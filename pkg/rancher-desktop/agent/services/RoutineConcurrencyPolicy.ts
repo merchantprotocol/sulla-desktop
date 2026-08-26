@@ -15,10 +15,9 @@
  *     transaction-scoped advisory lock, giving an exact, race-free ceiling
  *     across concurrent launches for any protected routine kind.
  *
- * Everything ships dark: when automatedProjectManagementEnabled is false the
- * resolver returns the caller's legacy value and callers skip reservation, so
- * runtime behaviour is unchanged until the human enables the feature in the
- * new settings area.
+ * Enabled by default. When the human explicitly turns automatedProjectManagementEnabled
+ * off, the resolver returns the caller's legacy value and callers skip
+ * reservation, restoring pre-feature unlimited/hardcoded behaviour.
  */
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
@@ -85,7 +84,7 @@ function clampLimit(value: number, fallback: number): number {
 
 export class RoutineConcurrencyPolicy {
   static async isEnabled(): Promise<boolean> {
-    return Boolean(await SullaSettingsModel.get(MASTER_ENABLED_KEY, false));
+    return Boolean(await SullaSettingsModel.get(MASTER_ENABLED_KEY, true));
   }
 
   /**

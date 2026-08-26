@@ -81,7 +81,7 @@ export default defineComponent({
       remoteRetryCount:      3, // Number of retries before falling back to local LLM
       remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
       // Automated Project Management (protected routine concurrency + custody)
-      automatedProjectManagementEnabled: false,
+      automatedProjectManagementEnabled: true,
       routineConcurrencyPlanning:  1,
       routineConcurrencyExecution: 3,
       routineConcurrencyReview:    3,
@@ -232,7 +232,7 @@ export default defineComponent({
     this.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
     this.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
-    this.automatedProjectManagementEnabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', false));
+    this.automatedProjectManagementEnabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', true));
     this.routineConcurrencyPlanning  = Number(await SullaSettingsModel.get('routineConcurrency_planning', 1));
     this.routineConcurrencyExecution = Number(await SullaSettingsModel.get('routineConcurrency_execution', 3));
     this.routineConcurrencyReview    = Number(await SullaSettingsModel.get('routineConcurrency_review', 3));
