@@ -78,7 +78,7 @@ async function readRoleLimit(role: WorkLaneSemanticRole): Promise<number | null>
 /** Resolve the effective per-role ceilings from durable settings. */
 export async function resolveWipLimits(): Promise<WipLimits> {
   const out = {} as WipLimits;
-  const enabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', false));
+  const enabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', true));
   if (!enabled) {
     for (const role of ALL_SEMANTIC_ROLES) out[role] = null;
     return out;
