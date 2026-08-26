@@ -12,7 +12,7 @@ import {
   DEFAULT_ROUTINE_LIMITS,
   MAX_ROUTINE_CONCURRENCY,
   PROTECTED_ROUTINE_KINDS,
-  perKindLimitKey,
+  TOTAL_LIMIT_KEY,
 } from '../RoutineConcurrencyPolicy';
 
 function settings(map: Record<string, any>) {
@@ -27,26 +27,25 @@ describe('RoutineConcurrencyPolicy.resolveLimit', () => {
     expect(await RoutineConcurrencyPolicy.resolveLimit('execution', 7)).toBe(7);
   });
 
-  it('uses the per-kind setting when enabled', async() => {
-    settings({ automatedProjectManagementEnabled: true, [perKindLimitKey('planning')]: 4 });
-    expect(await RoutineConcurrencyPolicy.resolveLimit('planning', 1)).toBe(4);
-  });
-
-  it('clamps to [0, MAX]', async() => {
-    settings({ automatedProjectManagementEnabled: true, [perKindLimitKey('review')]: 999 });
-    expect(await RoutineConcurrencyPolicy.resolveLimit('review')).toBe(MAX_ROUTINE_CONCURRENCY);
-    settings({ automatedProjectManagementEnabled: true, [perKindLimitKey('review')]: -5 });
-    expect(await RoutineConcurrencyPolicy.resolveLimit('review')).toBe(0);
-  });
-
-  it('falls back to the legacy key for execution when the per-kind key is unset', async() => {
-    settings({ automatedProjectManagementEnabled: true, taskDispatcherConcurrency: 5 });
-    expect(await RoutineConcurrencyPolicy.resolveLimit('execution', 3)).toBe(5);
-  });
-
-  it('uses the built-in default when nothing is configured and enabled', async() => {
-    settings({ automatedProjectManagementEnabled: true });
+  it('falls back to the built-in per-kind default when disabled and no legacy value given', async() => {
+    settings({ automatedProjectManagementEnabled: false });
     expect(await RoutineConcurrencyPolicy.resolveLimit('dreaming')).toBe(DEFAULT_ROUTINE_LIMITS.dreaming);
+  });
+
+  it('mirrors the single total concurrent-agent limit for every kind when enabled', async() => {
+    settings({ automatedProjectManagementEnabled: true, [TOTAL_LIMIT_KEY]: 4 });
+    expect(await RoutineConcurrencyPolicy.resolveLimit('planning', 1)).toBe(4);
+    expect(await RoutineConcurrencyPolicy.resolveLimit('review', 9)).toBe(4);
+  });
+
+  it('falls back to MAX_ROUTINE_CONCURRENCY when enabled with no total limit set (0 = unlimited)', async() => {
+    settings({ automatedProjectManagementEnabled: true });
+    expect(await RoutineConcurrencyPolicy.resolveLimit('execution')).toBe(MAX_ROUTINE_CONCURRENCY);
+  });
+
+  it('clamps the total limit to [0, MAX]', async() => {
+    settings({ automatedProjectManagementEnabled: true, [TOTAL_LIMIT_KEY]: 999 });
+    expect(await RoutineConcurrencyPolicy.resolveLimit('review')).toBe(MAX_ROUTINE_CONCURRENCY);
   });
 
   it('exposes all six protected kinds', () => {
