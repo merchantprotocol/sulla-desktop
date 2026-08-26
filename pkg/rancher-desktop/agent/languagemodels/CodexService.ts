@@ -749,7 +749,10 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       let errorMessage = '';
       let lastUsage: any = null;
 
-      const onAbort = () => {
+      // Kill the spawn on both sides of the SSH boundary — mirrors
+      // ClaudeCodeService.killSpawn. Used by both explicit abort and the
+      // stall watchdog below.
+      const killSpawn = () => {
         // 1) Kill the host-side limactl process (closes the SSH session; with
         //    `exec` in the inner shell the remote codex usually gets SIGHUP).
         try { proc.kill('SIGTERM') } catch { /* already dead */ }
@@ -770,6 +773,44 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         } catch (err) {
           log.log(`[CodexService] Remote pkill failed: ${ (err as Error)?.message ?? err }`);
         }
+      };
+
+      // ── Stall watchdog ──────────────────────────────────────────────
+      // A codex process whose upstream connection dies mid-run can sit
+      // silent forever — no stdout, no exit, no error — leaving the promise
+      // unsettled and the UI stuck on "Isolated environment ready" /
+      // "calling model" with no recovery. ClaudeCodeService already carries
+      // this exact protection (observed hangs up to 7.7h); codex never had
+      // it. Liveness = any stdout/stderr byte, so long in-CLI tool runs
+      // reset the clock; only a completely dead stream trips the kill.
+      const STALL_TIMEOUT_MS = 15 * 60 * 1_000;
+      const STALL_CHECK_MS = 30 * 1_000;
+      let lastStreamActivityAt = Date.now();
+      let stalled = false;
+      let stallTimer: NodeJS.Timeout | null = null;
+      const stopStallWatchdog = () => {
+        if (stallTimer) {
+          clearInterval(stallTimer);
+          stallTimer = null;
+        }
+      };
+      const startStallWatchdog = () => {
+        lastStreamActivityAt = Date.now();
+        stallTimer = setInterval(() => {
+          const silentMs = Date.now() - lastStreamActivityAt;
+          if (silentMs < STALL_TIMEOUT_MS) return;
+          stalled = true;
+          stopStallWatchdog();
+          log.warn(`[CodexService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing codex (convId=${ convId })`);
+          killSpawn();
+        }, STALL_CHECK_MS);
+      };
+      if (adoptedSpawned) startStallWatchdog();
+      else proc.once('spawn', startStallWatchdog);
+
+      const onAbort = () => {
+        stopStallWatchdog();
+        killSpawn();
       };
       if (options.signal) {
         if (options.signal.aborted) onAbort();
@@ -920,6 +961,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       };
 
       proc.stdout.on('data', (chunk) => {
+        lastStreamActivityAt = Date.now();
         stdoutBuffer += chunk.toString('utf-8');
         const lines = stdoutBuffer.split('\n');
         stdoutBuffer = lines.pop() ?? '';
@@ -927,6 +969,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       });
 
       proc.stderr.on('data', (chunk) => {
+        lastStreamActivityAt = Date.now();
         const text = chunk.toString('utf-8');
         stderrBuffer += text;
         const trimmed = text.trim();
@@ -936,15 +979,25 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       });
 
       proc.on('error', (err) => {
+        stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
         cleanupMcp();
         reject(err);
       });
 
       proc.on('close', (code) => {
+        stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
         cleanupMcp();
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
+
+        // Stall-watchdog kill — surface a clear, retryable error instead of
+        // falling through to the generic no-output message.
+        if (stalled) {
+          const silentMin = Math.round(STALL_TIMEOUT_MS / 60_000);
+          reject(new Error(`Codex stalled — no stream activity for ${ silentMin } minutes, so the run was terminated. Please try again.`));
+          return;
+        }
 
         // Binary missing — checked BEFORE the resume heuristic: sh's
         // "codex: not found" must not be mistaken for a dead thread (and the
