@@ -1338,6 +1338,16 @@ export class WorkItemsModel {
           WHERE id = $1`,
         [id],
       );
+      // Project- and epic-scoped lane workflow bindings die with the project,
+      // so an archived project stops appearing in active-binding listings.
+      await postgresClient.query(
+        `UPDATE work_lane_workflow_bindings
+            SET active = false, archived = true, archived_at = now(), updated_at = now()
+          WHERE archived = false
+            AND (   (scope = 'project' AND project_id = $1)
+                 OR (scope = 'epic' AND epic_id IN (SELECT id FROM ${ WorkItemsModel.EPICS } WHERE project_id = $1)))`,
+        [id],
+      );
       return true;
     }
 
@@ -1357,6 +1367,12 @@ export class WorkItemsModel {
       await postgresClient.query(
         `UPDATE ${ WorkItemsModel.EPICS } SET archived = true, updated_at = now()
           WHERE id = $1`,
+        [id],
+      );
+      await postgresClient.query(
+        `UPDATE work_lane_workflow_bindings
+            SET active = false, archived = true, archived_at = now(), updated_at = now()
+          WHERE scope = 'epic' AND epic_id = $1 AND archived = false`,
         [id],
       );
       return true;
