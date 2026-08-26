@@ -5,6 +5,14 @@ import type { WorkTaskWaitKind } from '../../database/models/WorkTaskWaitModel';
 
 const WAIT_KINDS = new Set<WorkTaskWaitKind>(['github_checks', 'human_gate', 'scheduled_time', 'external_job']);
 
+const MONITOR_RECHECK_MS = 5 * 60 * 1000;
+
+export function resolveNextCheckAt(waitKind: WorkTaskWaitKind, nextCheckAt: unknown, dueAt: string | null, now = Date.now()): string | undefined {
+  if (typeof nextCheckAt === 'string' && nextCheckAt.trim()) return nextCheckAt.trim();
+  if (waitKind === 'human_gate' && dueAt) return new Date(now + MONITOR_RECHECK_MS).toISOString();
+  return undefined;
+}
+
 /** Register one deterministic external wait. Duplicate active targets are idempotent. */
 export class RegisterTaskWaitWorker extends BaseTool {
   name = '';
@@ -20,9 +28,9 @@ export class RegisterTaskWaitWorker extends BaseTool {
     }
     try {
       const dueAt = typeof input.due_at === 'string' && input.due_at.trim() ? input.due_at.trim() : null;
-      const nextCheckAt = typeof input.next_check_at === 'string' && input.next_check_at.trim()
-        ? input.next_check_at.trim()
-        : (waitKind === 'human_gate' && dueAt ? dueAt : undefined);
+      // A due date is the human gate's deadline, not its monitor schedule.
+      // Keep the monitor alive on its normal cadence while preserving due_at separately.
+      const nextCheckAt = resolveNextCheckAt(waitKind, input.next_check_at, dueAt);
       const actor = input.actor || 'sulla';
       const registration = await getProjectsApplicationService().registerWait({
         taskId,
