@@ -486,11 +486,6 @@ export class AgentPersonaService {
     const msgThreadId = this.extractThreadId(msg);
     const myThreadId = this.state.threadId;
 
-    // TEMP DIAG (GW7w): trace every inbound WS message at the point it
-    // reaches the renderer, before any filtering can drop it. Remove once
-    // the today's-symptom investigation on task GW7w is closed.
-    console.log(`[GW7w-diag] FE-RECV agent=${ agentId } type=${ msg.type } kind=${ (msg.data as any)?.kind ?? '-' } msgThreadId=${ msgThreadId ?? '-' } myThreadId=${ myThreadId ?? '-' } t=${ Date.now() }`);
-
     // Drop messages that don't carry a threadId when we already have an active thread.
     // This prevents stray workflow / backend messages from leaking into the chat.
     if (!msgThreadId && myThreadId) {
@@ -506,25 +501,21 @@ export class AgentPersonaService {
         if (msg.type === 'chat_message' && (msg.data as any)?.kind === 'channel_message') {
           const toThreadId = (msg.data as any)?.toThreadId;
           if (toThreadId && toThreadId !== myThreadId) {
-            console.log(`[GW7w-diag] FE-DROP reason=channel_message-wrong-target toThreadId=${ toThreadId } myThreadId=${ myThreadId }`);
             return; // targeted to a different thread
           }
           // else: toThreadId matches or absent — fall through to dispatch
         } else {
-          console.log(`[GW7w-diag] FE-DROP reason=missing-threadId type=${ msg.type } kind=${ (msg.data as any)?.kind ?? '-' } myThreadId=${ myThreadId }`);
           return;
         }
       }
     }
 
     if (msgThreadId && myThreadId && msgThreadId !== myThreadId) {
-      console.log(`[GW7w-diag] FE-DROP reason=threadId-mismatch msgThreadId=${ msgThreadId } myThreadId=${ myThreadId }`);
       return; // belongs to a different chat tab — ignore
     }
 
     this.dispatcher.dispatch(this.getDispatchContext(), agentId, msgThreadId ?? '', msg);
     this.markMessagesChanged();
-    console.log(`[GW7w-diag] FE-DISPATCHED kind=${ (msg.data as any)?.kind ?? '-' } revision=${ this.messagesRevision.value } messagesLen=${ this.messages.length } t=${ Date.now() }`);
   }
 
   private markMessagesChanged(): void {

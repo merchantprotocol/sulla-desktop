@@ -102,13 +102,7 @@ export class PersonaAdapter {
     // React to the persona's explicit scalar revision. Deep-watching the
     // message array traversed the entire transcript on every stream delta.
     this.stopWatchers.push(
-      watch(() => this.ci.messagesRevision.value, (rev) => {
-        // TEMP DIAG (GW7w): confirm the adapter watcher actually fires on
-        // every ci revision bump and schedules a sync. Remove once GW7w
-        // is closed.
-        console.log(`[GW7w-diag] ADAPTER-SCHEDULE revision=${ rev } t=${ Date.now() }`);
-        this.messageSyncScheduler.schedule();
-      }),
+      watch(() => this.ci.messagesRevision.value, () => this.messageSyncScheduler.schedule()),
     );
 
     // Drive the run-state machine from the backend. Also re-map every
@@ -292,9 +286,6 @@ export class PersonaAdapter {
   // short timer publishes the latest accumulated state at a bounded rate.
   private syncMessages(): void {
     const backend = this.ci.messages.value;
-    // TEMP DIAG (GW7w): confirm syncMessages actually runs and how many
-    // backend messages it sees each call. Remove once GW7w is closed.
-    console.log(`[GW7w-diag] SYNC-RUN backendLen=${ backend.length } t=${ Date.now() }`);
     for (const b of backend) {
       if (!b?.id) continue;
 
@@ -308,16 +299,13 @@ export class PersonaAdapter {
       if (!mapped) {
         // Track as seen anyway so we don't repeatedly re-process it.
         this.seen.add(b.id);
-        console.log(`[GW7w-diag] SYNC-SKIP id=${ b.id } kind=${ b.kind ?? '-' } reason=null-mapping`);
         continue;
       }
       if (this.seen.has(b.id)) {
         this.controller.updateMessage(mapped.id, mapped as Partial<Message>);
-        console.log(`[GW7w-diag] SYNC-UPDATE id=${ b.id } kind=${ b.kind ?? '-' } contentLen=${ typeof b.content === 'string' ? b.content.length : -1 } t=${ Date.now() }`);
       } else {
         this.seen.add(b.id);
         this.controller.appendMessage(mapped);
-        console.log(`[GW7w-diag] SYNC-APPEND id=${ b.id } kind=${ b.kind ?? '-' } t=${ Date.now() }`);
       }
     }
   }

@@ -75,12 +75,9 @@ export class ChatInterface {
     // transcript. A deep watcher traversed every historical message for every
     // stream delta before this callback even ran, recreating the renderer
     // starvation that the persistence debounce was meant to prevent.
-    watch(() => this.persona.messagesRevision.value, (rev) => {
+    watch(() => this.persona.messagesRevision.value, () => {
       this.messages.value = [...this.persona.messages];
       this.schedulePersist();
-      // TEMP DIAG (GW7w): confirm the ci.messages mirror actually refreshes
-      // on every persona revision bump. Remove once GW7w is closed.
-      console.log(`[GW7w-diag] CI-MIRROR revision=${ rev } mirroredLen=${ this.messages.value.length } t=${ Date.now() }`);
     });
 
     // Watch graphRunning to process next queued message when current one completes
