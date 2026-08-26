@@ -1624,15 +1624,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const STREAM_THROTTLE_MS = 50;
     const isVoiceMode = controller.getMode() === 'voice';
 
-    let gw7wFirstTokenLogged = false;
     const onToken = (token: string): void => {
-      // TEMP DIAG (GW7w): log the very first token of the turn so we can
-      // tell "the provider never produced output" apart from "output was
-      // produced but never reached the renderer". Remove once GW7w is closed.
-      if (!gw7wFirstTokenLogged) {
-        gw7wFirstTokenLogged = true;
-        console.log(`[GW7w-diag] BE-FIRST-TOKEN threadId=${ state.metadata.threadId ?? '-' } t=${ Date.now() }`);
-      }
       contentBuffer += token;
 
       // Sub-agent inactivity watchdog in PlaybookController reads this —
@@ -1975,11 +1967,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     } else {
       state.metadata.hadUserMessages = true;
     }
-    // TEMP DIAG (GW7w): trace every WS chat send from the main process so we
-    // can correlate "sent" here against "FE-RECV" in AgentPersonaModel.ts.
-    // Remove once the today's-symptom investigation on task GW7w is closed.
-    console.log(`[GW7w-diag] BE-SEND connection=${ connectionId } kind=${ kind } contentLen=${ content.length } threadId=${ threadId ?? '-' } sent=${ sent } t=${ Date.now() }`);
-
     // If this agent is running inside a workflow, also emit a node_thinking
     // event so the workflow canvas can display the conversation in a bubble.
     // Subconscious subagents set `workflowThinkingLabel` so the frontend
