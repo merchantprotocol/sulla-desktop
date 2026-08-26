@@ -1,5 +1,5 @@
 // ChatInterface.ts
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, type ComputedRef } from 'vue';
 
 import { ChatMessageQueue, createMessageQueue, type QueuedMessage } from './ChatMessageQueue';
 
@@ -37,6 +37,7 @@ export class ChatInterface {
   readonly currentAgentId: ReturnType<typeof computed<string>>;
 
   readonly messages = ref<ChatMessage[]>([]);
+  readonly messagesRevision: ComputedRef<number>;
 
   /**
    * @param channelId  WebSocket channel (shared across tabs, e.g. 'sulla-desktop')
@@ -54,6 +55,7 @@ export class ChatInterface {
     this.hasSentMessage = ref(localStorage.getItem(this.hasSentMessageKey) === 'true');
     this.registry = getAgentPersonaRegistry();
     this.persona = this.registry.getOrCreatePersonaService(channelId, tabId);
+    this.messagesRevision = computed(() => this.persona.messagesRevision.value);
 
     // Initialize message queue
     this.messageQueue = createMessageQueue();
@@ -69,15 +71,14 @@ export class ChatInterface {
     // Restore persisted messages from localStorage
     this.restoreMessages();
 
-    // Watch persona messages for persistence. The UI mirror updates
-    // immediately; the localStorage write is debounced because this deep
-    // watcher fires on EVERY streaming delta — an undebounced persist did a
-    // full JSON.stringify of the message window per chunk (tens of MB of
-    // serialization work across one long response).
-    watch(() => this.persona.messages, () => {
+    // Mirror explicit message revisions instead of deep-watching the full
+    // transcript. A deep watcher traversed every historical message for every
+    // stream delta before this callback even ran, recreating the renderer
+    // starvation that the persistence debounce was meant to prevent.
+    watch(() => this.persona.messagesRevision.value, () => {
       this.messages.value = [...this.persona.messages];
       this.schedulePersist();
-    }, { deep: true });
+    });
 
     // Watch graphRunning to process next queued message when current one completes
     watch(() => this.persona.graphRunning.value, (isRunning) => {
