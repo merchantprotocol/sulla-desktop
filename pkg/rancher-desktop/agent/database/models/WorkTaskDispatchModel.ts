@@ -361,8 +361,38 @@ export class WorkTaskDispatchModel {
       if (!updated.rows[0]) {
         throw new Error(`Atomic dispatch lost task ${ task.id } before execution handoff`);
       }
+      const committed = updated.rows[0];
 
-      return { dispatch: inserted.rows[0], task: updated.rows[0], stage_claim: stageClaim.claim };
+      // Mirror WorkItemsModel.updateTask's status-transition side effects.
+      // Without this, mechanical execution dispatch was a second write path
+      // that bypassed the lane-entry-workflow claim entirely: no project
+      // pipeline workflow bound to the entered lane was ever resolved or
+      // attached, and no work_project_domain_events row was appended, so the
+      // Projects activity/audit trail silently missed every dispatcher-driven
+      // todo -> in_progress transition.
+      const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
+      const laneEntry = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
+        client, committed.id, committed.status, TASK_ASSIGNEES.dispatcher,
+      );
+      const { createPostgresProjectsRepositories } = await import('../../projects/infrastructure/PostgresProjectsRepositories');
+      await createPostgresProjectsRepositories(client).events.append({
+        id:             `projects-event-${ committed.id }-${ laneEntry.entry.generation }-transition`,
+        taskId:         committed.id,
+        generation:     laneEntry.entry.generation,
+        eventType:      'projects.task.transitioned',
+        idempotencyKey: `projects.task.transitioned:${ committed.id }:${ laneEntry.entry.generation }`,
+        occurredAt:     new Date(),
+        payload:        {
+          actor:         TASK_ASSIGNEES.dispatcher,
+          source:        'dispatcher',
+          fromLane:      task.status,
+          toLane:        committed.status,
+          laneEntryId:   laneEntry.entry.id,
+          laneAutomated: laneEntry.entry.status === 'pending',
+        },
+      });
+
+      return { dispatch: inserted.rows[0], task: committed, stage_claim: stageClaim.claim };
     });
   }
 
