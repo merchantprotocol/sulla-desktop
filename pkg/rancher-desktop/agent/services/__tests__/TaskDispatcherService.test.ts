@@ -179,19 +179,23 @@ describe('TaskDispatcherService', () => {
     }));
   });
 
-  it('fails closed when the default core agent is unavailable', async() => {
+  it('does not require an on-disk agent directory for the default core agent', async() => {
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled' || key === 'taskReviewCoreRoutineEnabled') return Promise.resolve(true);
       if (key === 'taskVerifierOwner') return Promise.resolve('core-routine');
       return Promise.resolve(fallback);
     });
+    // The default core routine agent is a product default, not a customizable
+    // one -- a missing/deleted override directory must never take down review.
     findAgentDirMock.mockReturnValue(null);
     const { TaskDispatcherService } = await import('../TaskDispatcherService');
     const service = new TaskDispatcherService();
     await service.initialize();
     service.destroy();
-    expect(claimNextReviewMock).not.toHaveBeenCalled();
-    expect(claimNextMock).not.toHaveBeenCalled();
+    expect(claimNextReviewMock).toHaveBeenCalled();
+    expect(reportCapabilityMock).toHaveBeenCalledWith(expect.objectContaining({
+      key: 'in-review-verification', health: 'healthy',
+    }));
   });
 
   it('suppresses an identical terminal generation before graph or workflow side effects', async() => {
