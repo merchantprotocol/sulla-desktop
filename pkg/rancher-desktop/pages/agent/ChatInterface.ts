@@ -8,6 +8,8 @@ import type { PersonaSidebarAsset } from '@pkg/agent';
 import { getAgentPersonaRegistry, AgentPersonaRegistry, type ChatMessage as RegistryChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
 
+import { touchChatStorageScope } from './ChatStorageGc';
+
 import type { PendingAttachment } from './AgentComposer.vue';
 
 export type ChatMessage = RegistryChatMessage;
@@ -49,6 +51,7 @@ export class ChatInterface {
     this.channelId = channelId;
     // Use tabId for storage scoping when available, otherwise fall back to channelId
     this.storageScope = tabId ? `${ channelId }_${ tabId }` : channelId;
+    touchChatStorageScope(this.storageScope);
     this.messagesStorageKey = `chat_messages_${ this.storageScope }`;
     this.currentAgentId = computed(() => this.channelId);
     this.hasSentMessageKey = `chat_has_sent_message_${ this.storageScope }`;
