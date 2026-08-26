@@ -30,7 +30,6 @@ import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent
 import { extractAgentTurnOutcome } from '../tools/agents/agentTurnOutcome';
 import { toolRegistry } from '../tools/registry';
 import { createPlaybookState } from '../workflow/WorkflowPlaybook';
-import { findAgentDir } from '../utils/sullaPaths';
 
 const CHECK_INTERVAL_MS = 60_000;
 const LEASE_HEARTBEAT_MS = 120_000;
@@ -405,7 +404,15 @@ export class TaskDispatcherService {
     return true;
   }
 
-  /** One service and one claim path own in_review. Disabling the core routine pauses it. */
+  /**
+   * One service and one claim path own in_review. Disabling the core routine
+   * pauses it. The default core routine agent (DEFAULT_CORE_ROUTINE_AGENT_ID)
+   * is never required to have an on-disk profile directory -- it is the
+   * product default, and every other agent-resolution path (BaseNode,
+   * GraphRegistry) already falls back to built-in defaults when no directory
+   * exists. Gating availability on filesystem presence here made a missing/
+   * deleted override folder take down the entire review pipeline.
+   */
   private async resolveVerificationOwner(): Promise<VerificationOwner | null> {
     const configured = String(await SullaSettingsModel.get('taskVerifierOwner', 'core-routine'));
     if (configured === 'legacy') return 'legacy';
@@ -414,7 +421,6 @@ export class TaskDispatcherService {
     if (!rolloutEnabled) return null;
     const routine = await WorkflowModel.findById(REVIEW_PROJECT_ARTIFACT_ID);
     if (!routine || routine.attributesSnapshot.enabled === false) return null;
-    if (!findAgentDir(DEFAULT_CORE_ROUTINE_AGENT_ID)) return null;
     return 'core-routine';
   }
 
