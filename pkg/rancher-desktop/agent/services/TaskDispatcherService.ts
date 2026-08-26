@@ -3,7 +3,6 @@ import { Octokit } from '@octokit/rest';
 import { AbortService } from './AbortService';
 import { resolvePullRequestHead, resolvePullRequestHeads } from './GitHubPullRequestHeadService';
 import { GraphRegistry } from './GraphRegistry';
-import { isInsideWindow } from './HeartbeatService';
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { getIntegrationService } from './IntegrationService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
@@ -141,7 +140,11 @@ export class TaskDispatcherService {
     if (!this.initialized || this.checking) return;
     this.checking = true;
     try {
-      const enabled = await SullaSettingsModel.get('heartbeatEnabled', false);
+      // The dispatcher is an independent system from the conversational Heartbeat
+      // agent (Jonathon, 2026-08-25) -- it must not read heartbeatEnabled/heartbeatWindow.
+      // Its own master switch is automatedProjectManagementEnabled (RoutineConcurrencyPolicy),
+      // exposed as "Enable Automation PM Work" on the Project Automation settings tab.
+      const enabled = await RoutineConcurrencyPolicy.isEnabled();
       if (!enabled) {
         await LifecycleCapabilityModel.report({
           key:               'todo-execution',
@@ -150,13 +153,10 @@ export class TaskDispatcherService {
           owner:             null,
           runtimeInstanceId: RUNTIME_INSTANCE_ID,
           fallbackMode:      'manual_hold',
-          error:             'Heartbeat and mechanical dispatch are disabled by user setting.',
+          error:             'Automated Project Management is disabled by user setting.',
         });
         return;
       }
-
-      const window = await SullaSettingsModel.get('heartbeatWindow', null);
-      if (window && !isInsideWindow(window)) return;
 
       if (!this.recoveredOnStart) {
         const recovered = await WorkTaskDispatchModel.recoverStale();

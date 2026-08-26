@@ -87,9 +87,6 @@ jest.unstable_mockModule('../GraphRegistry', () => ({
     delete:                graphDeleteMock,
   },
 }));
-jest.unstable_mockModule('../HeartbeatService', () => ({
-  isInsideWindow: jest.fn(() => true),
-}));
 jest.unstable_mockModule('../GitHubPullRequestHeadService', () => ({
   resolvePullRequestHead:  resolvePullRequestHeadMock,
   resolvePullRequestHeads: resolvePullRequestHeadsMock,
@@ -366,7 +363,7 @@ describe('TaskDispatcherService', () => {
 
   it('turns user disablement into a visible manual hold without claiming work', async() => {
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
-      if (key === 'heartbeatEnabled') return Promise.resolve(false);
+      if (key === 'automatedProjectManagementEnabled') return Promise.resolve(false);
       return Promise.resolve(fallback);
     });
     const { TaskDispatcherService } = await import('../TaskDispatcherService');

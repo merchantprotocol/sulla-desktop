@@ -1,5 +1,4 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
+import { describe, expect, it } from '@jest/globals';
 import {
   clampWipLimit,
   evaluateClaim,
@@ -70,41 +69,7 @@ describe('evaluateClaim — downstream-first precedence', () => {
 });
 
 describe('resolveWipLimits', () => {
-  afterEach(() => jest.restoreAllMocks());
-
-  it('prefers an explicit per-role setting, clamped', async () => {
-    jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async (prop: string) => {
-      if (prop === 'automatedProjectManagementEnabled') return true;
-      if (prop === 'projectAutomation.wip.execution') return 5;
-      return null;
-    });
-    const limits = await resolveWipLimits();
-    expect(limits.execution).toBe(5);
-  });
-
-  it('inherits #706 per-kind concurrency when no explicit WIP key is set', async () => {
-    jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async (prop: string) => {
-      if (prop === 'automatedProjectManagementEnabled') return true;
-      if (prop === 'routineConcurrency_review') return 6;
-      return null;
-    });
-    const limits = await resolveWipLimits();
-    expect(limits.review).toBe(6);
-    // roles with no default source stay unlimited
-    expect(limits.terminal).toBeNull();
-    expect(limits.backlog).toBeNull();
-  });
-
-  it('falls back to conservative constants when nothing is configured', async () => {
-    jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async (prop: string) =>
-      prop === 'automatedProjectManagementEnabled' ? true : null as any);
-    const limits = await resolveWipLimits();
-    expect(limits.execution).toBe(3);
-    expect(limits.planning).toBe(2);
-  });
-
-  it('is unlimited while automated Projects management is disabled', async () => {
-    jest.spyOn(SullaSettingsModel, 'get').mockResolvedValue(false as any);
+  it('always resolves every semantic role as unlimited (per-swimlane WIP limits were removed)', async () => {
     await expect(resolveWipLimits()).resolves.toEqual(unlimited);
   });
 });
