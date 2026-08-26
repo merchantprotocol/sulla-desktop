@@ -1,17 +1,17 @@
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import type { WorkLaneSemanticRole } from '../database/models/WorkLaneDefinitionModel';
 
 /**
- * Semantic-stage-aware Work-In-Progress limits and downstream backpressure.
+ * Semantic-stage WIP evaluation primitives.
  *
- * Issue #711 generalises the single "drain review before todo" invariant from
- * #709 into a configurable, per-semantic-role WIP ceiling with downstream-first
- * precedence. The durable settings live as additive keys on the existing
- * {@link SullaSettingsModel}; issue #706 remains the umbrella owner of the
- * Project Automation settings UI and the shared advisory-lock claim wrapper.
- * These keys never introduce a second settings store, and every default is
- * inherited from #706's per-kind concurrency keys when present so the two
- * compose cleanly.
+ * Per-swimlane WIP ceilings (issue #711) were removed at Jonathon's explicit
+ * direction (2026-08-25): the Project Automation settings surface exposes
+ * exactly one concurrency knob (the total concurrent-agent limit in
+ * {@link RoutineConcurrencyPolicy}), not per-stage caps. resolveWipLimits()
+ * therefore always resolves "no ceiling" for every role, so evaluateClaim()
+ * never holds a claim on WIP grounds. The pure evaluateClaim()/clampWipLimit()
+ * primitives are kept because TaskDispatcherService, WorkTaskDispatchModel,
+ * ProjectsApplicationService, and conveyor_health still call through this
+ * module's shape; they now always observe an always-allowed decision.
  */
 
 export type WipLimits = Record<WorkLaneSemanticRole, number | null>;
@@ -22,36 +22,19 @@ export const ALL_SEMANTIC_ROLES: readonly WorkLaneSemanticRole[] =
   ['backlog', 'planning', 'execution', 'review', 'blocked', 'terminal', 'manual'] as const;
 
 /**
- * Drain priority, most-downstream stage first. A claim for an upstream role is
- * held while any strictly-more-downstream role is at or over its ceiling.
- * Mirrors #711: terminal handoff and review before repair (blocked recovery),
- * repair before execution, execution before todo intake.
+ * Drain priority, most-downstream stage first. Kept for evaluateClaim()'s
+ * downstream-first precedence logic, which is inert while every limit is null.
  */
 export const DRAIN_PRIORITY: readonly WorkLaneSemanticRole[] =
   ['terminal', 'review', 'blocked', 'execution', 'planning', 'backlog'] as const;
 
-/** Documented safe range for a durable WIP ceiling (see #706). */
+/** Documented safe range for a WIP ceiling, retained for clampWipLimit(). */
 export const WIP_MIN = 1;
 export const WIP_MAX = 20;
 
-const SETTING_PREFIX = 'projectAutomation.wip.';
-
 /**
- * Compose-friendly defaults: where #706 has persisted a per-kind concurrency
- * ceiling we inherit it; otherwise a conservative constant. Roles absent here
- * (backlog, terminal, manual) carry no ceiling by default.
- */
-const DEFAULT_SOURCE: Partial<Record<WorkLaneSemanticRole, { key: string; fallback: number }>> = {
-  execution: { key: 'routineConcurrency_execution', fallback: 3 },
-  review:    { key: 'routineConcurrency_review',    fallback: 3 },
-  planning:  { key: 'routineConcurrency_planning',  fallback: 2 },
-  blocked:   { key: 'routineConcurrency_repair',    fallback: 2 },
-  manual:    { key: 'routineConcurrency_other',     fallback: 2 },
-};
-
-/**
- * Coerce a durable setting into an integer ceiling. Non-numeric, zero, or
- * negative values mean "no ceiling" (unlimited); positive values clamp to the
+ * Coerce a value into an integer ceiling. Non-numeric, zero, or negative
+ * values mean "no ceiling" (unlimited); positive values clamp to the
  * documented [WIP_MIN, WIP_MAX] range.
  */
 export function clampWipLimit(value: unknown): number | null {
@@ -61,35 +44,11 @@ export function clampWipLimit(value: unknown): number | null {
   return Math.min(WIP_MAX, Math.max(WIP_MIN, n));
 }
 
-async function readRoleLimit(role: WorkLaneSemanticRole): Promise<number | null> {
-  const explicit = await SullaSettingsModel.get(SETTING_PREFIX + role, null);
-  if (explicit !== null && explicit !== undefined && explicit !== '') {
-    return clampWipLimit(explicit);
-  }
-  const src = DEFAULT_SOURCE[role];
-  if (!src) return null;
-  const inherited = await SullaSettingsModel.get(src.key, null);
-  if (inherited !== null && inherited !== undefined && inherited !== '') {
-    return clampWipLimit(inherited);
-  }
-  return clampWipLimit(src.fallback);
-}
-
-/** Resolve the effective per-role ceilings from durable settings. */
+/** Always unlimited -- per-swimlane WIP ceilings were removed. */
 export async function resolveWipLimits(): Promise<WipLimits> {
   const out = {} as WipLimits;
-  const enabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', true));
-  if (!enabled) {
-    for (const role of ALL_SEMANTIC_ROLES) out[role] = null;
-    return out;
-  }
-  for (const role of ALL_SEMANTIC_ROLES) out[role] = await readRoleLimit(role);
+  for (const role of ALL_SEMANTIC_ROLES) out[role] = null;
   return out;
-}
-
-/** Persist an explicit per-role ceiling. Null / <=0 stores "unlimited". */
-export async function setWipLimit(role: WorkLaneSemanticRole, value: number | null): Promise<void> {
-  await SullaSettingsModel.set(SETTING_PREFIX + role, clampWipLimit(value) ?? 0, 'number');
 }
 
 export interface BackpressureDecision {
