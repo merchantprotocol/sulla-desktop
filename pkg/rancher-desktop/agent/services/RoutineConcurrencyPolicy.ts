@@ -55,6 +55,9 @@ export const DEFAULT_ROUTINE_LIMITS: Record<ProtectedRoutineKind, number> = {
 export const MASTER_ENABLED_KEY = 'automatedProjectManagementEnabled';
 export const TOTAL_LIMIT_KEY = 'routineConcurrencyTotalLimit';
 
+/** Default total concurrent-agent limit when the human hasn't set one yet. */
+export const DEFAULT_TOTAL_LIMIT = 5;
+
 /** Advisory-lock key that serialises all slot acquisitions. */
 const SLOT_ADVISORY_LOCK_KEY = 4823710298;
 
@@ -106,7 +109,7 @@ export class RoutineConcurrencyPolicy {
 
   static async resolveTotalLimit(): Promise<number | null> {
     if (!(await this.isEnabled())) return null;
-    const raw = await SullaSettingsModel.get(TOTAL_LIMIT_KEY, null);
+    const raw = await SullaSettingsModel.get(TOTAL_LIMIT_KEY, DEFAULT_TOTAL_LIMIT);
     if (raw === null || raw === undefined || raw === '') return null;
     const value = clampLimit(Number(raw), 0);
     return value > 0 ? value : null;

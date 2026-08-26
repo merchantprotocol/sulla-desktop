@@ -83,7 +83,7 @@ export default defineComponent({
       remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
       // Project Automation (single concurrent-agent limit; see Project Automation tab)
       automatedProjectManagementEnabled: true,
-      routineConcurrencyTotalLimit: 0,
+      routineConcurrencyTotalLimit: 5,
       // Heartbeat settings
       heartbeatEnabled:      true,
       heartbeatDelayMinutes: 15,
@@ -221,7 +221,7 @@ export default defineComponent({
     this.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
     this.automatedProjectManagementEnabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', true));
-    this.routineConcurrencyTotalLimit = Number(await SullaSettingsModel.get('routineConcurrencyTotalLimit', 0));
+    this.routineConcurrencyTotalLimit = Number(await SullaSettingsModel.get('routineConcurrencyTotalLimit', 5));
     this.botName = await SullaSettingsModel.get('botName', 'Sulla');
     this.primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
     // Load provider/model state from ModelProviderService (source of truth)

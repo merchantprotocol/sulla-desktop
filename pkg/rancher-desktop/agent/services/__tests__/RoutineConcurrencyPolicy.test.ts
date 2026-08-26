@@ -10,6 +10,7 @@ jest.mock('../../database/models/SullaSettingsModel', () => ({
 import {
   RoutineConcurrencyPolicy,
   DEFAULT_ROUTINE_LIMITS,
+  DEFAULT_TOTAL_LIMIT,
   MAX_ROUTINE_CONCURRENCY,
   PROTECTED_ROUTINE_KINDS,
   TOTAL_LIMIT_KEY,
@@ -38,9 +39,9 @@ describe('RoutineConcurrencyPolicy.resolveLimit', () => {
     expect(await RoutineConcurrencyPolicy.resolveLimit('review', 9)).toBe(4);
   });
 
-  it('falls back to MAX_ROUTINE_CONCURRENCY when enabled with no total limit set (0 = unlimited)', async() => {
+  it('falls back to DEFAULT_TOTAL_LIMIT when enabled with no total limit set yet', async() => {
     settings({ automatedProjectManagementEnabled: true });
-    expect(await RoutineConcurrencyPolicy.resolveLimit('execution')).toBe(MAX_ROUTINE_CONCURRENCY);
+    expect(await RoutineConcurrencyPolicy.resolveLimit('execution')).toBe(DEFAULT_TOTAL_LIMIT);
   });
 
   it('clamps the total limit to [0, MAX]', async() => {
