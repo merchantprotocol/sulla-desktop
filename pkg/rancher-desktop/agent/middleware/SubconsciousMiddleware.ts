@@ -21,6 +21,7 @@ import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
+import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
 import { sanitizeConversationContext } from '../utils/conversationContext';
 import { formatDateOnly } from '../utils/formatDateOnly';
 
@@ -348,8 +349,14 @@ export function runSubconsciousObservationWriters(
   }
   if (!options.includeObservations || !hasAnalyzableUserMessage(state)) return;
 
+  // Every writer still runs to completion with a model in the loop — the
+  // gate only bounds how many run concurrently PROCESS-WIDE (not just within
+  // this turn), so a burst of conversations completing close together
+  // (PM automation, Heartbeat, multiple chat/mobile sessions) can't fire
+  // dozens of background LLM calls at once and starve the primary turn's
+  // own model call. See SubconsciousWriterGate.ts.
   const launch = (label: string, run: () => Promise<unknown>): void => {
-    Promise.resolve().then(run).catch((error) => {
+    Promise.resolve().then(() => runThroughWriterGate(run)).catch((error) => {
       console.error(`[SubconsciousMiddleware] Post-turn ${ label } failed (fire-and-forget):`, error instanceof Error ? error.message : error);
     });
   };
