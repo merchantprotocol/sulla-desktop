@@ -95,7 +95,6 @@ export class TaskDispatcherService {
   private initialized = false;
   private checking = false;
   private schedulerId: ReturnType<typeof setInterval> | null = null;
-  private recoveredOnStart = false;
   private reclaimedReviewsOnStart = 0;
   private active = new Map<string, AbortService>();
   private lastBackpressure: {
@@ -143,7 +142,6 @@ export class TaskDispatcherService {
 
   destroy(): void {
     this.initialized = false;
-    this.recoveredOnStart = false;
     if (this.schedulerId) {
       clearInterval(this.schedulerId);
       this.schedulerId = null;
@@ -174,11 +172,15 @@ export class TaskDispatcherService {
         return;
       }
 
-      if (!this.recoveredOnStart) {
-        const recovered = await WorkTaskDispatchModel.recoverStale();
-        this.recoveredOnStart = true;
-        if (recovered.length > 0) console.warn(`[TaskDispatcher] Recovered ${ recovered.length } orphaned dispatch(es)`);
-      }
+      // Run on every tick, not just once at boot. recoverStale() only
+      // reclaims dispatches silent past its 45-minute heartbeat threshold,
+      // so it's safe to call continuously -- and it must be, since a
+      // dispatch can go dead mid-process-lifetime (a stuck sub-agent call,
+      // a crashed worker) just as easily as it can from a prior restart.
+      // A one-shot startup-only reclaim leaves those permanently stuck for
+      // the rest of the process's uptime with nothing else watching them.
+      const recovered = await WorkTaskDispatchModel.recoverStale();
+      if (recovered.length > 0) console.warn(`[TaskDispatcher] Recovered ${ recovered.length } stale dispatch(es)`);
 
       await this.checkInProgressRecovery();
       const reviewReady = await this.fillVerificationPool();
