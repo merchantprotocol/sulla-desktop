@@ -17,6 +17,7 @@ import { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
 import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
 import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
 import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
 
 export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
 export { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
@@ -1637,11 +1638,10 @@ export async function getAgentIdForTrigger(triggerType: string): Promise<string>
 
   const assigned = triggerMap[triggerType];
   if (assigned) {
-    const agentDir = findAgentDir(assigned);
-    const exists = !!agentDir;
-    console.log(`[GraphRegistry] getAgentIdForTrigger() — trigger "${ triggerType }" mapped to "${ assigned }", dir exists=${ exists }`);
-    // Return the mapped ID whether or not the dir exists — buildAgentState
-    // gracefully handles missing agent dirs (runs with default prompts/tools).
+    // Built-in identities are code/DB-backed. Do not probe the optional
+    // profile directory while resolving a trigger; a deleted override must
+    // not affect production dispatch or review-pool boot.
+    console.log(`[GraphRegistry] getAgentIdForTrigger() — trigger "${ triggerType }" mapped to "${ assigned }"`);
     return assigned;
   }
 
@@ -1849,6 +1849,13 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
   console.log(`[GraphRegistry] loadAgentConfig() — agentId="${ agentId }"`);
   if (!agentId) {
     console.log(`[GraphRegistry] loadAgentConfig() — empty agentId, returning undefined`);
+    return undefined;
+  }
+
+  // The default Sulla Desktop identity is defined by shipped code and
+  // database-backed prompt sections. Its profile directory is optional user
+  // override state, never a prerequisite for graph construction.
+  if (agentId === DEFAULT_CORE_ROUTINE_AGENT_ID) {
     return undefined;
   }
 
