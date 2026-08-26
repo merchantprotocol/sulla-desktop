@@ -19,6 +19,7 @@ const navItems = [
   { id: 'models', name: 'Models' },
   { id: 'system-prompt', name: 'System Prompt' },
   { id: 'heartbeat', name: 'Heartbeat' },
+  { id: 'project-automation', name: 'Project Automation' },
 ];
 
 // Shape of a system-prompt section row returned by the `system-prompt:*` IPC.
@@ -80,22 +81,9 @@ export default defineComponent({
       modelLoadError:        '' as string,
       remoteRetryCount:      3, // Number of retries before falling back to local LLM
       remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
-      // Automated Project Management (protected routine concurrency + custody)
+      // Project Automation (single concurrent-agent limit; see Project Automation tab)
       automatedProjectManagementEnabled: true,
-      routineConcurrencyPlanning:  1,
-      routineConcurrencyExecution: 3,
-      routineConcurrencyReview:    3,
-      routineConcurrencyRepair:    2,
-      routineConcurrencyDreaming:  1,
-      routineConcurrencyOther:     2,
       routineConcurrencyTotalLimit: 0,
-      projectWipBacklog:   0,
-      projectWipPlanning:  2,
-      projectWipExecution: 3,
-      projectWipReview:    3,
-      projectWipBlocked:   3,
-      projectWipTerminal:  0,
-      projectWipManual:    0,
       // Heartbeat settings
       heartbeatEnabled:      true,
       heartbeatDelayMinutes: 15,
@@ -233,20 +221,7 @@ export default defineComponent({
     this.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
     this.automatedProjectManagementEnabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', true));
-    this.routineConcurrencyPlanning  = Number(await SullaSettingsModel.get('routineConcurrency_planning', 1));
-    this.routineConcurrencyExecution = Number(await SullaSettingsModel.get('routineConcurrency_execution', 3));
-    this.routineConcurrencyReview    = Number(await SullaSettingsModel.get('routineConcurrency_review', 3));
-    this.routineConcurrencyRepair    = Number(await SullaSettingsModel.get('routineConcurrency_repair', 2));
-    this.routineConcurrencyDreaming  = Number(await SullaSettingsModel.get('routineConcurrency_dreaming', 1));
-    this.routineConcurrencyOther     = Number(await SullaSettingsModel.get('routineConcurrency_other', 2));
     this.routineConcurrencyTotalLimit = Number(await SullaSettingsModel.get('routineConcurrencyTotalLimit', 0));
-    this.projectWipBacklog   = Number(await SullaSettingsModel.get('projectAutomation.wip.backlog', 0));
-    this.projectWipPlanning  = Number(await SullaSettingsModel.get('projectAutomation.wip.planning', 2));
-    this.projectWipExecution = Number(await SullaSettingsModel.get('projectAutomation.wip.execution', 3));
-    this.projectWipReview    = Number(await SullaSettingsModel.get('projectAutomation.wip.review', 3));
-    this.projectWipBlocked   = Number(await SullaSettingsModel.get('projectAutomation.wip.blocked', 3));
-    this.projectWipTerminal  = Number(await SullaSettingsModel.get('projectAutomation.wip.terminal', 0));
-    this.projectWipManual    = Number(await SullaSettingsModel.get('projectAutomation.wip.manual', 0));
     this.botName = await SullaSettingsModel.get('botName', 'Sulla');
     this.primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
     // Load provider/model state from ModelProviderService (source of truth)
@@ -757,20 +732,7 @@ export default defineComponent({
           heartbeatEnabled:      Boolean(this.heartbeatEnabled),
           heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 15,
           automatedProjectManagementEnabled:        Boolean(this.automatedProjectManagementEnabled),
-          routineConcurrency_planning:  Number(this.routineConcurrencyPlanning),
-          routineConcurrency_execution: Number(this.routineConcurrencyExecution),
-          routineConcurrency_review:    Number(this.routineConcurrencyReview),
-          routineConcurrency_repair:    Number(this.routineConcurrencyRepair),
-          routineConcurrency_dreaming:  Number(this.routineConcurrencyDreaming),
-          routineConcurrency_other:     Number(this.routineConcurrencyOther),
           routineConcurrencyTotalLimit: Number(this.routineConcurrencyTotalLimit),
-          'projectAutomation.wip.backlog':   Number(this.projectWipBacklog),
-          'projectAutomation.wip.planning':  Number(this.projectWipPlanning),
-          'projectAutomation.wip.execution': Number(this.projectWipExecution),
-          'projectAutomation.wip.review':    Number(this.projectWipReview),
-          'projectAutomation.wip.blocked':   Number(this.projectWipBlocked),
-          'projectAutomation.wip.terminal':  Number(this.projectWipTerminal),
-          'projectAutomation.wip.manual':    Number(this.projectWipManual),
           heartbeatPrompt:       String(this.heartbeatPrompt || ''),
           heartbeatProvider:     String(this.heartbeatProvider || 'default'),
           subconsciousProvider:  String(this.subconsciousProvider || 'default'),
@@ -784,20 +746,7 @@ export default defineComponent({
           heartbeatDelayMinutes: 'number',
           heartbeatEnabled:      'boolean',
           automatedProjectManagementEnabled:        'boolean',
-          routineConcurrency_planning:  'number',
-          routineConcurrency_execution: 'number',
-          routineConcurrency_review:    'number',
-          routineConcurrency_repair:    'number',
-          routineConcurrency_dreaming:  'number',
-          routineConcurrency_other:     'number',
           routineConcurrencyTotalLimit: 'number',
-          'projectAutomation.wip.backlog':   'number',
-          'projectAutomation.wip.planning':  'number',
-          'projectAutomation.wip.execution': 'number',
-          'projectAutomation.wip.review':    'number',
-          'projectAutomation.wip.blocked':   'number',
-          'projectAutomation.wip.terminal':  'number',
-          'projectAutomation.wip.manual':    'number',
         };
 
         for (const [key, value] of Object.entries(settingsToSave)) {
@@ -1666,155 +1615,6 @@ export default defineComponent({
             </p>
           </div>
 
-          <!-- Automated Project Management -->
-
-          <div class="setting-group">
-
-            <label class="setting-label">Automated Project Management</label>
-
-            <div class="toggle-switch">
-
-              <label class="switch">
-
-                <input
-
-                  v-model="automatedProjectManagementEnabled"
-
-                  type="checkbox"
-
-                >
-
-                <span class="slider" />
-
-              </label>
-
-              <span class="toggle-label">{{ automatedProjectManagementEnabled ? 'Enforcing limits' : 'Disabled' }}</span>
-
-            </div>
-
-            <p class="setting-description">
-
-              Cap how many protected Projects routines may run at once so mechanical work cannot overwhelm system resources. When disabled, the legacy per-pool defaults apply.
-
-            </p>
-
-          </div>
-
-          <div
-
-            v-if="automatedProjectManagementEnabled"
-
-            class="setting-group"
-
-          >
-
-            <label class="setting-label">Concurrent running limits by routine kind</label>
-
-            <div style="display:flex; flex-wrap:wrap; gap:12px;">
-
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Planning
-
-                <input v-model.number="routineConcurrencyPlanning" type="number" class="text-input" min="0" max="32" style="width: 80px;">
-
-              </label>
-
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Execution
-
-                <input v-model.number="routineConcurrencyExecution" type="number" class="text-input" min="0" max="32" style="width: 80px;">
-
-              </label>
-
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Review
-
-                <input v-model.number="routineConcurrencyReview" type="number" class="text-input" min="0" max="32" style="width: 80px;">
-
-              </label>
-
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Repair
-
-                <input v-model.number="routineConcurrencyRepair" type="number" class="text-input" min="0" max="32" style="width: 80px;">
-
-              </label>
-
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Dreaming
-
-                <input v-model.number="routineConcurrencyDreaming" type="number" class="text-input" min="0" max="32" style="width: 80px;">
-
-              </label>
-
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Other
-
-                <input v-model.number="routineConcurrencyOther" type="number" class="text-input" min="0" max="32" style="width: 80px;">
-
-              </label>
-
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Total cap (0 = none)
-
-                <input v-model.number="routineConcurrencyTotalLimit" type="number" class="text-input" min="0" max="32" style="width: 80px;">
-
-              </label>
-
-            </div>
-
-            <p class="setting-description">
-
-              Maximum simultaneously-running protected routines per kind (0 pauses that kind). Enforced atomically at launch across planning, execution, review, repair, dreaming, and other core routines.
-
-            </p>
-
-          </div>
-
-          <div
-            v-if="automatedProjectManagementEnabled"
-            class="setting-group"
-          >
-            <label class="setting-label">Projects work-in-progress limits by semantic stage</label>
-            <div style="display:flex; flex-wrap:wrap; gap:12px;">
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Backlog intake
-                <input v-model.number="projectWipBacklog" type="number" class="text-input" min="0" max="20" style="width:80px;">
-              </label>
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Planning
-                <input v-model.number="projectWipPlanning" type="number" class="text-input" min="0" max="20" style="width:80px;">
-              </label>
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Execution
-                <input v-model.number="projectWipExecution" type="number" class="text-input" min="0" max="20" style="width:80px;">
-              </label>
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Review
-                <input v-model.number="projectWipReview" type="number" class="text-input" min="0" max="20" style="width:80px;">
-              </label>
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Blocked recovery
-                <input v-model.number="projectWipBlocked" type="number" class="text-input" min="0" max="20" style="width:80px;">
-              </label>
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Terminal handoff
-                <input v-model.number="projectWipTerminal" type="number" class="text-input" min="0" max="20" style="width:80px;">
-              </label>
-              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Custom/manual lanes
-                <input v-model.number="projectWipManual" type="number" class="text-input" min="0" max="20" style="width:80px;">
-              </label>
-            </div>
-            <p class="setting-description">
-              Counts queued and active work after resolving each project lane to its semantic role. Zero means unlimited. Saturated downstream stages pause new upstream claims without moving tasks or adding comments.
-            </p>
-          </div>
-
-          <div
-
-            v-if="automatedProjectManagementEnabled"
-
-            class="setting-group"
-
-          >
-
-            <label class="setting-label">Artifact-evidence custody</label>
-
-            <p class="setting-description">
-
-              Always enforced. A task cannot enter review unless coding work records branch, commit SHA, PR URL, head SHA, validation evidence, and provenance (or non-code work records an authoritative artifact id/URL and evidence).
-
-            </p>
-
-          </div>
-
           <!-- Provider Setting -->
           <div class="setting-group">
             <label class="setting-label">Heartbeat Provider</label>
@@ -1858,6 +1658,56 @@ export default defineComponent({
             </select>
             <p class="setting-description">
               Subconscious agents (memory recall, observation, unstuck research) run in the background and need a fast tool-emitting chat model. "Use Primary Provider" mirrors your main provider. Avoid autonomous models like Claude Code here — they over-invest in quick recall tasks.
+            </p>
+          </div>
+        </div>
+
+        <!-- Project Automation Tab -->
+        <div
+          v-if="currentNav === 'project-automation'"
+          class="tab-content"
+        >
+          <h2>Project Automation</h2>
+          <p class="description">
+            Configure the automated Projects dispatcher independently of the Heartbeat agent loop.
+          </p>
+
+          <!-- Enable/Disable Toggle -->
+          <div class="setting-group">
+            <label class="setting-label">Enable Automation PM Work</label>
+            <div class="toggle-switch">
+              <label class="switch">
+                <input
+                  v-model="automatedProjectManagementEnabled"
+                  type="checkbox"
+                >
+                <span class="slider" />
+              </label>
+              <span class="toggle-label">{{ automatedProjectManagementEnabled ? 'Enabled' : 'Disabled' }}</span>
+            </div>
+            <p class="setting-description">
+              When enabled, the dispatcher automatically claims and runs Projects work. When disabled, no protected routine launches automatically.
+            </p>
+          </div>
+
+          <!-- Concurrent agent limit -->
+          <div
+            v-if="automatedProjectManagementEnabled"
+            class="setting-group"
+          >
+            <label class="setting-label">Concurrent agent limit count</label>
+            <div class="delay-input">
+              <input
+                v-model.number="routineConcurrencyTotalLimit"
+                type="number"
+                class="text-input"
+                min="0"
+                max="32"
+                style="width: 120px;"
+              >
+            </div>
+            <p class="setting-description">
+              Maximum number of protected Projects routines (agents) allowed to run at the same time, across all work. 0 = unlimited.
             </p>
           </div>
         </div>
