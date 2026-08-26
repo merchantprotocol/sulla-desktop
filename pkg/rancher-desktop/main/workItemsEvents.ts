@@ -431,6 +431,22 @@ export function initWorkItemsEvents(): void {
   import('@pkg/agent/projects/application/ProjectsOrchestrationEventService')
     .then(({ getProjectsOrchestrationEventService }) => getProjectsOrchestrationEventService().drain(50))
     .catch(error => console.warn('[WorkItems] Projects orchestration recovery failed:', error));
+
+  // The domain-event drain only recovers transitions that never dispatched.
+  // A lane workflow that dies MID-RUN leaves its lane entry stuck in
+  // 'running' with the outbox already settled — drainRecoverable is the only
+  // path that resumes those. includeInterrupted=true force-fails executions
+  // still marked running/suspended, which is only safe at startup when this
+  // fresh process cannot have live runs; the periodic sweep passes false so
+  // it never kills an actively-running workflow, while still recovering
+  // pending entries, vanished executions, and settled-but-unrecorded runs.
+  const sweepLaneEntries = (includeInterrupted: boolean) => {
+    import('@pkg/agent/services/LaneEntryAutomationService')
+      .then(({ LaneEntryAutomationService }) => LaneEntryAutomationService.drainRecoverable(50, includeInterrupted))
+      .catch(error => console.warn('[WorkItems] Lane-entry automation recovery failed:', error));
+  };
+  sweepLaneEntries(true);
+  setInterval(() => sweepLaneEntries(false), 5 * 60_000);
 }
 
 interface ReorderUpdate {

@@ -784,10 +784,10 @@ ${ task.description || '(no description)' }
 
 Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
 
-Completed work MUST end with exactly one machine block. Code custody requires the exact remote PR head and validation/provenance; non-code custody requires an immutable authoritative artifact and evidence:
-<WORK_RESULT>{"summary":"concise receipt","custody":{"workKind":"code","branch":"feat/example","commitSha":"FULL_SHA","prUrl":"https://github.com/owner/repo/pull/123","prHeadSha":"FULL_SHA","validation":{"tests":"exact commands and outcomes"},"provenance":{"agentId":"${ workerAgentId }","dispatchId":"${ dispatchId }"}}}</WORK_RESULT>
+Completed work MUST end with exactly one machine block containing at least a summary:
+<WORK_RESULT>{"summary":"concise receipt"}</WORK_RESULT>
 
-Use workKind "non_code" with artifactId or artifactUrl, evidence, and provenance for non-code work. Missing or malformed custody is structurally rejected and the task will not enter review.`;
+Custody/evidence metadata is OPTIONAL — attach it when it strengthens the receipt, in whatever shape fits the work. For code work include what you have of branch, commitSha, prUrl, prHeadSha, validation, and provenance, e.g. "custody":{"workKind":"code","branch":"feat/example","commitSha":"FULL_SHA","prUrl":"https://github.com/owner/repo/pull/123","prHeadSha":"FULL_SHA","validation":{"tests":"exact commands and outcomes"},"provenance":{"agentId":"${ workerAgentId }","dispatchId":"${ dispatchId }"}}. For non-code work, "workKind":"non_code" with an artifactId or artifactUrl and evidence is plenty. Omitting custody never blocks the task from entering review; only a missing/duplicate WORK_RESULT block or a structurally malformed custody payload is rejected.`;
   }
 
   private buildVerifierPrompt(task: WorkTaskRecord, dispatchId: string, comments: { author: string | null; body: string }[]): string {
