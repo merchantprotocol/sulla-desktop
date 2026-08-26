@@ -18,6 +18,7 @@ import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { sanitizeConversationContext } from '../utils/conversationContext';
 import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
@@ -613,14 +614,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const templateVars = await getTemplateVariables();
     templateVars['{{agent_name}}'] = agentMeta?.name || agentId || templateVars['{{botName}}'];
     templateVars['{{agent_id}}'] = agentId;
-    templateVars['{{agent_dir}}'] = findAgentDir(agentId) || path.join(resolveSullaAgentsDir(), agentId);
+    templateVars['{{agent_dir}}'] = agentId === DEFAULT_CORE_ROUTINE_AGENT_ID
+      ? ''
+      : findAgentDir(agentId) || path.join(resolveSullaAgentsDir(), agentId);
 
     // Load agent-specific .md files and split into section overrides vs generic prompt
     let agentSectionOverrides = new Map<string, string>();
     let excludeSections = new Set<string>();
     let agentConfig: AgentConfig | null = agentMeta || null;
 
-    if (agentId) {
+    if (agentId && agentId !== DEFAULT_CORE_ROUTINE_AGENT_ID) {
       const agentData = await loadAgentPromptData(agentId);
       if (agentData) {
         agentSectionOverrides = agentData.sectionOverrides;
@@ -967,6 +970,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   protected async shouldInjectObservationsForAgent(state: BaseThreadState): Promise<boolean> {
     const agentId = resolveAgentIdentity(state.metadata);
     if (!agentId) return true;
+    if (agentId === DEFAULT_CORE_ROUTINE_AGENT_ID) return true;
 
     try {
       const agentDir = findAgentDir(agentId);

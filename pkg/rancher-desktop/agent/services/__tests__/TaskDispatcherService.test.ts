@@ -7,6 +7,7 @@ const verificationPoolStatsMock: any = jest.fn(() => Promise.resolve({ backlog: 
 const findRecoverableInProgressMock: any = jest.fn(() => Promise.resolve([]));
 const recoverOrphanedInProgressMock: any = jest.fn(() => Promise.resolve([]));
 const countRunningMock: any = jest.fn(() => Promise.resolve(0));
+const countByRoleMock: any = jest.fn(() => Promise.resolve({ execution: 0, verification: 0, planning: 0 }));
 const countReviewBacklogMock: any = jest.fn(() => Promise.resolve(0));
 const claimNextMock: any = jest.fn(() => Promise.resolve(null));
 const claimNextReviewMock: any = jest.fn(() => Promise.resolve(null));
@@ -34,6 +35,8 @@ const bindReviewGenerationMock: any = jest.fn();
 const generationHashMock: any = jest.fn(() => 'f'.repeat(64));
 const workflowFindByIdMock: any = jest.fn(() => Promise.resolve({ attributesSnapshot: { enabled: true } }));
 const findAgentDirMock: any = jest.fn(() => '/agents/sulla-desktop');
+const automationEnabledMock: any = jest.fn(() => Promise.resolve(true));
+const resolveLimitMock: any = jest.fn((_scope: string, configured: number) => Promise.resolve(configured));
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: settingsGetMock },
@@ -53,6 +56,7 @@ jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
     findRecoverableInProgress: findRecoverableInProgressMock,
     recoverOrphanedInProgress: recoverOrphanedInProgressMock,
     countRunning:            countRunningMock,
+    countByRole:             countByRoleMock,
     countReviewBacklog:      countReviewBacklogMock,
     claimNext:               claimNextMock,
     claimNextReview:         claimNextReviewMock,
@@ -87,6 +91,16 @@ jest.unstable_mockModule('../GraphRegistry', () => ({
     delete:                graphDeleteMock,
   },
 }));
+jest.unstable_mockModule('../RoutineConcurrencyPolicy', () => ({
+  RoutineConcurrencyPolicy: {
+    isEnabled:     automationEnabledMock,
+    resolveLimit:  resolveLimitMock,
+    reclaimStale:  jest.fn(() => Promise.resolve()),
+    acquire:       jest.fn(() => Promise.resolve('slot')),
+    release:       jest.fn(() => Promise.resolve()),
+    heartbeat:     jest.fn(() => Promise.resolve()),
+  },
+}));
 jest.unstable_mockModule('../GitHubPullRequestHeadService', () => ({
   resolvePullRequestHead:  resolvePullRequestHeadMock,
   resolvePullRequestHeads: resolvePullRequestHeadsMock,
@@ -111,6 +125,7 @@ describe('TaskDispatcherService', () => {
     findRecoverableInProgressMock.mockResolvedValue([]);
     recoverOrphanedInProgressMock.mockResolvedValue([]);
     countRunningMock.mockResolvedValue(0);
+    countByRoleMock.mockResolvedValue({ execution: 0, verification: 0, planning: 0 });
     countReviewBacklogMock.mockResolvedValue(0);
     claimNextMock.mockResolvedValue(null);
     claimNextReviewMock.mockResolvedValue(null);
@@ -133,6 +148,7 @@ describe('TaskDispatcherService', () => {
     recoverPreviousRuntimeMock.mockResolvedValue([]);
     reportCapabilityMock.mockResolvedValue({});
     releaseStageMock.mockResolvedValue(undefined);
+    automationEnabledMock.mockResolvedValue(true);
   });
 
   it('activates verification by default', async() => {
@@ -193,6 +209,7 @@ describe('TaskDispatcherService', () => {
     await service.initialize();
     service.destroy();
     expect(claimNextReviewMock).toHaveBeenCalled();
+    expect(findAgentDirMock).not.toHaveBeenCalled();
     expect(reportCapabilityMock).toHaveBeenCalledWith(expect.objectContaining({
       key: 'in-review-verification', health: 'healthy',
     }));
