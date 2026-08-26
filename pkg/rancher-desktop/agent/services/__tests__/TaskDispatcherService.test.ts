@@ -605,7 +605,7 @@ describe('TaskDispatcherService', () => {
   it('parses a mixed code and non-code generation with structural adapters', async() => {
     const { TaskDispatcherService } = await import('../TaskDispatcherService');
     const service = new TaskDispatcherService() as any;
-    const parsed = service.parseProtectedReview({
+    const { value: parsed, reason } = service.parseProtectedReview({
       workflowId:  'core-routine-review-project-artifact',
       executionId: 'wfp-mixed',
       outcome:     'completed',
@@ -629,9 +629,28 @@ describe('TaskDispatcherService', () => {
         }),
       }],
     });
+    expect(reason).toBeNull();
     expect(parsed.artifactTypes).toEqual(['code_pr', 'documentation']);
     expect(parsed.artifacts).toHaveLength(2);
     expect(parsed.artifacts[1].adapter).toBe('document-read');
+  });
+
+  it.each([
+    [{ outcome: 'completed', workflowId: 'wrong-workflow' }, 'workflow_did_not_complete'],
+    [{
+      outcome: 'completed', workflowId: 'core-routine-review-project-artifact',
+      nodeResults: [{ nodeId: 'node-review-synthesize', result: JSON.stringify({ disposition: 'NOPE' }) }],
+    }, 'missing_or_invalid_disposition'],
+    [{
+      outcome: 'completed', workflowId: 'core-routine-review-project-artifact',
+      nodeResults: [{ nodeId: 'node-review-synthesize', result: JSON.stringify({ disposition: 'PASS' }) }],
+    }, 'invalid_artifact_type'],
+  ] as const)('reports a specific reason for malformed protected-review output %#', async(completed, expectedReason) => {
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService() as any;
+    const { value, reason } = service.parseProtectedReview(completed);
+    expect(value).toBeNull();
+    expect(reason).toBe(expectedReason);
   });
 
   it('rejects malformed verifier output without changing the task to blocked', async() => {

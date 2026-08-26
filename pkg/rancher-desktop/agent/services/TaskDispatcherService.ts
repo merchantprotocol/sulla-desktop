@@ -58,6 +58,13 @@ interface ParsedProtectedReview extends Omit<ProtectedReviewEvidence, 'workflowE
   disposition: ReviewDisposition;
 }
 
+interface ProtectedReviewParseResult {
+  value:  ParsedProtectedReview | null;
+  // Short machine-readable cause of a null value, so repeat malformed-output
+  // failures on a task carry an actionable reason instead of one opaque string.
+  reason: string | null;
+}
+
 type VerificationOwner = 'core-routine' | 'legacy';
 
 let taskDispatcherServiceInstance: TaskDispatcherService | null = null;
@@ -526,9 +533,9 @@ export class TaskDispatcherService {
         if (verifierTimedOut) {
           await WorkTaskDispatchModel.failVerification(dispatch.id, 'verifier_timeout');
         } else if (verificationOwner === 'core-routine') {
-          const parsed = this.parseProtectedReview(finalState.metadata?.lastCompletedWorkflow);
+          const { value: parsed, reason: parseFailureReason } = this.parseProtectedReview(finalState.metadata?.lastCompletedWorkflow);
           if (!parsed) {
-            await WorkTaskDispatchModel.failVerification(dispatch.id, 'malformed_protected_review_output');
+            await WorkTaskDispatchModel.failVerification(dispatch.id, `malformed_protected_review_output:${ parseFailureReason }`);
           } else {
             const currentArtifacts = await this.resolveReviewArtifacts(task, comments, dispatch.origin_evidence);
             const currentGenerationHash = WorkTaskDispatchModel.reviewGenerationHash(currentArtifacts);
@@ -652,53 +659,84 @@ export class TaskDispatcherService {
     }
   }
 
-  private parseProtectedReview(completed: any): ParsedProtectedReview | null {
-    if (completed?.outcome !== 'completed' || completed.workflowId !== REVIEW_PROJECT_ARTIFACT_ID) return null;
+  private parseProtectedReview(completed: any): ProtectedReviewParseResult {
+    if (completed?.outcome !== 'completed' || completed.workflowId !== REVIEW_PROJECT_ARTIFACT_ID) {
+      return { value: null, reason: 'workflow_did_not_complete' };
+    }
     const synthesis = completed.nodeResults?.find((node: any) => node.nodeId === 'node-review-synthesize');
     const parsed = this.parseJsonObject(synthesis?.result);
-    if (!parsed || !['PASS', 'REPAIRABLE', 'REPLAN', 'EXTERNAL_WAIT', 'BLOCKED'].includes(parsed.disposition)) return null;
-    if (typeof parsed.artifactType !== 'string' || !parsed.artifactType.trim()) return null;
-    if (typeof parsed.generationHash !== 'string' || !/^[a-f0-9]{64}$/i.test(parsed.generationHash)) return null;
+    if (!parsed || !['PASS', 'REPAIRABLE', 'REPLAN', 'EXTERNAL_WAIT', 'BLOCKED'].includes(parsed.disposition)) {
+      return { value: null, reason: 'missing_or_invalid_disposition' };
+    }
+    if (typeof parsed.artifactType !== 'string' || !parsed.artifactType.trim()) {
+      return { value: null, reason: 'invalid_artifact_type' };
+    }
+    if (typeof parsed.generationHash !== 'string' || !/^[a-f0-9]{64}$/i.test(parsed.generationHash)) {
+      return { value: null, reason: 'invalid_generation_hash' };
+    }
     const artifactTypes = Array.isArray(parsed.artifactTypes) ? parsed.artifactTypes : [];
     const allowedTypes = new Set(Object.keys(ARTIFACT_VERIFICATION_ADAPTERS));
-    if (artifactTypes.length === 0 || artifactTypes.some((value: unknown) => typeof value !== 'string' || !allowedTypes.has(value))) return null;
-    if (!Array.isArray(parsed.artifacts) || parsed.artifacts.length === 0) return null;
+    if (artifactTypes.length === 0 || artifactTypes.some((value: unknown) => typeof value !== 'string' || !allowedTypes.has(value))) {
+      return { value: null, reason: 'invalid_artifact_types_list' };
+    }
+    if (!Array.isArray(parsed.artifacts) || parsed.artifacts.length === 0) {
+      return { value: null, reason: 'empty_artifacts_list' };
+    }
     const artifacts = parsed.artifacts.filter((artifact: any) => artifact && typeof artifact === 'object');
     if (artifacts.length !== parsed.artifacts.length || artifacts.some((artifact: any) =>
       !allowedTypes.has(artifact.type) || typeof artifact.canonicalRef !== 'string' ||
       typeof artifact.adapter !== 'string' || typeof artifact.code !== 'boolean' ||
       artifact.adapter !== ARTIFACT_VERIFICATION_ADAPTERS[artifact.type as ReviewArtifactType].adapter ||
-      typeof artifact.hash !== 'string' || !/^[a-f0-9]{40,64}$/i.test(artifact.hash))) return null;
-    if (typeof parsed.artifactRef !== 'string' || !parsed.artifactRef.trim()) return null;
-    if (typeof parsed.artifactHash !== 'string' || !/^[a-f0-9]{40,64}$/i.test(parsed.artifactHash)) return null;
-    if (typeof parsed.summary !== 'string' || !parsed.summary.trim()) return null;
-    if (!Array.isArray(parsed.checks) || !Array.isArray(parsed.findings)) return null;
+      typeof artifact.hash !== 'string' || !/^[a-f0-9]{40,64}$/i.test(artifact.hash))) {
+      return { value: null, reason: 'invalid_artifacts_shape' };
+    }
+    if (typeof parsed.artifactRef !== 'string' || !parsed.artifactRef.trim()) {
+      return { value: null, reason: 'invalid_artifact_ref' };
+    }
+    if (typeof parsed.artifactHash !== 'string' || !/^[a-f0-9]{40,64}$/i.test(parsed.artifactHash)) {
+      return { value: null, reason: 'invalid_artifact_hash' };
+    }
+    if (typeof parsed.summary !== 'string' || !parsed.summary.trim()) {
+      return { value: null, reason: 'missing_summary' };
+    }
+    if (!Array.isArray(parsed.checks) || !Array.isArray(parsed.findings)) {
+      return { value: null, reason: 'invalid_checks_or_findings' };
+    }
     if (parsed.disposition === 'EXTERNAL_WAIT') {
       const wait = parsed.wait;
-      if (!wait || !['github_checks', 'human_gate', 'scheduled_time', 'external_job'].includes(wait.kind)) return null;
-      if (typeof wait.targetKey !== 'string' || !wait.targetKey.trim()) return null;
-      if (!wait.target || typeof wait.target !== 'object' || Array.isArray(wait.target)) return null;
+      if (!wait || !['github_checks', 'human_gate', 'scheduled_time', 'external_job'].includes(wait.kind)) {
+        return { value: null, reason: 'invalid_external_wait_kind' };
+      }
+      if (typeof wait.targetKey !== 'string' || !wait.targetKey.trim()) {
+        return { value: null, reason: 'invalid_external_wait_target_key' };
+      }
+      if (!wait.target || typeof wait.target !== 'object' || Array.isArray(wait.target)) {
+        return { value: null, reason: 'invalid_external_wait_target' };
+      }
     }
     return {
-      disposition:    parsed.disposition,
-      generationHash: parsed.generationHash.toLowerCase(),
-      artifactTypes:  artifactTypes as ReviewArtifactType[],
-      artifacts:      artifacts.map((artifact: any) => ({
-        type:         artifact.type,
-        canonicalRef: artifact.canonicalRef.trim(),
-        url:          typeof artifact.url === 'string' ? artifact.url.trim() : null,
-        hash:         artifact.hash.toLowerCase(),
-        adapter:      artifact.adapter.trim(),
-        code:         artifact.code,
-      })),
-      artifactType: parsed.artifactType.trim(),
-      artifactRef:  parsed.artifactRef.trim(),
-      artifactUrl:  typeof parsed.artifactUrl === 'string' ? parsed.artifactUrl.trim() : null,
-      artifactHash: parsed.artifactHash.toLowerCase(),
-      summary:      parsed.summary.trim().slice(0, 8_000),
-      checks:       parsed.checks,
-      findings:     parsed.findings,
-      wait:         parsed.wait ?? null,
+      value: {
+        disposition:    parsed.disposition,
+        generationHash: parsed.generationHash.toLowerCase(),
+        artifactTypes:  artifactTypes as ReviewArtifactType[],
+        artifacts:      artifacts.map((artifact: any) => ({
+          type:         artifact.type,
+          canonicalRef: artifact.canonicalRef.trim(),
+          url:          typeof artifact.url === 'string' ? artifact.url.trim() : null,
+          hash:         artifact.hash.toLowerCase(),
+          adapter:      artifact.adapter.trim(),
+          code:         artifact.code,
+        })),
+        artifactType: parsed.artifactType.trim(),
+        artifactRef:  parsed.artifactRef.trim(),
+        artifactUrl:  typeof parsed.artifactUrl === 'string' ? parsed.artifactUrl.trim() : null,
+        artifactHash: parsed.artifactHash.toLowerCase(),
+        summary:      parsed.summary.trim().slice(0, 8_000),
+        checks:       parsed.checks,
+        findings:     parsed.findings,
+        wait:         parsed.wait ?? null,
+      },
+      reason: null,
     };
   }
 
