@@ -544,6 +544,25 @@ export class TaskDispatcherService {
         }, timeoutMinutes * 60_000)
         : null;
       const finalState = await graph.execute(state);
+
+      // Single-agent workflow nodes (e.g. node-review-classify) are
+      // dispatched fire-and-forget inside Graph.execute() so interactive
+      // callers (live chat, PlanningCouncilService) can stay responsive
+      // while a background sub-agent call runs and reconnects later via
+      // PlaybookController.triggerPlaybookContinuation. This dispatcher
+      // call has nothing else to do until the review workflow actually
+      // finishes, so wait here for the SAME in-process completion instead
+      // of treating graph.execute()'s premature return as terminal --
+      // otherwise the finally block below deletes the GraphRegistry entry
+      // the background completion needs to reconnect into, and the
+      // workflow orphans (kTJ1: malformed_protected_review_output).
+      if (isVerification && verificationOwner === 'core-routine' && !finalState.metadata?.lastCompletedWorkflow) {
+        const executionId = state.metadata?.activeWorkflow?.executionId;
+        if (executionId) {
+          await this.awaitReviewWorkflowSettlement(executionId, () => verifierTimedOut);
+        }
+      }
+
       if (verifierTimeout) clearTimeout(verifierTimeout);
       const outcome = extractAgentTurnOutcome(finalState);
       const summary = outcome.text.slice(0, 8_000);
@@ -644,6 +663,28 @@ export class TaskDispatcherService {
         this.checkAndDispatch().catch(err => console.error('[TaskDispatcher] Refill check failed:', err));
       }
     }
+  }
+
+  /**
+   * Poll the durable execution record for a dispatcher-driven review
+   * workflow until PlaybookController.releaseWorkflow() has settled it
+   * (WorkflowExecutionModel.settle), or the verifier timeout fires. This
+   * intentionally does not introduce a new drain/poll service -- it only
+   * bridges the one call site (runClaim) that needs a synchronous result
+   * out of Graph.execute()'s fire-and-forget single-agent node dispatch.
+   * The existing pending-completion / continuation machinery is untouched
+   * and already works correctly once given the chance to reconnect.
+   */
+  private async awaitReviewWorkflowSettlement(executionId: string, timedOut: () => boolean): Promise<void> {
+    const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
+    const pollIntervalMs = 1500;
+    while (!timedOut()) {
+      const execution = await WorkflowExecutionModel.find(executionId).catch(() => null);
+      const status = execution?.attributes?.status;
+      if (status === 'completed' || status === 'failed' || status === 'suspended') return;
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+    }
+    console.warn(`[TaskDispatcher] awaitReviewWorkflowSettlement: execution ${ executionId } did not settle before verifier timeout`);
   }
 
   private parseVerification(output: string): ParsedVerification | null {
