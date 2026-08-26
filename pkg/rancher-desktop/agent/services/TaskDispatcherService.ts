@@ -36,6 +36,7 @@ const LEASE_HEARTBEAT_MS = 120_000;
 const DEFAULT_CONCURRENCY = 3;
 const RUNTIME_INSTANCE_ID = `task-dispatcher-${ process.pid }-${ Date.now() }`;
 const DEFAULT_VERIFIER_TIMEOUT_MINUTES = 45;
+const DEFAULT_EXECUTION_TIMEOUT_MINUTES = 90;
 const DEFAULT_IN_PROGRESS_STALE_MINUTES = 360;
 const DEFAULT_RECOVERY_BATCH_SIZE = 1;
 const DEFAULT_RECOVERY_RETRY_CEILING = 3;
@@ -447,15 +448,11 @@ export class TaskDispatcherService {
     const { dispatch, task, stage_claim: liveStageClaim } = claim;
     const abort = new AbortService();
     this.active.set(dispatch.id, abort);
-    const leaseTimer = setInterval(
-      () => {
-        WorkTaskDispatchModel.touch(dispatch.id)
-          .catch(err => console.error(`[TaskDispatcher] Lease refresh failed for ${ dispatch.id }:`, err));
-      },
-      LEASE_HEARTBEAT_MS,
-    );
-    let verifierTimeout: ReturnType<typeof setTimeout> | null = null;
+    let lastActivityAt = Date.now();
+    let leaseTimer: ReturnType<typeof setInterval> | null = null;
+    let runTimeout: ReturnType<typeof setTimeout> | null = null;
     let verifierTimedOut = false;
+    let executionTimedOut = false;
 
     try {
       const isVerification = dispatch.kind === 'verification';
@@ -489,6 +486,18 @@ export class TaskDispatcherService {
         dispatch.thread_id,
         { isTrustedUser: 'trusted' },
       ) as { graph: any; state: any };
+      state.metadata.lastAgentActivityAt = Date.now();
+      lastActivityAt = Number(state.metadata.lastAgentActivityAt);
+      leaseTimer = setInterval(
+        () => {
+          const activityAt = Number(state.metadata.lastAgentActivityAt ?? 0);
+          if (activityAt <= lastActivityAt) return;
+          lastActivityAt = activityAt;
+          WorkTaskDispatchModel.touch(dispatch.id)
+            .catch(err => console.error(`[TaskDispatcher] Lease refresh failed for ${ dispatch.id }:`, err));
+        },
+        LEASE_HEARTBEAT_MS,
+      );
 
       if (isVerification) {
         const reviewPrompt = verificationOwner === 'core-routine'
@@ -538,13 +547,32 @@ export class TaskDispatcherService {
 
       const timeoutMinutes = isVerification
         ? Math.max(1, Number(await SullaSettingsModel.get('taskVerifierTimeoutMinutes', DEFAULT_VERIFIER_TIMEOUT_MINUTES)) || DEFAULT_VERIFIER_TIMEOUT_MINUTES)
-        : 0;
-      verifierTimeout = isVerification
-        ? setTimeout(() => {
-          verifierTimedOut = true;
-          abort.abort();
-        }, timeoutMinutes * 60_000)
-        : null;
+        : Math.max(0.001, Number(await SullaSettingsModel.get('taskDispatcherExecutionTimeoutMinutes', DEFAULT_EXECUTION_TIMEOUT_MINUTES)) || DEFAULT_EXECUTION_TIMEOUT_MINUTES);
+      const timeoutEnabledSetting = isVerification
+        ? true
+        : await SullaSettingsModel.get('taskDispatcherExecutionTimeoutEnabled', true);
+      const timeoutEnabled = timeoutEnabledSetting === true || timeoutEnabledSetting === 'true';
+      const reportOnlySetting = isVerification
+        ? false
+        : await SullaSettingsModel.get('taskDispatcherExecutionTimeoutReportOnly', false);
+      const reportOnly = reportOnlySetting === true || reportOnlySetting === 'true';
+      runTimeout = setTimeout(() => {
+        if (!timeoutEnabled || reportOnly) {
+          console.warn(`[TaskDispatcher] Execution timeout report-only for ${ dispatch.id } after ${ timeoutMinutes } minute(s)`);
+          return;
+        }
+        if (isVerification) verifierTimedOut = true;
+        else executionTimedOut = true;
+        abort.abort();
+        if (!isVerification) {
+          void WorkTaskDispatchModel.settle(
+            dispatch.id,
+            'timed_out',
+            undefined,
+            `execution exceeded ${ timeoutMinutes } minute(s)`,
+          ).catch(err => console.error(`[TaskDispatcher] Timeout settlement failed for ${ dispatch.id }:`, err));
+        }
+      }, timeoutMinutes * 60_000);
       const finalState = await graph.execute(state);
 
       // Single-agent workflow nodes (e.g. node-review-classify) are
@@ -565,7 +593,8 @@ export class TaskDispatcherService {
         }
       }
 
-      if (verifierTimeout) clearTimeout(verifierTimeout);
+      if (executionTimedOut) return;
+
       const outcome = extractAgentTurnOutcome(finalState);
       const summary = outcome.text.slice(0, 8_000);
 
@@ -655,8 +684,8 @@ export class TaskDispatcherService {
         await this.finalizeClaim(claim, 'failed', message);
       }
     } finally {
-      if (verifierTimeout) clearTimeout(verifierTimeout);
-      clearInterval(leaseTimer);
+      if (runTimeout) clearTimeout(runTimeout);
+      if (leaseTimer) clearInterval(leaseTimer);
       await LifecycleCapabilityModel.releaseStage(liveStageClaim.id)
         .catch(err => console.error(`[TaskDispatcher] Stage-claim release failed for ${ liveStageClaim.id }:`, err));
       this.active.delete(dispatch.id);
