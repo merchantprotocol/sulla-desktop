@@ -2,18 +2,20 @@
  * RoutineConcurrencyPolicy — unified, operator-configurable concurrency
  * controls for the protected Projects routines.
  *
- * The human configures per-kind concurrent running limits under Language Model
- * Settings -> Automated Project Management. This module is the single place
- * that (a) resolves those limits from the DB-backed settings store, and (b)
- * provides an atomic reservation primitive so mechanical Projects work cannot
- * overwhelm system resources.
+ * The human configures a single global concurrent-agent limit under Language
+ * Model Settings -> Project Automation. This module is the single place that
+ * (a) resolves that limit from the DB-backed settings store, and (b) provides
+ * an atomic reservation primitive so mechanical Projects work cannot overwhelm
+ * system resources.
  *
- * Two enforcement surfaces share these limits:
+ * Two enforcement surfaces share this limit:
  *   - The deterministic dispatcher pools (execution / review) bound how many
- *     dispatches they launch by resolveLimit(kind).
+ *     dispatches they launch by resolveLimit(kind), which now simply mirrors
+ *     the total limit (or MAX_ROUTINE_CONCURRENCY when unset).
  *   - acquire()/release() reserve a row in work_routine_slots under a
  *     transaction-scoped advisory lock, giving an exact, race-free ceiling
- *     across concurrent launches for any protected routine kind.
+ *     across concurrent launches of any protected routine kind. The total
+ *     ceiling checked here is the one and only concurrency knob.
  *
  * Enabled by default. When the human explicitly turns automatedProjectManagementEnabled
  * off, the resolver returns the caller's legacy value and callers skip
@@ -40,7 +42,7 @@ export const PROTECTED_ROUTINE_KINDS: ProtectedRoutineKind[] = [
 /** Hard ceiling the UI and resolver both clamp to. */
 export const MAX_ROUTINE_CONCURRENCY = 32;
 
-/** Default per-kind concurrent limits when the human has set nothing. */
+/** Per-kind fallback used only while the master switch is disabled. */
 export const DEFAULT_ROUTINE_LIMITS: Record<ProtectedRoutineKind, number> = {
   planning:  1,
   execution: 3,
@@ -48,12 +50,6 @@ export const DEFAULT_ROUTINE_LIMITS: Record<ProtectedRoutineKind, number> = {
   repair:    2,
   dreaming:  1,
   other:     2,
-};
-
-/** Legacy single-purpose settings keys kept as a fallback for two kinds. */
-const LEGACY_LIMIT_KEYS: Partial<Record<ProtectedRoutineKind, string>> = {
-  execution: 'taskDispatcherConcurrency',
-  review:    'taskVerifierConcurrency',
 };
 
 export const MASTER_ENABLED_KEY = 'automatedProjectManagementEnabled';
@@ -68,10 +64,6 @@ const DEFAULT_STALE_SLOT_MINUTES = 45;
 export interface RoutineSlotContext {
   owner?:  string | null;
   taskId?: string | null;
-}
-
-export function perKindLimitKey(kind: ProtectedRoutineKind): string {
-  return `routineConcurrency_${ kind }`;
 }
 
 function clampLimit(value: number, fallback: number): number {
@@ -91,8 +83,12 @@ export class RoutineConcurrencyPolicy {
    * Resolve the effective concurrent-running limit for a routine kind.
    *
    * When the feature is disabled we return the caller's legacy value (or the
-   * legacy settings key, or the built-in default) unchanged. When enabled the
-   * per-kind setting the human configured wins, still clamped to [0, MAX].
+   * built-in default) unchanged, restoring pre-feature behaviour. When
+   * enabled there is no per-kind setting any more -- every kind shares the
+   * single human-configured total concurrent-agent limit (or, when that is
+   * unset/zero, the hard MAX_ROUTINE_CONCURRENCY safety ceiling). The real
+   * cross-kind enforcement happens in acquire() via resolveTotalLimit(); this
+   * just sizes how large a batch each dispatcher pool may attempt.
    */
   static async resolveLimit(kind: ProtectedRoutineKind, legacyFallback?: number): Promise<number> {
     const fallback = clampLimit(
@@ -104,16 +100,8 @@ export class RoutineConcurrencyPolicy {
       return fallback;
     }
 
-    const configured = await SullaSettingsModel.get(perKindLimitKey(kind), null);
-    if (configured === null || configured === undefined || configured === '') {
-      const legacyKey = LEGACY_LIMIT_KEYS[kind];
-      if (legacyKey) {
-        const legacy = Number(await SullaSettingsModel.get(legacyKey, fallback));
-        return clampLimit(legacy, fallback);
-      }
-      return fallback;
-    }
-    return clampLimit(Number(configured), fallback);
+    const total = await this.resolveTotalLimit();
+    return total ?? MAX_ROUTINE_CONCURRENCY;
   }
 
   static async resolveTotalLimit(): Promise<number | null> {
