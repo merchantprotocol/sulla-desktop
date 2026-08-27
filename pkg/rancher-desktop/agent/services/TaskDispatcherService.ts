@@ -179,6 +179,8 @@ export class TaskDispatcherService {
       // a crashed worker) just as easily as it can from a prior restart.
       // A one-shot startup-only reclaim leaves those permanently stuck for
       // the rest of the process's uptime with nothing else watching them.
+      const journaled = await WorkTaskDispatchModel.recoverPendingOutcomeJournals();
+      if (journaled.length > 0) console.log(`[TaskDispatcher] Settled ${ journaled.length } journaled outcome(s)`);
       const recovered = await WorkTaskDispatchModel.recoverStale();
       if (recovered.length > 0) console.warn(`[TaskDispatcher] Recovered ${ recovered.length } stale dispatch(es)`);
 
@@ -837,7 +839,7 @@ export class TaskDispatcherService {
       evidence: { kind: 'dispatch', ref: dispatch.id },
     });
     try {
-      await WorkTaskDispatchModel.finalize(dispatch.id, task.id, {
+      const journalId = await WorkTaskDispatchModel.appendOutcomeJournal(dispatch.id, task.id, {
         dispatchStatus,
         taskStatus,
         taskAssignee: taskStatus === 'planning' ? 'dispatcher' : 'heartbeat',
@@ -855,8 +857,9 @@ export class TaskDispatcherService {
           custody:          parsed.custody,
         } : undefined,
       });
+      await WorkTaskDispatchModel.finalizeOutcomeJournal(journalId);
     } catch (err) {
-      console.error(`[TaskDispatcher] Could not atomically finalize ${ dispatch.id }:`, err);
+      console.error(`[TaskDispatcher] Could not journal/finalize ${ dispatch.id }:`, err);
     }
   }
 

@@ -13,6 +13,9 @@ const claimNextMock: any = jest.fn(() => Promise.resolve(null));
 const claimNextReviewMock: any = jest.fn(() => Promise.resolve(null));
 const settleMock: any = jest.fn(() => Promise.resolve());
 const finalizeMock: any = jest.fn(() => Promise.resolve());
+const appendOutcomeJournalMock: any = jest.fn(() => Promise.resolve('journal-1'));
+const finalizeOutcomeJournalMock: any = jest.fn(() => Promise.resolve());
+const recoverPendingOutcomeJournalsMock: any = jest.fn(() => Promise.resolve([]));
 const finalizeVerificationMock: any = jest.fn(() => Promise.resolve('APPROVE'));
 const finalizeProtectedReviewMock: any = jest.fn(() => Promise.resolve('PASS'));
 const recordReviewLaunchMock: any = jest.fn(() => Promise.resolve());
@@ -62,6 +65,9 @@ jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
     claimNextReview:         claimNextReviewMock,
     settle:                  settleMock,
     finalize:                finalizeMock,
+    appendOutcomeJournal:    appendOutcomeJournalMock,
+    finalizeOutcomeJournal:  finalizeOutcomeJournalMock,
+    recoverPendingOutcomeJournals: recoverPendingOutcomeJournalsMock,
     finalizeVerification:    finalizeVerificationMock,
     finalizeProtectedReview: finalizeProtectedReviewMock,
     recordReviewLaunch:      recordReviewLaunchMock,
@@ -120,6 +126,7 @@ describe('TaskDispatcherService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     recoverStaleMock.mockResolvedValue([]);
+    recoverPendingOutcomeJournalsMock.mockResolvedValue([]);
     recoverOrphanedVerificationMock.mockResolvedValue([]);
     verificationPoolStatsMock.mockResolvedValue({ backlog: 0, active: 0, suppressedDuplicates: 0, failures: 0 });
     findRecoverableInProgressMock.mockResolvedValue([]);
@@ -381,10 +388,11 @@ describe('TaskDispatcherService', () => {
     expect(workerState.llmTools.map((tool: any) => tool.function.name)).toEqual([
       'browse_tools', 'exec', 'read_file', 'write_file',
     ]);
-    expect(finalizeMock).toHaveBeenCalledWith('dispatch-1', 'task-1', expect.objectContaining({
+    expect(appendOutcomeJournalMock).toHaveBeenCalledWith('dispatch-1', 'task-1', expect.objectContaining({
       dispatchStatus: 'completed', taskStatus: 'in_review', taskAssignee: 'heartbeat',
       evidence: expect.objectContaining({ custody: expect.objectContaining({ workKind: 'code' }) }),
     }));
+    expect(finalizeOutcomeJournalMock).toHaveBeenCalledWith('journal-1');
     expect(releaseStageMock).toHaveBeenCalledWith('stage-claim-1');
     expect(updateTaskMock).not.toHaveBeenCalled();
   });
