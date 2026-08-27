@@ -30,6 +30,64 @@ const IPC_CHANNEL = 'browser-tab-view:bridge-event';
 const LOG_PREFIX = '[SULLA_TAB_PRELOAD]';
 
 /* ------------------------------------------------------------------ */
+/*  Native scroll-input health                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A wedged WebContentsView can still dispatch trusted wheel events into the
+ * page while Chromium's compositor refuses to apply them. Report only wheel
+ * gestures that had somewhere to scroll; the main process uses consecutive
+ * failures as an input-routing watchdog.
+ */
+window.addEventListener('wheel', (event) => {
+  if (!event.isTrusted || event.ctrlKey || event.metaKey || Math.abs(event.deltaY) < 1) return;
+
+  const direction = Math.sign(event.deltaY);
+  let candidate = event.target instanceof Element ? event.target : null;
+  let scrollTarget: Element | null = null;
+
+  while (candidate) {
+    const style = getComputedStyle(candidate);
+    const canOverflow = /^(auto|scroll|overlay)$/.test(style.overflowY);
+    const maxScrollTop = candidate.scrollHeight - candidate.clientHeight;
+    const canMove = direction > 0
+      ? candidate.scrollTop < maxScrollTop - 1
+      : candidate.scrollTop > 1;
+
+    if (canOverflow && maxScrollTop > 1 && canMove) {
+      scrollTarget = candidate;
+      break;
+    }
+    candidate = candidate.parentElement;
+  }
+
+  if (!scrollTarget) {
+    const root = document.scrollingElement;
+    const maxScrollTop = root ? root.scrollHeight - root.clientHeight : 0;
+    const canMove = !!root && (direction > 0 ? root.scrollTop < maxScrollTop - 1 : root.scrollTop > 1);
+
+    if (canMove) scrollTarget = root;
+  }
+
+  if (!scrollTarget) return;
+
+  const before = scrollTarget.scrollTop;
+
+  requestAnimationFrame(() => setTimeout(() => {
+    if (event.defaultPrevented) return;
+
+    try {
+      ipcRenderer.send(IPC_CHANNEL, {
+        type: 'sulla:view-scroll-heartbeat',
+        data: { moved: Math.abs(scrollTarget.scrollTop - before) > 0.5 },
+      });
+    } catch (err) {
+      console.error(`${ LOG_PREFIX } scroll heartbeat failed`, err);
+    }
+  }, 80));
+}, { capture: true, passive: true });
+
+/* ------------------------------------------------------------------ */
 /*  Web push stub                                                     */
 /* ------------------------------------------------------------------ */
 //
@@ -49,7 +107,7 @@ const LOG_PREFIX = '[SULLA_TAB_PRELOAD]';
 
 try {
   if (typeof PushManager !== 'undefined' && PushManager.prototype) {
-    const deny = function (): Promise<never> {
+    const deny = function(): Promise<never> {
       return Promise.reject(
         new DOMException('Push notifications are not available in this app.', 'NotAllowedError'),
       );
