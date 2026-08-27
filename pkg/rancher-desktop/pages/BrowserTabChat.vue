@@ -733,9 +733,9 @@ watch(
 
 onUnmounted(() => {
   // voice cleanup is handled automatically by useVoiceSession's onUnmounted
-  if (graphRunning.value) {
-    chatController.stop();
-  }
+  // Do not stop the graph here. A tab can unmount during mode switches or
+  // teardown while another same-channel chat is active; only the explicit
+  // Stop control owns cancellation for this tab/thread.
   chatController.dispose();
   modelSelector.dispose();
 });

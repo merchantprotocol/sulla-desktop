@@ -395,15 +395,15 @@ export class AgentPersonaService {
   }
 
   async emitStopSignal(agentId: string): Promise<boolean> {
-    console.log('[AgentPersonaModel] Emitting stop signal for agent:', agentId, 'thread:', this.state.threadId);
+    console.log('[AgentPersonaModel] Emitting stop signal for agent:', agentId, 'tab:', this.tabId, 'thread:', this.state.threadId);
     let sent: boolean;
     try {
-      // Send the threadId so the backend stops only THIS tab's run, not
-      // every active run on the channel. Backend falls back to channel-wide
-      // stop when threadId is missing (older clients).
+      // Send both ownership identifiers so the backend and logs can prove
+      // which tab/thread requested the stop. The backend rejects unscoped
+      // stops rather than treating the shared channel as run ownership.
       sent = await this.wsService.send(agentId, {
         type:      'stop_run',
-        data:      { threadId: this.state.threadId },
+        data:      { threadId: this.state.threadId, tabId: this.tabId },
         timestamp: Date.now(),
       });
     } catch {

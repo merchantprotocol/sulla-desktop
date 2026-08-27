@@ -193,19 +193,19 @@ export class BackendGraphWebSocketService {
     }
 
     if (msg.type === 'stop_run') {
-      // Stop a specific thread when the frontend supplies one (current chat
-      // tab); otherwise stop every active run on the channel as a fallback
-      // for older clients.
       const data = typeof msg.data === 'string' ? {} : (msg.data as any);
-      const stopThreadId = typeof data?.threadId === 'string' ? data.threadId : '';
-      if (stopThreadId) {
-        this.activeAborts.get(this.abortKey(channelId, stopThreadId))?.abort();
-      } else {
-        const prefix = `${ channelId }|`;
-        for (const [k, abort] of this.activeAborts) {
-          if (k.startsWith(prefix)) abort.abort();
-        }
+      const stopThreadId = typeof data?.threadId === 'string' ? data.threadId.trim() : '';
+      const stopTabId = typeof data?.tabId === 'string' ? data.tabId.trim() : '';
+      console.log(`[BackendGraphWS:stop_run] channelId=${ channelId }, tabId=${ stopTabId || '(none)' }, threadId=${ stopThreadId || '(none)' }`);
+
+      // A WebSocket channel is shared by every desktop chat tab. It is not a
+      // run-ownership boundary, so missing/stale client identity must fail
+      // closed. A stale thread id simply finds no active abort handle.
+      if (!stopThreadId) {
+        console.warn(`[BackendGraphWS:stop_run] ignored unscoped stop for channelId=${ channelId }, tabId=${ stopTabId || '(none)' }`);
+        return;
       }
+      this.activeAborts.get(this.abortKey(channelId, stopThreadId))?.abort();
       return;
     }
 
