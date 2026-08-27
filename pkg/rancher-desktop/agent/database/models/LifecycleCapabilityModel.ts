@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { ArtifactReceiptModel } from './ArtifactReceiptModel';
+import { buildReceipt, receiptInsertInput, renderReceiptComment } from '../../services/ArtifactReceiptService';
 
+import type { WorkTaskRecord } from './WorkItemsModel';
 import type { PoolClient } from 'pg';
 
 export const LIFECYCLE_CAPABILITY_KEYS = [
@@ -62,6 +65,23 @@ export interface ClaimResult {
   claimed: boolean;
   reason?: string;
   claim?:  LifecycleStageClaim;
+}
+
+export interface SettleReviewRejectInput {
+  /** Task currently sitting in the in_review stage. */
+  taskId:  string;
+  /** Acting in-review authority: the effective owner of in-review-verification. */
+  actor:   string;
+  /** Rejection rationale / repair guidance, recorded on the receipt. */
+  summary: string;
+}
+
+export interface SettleReviewRejectResult {
+  /** True when this call performed the handoff (verdict + transition). */
+  settled:        boolean;
+  /** True when the task had already left in_review — a safe no-op replay. */
+  alreadySettled: boolean;
+  task?:          WorkTaskRecord;
 }
 
 export type HeartbeatLifecycleMode = 'heartbeat_fallback' | 'protected_owner' | 'manual_hold' | 'unmanaged';
@@ -252,6 +272,106 @@ export class LifecycleCapabilityModel {
        WHERE id = $1 AND status = 'active'
        RETURNING *
     `, [claimId]);
+  }
+
+  /**
+   * First-class atomic reject->repair handoff (#727).
+   *
+   * assertActorCanManageTask treats any Heartbeat transition into a healthy
+   * capability's stage as a hostile takeover of that capability's lease. That
+   * is correct for a generic status edit, but wrong for the one legitimate
+   * stage-product handoff the in-review stage produces on a REJECTED verdict:
+   * routing the task back to todo-execution as a new artifact generation is
+   * the normal output of review, exactly like todo->in_review is the normal
+   * output of execution. This method is the narrow, purpose-built exception —
+   * not a general bypass of the guard: it only ever moves a task that is
+   * currently in_review, and only for the caller who is, at act time, the
+   * effective owner of in-review-verification (the protected review routine
+   * when healthy, or its explicitly named Heartbeat fallback when it is not).
+   *
+   * One transaction records the REJECTED verdict, releases any live review
+   * stage claim, and re-enqueues the task for the todo-execution owner
+   * (dispatcher) — with one concise Projects receipt. Recording the verdict
+   * and performing the handoff are the SAME statement group under the SAME
+   * transaction, so a crash before commit loses nothing: the task is simply
+   * still in_review and the next attempt starts clean. Because the handoff is
+   * gated on `status = 'in_review'`, a duplicate call against a generation
+   * that has already been handed off finds the task no longer in_review and
+   * returns a no-op instead of erroring or double-enqueuing.
+   */
+  static async settleReviewReject(input: SettleReviewRejectInput): Promise<SettleReviewRejectResult> {
+    return postgresClient.transaction(client => LifecycleCapabilityModel.settleReviewRejectWithClient(client, input));
+  }
+
+  static async settleReviewRejectWithClient(
+    client: PoolClient,
+    input: SettleReviewRejectInput,
+  ): Promise<SettleReviewRejectResult> {
+    const taskId = input.taskId;
+
+    const capabilityResult = await client.query<LifecycleCapabilityRecord>(`
+      SELECT * FROM lifecycle_capabilities WHERE capability_key = 'in-review-verification' FOR UPDATE
+    `);
+    const capability = capabilityResult.rows[0];
+    const authorized = capability ? effectiveOwner(capability) : null;
+    if (!authorized || authorized !== input.actor) {
+      throw new Error(
+        `Reject-repair handoff denied: in-review-verification is ${ capability ? (capability.enabled ? capability.health : 'disabled') : 'unregistered' }; ` +
+        `acting authority must be ${ authorized ?? 'an explicit owner or named Heartbeat fallback' } (actor was ${ input.actor }).`,
+      );
+    }
+
+    const taskResult = await client.query<{ id: string; status: string; last_moved_at: string }>(`
+      SELECT id, status, last_moved_at FROM work_tasks WHERE id = $1 FOR UPDATE
+    `, [taskId]);
+    const current = taskResult.rows[0];
+    if (!current) throw new Error(`Task not found: ${ taskId }`);
+    if (current.status !== 'in_review') {
+      // The review generation this call targets has already been settled
+      // (or the task never entered review). Idempotent no-op, not an error.
+      return { settled: false, alreadySettled: true };
+    }
+
+    await client.query(`
+      UPDATE work_task_stage_claims
+         SET status = 'released', released_at = now(), heartbeat_at = now()
+       WHERE task_id = $1 AND capability_key = 'in-review-verification'
+         AND stage = 'in_review' AND status = 'active'
+    `, [taskId]);
+
+    const updated = await client.query<WorkTaskRecord>(`
+      UPDATE work_tasks
+         SET status = 'todo', assignee = 'dispatcher', updated_at = now(),
+             last_moved_at = now(), last_activity_at = now(), last_moved_by = $2
+       WHERE id = $1 AND status = 'in_review'
+      RETURNING *
+    `, [taskId, input.actor]);
+    if (!updated.rows[0]) return { settled: false, alreadySettled: true };
+
+    const receipt = buildReceipt({
+      taskId,
+      eventType:         'repair',
+      actor:             input.actor,
+      disposition:       'REJECTED',
+      nextOwner:         'dispatcher',
+      validationSummary: input.summary,
+      // Keyed by the timestamp this specific review generation was entered so
+      // a later reject on a *different* generation of the same task never
+      // collides with this receipt's dedupe fingerprint.
+      evidence:          { kind: 'other', ref: `reject-handoff:${ taskId }@${ current.last_moved_at }` },
+    });
+    const receiptInsert = receiptInsertInput(receipt, `receipt-${ randomUUID() }`);
+    const insertedReceipt = await ArtifactReceiptModel.insertIfAbsentWithClient(client, receiptInsert);
+    if (insertedReceipt.inserted) {
+      const commentId = `artifact-receipt-comment-${ randomUUID() }`;
+      await client.query(`
+        INSERT INTO work_task_comments (id, task_id, body, author)
+        VALUES ($1, $2, $3, $4)
+      `, [commentId, taskId, renderReceiptComment(receipt), input.actor]);
+      await ArtifactReceiptModel.attachCommentWithClient(client, receiptInsert.id, commentId);
+    }
+
+    return { settled: true, alreadySettled: false, task: updated.rows[0] };
   }
 
   static async assertActorCanManageTask(

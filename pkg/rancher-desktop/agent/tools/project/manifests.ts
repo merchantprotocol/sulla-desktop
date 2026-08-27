@@ -426,6 +426,18 @@ export const projectToolManifests: ToolManifest[] = [
     loader:         () => import('./update_task'),
   },
   {
+    name:        'reject_task_review',
+    description: 'Settle an in_review task with a REJECTED verdict and atomically hand it back to todo-execution for repair. For the acting in-review authority only (the protected review routine, or its named Heartbeat fallback) — not a general status edit; use update_task for everything else. Idempotent: replaying it after the task has already left in_review is a no-op.',
+    category:    'project',
+    schemaDef:   {
+      task_id: { type: 'string', description: 'Task currently in_review to reject.' },
+      summary: { type: 'string', description: 'Rejection rationale / repair guidance, recorded on the receipt.' },
+      actor:   { type: 'string', optional: true, description: 'Acting in-review authority. Defaults to "heartbeat". Must be the effective owner of in-review-verification at call time.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./reject_task_review'),
+  },
+  {
     name:        'transition_task_stage',
     description: 'Move a task to one explicit active stage in its project pipeline. Workflow routines should pass expected_generation so a stale run cannot move a newer stage entry.',
     category:    'project',
