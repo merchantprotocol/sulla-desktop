@@ -16,10 +16,11 @@
 
 import { EventEmitter } from 'events';
 
-import Electron, { WebContentsView, session } from 'electron';
+import Electron, { WebContentsView } from 'electron';
 
 import type { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
+import { getBrowserSession } from '@pkg/main/browserTabs/browserSession';
 import Logging from '@pkg/utils/logging';
 import { BrowserTabViewManager } from '@pkg/window/browserTabViewManager';
 
@@ -71,8 +72,6 @@ import type {
 } from './types';
 
 const console = Logging.sulla;
-const SESSION_PARTITION = 'persist:sulla-browser';
-
 // ---------------------------------------------------------------------------
 // ChromeEvent implementation
 // ---------------------------------------------------------------------------
@@ -365,14 +364,19 @@ export class ChromeApiService implements ChromeApi {
 
       if (props.hidden) {
         // Create a detached WebContentsView — functional but not visible
+        const browserSession = getBrowserSession();
         const view = new WebContentsView({
           webPreferences: {
             webSecurity:      false,
             contextIsolation: false,
             nodeIntegration:  false,
-            partition:        SESSION_PARTITION,
+            session:          browserSession,
           },
         });
+
+        if (view.webContents.session !== browserSession) {
+          throw new Error('[ChromeApi] Hidden WebContentsView did not adopt the shared browser session');
+        }
 
         this.hiddenViews.set(tabId, view);
 
@@ -534,14 +538,14 @@ export class ChromeApiService implements ChromeApi {
 
   cookies = {
     get: async(details: CookieGetDetails): Promise<ChromeCookie | null> => {
-      const sess = session.fromPartition(SESSION_PARTITION);
+      const sess = getBrowserSession();
       const cookies = await sess.cookies.get({ url: details.url, name: details.name });
 
       return cookies.length > 0 ? this.toChromeCookie(cookies[0]) : null;
     },
 
     getAll: async(details: CookieGetAllDetails): Promise<ChromeCookie[]> => {
-      const sess = session.fromPartition(SESSION_PARTITION);
+      const sess = getBrowserSession();
       const filter: Electron.CookiesGetFilter = {};
 
       if (details.url) filter.url = details.url;
@@ -556,7 +560,7 @@ export class ChromeApiService implements ChromeApi {
     },
 
     set: async(details: CookieSetDetails): Promise<ChromeCookie> => {
-      const sess = session.fromPartition(SESSION_PARTITION);
+      const sess = getBrowserSession();
 
       await sess.cookies.set({
         url:            details.url,
@@ -584,7 +588,7 @@ export class ChromeApiService implements ChromeApi {
     },
 
     remove: async(details: CookieRemoveDetails): Promise<void> => {
-      const sess = session.fromPartition(SESSION_PARTITION);
+      const sess = getBrowserSession();
 
       await sess.cookies.remove(details.url, details.name);
     },
@@ -1015,7 +1019,7 @@ export class ChromeApiService implements ChromeApi {
       this.downloadCreatedEvent.emit(item);
 
       // Trigger the actual download via the browser session
-      const sess = session.fromPartition(SESSION_PARTITION);
+      const sess = getBrowserSession();
 
       sess.once('will-download', (_event, electronItem) => {
         if (options.filename) {
