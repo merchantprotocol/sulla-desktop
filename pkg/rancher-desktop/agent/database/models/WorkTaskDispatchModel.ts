@@ -16,7 +16,7 @@ import type { WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 import type { WorkTaskRecord } from './WorkItemsModel';
 import type { PoolClient } from 'pg';
 
-export type WorkTaskDispatchStatus = 'running' | 'completed' | 'blocked' | 'failed' | 'stale';
+export type WorkTaskDispatchStatus = 'running' | 'completed' | 'blocked' | 'failed' | 'stale' | 'timed_out';
 export type WorkTaskDispatchKind = 'execution' | 'verification';
 export type VerificationVerdict = 'APPROVE' | 'REWORK' | 'BLOCKED';
 export type ReviewDisposition = 'PASS' | 'REPAIRABLE' | 'REPLAN' | 'EXTERNAL_WAIT' | 'BLOCKED';
@@ -914,6 +914,7 @@ export class WorkTaskDispatchModel {
     await postgresClient.query(`
       UPDATE work_task_dispatches
          SET status = $2, result = $3, error = $4,
+             failure_reason = CASE WHEN $2 = 'timed_out' THEN 'execution_timeout' ELSE failure_reason END,
              heartbeat_at = now(), finished_at = now()
        WHERE id = $1 AND status = 'running'
     `, [id, status, result ?? null, error ?? null]);

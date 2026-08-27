@@ -1915,6 +1915,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       return false;
     }
 
+    // Dispatcher leases are renewed by real agent output, not by a live JS
+    // promise. This marker is shared with the dispatcher through the live
+    // graph state and is intentionally updated before transport delivery.
+    (state.metadata as any).lastAgentActivityAt = Date.now();
+
     const threadId = state.metadata.threadId;
 
     // If the graph muted chat output (e.g. during internal planning like
