@@ -76,6 +76,7 @@ import { up as up_0086, down as down_0086 } from './0086_create_projects_domain_
 import { up as up_0087, down as down_0087 } from './0087_create_project_pipeline_templates';
 import { up as up_0088, down as down_0088 } from './0088_add_generation_to_artifact_receipts';
 import { up as up_0089, down as down_0089 } from './0089_create_agent_definitions';
+import { up as up_0090, down as down_0090 } from './0090_create_work_task_outcome_journal';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -153,4 +154,5 @@ export const migrationsRegistry = [
   { name: '0087_create_project_pipeline_templates',                 up: up_0087, down: down_0087 },
   { name: '0088_add_generation_to_artifact_receipts',                up: up_0088, down: down_0088 },
   { name: '0089_create_agent_definitions',                           up: up_0089, down: down_0089 },
+  { name: '0090_create_work_task_outcome_journal',                  up: up_0090, down: down_0090 },
 ] as const;

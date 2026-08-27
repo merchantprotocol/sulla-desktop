@@ -179,6 +179,21 @@ export interface WorkTaskDispatchFinalization {
   receipt?:       ArtifactReceipt;
 }
 
+interface WorkTaskOutcomeJournalRow {
+  id: string;
+  dispatch_id: string;
+  task_id: string;
+  dispatch_status: Exclude<WorkTaskDispatchStatus, 'running' | 'stale'>;
+  task_status: 'in_review' | 'planning' | 'blocked';
+  task_assignee: 'heartbeat' | 'dispatcher';
+  comment: string;
+  result: string | null;
+  error: string | null;
+  evidence: WorkTaskDispatchEvidence | null;
+  receipt: ArtifactReceipt | null;
+  consumed_at: string | null;
+}
+
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
 
 /**
@@ -925,13 +940,105 @@ export class WorkTaskDispatchModel {
    * unit. A crash cannot leave a terminal dispatch attached to an in-progress
    * task (or move the task without retaining the evidence that justified it).
    */
+  static async appendOutcomeJournal(
+    id: string,
+    taskId: string,
+    finalization: WorkTaskDispatchFinalization,
+  ): Promise<string> {
+    const journalId = `outcome-${ randomUUID() }`;
+    const inserted = await postgresClient.query<{ id: string }>(`
+      INSERT INTO work_task_outcome_journal
+        (id, dispatch_id, task_id, dispatch_status, task_status, task_assignee,
+         comment, result, error, evidence, receipt)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)
+      ON CONFLICT (dispatch_id) DO NOTHING
+      RETURNING id
+    `, [
+      journalId, id, taskId, finalization.dispatchStatus, finalization.taskStatus,
+      finalization.taskAssignee, finalization.comment, finalization.result ?? null,
+      finalization.error ?? null,
+      finalization.evidence === undefined ? null : JSON.stringify(finalization.evidence),
+      finalization.receipt === undefined ? null : JSON.stringify(finalization.receipt),
+    ]);
+    if (inserted[0]) return inserted[0].id;
+    const existing = await postgresClient.query<{ id: string }>(
+      'SELECT id FROM work_task_outcome_journal WHERE dispatch_id = $1', [id],
+    );
+    if (!existing[0]) throw new Error(`Outcome journal insert disappeared for dispatch ${ id }`);
+    return existing[0].id;
+  }
+
+  static async finalizeOutcomeJournal(journalId: string): Promise<WorkTaskRecord | null> {
+    return postgresClient.transaction(async(client: PoolClient) => {
+      const journal = await client.query<WorkTaskOutcomeJournalRow>(`
+        SELECT * FROM work_task_outcome_journal WHERE id = $1 FOR UPDATE
+      `, [journalId]);
+      const row = journal.rows[0];
+      if (!row) throw new Error(`Outcome journal ${ journalId } was not found`);
+      if (row.consumed_at) return null;
+      const dispatch = await client.query<{ status: WorkTaskDispatchStatus }>(
+        'SELECT status FROM work_task_dispatches WHERE id = $1 FOR UPDATE', [row.dispatch_id],
+      );
+      if (dispatch.rows[0]?.status !== 'running') {
+        await client.query('UPDATE work_task_outcome_journal SET consumed_at = now() WHERE id = $1', [journalId]);
+        return null;
+      }
+      const task = await this.finalizeWithClient(client, row.dispatch_id, row.task_id, {
+        dispatchStatus: row.dispatch_status,
+        taskStatus: row.task_status,
+        taskAssignee: row.task_assignee,
+        comment: row.comment,
+        result: row.result ?? undefined,
+        error: row.error ?? undefined,
+        evidence: row.evidence ?? undefined,
+        receipt: row.receipt ?? undefined,
+      });
+      await client.query(
+        'UPDATE work_task_outcome_journal SET consumed_at = now() WHERE id = $1 AND consumed_at IS NULL',
+        [journalId],
+      );
+      return task;
+    });
+  }
+
+  static async recoverPendingOutcomeJournals(): Promise<string[]> {
+    const pending = await postgresClient.query<{ id: string }>(`
+      SELECT id FROM work_task_outcome_journal
+       WHERE consumed_at IS NULL ORDER BY created_at ASC
+    `);
+    const settled: string[] = [];
+    for (const row of pending) {
+      try {
+        await this.finalizeOutcomeJournal(row.id);
+        settled.push(row.id);
+      } catch (err) {
+        console.warn(`[WorkTaskDispatchModel] Outcome journal ${ row.id } remains pending:`, err);
+      }
+    }
+    return settled;
+  }
+
   static async finalize(id: string, taskId: string, finalization: WorkTaskDispatchFinalization): Promise<WorkTaskRecord> {
     const evidence = finalization.evidence ?? {};
     const custody = ArtifactCustodyPolicy.derive(evidence as unknown as Record<string, unknown>);
     if (finalization.taskStatus === 'in_review') {
       await ArtifactCustodyPolicy.assertForTransition('in_review', custody);
     }
-    return postgresClient.transaction(async(client: PoolClient) => {
+    return postgresClient.transaction(async(client: PoolClient) => this.finalizeWithClient(client, id, taskId, finalization));
+  }
+
+  private static async finalizeWithClient(
+    client: PoolClient,
+    id: string,
+    taskId: string,
+    finalization: WorkTaskDispatchFinalization,
+  ): Promise<WorkTaskRecord> {
+    return (async() => {
+      const evidence = finalization.evidence ?? {};
+      const custody = ArtifactCustodyPolicy.derive(evidence as unknown as Record<string, unknown>);
+      if (finalization.taskStatus === 'in_review') {
+        await ArtifactCustodyPolicy.assertForTransition('in_review', custody);
+      }
       const locked = await client.query<{ status: WorkTaskDispatchStatus }>(
         'SELECT status FROM work_task_dispatches WHERE id = $1 AND task_id = $2 FOR UPDATE',
         [id, taskId],
@@ -1005,7 +1112,7 @@ export class WorkTaskDispatchModel {
         throw new Error(`Task ${ taskId } is no longer owned by dispatch ${ id }`);
       }
       return moved.rows[0];
-    });
+    })();
   }
 
   static async recoverStale(staleMinutes = 45): Promise<string[]> {
@@ -1016,7 +1123,12 @@ export class WorkTaskDispatchModel {
                error = 'dispatcher lease expired or app restarted',
                failure_reason = 'lease_expired',
                finished_at = now()
-         WHERE status = 'running'
+        WHERE status = 'running'
+           AND NOT EXISTS (
+             SELECT 1 FROM work_task_outcome_journal j
+              WHERE j.dispatch_id = work_task_dispatches.id
+                AND j.consumed_at IS NULL
+           )
            AND heartbeat_at < now() - ($1 * interval '1 minute')
         RETURNING id, task_id, kind
       `, [staleMinutes]);
