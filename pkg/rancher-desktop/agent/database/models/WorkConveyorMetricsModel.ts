@@ -481,7 +481,7 @@ export class WorkConveyorMetricsModel {
   }
 
   private static classifyDispatcherLiveness(row: DispatcherLivenessRecord | null) {
-    if (!row) return { status: 'unknown' as const, ...row };
+    if (!row) return { status: 'unknown' as const };
     const overdue = row.next_expected_tick_at != null && new Date(row.next_expected_tick_at).getTime() < Date.now();
     return {
       ...row,
