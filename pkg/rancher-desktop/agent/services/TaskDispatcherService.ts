@@ -22,6 +22,7 @@ import {
   type VerificationVerdict,
 } from '../database/models/WorkTaskDispatchModel';
 import { WorkflowModel } from '../database/models/WorkflowModel';
+import { WorkflowExecutionModel } from '../database/models/WorkflowExecutionModel';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
 import {
   REVIEW_PROJECT_ARTIFACT_DEFINITION,
@@ -221,6 +222,10 @@ export class TaskDispatcherService {
 
   private async runTickWithStatementTimeout(generation: number): Promise<void> {
     try {
+      const reconciledWorkflowExecutions = await WorkflowExecutionModel.reconcileDispatcherOwnedExecutions();
+      if (reconciledWorkflowExecutions.length > 0) {
+        console.warn(`[TaskDispatcher] Reconciled ${ reconciledWorkflowExecutions.length } orphaned dispatcher workflow execution(s)`);
+      }
       await LifecycleCapabilityModel.recoverPreviousRuntime('todo-execution', RUNTIME_INSTANCE_ID);
       const recoveredReviewClaims = await LifecycleCapabilityModel.recoverPreviousRuntime(
         'in-review-verification', RUNTIME_INSTANCE_ID,
@@ -615,19 +620,15 @@ export class TaskDispatcherService {
           const playbook = createPlaybookState(REVIEW_PROJECT_ARTIFACT_DEFINITION as any, reviewPrompt);
           state.metadata.activeWorkflow = playbook;
           state.metadata.verificationAdapters = ARTIFACT_VERIFICATION_ADAPTERS;
-          await WorkTaskDispatchModel.recordReviewLaunch(dispatch.id, playbook.executionId, selectedReviewerAgentIds);
-          try {
-            const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
-            await WorkflowExecutionModel.markRunning({
-              executionId:  playbook.executionId,
-              workflowId:   REVIEW_PROJECT_ARTIFACT_ID,
-              workflowName: REVIEW_PROJECT_ARTIFACT_DEFINITION.name,
-              workflowSlug: REVIEW_PROJECT_ARTIFACT_ID,
-              triggerInput: reviewPrompt,
-            });
-          } catch (err) {
-            console.warn(`[TaskDispatcher] Could not record review workflow ${ playbook.executionId }:`, err);
-          }
+          await WorkTaskDispatchModel.recordReviewLaunchWithExecution(dispatch.id, {
+            executionId: playbook.executionId,
+            workflowId: REVIEW_PROJECT_ARTIFACT_ID,
+            workflowName: REVIEW_PROJECT_ARTIFACT_DEFINITION.name,
+            workflowSlug: REVIEW_PROJECT_ARTIFACT_ID,
+            triggerInput: reviewPrompt,
+            scopeTaskId: task.id,
+            reviewerAgentIds: selectedReviewerAgentIds,
+          });
         }
       } else {
         // A mechanical worker is an unattended coding/operations actor. Do

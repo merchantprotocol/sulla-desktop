@@ -1,6 +1,7 @@
 import { BaseModel } from '../BaseModel';
 import { postgresClient } from '../PostgresClient';
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 
 interface WorkflowExecutionAttributes {
   execution_id:     string;
@@ -70,8 +71,8 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     triggerInput?:    string;
     scopeTaskId?:     string;
     scopeGeneration?: number;
-  }): Promise<void> {
-    await postgresClient.query(
+  }, client: PoolClient = postgresClient as unknown as PoolClient): Promise<void> {
+    await client.query(
       `INSERT INTO workflow_executions
          (execution_id, workflow_id, workflow_name, workflow_slug, status, auto_restart, trigger_input,
           scope_task_id, scope_generation, started_at, updated_at)
@@ -153,8 +154,49 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   }
 
   static async findStaleExecutions(now = new Date()): Promise<WorkflowExecutionModel[]> {
-    const rows = await postgresClient.queryAll<any>(`SELECT * FROM workflow_executions WHERE status IN ('running', 'suspended') AND lease_expires_at IS NOT NULL AND lease_expires_at <= $1 ORDER BY lease_expires_at ASC`, [now]);
+    const rows = await postgresClient.queryAll<any>(`SELECT * FROM workflow_executions WHERE status IN ('running', 'suspended') AND scope_task_id IS NULL AND lease_expires_at IS NOT NULL AND lease_expires_at <= $1 ORDER BY lease_expires_at ASC`, [now]);
     return rows.map(WorkflowExecutionModel.hydrate);
+  }
+
+  /** The dispatcher is the sole recovery authority for scoped executions. */
+  static async reconcileDispatcherOwnedExecutions(): Promise<string[]> {
+    return postgresClient.transaction(async(client) => {
+      const rows = await client.query<{ execution_id: string }>(`
+        WITH orphaned AS (
+          SELECT execution.execution_id
+          FROM workflow_executions execution
+          LEFT JOIN work_task_dispatches dispatch
+            ON dispatch.workflow_execution_id = execution.execution_id
+          WHERE execution.scope_task_id IS NOT NULL
+            AND execution.status IN ('running', 'suspended')
+            AND (dispatch.id IS NULL OR dispatch.status <> 'running')
+          FOR UPDATE OF execution
+        ), settled AS (
+          UPDATE workflow_executions execution
+             SET status = 'failed', completed_at = COALESCE(completed_at, NOW()),
+                 terminal_at = COALESCE(terminal_at, NOW()),
+                 terminal_reason = 'dispatcher_parent_terminal_or_missing',
+                 error = COALESCE(error, 'dispatcher parent dispatch is terminal or missing'),
+                 owner_id = NULL, lease_token = NULL, lease_expires_at = NULL,
+                 updated_at = NOW()
+           WHERE execution.execution_id IN (SELECT execution_id FROM orphaned)
+           RETURNING execution.execution_id
+        )
+        SELECT execution_id FROM settled`, []);
+      const executionIds = rows.rows.map(row => row.execution_id);
+      if (executionIds.length === 0) return [];
+      await client.query(`UPDATE work_task_dispatches
+        SET status = 'stale', failure_reason = COALESCE(failure_reason, 'dispatcher_workflow_execution_reconciled'),
+            error = COALESCE(error, 'dispatcher workflow execution was reconciled'),
+            heartbeat_at = NOW(), finished_at = COALESCE(finished_at, NOW())
+        WHERE workflow_execution_id = ANY($1::text[]) AND status = 'running'`, [executionIds]);
+      await client.query(`UPDATE work_lane_entry_automations
+        SET status = 'failed',
+            outcome = jsonb_build_object('disposition', 'runtime_failed', 'message', 'dispatcher workflow execution reconciled'),
+            completed_at = COALESCE(completed_at, NOW())
+        WHERE execution_id = ANY($1::text[]) AND status = 'running'`, [executionIds]);
+      return executionIds;
+    });
   }
 
   static async nextLeaseExpiry(): Promise<Date | null> {

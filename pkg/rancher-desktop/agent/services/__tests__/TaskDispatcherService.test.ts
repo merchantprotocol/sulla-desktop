@@ -19,6 +19,8 @@ const recoverPendingOutcomeJournalsMock: any = jest.fn(() => Promise.resolve([])
 const finalizeVerificationMock: any = jest.fn(() => Promise.resolve('APPROVE'));
 const finalizeProtectedReviewMock: any = jest.fn(() => Promise.resolve('PASS'));
 const recordReviewLaunchMock: any = jest.fn(() => Promise.resolve());
+const recordReviewLaunchWithExecutionMock: any = jest.fn(() => Promise.resolve());
+const reconcileDispatcherOwnedExecutionsMock: any = jest.fn(() => Promise.resolve([]));
 const failVerificationMock: any = jest.fn(() => Promise.resolve(true));
 const touchMock: any = jest.fn(() => Promise.resolve());
 const addCommentMock: any = jest.fn(() => Promise.resolve());
@@ -75,6 +77,7 @@ jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
     finalizeVerification:    finalizeVerificationMock,
     finalizeProtectedReview: finalizeProtectedReviewMock,
     recordReviewLaunch:      recordReviewLaunchMock,
+    recordReviewLaunchWithExecution: recordReviewLaunchWithExecutionMock,
     bindReviewGeneration:    bindReviewGenerationMock,
     reviewGenerationHash:    generationHashMock,
     reviewFingerprint:       jest.fn(() => 'e'.repeat(64)),
@@ -86,7 +89,10 @@ jest.unstable_mockModule('../../database/models/WorkflowModel', () => ({
   WorkflowModel: { findById: workflowFindByIdMock },
 }));
 jest.unstable_mockModule('../../database/models/WorkflowExecutionModel', () => ({
-  WorkflowExecutionModel: { markRunning: jest.fn(() => Promise.resolve()) },
+  WorkflowExecutionModel: {
+    markRunning: jest.fn(() => Promise.resolve()),
+    reconcileDispatcherOwnedExecutions: reconcileDispatcherOwnedExecutionsMock,
+  },
 }));
 jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
   WorkItemsModel: {
@@ -664,8 +670,12 @@ describe('TaskDispatcherService', () => {
     await new Promise(resolve => setTimeout(resolve, 10));
     service.destroy();
 
-    expect(recordReviewLaunchMock).toHaveBeenCalledWith(
-      'verify-core', expect.stringMatching(/^wfp-/), ['sulla-desktop'],
+    expect(recordReviewLaunchWithExecutionMock).toHaveBeenCalledWith(
+      'verify-core', expect.objectContaining({
+        executionId: expect.stringMatching(/^wfp-/),
+        scopeTaskId: 'task-core',
+        reviewerAgentIds: ['sulla-desktop'],
+      }),
     );
     const state = executeMock.mock.calls[0][0];
     expect(state.metadata.activeWorkflow.definition.nodes
