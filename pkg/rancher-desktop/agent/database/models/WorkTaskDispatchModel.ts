@@ -168,6 +168,14 @@ export interface OrphanRecoveryResult {
   attemptNumber?: number;
 }
 
+export interface DispatchReconciliationResult {
+  inspected: number;
+  evidenced: number;
+  settled: string[];
+  reportOnly: string[];
+  timerFallback: string[];
+}
+
 export interface WorkTaskDispatchFinalization {
   dispatchStatus: Exclude<WorkTaskDispatchStatus, 'running' | 'stale'>;
   taskStatus:     'in_review' | 'planning' | 'blocked';
@@ -979,6 +987,12 @@ export class WorkTaskDispatchModel {
 
   static async recoverStale(staleMinutes = 45): Promise<string[]> {
     return postgresClient.transaction(async(client: PoolClient) => {
+      const setting = await client.query<{ enabled: boolean }>(
+        `SELECT COALESCE(value::boolean, false) AS enabled
+           FROM sulla_settings WHERE property = 'taskDispatcherTruthReconciliationEnabled' LIMIT 1`,
+      ).catch(() => ({ rows: [] as { enabled: boolean }[] }));
+      const reportOnly = !setting.rows[0]?.enabled;
+      const evidence = await this.reconcileRunningDispatchesWithClient(client, reportOnly);
       const stale = await client.query<{ id: string; task_id: string; kind: WorkTaskDispatchKind }>(`
         UPDATE work_task_dispatches
            SET status = 'stale',
@@ -987,8 +1001,9 @@ export class WorkTaskDispatchModel {
                finished_at = now()
          WHERE status = 'running'
            AND heartbeat_at < now() - ($1 * interval '1 minute')
+           AND NOT (id = ANY($2::text[]))
         RETURNING id, task_id, kind
-      `, [staleMinutes]);
+      `, [staleMinutes, evidence.evidencedIds]);
 
       const executionTaskIds = stale.rows.filter(row => row.kind === 'execution').map(row => row.task_id);
       const verificationTaskIds = stale.rows.filter(row => row.kind === 'verification').map(row => row.task_id);
@@ -1030,6 +1045,113 @@ export class WorkTaskDispatchModel {
       }
       return stale.rows.map(row => row.task_id);
     });
+  }
+
+  /**
+   * Reconcile dispatches from durable evidence before applying the lease timer.
+   * This is deliberately the only recovery authority: recoverStale() calls it
+   * on every boot/tick, and the timer only sees dispatches with no evidence.
+   */
+  private static async reconcileRunningDispatchesWithClient(
+    client: PoolClient,
+    reportOnly: boolean,
+  ): Promise<DispatchReconciliationResult & { evidencedIds: string[] }> {
+    const journalTable = await client.query<{ exists: boolean }>(
+      `SELECT to_regclass('public.work_task_outcome_journal') IS NOT NULL AS exists`,
+    );
+    const journalJoin = journalTable.rows[0]?.exists ? `
+        LEFT JOIN LATERAL (
+          SELECT dispatch_status, task_status
+            FROM work_task_outcome_journal
+           WHERE dispatch_id = d.id AND consumed_at IS NULL
+           ORDER BY created_at DESC LIMIT 1
+        ) journal ON true` : `
+        LEFT JOIN LATERAL (
+          SELECT NULL::text AS dispatch_status, NULL::text AS task_status
+        ) journal ON true`;
+    const rows = await client.query<{
+      id: string;
+      task_id: string;
+      kind: WorkTaskDispatchKind;
+      artifact_url: string | null;
+      artifact_ref: string | null;
+      content_hash: string | null;
+      task_status: string;
+      task_assignee: string | null;
+      workflow_status: string | null;
+      receipt_event: string | null;
+      receipt_disposition: string | null;
+      journal_status: string | null;
+      journal_task_status: string | null;
+    }>(`
+      SELECT d.id, d.task_id, d.kind, d.artifact_url, d.artifact_ref, d.content_hash,
+             t.status AS task_status, t.assignee AS task_assignee,
+             we.status AS workflow_status,
+             ar.event_type AS receipt_event, ar.disposition AS receipt_disposition,
+             journal.dispatch_status AS journal_status,
+             journal.task_status AS journal_task_status
+        FROM work_task_dispatches d
+        JOIN work_tasks t ON t.id = d.task_id
+        LEFT JOIN workflow_executions we ON we.execution_id = d.workflow_execution_id
+        LEFT JOIN LATERAL (
+          SELECT event_type, disposition
+            FROM work_artifact_receipts
+           WHERE task_id = d.task_id
+             AND (dispatch_id = d.id OR workflow_execution_id = d.workflow_execution_id)
+           ORDER BY created_at DESC LIMIT 1
+        ) ar ON true
+        ${ journalJoin }
+       WHERE d.status = 'running'
+       ORDER BY d.started_at ASC, d.id ASC
+    `);
+    const evidencedIds: string[] = [];
+    const settled: string[] = [];
+    const reportOnlyIds: string[] = [];
+    const timerFallback: string[] = [];
+    for (const row of rows.rows) {
+      const journalTerminal = ['completed', 'blocked', 'failed'].includes(row.journal_status ?? '')
+        && (row.journal_task_status === 'done' || row.journal_task_status === 'in_review' || row.journal_task_status === 'blocked');
+      const terminalTask = ['done', 'in_review'].includes(row.task_status);
+      const durableReceipt = Boolean(row.receipt_event);
+      const deliveredArtifact = durableReceipt || Boolean(row.artifact_url || row.artifact_ref || row.content_hash);
+      const completedWorkflow = row.workflow_status === 'completed';
+      const failedWorkflow = row.workflow_status === 'failed';
+      const evidence = journalTerminal || completedWorkflow || failedWorkflow || (terminalTask && deliveredArtifact);
+      if (!evidence) {
+        timerFallback.push(row.id);
+        continue;
+      }
+      evidencedIds.push(row.id);
+      const nextStatus = journalTerminal
+        ? row.journal_status!
+        : failedWorkflow ? 'failed' : 'completed';
+      const reason = journalTerminal ? 'outcome journal' : completedWorkflow ? 'workflow execution' : deliveredArtifact ? 'delivered artifact + task state' : 'task state';
+      if (reportOnly) {
+        reportOnlyIds.push(row.id);
+        console.warn('[TaskDispatcher] Truth reconciliation report-only proposal', {
+          dispatchId: row.id, taskId: row.task_id, status: nextStatus, reason,
+        });
+        continue;
+      }
+      await client.query(`
+        UPDATE work_task_dispatches
+           SET status = $2, result = COALESCE(result, $3),
+               failure_reason = CASE WHEN $2 = 'failed' THEN COALESCE(failure_reason, 'evidence_reconciled') ELSE failure_reason END,
+               heartbeat_at = now(), finished_at = COALESCE(finished_at, now())
+         WHERE id = $1 AND status = 'running'
+      `, [row.id, nextStatus, `Reconciled from ${ reason }.`]);
+      await client.query(`
+        UPDATE work_task_stage_claims
+           SET status = 'recovered', released_at = now(), heartbeat_at = now()
+         WHERE task_id = $1 AND status = 'active'
+           AND stage = CASE WHEN $2 = 'verification' THEN 'in_review' ELSE 'in_progress' END
+      `, [row.task_id, row.kind]);
+      if (journalTerminal && journalTable.rows[0]?.exists) {
+        await client.query(`UPDATE work_task_outcome_journal SET consumed_at = COALESCE(consumed_at, now()) WHERE dispatch_id = $1 AND consumed_at IS NULL`, [row.id]);
+      }
+      settled.push(row.id);
+    }
+    return { inspected: rows.rows.length, evidenced: evidencedIds.length, evidencedIds, settled, reportOnly: reportOnlyIds, timerFallback };
   }
 
   /**
