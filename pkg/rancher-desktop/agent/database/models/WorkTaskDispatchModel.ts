@@ -10,6 +10,7 @@ import {
 } from '../../services/ArtifactReceiptService';
 import { ArtifactReceiptModel } from './ArtifactReceiptModel';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
+import { WorkflowExecutionModel } from './WorkflowExecutionModel';
 import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
 import type { WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 
@@ -839,6 +840,31 @@ export class WorkTaskDispatchModel {
              heartbeat_at = now()
        WHERE id = $1 AND kind = 'verification' AND status = 'running'
     `, [id, workflowExecutionId, reviewerAgentIds]);
+  }
+
+  /** Link the dispatch and scoped workflow execution in one transaction. */
+  static async recordReviewLaunchWithExecution(id: string, execution: {
+    executionId: string;
+    workflowId: string;
+    workflowName: string;
+    workflowSlug: string;
+    triggerInput: string;
+    scopeTaskId: string;
+    reviewerAgentIds: string[];
+  }): Promise<void> {
+    await postgresClient.transaction(async(client: PoolClient) => {
+      const dispatchUpdate = await client.query(`UPDATE work_task_dispatches
+        SET workflow_execution_id = $2, reviewer_agent_ids = $3::text[], heartbeat_at = now()
+        WHERE id = $1 AND kind = 'verification' AND status = 'running'`,
+      [id, execution.executionId, execution.reviewerAgentIds]);
+      if (dispatchUpdate.rowCount !== 1) throw new Error('review_dispatch_not_live');
+      await WorkflowExecutionModel.markRunning({
+        executionId: execution.executionId, workflowId: execution.workflowId,
+        workflowName: execution.workflowName, workflowSlug: execution.workflowSlug,
+        triggerInput: execution.triggerInput, scopeTaskId: execution.scopeTaskId,
+        autoRestart: false,
+      }, client);
+    });
   }
 
   /** Bind the lease to immutable artifacts before any reviewer graph starts. */
