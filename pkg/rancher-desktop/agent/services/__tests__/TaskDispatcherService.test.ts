@@ -44,6 +44,8 @@ const workflowFindByIdMock: any = jest.fn(() => Promise.resolve({ attributesSnap
 const findAgentDirMock: any = jest.fn(() => '/agents/sulla-desktop');
 const automationEnabledMock: any = jest.fn(() => Promise.resolve(true));
 const resolveLimitMock: any = jest.fn((_scope: string, configured: number) => Promise.resolve(configured));
+const acquireSlotMock: any = jest.fn(() => Promise.resolve('slot'));
+const releaseSlotMock: any = jest.fn(() => Promise.resolve());
 const withStatementTimeoutMock: any = jest.fn((_timeoutMs: number, callback: () => Promise<unknown>) => callback());
 
 jest.unstable_mockModule('../../database/PostgresClient', () => ({
@@ -117,8 +119,8 @@ jest.unstable_mockModule('../RoutineConcurrencyPolicy', () => ({
     isEnabled:     automationEnabledMock,
     resolveLimit:  resolveLimitMock,
     reclaimStale:  jest.fn(() => Promise.resolve()),
-    acquire:       jest.fn(() => Promise.resolve('slot')),
-    release:       jest.fn(() => Promise.resolve()),
+    acquire:       acquireSlotMock,
+    release:       releaseSlotMock,
     heartbeat:     jest.fn(() => Promise.resolve()),
   },
 }));
@@ -171,6 +173,8 @@ describe('TaskDispatcherService', () => {
     reportCapabilityMock.mockResolvedValue({});
     releaseStageMock.mockResolvedValue(undefined);
     automationEnabledMock.mockResolvedValue(true);
+    acquireSlotMock.mockResolvedValue('slot');
+    releaseSlotMock.mockResolvedValue(undefined);
     withStatementTimeoutMock.mockImplementation((_timeoutMs: number, callback: () => Promise<unknown>) => callback());
   });
 
@@ -210,6 +214,64 @@ describe('TaskDispatcherService', () => {
         key:     'todo-execution',
         details: expect.objectContaining({ tickWedgeCount: 1 }),
       }));
+      service.destroy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('releases the tick gate when hasActiveLinkedPullRequest never settles', async() => {
+    jest.useFakeTimers();
+    try {
+      settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+        if (key === 'taskDispatcherTickTimeoutMs') return Promise.resolve(1_000);
+        if (key === 'taskVerifierOwner') return Promise.resolve('legacy');
+        return Promise.resolve(fallback);
+      });
+      findRecoverableInProgressMock.mockResolvedValue([{
+        task: { id: 'hung-pr-task', github_issue: 'merchantprotocol/sulla-desktop#1' },
+        exclusionReasons: [],
+      }]);
+      const { TaskDispatcherService } = await import('../TaskDispatcherService');
+      const service = new TaskDispatcherService() as any;
+      service.hasActiveLinkedPullRequest = jest.fn(() => new Promise(() => {}));
+      const initialized = service.initialize();
+
+      await jest.advanceTimersByTimeAsync(1_000);
+      await initialized;
+      findRecoverableInProgressMock.mockResolvedValue([]);
+      await jest.advanceTimersByTimeAsync(59_000);
+
+      expect(service.hasActiveLinkedPullRequest).toHaveBeenCalledTimes(1);
+      expect(countRunningMock).toHaveBeenCalled();
+      expect(completeTickMock).toHaveBeenCalledWith(60_000, 'error');
+      service.destroy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('releases the tick gate when a statement-timeout tick query never settles', async() => {
+    jest.useFakeTimers();
+    try {
+      settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+        if (key === 'taskDispatcherTickTimeoutMs') return Promise.resolve(1_000);
+        if (key === 'taskVerifierOwner') return Promise.resolve('legacy');
+        return Promise.resolve(fallback);
+      });
+      withStatementTimeoutMock
+        .mockImplementationOnce(() => new Promise(() => {}))
+        .mockImplementation((_timeoutMs: number, callback: () => Promise<unknown>) => callback());
+      const { TaskDispatcherService } = await import('../TaskDispatcherService');
+      const service = new TaskDispatcherService();
+      const initialized = service.initialize();
+
+      await jest.advanceTimersByTimeAsync(1_000);
+      await initialized;
+      await jest.advanceTimersByTimeAsync(59_000);
+
+      expect(withStatementTimeoutMock.mock.calls.length).toBeGreaterThan(1);
+      expect(countRunningMock).toHaveBeenCalled();
       service.destroy();
     } finally {
       jest.useRealTimers();
@@ -329,7 +391,7 @@ describe('TaskDispatcherService', () => {
     await service.initialize();
     service.destroy();
 
-    expect(recoverStaleMock).toHaveBeenCalledWith(0);
+    expect(recoverStaleMock).toHaveBeenCalledWith();
     expect(recoverPreviousRuntimeMock).toHaveBeenCalledWith('todo-execution', expect.stringContaining('task-dispatcher-'));
     expect(countRunningMock).toHaveBeenCalled();
   });
@@ -415,7 +477,9 @@ describe('TaskDispatcherService', () => {
     await service.initialize();
     service.destroy();
 
-    expect(claimNextMock).toHaveBeenCalledWith('sulla-desktop', expect.stringContaining('task-dispatcher-'));
+    expect(claimNextMock).toHaveBeenCalledWith(
+      'sulla-desktop', expect.stringContaining('task-dispatcher-'), expect.any(Object),
+    );
   });
 
   it('claims mechanically, executes the assigned worker, and returns completed work for review', async() => {
@@ -448,7 +512,9 @@ describe('TaskDispatcherService', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     service.destroy();
 
-    expect(claimNextMock).toHaveBeenCalledWith('sulla-desktop', expect.stringContaining('task-dispatcher-'));
+    expect(claimNextMock).toHaveBeenCalledWith(
+      'sulla-desktop', expect.stringContaining('task-dispatcher-'), expect.any(Object),
+    );
     expect(executeMock).toHaveBeenCalled();
     const workerState = executeMock.mock.calls[0][0];
     expect(workerState.metadata.allowedToolNames).toEqual([
@@ -466,7 +532,56 @@ describe('TaskDispatcherService', () => {
     expect(updateTaskMock).not.toHaveBeenCalled();
   });
 
+  it('settles an immortal worker at max runtime and releases its WIP slot', async() => {
+    jest.useFakeTimers();
+    try {
+      const claim = {
+        task: {
+          id:          'immortal-task',
+          title:       'Never returns',
+          description: '',
+          project_id:  'p',
+          epic_id:     'e',
+          priority:    'high',
+        },
+        dispatch: {
+          id:        'immortal-dispatch',
+          task_id:   'immortal-task',
+          agent_id:  'sulla-desktop',
+          thread_id: 'immortal-thread',
+          kind:      'execution',
+          attempt:   1,
+        },
+        stage_claim: { id: 'immortal-stage' },
+      };
+      claimNextMock.mockResolvedValueOnce(claim).mockResolvedValue(null);
+      executeMock.mockImplementation(() => new Promise(() => {}));
+      settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+        if (key === 'taskDispatcherExecutionTimeoutMinutes') return Promise.resolve(0.001);
+        if (key === 'taskDispatcherExecutionTimeoutEnabled') return Promise.resolve(true);
+        if (key === 'taskVerifierOwner') return Promise.resolve('legacy');
+        return Promise.resolve(fallback);
+      });
+
+      const { TaskDispatcherService } = await import('../TaskDispatcherService');
+      const service = new TaskDispatcherService();
+      await service.initialize();
+      await jest.advanceTimersByTimeAsync(60);
+      await Promise.resolve();
+
+      expect(settleMock).toHaveBeenCalledWith(
+        'immortal-dispatch', 'timed_out', undefined, 'execution exceeded 0.001 minute(s)',
+      );
+      expect(releaseStageMock).toHaveBeenCalledWith('immortal-stage');
+      expect(releaseSlotMock).toHaveBeenCalledWith('slot');
+      service.destroy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('turns user disablement into a visible manual hold without claiming work', async() => {
+    automationEnabledMock.mockResolvedValue(false);
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'automatedProjectManagementEnabled') return Promise.resolve(false);
       return Promise.resolve(fallback);
@@ -530,7 +645,7 @@ describe('TaskDispatcherService', () => {
     await new Promise(resolve => setTimeout(resolve, 10));
     service.destroy();
 
-    expect(claimNextReviewMock).toHaveBeenCalledTimes(4);
+    expect(claimNextReviewMock).toHaveBeenCalledTimes(3);
     expect(claimNextReviewMock).toHaveBeenCalledWith('sulla-desktop', [], expect.stringContaining('task-dispatcher-'));
     expect(executeMock).toHaveBeenCalledTimes(3);
     expect(finalizeVerificationMock).toHaveBeenCalledTimes(3);

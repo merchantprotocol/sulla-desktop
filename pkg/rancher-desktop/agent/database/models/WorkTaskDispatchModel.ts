@@ -1145,6 +1145,15 @@ export class WorkTaskDispatchModel {
       if (!moved.rows[0]) {
         throw new Error(`Task ${ taskId } is no longer owned by dispatch ${ id }`);
       }
+      // Finalization is the durable ownership handoff. Releasing the stage
+      // claim in this same transaction is required for journal replay after a
+      // process death: runClaim's finally block may never execute after
+      // SIGKILL, and leaving the claim active strands the WIP slot forever.
+      await client.query(`
+        UPDATE work_task_stage_claims
+           SET status = 'released', released_at = now(), heartbeat_at = now()
+         WHERE task_id = $1 AND stage = 'in_progress' AND status = 'active'
+      `, [taskId]);
       return moved.rows[0];
     })();
   }
