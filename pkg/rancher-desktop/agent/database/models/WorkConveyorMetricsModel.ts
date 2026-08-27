@@ -481,7 +481,19 @@ export class WorkConveyorMetricsModel {
   }
 
   private static classifyDispatcherLiveness(row: DispatcherLivenessRecord | null) {
-    if (!row) return { status: 'unknown' as const };
+    if (!row) {
+      return {
+        status: 'unknown' as const,
+        last_tick_started_at: null,
+        last_tick_at: null,
+        next_expected_tick_at: null,
+        last_outcome: 'never' as const,
+        checking: false,
+        consecutive_wedge_count: 0,
+        wedge_count: 0,
+        updated_at: null,
+      };
+    }
     const overdue = row.next_expected_tick_at != null && new Date(row.next_expected_tick_at).getTime() < Date.now();
     return {
       ...row,
