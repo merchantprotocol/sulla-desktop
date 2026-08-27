@@ -1,14 +1,16 @@
 import { Octokit } from '@octokit/rest';
 
 import { AbortService } from './AbortService';
-import { resolvePullRequestHead, resolvePullRequestHeads } from './GitHubPullRequestHeadService';
-import { GraphRegistry } from './GraphRegistry';
-import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
-import { getIntegrationService } from './IntegrationService';
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { RoutineConcurrencyPolicy } from './RoutineConcurrencyPolicy';
 import { ArtifactCustodyPolicy } from './ArtifactCustodyPolicy';
 import { buildReceipt, renderReceiptComment } from './ArtifactReceiptService';
+import { resolvePullRequestHead, resolvePullRequestHeads } from './GitHubPullRequestHeadService';
+import { GraphRegistry } from './GraphRegistry';
+import { getIntegrationService } from './IntegrationService';
+import { resolveWipLimits, evaluateClaim, type WipLimits, type RoleCounts, type BackpressureDecision } from './ProjectAutomationWipLimits';
+import { RoutineConcurrencyPolicy } from './RoutineConcurrencyPolicy';
+import { postgresClient } from '../database/PostgresClient';
+import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
 import {
   WorkTaskDispatchModel,
@@ -19,14 +21,13 @@ import {
   type ReviewDisposition,
   type VerificationVerdict,
 } from '../database/models/WorkTaskDispatchModel';
-import { resolveWipLimits, evaluateClaim, type WipLimits, type RoleCounts, type BackpressureDecision } from './ProjectAutomationWipLimits';
 import { WorkflowModel } from '../database/models/WorkflowModel';
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
 import {
   REVIEW_PROJECT_ARTIFACT_DEFINITION,
   REVIEW_PROJECT_ARTIFACT_ID,
   ARTIFACT_VERIFICATION_ADAPTERS,
 } from '../routines/core/reviewProjectArtifact';
-import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
 import { extractAgentTurnOutcome } from '../tools/agents/agentTurnOutcome';
 import { toolRegistry } from '../tools/registry';
 import { createPlaybookState } from '../workflow/WorkflowPlaybook';
@@ -40,6 +41,7 @@ const DEFAULT_IN_PROGRESS_STALE_MINUTES = 360;
 const DEFAULT_RECOVERY_BATCH_SIZE = 1;
 const DEFAULT_RECOVERY_RETRY_CEILING = 3;
 const DEFAULT_TICK_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_TICK_QUERY_TIMEOUT_MS = 30_000;
 const LINKED_PR_REQUEST_TIMEOUT_MS = 30_000;
 const LEGACY_VERIFIER_TOOLS = [
   'file_search', 'read_file',
@@ -162,26 +164,28 @@ export class TaskDispatcherService {
     this.activeTickStartedAt = new Date().toISOString();
     this.lastTickError = null;
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    let tickTimeoutMs = DEFAULT_TICK_TIMEOUT_MS;
+    let healthError: string | null = null;
     try {
       // Read the setting inside the guarded section too: a stalled settings
       // read is itself a tick-path failure and must release the gate.
-      const tickTimeoutMs = await this.getTickTimeoutMs();
-      const timeout = new Promise<never>((_, reject) => {
+      tickTimeoutMs = await this.getTickTimeoutMs();
+      const timeout = new Promise<never>((_resolve, reject) => {
         timeoutTimer = setTimeout(() => reject(new Error(`dispatcher tick ${ generation } exceeded ${ tickTimeoutMs }ms deadline`)), tickTimeoutMs);
       });
-      await Promise.race([this.runTick(), timeout]);
+      await Promise.race([this.runTick(generation), timeout]);
     } catch (err) {
       const timedOut = err instanceof Error && err.message.includes('exceeded') && err.message.includes('deadline');
+      healthError = timedOut ? 'tick deadline exceeded' : err instanceof Error ? err.message : String(err);
+      this.lastTickError = healthError;
       if (timedOut) {
         this.tickWedgeCount += 1;
         console.error('[TaskDispatcher] Tick watchdog expired; releasing tick gate', {
           generation, startedAt: this.activeTickStartedAt, tickTimeoutMs, wedgeCount: this.tickWedgeCount,
         });
       } else {
-        this.lastTickError = err instanceof Error ? err.message : String(err);
         console.error('[TaskDispatcher] Dispatch check failed:', err);
       }
-      await this.reportTickHealth(timedOut ? 'degraded' : 'degraded', this.lastTickError ?? (timedOut ? 'tick deadline exceeded' : undefined));
     } finally {
       if (timeoutTimer) clearTimeout(timeoutTimer);
       // An expired tick's promise may eventually settle. It must never clear
@@ -190,6 +194,12 @@ export class TaskDispatcherService {
         this.activeTickGeneration = null;
         this.activeTickStartedAt = null;
       }
+    }
+    // Capability reporting is also database-backed. Release the tick gate
+    // before awaiting it so a wedged report cannot disable future ticks.
+    if (healthError) {
+      await this.reportTickHealth('degraded', healthError)
+        .catch(reportErr => console.error('[TaskDispatcher] Tick health report failed:', reportErr));
     }
   }
 
@@ -201,15 +211,22 @@ export class TaskDispatcherService {
     return Math.max(1000, configured || DEFAULT_TICK_TIMEOUT_MS);
   }
 
-  private async runTick(): Promise<void> {
+  private async runTick(generation: number): Promise<void> {
+    await postgresClient.withStatementTimeout(
+      DEFAULT_TICK_QUERY_TIMEOUT_MS,
+      () => this.runTickWithStatementTimeout(generation),
+    );
+  }
+
+  private async runTickWithStatementTimeout(generation: number): Promise<void> {
     try {
+      await LifecycleCapabilityModel.recoverPreviousRuntime('todo-execution', RUNTIME_INSTANCE_ID);
       const recoveredReviewClaims = await LifecycleCapabilityModel.recoverPreviousRuntime(
         'in-review-verification', RUNTIME_INSTANCE_ID,
       );
       this.reclaimedReviews += (await WorkTaskDispatchModel.recoverOrphanedVerification(
         recoveredReviewClaims,
       )).length;
-      await LifecycleCapabilityModel.recoverPreviousRuntime('todo-execution', RUNTIME_INSTANCE_ID);
 
       // The dispatcher is an independent system from the conversational Heartbeat
       // agent (Jonathon, 2026-08-25) -- it must not read heartbeatEnabled/heartbeatWindow.
@@ -275,8 +292,13 @@ export class TaskDispatcherService {
         return;
       }
       await this.fillExecutionPool();
-      await this.reportTickHealth('healthy');
+      if (this.activeTickGeneration === generation) {
+        await this.reportTickHealth('healthy');
+      }
     } catch (err) {
+      // A timed-out generation can settle after a newer tick has started. It
+      // must not overwrite the newer generation's diagnostics or health.
+      if (this.activeTickGeneration !== generation) return;
       this.lastTickError = err instanceof Error ? err.message : String(err);
       await LifecycleCapabilityModel.report({
         key:               'todo-execution',
@@ -292,9 +314,13 @@ export class TaskDispatcherService {
 
   private async reportTickHealth(health: 'healthy' | 'degraded', error?: string): Promise<void> {
     await LifecycleCapabilityModel.report({
-      key: 'todo-execution', enabled: this.initialized, health,
-      owner: this.initialized ? 'dispatcher' : null, runtimeInstanceId: RUNTIME_INSTANCE_ID,
-      fallbackMode: 'heartbeat', error,
+      key:               'todo-execution',
+      enabled:           this.initialized,
+      health,
+      owner:             this.initialized ? 'dispatcher' : null,
+      runtimeInstanceId: RUNTIME_INSTANCE_ID,
+      fallbackMode:      'heartbeat',
+      error,
       details: {
         tickGeneration: this.tickGeneration,
         activeTickGeneration: this.activeTickGeneration,
@@ -361,7 +387,9 @@ export class TaskDispatcherService {
       if (!token) return true;
       const octokit = new Octokit({ auth: token.value });
       const { data } = await octokit.pulls.get({
-        owner: match[1], repo: match[2], pull_number: Number(match[3]),
+        owner:   match[1],
+        repo:    match[2],
+        pull_number: Number(match[3]),
         request: { timeout: LINKED_PR_REQUEST_TIMEOUT_MS },
       });
       return data.state === 'open';

@@ -37,7 +37,11 @@ const workflowFindByIdMock: any = jest.fn(() => Promise.resolve({ attributesSnap
 const findAgentDirMock: any = jest.fn(() => '/agents/sulla-desktop');
 const automationEnabledMock: any = jest.fn(() => Promise.resolve(true));
 const resolveLimitMock: any = jest.fn((_scope: string, configured: number) => Promise.resolve(configured));
+const withStatementTimeoutMock: any = jest.fn((_timeoutMs: number, callback: () => Promise<unknown>) => callback());
 
+jest.unstable_mockModule('../../database/PostgresClient', () => ({
+  postgresClient: { withStatementTimeout: withStatementTimeoutMock },
+}));
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: settingsGetMock },
 }));
@@ -149,6 +153,7 @@ describe('TaskDispatcherService', () => {
     reportCapabilityMock.mockResolvedValue({});
     releaseStageMock.mockResolvedValue(undefined);
     automationEnabledMock.mockResolvedValue(true);
+    withStatementTimeoutMock.mockImplementation((_timeoutMs: number, callback: () => Promise<unknown>) => callback());
   });
 
   it('activates verification by default', async() => {
@@ -158,6 +163,59 @@ describe('TaskDispatcherService', () => {
     service.destroy();
 
     expect(claimNextReviewMock).toHaveBeenCalled();
+    expect(withStatementTimeoutMock).toHaveBeenCalledWith(30_000, expect.any(Function));
+  });
+
+  it('releases a wedged tick at its deadline and runs the next scheduled tick', async() => {
+    jest.useFakeTimers();
+    try {
+      settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+        if (key === 'taskDispatcherTickTimeoutMs') return Promise.resolve(1_000);
+        if (key === 'taskVerifierOwner') return Promise.resolve('legacy');
+        return Promise.resolve(fallback);
+      });
+      recoverPreviousRuntimeMock
+        .mockImplementationOnce(() => new Promise(() => {}))
+        .mockResolvedValue([]);
+
+      const { TaskDispatcherService } = await import('../TaskDispatcherService');
+      const service = new TaskDispatcherService();
+      const initialized = service.initialize();
+
+      await jest.advanceTimersByTimeAsync(1_000);
+      await initialized;
+      await jest.advanceTimersByTimeAsync(59_000);
+
+      expect(recoverPreviousRuntimeMock.mock.calls.length).toBeGreaterThan(1);
+      expect(countRunningMock).toHaveBeenCalled();
+      expect(reportCapabilityMock).toHaveBeenCalledWith(expect.objectContaining({
+        key:     'todo-execution',
+        details: expect.objectContaining({ tickWedgeCount: 1 }),
+      }));
+      service.destroy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps the scheduler armed when first-pass recovery throws', async() => {
+    jest.useFakeTimers();
+    try {
+      recoverPreviousRuntimeMock
+        .mockRejectedValueOnce(new Error('recovery failed'))
+        .mockResolvedValue([]);
+
+      const { TaskDispatcherService } = await import('../TaskDispatcherService');
+      const service = new TaskDispatcherService();
+      await service.initialize();
+      await jest.advanceTimersByTimeAsync(60_000);
+
+      expect(recoverPreviousRuntimeMock.mock.calls.length).toBeGreaterThan(1);
+      expect(countRunningMock).toHaveBeenCalled();
+      service.destroy();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('reclaims only review tasks whose previous-runtime claims were recovered', async() => {
@@ -172,7 +230,7 @@ describe('TaskDispatcherService', () => {
     expect(recoverOrphanedVerificationMock).toHaveBeenCalledWith(['orphan-review']);
     expect(recoverStaleMock).toHaveBeenCalledWith();
     expect(reportCapabilityMock).toHaveBeenCalledWith(expect.objectContaining({
-      key: 'in-review-verification',
+      key:     'in-review-verification',
       details: expect.objectContaining({ reclaimed: 1 }),
     }));
   });
