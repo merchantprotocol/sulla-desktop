@@ -19,7 +19,7 @@ export class FrontendGraphWebSocketService {
   private readonly wsService = getWebSocketClientService();
   private channelId:   string;
   private unsubscribe: (() => void) | null = null;
-  private activeAbort: AbortService | null = null;
+  private activeAborts = new Map<string, AbortService>();
 
   constructor(private readonly deps: FrontendGraphWebSocketDeps, channelId?: string) {
     this.channelId = channelId || DEFAULT_CHANNEL_ID;
@@ -38,10 +38,7 @@ export class FrontendGraphWebSocketService {
       this.unsubscribe();
       this.unsubscribe = null;
     }
-    if (this.activeAbort) {
-      this.activeAbort.abort();
-      this.activeAbort = null;
-    }
+    this.abortAllRuns();
     await this.deregisterAgent().catch(() => {});
 
     // Switch and re-initialize
@@ -54,10 +51,7 @@ export class FrontendGraphWebSocketService {
       this.unsubscribe();
       this.unsubscribe = null;
     }
-    if (this.activeAbort) {
-      this.activeAbort.abort();
-      this.activeAbort = null;
-    }
+    this.abortAllRuns();
 
     // Frontend is only available while the app window is open.
     // Remove it from the active agents registry on teardown.
@@ -111,13 +105,15 @@ export class FrontendGraphWebSocketService {
     });
 
     if (msg.type === 'stop_run') {
-      console.log(`[FrontendGraph:stop_run] received — activeAbort=${ !!this.activeAbort }, channel=${ this.channelId }`);
-      if (this.activeAbort) {
-        this.activeAbort.abort();
-        console.log('[FrontendGraph:stop_run] abort() called successfully');
-      } else {
-        console.warn('[FrontendGraph:stop_run] No activeAbort controller — graph may have already finished');
+      const data = typeof msg.data === 'string' ? {} : (msg.data as any);
+      const threadId = typeof data?.threadId === 'string' ? data.threadId.trim() : '';
+      const tabId = typeof data?.tabId === 'string' ? data.tabId.trim() : '';
+      console.log(`[FrontendGraph:stop_run] channelId=${ this.channelId }, tabId=${ tabId || '(none)' }, threadId=${ threadId || '(none)' }`);
+      if (!threadId) {
+        console.warn(`[FrontendGraph:stop_run] ignored unscoped stop for channelId=${ this.channelId }, tabId=${ tabId || '(none)' }`);
+        return;
       }
+      this.activeAborts.get(threadId)?.abort();
       return;
     }
 
@@ -174,18 +170,19 @@ export class FrontendGraphWebSocketService {
     }
 
     // Create a fresh AbortService for this run and wire it into state.
-    // Set state first so stop_run can't race between activeAbort and state.
-    if (this.activeAbort) {
+    // Set state first so stop_run can't race between activeAborts and state.
+    const prior = this.activeAborts.get(threadId);
+    if (prior) {
       try {
-        this.activeAbort.abort();
+        prior.abort();
       } catch {
         // already aborted
       }
     }
     const abort = new AbortService();
     state.metadata.options.abort = abort;
-    this.activeAbort = abort;
-    const isCurrentRun = () => this.activeAbort === abort;
+    this.activeAborts.set(threadId, abort);
+    const isCurrentRun = () => this.activeAborts.get(threadId) === abort;
 
     // Always refresh model context from current settings so existing threads
     // follow the currently selected frontend model/provider.
@@ -269,7 +266,7 @@ export class FrontendGraphWebSocketService {
       state.metadata.iterations = 0;
       (state.metadata as any).agentLoopCount = 0;
       if (isCurrentRun()) {
-        this.activeAbort = null;
+        this.activeAborts.delete(threadId);
       }
 
       // Persist thread state so it survives page reloads
@@ -293,18 +290,19 @@ export class FrontendGraphWebSocketService {
     const { graph, state } = existing as { graph: any; state: AgentGraphState };
 
     // Create a fresh AbortService for this run.
-    // Set state first so stop_run can't race between activeAbort and state.
-    if (this.activeAbort) {
+    // Set state first so stop_run can't race between activeAborts and state.
+    const prior = this.activeAborts.get(threadId);
+    if (prior) {
       try {
-        this.activeAbort.abort();
+        prior.abort();
       } catch {
         // already aborted
       }
     }
     const abort = new AbortService();
     state.metadata.options.abort = abort;
-    this.activeAbort = abort;
-    const isCurrentRun = () => this.activeAbort === abort;
+    this.activeAborts.set(threadId, abort);
+    const isCurrentRun = () => this.activeAborts.get(threadId) === abort;
 
     try {
       // Reset loop counters so the graph can run another full set of cycles
@@ -332,7 +330,7 @@ export class FrontendGraphWebSocketService {
       state.metadata.iterations = 0;
       (state.metadata as any).agentLoopCount = 0;
       if (isCurrentRun()) {
-        this.activeAbort = null;
+        this.activeAborts.delete(threadId);
       }
 
       // Persist thread state so it survives page reloads
@@ -346,6 +344,13 @@ export class FrontendGraphWebSocketService {
       data:      { role: 'assistant', content, thread_id: threadId ?? this.deps.currentThreadId.value },
       timestamp: Date.now(),
     });
+  }
+
+  private abortAllRuns(): void {
+    for (const abort of this.activeAborts.values()) {
+      abort.abort();
+    }
+    this.activeAborts.clear();
   }
 
   private emitSystemMessage(content: string, threadId?: string): void {

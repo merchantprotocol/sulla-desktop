@@ -28,6 +28,7 @@ export class ChatInterface {
   private readonly persona:            AgentPersonaService;
   private readonly registry:           AgentPersonaRegistry;
   private readonly channelId:          string;
+  private readonly tabId?:             string;
   /** Unique key for this tab's localStorage — scoped by tabId when provided */
   private readonly storageScope:       string;
   private readonly messagesStorageKey: string;
@@ -49,6 +50,7 @@ export class ChatInterface {
    */
   constructor(channelId: string = DEFAULT_CHANNEL, tabId?: string) {
     this.channelId = channelId;
+    this.tabId = tabId;
     // Use tabId for storage scoping when available, otherwise fall back to channelId
     this.storageScope = tabId ? `${ channelId }_${ tabId }` : channelId;
     touchChatStorageScope(this.storageScope);
@@ -241,8 +243,16 @@ export class ChatInterface {
   }
 
   stop(): void {
-    console.log(`[ChatInterface:stop] channelId=${ this.channelId }, graphRunning was ${ this.persona.graphRunning.value }`);
-    this.persona.emitStopSignal(this.channelId);
+    const threadId = this.persona.getThreadId();
+    console.log(`[ChatInterface:stop] channelId=${ this.channelId }, tabId=${ this.tabId ?? '(none)' }, threadId=${ threadId ?? '(none)' }, graphRunning was ${ this.persona.graphRunning.value }`);
+    if (threadId) {
+      this.persona.emitStopSignal(this.channelId);
+    } else {
+      // Never emit an unscoped stop. Multiple tabs intentionally share one
+      // channel, so a missing thread id must fail closed instead of risking a
+      // channel-wide abort in an older backend.
+      console.warn(`[ChatInterface:stop] ignored unscoped stop for channelId=${ this.channelId }, tabId=${ this.tabId ?? '(none)' }`);
+    }
     this.persona.graphRunning.value = false;
     // Clear the queue when stopping
     this.messageQueue.clear();
