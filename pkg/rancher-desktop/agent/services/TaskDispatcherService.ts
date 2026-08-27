@@ -579,6 +579,7 @@ export class TaskDispatcherService {
     let lastActivityAt = Date.now();
     let leaseTimer: ReturnType<typeof setInterval> | null = null;
     let runTimeout: ReturnType<typeof setTimeout> | null = null;
+    let expireRun: (() => void) | null = null;
     let verifierTimedOut = false;
     let executionTimedOut = false;
 
@@ -680,6 +681,9 @@ export class TaskDispatcherService {
         ? false
         : await SullaSettingsModel.get('taskDispatcherExecutionTimeoutReportOnly', false);
       const reportOnly = reportOnlySetting === true || reportOnlySetting === 'true';
+      const runtimeDeadline = new Promise<null>((resolve) => {
+        expireRun = () => resolve(null);
+      });
       runTimeout = setTimeout(() => {
         if (!timeoutEnabled || reportOnly) {
           console.warn(`[TaskDispatcher] Execution timeout report-only for ${ dispatch.id } after ${ timeoutMinutes } minute(s)`);
@@ -688,8 +692,9 @@ export class TaskDispatcherService {
         if (isVerification) verifierTimedOut = true;
         else executionTimedOut = true;
         abort.abort();
+        expireRun?.();
         if (!isVerification) {
-          void WorkTaskDispatchModel.settle(
+          WorkTaskDispatchModel.settle(
             dispatch.id,
             'timed_out',
             undefined,
@@ -697,7 +702,17 @@ export class TaskDispatcherService {
           ).catch(err => console.error(`[TaskDispatcher] Timeout settlement failed for ${ dispatch.id }:`, err));
         }
       }, timeoutMinutes * 60_000);
-      const finalState = await graph.execute(state);
+      const finalState = await Promise.race([graph.execute(state), runtimeDeadline]);
+
+      // An abort signal is cooperative; an immortal provider promise may
+      // ignore it forever. The deadline itself therefore wins the race and
+      // unwinds runClaim so its finally block releases the stage and WIP slot.
+      if (!finalState) {
+        if (isVerification && verifierTimedOut) {
+          await WorkTaskDispatchModel.failVerification(dispatch.id, 'verifier_timeout');
+        }
+        return;
+      }
 
       // Single-agent workflow nodes (e.g. node-review-classify) are
       // dispatched fire-and-forget inside Graph.execute() so interactive
