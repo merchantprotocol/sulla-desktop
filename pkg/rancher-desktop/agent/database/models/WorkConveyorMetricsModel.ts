@@ -17,6 +17,7 @@
  * Read-only: no INSERT/UPDATE/DELETE.
  */
 import { postgresClient } from '../PostgresClient';
+import { DispatcherLivenessModel, type DispatcherLivenessRecord } from './DispatcherLivenessModel';
 
 export type SemanticStage =
   | 'backlog' | 'planning' | 'execution' | 'review' | 'blocked' | 'terminal' | 'manual';
@@ -462,12 +463,12 @@ export class WorkConveyorMetricsModel {
 
   /** Aggregate snapshot of every conveyor metric (all queries run concurrently). */
   static async snapshot(opts: ConveyorMetricsOptions = {}) {
-    const [stages, agePercentiles, throughput, verifier, rework, custody, waits, leases, deps, wip, shipments] =
+    const [stages, agePercentiles, throughput, verifier, rework, custody, waits, leases, deps, wip, shipments, dispatcherLiveness] =
       await Promise.all([
         this.stageCounts(opts), this.stageAgePercentiles(opts), this.throughput(opts),
         this.verifierThroughput(opts), this.reworkRate(opts), this.custodyCompleteness(opts),
         this.waitAdoption(opts), this.staleLeases(opts), this.dependencyHeld(opts),
-        this.wipPressure(opts), this.shipments(opts),
+        this.wipPressure(opts), this.shipments(opts), DispatcherLivenessModel.get(),
       ]);
     return {
       metric: 'conveyor_health',
@@ -475,6 +476,20 @@ export class WorkConveyorMetricsModel {
       project_id: pid(opts),
       stages, agePercentiles, throughput, verifier, rework, custody,
       waits, leases, deps, wip, shipments,
+      dispatcherLiveness: this.classifyDispatcherLiveness(dispatcherLiveness),
+    };
+  }
+
+  private static classifyDispatcherLiveness(row: DispatcherLivenessRecord | null) {
+    if (!row) return { status: 'unknown' as const, ...row };
+    const overdue = row.next_expected_tick_at != null && new Date(row.next_expected_tick_at).getTime() < Date.now();
+    return {
+      ...row,
+      status: row.checking || overdue ? 'wedged' as const
+        : row.last_outcome === 'actively-dispatching' ? 'actively-dispatching' as const
+          : row.last_outcome === 'no-eligible-work' ? 'no-eligible-work' as const
+            : row.last_outcome === 'idle' ? 'idle' as const
+              : row.last_outcome,
     };
   }
 }

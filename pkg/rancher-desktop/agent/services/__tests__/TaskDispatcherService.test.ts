@@ -34,6 +34,8 @@ const graphDeleteMock: any = jest.fn();
 const recoverPreviousRuntimeMock: any = jest.fn(() => Promise.resolve([]));
 const reportCapabilityMock: any = jest.fn(() => Promise.resolve({}));
 const releaseStageMock: any = jest.fn(() => Promise.resolve());
+const beginTickMock: any = jest.fn(() => Promise.resolve({}));
+const completeTickMock: any = jest.fn(() => Promise.resolve({}));
 const resolvePullRequestHeadMock: any = jest.fn();
 const resolvePullRequestHeadsMock: any = jest.fn();
 const bindReviewGenerationMock: any = jest.fn();
@@ -56,6 +58,9 @@ jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () =>
     report:                 reportCapabilityMock,
     releaseStage:           releaseStageMock,
   },
+}));
+jest.unstable_mockModule('../../database/models/DispatcherLivenessModel', () => ({
+  DispatcherLivenessModel: { beginTick: beginTickMock, completeTick: completeTickMock },
 }));
 jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
   WorkTaskDispatchModel: {

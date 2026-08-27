@@ -9,6 +9,7 @@ import { getIntegrationService } from './IntegrationService';
 import { resolveWipLimits, evaluateClaim, type WipLimits, type RoleCounts, type BackpressureDecision } from './ProjectAutomationWipLimits';
 import { RoutineConcurrencyPolicy } from './RoutineConcurrencyPolicy';
 import { postgresClient } from '../database/PostgresClient';
+import { DispatcherLivenessModel, type DispatcherTickOutcome } from '../database/models/DispatcherLivenessModel';
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
@@ -168,6 +169,9 @@ export class TaskDispatcherService {
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
     let tickTimeoutMs = DEFAULT_TICK_TIMEOUT_MS;
     let healthError: string | null = null;
+    let outcome: DispatcherTickOutcome = 'idle';
+    await DispatcherLivenessModel.beginTick(CHECK_INTERVAL_MS).catch(err =>
+      console.error('[TaskDispatcher] Failed to record tick start:', err));
     try {
       // Read the setting inside the guarded section too: a stalled settings
       // read is itself a tick-path failure and must release the gate.
@@ -175,8 +179,9 @@ export class TaskDispatcherService {
       const timeout = new Promise<never>((_resolve, reject) => {
         timeoutTimer = setTimeout(() => reject(new Error(`dispatcher tick ${ generation } exceeded ${ tickTimeoutMs }ms deadline`)), tickTimeoutMs);
       });
-      await Promise.race([this.runTick(generation), timeout]);
+      outcome = await Promise.race([this.runTick(generation), timeout]);
     } catch (err) {
+      outcome = 'error';
       const timedOut = err instanceof Error && err.message.includes('exceeded') && err.message.includes('deadline');
       healthError = timedOut ? 'tick deadline exceeded' : err instanceof Error ? err.message : String(err);
       this.lastTickError = healthError;
@@ -196,6 +201,8 @@ export class TaskDispatcherService {
         this.activeTickGeneration = null;
         this.activeTickStartedAt = null;
       }
+      await DispatcherLivenessModel.completeTick(CHECK_INTERVAL_MS, outcome).catch(err =>
+        console.error('[TaskDispatcher] Failed to record tick completion:', err));
     }
     // Capability reporting is also database-backed. Release the tick gate
     // before awaiting it so a wedged report cannot disable future ticks.
@@ -213,14 +220,15 @@ export class TaskDispatcherService {
     return Math.max(1000, configured || DEFAULT_TICK_TIMEOUT_MS);
   }
 
-  private async runTick(generation: number): Promise<void> {
-    await postgresClient.withStatementTimeout(
+  private async runTick(generation: number): Promise<DispatcherTickOutcome> {
+    return postgresClient.withStatementTimeout(
       DEFAULT_TICK_QUERY_TIMEOUT_MS,
       () => this.runTickWithStatementTimeout(generation),
     );
   }
 
-  private async runTickWithStatementTimeout(generation: number): Promise<void> {
+  private async runTickWithStatementTimeout(generation: number): Promise<DispatcherTickOutcome> {
+    let outcome: DispatcherTickOutcome = 'idle';
     try {
       const reconciledWorkflowExecutions = await WorkflowExecutionModel.reconcileDispatcherOwnedExecutions();
       if (reconciledWorkflowExecutions.length > 0) {
@@ -240,6 +248,7 @@ export class TaskDispatcherService {
       // exposed as "Enable Automation PM Work" on the Project Automation settings tab.
       const enabled = await RoutineConcurrencyPolicy.isEnabled();
       if (!enabled) {
+        outcome = 'disabled';
         await LifecycleCapabilityModel.report({
           key:               'todo-execution',
           enabled:           false,
@@ -249,7 +258,7 @@ export class TaskDispatcherService {
           fallbackMode:      'manual_hold',
           error:             'Automated Project Management is disabled by user setting.',
         });
-        return;
+        return outcome;
       }
 
       // Run on every tick, not just once at boot. recoverStale() only
@@ -267,8 +276,9 @@ export class TaskDispatcherService {
       await this.checkInProgressRecovery();
       const reviewReady = await this.fillVerificationPool();
       if (!reviewReady) {
+        outcome = 'no-eligible-work';
         console.warn('[TaskDispatcher] Protected review is unavailable; holding fresh execution work');
-        return;
+        return outcome;
       }
       // Issue #711: semantic stage-aware WIP limits + downstream-first backpressure.
       // Additive over the #709 review-drain guard below: this only ever holds MORE
@@ -285,29 +295,36 @@ export class TaskDispatcherService {
           at:       new Date().toISOString(),
         };
         if (!wipDecision.allowed) {
+          outcome = 'no-eligible-work';
           console.log(`[TaskDispatcher] Holding fresh execution work: ${ wipDecision.reason }`);
-          return;
+          return outcome;
         }
       } catch (wipErr) {
         // The gate is a safety invariant. If counts/settings cannot be resolved,
         // fail closed and retry on the next scheduled tick.
+        outcome = 'no-eligible-work';
         console.warn('[TaskDispatcher] WIP limit evaluation failed; holding fresh execution:', wipErr);
-        return;
+        return outcome;
       }
       const reviewBacklog = await WorkTaskDispatchModel.countReviewBacklog();
       if (reviewBacklog > 0) {
+        outcome = 'no-eligible-work';
         console.log(`[TaskDispatcher] Holding fresh todo work until ${ reviewBacklog } downstream review item(s) drain`);
-        return;
+        return outcome;
       }
-      await this.fillExecutionPool();
+      const dispatched = await this.fillExecutionPool();
+      outcome = dispatched > 0 ? 'actively-dispatching' : 'no-eligible-work';
       if (this.activeTickGeneration === generation) {
         await this.reportTickHealth('healthy');
       }
+      return outcome;
     } catch (err) {
       // A timed-out generation can settle after a newer tick has started. It
       // must not overwrite the newer generation's diagnostics or health.
-      if (this.activeTickGeneration !== generation) return;
+      if (this.activeTickGeneration !== generation) return 'error';
       this.lastTickError = err instanceof Error ? err.message : String(err);
+      outcome = 'error';
+      console.error('[TaskDispatcher] Dispatch check failed:', err);
       await LifecycleCapabilityModel.report({
         key:               'todo-execution',
         enabled:           true,
@@ -317,6 +334,7 @@ export class TaskDispatcherService {
         fallbackMode:      'heartbeat',
         error:             this.lastTickError,
       }).catch(reportErr => console.error('[TaskDispatcher] Capability report failed:', reportErr));
+      return outcome;
     }
   }
 
@@ -408,7 +426,7 @@ export class TaskDispatcherService {
     }
   }
 
-  private async fillExecutionPool(): Promise<void> {
+  private async fillExecutionPool(): Promise<number> {
     const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
     const concurrency = await RoutineConcurrencyPolicy.resolveLimit('execution', configured || DEFAULT_CONCURRENCY);
     const enforceSlots = await RoutineConcurrencyPolicy.isEnabled();
@@ -425,7 +443,8 @@ export class TaskDispatcherService {
       fallbackMode:      'manual_hold',
     });
 
-        let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution'));
+    let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution'));
+    let dispatched = 0;
     while (freeSlots > 0 && this.initialized) {
       let slot: string | null = null;
       if (enforceSlots) {
@@ -446,7 +465,9 @@ export class TaskDispatcherService {
           if (heldSlot) void RoutineConcurrencyPolicy.release(heldSlot);
         });
       freeSlots -= 1;
+      dispatched += 1;
     }
+    return dispatched;
   }
 
   private async fillVerificationPool(): Promise<boolean> {
