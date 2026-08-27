@@ -1,5 +1,7 @@
 // PostgresClient.ts — upgraded to pg.Pool + proper shutdown
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 
 import { SullaSettingsModel } from './models/SullaSettingsModel';
@@ -8,6 +10,7 @@ export class PostgresClient {
   private pool: Pool | null = null;
   private connected = false;
   private shuttingDown = false;
+  private statementTimeout = new AsyncLocalStorage<number>();
 
   get isShuttingDown(): boolean {
     return this.shuttingDown;
@@ -76,16 +79,35 @@ export class PostgresClient {
     return this.pool!.connect();
   }
 
+  async withStatementTimeout<T>(timeoutMs: number, callback: () => Promise<T>): Promise<T> {
+    const boundedTimeoutMs = Math.max(1, Math.floor(timeoutMs));
+
+    return this.statementTimeout.run(boundedTimeoutMs, callback);
+  }
+
+  private async applyStatementTimeout(client: PoolClient, local: boolean): Promise<boolean> {
+    const timeoutMs = this.statementTimeout.getStore();
+    if (!timeoutMs) return false;
+    await client.query("SELECT set_config('statement_timeout', $1, $2)", [`${ timeoutMs }ms`, local]);
+    return true;
+  }
+
   async queryWithResult<T extends QueryResultRow = any>(text: string, params: any[] = []): Promise<QueryResult<T>> {
     if (this.shuttingDown) {
       return { rows: [], rowCount: 0, command: '', oid: 0, fields: [] } as unknown as QueryResult<T>;
     }
     const client = await this.getClient();
+    let timeoutApplied = false;
     try {
+      timeoutApplied = await this.applyStatementTimeout(client, false);
       const res = await client.query(text, params);
       return res;
     } finally {
-      client.release();
+      try {
+        if (timeoutApplied) await client.query('RESET statement_timeout');
+      } finally {
+        client.release();
+      }
     }
   }
 
@@ -94,11 +116,17 @@ export class PostgresClient {
       return [];
     }
     const client = await this.getClient();
+    let timeoutApplied = false;
     try {
+      timeoutApplied = await this.applyStatementTimeout(client, false);
       const res = await client.query(text, params);
       return res.rows;
     } finally {
-      client.release();
+      try {
+        if (timeoutApplied) await client.query('RESET statement_timeout');
+      } finally {
+        client.release();
+      }
     }
   }
 
@@ -115,6 +143,7 @@ export class PostgresClient {
     const client = await this.getClient();
     try {
       await client.query('BEGIN');
+      await this.applyStatementTimeout(client, true);
       const result = await callback(client);
       await client.query('COMMIT');
       return result;
@@ -155,7 +184,7 @@ export class PostgresClient {
           throw new Error(`PostgreSQL not reachable after ${ maxAttempts } attempts`);
         }
         console.log(`[PostgresClient] waitForReady attempt ${ i }/${ maxAttempts } failed, retrying...`);
-        await new Promise(r => setTimeout(r, intervalMs));
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
       } finally {
         try { await probe?.end() } catch { /* ignore */ }
       }
