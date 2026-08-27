@@ -44,6 +44,7 @@ export class ConveyorHealthWorker extends BaseTool {
       lines.push(`Dependency-held: ${ snap.deps.dependencyHeld }`);
       lines.push(`WIP: execution=${ snap.wip.activeExecutionWip }/${ snap.wip.wipLimit ?? 'unlimited' } verification=${ snap.wip.activeVerificationWip } backpressure=${ snap.wip.backpressureReason ?? 'none' }`);
       lines.push(`Shipments: independent=${ snap.shipments.independentShipments } integration_train_closures=${ snap.shipments.integrationTrainClosures } missing_evidence=${ snap.shipments.missingEvidence }`);
+      lines.push(`Dispatcher: ${ snap.dispatcherLiveness.status } last_tick=${ snap.dispatcherLiveness.last_tick_at ?? 'never' } next_expected=${ snap.dispatcherLiveness.next_expected_tick_at ?? 'unknown' } wedges=${ snap.dispatcherLiveness.consecutive_wedge_count ?? 0 }`);
       lines.push('');
       lines.push('## Custody completeness by artifact type (structured/legacy/missing/invalid)');
       for (const c of snap.custody) {

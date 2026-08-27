@@ -195,6 +195,7 @@
                 <div class="ph-health-stat"><span>Stale leases</span><b>{{ conveyorHealth.leases.staleLeases }}</b><small>{{ conveyorHealth.leases.activeLeases }} active total</small></div>
                 <div class="ph-health-stat"><span>Dependency held</span><b>{{ conveyorHealth.deps.dependencyHeld }}</b><small>claim-gated tasks</small></div>
                 <div class="ph-health-stat"><span>Shipments</span><b>{{ conveyorHealth.shipments.independentShipments }}</b><small>{{ conveyorHealth.shipments.integrationTrainClosures }} train · {{ conveyorHealth.shipments.missingEvidence }} missing</small></div>
+                <div class="ph-health-stat" :class="{ held: conveyorHealth.dispatcherLiveness.status === 'wedged' }"><span>Dispatcher</span><b>{{ conveyorHealth.dispatcherLiveness.status }}</b><small>last {{ conveyorHealth.dispatcherLiveness.last_tick_at ? new Date(conveyorHealth.dispatcherLiveness.last_tick_at).toLocaleTimeString() : 'never' }} · next {{ conveyorHealth.dispatcherLiveness.next_expected_tick_at ? new Date(conveyorHealth.dispatcherLiveness.next_expected_tick_at).toLocaleTimeString() : 'unknown' }}</small></div>
               </div>
               <div v-if="healthItems.length" class="ph-health-drill">
                 <b>Oldest {{ healthStage }} work</b>
