@@ -175,8 +175,8 @@ describe('BrowserTabViewManager', () => {
     const health = (manager as any).newViewHealth();
 
     health.recoveryStage = 'reattached';
-    (WebContentsView as any).mockReturnValue(replacement);
-    (getWindow as any).mockReturnValue({ contentView });
+    (WebContentsView as any).mockReturnValueOnce(replacement);
+    (getWindow as any).mockReturnValueOnce({ contentView });
     (manager as any).focusedTabId = 'tab-a';
     (manager as any).views.set('tab-a', original);
     (manager as any).latestBounds.set('tab-a', { x: 1, y: 2, width: 3, height: 4 });
