@@ -205,6 +205,37 @@ interface WorkTaskOutcomeJournalRow {
 
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
 
+/** Heartbeat-silence threshold shared by recoverStale() and the drainable-review-backlog surface. */
+const STALE_DISPATCH_MINUTES = 45;
+
+/**
+ * A review-stage task only exerts downstream-first backpressure while it can
+ * actually drain. A single wedged in_review row must never hold the whole
+ * conveyor (Jonathon directive 2026-08-28): a task whose running dispatch has
+ * a dead heartbeat cannot be claimed for review, a task whose latest
+ * verification ended terminal-failed needs planning/human recovery that
+ * holding fresh todo work does nothing to advance, and a dependency-held task
+ * is un-claimable by the review pool. `alias` is a trusted table alias
+ * (e.g. 't', 'downstream'), never user input.
+ */
+function drainableReviewSql(alias: string): string {
+  return `AND NOT EXISTS (
+             SELECT 1 FROM work_task_dispatches zombie
+              WHERE zombie.task_id = ${ alias }.id AND zombie.status = 'running'
+                AND zombie.heartbeat_at < now() - (${ STALE_DISPATCH_MINUTES } * interval '1 minute')
+           )
+           AND COALESCE((
+             SELECT latest_verification.status <> 'failed'
+                    OR latest_verification.failure_reason IS NULL
+                    OR latest_verification.failure_reason NOT LIKE 'terminal:%'
+               FROM work_task_dispatches latest_verification
+              WHERE latest_verification.task_id = ${ alias }.id
+                AND latest_verification.kind = 'verification'
+              ORDER BY latest_verification.started_at DESC LIMIT 1
+           ), true)
+           ${ WorkTaskDependencyModel.claimExclusionSql(`${ alias }.id`) }`;
+}
+
 /**
  * Idle in_progress reclaim is ownership-neutral by design (Jonathon
  * directive 2026-08-25, Projects task 1Nk7): whoever is actively working a
@@ -317,6 +348,7 @@ export class WorkTaskDispatchModel {
                   SELECT 1 FROM unnest(COALESCE(downstream.labels, '{}')) AS downstream_label
                    WHERE LOWER(downstream_label) = ANY($3::text[])
                 )
+                ${ drainableReviewSql('downstream') }
            )
            AND NOT EXISTS (
              SELECT 1 FROM work_tasks child
@@ -540,10 +572,14 @@ export class WorkTaskDispatchModel {
   }
 
   /**
-   * Count autonomous work already at the review stage, including work with an
-   * active verification lease. Any such row is farther down the conveyor than
-   * todo, so the dispatcher uses this as a hard backpressure gate before
-   * claiming fresh execution work.
+   * Count autonomous work already at the review stage that can still drain —
+   * claimable by the review pool or actively held by a live verification
+   * lease. Any such row is farther down the conveyor than todo, so the
+   * dispatcher uses this as a hard backpressure gate before claiming fresh
+   * execution work. Wedged rows (dead-heartbeat running dispatch,
+   * terminal-failed latest verification, dependency-held) are excluded via
+   * drainableReviewSql: holding the whole conveyor does nothing to advance
+   * them, and one stuck task must never starve every execution slot.
    */
   static async countReviewBacklog(): Promise<number> {
     const row = await postgresClient.queryOne<{ count: string }>(`
@@ -562,6 +598,7 @@ export class WorkTaskDispatchModel {
            SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
             WHERE LOWER(label) = ANY($2::text[])
          )
+         ${ drainableReviewSql('t') }
     `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
     return Number(row?.count || 0);
   }
@@ -858,10 +895,22 @@ export class WorkTaskDispatchModel {
         WHERE id = $1 AND kind = 'verification' AND status = 'running'`,
       [id, execution.executionId, execution.reviewerAgentIds]);
       if (dispatchUpdate.rowCount !== 1) throw new Error('review_dispatch_not_live');
+      // workflow_executions_scope_pair_check (migration 0071) requires
+      // scope_task_id and a positive scope_generation together or neither.
+      // Reviews scope to the task's latest lane-entry generation; a task with
+      // no lane entries launches unscoped rather than violating the constraint
+      // and failing every review.
+      const generationRow = await client.query<{ generation: number | null }>(
+        'SELECT MAX(generation)::int AS generation FROM work_lane_entry_automations WHERE task_id = $1',
+        [execution.scopeTaskId],
+      );
+      const scopeGeneration = Number(generationRow.rows[0]?.generation ?? 0);
       await WorkflowExecutionModel.markRunning({
         executionId: execution.executionId, workflowId: execution.workflowId,
         workflowName: execution.workflowName, workflowSlug: execution.workflowSlug,
-        triggerInput: execution.triggerInput, scopeTaskId: execution.scopeTaskId,
+        triggerInput: execution.triggerInput,
+        scopeTaskId: scopeGeneration > 0 ? execution.scopeTaskId : undefined,
+        scopeGeneration: scopeGeneration > 0 ? scopeGeneration : undefined,
         autoRestart: false,
       }, client);
     });
@@ -1017,22 +1066,76 @@ export class WorkTaskDispatchModel {
         await client.query('UPDATE work_task_outcome_journal SET consumed_at = now() WHERE id = $1', [journalId]);
         return null;
       }
-      const task = await this.finalizeWithClient(client, row.dispatch_id, row.task_id, {
-        dispatchStatus: row.dispatch_status,
-        taskStatus: row.task_status,
-        taskAssignee: row.task_assignee,
-        comment: row.comment,
-        result: row.result ?? undefined,
-        error: row.error ?? undefined,
-        evidence: row.evidence ?? undefined,
-        receipt: row.receipt ?? undefined,
-      });
+      // Replay is only strict while the dispatcher still owns the task. If the
+      // task already advanced (the worker, lane automation, or a human landed
+      // the transition before this journal settled), the full finalization
+      // would throw "no longer owned" on every tick forever — leaving the
+      // dispatch running, the journal pending, stale recovery skipping the
+      // lease, and the review-backlog gate holding the whole conveyor. In that
+      // case settle the dispatch bookkeeping and preserve the task's current
+      // state: the journal's task move already happened or was superseded.
+      const custody = await client.query<{ status: string; assignee: string | null }>(
+        'SELECT status, assignee FROM work_tasks WHERE id = $1 FOR UPDATE', [row.task_id],
+      );
+      const dispatcherOwned = custody.rows[0]?.status === 'in_progress' && custody.rows[0]?.assignee === 'dispatcher';
+      const task = dispatcherOwned
+        ? await this.finalizeWithClient(client, row.dispatch_id, row.task_id, {
+          dispatchStatus: row.dispatch_status,
+          taskStatus: row.task_status,
+          taskAssignee: row.task_assignee,
+          comment: row.comment,
+          result: row.result ?? undefined,
+          error: row.error ?? undefined,
+          evidence: row.evidence ?? undefined,
+          receipt: row.receipt ?? undefined,
+        })
+        : await this.settleDispatchPreservingTask(client, row, custody.rows[0] ?? null);
       await client.query(
         'UPDATE work_task_outcome_journal SET consumed_at = now() WHERE id = $1 AND consumed_at IS NULL',
         [journalId],
       );
       return task;
     });
+  }
+
+  /**
+   * Journal replay for a task that already left dispatcher custody: settle the
+   * dispatch row, release any still-active stage claims, and record the
+   * worker's outcome comment — without touching the task's current
+   * status/assignee, which won the race and is treated as authoritative.
+   */
+  private static async settleDispatchPreservingTask(
+    client: PoolClient,
+    journal: WorkTaskOutcomeJournalRow,
+    currentTask: { status: string; assignee: string | null } | null,
+  ): Promise<WorkTaskRecord | null> {
+    await client.query(`
+      UPDATE work_task_dispatches
+         SET status = $2, result = $3, error = $4, heartbeat_at = now(), finished_at = now()
+       WHERE id = $1 AND status = 'running'
+    `, [journal.dispatch_id, journal.dispatch_status, journal.result ?? null, journal.error ?? null]);
+
+    const observed = currentTask
+      ? `${ currentTask.status }/${ currentTask.assignee ?? 'unassigned' }`
+      : 'missing';
+    await client.query(`
+      INSERT INTO work_task_comments (id, task_id, body, author)
+      VALUES ($1, $2, $3, 'dispatcher')
+    `, [
+      `dispatch-comment-${ randomUUID() }`,
+      journal.task_id,
+      `${ journal.comment }\n\n(Outcome journal replay: the task had already advanced to ${ observed }, `
+        + `so the dispatch was settled without moving the task.)`,
+    ]);
+
+    await client.query(`
+      UPDATE work_task_stage_claims
+         SET status = 'released', released_at = now(), heartbeat_at = now()
+       WHERE task_id = $1 AND status = 'active'
+    `, [journal.task_id]);
+
+    const current = await client.query<WorkTaskRecord>('SELECT * FROM work_tasks WHERE id = $1', [journal.task_id]);
+    return current.rows[0] ?? null;
   }
 
   static async recoverPendingOutcomeJournals(): Promise<string[]> {
@@ -1158,7 +1261,7 @@ export class WorkTaskDispatchModel {
     })();
   }
 
-  static async recoverStale(staleMinutes = 45): Promise<string[]> {
+  static async recoverStale(staleMinutes = STALE_DISPATCH_MINUTES): Promise<string[]> {
     return postgresClient.transaction(async(client: PoolClient) => {
       const setting = await client.query<{ enabled: boolean }>(
         `SELECT COALESCE(value::boolean, false) AS enabled
