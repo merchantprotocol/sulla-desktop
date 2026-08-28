@@ -92,6 +92,13 @@ interface PrewarmRecord {
   closed:        boolean;
   busy:          boolean;
   reapTimer:     ReturnType<typeof setTimeout> | null;
+  /**
+   * Output the process wrote while nobody was listening (booting prewarm, or
+   * parked between warm turns), drained at claim time. Replayed through the
+   * adopting turn's line processor so a buffered system/init line still
+   * delivers its session id. See claimPrewarm.
+   */
+  pendingStdout?: string;
 }
 
 export class ClaudeCodeService extends BaseLanguageModel {
@@ -361,6 +368,29 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (rec.closed || rec.model !== model) {
       this.killPrewarmRecord(rec);                       // dead or model mismatch
       return null;
+    }
+
+    // Drain anything the process wrote while unclaimed. A prewarm that sat
+    // past the CLI's stdin-wait can emit an empty `result` (observed as an
+    // instant "claude produced no output" failure on the adopting turn) —
+    // a process that already resulted with no prompt is useless, so decline
+    // it and let the caller cold-spawn. Anything else (system/init) is kept
+    // for replay so the adopting turn still sees the session id.
+    let drained = '';
+    try {
+      let chunk: Buffer | string | null;
+      while ((chunk = rec.proc.stdout.read()) !== null) drained += chunk.toString('utf-8');
+    } catch { /* stream already ended — closed flag handling covers it */ }
+    if (drained) {
+      const staleResult = drained.split('\n').some((line) => {
+        try { return JSON.parse(line.trim())?.type === 'result'; } catch { return false; }
+      });
+      if (staleResult) {
+        log.warn(`[ClaudeCodeService] claimPrewarm: discarding pooled proc for convId=${ convId } — stale result buffered while unclaimed`);
+        this.killPrewarmRecord(rec);
+        return null;
+      }
+      rec.pendingStdout = drained;
     }
     return rec;
   }
@@ -1390,6 +1420,25 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         }
       };
       proc.stderr.on('data', onStderrData);
+
+      // Replay output drained while the process sat unclaimed (see
+      // claimPrewarm) so a buffered system/init line still delivers its
+      // session id and "tools connected" signal to THIS turn.
+      if (adopted?.pendingStdout) {
+        const pending = adopted.pendingStdout;
+        adopted.pendingStdout = undefined;
+        onStdoutData(Buffer.from(pending, 'utf-8'));
+      }
+
+      // Adopted processes need an explicit resume: finishWarmTurn parks the
+      // proc with stdout/stderr paused, and attaching a 'data' listener does
+      // NOT restart a stream that was explicitly paused. Without this, a
+      // re-adopted warm proc runs the whole turn with its output pipe frozen —
+      // nothing streams to the UI until the process is killed, at which point
+      // every buffered event floods through at once. Harmless on fresh spawns
+      // (resume on an already-flowing stream is a no-op).
+      proc.stdout.resume();
+      proc.stderr.resume();
 
       const onProcError = (err: Error) => {
         stopHeartbeat();
