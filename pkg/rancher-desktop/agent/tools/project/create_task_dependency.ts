@@ -30,7 +30,7 @@ export class CreateTaskDependencyWorker extends BaseTool {
       }, { actor, source: 'tool' });
       return {
         successBoolean: true,
-        responseString: `Dependency ${ dep.id }: task ${ dep.dependent_task_id } ${ dep.relation_type } ${ dep.depends_on_task_id }. The dependent cannot be claimed until the prerequisite is done.`,
+        responseString: `Dependency ${ dep.id }: task ${ dep.dependent_task_id } ${ dep.relation_type } ${ dep.depends_on_task_id }. Task ${ dep.dependent_task_id } depends on prerequisite ${ dep.depends_on_task_id } and cannot be claimed until it is done.`,
       };
     } catch (err: any) {
       return { successBoolean: false, responseString: `Failed to create task dependency: ${ err?.message ?? String(err) }` };

@@ -35,6 +35,7 @@ describe('task dependency tools', () => {
     createDependency.mockResolvedValue({ id: 'dep-1', dependent_task_id: 'a', depends_on_task_id: 'b', relation_type: 'requires' });
     const res = await call(new CreateTaskDependencyWorker(), { dependent_task_id: 'a', depends_on_task_id: 'b' });
     expect(res.successBoolean).toBe(true);
+    expect(res.responseString).toContain('Task a depends on prerequisite b');
     expect(createDependency).toHaveBeenCalledWith(expect.objectContaining({ dependentTaskId: 'a', dependsOnTaskId: 'b', relationType: 'requires' }), expect.any(Object));
   });
 

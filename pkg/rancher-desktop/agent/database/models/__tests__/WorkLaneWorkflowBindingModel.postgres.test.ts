@@ -12,6 +12,7 @@ import { up as addWorkTaskActivity } from '../../migrations/0061_add_work_task_a
 import { up as createLaneDefinitions } from '../../migrations/0069_create_work_lane_definitions';
 import { up as createLaneWorkflowBindings } from '../../migrations/0070_create_lane_workflow_bindings';
 import { up as scopeLaneWorkflowExecutions } from '../../migrations/0071_scope_lane_workflow_executions';
+import { up as createPlanningRuns } from '../../migrations/0072_create_work_task_planning_runs';
 import { up as addProjectViewsAndScheduling } from '../../migrations/0075_add_project_views_and_scheduling';
 import { up as addWorkflowExecutionLeases } from '../../migrations/0081_add_workflow_execution_leases';
 import { up as createWorkTaskDependencies } from '../../migrations/0083_create_work_task_dependencies';
@@ -43,6 +44,7 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
     await pool.query(createLaneDefinitions);
     await pool.query(createLaneWorkflowBindings);
     await pool.query(scopeLaneWorkflowExecutions);
+    await pool.query(createPlanningRuns);
     await addProjectViewsAndScheduling(pool as any);
     await pool.query(addWorkflowExecutionLeases);
     await createWorkTaskDependencies(pool as any);
@@ -234,6 +236,28 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
     })).rejects.toThrow('No active task/lane context');
     expect(await WorkItemsModel.getTask('task-rollback')).toMatchObject({ status: 'backlog' });
     expect(await WorkLaneWorkflowBindingModel.listLaneEntries('task-rollback')).toEqual([]);
+  }, 30_000);
+
+  it('settles a dependency-held planning council when moving the task to blocked', async() => {
+    await pool.query(`
+      INSERT INTO work_tasks (id, project_id, epic_id, title, status)
+      VALUES
+        ('task-dependency-held', 'project-1', 'epic-1', 'Dependency-held task', 'planning'),
+        ('task-dependency-prerequisite', 'project-1', 'epic-1', 'Dependency prerequisite', 'planning');
+      INSERT INTO work_task_planning_runs (id, task_id, workflow_id, trigger_status, trigger_actor)
+      VALUES ('planning-dependency-held', 'task-dependency-held', 'workflow-1', 'planning', 'planning-council');
+    `);
+    await WorkItemsModel.setTaskDependency(
+      'task-dependency-held', 'task-dependency-prerequisite', 'planning-council',
+    );
+
+    await expect(WorkItemsModel.updateTask('task-dependency-held', {
+      status: 'blocked', actor: 'planning-council',
+    })).resolves.toMatchObject({ status: 'blocked' });
+    expect(await WorkItemsModel.getTask('task-dependency-held')).toMatchObject({ status: 'blocked' });
+    expect((await pool.query(
+      'SELECT status FROM work_task_planning_runs WHERE id = $1', ['planning-dependency-held'],
+    )).rows[0]).toMatchObject({ status: 'blocked' });
   }, 30_000);
 
   it('allows two tasks on one workflow while rejecting duplicate active task-generation scope', async() => {

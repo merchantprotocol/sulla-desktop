@@ -270,7 +270,12 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (p.existingSession) claudeArgs.push('--resume', shq(p.existingSession));
     if (p.mcpConfigPath) claudeArgs.push('--mcp-config', shq(p.mcpConfigPath));
 
-    const innerCmd = `${ envAssignments.join(' ') } exec ${ claudeArgs.join(' ') }`;
+    // Claude Code emits newline-delimited JSON, but its stdout is connected
+    // to the limactl/SSH pipe rather than a terminal. Force the child stream
+    // to flush each complete line so stream-json events reach Sulla while the
+    // turn is running instead of arriving in a burst when the process exits
+    // (which made Stop appear to "unfreeze" the chat).
+    const innerCmd = `${ envAssignments.join(' ') } exec stdbuf -oL -eL ${ claudeArgs.join(' ') }`;
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 

@@ -1,9 +1,10 @@
 import path from 'path';
 
-import Electron, { WebContentsView, session } from 'electron';
+import Electron, { WebContentsView } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
+import { BROWSER_SESSION_PARTITION, getBrowserSession } from '@pkg/main/browserTabs/browserSession';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { safeSend } from '@pkg/utils/safeSend';
@@ -11,8 +12,6 @@ import { getWindow, openUrlInApp } from '@pkg/window';
 import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
 
 const console = Logging.sulla;
-
-const SESSION_PARTITION = 'persist:sulla-browser';
 
 interface ViewHealth {
   captureFailures: number;
@@ -83,7 +82,7 @@ export class BrowserTabViewManager {
    * so cookie management works for all browser-tab views.
    */
   private ensureSession(): Electron.Session {
-    const sess = session.fromPartition(SESSION_PARTITION);
+    const sess = getBrowserSession();
 
     if (!this.sessionInitialised) {
       this.webRequestFixer = new SullaWebRequestFixer((event) => {
@@ -153,7 +152,7 @@ export class BrowserTabViewManager {
       }
 
       this.sessionInitialised = true;
-      console.log('[BrowserTabView] Session initialised:', SESSION_PARTITION);
+      console.log('[BrowserTabView] Session initialised:', BROWSER_SESSION_PARTITION);
     }
 
     return sess;
@@ -186,16 +185,24 @@ export class BrowserTabViewManager {
     }
 
     // Make sure shared session is ready
-    this.ensureSession();
+    const browserSession = this.ensureSession();
 
     const view = new WebContentsView({
       webPreferences: {
-        webSecurity:      false,
-        contextIsolation: false,
-        nodeIntegration:  false,
-        partition:        SESSION_PARTITION,
+        webSecurity:          false,
+        contextIsolation:     false,
+        nodeIntegration:      false,
+        session:              browserSession,
+        // Set this before the renderer is created. Electron documents that
+        // backgroundThrottling also controls the Page Visibility API; setting
+        // it after construction can leave the initial document hidden.
+        backgroundThrottling: false,
       },
     });
+
+    if (view.webContents.session !== browserSession) {
+      throw new Error('[BrowserTabView] WebContentsView did not adopt the shared browser session');
+    }
 
     // Disable background throttling so the Chromium renderer stays awake and
     // the compositor keeps producing frames even when the view is parked
@@ -373,6 +380,11 @@ export class BrowserTabViewManager {
 
     for (const [tabId, view] of this.views) {
       if (tabId === this.focusedTabId) {
+        // Explicitly clear any native hidden state before attaching/promoting
+        // the focused view. Parked views remain drawable off-screen for agent
+        // capture, while focused pages report visibilityState=visible.
+        view.setVisible(true);
+        view.webContents.setBackgroundThrottling(false);
         const bounds = this.latestBounds.get(tabId);
         if (bounds) view.setBounds(bounds);
         try {
