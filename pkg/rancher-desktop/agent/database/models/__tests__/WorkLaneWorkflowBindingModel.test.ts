@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { postgresClient } from '../../PostgresClient';
+import { WorkTaskDependencyModel } from '../WorkTaskDependencyModel';
 import {
   LANE_ENTRY_INPUT_ENVELOPE, LANE_OUTCOME_OUTPUT_ENVELOPE,
   WorkLaneWorkflowBindingModel,
@@ -112,5 +113,23 @@ describe('WorkLaneWorkflowBindingModel', () => {
     expect(result).toEqual({ created: false, entry: expect.objectContaining({ generation: 4 }) });
     expect(client.query.mock.calls[0][0]).toContain('pg_advisory_xact_lock');
     expect(client.query).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not let an unresolved dependency block entry into blocked', async() => {
+    const assertClaimable = jest.spyOn(WorkTaskDependencyModel, 'assertClaimable')
+      .mockRejectedValue(new Error('dependency hold'));
+    const client = {
+      query: (jest.fn() as any)
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ project_id: 'project-1', epic_id: null, semantic_role: 'blocked', system_required: true }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: 'entry-2', task_id: 'task-1', generation: 5, lane_key: 'blocked' }] }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(client));
+
+    await expect(WorkLaneWorkflowBindingModel.claimLaneEntry('task-1', 'blocked'))
+      .resolves.toMatchObject({ created: true, entry: { lane_key: 'blocked' } });
+    expect(assertClaimable).not.toHaveBeenCalled();
   });
 });

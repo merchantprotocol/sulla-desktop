@@ -18,6 +18,11 @@ export interface LaneContract {
 export const LANE_ENTRY_INPUT_ENVELOPE = 'project.lane-entry.v1';
 export const LANE_OUTCOME_OUTPUT_ENVELOPE = 'project.lane-outcome.v1';
 
+// Dependency holds prevent work from being claimed into forward execution or
+// review lanes. They must not prevent a task from entering a recovery/settled
+// lane such as blocked, planning, or another non-forward state.
+const DEPENDENCY_GATED_LANE_KEYS = new Set(['todo', 'in_progress', 'in_review']);
+
 export interface LaneWorkflowBindingRecord {
   id:            string;
   profile_id:    string;
@@ -421,7 +426,9 @@ export class WorkLaneWorkflowBindingModel {
     actor = 'sulla', profileId = 'default'):
     Promise<{ created: boolean; entry: LaneEntryAutomationRecord }> {
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ taskId }`]);
-    await WorkTaskDependencyModel.assertClaimable(taskId, client);
+    if (DEPENDENCY_GATED_LANE_KEYS.has(laneKey)) {
+      await WorkTaskDependencyModel.assertClaimable(taskId, client);
+    }
     const prior = await client.query<LaneEntryAutomationRecord>(`
         SELECT * FROM work_lane_entry_automations WHERE task_id = $1 ORDER BY generation DESC LIMIT 1
       `, [taskId]);
