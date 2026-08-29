@@ -30,6 +30,9 @@ export class ModelsUsageWorker extends BaseTool {
     const modelFilter = typeof input.model === 'string' && input.model.trim()
       ? input.model.trim()
       : undefined;
+    const profileId = typeof input.profile_id === 'string' && input.profile_id.trim()
+      ? input.profile_id.trim()
+      : 'default';
     const hours = typeof input.hours === 'number' && Number.isFinite(input.hours) && input.hours > 0
       ? input.hours
       : 24;
@@ -108,7 +111,8 @@ export class ModelsUsageWorker extends BaseTool {
         records:         records.length,
         totals,
         byProviderModel: Object.values(byProviderModel),
-        meterableUsage: await MeterableUsageModel.totals('default', new Date(sinceMs)).catch(() => []),
+        meterableUsage: await MeterableUsageModel.totals(profileId, new Date(sinceMs)).catch(() => []),
+        profileId,
       }, null, 2),
     };
   }
