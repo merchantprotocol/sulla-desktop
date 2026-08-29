@@ -78,6 +78,7 @@ import { up as up_0088, down as down_0088 } from './0088_add_generation_to_artif
 import { up as up_0089, down as down_0089 } from './0089_create_agent_definitions';
 import { up as up_0090, down as down_0090 } from './0090_create_work_task_outcome_journal';
 import { up as up_0091, down as down_0091 } from './0091_create_dispatcher_liveness';
+import { up as up_0092, down as down_0092 } from './0092_create_meterable_usage_ledger';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -157,4 +158,5 @@ export const migrationsRegistry = [
   { name: '0089_create_agent_definitions',                           up: up_0089, down: down_0089 },
   { name: '0090_create_work_task_outcome_journal',                  up: up_0090, down: down_0090 },
   { name: '0091_create_dispatcher_liveness',                         up: up_0091, down: down_0091 },
+  { name: '0092_create_meterable_usage_ledger',                       up: up_0092, down: down_0092 },
 ] as const;

@@ -1,4 +1,5 @@
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
+import { MeterableUsageModel } from '../../database/models/MeterableUsageModel';
 import { BaseTool, ToolResponse } from '../base';
 
 type UsageRecord = Record<string, unknown> & {
@@ -107,6 +108,7 @@ export class ModelsUsageWorker extends BaseTool {
         records:         records.length,
         totals,
         byProviderModel: Object.values(byProviderModel),
+        meterableUsage: await MeterableUsageModel.totals('default', new Date(sinceMs)).catch(() => []),
       }, null, 2),
     };
   }

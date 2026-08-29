@@ -1,6 +1,9 @@
 // ILLMService - Common interface for all LLM services (local and remote)
 // This allows the agent to use either Ollama or remote APIs interchangeably
 
+import { randomUUID } from 'crypto';
+import { MeterableUsageModel } from '../database/models/MeterableUsageModel';
+
 export enum FinishReason {
   Stop = 'stop',
   ToolCalls = 'tool_calls',
@@ -302,6 +305,8 @@ export abstract class BaseLanguageModel {
       tools?:          any;
       conversationId?: string;
       nodeName?:       string;
+      profileId?:      string;
+      usageEventId?:   string;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
@@ -353,6 +358,7 @@ export abstract class BaseLanguageModel {
       // Override time_spent with real wall-clock time
       normalized.metadata.time_spent = Math.round(performance.now() - startTime);
       normalized.metadata.model = effectiveModel;
+      this.recordMeterableTokens(normalized, options.profileId, options.usageEventId);
 
       // Log the response
       if (convId) {
@@ -372,7 +378,7 @@ export abstract class BaseLanguageModel {
         } catch { /* best-effort */ }
       }
 
-      return normalized;
+        return normalized;
     } catch (error) {
       // Log the error
       if (convId) {
@@ -418,6 +424,8 @@ export abstract class BaseLanguageModel {
       tools?:          any;
       conversationId?: string;
       nodeName?:       string;
+      profileId?:      string;
+      usageEventId?:   string;
       /** Calling graph state. Used by ClaudeCodeService to mint an MCP
        *  session so the in-VM CLI can call back into native tools that
        *  mutate state.metadata on this exact graph instance. Ignored by
@@ -464,6 +472,7 @@ export abstract class BaseLanguageModel {
 
         normalized.metadata.time_spent = Math.round(performance.now() - startTime);
         normalized.metadata.model = effectiveModel;
+        this.recordMeterableTokens(normalized, options.profileId, options.usageEventId);
 
         // Log response
         if (convId) {
@@ -484,7 +493,7 @@ export abstract class BaseLanguageModel {
           } catch { /* best-effort */ }
         }
 
-        return normalized;
+      return normalized;
       }
 
       // Provider does not support streaming — fall back to chat()
@@ -509,6 +518,19 @@ export abstract class BaseLanguageModel {
       console.error(`[${ this.getProviderName() }] Stream chat failed:`, error);
       throw error;
     }
+  }
+
+  private recordMeterableTokens(response: NormalizedResponse, profileId?: string, usageEventId?: string): void {
+    const quantity = Number(response.metadata.tokens_used ?? 0);
+    if (!Number.isFinite(quantity) || quantity <= 0) return;
+    void MeterableUsageModel.accrue({
+      profileId,
+      dimension: 'ai_tokens',
+      quantity,
+      idempotencyKey: usageEventId || randomUUID(),
+      source: `model:${ this.getProviderName() }`,
+      metadata: { provider: this.getProviderName(), model: response.metadata.model },
+    }).catch(() => { /* accounting must never break a model turn */ });
   }
 
   // ─────────────────────────────────────────────────────────────
