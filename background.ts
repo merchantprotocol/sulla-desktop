@@ -406,32 +406,6 @@ Electron.app.whenReady().then(() => {
   const fixer = new SullaWebRequestFixer(writeSullaWebRequestEvent);
   fixer.attachToSession(session);
 
-  // Capture cookies set by JavaScript (document.cookie) inside iframes.
-  // Apps like Twenty CRM store auth tokens via JS, not HTTP Set-Cookie headers.
-  // This listener persists those cookies into our DB so they survive across
-  // sessions and can be re-injected by SullaWebRequestFixer.
-  session.cookies.on('changed', (_event, cookie, _cause, removed) => {
-    if (removed) return;
-    try {
-      const hostname = cookie.domain?.replace(/^\./, '') || '';
-      const nameValue = `${ cookie.name }=${ cookie.value }`;
-      const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
-
-      if (isLocalhost) {
-        // Cookies don't carry port info.  For localhost, broadcast to all known
-        // localhost domain keys so services like Twenty (30207), N8N (30119) etc.
-        // all receive the cookie if it belongs to them.
-        for (const key of fixer.getLocalhostDomainKeys()) {
-          fixer.onJsCookieChanged(key, nameValue);
-        }
-      } else {
-        const port = cookie.secure ? '443' : '80';
-
-        fixer.onJsCookieChanged(`${ hostname }:${ port }`, nameValue);
-      }
-    } catch { /* no-op */ }
-  });
-
   // Grant microphone and screen-capture permissions for audio capture.
   // setPermissionCheckHandler is needed because getDisplayMedia() triggers a
   // synchronous permission *check* before it fires the async request handler.
