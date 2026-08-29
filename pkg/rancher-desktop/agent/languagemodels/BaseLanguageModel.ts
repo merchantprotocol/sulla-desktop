@@ -1,7 +1,7 @@
 // ILLMService - Common interface for all LLM services (local and remote)
 // This allows the agent to use either Ollama or remote APIs interchangeably
 
-import { randomUUID } from 'crypto';
+import { createHash } from 'crypto';
 import { MeterableUsageModel } from '../database/models/MeterableUsageModel';
 
 export enum FinishReason {
@@ -108,6 +108,13 @@ export interface NormalizedResponse {
     rawProviderContent?: any;
     streamingEmitted?:   boolean;
   };
+}
+
+export function usageTokenTotal(usage: any): number {
+  if (!usage || typeof usage !== 'object') return 0;
+  const input = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
+  const output = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
+  return (Number.isFinite(input) ? input : 0) + (Number.isFinite(output) ? output : 0);
 }
 
 /**
@@ -358,7 +365,7 @@ export abstract class BaseLanguageModel {
       // Override time_spent with real wall-clock time
       normalized.metadata.time_spent = Math.round(performance.now() - startTime);
       normalized.metadata.model = effectiveModel;
-      this.recordMeterableTokens(normalized, options.profileId, options.usageEventId);
+      await this.recordMeterableTokens(normalized, options.profileId, options.usageEventId, this.usageEventId(messages, options, effectiveModel));
 
       // Log the response
       if (convId) {
@@ -472,7 +479,7 @@ export abstract class BaseLanguageModel {
 
         normalized.metadata.time_spent = Math.round(performance.now() - startTime);
         normalized.metadata.model = effectiveModel;
-        this.recordMeterableTokens(normalized, options.profileId, options.usageEventId);
+        await this.recordMeterableTokens(normalized, options.profileId, options.usageEventId, this.usageEventId(messages, options, effectiveModel));
 
         // Log response
         if (convId) {
@@ -520,17 +527,38 @@ export abstract class BaseLanguageModel {
     }
   }
 
-  private recordMeterableTokens(response: NormalizedResponse, profileId?: string, usageEventId?: string): void {
+  protected async recordMeterableTokens(
+    response: NormalizedResponse,
+    profileId: string | undefined,
+    usageEventId: string | undefined,
+    derivedUsageEventId: string,
+  ): Promise<void> {
     const quantity = Number(response.metadata.tokens_used ?? 0);
     if (!Number.isFinite(quantity) || quantity <= 0) return;
-    void MeterableUsageModel.accrue({
-      profileId,
+    let effectiveProfileId = profileId?.trim();
+    if (!effectiveProfileId) {
+      try {
+        const { getActiveContractorId } = await import('@pkg/main/sullaCloudAuth');
+        effectiveProfileId = (await getActiveContractorId()).trim() || undefined;
+      } catch { /* unauthenticated/local installs use the explicit default */ }
+    }
+    await MeterableUsageModel.accrue({
+      profileId: effectiveProfileId,
       dimension: 'ai_tokens',
       quantity,
-      idempotencyKey: usageEventId || randomUUID(),
+      idempotencyKey: usageEventId || derivedUsageEventId,
       source: `model:${ this.getProviderName() }`,
       metadata: { provider: this.getProviderName(), model: response.metadata.model },
     }).catch(() => { /* accounting must never break a model turn */ });
+  }
+
+  protected usageEventId(messages: ChatMessage[], options: { conversationId?: string }, effectiveModel: string): string {
+    return `llm:${ createHash('sha256').update(JSON.stringify({
+      provider: this.getProviderName(),
+      model: effectiveModel,
+      conversationId: options.conversationId ?? '__default__',
+      messages,
+    })).digest('hex') }`;
   }
 
   // ─────────────────────────────────────────────────────────────
