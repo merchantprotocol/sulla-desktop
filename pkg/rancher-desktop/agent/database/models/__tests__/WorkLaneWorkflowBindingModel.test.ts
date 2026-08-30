@@ -133,4 +133,36 @@ describe('WorkLaneWorkflowBindingModel', () => {
       .resolves.toMatchObject({ created: true, entry: { lane_key: 'blocked' } });
     expect(assertClaimable).not.toHaveBeenCalled();
   });
+
+  it('continues rearming after a full batch of tasks without a resolvable workflow', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ task_id: 'task-a', lane_key: 'manual' }])
+      .mockResolvedValueOnce([{ task_id: 'task-b', lane_key: 'todo' }])
+      .mockResolvedValueOnce([]);
+    let transactionCount = 0;
+    (postgresClient as any).transaction = jest.fn(async(callback: any) => {
+      transactionCount++;
+      const client = {
+        query: transactionCount === 1
+          ? (jest.fn() as any)
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [] })
+          : (jest.fn() as any)
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ id: 'entry-b', task_id: 'task-b', lane_key: 'todo' }] }),
+      };
+      return callback(client);
+    });
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'resolve')
+      .mockResolvedValueOnce({ workflowId: null, binding: null, source: 'none', fallbackReason: 'none', workflowSnapshot: {} } as any)
+      .mockResolvedValueOnce({ workflowId: 'workflow-todo', binding: null, source: 'core', fallbackReason: null, workflowSnapshot: {} } as any);
+
+    await expect(WorkLaneWorkflowBindingModel.rearmCurrentUnautomated(1)).resolves.toEqual([
+      expect.objectContaining({ id: 'entry-b', task_id: 'task-b' }),
+    ]);
+    expect((postgresClient.query as any).mock.calls.map((call: any[]) => call[1])).toEqual([
+      [1, null], [1, 'task-a'], [1, 'task-b'],
+    ]);
+  });
 });

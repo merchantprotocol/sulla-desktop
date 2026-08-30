@@ -127,4 +127,5 @@ describe('LaneEntryAutomationService', () => {
     expect(reset).toHaveBeenCalledWith('entry-5', 'lane-exec-task-5-1');
     expect(dispatch).toHaveBeenCalledWith('entry-5');
   });
+
 });

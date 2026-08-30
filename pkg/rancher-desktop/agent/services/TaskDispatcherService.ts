@@ -130,10 +130,15 @@ export class TaskDispatcherService {
     console.log('[TaskDispatcher] Mechanical dispatcher initialized');
   }
 
-  /** Immediate, idempotent nudge from a committed execution/review lane entry. */
-  async requestDispatch(): Promise<void> {
-    if (!this.initialized) return;
+  /** Immediate, idempotent nudge from a committed execution/review lane entry.
+   * When taskId is supplied, return proof that the dispatcher owns that task;
+   * a successful tick alone is not admission evidence because it may claim a
+   * different task or find the queue backpressured. */
+  async requestDispatch(taskId?: string): Promise<boolean> {
+    if (!this.initialized) return false;
     await this.checkAndDispatch();
+    if (!taskId) return true;
+    return WorkTaskDispatchModel.hasActiveDispatchForTask(taskId);
   }
 
   async forceCheck(): Promise<void> {
