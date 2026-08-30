@@ -38,20 +38,23 @@
       @fork="onFork"
     />
 
-    <ChatContextMenu ref="ctxMenu" @new-chat="onNewChat" />
+    <ChatContextMenu
+      ref="ctxMenu"
+      @new-chat="onNewChat"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import DOMPurify from 'dompurify';
-import { marked } from 'marked';
 
-import type { SullaMessage } from '../../models/Message';
-import TurnActions from './TurnActions.vue';
 import IsolatedHtml from './IsolatedHtml.vue';
+import TurnActions from './TurnActions.vue';
 import ChatContextMenu from '../../ChatContextMenu.vue';
 import { useChatController } from '../../controller/useChatController';
+import { renderMarkdown } from '../../messages/markdown';
+
+import type { SullaMessage } from '../../models/Message';
 
 /**
  * Detect raw HTML-ish content. When the agent emits things like a bare
@@ -72,22 +75,16 @@ const ctxMenu = ref<InstanceType<typeof ChatContextMenu> | null>(null);
 
 const timeLabel = computed(() => {
   const d = new Date(props.msg.createdAt);
-  return `${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${ d.getHours() % 12 || 12 }:${ String(d.getMinutes()).padStart(2, '0') }`;
 });
 
 const isHtmlDocument = computed(() => HTML_DOC_RE.test(props.msg.text || ''));
 
-const rendered = computed(() => {
-  const html = (marked(props.msg.text || '') as string) || '';
-  return DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true },
-    ADD_ATTR: ['target', 'rel'],
-  });
-});
+const rendered = computed(() => renderMarkdown(props.msg.text));
 
 function copy(): void {
-  void navigator.clipboard?.writeText(props.msg.text);
-  // eslint-disable-next-line no-console
+  navigator.clipboard?.writeText(props.msg.text).catch(() => undefined);
+
   console.log('[chat] copied sulla message', props.msg.id);
 }
 
@@ -105,7 +102,7 @@ function onQuote(): void {
 
 function onFork(): void {
   // Forking needs a registry hook that doesn't exist yet. Visual-only for now.
-  // eslint-disable-next-line no-console
+
   console.log('fork from', props.msg.id);
 }
 

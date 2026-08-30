@@ -14,18 +14,21 @@
         v-else
         v-html="rendered"
       />
-      <span class="chat-cursor" aria-hidden="true" />
+      <span
+        class="chat-cursor"
+        aria-hidden="true"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import DOMPurify from 'dompurify';
-import { marked } from 'marked';
+
+import IsolatedHtml from './IsolatedHtml.vue';
+import { renderMarkdown } from '../../messages/markdown';
 
 import type { StreamingMessage } from '../../models/Message';
-import IsolatedHtml from './IsolatedHtml.vue';
 
 const props = defineProps<{ msg: StreamingMessage }>();
 
@@ -34,8 +37,5 @@ const props = defineProps<{ msg: StreamingMessage }>();
 const HTML_DOC_RE = /<style\b|<script\b|<!doctype|<html\b|<body\b|<head\b/i;
 const isHtmlDocument = computed(() => HTML_DOC_RE.test(props.msg.text || ''));
 
-const rendered = computed(() => {
-  const html = (marked(props.msg.text || '') as string) || '';
-  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
-});
+const rendered = computed(() => renderMarkdown(props.msg.text));
 </script>
