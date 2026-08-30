@@ -45,6 +45,7 @@ describe('WorkLaneWorkflowBindingModel', () => {
     expect(resolved.fallbackReason).toContain('unavailable');
     const sql = (postgresClient.query as any).mock.calls[0][0];
     expect(sql).toContain("WHEN 'epic' THEN 0 WHEN 'project' THEN 1 WHEN 'global' THEN 2 ELSE 3");
+    expect(sql).toContain("scope = 'core' AND (lane_key = $4 OR (lane_key IS NULL AND semantic_role = $5))");
   });
 
   it('allows binding a workflow that has no lane contract at all', async() => {

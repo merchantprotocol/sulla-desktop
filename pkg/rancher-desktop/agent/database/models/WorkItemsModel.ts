@@ -873,6 +873,16 @@ export class WorkItemsModel {
     );
     const created = rows[0];
     if (created) {
+      // Creation into an active stage is a real lane entry too. Previously
+      // only later status updates produced automation records, so a freshly
+      // fed todo task waited for the minute poll and a freshly fed planning
+      // task had no workflow custody at all.
+      try {
+        const { LaneEntryAutomationService } = await import('../../services/LaneEntryAutomationService');
+        await LaneEntryAutomationService.handleTransition(created.id, created.status, actor);
+      } catch (error) {
+        console.warn(`[WorkItems] Initial lane automation for task ${ created.id } remains recoverable:`, error);
+      }
       await notifyTaskStatusCommitted(created, '', input.actor);
     }
     return created;

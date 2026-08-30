@@ -61,6 +61,7 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
   laneContract: {
     input:  'project.lane-entry.v1',
     output: 'project.lane-outcome.v1',
+    owner:  'planning-council',
   },
   enabled:   true,
   createdAt: '2026-08-23T00:00:00.000Z',

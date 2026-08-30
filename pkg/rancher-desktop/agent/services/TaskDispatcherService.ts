@@ -130,6 +130,12 @@ export class TaskDispatcherService {
     console.log('[TaskDispatcher] Mechanical dispatcher initialized');
   }
 
+  /** Immediate, idempotent nudge from a committed execution/review lane entry. */
+  async requestDispatch(): Promise<void> {
+    if (!this.initialized) return;
+    await this.checkAndDispatch();
+  }
+
   async forceCheck(): Promise<void> {
     await this.checkAndDispatch();
   }
@@ -1058,6 +1064,8 @@ Description:
 ${ task.description || '(no description)' }
 
 Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
+
+The originating Projects task is controller-owned while this dispatch is active. Do not create, update, move, archive, assign, or comment on task ${ task.id }, and do not call any Projects mutation for it. Return evidence only. The dispatcher controller will atomically move successful work to independent review; a worker must never mark its own task done.
 
 Completed work MUST end with exactly one machine block containing at least a summary:
 <WORK_RESULT>{"summary":"concise receipt"}</WORK_RESULT>
