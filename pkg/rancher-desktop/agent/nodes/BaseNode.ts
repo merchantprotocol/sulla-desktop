@@ -1036,7 +1036,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const lastNonSystemMessage = messages.filter(m => m.role !== 'system').pop();
     if (lastNonSystemMessage?.role === 'assistant') {
       console.log(`[${ this.name }] Last message is from assistant — skipping LLM call and marking as done`);
-      // Return a done response that signals the graph should complete
+      // Explicit CONTINUE responses re-enter the same graph node. If the
+      // previous response was already persisted, there is nothing left for
+      // the provider to do. Mark the cycle complete and identify this as a
+      // reused response so AgentNode cannot dispatch the same text again.
+      state.metadata.cycleComplete = true;
       return {
         content:  lastNonSystemMessage.content as string || '',
         metadata: {
@@ -1044,6 +1048,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           time_spent:         0,
           finish_reason:      FinishReason.Stop,
           rawProviderContent: lastNonSystemMessage.content,
+          reusedAssistantMessage: true,
         },
       };
     }

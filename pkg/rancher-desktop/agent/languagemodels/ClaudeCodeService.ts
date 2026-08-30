@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
+import { buildClaudeLaunchCommand } from './claudeLaunchCommand';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
@@ -278,11 +279,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (p.mcpConfigPath) claudeArgs.push('--mcp-config', shq(p.mcpConfigPath));
 
     // Claude Code emits newline-delimited JSON, but its stdout is connected
-    // to the limactl/SSH pipe rather than a terminal. Force the child stream
-    // to flush each complete line so stream-json events reach Sulla while the
-    // turn is running instead of arriving in a burst when the process exits
-    // (which made Stop appear to "unfreeze" the chat).
-    const innerCmd = `${ envAssignments.join(' ') } exec stdbuf -oL -eL ${ claudeArgs.join(' ') }`;
+    // to the limactl/SSH pipe rather than a terminal. Prefer stdbuf when the
+    // VM provides it, but never make Claude startup depend on that optional
+    // binary: existing installations may not have coreutils installed.
+    const innerCmd = buildClaudeLaunchCommand(envAssignments, claudeArgs);
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 

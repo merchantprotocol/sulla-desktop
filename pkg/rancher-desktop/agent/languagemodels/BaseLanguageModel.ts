@@ -104,6 +104,8 @@ export interface NormalizedResponse {
     parsed_content?:     any;
     rawProviderContent?: any;
     streamingEmitted?:   boolean;
+    /** The graph already persisted and displayed this assistant message. */
+    reusedAssistantMessage?: boolean;
   };
 }
 
