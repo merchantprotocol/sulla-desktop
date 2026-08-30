@@ -1222,6 +1222,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         tools:       llmTools,
         conversationId,
         nodeName,
+        profileId: (state.metadata as any).profileId,
       }, nodeRunContext);
 
       // Detect empty response (no content AND no tool calls) and retry once with reduced context
@@ -1240,6 +1241,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           tools:       llmTools,
           conversationId,
           nodeName,
+          profileId: (state.metadata as any).profileId,
         });
       }
 
@@ -1293,6 +1295,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             tools:       llmTools,
             conversationId,
             nodeName,
+            profileId: (state.metadata as any).profileId,
           });
           if (retryReply && (retryReply.content?.trim() || retryReply.metadata.tool_calls?.length)) {
             (retryReply.metadata as any).retry_used = true;

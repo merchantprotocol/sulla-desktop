@@ -1,6 +1,9 @@
 // ILLMService - Common interface for all LLM services (local and remote)
 // This allows the agent to use either Ollama or remote APIs interchangeably
 
+import { createHash } from 'crypto';
+import { MeterableUsageModel } from '../database/models/MeterableUsageModel';
+
 export enum FinishReason {
   Stop = 'stop',
   ToolCalls = 'tool_calls',
@@ -119,6 +122,13 @@ export interface NormalizedResponse {
     rawProviderContent?: any;
     streamingEmitted?:   boolean;
   };
+}
+
+export function usageTokenTotal(usage: any): number {
+  if (!usage || typeof usage !== 'object') return 0;
+  const input = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
+  const output = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
+  return (Number.isFinite(input) ? input : 0) + (Number.isFinite(output) ? output : 0);
 }
 
 /**
@@ -316,6 +326,8 @@ export abstract class BaseLanguageModel {
       tools?:          any;
       conversationId?: string;
       nodeName?:       string;
+      profileId?:      string;
+      usageEventId?:   string;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
@@ -369,6 +381,7 @@ export abstract class BaseLanguageModel {
       // Override time_spent with real wall-clock time
       normalized.metadata.time_spent = Math.round(performance.now() - startTime);
       normalized.metadata.model = effectiveModel;
+      await this.recordMeterableTokens(normalized, options.profileId, options.usageEventId, this.usageEventId(messages, options, effectiveModel));
 
       // Log the response
       if (convId) {
@@ -388,7 +401,7 @@ export abstract class BaseLanguageModel {
         } catch { /* best-effort */ }
       }
 
-      return normalized;
+        return normalized;
     } catch (error) {
       // Log the error
       if (convId) {
@@ -434,6 +447,8 @@ export abstract class BaseLanguageModel {
       tools?:          any;
       conversationId?: string;
       nodeName?:       string;
+      profileId?:      string;
+      usageEventId?:   string;
       /** Calling graph state. Used by ClaudeCodeService to mint an MCP
        *  session so the in-VM CLI can call back into native tools that
        *  mutate state.metadata on this exact graph instance. Ignored by
@@ -486,6 +501,7 @@ export abstract class BaseLanguageModel {
 
         normalized.metadata.time_spent = Math.round(performance.now() - startTime);
         normalized.metadata.model = effectiveModel;
+        await this.recordMeterableTokens(normalized, options.profileId, options.usageEventId, this.usageEventId(messages, options, effectiveModel));
 
         // Log response
         if (convId) {
@@ -508,7 +524,7 @@ export abstract class BaseLanguageModel {
           } catch { /* best-effort */ }
         }
 
-        return normalized;
+      return normalized;
       }
 
       // Provider does not support streaming — fall back to chat()
@@ -533,6 +549,40 @@ export abstract class BaseLanguageModel {
       console.error(`[${ this.getProviderName() }] Stream chat failed:`, error);
       throw error;
     }
+  }
+
+  protected async recordMeterableTokens(
+    response: NormalizedResponse,
+    profileId: string | undefined,
+    usageEventId: string | undefined,
+    derivedUsageEventId: string,
+  ): Promise<void> {
+    const quantity = Number(response.metadata.tokens_used ?? 0);
+    if (!Number.isFinite(quantity) || quantity <= 0) return;
+    let effectiveProfileId = profileId?.trim();
+    if (!effectiveProfileId) {
+      try {
+        const { getActiveContractorId } = await import('@pkg/main/sullaCloudAuth');
+        effectiveProfileId = (await getActiveContractorId()).trim() || undefined;
+      } catch { /* unauthenticated/local installs use the explicit default */ }
+    }
+    await MeterableUsageModel.accrue({
+      profileId: effectiveProfileId,
+      dimension: 'ai_tokens',
+      quantity,
+      idempotencyKey: usageEventId || derivedUsageEventId,
+      source: `model:${ this.getProviderName() }`,
+      metadata: { provider: this.getProviderName(), model: response.metadata.model },
+    }).catch(() => { /* accounting must never break a model turn */ });
+  }
+
+  protected usageEventId(messages: ChatMessage[], options: { conversationId?: string }, effectiveModel: string): string {
+    return `llm:${ createHash('sha256').update(JSON.stringify({
+      provider: this.getProviderName(),
+      model: effectiveModel,
+      conversationId: options.conversationId ?? '__default__',
+      messages,
+    })).digest('hex') }`;
   }
 
   // ─────────────────────────────────────────────────────────────

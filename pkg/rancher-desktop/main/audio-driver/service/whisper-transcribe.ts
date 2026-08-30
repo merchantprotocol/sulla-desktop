@@ -24,6 +24,7 @@ import path from 'path';
 
 import { log } from '../model/logger';
 import * as whisperModel from '../model/whisper';
+import { MeterableUsageModel } from '../../../agent/database/models/MeterableUsageModel';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -69,6 +70,9 @@ let mode: TranscribeMode | null = null;
 let onTranscript: TranscriptCallback | null = null;
 let language = 'en';
 let modelName = 'base.en';
+let profileId = 'default';
+let sessionId = '';
+let sessionStartedAt = 0;
 
 // STT engine for this session. Defaults to local whisper; the transcribe-start
 // IPC handler passes `grok` + the api key when the user selects Grok STT.
@@ -108,6 +112,8 @@ export function start(opts: {
   model?:       string;
   provider?:    SttProvider;
   grokApiKey?:  string | null;
+  profileId?:    string;
+  sessionId?:    string;
 }): boolean {
   const useGrok = opts.provider === 'grok';
 
@@ -142,6 +148,9 @@ export function start(opts: {
 
   provider = opts.provider || 'whisper';
   grokApiKey = opts.grokApiKey || null;
+  profileId = opts.profileId?.trim() || 'default';
+  sessionId = opts.sessionId?.trim() || `transcription-${ Date.now() }`;
+  sessionStartedAt = Date.now();
 
   // Use requested model if available, otherwise first available model (whisper only)
   modelName = models.includes(requestedModel) ? requestedModel : (models[0] || modelName);
@@ -171,6 +180,19 @@ export function start(opts: {
 }
 
 export function stop(): void {
+  const elapsedMinutes = sessionStartedAt > 0 ? (Date.now() - sessionStartedAt) / 60000 : 0;
+  if (elapsedMinutes > 0 && sessionId) {
+    void MeterableUsageModel.accrue({
+      profileId,
+      dimension: 'transcription_minutes',
+      quantity: Math.ceil(elapsedMinutes),
+      idempotencyKey: sessionId,
+      source: `transcription:${ provider }`,
+      metadata: { mode, provider, sessionId },
+    }).catch(() => { /* accounting must never break stopping transcription */ });
+  }
+  sessionStartedAt = 0;
+  sessionId = '';
   if (flushTimer) {
     clearInterval(flushTimer);
     flushTimer = null;
