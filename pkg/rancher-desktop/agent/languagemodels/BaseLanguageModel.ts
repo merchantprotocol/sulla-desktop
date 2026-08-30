@@ -510,6 +510,7 @@ export abstract class BaseLanguageModel {
           try {
             const { getConversationLogger } = require('../services/ConversationLogger');
             getConversationLogger().logLLMCall(convId, 'response', {
+              ...metrics,
               model:            effectiveModel,
               content:          normalized.content,
               finishReason:     normalized.metadata.finish_reason,
@@ -521,7 +522,6 @@ export abstract class BaseLanguageModel {
               toolCalls:        normalized.metadata.tool_calls,
               streaming:        true,
               ttftMs,
-              ...metrics,
             });
           } catch { /* best-effort */ }
         }
