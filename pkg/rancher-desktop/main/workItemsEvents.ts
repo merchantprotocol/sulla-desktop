@@ -435,18 +435,15 @@ export function initWorkItemsEvents(): void {
   // The domain-event drain only recovers transitions that never dispatched.
   // A lane workflow that dies MID-RUN leaves its lane entry stuck in
   // 'running' with the outbox already settled — drainRecoverable is the only
-  // path that resumes those. includeInterrupted=true force-fails executions
-  // still marked running/suspended, which is only safe at startup when this
-  // fresh process cannot have live runs; the periodic sweep passes false so
-  // it never kills an actively-running workflow, while still recovering
-  // pending entries, vanished executions, and settled-but-unrecorded runs.
-  const sweepLaneEntries = (includeInterrupted: boolean) => {
+  // path that resumes those. Recovery is lease-fenced in the model, so both
+  // startup and periodic sweeps leave live executions alone.
+  const sweepLaneEntries = () => {
     import('@pkg/agent/services/LaneEntryAutomationService')
-      .then(({ LaneEntryAutomationService }) => LaneEntryAutomationService.drainRecoverable(50, includeInterrupted))
+      .then(({ LaneEntryAutomationService }) => LaneEntryAutomationService.drainRecoverable(50))
       .catch(error => console.warn('[WorkItems] Lane-entry automation recovery failed:', error));
   };
-  sweepLaneEntries(true);
-  setInterval(() => sweepLaneEntries(false), 5 * 60_000);
+  sweepLaneEntries();
+  setInterval(sweepLaneEntries, 5 * 60_000);
 }
 
 interface ReorderUpdate {

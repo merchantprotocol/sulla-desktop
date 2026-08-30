@@ -1,6 +1,9 @@
 // ILLMService - Common interface for all LLM services (local and remote)
 // This allows the agent to use either Ollama or remote APIs interchangeably
 
+import { createHash } from 'crypto';
+import { MeterableUsageModel } from '../database/models/MeterableUsageModel';
+
 export enum FinishReason {
   Stop = 'stop',
   ToolCalls = 'tool_calls',
@@ -30,6 +33,20 @@ export function getTextContent(content: string | ContentBlock[]): string {
     .filter((b): b is { type: 'text'; text: string } => b?.type === 'text' && typeof (b as any).text === 'string')
     .map(b => b.text)
     .join('\n');
+}
+
+function promptMetrics(messages: ChatMessage[]): { promptChars: number; promptTokens: number; toolResultChars: number; toolResultShare: number } {
+  const promptChars = messages.reduce((sum, message) => sum + JSON.stringify(message.content).length, 0);
+  const toolResultChars = messages.reduce((sum, message) => {
+    const content = JSON.stringify(message.content);
+    return sum + ((message.role === 'tool' || content.includes('tool_result')) ? content.length : 0);
+  }, 0);
+  return {
+    promptChars,
+    promptTokens: Math.ceil(promptChars / 4),
+    toolResultChars,
+    toolResultShare: promptChars ? Number((toolResultChars / promptChars).toFixed(4)) : 0,
+  };
 }
 
 export interface ChatMessage {
@@ -107,6 +124,13 @@ export interface NormalizedResponse {
     /** The graph already persisted and displayed this assistant message. */
     reusedAssistantMessage?: boolean;
   };
+}
+
+export function usageTokenTotal(usage: any): number {
+  if (!usage || typeof usage !== 'object') return 0;
+  const input = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
+  const output = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
+  return (Number.isFinite(input) ? input : 0) + (Number.isFinite(output) ? output : 0);
 }
 
 /**
@@ -304,10 +328,13 @@ export abstract class BaseLanguageModel {
       tools?:          any;
       conversationId?: string;
       nodeName?:       string;
+      profileId?:      string;
+      usageEventId?:   string;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
     const convId = options.conversationId;
+    const metrics = promptMetrics(messages);
 
     try {
       // Use provided model or fallback to default
@@ -326,6 +353,7 @@ export abstract class BaseLanguageModel {
             format:      options.format,
             tools:       options.tools,
             messages,
+            ...metrics,
           });
         } catch { /* best-effort */ }
       }
@@ -355,6 +383,7 @@ export abstract class BaseLanguageModel {
       // Override time_spent with real wall-clock time
       normalized.metadata.time_spent = Math.round(performance.now() - startTime);
       normalized.metadata.model = effectiveModel;
+      await this.recordMeterableTokens(normalized, options.profileId, options.usageEventId, this.usageEventId(messages, options, effectiveModel));
 
       // Log the response
       if (convId) {
@@ -374,7 +403,7 @@ export abstract class BaseLanguageModel {
         } catch { /* best-effort */ }
       }
 
-      return normalized;
+        return normalized;
     } catch (error) {
       // Log the error
       if (convId) {
@@ -420,6 +449,8 @@ export abstract class BaseLanguageModel {
       tools?:          any;
       conversationId?: string;
       nodeName?:       string;
+      profileId?:      string;
+      usageEventId?:   string;
       /** Calling graph state. Used by ClaudeCodeService to mint an MCP
        *  session so the in-VM CLI can call back into native tools that
        *  mutate state.metadata on this exact graph instance. Ignored by
@@ -430,6 +461,8 @@ export abstract class BaseLanguageModel {
     const startTime = performance.now();
     const effectiveModel = options.model ?? this.model;
     const convId = options.conversationId;
+    const metrics = promptMetrics(messages);
+    let ttftMs: number | undefined;
 
     // Log outgoing request (same as chat())
     if (convId) {
@@ -444,6 +477,7 @@ export abstract class BaseLanguageModel {
           format:      options.format,
           tools:       options.tools,
           messages,
+          ...metrics,
           streaming:   true,
         });
       } catch { /* best-effort */ }
@@ -460,12 +494,16 @@ export abstract class BaseLanguageModel {
         // Provider supports streaming — parse the SSE stream
         const normalized = await this.parseStreamResponse(
           streamResponse,
-          callbacks,
+          { ...callbacks, onToken: (token: string) => {
+            ttftMs ??= Math.round(performance.now() - startTime);
+            callbacks.onToken(token);
+          } },
           options.signal,
         );
 
         normalized.metadata.time_spent = Math.round(performance.now() - startTime);
         normalized.metadata.model = effectiveModel;
+        await this.recordMeterableTokens(normalized, options.profileId, options.usageEventId, this.usageEventId(messages, options, effectiveModel));
 
         // Log response
         if (convId) {
@@ -482,11 +520,13 @@ export abstract class BaseLanguageModel {
               reasoning:        normalized.metadata.reasoning,
               toolCalls:        normalized.metadata.tool_calls,
               streaming:        true,
+              ttftMs,
+              ...metrics,
             });
           } catch { /* best-effort */ }
         }
 
-        return normalized;
+      return normalized;
       }
 
       // Provider does not support streaming — fall back to chat()
@@ -511,6 +551,40 @@ export abstract class BaseLanguageModel {
       console.error(`[${ this.getProviderName() }] Stream chat failed:`, error);
       throw error;
     }
+  }
+
+  protected async recordMeterableTokens(
+    response: NormalizedResponse,
+    profileId: string | undefined,
+    usageEventId: string | undefined,
+    derivedUsageEventId: string,
+  ): Promise<void> {
+    const quantity = Number(response.metadata.tokens_used ?? 0);
+    if (!Number.isFinite(quantity) || quantity <= 0) return;
+    let effectiveProfileId = profileId?.trim();
+    if (!effectiveProfileId) {
+      try {
+        const { getActiveContractorId } = await import('@pkg/main/sullaCloudAuth');
+        effectiveProfileId = (await getActiveContractorId()).trim() || undefined;
+      } catch { /* unauthenticated/local installs use the explicit default */ }
+    }
+    await MeterableUsageModel.accrue({
+      profileId: effectiveProfileId,
+      dimension: 'ai_tokens',
+      quantity,
+      idempotencyKey: usageEventId || derivedUsageEventId,
+      source: `model:${ this.getProviderName() }`,
+      metadata: { provider: this.getProviderName(), model: response.metadata.model },
+    }).catch(() => { /* accounting must never break a model turn */ });
+  }
+
+  protected usageEventId(messages: ChatMessage[], options: { conversationId?: string }, effectiveModel: string): string {
+    return `llm:${ createHash('sha256').update(JSON.stringify({
+      provider: this.getProviderName(),
+      model: effectiveModel,
+      conversationId: options.conversationId ?? '__default__',
+      messages,
+    })).digest('hex') }`;
   }
 
   // ─────────────────────────────────────────────────────────────

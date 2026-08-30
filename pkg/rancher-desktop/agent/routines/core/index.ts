@@ -12,12 +12,14 @@
  */
 
 import { DREAM_ABOUT_HUMAN_DEFINITION } from './dreamAboutHuman';
+import { EXECUTE_PROJECT_TODO_DEFINITION } from './executeProjectTodo';
 import { REVIEW_PROJECT_ARTIFACT_DEFINITION } from './reviewProjectArtifact';
 import { PLAN_PROJECT_TASK_DEFINITION } from './planProjectTask';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from './defaultCoreAgent';
 
 export const CORE_ROUTINES: readonly Record<string, any>[] = [
   DREAM_ABOUT_HUMAN_DEFINITION,
+  EXECUTE_PROJECT_TODO_DEFINITION,
   REVIEW_PROJECT_ARTIFACT_DEFINITION,
   PLAN_PROJECT_TASK_DEFINITION,
 ];

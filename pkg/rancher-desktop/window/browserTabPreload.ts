@@ -25,9 +25,11 @@
 import { ipcRenderer } from 'electron';
 
 import { buildGuestBridgeScript } from '../agent/scripts/injected/GuestBridgePreload';
+import { shouldFallbackToRootScroll } from './browserScrollFallback';
 
 const IPC_CHANNEL = 'browser-tab-view:bridge-event';
 const LOG_PREFIX = '[SULLA_TAB_PRELOAD]';
+const ROOT_SCROLL_FALLBACK_DELAY_MS = 80;
 
 /* ------------------------------------------------------------------ */
 /*  Native scroll-input health                                        */
@@ -74,7 +76,27 @@ window.addEventListener('wheel', (event) => {
   const before = scrollTarget.scrollTop;
 
   requestAnimationFrame(() => setTimeout(() => {
-    if (event.defaultPrevented) return;
+    const root = document.scrollingElement;
+    const rootMaxScrollTop = root ? root.scrollHeight - root.clientHeight : 0;
+    const nativeRootMoved = root && Math.abs(root.scrollTop - before) > 0.5;
+
+    // WebContentsView can deliver trusted wheel events while Chromium's root
+    // scroll node fails to consume them. Replay only that narrow case. Inner
+    // overflow containers are left entirely to Chromium because they already
+    // scroll correctly and should not cause the document to move as well.
+    if (root && scrollTarget === root && !nativeRootMoved && shouldFallbackToRootScroll({
+      hasInnerScrollableTarget: false,
+      rootScrollTop:           root.scrollTop,
+      rootMaxScrollTop,
+      deltaY:                  event.deltaY,
+      defaultPrevented:        event.defaultPrevented,
+    })) {
+      try {
+        window.scrollBy({ top: event.deltaY, left: event.deltaX, behavior: 'instant' });
+      } catch {
+        window.scrollBy(event.deltaX, event.deltaY);
+      }
+    }
 
     try {
       ipcRenderer.send(IPC_CHANNEL, {
@@ -84,7 +106,7 @@ window.addEventListener('wheel', (event) => {
     } catch (err) {
       console.error(`${ LOG_PREFIX } scroll heartbeat failed`, err);
     }
-  }, 80));
+  }, ROOT_SCROLL_FALLBACK_DELAY_MS));
 }, { capture: true, passive: true });
 
 /* ------------------------------------------------------------------ */

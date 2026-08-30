@@ -3,7 +3,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
+import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { emitCodexToolEvent } from './codexToolEvents';
 import { codexSandboxArgs } from './codexSandboxPolicy';
@@ -333,8 +333,8 @@ export class CodexService extends BaseLanguageModel {
 
   /** Non-streaming chat — buffers the whole response and returns it. */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    const { text } = await this.runCodex(messages, {}, options);
-    return { text };
+    const result = await this.runCodex(messages, {}, options);
+    return result;
   }
 
   protected normalizeResponse(raw: any): NormalizedResponse {
@@ -342,10 +342,10 @@ export class CodexService extends BaseLanguageModel {
     return {
       content:  text,
       metadata: {
-        tokens_used:       0,
+        tokens_used:       usageTokenTotal(raw?.usage),
         time_spent:        0,
-        prompt_tokens:     0,
-        completion_tokens: 0,
+        prompt_tokens:     Number(raw?.usage?.input_tokens ?? 0),
+        completion_tokens: Number(raw?.usage?.output_tokens ?? 0),
         model:             this.getModel(),
         finish_reason:     FinishReason.Stop,
       },
@@ -359,25 +359,29 @@ export class CodexService extends BaseLanguageModel {
     options: {
       signal?:         AbortSignal;
       conversationId?: string;
+      profileId?:      string;
+      usageEventId?:   string;
       state?:          BaseThreadState | any;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
 
     try {
-      const { text } = await this.runCodex(messages, callbacks, options);
-
-      return {
-        content:  text,
+      const result = await this.runCodex(messages, callbacks, options);
+      const response: NormalizedResponse = {
+        content:  result.text,
         metadata: {
-          tokens_used:       0,
+          tokens_used:       usageTokenTotal(result.usage),
           time_spent:        Math.round(performance.now() - startTime),
-          prompt_tokens:     0,
-          completion_tokens: 0,
+          prompt_tokens:     Number(result.usage?.input_tokens ?? 0),
+          completion_tokens: Number(result.usage?.output_tokens ?? 0),
           model:             this.getModel(),
           finish_reason:     FinishReason.Stop,
         },
       };
+      await this.recordMeterableTokens(response, options.profileId, options.usageEventId, this.usageEventId(messages, options, this.getModel()));
+
+      return response;
     } catch (err) {
       console.warn('[CodexService] chatStream failed:', err);
       throw err;
@@ -611,7 +615,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     callbacks: Partial<StreamCallbacks>,
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
-  ): Promise<{ text: string }> {
+  ): Promise<{ text: string; usage?: any }> {
     // Auth lives in ~/.codex/auth.json (written by CodexOAuth, self-refreshed
     // by the CLI). Rebuild it from the stored OAuth tokens if missing.
     const hasAuth = await ensureCodexAuthFile();
@@ -1053,7 +1057,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         }
 
         log.log(`[CodexService] runCodex ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
-        resolve({ text: textCollected });
+        resolve({ text: textCollected, usage: lastUsage });
       });
     });
   }

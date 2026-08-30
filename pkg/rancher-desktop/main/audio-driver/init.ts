@@ -28,6 +28,7 @@
  */
 
 import { ipcMain, BrowserWindow, systemPreferences } from 'electron';
+import crypto from 'crypto';
 
 import { MicrophoneDriverController } from './controller/MicrophoneDriverController';
 import { SpeakerDriverController } from './controller/SpeakerDriverController';
@@ -503,6 +504,8 @@ function registerIpcHandlers(): void {
     mode:      'conversation' | 'secretary';
     language?: string;
     model?:    string;
+    profileId?: string;
+    sessionId?: string;
   }) => {
     log.info('IPC', 'transcribe-start', opts);
 
@@ -534,6 +537,13 @@ function registerIpcHandlers(): void {
 
     // Lazy-import to avoid circular dependency at module load time
     const { onWhisperTranscript } = await import('@pkg/main/teleprompterTracking');
+    let profileId = opts.profileId?.trim() || '';
+    if (!profileId) {
+      try {
+        const { getActiveContractorId } = await import('@pkg/main/sullaCloudAuth');
+        profileId = (await getActiveContractorId()).trim();
+      } catch { /* unauthenticated/local installs use the model default */ }
+    }
 
     const ok = whisperTranscribe.start({
       mode:         opts.mode,
@@ -541,6 +551,8 @@ function registerIpcHandlers(): void {
       model:        opts.model,
       provider:     sttProvider,
       grokApiKey,
+      profileId,
+      sessionId:    opts.sessionId?.trim() || `transcription:${ crypto.randomUUID() }`,
       onTranscript: (event) => {
         broadcast('gateway-transcript', event);
         // Feed the main-process teleprompter tracker (no-ops if not tracking)

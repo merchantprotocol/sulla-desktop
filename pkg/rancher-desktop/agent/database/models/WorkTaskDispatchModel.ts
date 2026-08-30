@@ -571,6 +571,17 @@ export class WorkTaskDispatchModel {
     return Number(row?.count || 0);
   }
 
+  /** True when the dispatcher has a durable claim for this exact task. */
+  static async hasActiveDispatchForTask(taskId: string): Promise<boolean> {
+    const row = await postgresClient.queryOne<{ found: boolean }>(`
+      SELECT EXISTS (
+        SELECT 1 FROM work_task_dispatches
+         WHERE task_id = $1 AND status = 'running'
+      ) AS found
+    `, [taskId]);
+    return row?.found === true;
+  }
+
   /**
    * Count autonomous work already at the review stage that can still drain —
    * claimable by the review pool or actively held by a live verification
@@ -1074,10 +1085,28 @@ export class WorkTaskDispatchModel {
       // lease, and the review-backlog gate holding the whole conveyor. In that
       // case settle the dispatch bookkeeping and preserve the task's current
       // state: the journal's task move already happened or was superseded.
-      const custody = await client.query<{ status: string; assignee: string | null }>(
-        'SELECT status, assignee FROM work_tasks WHERE id = $1 FOR UPDATE', [row.task_id],
+      const custody = await client.query<{ status: string; assignee: string | null; last_moved_by: string | null }>(
+        'SELECT status, assignee, last_moved_by FROM work_tasks WHERE id = $1 FOR UPDATE', [row.task_id],
       );
-      const dispatcherOwned = custody.rows[0]?.status === 'in_progress' && custody.rows[0]?.assignee === 'dispatcher';
+      let dispatcherOwned = custody.rows[0]?.status === 'in_progress' && custody.rows[0]?.assignee === 'dispatcher';
+      const workerAdvancedTerminal = custody.rows[0]
+        && ['done', 'cancelled', 'parked'].includes(custody.rows[0].status)
+        && custody.rows[0].last_moved_by !== 'human';
+      if (!dispatcherOwned && workerAdvancedTerminal) {
+        // An execution worker is proposal-only. If it bypassed the controller
+        // and marked its own task terminal, restore dispatcher custody inside
+        // this same journal transaction so the authoritative outcome still
+        // enters independent review. Explicit Human movement always wins.
+        const restored = await client.query(`
+          UPDATE work_tasks
+             SET status = 'in_progress', assignee = 'dispatcher', completed_at = NULL,
+                 updated_at = now(), last_moved_at = now(), last_activity_at = now(),
+                 last_moved_by = 'dispatcher'
+           WHERE id = $1 AND status = $2 AND last_moved_by IS DISTINCT FROM 'human'
+           RETURNING id
+        `, [row.task_id, custody.rows[0].status]);
+        dispatcherOwned = Boolean(restored.rows[0]);
+      }
       const task = dispatcherOwned
         ? await this.finalizeWithClient(client, row.dispatch_id, row.task_id, {
           dispatchStatus: row.dispatch_status,
@@ -1107,7 +1136,7 @@ export class WorkTaskDispatchModel {
   private static async settleDispatchPreservingTask(
     client: PoolClient,
     journal: WorkTaskOutcomeJournalRow,
-    currentTask: { status: string; assignee: string | null } | null,
+    currentTask: { status: string; assignee: string | null; last_moved_by?: string | null } | null,
   ): Promise<WorkTaskRecord | null> {
     await client.query(`
       UPDATE work_task_dispatches

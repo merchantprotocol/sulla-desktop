@@ -3,7 +3,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
+import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
 import { buildClaudeLaunchCommand } from './claudeLaunchCommand';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
@@ -433,8 +433,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   /** Non-streaming chat — buffers the whole response and returns it. */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    const { text } = await this.runClaude(messages, {}, options);
-    return { text };
+    const result = await this.runClaude(messages, {}, options);
+    return result;
   }
 
   protected normalizeResponse(raw: any): NormalizedResponse {
@@ -442,10 +442,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return {
       content:  text,
       metadata: {
-        tokens_used:       0,
+        tokens_used:       usageTokenTotal(raw?.usage),
         time_spent:        0,
-        prompt_tokens:     0,
-        completion_tokens: 0,
+        prompt_tokens:     Number(raw?.usage?.input_tokens ?? 0),
+        completion_tokens: Number(raw?.usage?.output_tokens ?? 0),
         model:             this.getModel(),
         finish_reason:     FinishReason.Stop,
       },
@@ -459,25 +459,29 @@ export class ClaudeCodeService extends BaseLanguageModel {
     options: {
       signal?:         AbortSignal;
       conversationId?: string;
+      profileId?:      string;
+      usageEventId?:   string;
       state?:          BaseThreadState | any;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
 
     try {
-      const { text } = await this.runClaude(messages, callbacks, options);
-
-      return {
-        content:  text,
+      const result = await this.runClaude(messages, callbacks, options);
+      const response: NormalizedResponse = {
+        content:  result.text,
         metadata: {
-          tokens_used:       0,
+          tokens_used:       usageTokenTotal(result.usage),
           time_spent:        Math.round(performance.now() - startTime),
-          prompt_tokens:     0,
-          completion_tokens: 0,
+          prompt_tokens:     Number(result.usage?.input_tokens ?? 0),
+          completion_tokens: Number(result.usage?.output_tokens ?? 0),
           model:             this.getModel(),
           finish_reason:     FinishReason.Stop,
         },
       };
+      await this.recordMeterableTokens(response, options.profileId, options.usageEventId, this.usageEventId(messages, options, this.getModel()));
+
+      return response;
     } catch (err) {
       console.warn('[ClaudeCodeService] chatStream failed:', err);
       throw err;
@@ -773,7 +777,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     callbacks: Partial<StreamCallbacks>,
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
-  ): Promise<{ text: string }> {
+  ): Promise<{ text: string; usage?: any }> {
     // Credentials: integration vault first, settings fallback (shared with prewarm()).
     const { oauthToken, apiKey } = await this.resolveClaudeCreds();
 
@@ -985,6 +989,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       let stderrBuffer = '';
       let textCollected = '';
       let capturedSessionId: string | undefined = existingSession;
+      let lastUsage: any;
       let errored = false;
       let errorMessage = '';
       let sessionInUse = false;
@@ -1362,6 +1367,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
         // Final result event — capture full text and record usage/cost.
         if (parsed.type === 'result') {
+          lastUsage = parsed.usage;
           // Perf summary: split the run into tool-execution time vs the rest
           // (model generation + CLI overhead). Directly answers "is it the
           // search/tool layer or the model that's slow?"
@@ -1492,7 +1498,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           parked = true;
         }
         log.log(`[ClaudeCodeService] warm turn ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (proc parked)`);
-        resolve({ text: textCollected });
+        resolve({ text: textCollected, usage: lastUsage });
       };
 
       const onProcClose = (code: number | null) => {
@@ -1544,7 +1550,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         }
 
         log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
-        resolve({ text: textCollected });
+        resolve({ text: textCollected, usage: lastUsage });
       };
       proc.on('close', onProcClose);
     });

@@ -83,7 +83,11 @@ export async function dispatchClaudeForMessage(msg: PulledUserMessage): Promise<
     const result = await svc.chatStream(
       messages,
       { onToken: () => { /* discard */ } },
-      { conversationId: msg.conversation_id },
+      {
+        conversationId: msg.conversation_id,
+        profileId:      msg.contractor_id,
+        usageEventId:   `sync:${ msg.id }`,
+      },
     );
 
     const reply = result?.content?.trim() ?? '';
