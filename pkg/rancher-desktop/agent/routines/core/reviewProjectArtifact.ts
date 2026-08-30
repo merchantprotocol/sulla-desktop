@@ -67,6 +67,7 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
   laneContract: {
     input:  'project.lane-entry.v1',
     output: 'project.lane-outcome.v1',
+    owner:  'task-dispatcher-review',
   },
   enabled:     true,
   createdAt:   '2026-08-23T19:30:00.000Z',

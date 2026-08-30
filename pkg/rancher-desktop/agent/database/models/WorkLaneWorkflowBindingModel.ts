@@ -184,7 +184,7 @@ export class WorkLaneWorkflowBindingModel {
     if (input.scope === 'epic' && (!epicId || !laneKey)) throw new Error('epicId and laneKey are required for epic bindings.');
     if (input.scope === 'project' && (!projectId || !laneKey)) throw new Error('projectId and laneKey are required for project bindings.');
     if (input.scope === 'global' && !laneKey && !semanticRole) throw new Error('laneKey or semanticRole is required for global bindings.');
-    if (input.scope === 'core' && !semanticRole) throw new Error('semanticRole is required for core bindings.');
+    if (input.scope === 'core' && !laneKey && !semanticRole) throw new Error('laneKey or semanticRole is required for core bindings.');
 
     const workflow = await WorkLaneWorkflowBindingModel.requireWorkflow(input.workflowId);
     if (input.scope === 'core' && (!workflow.system || !['system', 'core-seeder'].includes(input.actor ?? ''))) {
@@ -290,7 +290,7 @@ export class WorkLaneWorkflowBindingModel {
            (scope = 'epic' AND epic_id = $2 AND lane_key = $4)
            OR (scope = 'project' AND project_id = $3 AND lane_key = $4)
            OR (scope = 'global' AND (lane_key = $4 OR (lane_key IS NULL AND semantic_role = $5)))
-           OR (scope = 'core' AND semantic_role = $5)
+           OR (scope = 'core' AND (lane_key = $4 OR (lane_key IS NULL AND semantic_role = $5)))
          )
        ORDER BY CASE scope WHEN 'epic' THEN 0 WHEN 'project' THEN 1 WHEN 'global' THEN 2 ELSE 3 END,
          CASE WHEN lane_key = $4 THEN 0 ELSE 1 END, created_at DESC
@@ -348,20 +348,24 @@ export class WorkLaneWorkflowBindingModel {
       'SELECT * FROM work_lane_entry_automations WHERE id = $1', [id]);
   }
 
-  static async listRecoverable(limit = 50, includeInterrupted = false): Promise<RecoverableLaneEntryRecord[]> {
+  static async listRecoverable(limit = 50, _includeInterrupted = false): Promise<RecoverableLaneEntryRecord[]> {
     return postgresClient.query<RecoverableLaneEntryRecord>(`
       SELECT lane.*, execution.status AS workflow_execution_status,
-             execution.error AS workflow_execution_error
+             execution.error AS workflow_execution_error,
+             execution.lease_expires_at
         FROM work_lane_entry_automations lane
         LEFT JOIN workflow_executions execution ON execution.execution_id = lane.execution_id
        WHERE lane.workflow_id IS NOT NULL AND (
          lane.status = 'pending'
          OR (lane.status = 'running' AND (
-           execution.execution_id IS NULL OR execution.status IN ('completed', 'failed') OR $2 = true
+           execution.execution_id IS NULL OR execution.status IN ('completed', 'failed')
+           OR (execution.status IN ('running', 'suspended')
+               AND execution.lease_expires_at IS NOT NULL
+               AND execution.lease_expires_at <= now())
          ))
        )
        ORDER BY lane.created_at ASC LIMIT $1
-    `, [limit, includeInterrupted]);
+    `, [limit]);
   }
 
   static async markStarted(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
@@ -391,6 +395,7 @@ export class WorkLaneWorkflowBindingModel {
         UPDATE workflow_executions
            SET status = 'failed', completed_at = now(), updated_at = now(), error = 'interrupted_before_lane_recovery'
          WHERE execution_id = $1 AND status IN ('running', 'suspended')
+           AND lease_expires_at IS NOT NULL AND lease_expires_at <= now()
          RETURNING execution_id
       `, [executionId]);
       if (!interrupted.rows[0]) return null;
@@ -420,6 +425,68 @@ export class WorkLaneWorkflowBindingModel {
     return postgresClient.transaction(async(client: PoolClient) => {
       return WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(client, taskId, laneKey, actor, profileId);
     });
+  }
+
+  /**
+   * Re-arm current stages that were recorded as unautomated before a bundled
+   * fallback binding existed.  A new generation preserves the original audit
+   * snapshot instead of rewriting it in place.
+   */
+  static async rearmCurrentUnautomated(limit = 500, actor = 'core-seeder'):
+  Promise<LaneEntryAutomationRecord[]> {
+    const armed: LaneEntryAutomationRecord[] = [];
+    const batchSize = Math.max(1, limit);
+    let cursorTaskId: string | null = null;
+    while (true) {
+      const candidates: Array<{ task_id: string; lane_key: string }> = await postgresClient.query<{
+        task_id: string; lane_key: string;
+      }>(`
+        SELECT task.id AS task_id, task.status AS lane_key
+          FROM work_tasks task
+          JOIN work_projects project ON project.id = task.project_id
+          JOIN work_epics epic ON epic.id = task.epic_id
+          LEFT JOIN LATERAL (
+            SELECT id, lane_key, status FROM work_lane_entry_automations
+             WHERE task_id = task.id ORDER BY generation DESC LIMIT 1
+          ) latest ON true
+         WHERE task.archived = false AND project.archived = false AND epic.archived = false
+           AND (latest.id IS NULL OR (latest.status = 'unautomated' AND latest.lane_key = task.status))
+           AND ($2::text IS NULL OR task.id > $2)
+         ORDER BY task.id ASC
+         LIMIT $1
+      `, [batchSize, cursorTaskId]);
+      if (candidates.length === 0) break;
+      for (const candidate of candidates) {
+        const entry = await postgresClient.transaction(async(client) => {
+          await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ candidate.task_id }`]);
+          const latest = await client.query<LaneEntryAutomationRecord>(`
+            SELECT * FROM work_lane_entry_automations WHERE task_id = $1 ORDER BY generation DESC LIMIT 1
+          `, [candidate.task_id]);
+          if (latest.rows[0]
+            && (latest.rows[0].lane_key !== candidate.lane_key || latest.rows[0].status !== 'unautomated')) return null;
+          const resolution = await WorkLaneWorkflowBindingModel.resolve(candidate.task_id, candidate.lane_key, 'default', client);
+          if (!resolution.workflowId) return null;
+          const inserted = await client.query<LaneEntryAutomationRecord>(`
+            INSERT INTO work_lane_entry_automations (
+              id, task_id, generation, previous_lane_key, lane_key, binding_id, workflow_id,
+              resolution_source, fallback_reason, binding_snapshot, workflow_snapshot, status, actor
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,'pending',$12)
+            RETURNING *
+          `, [`lane-entry-${ randomUUID() }`, candidate.task_id, (latest.rows[0]?.generation ?? 0) + 1,
+            latest.rows[0]?.lane_key ?? null, candidate.lane_key, resolution.binding?.id ?? null, resolution.workflowId,
+            resolution.source, resolution.fallbackReason, JSON.stringify(resolution.binding ?? {}),
+            JSON.stringify(resolution.workflowSnapshot), actor]);
+          return inserted.rows[0] ?? null;
+        });
+        if (entry) armed.push(entry);
+      }
+      // Keyset pagination must advance even when every row in this batch has
+      // no compatible workflow. Otherwise an old unbound/manual lane can
+      // permanently hide later tasks that now have protected bindings.
+      cursorTaskId = candidates[candidates.length - 1].task_id;
+      if (candidates.length < batchSize) break;
+    }
+    return armed;
   }
 
   static async claimLaneEntryInTransaction(client: PoolClient, taskId: string, laneKey: string,

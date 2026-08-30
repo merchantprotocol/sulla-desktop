@@ -28,6 +28,39 @@ export class LaneEntryAutomationService {
     const started = await WorkLaneWorkflowBindingModel.markStarted(entry.id, executionId);
     if (!started) return (await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id)) ?? entry;
 
+    // Protected lifecycle workflows are visible, enabled contracts, but their
+    // canonical services own claims and execution. Delegate instead of
+    // launching a second graph that would race the planning council or task
+    // dispatcher for the same task generation.
+    const laneContract = (entry.workflow_snapshot as any)?.laneContract ?? {};
+    const owner = typeof laneContract.owner === 'string' ? laneContract.owner : null;
+    if (owner && ['planning-council', 'task-dispatcher', 'task-dispatcher-review'].includes(owner)) {
+      try {
+        if (owner === 'planning-council') {
+          const { WorkItemsModel } = await import('../database/models/WorkItemsModel');
+          const { PlanningCouncilService } = await import('./PlanningCouncilService');
+          const task = await WorkItemsModel.getTask(entry.task_id);
+          if (task) await PlanningCouncilService.handleTaskStatusTransition(
+            task, entry.previous_lane_key ?? '', entry.actor ?? 'core-lane-entry',
+          );
+        } else {
+          const { getTaskDispatcherService } = await import('./TaskDispatcherService');
+          const admitted = await getTaskDispatcherService().requestDispatch(entry.task_id);
+          if (!admitted) throw new Error(`Dispatcher did not admit task ${ entry.task_id }.`);
+        }
+        const delegated = await WorkLaneWorkflowBindingModel.markOutcome(entry.id, executionId, 'completed', {
+          disposition: 'delegated', owner, generation: entry.generation,
+        });
+        return delegated ?? started;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const failed = await WorkLaneWorkflowBindingModel.markOutcome(entry.id, executionId, 'failed', {
+          disposition: 'delegation_failed', owner, message,
+        });
+        return failed ?? started;
+      }
+    }
+
     try {
       const result = await LaneEntryAutomationService.executeRoutine(entry.workflow_id, JSON.stringify({
         event:        'project.lane.entered',

@@ -35,6 +35,20 @@ export function getTextContent(content: string | ContentBlock[]): string {
     .join('\n');
 }
 
+function promptMetrics(messages: ChatMessage[]): { promptChars: number; promptTokens: number; toolResultChars: number; toolResultShare: number } {
+  const promptChars = messages.reduce((sum, message) => sum + JSON.stringify(message.content).length, 0);
+  const toolResultChars = messages.reduce((sum, message) => {
+    const content = JSON.stringify(message.content);
+    return sum + ((message.role === 'tool' || content.includes('tool_result')) ? content.length : 0);
+  }, 0);
+  return {
+    promptChars,
+    promptTokens: Math.ceil(promptChars / 4),
+    toolResultChars,
+    toolResultShare: promptChars ? Number((toolResultChars / promptChars).toFixed(4)) : 0,
+  };
+}
+
 export interface ChatMessage {
   id?:           string;
   role:          'user' | 'assistant' | 'system' | 'tool';
@@ -318,6 +332,7 @@ export abstract class BaseLanguageModel {
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
     const convId = options.conversationId;
+    const metrics = promptMetrics(messages);
 
     try {
       // Use provided model or fallback to default
@@ -336,6 +351,7 @@ export abstract class BaseLanguageModel {
             format:      options.format,
             tools:       options.tools,
             messages,
+            ...metrics,
           });
         } catch { /* best-effort */ }
       }
@@ -443,6 +459,8 @@ export abstract class BaseLanguageModel {
     const startTime = performance.now();
     const effectiveModel = options.model ?? this.model;
     const convId = options.conversationId;
+    const metrics = promptMetrics(messages);
+    let ttftMs: number | undefined;
 
     // Log outgoing request (same as chat())
     if (convId) {
@@ -457,6 +475,7 @@ export abstract class BaseLanguageModel {
           format:      options.format,
           tools:       options.tools,
           messages,
+          ...metrics,
           streaming:   true,
         });
       } catch { /* best-effort */ }
@@ -473,7 +492,10 @@ export abstract class BaseLanguageModel {
         // Provider supports streaming — parse the SSE stream
         const normalized = await this.parseStreamResponse(
           streamResponse,
-          callbacks,
+          { ...callbacks, onToken: (token: string) => {
+            ttftMs ??= Math.round(performance.now() - startTime);
+            callbacks.onToken(token);
+          } },
           options.signal,
         );
 
@@ -496,6 +518,8 @@ export abstract class BaseLanguageModel {
               reasoning:        normalized.metadata.reasoning,
               toolCalls:        normalized.metadata.tool_calls,
               streaming:        true,
+              ttftMs,
+              ...metrics,
             });
           } catch { /* best-effort */ }
         }

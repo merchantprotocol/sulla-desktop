@@ -84,6 +84,12 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('## The Prospector — Verified Work Discovery');
     expect(heartbeatPrompt).toContain('Prospecting is **verify-and-route**');
     expect(heartbeatPrompt).toContain('## Routine Stewardship');
+    expect(heartbeatPrompt).toContain('## Autonomous Conveyor Supervision + Work Discovery');
+    expect(heartbeatPrompt).toContain('sulla project/conveyor_health');
+    expect(heartbeatPrompt).toContain('failed or unautomated lane entries');
+    expect(heartbeatPrompt).toContain('Never conceal a broken conveyor by manually doing the stranded task');
+    expect(heartbeatPrompt).toContain('Never flip Heartbeat to make the dispatcher run');
+    expect(heartbeatPrompt).toContain('create or refine the project, epic, and planning task');
     expect(heartbeatPrompt).toContain('## Agent Network + Briefings');
     expect(heartbeatPrompt).toContain('concisely and only on deltas');
   });

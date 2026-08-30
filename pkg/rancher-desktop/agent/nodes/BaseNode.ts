@@ -19,6 +19,7 @@ import { sanitizeConversationContext } from '../utils/conversationContext';
 import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
+import { prepareProviderMessages } from './contextBudget';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
@@ -1048,67 +1049,20 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       };
     }
 
-    // Pre-flight context check: trim messages to fit the active model's context window
-    const contextWindow = this.llm.getContextWindow();
-    const responseReserve = Math.floor(contextWindow * 0.20);
-    const inputBudgetTokens = contextWindow - responseReserve;
-    const estimateTokens = (text: string) => Math.ceil((text?.length ?? 0) / 4);
-
-    let totalTokens = messages.reduce((sum, m) => {
-      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-      return sum + estimateTokens(content);
-    }, 0);
-
-    if (totalTokens > inputBudgetTokens) {
-      console.warn(`[${ this.name }] Pre-flight trim: ~${ totalTokens } tokens exceeds ${ inputBudgetTokens } budget (ctx=${ contextWindow })`);
-      // Find protected indices: system messages + latest user message
-      const systemIndices = new Set<number>();
-      let latestUserIdx = -1;
-      for (let i = 0; i < messages.length; i++) {
-        if (messages[i].role === 'system') systemIndices.add(i);
-        if (messages[i].role === 'user') latestUserIdx = i;
-      }
-      // Build a set of indices that form tool_use/tool_result pairs so we
-      // never drop one half of a pair (which would corrupt the message array
-      // and cause "tool_call_id not found" API errors).
-      const toolPairIndices = new Set<number>();
-      for (let idx = 0; idx < messages.length; idx++) {
-        const msg = messages[idx];
-        const hasToolUse = msg.role === 'assistant' && Array.isArray(msg.content) &&
-          msg.content.some((b: any) => b?.type === 'tool_use');
-        if (hasToolUse) {
-          const next = messages[idx + 1];
-          const nextHasToolResult = next?.role === 'user' && Array.isArray(next.content) &&
-            next.content.some((b: any) => b?.type === 'tool_result');
-          if (nextHasToolResult) {
-            toolPairIndices.add(idx);
-            toolPairIndices.add(idx + 1);
-          }
-        }
-      }
-
-      // Drop from oldest non-protected until under budget
-      let i = 0;
-      while (totalTokens > inputBudgetTokens && i < messages.length) {
-        if (!systemIndices.has(i) && i !== latestUserIdx && !toolPairIndices.has(i)) {
-          const rawContent = messages[i].content;
-          totalTokens -= estimateTokens(typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent));
-          messages.splice(i, 1);
-          // Rebuild protected indices after splice
-          if (latestUserIdx > i) latestUserIdx--;
-          // Shift toolPairIndices down
-          const shifted = new Set<number>();
-          for (const idx of toolPairIndices) {
-            if (idx > i) shifted.add(idx - 1);
-            else if (idx < i) shifted.add(idx);
-          }
-          toolPairIndices.clear();
-          for (const idx of shifted) toolPairIndices.add(idx);
-        } else {
-          i++;
-        }
-      }
-      console.log(`[${ this.name }] Pre-flight trim complete: ${ messages.length } messages, ~${ totalTokens } tokens`);
+    // Curate the exact provider input after the system prompt/context is in
+    // place. This compacts stale tool payloads before pair-safe eviction.
+    const budget = prepareProviderMessages(messages, this.llm.getContextWindow());
+    messages.splice(0, messages.length, ...budget.messages);
+    (state.metadata as any).contextBudget = {
+      inputBudgetTokens: budget.inputBudgetTokens,
+      beforeTokens:      budget.beforeTokens,
+      afterTokens:       budget.afterTokens,
+      beforeChars:       budget.beforeChars,
+      afterChars:        budget.afterChars,
+      toolResultChars:   budget.toolResultChars,
+    };
+    if (budget.beforeTokens !== budget.afterTokens || budget.beforeChars !== budget.afterChars) {
+      console.log(`[${ this.name }] Provider context curated: ~${ budget.beforeTokens } → ~${ budget.afterTokens } tokens, ${ budget.beforeChars } → ${ budget.afterChars } chars`);
     }
 
     // Check for abort before making LLM calls
@@ -1394,6 +1348,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             console.warn(
               `[${ this.name }:BaseNode] Falling back to secondary provider ` +
               `(from=${ primaryName }/${ primaryId || '(default)' }, to=${ secondaryName }/${ secondaryModel || '(default)' }, reason=${ recovery.kind })`,
+            );
+            void this.wsChatMessage(
+              state,
+              `Provider fallback: ${ primaryName }/${ primaryId || '(default)' } → ${ secondaryName }/${ secondaryModel || '(default)' } (${ recovery.kind })`,
+              'system',
+              'progress',
+              { event: 'provider_fallback', fromProvider: primaryName, fromModel: primaryId, toProvider: secondaryName, toModel: secondaryModel, reason: recovery.kind },
             );
             const chatMessages = messages.filter(msg =>
               ['system', 'user', 'assistant'].includes(msg.role),
