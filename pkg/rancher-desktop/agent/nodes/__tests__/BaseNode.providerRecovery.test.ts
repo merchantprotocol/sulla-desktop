@@ -74,7 +74,8 @@ jest.unstable_mockModule('../../services/JsonParseService', () => ({
 
 jest.unstable_mockModule('../../services/WebSocketClientService', () => ({
   getWebSocketClientService: jest.fn(() => ({
-    send: jest.fn(),
+    isConnected: jest.fn(() => true),
+    send:        jest.fn(),
   })),
 }));
 
