@@ -436,8 +436,11 @@ export class WorkLaneWorkflowBindingModel {
   Promise<LaneEntryAutomationRecord[]> {
     const armed: LaneEntryAutomationRecord[] = [];
     const batchSize = Math.max(1, limit);
+    let cursorTaskId: string | null = null;
     while (true) {
-      const candidates = await postgresClient.query<{ task_id: string; lane_key: string }>(`
+      const candidates: Array<{ task_id: string; lane_key: string }> = await postgresClient.query<{
+        task_id: string; lane_key: string;
+      }>(`
         SELECT task.id AS task_id, task.status AS lane_key
           FROM work_tasks task
           JOIN work_projects project ON project.id = task.project_id
@@ -448,11 +451,11 @@ export class WorkLaneWorkflowBindingModel {
           ) latest ON true
          WHERE task.archived = false AND project.archived = false AND epic.archived = false
            AND (latest.id IS NULL OR (latest.status = 'unautomated' AND latest.lane_key = task.status))
-         ORDER BY task.last_activity_at ASC
+           AND ($2::text IS NULL OR task.id > $2)
+         ORDER BY task.id ASC
          LIMIT $1
-      `, [batchSize]);
+      `, [batchSize, cursorTaskId]);
       if (candidates.length === 0) break;
-      let armedThisBatch = 0;
       for (const candidate of candidates) {
         const entry = await postgresClient.transaction(async(client) => {
           await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ candidate.task_id }`]);
@@ -475,14 +478,13 @@ export class WorkLaneWorkflowBindingModel {
             JSON.stringify(resolution.workflowSnapshot), actor]);
           return inserted.rows[0] ?? null;
         });
-        if (entry) {
-          armed.push(entry);
-          armedThisBatch++;
-        }
+        if (entry) armed.push(entry);
       }
-      // Concurrent status changes can make a batch contain no eligible rows;
-      // stop rather than spin forever while another writer owns those tasks.
-      if (armedThisBatch === 0) break;
+      // Keyset pagination must advance even when every row in this batch has
+      // no compatible workflow. Otherwise an old unbound/manual lane can
+      // permanently hide later tasks that now have protected bindings.
+      cursorTaskId = candidates[candidates.length - 1].task_id;
+      if (candidates.length < batchSize) break;
     }
     return armed;
   }
