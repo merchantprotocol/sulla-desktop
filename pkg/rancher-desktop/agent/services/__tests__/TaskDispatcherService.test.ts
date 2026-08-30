@@ -23,6 +23,7 @@ const recordReviewLaunchWithExecutionMock: any = jest.fn(() => Promise.resolve()
 const reconcileDispatcherOwnedExecutionsMock: any = jest.fn(() => Promise.resolve([]));
 const failVerificationMock: any = jest.fn(() => Promise.resolve(true));
 const touchMock: any = jest.fn(() => Promise.resolve());
+const hasActiveDispatchForTaskMock: any = jest.fn(() => Promise.resolve(false));
 const addCommentMock: any = jest.fn(() => Promise.resolve());
 const updateTaskMock: any = jest.fn(() => Promise.resolve());
 const executeMock: any = jest.fn();
@@ -90,6 +91,7 @@ jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
     reviewFingerprint:       jest.fn(() => 'e'.repeat(64)),
     failVerification:        failVerificationMock,
     touch:                   touchMock,
+    hasActiveDispatchForTask: hasActiveDispatchForTaskMock,
   },
 }));
 jest.unstable_mockModule('../../database/models/WorkflowModel', () => ({

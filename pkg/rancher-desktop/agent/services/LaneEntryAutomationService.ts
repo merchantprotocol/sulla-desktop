@@ -45,7 +45,8 @@ export class LaneEntryAutomationService {
           );
         } else {
           const { getTaskDispatcherService } = await import('./TaskDispatcherService');
-          await getTaskDispatcherService().requestDispatch();
+          const admitted = await getTaskDispatcherService().requestDispatch(entry.task_id);
+          if (!admitted) throw new Error(`Dispatcher did not admit task ${ entry.task_id }.`);
         }
         const delegated = await WorkLaneWorkflowBindingModel.markOutcome(entry.id, executionId, 'completed', {
           disposition: 'delegated', owner, generation: entry.generation,

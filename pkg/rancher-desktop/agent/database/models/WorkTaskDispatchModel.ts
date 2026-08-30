@@ -571,6 +571,17 @@ export class WorkTaskDispatchModel {
     return Number(row?.count || 0);
   }
 
+  /** True when the dispatcher has a durable claim for this exact task. */
+  static async hasActiveDispatchForTask(taskId: string): Promise<boolean> {
+    const row = await postgresClient.queryOne<{ found: boolean }>(`
+      SELECT EXISTS (
+        SELECT 1 FROM work_task_dispatches
+         WHERE task_id = $1 AND status = 'running'
+      ) AS found
+    `, [taskId]);
+    return row?.found === true;
+  }
+
   /**
    * Count autonomous work already at the review stage that can still drain —
    * claimable by the review pool or actively held by a live verification
