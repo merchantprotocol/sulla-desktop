@@ -71,6 +71,7 @@ import {
 } from '../workflow/lockedCoreRoutineExecution';
 
 import type { WorkflowPlaybookState, PlaybookNodeOutput } from '../workflow/types';
+import { shouldWakeWorkflowConversation } from '../workflow/workflowContinuation';
 
 // ============================================================================
 // PLAYBOOK DEBUG LOGGER
@@ -2634,7 +2635,12 @@ export class PlaybookController<TState = any> {
     }
 
     const meta = (state as any).metadata;
-    if (meta?.waitingForUser || meta?.cycleComplete) {
+    // Workflow continuations must re-enter the playbook while an active
+    // workflow is still running. These flags can be inherited from the
+    // surrounding chat state (and are intentionally used for normal chat
+    // wake-ups), but treating them as idle here strands a completed child at
+    // the frontier and leaves the execution running forever.
+    if (shouldWakeWorkflowConversation(meta)) {
       const channel = meta?.wsChannel;
       const threadId = meta?.threadId;
       if (channel && threadId) {
