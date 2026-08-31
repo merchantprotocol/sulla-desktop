@@ -49,7 +49,7 @@ import {
   formatQuestionResolution,
   normalizeQuestions,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
-import { buildReadAdapterHandler, resolveVerifierReadTools } from './verifierReadAdapter';
+import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 
@@ -477,32 +477,37 @@ export class MCPServerHost {
       },
     );
 
-    // read_adapter — the verifier's only viable read path. Verifier runs
-    // (verifierReadOnly) execute CLI models under a network-denying sandbox
-    // (codex --sandbox read-only inside the Lima VM), so shelling out to the
-    // `sulla` CLI fails with curl exit 7 before it can reach the tools
-    // bridge. This handler runs in the host process — outside that sandbox —
-    // and dispatches straight to the same ToolRegistry worker the CLI would
-    // hit, allowlisted to the dispatcher-stamped read-only adapter catalog.
-    const verifierReadTools = resolveVerifierReadTools(session.state.metadata);
-    if (verifierReadTools) {
+    // sulla_tool — the graph-stamped tool surface, projected provider-neutrally.
+    // The graph system decides which tools an agent node may use
+    // (state.metadata.allowedToolNames, stamped by the dispatcher and
+    // inherited by sub-nodes — the same mechanism the subconscious observer
+    // agents use). API-driven providers honor it because the graph loop
+    // executes their tool calls; CLI-driven providers (Claude Code, Codex, or
+    // any future CLI model) bring their own harness and would otherwise
+    // bypass it — and sandboxed verifier runs cannot even shell to the
+    // `sulla` CLI. This handler runs in the host process and dispatches
+    // in-process to the same ToolRegistry worker the graph loop would use,
+    // enforcing exactly the graph's allowlist. Unrestricted sessions (no
+    // allowedToolNames) keep the full CLI catalog and get no projection.
+    const graphToolSurface = resolveGraphToolSurface(session.state.metadata);
+    if (graphToolSurface) {
       server.registerTool(
-        'read_adapter',
+        'sulla_tool',
         {
           description: [
-            'Run one read-only verification adapter tool and return its result.',
-            'Your shell runs inside a network-denying sandbox, so `sulla <category>/<tool>` commands',
-            '(including those returned by browse_tools) fail with no output — call THIS tool instead',
-            'for every canonical read. Pass the bare tool name and its JSON arguments.',
-            `Allowed tools: ${ verifierReadTools.join(', ') }.`,
+            'Run one tool from this agent\'s graph-stamped tool surface and return its result.',
+            'This is the canonical way to invoke Sulla tools for this agent — use it instead of',
+            'shelling out to the `sulla` CLI (sandboxed runs cannot reach the CLI bridge at all).',
+            'Pass the bare tool name and its JSON arguments.',
+            `Allowed tools: ${ graphToolSurface.join(', ') }.`,
             'Use browse_tools to discover each tool\'s parameter JSON, then invoke it here.',
           ].join(' '),
           inputSchema: {
-            tool: z.string().describe('Bare tool name from the read-only adapter catalog, e.g. "github_get_pr" or "get_project_item".'),
+            tool: z.string().describe('Bare tool name from this agent\'s allowed tool surface, e.g. "github_get_pr" or "get_project_item".'),
             args: z.record(z.any()).optional().describe('JSON arguments for the tool, exactly as documented by browse_tools.'),
           },
         },
-        buildReadAdapterHandler(verifierReadTools, name => toolRegistry.getTool(name)),
+        buildGraphToolHandler(graphToolSurface, name => toolRegistry.getTool(name)),
       );
     }
 

@@ -1156,7 +1156,7 @@ Bound review generation: ${ generationHash }
 Structured artifact components: ${ JSON.stringify(artifacts) }
 Producer/custodian profile identities (audit only; reviewer independence is enforced by separate workflow node executions): ${ JSON.stringify(excludedAgentIds) }
 Read-only adapter catalog: ${ JSON.stringify(ARTIFACT_VERIFICATION_ADAPTERS) }
-Adapter access: your shell runs inside a network-denying read-only sandbox, so \`sulla\` CLI commands fail with no output. Invoke every catalog tool through the sulla-native MCP tool \`read_adapter\` ({"tool":"<bare tool name>","args":{...}}) instead of the shell.
+Adapter access: your shell runs inside a network-denying read-only sandbox, so \`sulla\` CLI commands fail with no output. Invoke every catalog tool through the sulla-native MCP tool \`sulla_tool\` ({"tool":"<bare tool name>","args":{...}}) instead of the shell.
 
 Acceptance contract:
 ${ task.description || '(no description)' }

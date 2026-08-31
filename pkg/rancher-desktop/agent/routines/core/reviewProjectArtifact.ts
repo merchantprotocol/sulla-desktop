@@ -33,7 +33,7 @@ const READ_ONLY = [
   'Never edit files or records, change Projects state, commit, push, merge, deploy, spend money,',
   'send external communication, or perform destructive actions. Return evidence, not instructions to trust you.',
   'Your shell is sandboxed without network access, so `sulla` CLI commands return nothing — run every',
-  'catalog read through the sulla-native MCP tool `read_adapter` ({"tool":"<bare name>","args":{...}}).',
+  'catalog read through the sulla-native MCP tool `sulla_tool` ({"tool":"<bare name>","args":{...}}).',
 ].join(' ');
 
 const reviewerNode = (
