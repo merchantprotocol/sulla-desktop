@@ -56,6 +56,7 @@ const ORCHESTRATOR_REENTRY_MAX_MS = parseInt(
 import { throwIfAborted } from '../services/AbortService';
 import { getConversationLogger } from '../services/ConversationLogger';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
+import { ChatMessageModel } from '../database/models/ChatMessageModel';
 import {
   processNextStep,
   resolveDecision,
@@ -2420,7 +2421,20 @@ export class PlaybookController<TState = any> {
         `Sub-agent "${ agentId || nodeId }"`,
         () => graph.execute(subState),
       );
+
     } finally {
+      // Persist the graph turn even when the provider/worker throws after
+      // emitting messages. This closes the crash window between playbook
+      // nodes and leaves a truthful partial transcript for recovery readers.
+      const persistedState = finalState || subState;
+      await ChatMessageModel.saveThreadState(threadId, {
+        thread: {
+          id:       threadId,
+          title:    String((persistedState as any)?.metadata?.agent?.name || agentId || nodeId),
+          messages: Array.isArray((persistedState as any)?.messages) ? (persistedState as any).messages : [],
+        },
+      });
+
       // Deregister from the parent's active-sub-agents list. Must run on
       // every exit path — success, contract-violation, or thrown error —
       // so an abort that fans out to stale threadIds doesn't see zombies.
