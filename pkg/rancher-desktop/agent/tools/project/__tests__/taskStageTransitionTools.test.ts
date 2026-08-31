@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { getProjectsApplicationService } from '../../../projects/application/ProjectsApplicationService';
 import { TransitionTaskRelativeWorker } from '../transition_task_relative';
 import { TransitionTaskStageWorker } from '../transition_task_stage';
+import { TransitionTaskToExecutionWorker } from '../transition_task_to_execution';
 
 const projects = getProjectsApplicationService() as any;
 const transitionTaskStage = jest.spyOn(projects, 'transitionTaskStage');
@@ -41,5 +42,17 @@ describe('task stage transition workflow tools', () => {
     expect(transitionTaskRelative).toHaveBeenCalledWith(expect.objectContaining({
       taskId: 'task-1', direction: 'next', expectedGeneration: 2,
     }), { actor: 'sulla', source: 'routine' });
+  });
+
+  it('passes the execution-role transition and generation through the application boundary', async() => {
+    const transitionTaskToExecution = jest.spyOn(projects, 'transitionTaskToExecution')
+      .mockResolvedValue({ fromStage: 'blocked', toStage: 'ready-custom' });
+    const result = await call(new TransitionTaskToExecutionWorker(), {
+      task_id: 'task-1', expected_generation: 9, actor: 'planning-council',
+    });
+    expect(result.successBoolean).toBe(true);
+    expect(transitionTaskToExecution).toHaveBeenCalledWith({
+      taskId: 'task-1', expectedGeneration: 9, custody: undefined,
+    }, { actor: 'planning-council', source: 'routine' });
   });
 });

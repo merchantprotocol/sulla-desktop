@@ -465,6 +465,19 @@ export const projectToolManifests: ToolManifest[] = [
     operationTypes: ['update'],
     loader:         () => import('./transition_task_relative'),
   },
+  {
+    name:        'transition_task_to_execution',
+    description: 'Return a task to the first active stage with semantic role execution in its project pipeline. Resolves the target explicitly rather than using relative order; expected_generation rejects stale workflow runs.',
+    category:    'project',
+    schemaDef:   {
+      task_id:            { type: 'string', description: 'Task to transition.' },
+      expected_generation:{ type: 'number', optional: true, description: 'Current immutable stage-entry generation. Rejects stale workflow runs.' },
+      custody:            { type: 'object', optional: true, description: 'Structured evidence when the destination stage policy requires custody.' },
+      actor:              { type: 'string', optional: true, description: 'Audit actor. Defaults to sulla.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./transition_task_to_execution'),
+  },
 
   // ── comments ─────────────────────────────────────────────────────────
   {

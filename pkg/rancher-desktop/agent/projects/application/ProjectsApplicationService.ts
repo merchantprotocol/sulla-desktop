@@ -63,6 +63,12 @@ export interface TransitionTaskRelativeInput {
   custody?:            UpdateTaskInput['custody'];
 }
 
+export interface TransitionTaskToExecutionInput {
+  taskId:              string;
+  expectedGeneration?: number;
+  custody?:            UpdateTaskInput['custody'];
+}
+
 export interface TaskStageTransitionResult {
   task:               WorkTaskRecord;
   fromStage:          string;
@@ -456,6 +462,25 @@ export class ProjectsApplicationService {
     return this.transitionTaskStage({
       taskId,
       stageKey:            target.lane_key,
+      expectedGeneration: input.expectedGeneration,
+      custody:            input.custody,
+    }, context);
+  }
+
+  /** Return a task to the first configured execution lane, independent of lane ordering. */
+  async transitionTaskToExecution(
+    input: TransitionTaskToExecutionInput,
+    context: ProjectsCommandContext = DEFAULT_CONTEXT,
+  ): Promise<TaskStageTransitionResult> {
+    const taskId = itemId(input.taskId, 'task_id');
+    const current = await this.repository.getTask(taskId);
+    if (!current) throw new Error(`Task not found: ${ taskId }`);
+    const executionEntryLaneKey = await WorkLaneDefinitionModel.preferredLaneKey(
+      current.project_id, 'execution', 'todo', 'first',
+    );
+    return this.transitionTaskStage({
+      taskId,
+      stageKey:            executionEntryLaneKey,
       expectedGeneration: input.expectedGeneration,
       custody:            input.custody,
     }, context);

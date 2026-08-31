@@ -179,7 +179,8 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
             'with author `planning-council`; the body must contain `Final planning council plan` plus the complete synthesis. ' +
             'If the synthesis disposition is TODO, create well-bounded subtasks only when the plan genuinely requires independent ' +
             'units, then call `sulla project/update_task` to set assignee `dispatcher` without changing status, followed by ' +
-            '`sulla project/transition_task_relative` with direction `next`, the trigger task id, and its exact stage-entry generation. ' +
+            '`sulla project/transition_task_to_execution` with the trigger task id and its exact stage-entry generation. ' +
+            'That operation resolves the first active lane with semantic role `execution`; never infer the target from relative ordering. ' +
             'If and only if disposition is BLOCKED, set assignee `heartbeat` without changing status, then call ' +
             '`sulla project/transition_task_stage` with the configured exception stage key `blocked` and exact generation, ' +
             'and ensure the comment names the exact irreversible gate. Re-read the task with `sulla project/get_project_item` ' +
