@@ -199,6 +199,42 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     });
   }
 
+  /**
+   * Retire executions that can no longer be owned by a live worker. These
+   * rows predate lease ownership (or were created before activation finished)
+   * and otherwise remain permanently eligible for recovery/concurrency scans.
+   * A multi-hour age guard keeps this from touching a slow startup.
+   */
+  static async reapStaleLeaselessExecutions(staleHours = 4): Promise<string[]> {
+    const hours = Math.max(1, Math.floor(staleHours));
+    return postgresClient.transaction(async(client) => {
+      const rows = await client.query<{ execution_id: string }>(`
+        UPDATE workflow_executions
+           SET status = 'failed', completed_at = COALESCE(completed_at, NOW()),
+               terminal_at = COALESCE(terminal_at, NOW()),
+               terminal_reason = 'stale_leaseless_execution',
+               error = COALESCE(error, 'stale execution had no lease or heartbeat'),
+               updated_at = NOW()
+         WHERE status IN ('running', 'suspended')
+           AND owner_id IS NULL
+           AND lease_token IS NULL
+           AND lease_expires_at IS NULL
+           AND heartbeat_at IS NULL
+           AND started_at <= NOW() - ($1 * INTERVAL '1 hour')
+        RETURNING execution_id`, [hours]);
+      const executionIds = rows.rows.map(row => row.execution_id);
+      if (executionIds.length > 0) {
+        await client.query(`
+          UPDATE work_lane_entry_automations
+             SET status = 'failed',
+                 outcome = jsonb_build_object('disposition', 'runtime_failed', 'message', 'stale leaseless execution retired'),
+                 completed_at = COALESCE(completed_at, NOW())
+           WHERE execution_id = ANY($1::text[]) AND status = 'running'`, [executionIds]);
+      }
+      return executionIds;
+    });
+  }
+
   static async nextLeaseExpiry(): Promise<Date | null> {
     const row = await postgresClient.queryOne<{ next_expiry: Date | null }>(`
       SELECT MIN(lease_expires_at) AS next_expiry

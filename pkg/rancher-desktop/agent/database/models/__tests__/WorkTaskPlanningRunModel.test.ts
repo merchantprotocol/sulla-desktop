@@ -29,6 +29,7 @@ describe('WorkTaskPlanningRunModel', () => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [blocked] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ attempt: 1 }] })
       .mockResolvedValueOnce({ rows: [run] })
       .mockResolvedValueOnce({ rows: [planning] });
@@ -38,10 +39,10 @@ describe('WorkTaskPlanningRunModel', () => {
 
     expect(claimed).toMatchObject({ run: { status: 'active' }, task: { status: 'planning' } });
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE');
-    expect(query.mock.calls[1][0]).toContain("status = 'active'");
-    expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_planning_runs');
-    expect(query.mock.calls[4][0]).toContain('status = $2');
-    expect(query.mock.calls[4][1]).toEqual(['task-1', 'planning']);
+    expect(query.mock.calls[2][0]).toContain("status = 'active'");
+    expect(query.mock.calls[4][0]).toContain('INSERT INTO work_task_planning_runs');
+    expect(query.mock.calls[5][0]).toContain('status = $2');
+    expect(query.mock.calls[5][1]).toEqual(['task-1', 'planning']);
   });
 
   it('does not launch a duplicate when a task already has an active council', async() => {

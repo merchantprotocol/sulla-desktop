@@ -213,6 +213,11 @@ export class PlaybookController<TState = any> {
   private isProcessingPlaybook = false;
   private _continuationQueued = false;
 
+  private isWorkflowLive(state: TState, executionId: string): boolean {
+    const active = (state as any).metadata?.activeWorkflow;
+    return active?.status === 'running' && active.executionId === executionId;
+  }
+
   constructor(graph: PlaybookGraphInterface<TState>) {
     this.graph = graph;
   }
@@ -2201,6 +2206,13 @@ export class PlaybookController<TState = any> {
     };
 
     meta.activeWorkflow = undefined;
+    // Terminal workflows own no future driver work. Late callbacks are
+    // fenced by execution id and must not spawn post-terminal threads.
+    this.pendingSubAgents.clear();
+    this.pendingCompletions.length = 0;
+    this.pendingFailures.length = 0;
+    this.pendingEscalations.length = 0;
+    this._continuationQueued = false;
 
     // Persist final execution status so boot recovery doesn't pick it up again.
     try {
@@ -2470,10 +2482,15 @@ export class PlaybookController<TState = any> {
     nodeLabel: string,
     maxRetries: number,
   ): void {
+    const workflowExecutionId = (state as any).metadata?.activeWorkflow?.executionId;
     const attempt = async(attemptNum: number): Promise<void> => {
       try {
         console.log(`[PlaybookController] Sub-agent "${ nodeLabel }" attempt ${ attemptNum }/${ maxRetries }`);
         const result = await this.executeSubAgent(state, nodeId, agentId, prompt, config);
+        if (!workflowExecutionId || !this.isWorkflowLive(state, workflowExecutionId)) {
+          this.pendingSubAgents.delete(nodeId);
+          return;
+        }
         const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
 
         if (result.contractStatus === 'blocked') {
@@ -2572,6 +2589,10 @@ export class PlaybookController<TState = any> {
           this.triggerPlaybookContinuation(state);
         }
       } catch (err: any) {
+        if (!workflowExecutionId || !this.isWorkflowLive(state, workflowExecutionId)) {
+          this.pendingSubAgents.delete(nodeId);
+          return;
+        }
         const errorMsg = err.message || String(err);
         console.error(`[PlaybookController] Sub-agent "${ nodeLabel }" threw (attempt ${ attemptNum }/${ maxRetries }):`, errorMsg);
 
@@ -2627,6 +2648,8 @@ export class PlaybookController<TState = any> {
   // ─── Continuation Trigger ───────────────────────────────────────
 
   private triggerPlaybookContinuation(state: TState): void {
+    const executionId = (state as any).metadata?.activeWorkflow?.executionId;
+    if (!executionId || !this.isWorkflowLive(state, executionId)) return;
     if (this.isProcessingPlaybook) {
       this._continuationQueued = true;
       console.log('[PlaybookController] Playbook already processing, queued continuation for after unlock');

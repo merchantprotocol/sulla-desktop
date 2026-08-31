@@ -15,6 +15,7 @@ const recoverStaleForTaskMock: any = jest.fn();
 const findWorkflowMock: any = jest.fn();
 const executeRoutineMock: any = jest.fn();
 const recordReceiptMock: any = jest.fn();
+const reapStaleLeaselessExecutionsMock: any = jest.fn();
 
 jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
   WorkItemsModel: {
@@ -44,6 +45,9 @@ jest.unstable_mockModule('../../database/models/WorkTaskPlanningRunModel', () =>
 
 jest.unstable_mockModule('../../database/models/WorkflowModel', () => ({
   WorkflowModel: { findById: findWorkflowMock },
+}));
+jest.unstable_mockModule('../../database/models/WorkflowExecutionModel', () => ({
+  WorkflowExecutionModel: { reapStaleLeaselessExecutions: reapStaleLeaselessExecutionsMock },
 }));
 
 jest.unstable_mockModule('../../../main/sullaRoutineTemplateEvents', () => ({
@@ -94,6 +98,15 @@ describe('PlanningCouncilService', () => {
     executeRoutineMock.mockResolvedValue({ executionId: 'graph-1', playbookExecutionId: 'wfp-1' });
     settleForTaskMock.mockResolvedValue(null);
     recoverStaleForTaskMock.mockResolvedValue(false);
+    recoverStaleMock.mockResolvedValue([]);
+    reapStaleLeaselessExecutionsMock.mockResolvedValue([]);
+  });
+
+  it('retires stale leaseless executions before planning recovery', async() => {
+    const PlanningCouncilService = await service();
+    await PlanningCouncilService.recoverOnStartup();
+    expect(reapStaleLeaselessExecutionsMock).toHaveBeenCalledTimes(1);
+    expect(recoverStaleMock).toHaveBeenCalledWith(45);
   });
 
   it('atomically claims a blocked task and launches the task-scoped routine once', async() => {
@@ -104,7 +117,7 @@ describe('PlanningCouncilService', () => {
     expect(executeRoutineMock).toHaveBeenCalledWith(
       'core-routine-plan-project-task',
       expect.stringContaining('"original_blocker":"Exact blocker"'),
-      { allowConcurrent: true, routineKind: 'planning' },
+      { allowConcurrent: true, routineKind: 'planning', waitForCapacity: true },
     );
     expect(attachExecutionMock).toHaveBeenCalledWith('planning-1', 'wfp-1');
     expect(addCommentMock).toHaveBeenCalledWith(expect.objectContaining({
