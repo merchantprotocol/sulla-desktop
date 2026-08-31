@@ -16,19 +16,20 @@
 
 import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
 
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
 import type { ChatController } from '../controller/ChatController';
+import type {
+  ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, HtmlPayload,
+} from '../models/Artifact';
+import type { Attachment } from '../models/Attachment';
 import type { Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
   ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
   PatchMessage, PatchHunk, ProactiveMessage,
 } from '../models/Message';
-import type { Attachment } from '../models/Attachment';
-import type {
-  ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, HtmlPayload,
-} from '../models/Artifact';
 import { asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
+import { StreamUpdateScheduler } from './StreamUpdateScheduler';
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export interface PersonaAdapterOptions {
   channelId?: string;
@@ -38,6 +39,12 @@ export interface PersonaAdapterOptions {
 export class PersonaAdapter {
   private ci: ChatInterface;
   private stopWatchers: WatchStopHandle[] = [];
+  // Backend stream deltas can arrive faster than Vue can paint. Publish the
+  // leading update immediately, then cap continuous updates to ~30fps. A pure
+  // requestAnimationFrame scheduler can deadlock visibly under renderer
+  // starvation: no paint means no callback, while Stop appears to fix it only
+  // because the completion path flushes synchronously.
+  private readonly messageSyncScheduler = new StreamUpdateScheduler(() => this.syncMessages());
 
   /**
    * Mirrors ChatInterface.hasMessages — true once the user has sent their
@@ -58,6 +65,13 @@ export class PersonaAdapter {
   private firstCompletedAt = new Map<string, number>();
   /** Hash of the last-mapped transcript Message per backend id, for skipping no-op updates. */
   private lastMappedHash = new Map<string, string>();
+  /**
+   * Cheap per-message fingerprint (primitive fields / lengths, not a full
+   * serialize) used to skip mapBackendMessage()+stableHash() entirely for
+   * messages that haven't actually changed since the last sync. See
+   * rawSignature() for why this exists.
+   */
+  private lastRawSignature = new Map<string, string>();
   /** workflowRunId → artifactId, so repeated node events find the same artifact. */
   private workflowArtifacts = new Map<string, ArtifactId>();
   /** workflowRunId → name used when the artifact was first opened (stable across updates). */
@@ -85,20 +99,23 @@ export class PersonaAdapter {
     // Pull in any messages that were already restored from localStorage.
     this.syncMessages();
 
-    // React to persona.messages growing / items being mutated in place.
+    // React to the persona's explicit scalar revision. Deep-watching the
+    // message array traversed the entire transcript on every stream delta.
     this.stopWatchers.push(
-      watch(() => this.ci.messages.value, () => this.syncMessages(), { deep: true }),
+      watch(() => this.ci.messagesRevision.value, () => this.messageSyncScheduler.schedule()),
     );
 
     // Drive the run-state machine from the backend. Also re-map every
     // message whenever `graphRunning` flips — the streaming/thinking
     // mappings use it as a completion fallback, so a transition to
     // idle must re-evaluate dangling bubbles even when the underlying
-    // message objects haven't changed.
+    // message objects haven't changed. Flushed immediately (not scheduled):
+    // this fires at most twice per turn, and the run-state/UI should not
+    // wait a frame behind it.
     this.stopWatchers.push(
       watch(() => this.ci.graphRunning.value, (running) => {
         this.syncRunState(running);
-        this.syncMessages();
+        this.messageSyncScheduler.flush();
       }),
     );
 
@@ -223,6 +240,7 @@ export class PersonaAdapter {
     this.firstSeenAt.clear();
     this.firstCompletedAt.clear();
     this.lastMappedHash.clear();
+    this.lastRawSignature.clear();
     this.workflowArtifacts.clear();
     this.workflowNames.clear();
     this.htmlArtifacts.clear();
@@ -230,11 +248,13 @@ export class PersonaAdapter {
   }
 
   dispose(): void {
+    this.messageSyncScheduler.dispose();
     for (const stop of this.stopWatchers) stop();
     this.stopWatchers = [];
     this.firstSeenAt.clear();
     this.firstCompletedAt.clear();
     this.lastMappedHash.clear();
+    this.lastRawSignature.clear();
     this.workflowArtifacts.clear();
     this.workflowNames.clear();
     this.htmlArtifacts.clear();
@@ -243,10 +263,36 @@ export class PersonaAdapter {
   }
 
   // ─── Sync backend → controller ─────────────────────────────────────
+  //
+  // This runs on EVERY backend message-array mutation — i.e. every streamed
+  // token and every tool-progress event during a run, not just once per
+  // turn. It used to call mapBackendMessage() + JSON.stringify(mapped) on
+  // every message in the thread on every single call, including messages
+  // that hadn't changed at all. mapBackendMessage does real work per kind
+  // (regex scans, array mapping) and JSON.stringify re-serializes the full
+  // mapped object — for a streaming message that cost grows with the
+  // message's own length, so cost-per-event scaled with total content
+  // length and total events scaled with the same stream: an O(N) turn did
+  // O(N^2) work. On a long tool-heavy turn that was enough to keep the
+  // renderer's JS thread continuously busy and starve paint for minutes —
+  // reported as "chat freezes, then every message dumps in at once the
+  // instant I hit Stop" (Stop ends the event stream, the thread finally
+  // gets a gap to paint). rawSignature() below is an O(1) fingerprint that
+  // lets us skip all of that for messages nothing has actually changed on.
+  //
+  // scheduleSyncMessages() additionally caps how often the loop below can
+  // run. The leading update is synchronous so visible progress never depends
+  // on reaching an animation-frame boundary. During a continuous stream, a
+  // short timer publishes the latest accumulated state at a bounded rate.
   private syncMessages(): void {
     const backend = this.ci.messages.value;
     for (const b of backend) {
       if (!b?.id) continue;
+
+      const rawSig = this.rawSignature(b);
+      if (this.seen.has(b.id) && this.lastRawSignature.get(b.id) === rawSig) continue;
+      this.lastRawSignature.set(b.id, rawSig);
+
       const mapped = this.mapBackendMessage(b);
       // A null mapping means the message is represented elsewhere (e.g. in the
       // artifact sidebar) and should not produce a transcript entry.
@@ -256,17 +302,42 @@ export class PersonaAdapter {
         continue;
       }
       if (this.seen.has(b.id)) {
-        // Existing — update mutable fields, but skip if nothing changed.
-        const hash = stableHash(mapped);
-        if (this.lastMappedHash.get(b.id) === hash) continue;
-        this.lastMappedHash.set(b.id, hash);
         this.controller.updateMessage(mapped.id, mapped as Partial<Message>);
       } else {
         this.seen.add(b.id);
-        this.lastMappedHash.set(b.id, stableHash(mapped));
         this.controller.appendMessage(mapped);
       }
     }
+  }
+
+  /**
+   * O(1) fingerprint (primitive reads / string lengths) of the backend
+   * fields that can change what mapBackendMessage() produces for a given
+   * message. Deliberately avoids serializing `content` itself — only its
+   * length — since content is the field that grows every streamed token.
+   * Must cover every backend field MessageDispatcher mutates in place after
+   * a message's first push (verified against MessageDispatcher.ts): content,
+   * `_completed`, toolCard.status/output/error, subAgentActivity.*, and
+   * workflowNode.status/output/error/nodeIndex/totalNodes. graphRunning is
+   * included because thinking/streaming completion falls back to it.
+   * Other kinds (patch, citation, tool_approval, tool_question, channel,
+   * proactive, html, workflow_document) are pushed once and never mutated,
+   * so kind|role|contentLen already makes their signature stable.
+   */
+  private rawSignature(b: BackendMessage): string {
+    const contentLen = typeof b.content === 'string' ? b.content.length : -1;
+    const completed = (b as any)._completed === true ? 1 : 0;
+    const running = this.ci.graphRunning.value ? 1 : 0;
+    const tool = b.toolCard
+      ? `${ b.toolCard.status }|${ b.toolCard.output?.length ?? -1 }|${ b.toolCard.error ?? '' }`
+      : '';
+    const subAgent = b.subAgentActivity
+      ? `${ b.subAgentActivity.status }|${ b.subAgentActivity.thinkingLines.length }|${ b.subAgentActivity.output?.length ?? -1 }|${ b.subAgentActivity.error ?? '' }`
+      : '';
+    const wfNode = b.workflowNode
+      ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
+      : '';
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ running }|${ tool }|${ subAgent }|${ wfNode }`;
   }
 
   private syncRunState(running: boolean): void {

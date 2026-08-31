@@ -1,4 +1,4 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -17,15 +17,20 @@ export class UpdateTaskWorker extends BaseTool {
     if (!id) return { successBoolean: false, responseString: 'id is required to update a task.' };
 
     const parentRaw = input.parent_id;
-    const parentId = parentRaw === '' ? null
+    const parentId = parentRaw === ''
+      ? null
       : (typeof parentRaw === 'string' ? parentRaw.trim() : undefined);
     const labels = Array.isArray(input.labels)
       ? input.labels.map((l: any) => String(l)).filter(Boolean)
       : undefined;
 
     try {
-      await WorkItemsModel.ensureTables();
-      const updated = await WorkItemsModel.updateTask(id, {
+      const projects = getProjectsApplicationService();
+      await projects.ready();
+      const actor = input.actor || 'sulla';
+      const current = await projects.getTask(id);
+      if (!current) return { successBoolean: false, responseString: `No task found with id: ${ id }` };
+      const updated = await projects.updateTask(id, {
         epic_id:      typeof input.epic_id === 'string' && input.epic_id.trim() ? input.epic_id.trim() : undefined,
         parent_id:    parentId,
         title:        input.title,
@@ -38,8 +43,9 @@ export class UpdateTaskWorker extends BaseTool {
         github_issue: input.github_issue === '' ? null : input.github_issue,
         position:     typeof input.position === 'number' ? input.position : undefined,
         source:       input.source,
-        actor:        input.actor || 'sulla',
-      });
+        actor,
+        custody:      input.custody,
+      }, { actor, source: 'tool' });
       if (!updated) return { successBoolean: false, responseString: `No task found with id: ${ id }` };
 
       return {

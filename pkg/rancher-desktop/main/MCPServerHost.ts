@@ -42,12 +42,14 @@ import { z } from 'zod';
 import { ApprovalService } from '@pkg/agent/services/ApprovalService';
 import { toolRegistry } from '@pkg/agent/tools/registry';
 import { activateWorkflowOnState } from '@pkg/agent/tools/workflow/execute_workflow';
+import { registerGraphBrowserControllerMcp } from '@pkg/agent/utils/graphBrowserControllerMcp';
 import {
   clampTimeout,
   emitQuestionCardViaWs,
   formatQuestionResolution,
   normalizeQuestions,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
+import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 
@@ -474,6 +476,46 @@ export class MCPServerHost {
         };
       },
     );
+
+    // sulla_tool — the graph-stamped tool surface, projected provider-neutrally.
+    // The graph system decides which tools an agent node may use
+    // (state.metadata.allowedToolNames, stamped by the dispatcher and
+    // inherited by sub-nodes — the same mechanism the subconscious observer
+    // agents use). API-driven providers honor it because the graph loop
+    // executes their tool calls; CLI-driven providers (Claude Code, Codex, or
+    // any future CLI model) bring their own harness and would otherwise
+    // bypass it — and sandboxed verifier runs cannot even shell to the
+    // `sulla` CLI. This handler runs in the host process and dispatches
+    // in-process to the same ToolRegistry worker the graph loop would use,
+    // enforcing exactly the graph's allowlist. Unrestricted sessions (no
+    // allowedToolNames) keep the full CLI catalog and get no projection.
+    const graphToolSurface = resolveGraphToolSurface(session.state.metadata);
+    if (graphToolSurface) {
+      server.registerTool(
+        'sulla_tool',
+        {
+          description: [
+            'Run one tool from this agent\'s graph-stamped tool surface and return its result.',
+            'This is the canonical way to invoke Sulla tools for this agent — use it instead of',
+            'shelling out to the `sulla` CLI (sandboxed runs cannot reach the CLI bridge at all).',
+            'Pass the bare tool name and its JSON arguments.',
+            `Allowed tools: ${ graphToolSurface.join(', ') }.`,
+            'Use browse_tools to discover each tool\'s parameter JSON, then invoke it here.',
+          ].join(' '),
+          inputSchema: {
+            tool: z.string().describe('Bare tool name from this agent\'s allowed tool surface, e.g. "github_get_pr" or "get_project_item".'),
+            args: z.record(z.any()).optional().describe('JSON arguments for the tool, exactly as documented by browse_tools.'),
+          },
+        },
+        buildGraphToolHandler(graphToolSurface, name => toolRegistry.getTool(name)),
+      );
+    }
+
+    // Scheduled providers run inside Lima and cannot launch host-app-specific
+    // controller binaries. Capability-enabled graphs receive this narrow
+    // delegation to Sulla's real in-app WebContents browser. Ordinary chat,
+    // API, Slack, and explicitly headless graphs do not see the tool at all.
+    registerGraphBrowserControllerMcp(server, session.state);
 
     return server;
   }

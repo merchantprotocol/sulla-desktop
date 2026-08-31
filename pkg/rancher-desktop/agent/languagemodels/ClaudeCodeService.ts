@@ -3,7 +3,8 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
+import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
+import { buildClaudeLaunchCommand } from './claudeLaunchCommand';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
@@ -92,6 +93,13 @@ interface PrewarmRecord {
   closed:        boolean;
   busy:          boolean;
   reapTimer:     ReturnType<typeof setTimeout> | null;
+  /**
+   * Output the process wrote while nobody was listening (booting prewarm, or
+   * parked between warm turns), drained at claim time. Replayed through the
+   * adopting turn's line processor so a buffered system/init line still
+   * delivers its session id. See claimPrewarm.
+   */
+  pendingStdout?: string;
 }
 
 export class ClaudeCodeService extends BaseLanguageModel {
@@ -270,7 +278,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (p.existingSession) claudeArgs.push('--resume', shq(p.existingSession));
     if (p.mcpConfigPath) claudeArgs.push('--mcp-config', shq(p.mcpConfigPath));
 
-    const innerCmd = `${ envAssignments.join(' ') } exec ${ claudeArgs.join(' ') }`;
+    // Claude Code emits newline-delimited JSON, but its stdout is connected
+    // to the limactl/SSH pipe rather than a terminal. Prefer stdbuf when the
+    // VM provides it, but never make Claude startup depend on that optional
+    // binary: existing installations may not have coreutils installed.
+    const innerCmd = buildClaudeLaunchCommand(envAssignments, claudeArgs);
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
@@ -357,6 +369,29 @@ export class ClaudeCodeService extends BaseLanguageModel {
       this.killPrewarmRecord(rec);                       // dead or model mismatch
       return null;
     }
+
+    // Drain anything the process wrote while unclaimed. A prewarm that sat
+    // past the CLI's stdin-wait can emit an empty `result` (observed as an
+    // instant "claude produced no output" failure on the adopting turn) —
+    // a process that already resulted with no prompt is useless, so decline
+    // it and let the caller cold-spawn. Anything else (system/init) is kept
+    // for replay so the adopting turn still sees the session id.
+    let drained = '';
+    try {
+      let chunk: Buffer | string | null;
+      while ((chunk = rec.proc.stdout.read()) !== null) drained += chunk.toString('utf-8');
+    } catch { /* stream already ended — closed flag handling covers it */ }
+    if (drained) {
+      const staleResult = drained.split('\n').some((line) => {
+        try { return JSON.parse(line.trim())?.type === 'result'; } catch { return false; }
+      });
+      if (staleResult) {
+        log.warn(`[ClaudeCodeService] claimPrewarm: discarding pooled proc for convId=${ convId } — stale result buffered while unclaimed`);
+        this.killPrewarmRecord(rec);
+        return null;
+      }
+      rec.pendingStdout = drained;
+    }
     return rec;
   }
 
@@ -398,8 +433,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   /** Non-streaming chat — buffers the whole response and returns it. */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    const { text } = await this.runClaude(messages, {}, options);
-    return { text };
+    const result = await this.runClaude(messages, {}, options);
+    return result;
   }
 
   protected normalizeResponse(raw: any): NormalizedResponse {
@@ -407,10 +442,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return {
       content:  text,
       metadata: {
-        tokens_used:       0,
+        tokens_used:       usageTokenTotal(raw?.usage),
         time_spent:        0,
-        prompt_tokens:     0,
-        completion_tokens: 0,
+        prompt_tokens:     Number(raw?.usage?.input_tokens ?? 0),
+        completion_tokens: Number(raw?.usage?.output_tokens ?? 0),
         model:             this.getModel(),
         finish_reason:     FinishReason.Stop,
       },
@@ -424,25 +459,29 @@ export class ClaudeCodeService extends BaseLanguageModel {
     options: {
       signal?:         AbortSignal;
       conversationId?: string;
+      profileId?:      string;
+      usageEventId?:   string;
       state?:          BaseThreadState | any;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
 
     try {
-      const { text } = await this.runClaude(messages, callbacks, options);
-
-      return {
-        content:  text,
+      const result = await this.runClaude(messages, callbacks, options);
+      const response: NormalizedResponse = {
+        content:  result.text,
         metadata: {
-          tokens_used:       0,
+          tokens_used:       usageTokenTotal(result.usage),
           time_spent:        Math.round(performance.now() - startTime),
-          prompt_tokens:     0,
-          completion_tokens: 0,
+          prompt_tokens:     Number(result.usage?.input_tokens ?? 0),
+          completion_tokens: Number(result.usage?.output_tokens ?? 0),
           model:             this.getModel(),
           finish_reason:     FinishReason.Stop,
         },
       };
+      await this.recordMeterableTokens(response, options.profileId, options.usageEventId, this.usageEventId(messages, options, this.getModel()));
+
+      return response;
     } catch (err) {
       console.warn('[ClaudeCodeService] chatStream failed:', err);
       throw err;
@@ -738,7 +777,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     callbacks: Partial<StreamCallbacks>,
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
-  ): Promise<{ text: string }> {
+  ): Promise<{ text: string; usage?: any }> {
     // Credentials: integration vault first, settings fallback (shared with prewarm()).
     const { oauthToken, apiKey } = await this.resolveClaudeCreds();
 
@@ -950,6 +989,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       let stderrBuffer = '';
       let textCollected = '';
       let capturedSessionId: string | undefined = existingSession;
+      let lastUsage: any;
       let errored = false;
       let errorMessage = '';
       let sessionInUse = false;
@@ -1327,6 +1367,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
         // Final result event — capture full text and record usage/cost.
         if (parsed.type === 'result') {
+          lastUsage = parsed.usage;
           // Perf summary: split the run into tool-execution time vs the rest
           // (model generation + CLI overhead). Directly answers "is it the
           // search/tool layer or the model that's slow?"
@@ -1386,6 +1427,25 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       };
       proc.stderr.on('data', onStderrData);
 
+      // Replay output drained while the process sat unclaimed (see
+      // claimPrewarm) so a buffered system/init line still delivers its
+      // session id and "tools connected" signal to THIS turn.
+      if (adopted?.pendingStdout) {
+        const pending = adopted.pendingStdout;
+        adopted.pendingStdout = undefined;
+        onStdoutData(Buffer.from(pending, 'utf-8'));
+      }
+
+      // Adopted processes need an explicit resume: finishWarmTurn parks the
+      // proc with stdout/stderr paused, and attaching a 'data' listener does
+      // NOT restart a stream that was explicitly paused. Without this, a
+      // re-adopted warm proc runs the whole turn with its output pipe frozen —
+      // nothing streams to the UI until the process is killed, at which point
+      // every buffered event floods through at once. Harmless on fresh spawns
+      // (resume on an already-flowing stream is a no-op).
+      proc.stdout.resume();
+      proc.stderr.resume();
+
       const onProcError = (err: Error) => {
         stopHeartbeat();
         stopStallWatchdog();
@@ -1438,7 +1498,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           parked = true;
         }
         log.log(`[ClaudeCodeService] warm turn ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (proc parked)`);
-        resolve({ text: textCollected });
+        resolve({ text: textCollected, usage: lastUsage });
       };
 
       const onProcClose = (code: number | null) => {
@@ -1490,7 +1550,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         }
 
         log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
-        resolve({ text: textCollected });
+        resolve({ text: textCollected, usage: lastUsage });
       };
       proc.on('close', onProcClose);
     });

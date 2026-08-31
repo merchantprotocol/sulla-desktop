@@ -1,4 +1,4 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 function fmtProject(p: any): string {
@@ -32,22 +32,23 @@ export class ListProjectItemsWorker extends BaseTool {
     const assignee = input.assignee || undefined;
 
     try {
-      await WorkItemsModel.ensureTables();
+      const projects = getProjectsApplicationService();
+      await projects.ready();
       const lines: string[] = [];
 
       if (kind === 'project' || kind === 'all') {
-        const rows = await WorkItemsModel.listProjects({ status, priority, includeDone, limit });
+        const rows = await projects.listProjects({ status, priority, includeDone, limit });
         lines.push(rows.length ? `${ rows.length } project(s):` : 'No projects.');
         lines.push(...rows.map(fmtProject));
       }
       if (kind === 'epic' || kind === 'all') {
-        const rows = await WorkItemsModel.listEpics({ projectId, status, priority, includeDone, limit });
+        const rows = await projects.listEpics({ projectId, status, priority, includeDone, limit });
         if (lines.length) lines.push('');
         lines.push(rows.length ? `${ rows.length } epic(s):` : 'No epics.');
         lines.push(...rows.map(fmtEpic));
       }
       if (kind === 'task' || kind === 'all') {
-        const rows = await WorkItemsModel.listTasks({
+        const rows = await projects.listTasks({
           projectId, epicId, parentId, status, priority, assignee, includeDone, limit,
         });
         if (lines.length) lines.push('');

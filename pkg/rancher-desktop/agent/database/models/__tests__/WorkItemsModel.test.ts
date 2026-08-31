@@ -122,6 +122,116 @@ describe('WorkItemsModel', () => {
     expect(sql).not.toContain('last_moved_at = now()');
   });
 
+  it('normalizes direct Sulla todo ownership when inserting through the model boundary', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id: params[0], status: params[7], assignee: params[11], labels: params[12],
+      }]));
+
+    const task = await WorkItemsModel.insertTask({
+      id:       'task-1',
+      epic_id:  'epic-1',
+      title:    'Executable',
+      status:   'todo',
+      assignee: 'sulla',
+      actor:    'sulla',
+      labels:   ['projects'],
+    });
+
+    expect(task.assignee).toBe('dispatcher');
+    expect((postgresClient.query as any).mock.calls[1][1][11]).toBe('dispatcher');
+  });
+
+  it('falls back to todo ownership when omitted-status creation is capability-degraded', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id: params[0], status: params[7], assignee: params[11], labels: params[12],
+      }]));
+
+    const task = await WorkItemsModel.insertTask({
+      id:       'task-degraded-default',
+      epic_id:  'epic-1',
+      title:    'Compatibility entry',
+      assignee: 'sulla',
+      actor:    'sulla',
+    });
+
+    expect(task).toMatchObject({ status: 'todo', assignee: 'dispatcher' });
+  });
+
+  it('defaults omitted-status creation to the project-specific execution-entry lane', async() => {
+    jest.spyOn(WorkLaneDefinitionModel, 'validateTaskStatus').mockResolvedValue({
+      lane_key: 'ready-custom', semantic_role: 'execution',
+    } as any);
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('ready-custom');
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id: params[0], status: params[7], assignee: params[11], labels: params[12],
+      }]));
+
+    const task = await WorkItemsModel.insertTask({
+      id:       'task-custom-create',
+      epic_id:  'epic-1',
+      title:    'Custom execution entry',
+      assignee: 'sulla',
+      actor:    'sulla',
+    });
+
+    expect(task).toMatchObject({ status: 'ready-custom', assignee: 'dispatcher' });
+    expect(WorkLaneDefinitionModel.preferredLaneKey).toHaveBeenCalledWith(
+      'project-1', 'execution', 'todo', 'first',
+    );
+  });
+  it('preserves gated and human ownership when inserting through the model boundary', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
+      .mockResolvedValueOnce([{ id: 'gated', assignee: 'sulla' }])
+      .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
+      .mockResolvedValueOnce([{ id: 'human', assignee: 'human' }]);
+
+    await WorkItemsModel.insertTask({
+      id:       'gated',
+      epic_id:  'epic-1',
+      title:    'Needs approval',
+      status:   'todo',
+      assignee: 'sulla',
+      actor:    'sulla',
+      labels:   ['gated'],
+    });
+    await WorkItemsModel.insertTask({
+      id:       'human',
+      epic_id:  'epic-1',
+      title:    'Human task',
+      status:   'todo',
+      assignee: 'human',
+      actor:    'sulla',
+      labels:   [],
+    });
+
+    expect((postgresClient.query as any).mock.calls[1][1][11]).toBe('sulla');
+    expect((postgresClient.query as any).mock.calls[3][1][11]).toBe('human');
+  });
+
+  it('normalizes a legacy todo during an update using the resulting labels and status', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{
+        id: 'task-1', status: 'todo', priority: 'high', assignee: 'sulla', labels: [],
+      }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id: 'task-1', assignee: params[1], title: params[0],
+      }]));
+
+    const task = await WorkItemsModel.updateTask('task-1', { title: 'Touched', actor: 'heartbeat' });
+    const sql = (postgresClient.query as any).mock.calls[1][0] as string;
+
+    expect(task?.assignee).toBe('dispatcher');
+    expect(sql).toContain('assignee = $2');
+    expect(sql).toContain('last_moved_by');
+  });
+
   it('inserts a comment and touches its task in one SQL statement', async() => {
     (postgresClient as any).query = (jest.fn() as any)
       .mockResolvedValueOnce([{ id: 'task-1', title: 'Rotate me' }])
@@ -135,5 +245,76 @@ describe('WorkItemsModel', () => {
     expect(sql).toContain('WITH inserted AS');
     expect(sql).toContain('SET last_activity_at = now()');
     expect(sql).toContain('SELECT inserted.* FROM inserted JOIN touched ON true');
+  });
+
+  it('commits a schedule edit and its audit row in the same transaction', async() => {
+    const before = {
+      id:           'task-schedule',
+      project_id:   'project-1',
+      status:       'todo',
+      priority:     'high',
+      assignee:     'human',
+      labels:       [],
+      start_at:     null,
+      due_at:       null,
+      milestone_at: null,
+    };
+    const after = { ...before, due_at: '2026-08-31T00:00:00.000Z' };
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([before]));
+    const client = {
+      query: (jest.fn() as any)
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [before] })
+        .mockResolvedValueOnce({ rows: [after] })
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(client));
+
+    const updated = await WorkItemsModel.updateTask('task-schedule', {
+      due_at: '2026-08-31T00:00:00.000Z', actor: 'human',
+    });
+
+    expect(updated?.due_at).toBe('2026-08-31T00:00:00.000Z');
+    expect(client.query.mock.calls[1][0]).toContain('FOR UPDATE');
+    expect(client.query.mock.calls[2][0]).toContain('UPDATE work_tasks');
+    expect(client.query.mock.calls[3][0]).toContain('INSERT INTO work_schedule_audit');
+    expect(postgresClient.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists active same-project dependencies and rejects dependency cycles', async() => {
+    const successClient = {
+      query: (jest.fn() as any)
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'task-a', project_id: 'project-1' },
+            { id: 'task-b', project_id: 'project-1' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ found: false }] })
+        .mockResolvedValueOnce({ rows: [{ task_id: 'task-a', depends_on_task_id: 'task-b' }] }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(successClient));
+    await expect(WorkItemsModel.setTaskDependency('task-a', 'task-b', 'human')).resolves.toMatchObject(
+      {
+        task_id: 'task-a', depends_on_task_id: 'task-b',
+      },
+    );
+    expect(successClient.query.mock.calls[1][0]).toContain('WITH RECURSIVE prerequisites');
+
+    const cycleClient = {
+      query: (jest.fn() as any)
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'task-a', project_id: 'project-1' },
+            { id: 'task-b', project_id: 'project-1' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ found: true }] }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(cycleClient));
+    await expect(
+      WorkItemsModel.setTaskDependency('task-a', 'task-b', 'human'),
+    )
+      .rejects.toThrow('create a cycle');
   });
 });

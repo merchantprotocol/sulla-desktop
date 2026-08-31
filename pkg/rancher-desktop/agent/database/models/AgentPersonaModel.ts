@@ -80,6 +80,11 @@ export class AgentPersonaService {
   private readonly dispatcher = createMessageDispatcher();
 
   readonly messages:     ChatMessage[] = reactive([]);
+  /**
+   * Monotonic signal for renderer consumers. Watching this scalar avoids a
+   * deep traversal of the entire reactive transcript on every stream delta.
+   */
+  readonly messagesRevision = ref(0);
   private readonly toolRunIdToMessageId = new Map<string, string>();
 
   /**
@@ -213,6 +218,7 @@ export class AgentPersonaService {
       };
     }
     this.messages.push(localMessage);
+    this.markMessagesChanged();
 
     this.registry.setLoading(id, true);
 
@@ -241,6 +247,7 @@ export class AgentPersonaService {
         role:      'system',
         content:   'Message could not be delivered — the connection to the agent appears to be down. Please try again.',
       });
+      this.markMessagesChanged();
     }
 
     return delivered;
@@ -277,6 +284,7 @@ export class AgentPersonaService {
       };
     }
     this.messages.push(localMessage);
+    this.markMessagesChanged();
 
     // Send inject_message — backend will push to state.messages without calling graph.execute()
     let delivered: boolean;
@@ -350,6 +358,7 @@ export class AgentPersonaService {
   clearMessages(): void {
     this.messages.splice(0, this.messages.length);
     this.toolRunIdToMessageId.clear();
+    this.markMessagesChanged();
   }
 
   async emitContinueRun(): Promise<boolean> {
@@ -379,21 +388,22 @@ export class AgentPersonaService {
         role:      'system',
         content:   'Could not resume the agent — the connection appears to be down. Please try again.',
       });
+      this.markMessagesChanged();
     }
 
     return delivered;
   }
 
   async emitStopSignal(agentId: string): Promise<boolean> {
-    console.log('[AgentPersonaModel] Emitting stop signal for agent:', agentId, 'thread:', this.state.threadId);
+    console.log('[AgentPersonaModel] Emitting stop signal for agent:', agentId, 'tab:', this.tabId, 'thread:', this.state.threadId);
     let sent: boolean;
     try {
-      // Send the threadId so the backend stops only THIS tab's run, not
-      // every active run on the channel. Backend falls back to channel-wide
-      // stop when threadId is missing (older clients).
+      // Send both ownership identifiers so the backend and logs can prove
+      // which tab/thread requested the stop. The backend rejects unscoped
+      // stops rather than treating the shared channel as run ownership.
       sent = await this.wsService.send(agentId, {
         type:      'stop_run',
-        data:      { threadId: this.state.threadId },
+        data:      { threadId: this.state.threadId, tabId: this.tabId },
         timestamp: Date.now(),
       });
     } catch {
@@ -505,6 +515,11 @@ export class AgentPersonaService {
     }
 
     this.dispatcher.dispatch(this.getDispatchContext(), agentId, msgThreadId ?? '', msg);
+    this.markMessagesChanged();
+  }
+
+  private markMessagesChanged(): void {
+    this.messagesRevision.value++;
   }
 
   /**

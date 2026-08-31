@@ -14,28 +14,35 @@
  */
 
 import { postgresClient } from '../PostgresClient';
+import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
+import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
+import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
+import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
+
+import type { PoolClient } from 'pg';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
 export type WorkItemKind = 'project' | 'epic' | 'task';
 
 export interface WorkProjectRecord {
-  id:              string;
-  slug:            string;
-  title:           string;
-  description:     string;
-  outcome_metric:  string | null;
-  status:          string;
-  priority:        string;
-  owner:           string | null;
-  source:          string | null;
-  source_path:     string | null;
-  github_repo:     string | null;
-  due_at:          string | null;
-  created_at:      string;
-  updated_at:      string | null;
-  last_moved_at:   string;
-  archived:        boolean;
+  id:             string;
+  slug:           string;
+  title:          string;
+  description:    string;
+  outcome_metric: string | null;
+  status:         string;
+  priority:       string;
+  owner:          string | null;
+  source:         string | null;
+  source_path:    string | null;
+  github_repo:    string | null;
+  due_at:         string | null;
+  created_at:     string;
+  updated_at:     string | null;
+  last_moved_at:  string;
+  archived:       boolean;
+  pipeline_template_id: string | null;
 }
 
 export interface WorkEpicRecord {
@@ -48,6 +55,8 @@ export interface WorkEpicRecord {
   priority:      string;
   position:      number;
   due_at:        string | null;
+  start_at:      string | null;
+  milestone_at:  string | null;
   source:        string | null;
   source_ref:    string | null;
   created_at:    string;
@@ -57,30 +66,42 @@ export interface WorkEpicRecord {
 }
 
 export interface WorkTaskRecord {
-  id:            string;
-  project_id:    string;
-  epic_id:       string | null;
-  parent_id:     string | null;
-  slug:          string | null;
-  title:         string;
-  description:   string;
-  status:        string;
-  priority:      string;
-  due_at:        string | null;
-  github_issue:  string | null;
-  assignee:      string | null;
-  labels:        string[] | null;
-  position:      number;
-  source:        string | null;
-  source_ref:    string | null;
-  created_at:    string;
-  updated_at:    string | null;
-  last_moved_at: string;
+  id:               string;
+  project_id:       string;
+  epic_id:          string | null;
+  parent_id:        string | null;
+  slug:             string | null;
+  title:            string;
+  description:      string;
+  status:           string;
+  priority:         string;
+  due_at:           string | null;
+  start_at:         string | null;
+  milestone_at:     string | null;
+  github_issue:     string | null;
+  assignee:         string | null;
+  labels:           string[] | null;
+  position:         number;
+  source:           string | null;
+  source_ref:       string | null;
+  created_at:       string;
+  updated_at:       string | null;
+  last_moved_at:    string;
   last_activity_at: string;
-  created_by:    string | null;
-  last_moved_by: string | null;
-  completed_at:  string | null;
-  archived:      boolean;
+  created_by:       string | null;
+  last_moved_by:    string | null;
+  completed_at:     string | null;
+  archived:         boolean;
+}
+
+export interface WorkTaskDependencyRecord {
+  task_id:              string;
+  depends_on_task_id:   string;
+  relation_type:        string;
+  acceptance_condition: string | null;
+  created_at:           string;
+  created_by:           string | null;
+  archived:             boolean;
 }
 
 export interface WorkCommentRecord {
@@ -137,33 +158,34 @@ export interface SearchHit {
 }
 
 export interface UpsertProjectInput {
-  id?:              string;
-  slug?:            string;
-  title:            string;
-  description?:     string;
-  outcome_metric?:  string | null;
-  status?:          string;
-  priority?:        string;
-  owner?:           string | null;
-  due_at?:          string | null;
-  source?:          string | null;
-  source_ref?:      string | null;
-  source_path?:     string | null;
-  github_repo?:     string | null;
+  id?:             string;
+  slug?:           string;
+  title:           string;
+  description?:    string;
+  outcome_metric?: string | null;
+  status?:         string;
+  priority?:       string;
+  owner?:          string | null;
+  due_at?:         string | null;
+  source?:         string | null;
+  source_ref?:     string | null;
+  source_path?:    string | null;
+  github_repo?:    string | null;
+  pipeline_template_id?: string | null;
 }
 
 export interface UpdateProjectInput {
-  slug?:            string;
-  title?:           string;
-  description?:     string;
-  outcome_metric?:  string | null;
-  status?:          string;
-  priority?:        string;
-  owner?:           string | null;
-  due_at?:          string | null;
-  source?:          string | null;
-  source_path?:     string | null;
-  github_repo?:     string | null;
+  slug?:           string;
+  title?:          string;
+  description?:    string;
+  outcome_metric?: string | null;
+  status?:         string;
+  priority?:       string;
+  owner?:          string | null;
+  due_at?:         string | null;
+  source?:         string | null;
+  source_path?:    string | null;
+  github_repo?:    string | null;
 }
 
 export interface UpsertEpicInput {
@@ -176,6 +198,8 @@ export interface UpsertEpicInput {
   priority?:     string;
   position?:     number;
   due_at?:       string | null;
+  start_at?:     string | null;
+  milestone_at?: string | null;
   source?:       string | null;
   source_ref?:   string | null;
 }
@@ -189,54 +213,62 @@ export interface UpdateEpicInput {
   priority?:     string;
   position?:     number;
   due_at?:       string | null;
+  start_at?:     string | null;
+  milestone_at?: string | null;
+  actor?:        string;
   source?:       string | null;
   source_ref?:   string | null;
 }
 
 export interface UpsertTaskInput {
-  id?:            string;
-  project_id?:    string;
-  epic_id?:       string | null;
-  parent_id?:     string | null;
-  slug?:          string;
-  title:          string;
-  description?:   string;
-  status?:        string;
-  priority?:      string;
-  assignee?:      string | null;
-  due_at?:        string | null;
-  labels?:        string[];
-  github_issue?:  string | null;
-  position?:      number;
-  source?:        string | null;
-  source_ref?:    string | null;
-  actor?:         string;
+  id?:           string;
+  project_id?:   string;
+  epic_id?:      string | null;
+  parent_id?:    string | null;
+  slug?:         string;
+  title:         string;
+  description?:  string;
+  status?:       string;
+  priority?:     string;
+  assignee?:     string | null;
+  due_at?:       string | null;
+  start_at?:     string | null;
+  milestone_at?: string | null;
+  labels?:       string[];
+  github_issue?: string | null;
+  position?:     number;
+  source?:       string | null;
+  source_ref?:   string | null;
+  actor?:        string;
 }
 
 export interface UpdateTaskInput {
-  epic_id?:       string | null;
-  parent_id?:     string | null;
-  slug?:          string | null;
-  title?:         string;
-  description?:   string;
-  status?:        string;
-  priority?:      string;
-  assignee?:      string | null;
-  due_at?:        string | null;
-  labels?:        string[];
-  github_issue?:  string | null;
-  position?:      number;
-  source?:        string | null;
-  source_ref?:    string | null;
-  actor?:         string;
+  epic_id?:      string | null;
+  parent_id?:    string | null;
+  slug?:         string | null;
+  title?:        string;
+  description?:  string;
+  status?:       string;
+  priority?:     string;
+  assignee?:     string | null;
+  due_at?:       string | null;
+  start_at?:     string | null;
+  milestone_at?: string | null;
+  labels?:       string[];
+  github_issue?: string | null;
+  position?:     number;
+  source?:       string | null;
+  source_ref?:   string | null;
+  actor?:        string;
+  custody?:      ArtifactCustody | null;
 }
 
 export interface AddCommentInput {
-  id?:      string;
-  task_id:  string;
-  body:     string;
-  author?:  string;
-  actor?:   string;
+  id?:     string;
+  task_id: string;
+  body:    string;
+  author?: string;
+  actor?:  string;
 }
 
 export interface ListOpts {
@@ -257,17 +289,20 @@ export interface ListEpicsOpts extends ListOpts {
 }
 
 export interface ListTasksOpts extends ListOpts {
-  projectId?: string;
-  epicId?:    string;
-  parentId?:  string;
-  assignee?:  string;
+  projectId?:            string;
+  epicId?:               string;
+  parentId?:             string;
+  assignee?:             string;
+  semanticRoles?:        WorkLaneSemanticRole[];
+  excludeSemanticRoles?: WorkLaneSemanticRole[];
+  fallbackStatuses?:     string[];
 }
 
 export interface SearchOpts {
-  query:             string;
-  kind?:             WorkItemKind | string;
-  includeArchived?:  boolean;
-  limit?:            number;
+  query:            string;
+  kind?:            WorkItemKind | string;
+  includeArchived?: boolean;
+  limit?:           number;
 }
 
 // ── Tiny-ID generator (4-char) — same alphabet as observations/rules ──
@@ -346,12 +381,66 @@ function isClosedStatus(status: string | undefined): boolean {
   return status === 'done' || status === 'cancelled' || status === 'parked';
 }
 
+const FALLBACK_ROLE_KEYS: Record<WorkLaneSemanticRole, string[]> = {
+  backlog:   ['backlog'],
+  planning:  ['planning'],
+  execution: ['todo', 'in_progress'],
+  review:    ['in_review'],
+  blocked:   ['blocked'],
+  terminal:  ['done', 'cancelled'],
+  manual:    ['parked'],
+};
+
+function fallbackKeys(roles: WorkLaneSemanticRole[]): string[] {
+  return Array.from(new Set(roles.flatMap(role => FALLBACK_ROLE_KEYS[role])));
+}
+
+/**
+ * Bridge committed Projects status writes into the sole matching routine.
+ * Dynamic import keeps the Projects model free of main-process/workflow cycles.
+ * The task write is already durable when this runs, so bridge failures do not
+ * misreport the Projects mutation to its caller.
+ */
+async function notifyTaskStatusCommitted(
+  task: WorkTaskRecord,
+  previousStatus: string,
+  actor?: string,
+): Promise<void> {
+  try {
+    const capability = await WorkLaneDefinitionModel.runtimeCapability(task.project_id);
+    const currentRole = capability.ready
+      ? (await WorkLaneDefinitionModel.resolveStatus(task.project_id, task.status))?.semantic_role ?? 'manual'
+      : (FALLBACK_ROLE_KEYS.planning.includes(task.status)
+        ? 'planning'
+        : FALLBACK_ROLE_KEYS.blocked.includes(task.status)
+          ? 'blocked'
+          : FALLBACK_ROLE_KEYS.execution.includes(task.status) ? 'execution' : 'manual');
+    const previousRole = capability.ready
+      ? (await WorkLaneDefinitionModel.resolveStatus(task.project_id, previousStatus))?.semantic_role ?? 'manual'
+      : (FALLBACK_ROLE_KEYS.planning.includes(previousStatus)
+        ? 'planning'
+        : FALLBACK_ROLE_KEYS.blocked.includes(previousStatus)
+          ? 'blocked'
+          : FALLBACK_ROLE_KEYS.execution.includes(previousStatus) ? 'execution' : 'manual');
+    if ([currentRole, previousRole].some(role => role === 'blocked' || role === 'planning')) {
+      const { PlanningCouncilService } = await import('../../services/PlanningCouncilService');
+      await PlanningCouncilService.handleTaskStatusTransition(task, previousStatus, actor);
+    }
+    if (currentRole === 'execution' && previousRole !== 'execution') {
+      const { getTaskDispatcherService } = await import('../../services/TaskDispatcherService');
+      await getTaskDispatcherService().forceCheck();
+    }
+  } catch (err) {
+    console.error(`[WorkItemsModel] Post-commit status bridge failed for task ${ task.id }:`, err);
+  }
+}
+
 // ── Model ──────────────────────────────────────────────────────────────
 
 export class WorkItemsModel {
   private static readonly PROJECTS = 'work_projects';
-  private static readonly EPICS    = 'work_epics';
-  private static readonly TASKS    = 'work_tasks';
+  private static readonly EPICS = 'work_epics';
+  private static readonly TASKS = 'work_tasks';
   private static readonly COMMENTS = 'work_task_comments';
 
   // ──────────────────────────────────────────────
@@ -359,177 +448,10 @@ export class WorkItemsModel {
   // ──────────────────────────────────────────────
 
   static async ensureTables(): Promise<void> {
-    try {
-      await postgresClient.query(`
-        CREATE TABLE IF NOT EXISTS ${ WorkItemsModel.PROJECTS } (
-          id              TEXT        PRIMARY KEY,
-          slug            TEXT        NOT NULL UNIQUE,
-          title           TEXT        NOT NULL,
-          description     TEXT        NOT NULL DEFAULT '',
-          outcome_metric  TEXT,
-          status          TEXT        NOT NULL DEFAULT 'working',
-          priority        TEXT        NOT NULL DEFAULT 'p2',
-          owner           TEXT,
-          source          TEXT,
-          source_path     TEXT,
-          github_repo     TEXT,
-          due_at          TIMESTAMPTZ,
-          created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at      TIMESTAMPTZ,
-          last_moved_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-          archived        BOOLEAN     NOT NULL DEFAULT false
-        )
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_projects_board
-          ON ${ WorkItemsModel.PROJECTS } (archived, status, priority, last_moved_at ASC)
-      `);
-
-      await postgresClient.query(`
-        CREATE TABLE IF NOT EXISTS ${ WorkItemsModel.EPICS } (
-          id              TEXT        PRIMARY KEY,
-          project_id      TEXT        NOT NULL REFERENCES ${ WorkItemsModel.PROJECTS }(id),
-          slug            TEXT,
-          title           TEXT        NOT NULL,
-          description     TEXT        NOT NULL DEFAULT '',
-          status          TEXT        NOT NULL DEFAULT 'working',
-          priority        TEXT        NOT NULL DEFAULT 'p2',
-          position        INTEGER     NOT NULL DEFAULT 0,
-          due_at          TIMESTAMPTZ,
-          source          TEXT,
-          source_ref      TEXT,
-          created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at      TIMESTAMPTZ,
-          last_moved_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-          archived        BOOLEAN     NOT NULL DEFAULT false
-        )
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_epics_project
-          ON ${ WorkItemsModel.EPICS } (project_id, archived, position, status)
-      `);
-      await postgresClient.query(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_work_epics_project_slug
-          ON ${ WorkItemsModel.EPICS } (project_id, slug)
-          WHERE slug IS NOT NULL
-      `);
-
-      await postgresClient.query(`
-        CREATE TABLE IF NOT EXISTS ${ WorkItemsModel.TASKS } (
-          id              TEXT        PRIMARY KEY,
-          project_id      TEXT        NOT NULL REFERENCES ${ WorkItemsModel.PROJECTS }(id),
-          epic_id         TEXT        REFERENCES ${ WorkItemsModel.EPICS }(id),
-          parent_id       TEXT        REFERENCES ${ WorkItemsModel.TASKS }(id),
-          slug            TEXT,
-          title           TEXT        NOT NULL,
-          description     TEXT        NOT NULL DEFAULT '',
-          status          TEXT        NOT NULL DEFAULT 'todo',
-          priority        TEXT        NOT NULL DEFAULT 'p2',
-          due_at          TIMESTAMPTZ,
-          github_issue    TEXT,
-          assignee        TEXT,
-          labels          TEXT[],
-          position        INTEGER     NOT NULL DEFAULT 0,
-          source          TEXT,
-          source_ref      TEXT,
-          created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at      TIMESTAMPTZ,
-          last_moved_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-          last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          created_by      TEXT,
-          last_moved_by   TEXT,
-          completed_at    TIMESTAMPTZ,
-          archived        BOOLEAN     NOT NULL DEFAULT false
-        )
-      `);
-      await postgresClient.query(`
-        ALTER TABLE ${ WorkItemsModel.TASKS }
-          ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_tasks_epic
-          ON ${ WorkItemsModel.TASKS } (epic_id, archived, status, position)
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_tasks_project
-          ON ${ WorkItemsModel.TASKS } (project_id, archived, status, priority, due_at)
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_tasks_parent
-          ON ${ WorkItemsModel.TASKS } (parent_id) WHERE parent_id IS NOT NULL
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_tasks_due
-          ON ${ WorkItemsModel.TASKS } (archived, due_at)
-          WHERE due_at IS NOT NULL AND archived = false
-      `);
-      await postgresClient.query(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_work_tasks_epic_slug
-          ON ${ WorkItemsModel.TASKS } (epic_id, slug)
-          WHERE slug IS NOT NULL
-      `);
-
-      await postgresClient.query(`
-        CREATE TABLE IF NOT EXISTS ${ WorkItemsModel.COMMENTS } (
-          id              TEXT        PRIMARY KEY,
-          task_id         TEXT        NOT NULL REFERENCES ${ WorkItemsModel.TASKS }(id),
-          body            TEXT        NOT NULL,
-          author          TEXT,
-          created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at      TIMESTAMPTZ,
-          archived        BOOLEAN     NOT NULL DEFAULT false
-        )
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_task_comments_task
-          ON ${ WorkItemsModel.COMMENTS } (task_id, archived, created_at ASC)
-      `);
-      await postgresClient.query(`
-        UPDATE ${ WorkItemsModel.TASKS } t
-           SET last_activity_at = GREATEST(
-             t.last_moved_at,
-             COALESCE(t.updated_at, t.last_moved_at),
-             COALESCE((
-               SELECT MAX(c.created_at)
-                 FROM ${ WorkItemsModel.COMMENTS } c
-                WHERE c.task_id = t.id AND c.archived = false
-             ), t.last_moved_at)
-           )
-         WHERE t.last_activity_at IS NULL
-      `);
-      await postgresClient.query(`
-        ALTER TABLE ${ WorkItemsModel.TASKS }
-          ALTER COLUMN last_activity_at SET DEFAULT now(),
-          ALTER COLUMN last_activity_at SET NOT NULL
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_tasks_activity
-          ON ${ WorkItemsModel.TASKS } (archived, status, priority, last_activity_at ASC)
-      `);
-
-      try {
-        await postgresClient.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
-        await postgresClient.query(`
-          CREATE INDEX IF NOT EXISTS idx_work_projects_title_trgm
-            ON ${ WorkItemsModel.PROJECTS } USING gin (title gin_trgm_ops)
-        `);
-        await postgresClient.query(`
-          CREATE INDEX IF NOT EXISTS idx_work_epics_title_trgm
-            ON ${ WorkItemsModel.EPICS } USING gin (title gin_trgm_ops)
-        `);
-        await postgresClient.query(`
-          CREATE INDEX IF NOT EXISTS idx_work_tasks_title_trgm
-            ON ${ WorkItemsModel.TASKS } USING gin (title gin_trgm_ops)
-        `);
-      } catch (trgmErr) {
-        console.warn('[WorkItemsModel] pg_trgm index unavailable (non-fatal):', trgmErr);
-      }
-    } catch (err) {
-      console.error('[WorkItemsModel] Failed to ensure tables:', err);
-    }
+    const { PostgresProjectsSchemaVerifier } = await import('../../projects/infrastructure/PostgresProjectsSchemaVerifier');
+    return PostgresProjectsSchemaVerifier.verify();
   }
 
-  /** Alias — ObservationsModel/RulesModel style. */
   static async ensureTable(): Promise<void> {
     return WorkItemsModel.ensureTables();
   }
@@ -554,6 +476,22 @@ export class WorkItemsModel {
     const epic = await WorkItemsModel.getEpic(epicId);
     if (!epic) throw new Error(`No epic found with id: ${ epicId }`);
     return epic;
+  }
+
+  private static async auditScheduleChangesWithClient(
+    client: Pick<PoolClient, 'query'>,
+    kind: 'epic' | 'task', id: string,
+    before: Pick<WorkEpicRecord, 'start_at' | 'due_at' | 'milestone_at'>,
+    after: Pick<WorkEpicRecord, 'start_at' | 'due_at' | 'milestone_at'>,
+    actor = 'sulla',
+  ): Promise<void> {
+    for (const field of ['start_at', 'due_at', 'milestone_at'] as const) {
+      if ((before[field] ?? null) === (after[field] ?? null)) continue;
+      await client.query(`INSERT INTO work_schedule_audit
+        (item_kind, item_id, field_name, old_value, new_value, actor)
+        VALUES ($1, $2, $3, $4, $5, $6)`,
+      [kind, id, field, before[field] ?? null, after[field] ?? null, actor]);
+    }
   }
 
   private static pushClosedFilter(conds: string[], opts: ListOpts): void {
@@ -640,17 +578,17 @@ export class WorkItemsModel {
       values.push(val);
     };
 
-    if (changes.slug           !== undefined) assign('slug', changes.slug);
-    if (changes.title          !== undefined) assign('title', changes.title);
-    if (changes.description    !== undefined) assign('description', changes.description);
+    if (changes.slug !== undefined) assign('slug', changes.slug);
+    if (changes.title !== undefined) assign('title', changes.title);
+    if (changes.description !== undefined) assign('description', changes.description);
     if (changes.outcome_metric !== undefined) assign('outcome_metric', changes.outcome_metric);
-    if (changes.status         !== undefined) { assign('status', changes.status); moved = true; }
-    if (changes.priority       !== undefined) { assign('priority', changes.priority); moved = true; }
-    if (changes.owner          !== undefined) assign('owner', changes.owner);
-    if (changes.due_at         !== undefined) { assign('due_at', changes.due_at); moved = true; }
-    if (changes.source         !== undefined) assign('source', changes.source);
-    if (changes.source_path    !== undefined) assign('source_path', changes.source_path);
-    if (changes.github_repo    !== undefined) assign('github_repo', changes.github_repo);
+    if (changes.status !== undefined) { assign('status', changes.status); moved = true }
+    if (changes.priority !== undefined) { assign('priority', changes.priority); moved = true }
+    if (changes.owner !== undefined) assign('owner', changes.owner);
+    if (changes.due_at !== undefined) { assign('due_at', changes.due_at); moved = true }
+    if (changes.source !== undefined) assign('source', changes.source);
+    if (changes.source_path !== undefined) assign('source_path', changes.source_path);
+    if (changes.github_repo !== undefined) assign('github_repo', changes.github_repo);
 
     if (moved) setClauses.push('last_moved_at = now()');
     if (setClauses.length === 1) return existing;
@@ -669,8 +607,8 @@ export class WorkItemsModel {
     const values: any[] = [];
     let idx = 1;
     WorkItemsModel.pushClosedFilter(conds, opts);
-    if (opts.status)   { conds.push(`status = $${ idx++ }`);   values.push(opts.status); }
-    if (opts.priority) { conds.push(`priority = $${ idx++ }`); values.push(opts.priority); }
+    if (opts.status) { conds.push(`status = $${ idx++ }`); values.push(opts.status) }
+    if (opts.priority) { conds.push(`priority = $${ idx++ }`); values.push(opts.priority) }
     const limit = opts.limit ?? 50;
     values.push(limit);
     return postgresClient.query<WorkProjectRecord>(
@@ -708,14 +646,16 @@ export class WorkItemsModel {
       );
       if (existing[0]) {
         return (await WorkItemsModel.updateEpic(existing[0].id, {
-          title:       input.title,
-          description: input.description,
-          status:      input.status,
-          priority:    input.priority,
-          position:    input.position,
-          due_at:      input.due_at,
-          source:      input.source,
-          source_ref:  input.source_ref,
+          title:        input.title,
+          description:  input.description,
+          status:       input.status,
+          priority:     input.priority,
+          position:     input.position,
+          due_at:       input.due_at,
+          start_at:     input.start_at,
+          milestone_at: input.milestone_at,
+          source:       input.source,
+          source_ref:   input.source_ref,
         })) ?? existing[0];
       }
     }
@@ -724,8 +664,8 @@ export class WorkItemsModel {
     const rows = await postgresClient.query<WorkEpicRecord>(
       `INSERT INTO ${ WorkItemsModel.EPICS }
          (id, project_id, slug, title, description, status, priority,
-          position, due_at, source, source_ref)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          position, due_at, start_at, milestone_at, source, source_ref)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [
         id,
@@ -737,6 +677,8 @@ export class WorkItemsModel {
         input.priority ?? 'p2',
         input.position ?? 0,
         input.due_at ?? null,
+        input.start_at ?? null,
+        input.milestone_at ?? null,
         input.source ?? null,
         input.source_ref ?? null,
       ],
@@ -763,27 +705,43 @@ export class WorkItemsModel {
       values.push(val);
     };
 
-    if (changes.project_id  !== undefined) { assign('project_id', changes.project_id); moved = true; }
-    if (changes.slug        !== undefined) assign('slug', changes.slug);
-    if (changes.title       !== undefined) assign('title', changes.title);
+    if (changes.project_id !== undefined) { assign('project_id', changes.project_id); moved = true }
+    if (changes.slug !== undefined) assign('slug', changes.slug);
+    if (changes.title !== undefined) assign('title', changes.title);
     if (changes.description !== undefined) assign('description', changes.description);
-    if (changes.status      !== undefined) { assign('status', changes.status); moved = true; }
-    if (changes.priority    !== undefined) { assign('priority', changes.priority); moved = true; }
-    if (changes.position    !== undefined) assign('position', changes.position);
-    if (changes.due_at      !== undefined) { assign('due_at', changes.due_at); moved = true; }
-    if (changes.source      !== undefined) assign('source', changes.source);
-    if (changes.source_ref  !== undefined) assign('source_ref', changes.source_ref);
+    if (changes.status !== undefined) { assign('status', changes.status); moved = true }
+    if (changes.priority !== undefined) { assign('priority', changes.priority); moved = true }
+    if (changes.position !== undefined) assign('position', changes.position);
+    if (changes.due_at !== undefined) { assign('due_at', changes.due_at); moved = true }
+    if (changes.start_at !== undefined) { assign('start_at', changes.start_at); moved = true }
+    if (changes.milestone_at !== undefined) { assign('milestone_at', changes.milestone_at); moved = true }
+    if (changes.source !== undefined) assign('source', changes.source);
+    if (changes.source_ref !== undefined) assign('source_ref', changes.source_ref);
 
     if (moved) setClauses.push('last_moved_at = now()');
     if (setClauses.length === 1) return existing;
 
     values.push(id);
-    const rows = await postgresClient.query<WorkEpicRecord>(
-      `UPDATE ${ WorkItemsModel.EPICS } SET ${ setClauses.join(', ') }
-        WHERE id = $${ idx } RETURNING *`,
-      values,
-    );
-    return rows[0] ?? null;
+    const updateSql = `UPDATE ${ WorkItemsModel.EPICS } SET ${ setClauses.join(', ') }
+      WHERE id = $${ idx } RETURNING *`;
+    const changesSchedule = changes.due_at !== undefined || changes.start_at !== undefined || changes.milestone_at !== undefined;
+    if (!changesSchedule) {
+      const rows = await postgresClient.query<WorkEpicRecord>(updateSql, values);
+      return rows[0] ?? null;
+    }
+
+    return postgresClient.transaction(async(client) => {
+      const current = await client.query<WorkEpicRecord>(
+        `SELECT * FROM ${ WorkItemsModel.EPICS } WHERE id = $1 AND archived = false FOR UPDATE`, [id]);
+      if (!current.rows[0]) return null;
+      const rows = await client.query<WorkEpicRecord>(updateSql, values);
+      const updated = rows.rows[0] ?? null;
+      if (updated) {
+        await WorkItemsModel.auditScheduleChangesWithClient(
+          client, 'epic', id, current.rows[0], updated, changes.actor);
+      }
+      return updated;
+    });
   }
 
   static async listEpics(opts: ListEpicsOpts = {}): Promise<WorkEpicRecord[]> {
@@ -791,9 +749,9 @@ export class WorkItemsModel {
     const values: any[] = [];
     let idx = 1;
     WorkItemsModel.pushClosedFilter(conds, opts);
-    if (opts.projectId) { conds.push(`project_id = $${ idx++ }`); values.push(opts.projectId); }
-    if (opts.status)    { conds.push(`status = $${ idx++ }`);     values.push(opts.status); }
-    if (opts.priority)  { conds.push(`priority = $${ idx++ }`);   values.push(opts.priority); }
+    if (opts.projectId) { conds.push(`project_id = $${ idx++ }`); values.push(opts.projectId) }
+    if (opts.status) { conds.push(`status = $${ idx++ }`); values.push(opts.status) }
+    if (opts.priority) { conds.push(`priority = $${ idx++ }`); values.push(opts.priority) }
     const limit = opts.limit ?? 50;
     values.push(limit);
     return postgresClient.query<WorkEpicRecord>(
@@ -817,20 +775,78 @@ export class WorkItemsModel {
     return rows[0] ?? null;
   }
 
+  static async listTaskDependencies(projectId: string): Promise<WorkTaskDependencyRecord[]> {
+    return postgresClient.query<WorkTaskDependencyRecord>(`
+      SELECT dependency.dependent_task_id AS task_id,
+             dependency.depends_on_task_id,
+             dependency.relation_type,
+             dependency.acceptance_condition,
+             dependency.created_at,
+             dependency.created_by,
+             (dependency.archived_at IS NOT NULL) AS archived
+      FROM work_task_dependencies dependency
+      JOIN ${ WorkItemsModel.TASKS } task ON task.id = dependency.dependent_task_id
+      JOIN ${ WorkItemsModel.TASKS } prerequisite ON prerequisite.id = dependency.depends_on_task_id
+      WHERE dependency.archived_at IS NULL
+        AND task.archived = false AND prerequisite.archived = false
+        AND task.project_id = $1 AND prerequisite.project_id = $1
+      ORDER BY dependency.created_at ASC`, [projectId]);
+  }
+
+  static async setTaskDependency(taskId: string, dependsOnTaskId: string, actor = 'human'): Promise<WorkTaskDependencyRecord> {
+    const dependency = await WorkTaskDependencyModel.create({
+      dependentTaskId: taskId,
+      dependsOnTaskId,
+      relationType:    'requires',
+      actor,
+    });
+    return {
+      task_id:              dependency.dependent_task_id,
+      depends_on_task_id:   dependency.depends_on_task_id,
+      relation_type:        dependency.relation_type,
+      acceptance_condition: dependency.acceptance_condition,
+      created_at:           dependency.created_at,
+      created_by:           dependency.created_by,
+      archived:             dependency.archived_at !== null,
+    };
+  }
+
+  static async removeTaskDependency(taskId: string, dependsOnTaskId: string): Promise<boolean> {
+    return WorkTaskDependencyModel.remove({
+      dependentTaskId: taskId,
+      dependsOnTaskId,
+      relationType:    'requires',
+    });
+  }
+
   static async insertTask(input: UpsertTaskInput): Promise<WorkTaskRecord> {
     if (!input.epic_id) throw new Error('epic_id is required to create a task.');
     const epic = await WorkItemsModel.requireEpic(input.epic_id);
     const projectId = input.project_id || epic.project_id;
     const slug = input.slug ? input.slug.slice(0, 80) : null;
-    const status = input.status ?? 'working';
+    const status = input.status ?? 'todo';
+    const lane = await WorkLaneDefinitionModel.validateTaskStatus(projectId, status);
+    const executionEntryLaneKey = lane?.semantic_role === 'execution'
+      ? await WorkLaneDefinitionModel.preferredLaneKey(projectId, 'execution', 'todo', 'first')
+      : null;
     const id = input.id || await WorkItemsModel.uniqueId(WorkItemsModel.TASKS);
+    const actor = input.actor ?? 'sulla';
+    const labels = input.labels ?? [];
+    const assignee = normalizeAutonomousTaskOwnership({
+      status,
+      assignee:              input.assignee ?? null,
+      labels,
+      actor,
+      semanticRole:         lane?.semantic_role,
+      executionEntryLaneKey,
+    });
 
     const rows = await postgresClient.query<WorkTaskRecord>(
       `INSERT INTO ${ WorkItemsModel.TASKS }
          (id, project_id, epic_id, parent_id, slug, title, description, status,
           priority, due_at, github_issue, assignee, labels, position, source,
-          source_ref, created_by, completed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+          source_ref, created_by, completed_at, start_at, milestone_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        RETURNING *`,
       [
         id,
@@ -844,16 +860,32 @@ export class WorkItemsModel {
         input.priority ?? 'p2',
         input.due_at ?? null,
         input.github_issue ?? null,
-        input.assignee ?? null,
-        input.labels ?? [],
+        assignee,
+        labels,
         input.position ?? 0,
         input.source ?? null,
         input.source_ref ?? null,
-        input.actor ?? 'sulla',
-        isClosedStatus(status) ? new Date().toISOString() : null,
+        actor,
+        (lane ? lane.semantic_role === 'terminal' : isClosedStatus(status)) ? new Date().toISOString() : null,
+        input.start_at ?? null,
+        input.milestone_at ?? null,
       ],
     );
-    return rows[0];
+    const created = rows[0];
+    if (created) {
+      // Creation into an active stage is a real lane entry too. Previously
+      // only later status updates produced automation records, so a freshly
+      // fed todo task waited for the minute poll and a freshly fed planning
+      // task had no workflow custody at all.
+      try {
+        const { LaneEntryAutomationService } = await import('../../services/LaneEntryAutomationService');
+        await LaneEntryAutomationService.handleTransition(created.id, created.status, actor);
+      } catch (error) {
+        console.warn(`[WorkItems] Initial lane automation for task ${ created.id } remains recoverable:`, error);
+      }
+      await notifyTaskStatusCommitted(created, '', input.actor);
+    }
+    return created;
   }
 
   static async upsertTask(input: UpsertTaskInput): Promise<WorkTaskRecord> {
@@ -875,6 +907,8 @@ export class WorkItemsModel {
           priority:     input.priority,
           assignee:     input.assignee,
           due_at:       input.due_at,
+          start_at:     input.start_at,
+          milestone_at: input.milestone_at,
           labels:       input.labels,
           github_issue: input.github_issue,
           position:     input.position,
@@ -896,64 +930,199 @@ export class WorkItemsModel {
       const epic = await WorkItemsModel.requireEpic(changes.epic_id);
       nextProjectId = epic.project_id;
     }
+    const targetLane = changes.status !== undefined
+      ? await WorkLaneDefinitionModel.validateTaskStatus(nextProjectId ?? existing.project_id, changes.status)
+      : null;
+    const enteringReview = changes.status !== undefined &&
+      changes.status !== existing.status &&
+      (targetLane?.semantic_role === 'review' || (!targetLane && changes.status === 'in_review'));
+    const enteringDone = changes.status !== undefined &&
+      changes.status !== existing.status &&
+      changes.status === 'done';
+    if (enteringReview) {
+      await ArtifactCustodyPolicy.assertForTransition('in_review', changes.custody);
+    }
+    if (enteringDone) {
+      await ArtifactCustodyPolicy.assertForTransition('done', changes.custody);
+    }
+    const ownershipProjectId = nextProjectId ?? existing.project_id;
+    const ownershipCapability = changes.status === undefined
+      ? await WorkLaneDefinitionModel.runtimeCapability(ownershipProjectId)
+      : null;
+    const ownershipLane = targetLane ?? (ownershipCapability?.ready
+      ? await WorkLaneDefinitionModel.resolveStatus(ownershipProjectId, existing.status)
+      : null);
+    const ownershipSemanticRole = targetLane?.semantic_role ?? (ownershipCapability?.ready
+      ? ownershipLane?.semantic_role ?? 'manual'
+      : undefined);
+    const executionEntryLaneKey = ownershipLane?.semantic_role === 'execution'
+      ? await WorkLaneDefinitionModel.preferredLaneKey(ownershipProjectId, 'execution', 'todo', 'first')
+      : null;
 
     const setClauses: string[] = ['updated_at = now()'];
     const values: any[] = [];
     let idx = 1;
     let moved = false;
+    const actor = changes.actor ?? 'sulla';
+    const assignee = normalizeAutonomousTaskOwnership({
+      status:                changes.status ?? existing.status,
+      assignee:              changes.assignee !== undefined ? changes.assignee : existing.assignee,
+      labels:                changes.labels ?? existing.labels,
+      actor,
+      semanticRole:         ownershipSemanticRole,
+      executionEntryLaneKey,
+    });
 
     const assign = (col: string, val: any) => {
       setClauses.push(`${ col } = $${ idx++ }`);
       values.push(val);
     };
 
-    if (changes.epic_id      !== undefined) { assign('epic_id', changes.epic_id); moved = true; }
-    if (nextProjectId        !== undefined) assign('project_id', nextProjectId);
-    if (changes.parent_id    !== undefined) { assign('parent_id', changes.parent_id); moved = true; }
-    if (changes.slug         !== undefined) assign('slug', changes.slug);
-    if (changes.title        !== undefined) assign('title', changes.title);
-    if (changes.description  !== undefined) assign('description', changes.description);
-    if (changes.status       !== undefined) { assign('status', changes.status); moved = true; }
-    if (changes.priority     !== undefined) { assign('priority', changes.priority); moved = true; }
-    if (changes.assignee     !== undefined) { assign('assignee', changes.assignee); moved = true; }
-    if (changes.due_at       !== undefined) { assign('due_at', changes.due_at); moved = true; }
-    if (changes.labels       !== undefined) assign('labels', changes.labels);
+    if (changes.epic_id !== undefined) { assign('epic_id', changes.epic_id); moved = true }
+    if (nextProjectId !== undefined) assign('project_id', nextProjectId);
+    if (changes.parent_id !== undefined) { assign('parent_id', changes.parent_id); moved = true }
+    if (changes.slug !== undefined) assign('slug', changes.slug);
+    if (changes.title !== undefined) assign('title', changes.title);
+    if (changes.description !== undefined) assign('description', changes.description);
+    if (changes.status !== undefined) { assign('status', changes.status); moved = true }
+    if (changes.priority !== undefined) { assign('priority', changes.priority); moved = true }
+    if (changes.assignee !== undefined || assignee !== existing.assignee) {
+      assign('assignee', assignee);
+      moved = true;
+    }
+    if (changes.due_at !== undefined) { assign('due_at', changes.due_at); moved = true }
+    if (changes.start_at !== undefined) { assign('start_at', changes.start_at); moved = true }
+    if (changes.milestone_at !== undefined) { assign('milestone_at', changes.milestone_at); moved = true }
+    if (changes.labels !== undefined) assign('labels', changes.labels);
     if (changes.github_issue !== undefined) assign('github_issue', changes.github_issue);
-    if (changes.position     !== undefined) assign('position', changes.position);
-    if (changes.source       !== undefined) assign('source', changes.source);
-    if (changes.source_ref   !== undefined) assign('source_ref', changes.source_ref);
+    if (changes.position !== undefined) assign('position', changes.position);
+    if (changes.source !== undefined) assign('source', changes.source);
+    if (changes.source_ref !== undefined) assign('source_ref', changes.source_ref);
 
     if (changes.status !== undefined) {
-      assign('completed_at', isClosedStatus(changes.status) ? new Date().toISOString() : null);
+      const terminal = targetLane
+        ? targetLane.semantic_role === 'terminal'
+        : isClosedStatus(changes.status);
+      assign('completed_at', terminal ? new Date().toISOString() : null);
     }
 
     if (moved) {
       setClauses.push('last_moved_at = now()');
-      assign('last_moved_by', changes.actor ?? 'sulla');
+      assign('last_moved_by', actor);
     }
     if (setClauses.length === 1) return existing;
     setClauses.push('last_activity_at = now()');
 
     values.push(id);
-    const rows = await postgresClient.query<WorkTaskRecord>(
-      `UPDATE ${ WorkItemsModel.TASKS } SET ${ setClauses.join(', ') }
-        WHERE id = $${ idx } RETURNING *`,
-      values,
-    );
-    return rows[0] ?? null;
+    const updateSql = `UPDATE ${ WorkItemsModel.TASKS } SET ${ setClauses.join(', ') }
+      WHERE id = $${ idx } RETURNING *`;
+    let updated: WorkTaskRecord | null;
+
+    const changesSchedule = changes.due_at !== undefined || changes.start_at !== undefined || changes.milestone_at !== undefined;
+    if (changes.status !== undefined || changesSchedule) {
+      updated = await postgresClient.transaction(async(client) => {
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ id }`]);
+        const current = await client.query<WorkTaskRecord>(
+          `SELECT * FROM ${ WorkItemsModel.TASKS } WHERE id = $1 AND archived = false FOR UPDATE`, [id]);
+        if (!current.rows[0]) return null;
+        const rows = await client.query<WorkTaskRecord>(updateSql, values);
+        const committed = rows.rows[0] ?? null;
+        if (committed && enteringReview && changes.custody) {
+          await ArtifactCustodyPolicy.persistWithClient(
+            client, committed.id, 'in_review', changes.custody, actor);
+        }
+        if (committed && enteringDone && changes.custody) {
+          await ArtifactCustodyPolicy.persistWithClient(
+            client, committed.id, 'done', changes.custody, actor);
+        }
+        if (committed && committed.status !== current.rows[0].status) {
+          const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
+          const claimed = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
+            client, committed.id, committed.status, changes.actor ?? 'sulla');
+          const { createPostgresProjectsRepositories } = await import('../../projects/infrastructure/PostgresProjectsRepositories');
+          await createPostgresProjectsRepositories(client).events.append({
+            id:             `projects-event-${ committed.id }-${ claimed.entry.generation }-transition`,
+            taskId:         committed.id,
+            generation:     claimed.entry.generation,
+            eventType:      'projects.task.transitioned',
+            idempotencyKey: `projects.task.transitioned:${ committed.id }:${ claimed.entry.generation }`,
+            occurredAt:     new Date(),
+            payload:        {
+              actor,
+              source:        changes.source ?? 'system',
+              fromLane:      current.rows[0].status,
+              toLane:        committed.status,
+              laneEntryId:   claimed.entry.id,
+              laneAutomated: claimed.entry.status === 'pending',
+            },
+          });
+        }
+        if (committed && changesSchedule) {
+          await WorkItemsModel.auditScheduleChangesWithClient(
+            client, 'task', id, current.rows[0], committed, actor);
+        }
+        return committed;
+      });
+    } else {
+      const rows = await postgresClient.query<WorkTaskRecord>(updateSql, values);
+      updated = rows[0] ?? null;
+    }
+
+    if (updated && changes.status !== undefined && updated.status !== existing.status) {
+      try {
+        const { getProjectsOrchestrationEventService } = await import('../../projects/application/ProjectsOrchestrationEventService');
+        await getProjectsOrchestrationEventService().drain();
+      } catch (error) {
+        console.warn(`[WorkItems] Transition events for task ${ updated.id } remain recoverable after dispatch failure:`, error);
+      }
+    }
+    if (updated && changes.status !== undefined) {
+      await notifyTaskStatusCommitted(updated, existing.status, changes.actor);
+    }
+    return updated;
   }
 
   static async listTasks(opts: ListTasksOpts = {}): Promise<WorkTaskRecord[]> {
     const conds = ['archived = false'];
     const values: any[] = [];
     let idx = 1;
-    WorkItemsModel.pushClosedFilter(conds, opts);
-    if (opts.projectId) { conds.push(`project_id = $${ idx++ }`); values.push(opts.projectId); }
-    if (opts.epicId)    { conds.push(`epic_id = $${ idx++ }`);    values.push(opts.epicId); }
-    if (opts.parentId)  { conds.push(`parent_id = $${ idx++ }`);  values.push(opts.parentId); }
-    if (opts.status)    { conds.push(`status = $${ idx++ }`);     values.push(opts.status); }
-    if (opts.priority)  { conds.push(`priority = $${ idx++ }`);   values.push(opts.priority); }
-    if (opts.assignee)  { conds.push(`assignee = $${ idx++ }`);   values.push(opts.assignee); }
+    const needsSemanticCatalog = !opts.includeDone || Boolean(opts.semanticRoles?.length) || Boolean(opts.excludeSemanticRoles?.length);
+    const capability = needsSemanticCatalog
+      ? await WorkLaneDefinitionModel.runtimeCapability(opts.projectId)
+      : null;
+    const effectiveRole = `(SELECT effective.semantic_role FROM work_lane_definitions effective
+      WHERE effective.reset_at IS NULL AND effective.archived = false AND effective.enabled = true
+        AND effective.lane_key = work_tasks.status
+        AND (effective.scope = 'global_default'
+          OR (effective.scope = 'project' AND effective.project_id = work_tasks.project_id))
+      ORDER BY CASE WHEN effective.scope = 'project' THEN 0 ELSE 1 END LIMIT 1)`;
+    if (!opts.includeDone) {
+      if (capability?.ready) {
+        conds.push(`COALESCE(${ effectiveRole }, 'manual') <> 'terminal'`);
+      } else {
+        conds.push(`NOT (${ CLOSED_STATUSES })`);
+      }
+    }
+    if (opts.semanticRoles?.length) {
+      const keys = opts.fallbackStatuses?.length ? opts.fallbackStatuses : fallbackKeys(opts.semanticRoles);
+      values.push(capability?.ready ? opts.semanticRoles : keys);
+      conds.push(capability?.ready
+        ? `COALESCE(${ effectiveRole }, 'manual') = ANY($${ idx++ }::text[])`
+        : `status = ANY($${ idx++ }::text[])`);
+    }
+    if (opts.excludeSemanticRoles?.length) {
+      const keys = opts.fallbackStatuses?.length ? opts.fallbackStatuses : fallbackKeys(opts.excludeSemanticRoles);
+      values.push(capability?.ready ? opts.excludeSemanticRoles : keys);
+      conds.push(capability?.ready
+        ? `NOT (COALESCE(${ effectiveRole }, 'manual') = ANY($${ idx++ }::text[]))`
+        : `NOT (status = ANY($${ idx++ }::text[]))`);
+    }
+    if (opts.projectId) { conds.push(`project_id = $${ idx++ }`); values.push(opts.projectId) }
+    if (opts.epicId) { conds.push(`epic_id = $${ idx++ }`); values.push(opts.epicId) }
+    if (opts.parentId) { conds.push(`parent_id = $${ idx++ }`); values.push(opts.parentId) }
+    if (opts.status) { conds.push(`status = $${ idx++ }`); values.push(opts.status) }
+    if (opts.priority) { conds.push(`priority = $${ idx++ }`); values.push(opts.priority) }
+    if (opts.assignee) { conds.push(`assignee = $${ idx++ }`); values.push(opts.assignee) }
     const limit = opts.limit ?? 50;
     values.push(limit);
     return postgresClient.query<WorkTaskRecord>(
@@ -1179,6 +1348,16 @@ export class WorkItemsModel {
           WHERE id = $1`,
         [id],
       );
+      // Project- and epic-scoped lane workflow bindings die with the project,
+      // so an archived project stops appearing in active-binding listings.
+      await postgresClient.query(
+        `UPDATE work_lane_workflow_bindings
+            SET active = false, archived = true, archived_at = now(), updated_at = now()
+          WHERE archived = false
+            AND (   (scope = 'project' AND project_id = $1)
+                 OR (scope = 'epic' AND epic_id IN (SELECT id FROM ${ WorkItemsModel.EPICS } WHERE project_id = $1)))`,
+        [id],
+      );
       return true;
     }
 
@@ -1198,6 +1377,12 @@ export class WorkItemsModel {
       await postgresClient.query(
         `UPDATE ${ WorkItemsModel.EPICS } SET archived = true, updated_at = now()
           WHERE id = $1`,
+        [id],
+      );
+      await postgresClient.query(
+        `UPDATE work_lane_workflow_bindings
+            SET active = false, archived = true, archived_at = now(), updated_at = now()
+          WHERE scope = 'epic' AND epic_id = $1 AND archived = false`,
         [id],
       );
       return true;
@@ -1238,8 +1423,10 @@ export class WorkItemsModel {
     for (const kind of kinds) {
       const remaining = limit - hits.length;
       if (remaining <= 0) break;
-      const table = kind === 'project' ? WorkItemsModel.PROJECTS
-        : kind === 'epic' ? WorkItemsModel.EPICS
+      const table = kind === 'project'
+        ? WorkItemsModel.PROJECTS
+        : kind === 'epic'
+          ? WorkItemsModel.EPICS
           : WorkItemsModel.TASKS;
       const conds: string[] = [];
       const values: any[] = [];

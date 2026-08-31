@@ -1,13 +1,49 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
+const mockBrowserSession = {
+  cookies: {
+    flushStore: jest.fn(() => Promise.resolve()),
+    on:         jest.fn(),
+  },
+  getUserAgent:          jest.fn(() => 'Chrome Electron/40.0 SullaDesktop/1.0'),
+  setUserAgent:          jest.fn(),
+  on:                    jest.fn(),
+  getPreloadScripts:     jest.fn(() => []),
+  registerPreloadScript: jest.fn(),
+};
+const mockWebContents = {
+  session:                 mockBrowserSession,
+  ipc:                     { on: jest.fn() },
+  setBackgroundThrottling: jest.fn(),
+  setWindowOpenHandler:    jest.fn(),
+  on:                      jest.fn(),
+  loadURL:                 jest.fn(() => Promise.resolve()),
+  getURL:                  jest.fn(() => ''),
+};
+const mockView = {
+  webContents: mockWebContents,
+  setBounds:   jest.fn(),
+  setVisible:  jest.fn(),
+};
+const mockWebContentsView = jest.fn((_options?: unknown) => mockView);
+const mockMainWindow = {
+  contentView: {
+    addChildView:    jest.fn(),
+    removeChildView: jest.fn(),
+  },
+  webContents: {},
+};
+const mockGetWindow = jest.fn(() => mockMainWindow);
+const mockAttachToSession = jest.fn();
+
 jest.unstable_mockModule('electron', () => ({
   default:         {},
-  WebContentsView: jest.fn(),
-  session:         { fromPartition: jest.fn() },
+  WebContentsView: mockWebContentsView,
+  session:         { fromPartition: jest.fn(() => mockBrowserSession) },
 }));
 
 jest.unstable_mockModule('@pkg/SullaWebRequestFixer', () => ({
-  SullaWebRequestFixer: jest.fn(),
+  SullaWebRequestFixer: jest.fn(() => ({ attachToSession: mockAttachToSession })),
 }));
 
 jest.unstable_mockModule('@pkg/utils/logging', () => ({
@@ -33,7 +69,7 @@ jest.unstable_mockModule('@pkg/utils/safeSend', () => ({
 }));
 
 jest.unstable_mockModule('@pkg/window', () => ({
-  getWindow:    jest.fn(() => null),
+  getWindow:    mockGetWindow,
   openUrlInApp: jest.fn(),
 }));
 
@@ -49,6 +85,7 @@ async function loadManager() {
 describe('BrowserTabViewManager', () => {
   afterEach(() => {
     jest.clearAllMocks();
+    mockWebContents.getURL.mockReturnValue('');
   });
 
   it('ignores stale focus clears from tabs that no longer own focus', async() => {
@@ -70,5 +107,109 @@ describe('BrowserTabViewManager', () => {
     manager.setFocusedTab(null, 'tab-a');
 
     expect(manager.getFocusedTab()).toBeNull();
+  });
+
+  it('recovers after three wheel events fail to move a scrollable target', async() => {
+    const { BrowserTabViewManager } = await loadManager();
+    const manager = BrowserTabViewManager.getInstance();
+    const recover = jest.spyOn(manager as any, 'recoverWedgedView').mockResolvedValue(undefined);
+
+    manager.setFocusedTab('tab-a');
+    (manager as any).viewHealth.set('tab-a', (manager as any).newViewHealth());
+    (manager as any).handleScrollHeartbeat('tab-a', false);
+    (manager as any).handleScrollHeartbeat('tab-a', false);
+    (manager as any).handleScrollHeartbeat('tab-a', false);
+
+    expect(recover).toHaveBeenCalledWith(
+      'tab-a',
+      'wheel events reached a scrollable DOM target without scroll movement',
+    );
+  });
+
+  it('clears the input watchdog after scroll movement resumes', async() => {
+    const { BrowserTabViewManager } = await loadManager();
+    const manager = BrowserTabViewManager.getInstance();
+    const recover = jest.spyOn(manager as any, 'recoverWedgedView').mockResolvedValue(undefined);
+
+    manager.setFocusedTab('tab-a');
+    (manager as any).viewHealth.set('tab-a', (manager as any).newViewHealth());
+    (manager as any).handleScrollHeartbeat('tab-a', false);
+    (manager as any).handleScrollHeartbeat('tab-a', false);
+    (manager as any).handleScrollHeartbeat('tab-a', true);
+    (manager as any).handleScrollHeartbeat('tab-a', false);
+
+    expect(recover).not.toHaveBeenCalled();
+  });
+
+  it('recovers after two consecutive empty capture probes', async() => {
+    const { BrowserTabViewManager } = await loadManager();
+    const manager = BrowserTabViewManager.getInstance();
+    const recover = jest.spyOn(manager as any, 'recoverWedgedView').mockResolvedValue(undefined);
+
+    (manager as any).viewHealth.set('tab-a', (manager as any).newViewHealth());
+    await (manager as any).recordCaptureFailure('tab-a', 'empty NativeImage');
+    expect(recover).not.toHaveBeenCalled();
+
+    await (manager as any).recordCaptureFailure('tab-a', 'empty NativeImage');
+    expect(recover).toHaveBeenCalledWith('tab-a', 'capture watchdog: empty NativeImage');
+  });
+
+  it('recreates the view while preserving webContents when re-attach was insufficient', async() => {
+    const { BrowserTabViewManager } = await loadManager();
+    const { WebContentsView } = await import('electron');
+    const { getWindow } = await import('@pkg/window');
+    const manager = BrowserTabViewManager.getInstance();
+    const webContents = {
+      focus:                   jest.fn(),
+      setBackgroundThrottling: jest.fn(),
+    };
+    const original = { webContents };
+    const replacement = {
+      webContents,
+      setBounds: jest.fn(),
+    };
+    const contentView = {
+      addChildView:    jest.fn(),
+      removeChildView: jest.fn(),
+    };
+    const health = (manager as any).newViewHealth();
+
+    health.recoveryStage = 'reattached';
+    (WebContentsView as any).mockReturnValueOnce(replacement);
+    (getWindow as any).mockReturnValueOnce({ contentView });
+    (manager as any).focusedTabId = 'tab-a';
+    (manager as any).views.set('tab-a', original);
+    (manager as any).latestBounds.set('tab-a', { x: 1, y: 2, width: 3, height: 4 });
+    (manager as any).viewHealth.set('tab-a', health);
+
+    await (manager as any).recoverWedgedView('tab-a', 'scroll still stuck');
+
+    expect(WebContentsView).toHaveBeenCalledWith({ webContents });
+    expect(contentView.removeChildView).toHaveBeenCalledWith(original);
+    expect(contentView.addChildView).toHaveBeenCalledWith(replacement);
+    expect((manager as any).views.get('tab-a')).toBe(replacement);
+    expect(webContents.focus).toHaveBeenCalled();
+  });
+
+  it('constructs tabs with the shared persistent session and visible-page throttling policy', async() => {
+    const { BrowserTabViewManager } = await loadManager();
+    const manager = BrowserTabViewManager.getInstance();
+
+    manager.createView('cookie-tab', 'http://localhost:3000', { x: 10, y: 20, width: 800, height: 600 });
+
+    expect(mockWebContentsView).toHaveBeenCalledWith({
+      webPreferences: expect.objectContaining({
+        session:              mockBrowserSession,
+        backgroundThrottling: false,
+      }),
+    });
+    expect(mockWebContents.session).toBe(mockBrowserSession);
+    expect(mockAttachToSession).toHaveBeenCalledWith(mockBrowserSession);
+
+    manager.setFocusedTab('cookie-tab');
+
+    expect(mockView.setVisible).toHaveBeenCalledWith(true);
+    expect(mockWebContents.setBackgroundThrottling).toHaveBeenCalledWith(false);
+    expect(mockMainWindow.contentView.addChildView).toHaveBeenCalledWith(mockView);
   });
 });

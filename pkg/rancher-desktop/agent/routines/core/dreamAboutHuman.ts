@@ -16,6 +16,8 @@
  * Runs nightly at 00:00 local (staggered ahead of the other per-domain dreamers).
  */
 
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from './defaultCoreAgent';
+
 export const DREAM_ABOUT_HUMAN_ID = 'core-routine-dream-about-human';
 
 /**
@@ -39,10 +41,10 @@ export const DREAM_ABOUT_HUMAN_DEFINITION: Record<string, any> = {
     'observations, synthesizes goals-over-time and personality/communication style, ' +
     'prunes what is stale or contradicted, and writes the consolidated profile into ' +
     'the `user` system-prompt section. Locked core routine — DB-only, no filesystem.',
-  version:   2,
+  version:   3,
   enabled:   true,
   createdAt: '2026-08-19T00:00:00.000Z',
-  updatedAt: '2026-08-19T00:00:00.000Z',
+  updatedAt: '2026-08-24T20:32:00.000Z',
 
   edges: [
     { id: 'e-dah-trigger-load',      source: 'node-dah-trigger',     target: 'node-dah-load',        animated: true },
@@ -112,7 +114,7 @@ export const DREAM_ABOUT_HUMAN_DEFINITION: Record<string, any> = {
         category: 'agent',
         subtype:  'agent',
         config: {
-          agentId:                  'thinker-worker',
+          agentId:                  DEFAULT_CORE_ROUTINE_AGENT_ID,
           agentName:                'Human Goals Horizon',
           additionalPrompt:         OBSERVE_ONLY,
           successCriteria:          'A concise goals-over-time snapshot for the human.',
@@ -136,7 +138,7 @@ export const DREAM_ABOUT_HUMAN_DEFINITION: Record<string, any> = {
         category: 'agent',
         subtype:  'agent',
         config: {
-          agentId:                  'thinker-worker',
+          agentId:                  DEFAULT_CORE_ROUTINE_AGENT_ID,
           agentName:                'Human Personality Reader',
           additionalPrompt:         OBSERVE_ONLY,
           successCriteria:          'A personality + how-to-work-with-them snapshot for the human.',
@@ -170,7 +172,7 @@ export const DREAM_ABOUT_HUMAN_DEFINITION: Record<string, any> = {
         category: 'agent',
         subtype:  'agent',
         config: {
-          agentId:                  'thinker-worker',
+          agentId:                  DEFAULT_CORE_ROUTINE_AGENT_ID,
           agentName:                'Human Observation Pruner',
           additionalPrompt:         OBSERVE_ONLY,
           successCriteria:          'Stale, duplicate, or contradicted human observations archived.',
@@ -194,7 +196,7 @@ export const DREAM_ABOUT_HUMAN_DEFINITION: Record<string, any> = {
         category: 'agent',
         subtype:  'agent',
         config: {
-          agentId:                  'thinker-worker',
+          agentId:                  DEFAULT_CORE_ROUTINE_AGENT_ID,
           agentName:                'Human Profile Synthesizer',
           additionalPrompt:         OBSERVE_ONLY,
           successCriteria:          'The `user` system-prompt section holds a fresh consolidated human profile.',

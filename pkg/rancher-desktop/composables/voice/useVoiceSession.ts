@@ -22,8 +22,9 @@
 import { ref, readonly, watch, onUnmounted, type Ref } from 'vue';
 
 import { TTSPlayerService } from './TTSPlayerService';
-import { createVoiceTurnAccumulator } from './VoiceTurnAccumulator';
+import { createVoiceBargeInDetector } from './VoiceBargeInDetector';
 import { logBargeIn } from './VoiceLogger';
+import { createVoiceTurnAccumulator } from './VoiceTurnAccumulator';
 
 import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -73,11 +74,6 @@ function formatDuration(seconds: number): string {
 // deliberately long so it never pre-empts a real utterance mid-thought — the old
 // 2000ms value collided with whisper's 2000ms chunk cadence and split utterances.
 const UTTERANCE_FALLBACK_MS = 8000;
-
-// How long the user must speak continuously before we treat it as a
-// barge-in and cut TTS off. Short sounds (coughs, "mm-hm", chair squeaks
-// the VAD flags as speech) should never kill Sulla mid-sentence.
-const BARGE_IN_GRACE_MS = 400;
 
 // ─── Composable ─────────────────────────────────────────────────
 
@@ -209,9 +205,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
 
   // ── VAD event handler (audio level meter + barge-in) ──
 
-  // Timestamp of the first VAD "speaking" frame while TTS was playing;
-  // 0 when the user is not speaking over Sulla.
-  let bargeInSpeechStart = 0;
+  const bargeInDetector = createVoiceBargeInDetector();
 
   const onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
     if (!isRecording.value) return;
@@ -219,16 +213,9 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
 
     // Barge-in: sustained user speech while Sulla is speaking stops TTS.
     // The grace period keeps brief noises from interrupting playback.
-    if (data.speaking && isTTSPlaying.value) {
-      if (bargeInSpeechStart === 0) {
-        bargeInSpeechStart = Date.now();
-      } else if (Date.now() - bargeInSpeechStart >= BARGE_IN_GRACE_MS) {
-        logBargeIn();
-        ttsPlayer.stop();
-        bargeInSpeechStart = 0;
-      }
-    } else {
-      bargeInSpeechStart = 0;
+    if (bargeInDetector.update(data.speaking, isTTSPlaying.value)) {
+      logBargeIn();
+      ttsPlayer.stop();
     }
   };
 
@@ -239,6 +226,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     isRecording.value = true;
     pipelineState.value = 'LISTENING';
     turnAccumulator.reset();
+    bargeInDetector.reset();
     startDurationTimer();
 
     // Start mic with PCM format for whisper
@@ -269,6 +257,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
   function stopRecording() {
     console.log('[VoiceSession] stopRecording');
     isRecording.value = false;
+    bargeInDetector.reset();
 
     ipcRenderer.removeListener('gateway-transcript', onTranscript);
     ipcRenderer.removeListener('audio-driver:mic-vad', onMicVad);

@@ -1,9 +1,10 @@
 import path from 'path';
 
-import Electron, { WebContentsView, session } from 'electron';
+import Electron, { WebContentsView } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
+import { BROWSER_SESSION_PARTITION, getBrowserSession } from '@pkg/main/browserTabs/browserSession';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { safeSend } from '@pkg/utils/safeSend';
@@ -12,7 +13,14 @@ import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
 
 const console = Logging.sulla;
 
-const SESSION_PARTITION = 'persist:sulla-browser';
+interface ViewHealth {
+  captureFailures: number;
+  stuckScrolls:    number;
+  probeInFlight:   boolean;
+  recovering:      boolean;
+  lastRecoveryAt:  number;
+  recoveryStage:   'reattached' | 'recreated' | null;
+}
 
 /**
  * Manages WebContentsView instances for browser tabs.
@@ -51,6 +59,8 @@ export class BrowserTabViewManager {
   private latestBounds = new Map<string, Electron.Rectangle>();
   private failedUrls = new Map<string, string>(); // tabId → original URL that failed
   private retryTimers = new Map<string, ReturnType<typeof setInterval>>();
+  private viewHealth = new Map<string, ViewHealth>();
+  private healthMonitor:   ReturnType<typeof setInterval> | null = null;
   private acceptedCertHosts = new Set<string>(); // hosts where user clicked "Proceed"
   /** Credentials captured but not yet saved — keyed by tabId, auto-expires after 90s */
   private pendingCredentials = new Map<string, { origin: string; username: string; password: string; timer: ReturnType<typeof setTimeout>; pageTitle?: string; existingAccountId?: string }>();
@@ -72,7 +82,7 @@ export class BrowserTabViewManager {
    * so cookie management works for all browser-tab views.
    */
   private ensureSession(): Electron.Session {
-    const sess = session.fromPartition(SESSION_PARTITION);
+    const sess = getBrowserSession();
 
     if (!this.sessionInitialised) {
       this.webRequestFixer = new SullaWebRequestFixer((event) => {
@@ -142,7 +152,7 @@ export class BrowserTabViewManager {
       }
 
       this.sessionInitialised = true;
-      console.log('[BrowserTabView] Session initialised:', SESSION_PARTITION);
+      console.log('[BrowserTabView] Session initialised:', BROWSER_SESSION_PARTITION);
     }
 
     return sess;
@@ -175,16 +185,24 @@ export class BrowserTabViewManager {
     }
 
     // Make sure shared session is ready
-    this.ensureSession();
+    const browserSession = this.ensureSession();
 
     const view = new WebContentsView({
       webPreferences: {
-        webSecurity:      false,
-        contextIsolation: false,
-        nodeIntegration:  false,
-        partition:        SESSION_PARTITION,
+        webSecurity:          false,
+        contextIsolation:     false,
+        nodeIntegration:      false,
+        session:              browserSession,
+        // Set this before the renderer is created. Electron documents that
+        // backgroundThrottling also controls the Page Visibility API; setting
+        // it after construction can leave the initial document hidden.
+        backgroundThrottling: false,
       },
     });
+
+    if (view.webContents.session !== browserSession) {
+      throw new Error('[BrowserTabView] WebContentsView did not adopt the shared browser session');
+    }
 
     // Disable background throttling so the Chromium renderer stays awake and
     // the compositor keeps producing frames even when the view is parked
@@ -195,6 +213,8 @@ export class BrowserTabViewManager {
     view.setBounds(bounds);
     this.views.set(tabId, view);
     this.latestBounds.set(tabId, bounds);
+    this.viewHealth.set(tabId, this.newViewHealth());
+    this.startHealthMonitor();
 
     // Forward guest console output to main log so we can see errors from the
     // preload / guest bridge script. Without this, guest-side exceptions are
@@ -239,12 +259,17 @@ export class BrowserTabViewManager {
     this.stopRetry(tabId);
     (view.webContents as any).close?.();
     this.views.delete(tabId);
+    this.viewHealth.delete(tabId);
     this.latestBounds.delete(tabId);
     this.failedUrls.delete(tabId);
     this.clearPendingCredentials(tabId);
     if (this.focusedTabId === tabId) {
       this.focusedTabId = null;
       // No reconcile needed — the view is gone; detach already happened above.
+    }
+    if (this.views.size === 0 && this.healthMonitor) {
+      clearInterval(this.healthMonitor);
+      this.healthMonitor = null;
     }
     console.log(`[BrowserTabView] Destroyed view tabId=${ tabId }`);
   }
@@ -314,6 +339,7 @@ export class BrowserTabViewManager {
     if (this.focusedTabId === tabId) return;
     console.log(`[BrowserTabView] setFocusedTab ${ this.focusedTabId ?? '(none)' } → ${ tabId ?? '(none)' }`);
     this.focusedTabId = tabId;
+    if (tabId) this.viewHealth.set(tabId, this.newViewHealth());
     this.reconcileVisibility();
   }
 
@@ -354,6 +380,11 @@ export class BrowserTabViewManager {
 
     for (const [tabId, view] of this.views) {
       if (tabId === this.focusedTabId) {
+        // Explicitly clear any native hidden state before attaching/promoting
+        // the focused view. Parked views remain drawable off-screen for agent
+        // capture, while focused pages report visibilityState=visible.
+        view.setVisible(true);
+        view.webContents.setBackgroundThrottling(false);
         const bounds = this.latestBounds.get(tabId);
         if (bounds) view.setBounds(bounds);
         try {
@@ -384,6 +415,163 @@ export class BrowserTabViewManager {
           console.warn(`[BrowserTabView] reconcile park failed tabId=${ tabId }:`, err);
         }
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Compositor / input-routing wedge recovery
+  // ---------------------------------------------------------------------------
+
+  private static readonly HEALTH_PROBE_INTERVAL_MS = 8_000;
+  private static readonly HEALTH_PROBE_TIMEOUT_MS = 3_000;
+  private static readonly CAPTURE_FAILURE_THRESHOLD = 2;
+  private static readonly STUCK_SCROLL_THRESHOLD = 3;
+  private static readonly RECOVERY_COOLDOWN_MS = 1_500;
+
+  private newViewHealth(): ViewHealth {
+    return {
+      captureFailures: 0,
+      stuckScrolls:    0,
+      probeInFlight:   false,
+      recovering:      false,
+      lastRecoveryAt:  0,
+      recoveryStage:   null,
+    };
+  }
+
+  private startHealthMonitor(): void {
+    if (this.healthMonitor) return;
+
+    this.healthMonitor = setInterval(() => {
+      this.probeFocusedView().catch((err) => {
+        console.warn('[BrowserTabView] focused-view health probe failed:', err);
+      });
+    }, BrowserTabViewManager.HEALTH_PROBE_INTERVAL_MS);
+    this.healthMonitor.unref?.();
+  }
+
+  /**
+   * capturePage is intentionally used here rather than the screenshot tool's
+   * CDP path: an empty NativeImage is the known signal for the detached-view
+   * compositor wedge. Probe only the visible, settled view to avoid waking
+   * every parked tab or treating navigation as a failure.
+   */
+  private async probeFocusedView(): Promise<void> {
+    const tabId = this.focusedTabId;
+    if (!tabId) return;
+
+    const view = this.views.get(tabId);
+    const health = this.viewHealth.get(tabId);
+
+    if (!view || !health || health.probeInFlight || health.recovering) return;
+    if (view.webContents.isDestroyed() || view.webContents.isLoading()) return;
+
+    const bounds = this.latestBounds.get(tabId);
+    if (!bounds || bounds.width < 1 || bounds.height < 1) return;
+
+    health.probeInFlight = true;
+    try {
+      const image = await Promise.race([
+        view.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }),
+        new Promise<never>((_resolve, reject) => setTimeout(
+          () => reject(new Error('capturePage health probe timed out')),
+          BrowserTabViewManager.HEALTH_PROBE_TIMEOUT_MS,
+        )),
+      ]);
+
+      if (this.views.get(tabId) !== view || this.focusedTabId !== tabId) return;
+
+      if (image.isEmpty()) {
+        await this.recordCaptureFailure(tabId, 'empty NativeImage');
+      } else {
+        health.captureFailures = 0;
+      }
+    } catch (err) {
+      if (this.views.get(tabId) !== view || this.focusedTabId !== tabId) return;
+      const reason = err instanceof Error ? err.message : String(err);
+
+      await this.recordCaptureFailure(tabId, reason);
+    } finally {
+      health.probeInFlight = false;
+    }
+  }
+
+  private async recordCaptureFailure(tabId: string, reason: string): Promise<void> {
+    const health = this.viewHealth.get(tabId);
+    if (!health) return;
+
+    health.captureFailures++;
+    if (health.captureFailures < BrowserTabViewManager.CAPTURE_FAILURE_THRESHOLD) return;
+
+    health.captureFailures = 0;
+    await this.recoverWedgedView(tabId, `capture watchdog: ${ reason }`);
+  }
+
+  private handleScrollHeartbeat(tabId: string, moved: boolean): void {
+    if (tabId !== this.focusedTabId) return;
+
+    const health = this.viewHealth.get(tabId);
+    if (!health || health.recovering) return;
+
+    if (moved) {
+      health.stuckScrolls = 0;
+      health.recoveryStage = null;
+      return;
+    }
+
+    health.stuckScrolls++;
+    if (health.stuckScrolls < BrowserTabViewManager.STUCK_SCROLL_THRESHOLD) return;
+
+    health.stuckScrolls = 0;
+    this.recoverWedgedView(tabId, 'wheel events reached a scrollable DOM target without scroll movement').catch((err) => {
+      console.warn(`[BrowserTabView] scroll-input recovery failed tabId=${ tabId }:`, err);
+    });
+  }
+
+  private async recoverWedgedView(tabId: string, reason: string): Promise<void> {
+    const health = this.viewHealth.get(tabId);
+    const view = this.views.get(tabId);
+    const mainWindow = getWindow('main-agent');
+
+    if (!health || !view || !mainWindow || tabId !== this.focusedTabId) return;
+    if (health.recovering || Date.now() - health.lastRecoveryAt < BrowserTabViewManager.RECOVERY_COOLDOWN_MS) return;
+
+    health.recovering = true;
+    health.lastRecoveryAt = Date.now();
+    const shouldRecreate = health.recoveryStage === 'reattached';
+    const action = shouldRecreate ? 'recreate-preserving-webContents' : 'detach-reattach';
+
+    console.warn(`[BrowserTabView] wedge recovery fired tabId=${ tabId } action=${ action } reason=${ reason }`);
+
+    try {
+      mainWindow.contentView.removeChildView(view);
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      if (this.views.get(tabId) !== view || this.focusedTabId !== tabId) return;
+
+      const bounds = this.latestBounds.get(tabId);
+      if (shouldRecreate) {
+        const replacement = new WebContentsView({ webContents: view.webContents });
+
+        replacement.webContents.setBackgroundThrottling(false);
+        if (bounds) replacement.setBounds(bounds);
+        this.views.set(tabId, replacement);
+        mainWindow.contentView.addChildView(replacement);
+        health.recoveryStage = 'recreated';
+      } else {
+        if (bounds) view.setBounds(bounds);
+        mainWindow.contentView.addChildView(view);
+        health.recoveryStage = 'reattached';
+      }
+
+      this.views.get(tabId)?.webContents.focus();
+      health.captureFailures = 0;
+      health.stuckScrolls = 0;
+    } catch (err) {
+      console.warn(`[BrowserTabView] wedge recovery failed tabId=${ tabId } action=${ action }:`, err);
+      this.reconcileVisibility();
+    } finally {
+      health.recovering = false;
     }
   }
 
@@ -897,6 +1085,10 @@ export class BrowserTabViewManager {
     // The menu calls __sullaBridgeEmit('context-menu-action', payload)
     // which arrives here via the preload's ipcRenderer.send().
     wc.ipc.on('browser-tab-view:bridge-event', (_event: Electron.IpcMainEvent, msg: { type: string; data: any }) => {
+      if (msg.type === 'sulla:view-scroll-heartbeat') {
+        this.handleScrollHeartbeat(tabId, msg.data?.moved === true);
+        return;
+      }
       if (msg.type !== 'context-menu-action') return;
       const { action, ...data } = msg.data || {};
 

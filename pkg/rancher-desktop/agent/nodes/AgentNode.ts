@@ -338,6 +338,13 @@ export class AgentNode extends BaseNode {
 
       if (!reply) return null;
 
+      // normalizedChat short-circuits when this graph cycle has already
+      // persisted an assistant response. That content is returned only so the
+      // graph can close cleanly; it must never be emitted or logged again.
+      if (reply.metadata.reusedAssistantMessage) {
+        return reply.content || null;
+      }
+
       // Emit text to the UI BEFORE tool execution so text appears before tool cards.
       // Dedup: skip if streaming already sent this content to the UI, or if 100%
       // identical to the immediately previous assistant message (AGENT_CONTINUE

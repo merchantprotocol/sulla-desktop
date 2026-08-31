@@ -164,6 +164,8 @@ export interface BaseThreadState {
     isTrustedUser?:      'trusted' | 'untrusted' | 'verify';
     /** Whether the user can see browser panels in the UI */
     userVisibleBrowser?: boolean;
+    /** Opt a scheduled graph into Sulla's graph-bound in-app browser controller. */
+    graphNativeBrowserController?: boolean;
 
     /** Active workflow playbook — when set, the agent orchestrates this workflow */
     activeWorkflow?: WorkflowPlaybookState;
@@ -187,6 +189,7 @@ export interface AgentGraphState extends BaseThreadState {
       type?:         string;
       skills?:       string[];
       tools?:        string[];         // allowlist of tool names
+      knowledgeAssociationRole?: 'project_reader' | 'project_writer' | 'knowledge_reader' | 'knowledge_writer';
       integrations?: string[];  // allowlist of integration slugs (empty = none, ["*"] = all)
       prompt?:       string;          // compiled .md files, no variable substitution
       excludeSoul?:  boolean;         // if true, skip the global soul prompt from settings

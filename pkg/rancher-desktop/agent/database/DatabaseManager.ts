@@ -28,7 +28,8 @@ export function getDatabaseManager(): DatabaseManager {
 
 export class DatabaseManager {
   private initialized = false;
-  private pollingInterval: NodeJS.Timeout | null = null;
+  private initializationPromise: Promise<void> | null = null;
+  private pollingInterval:       NodeJS.Timeout | null = null;
   private isPolling = false;
 
   /**
@@ -38,14 +39,23 @@ export class DatabaseManager {
    */
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    if (this.initializationPromise) return this.initializationPromise;
 
+    this.initializationPromise = this.initializeOnce();
+    try {
+      await this.initializationPromise;
+    } finally {
+      this.initializationPromise = null;
+    }
+  }
+
+  private async initializeOnce(): Promise<void> {
     console.log('[DB] Connecting to PostgreSQL...');
 
     // Use the shared singleton — lifecycle manager already verified the host port is reachable
     await postgresClient.initialize();
     await postgresClient.query('SELECT 1');
     console.log('[DB] Connection healthy');
-    this.initialized = true;
 
     await this.runMigrations();
 
@@ -54,6 +64,16 @@ export class DatabaseManager {
 
     // Settings are ready to be used in seeding
     await this.runSeeders();
+
+    // Lane definitions are reasserted at every boot. This is deliberately
+    // outside the one-shot seeder registry: newly encountered legacy task
+    // statuses must become visible lanes without rewriting task rows.
+    try {
+      const { initialize } = await import('@pkg/agent/database/seeders/WorkLaneDefinitionSeeder');
+      await initialize();
+    } catch (error) {
+      console.warn('[DB] WorkLaneDefinitionSeeder failed:', error);
+    }
 
     // Seed the editable system-prompt sections from their baked native
     // fallbacks (write-only-if-absent; honors is_customized). Non-fatal —
@@ -75,6 +95,17 @@ export class DatabaseManager {
       console.warn('[DB] seedCoreRoutines() failed:', error);
     }
 
+    // A workflow graph cannot survive a process restart. Close any durable
+    // planning claims left active by the prior process and launch one fresh
+    // council per still-planning task. Non-fatal; the next status event also
+    // retries through the same collision-safe ledger.
+    try {
+      const { PlanningCouncilService } = await import('@pkg/agent/services/PlanningCouncilService');
+      await PlanningCouncilService.recoverOnStartup();
+    } catch (error) {
+      console.warn('[DB] PlanningCouncilService.recoverOnStartup() failed:', error);
+    }
+
     // Warm skills registry cache
     try {
       await skillsRegistry.initialize();
@@ -89,6 +120,7 @@ export class DatabaseManager {
       console.warn('[DB] ProjectRegistry warm initialization failed:', error);
     }
 
+    this.initialized = true;
     console.log('[DB] Database fully initialized');
   }
 
@@ -146,7 +178,11 @@ export class DatabaseManager {
 
       try {
         console.log(`[DB] Running migration: ${ mig.name }`);
-        await postgresClient.query(mig.up);
+        if (typeof mig.up === 'function') {
+          await postgresClient.transaction(mig.up);
+        } else {
+          await postgresClient.query(mig.up);
+        }
 
         await postgresClient.query(
           `INSERT INTO ${ MIGRATIONS_TABLE } (name) VALUES ($1) ON CONFLICT DO NOTHING`,

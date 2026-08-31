@@ -19,6 +19,7 @@ const navItems = [
   { id: 'models', name: 'Models' },
   { id: 'system-prompt', name: 'System Prompt' },
   { id: 'heartbeat', name: 'Heartbeat' },
+  { id: 'project-automation', name: 'Project Automation' },
 ];
 
 // Shape of a system-prompt section row returned by the `system-prompt:*` IPC.
@@ -80,6 +81,9 @@ export default defineComponent({
       modelLoadError:        '' as string,
       remoteRetryCount:      3, // Number of retries before falling back to local LLM
       remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
+      // Project Automation (single concurrent-agent limit; see Project Automation tab)
+      automatedProjectManagementEnabled: true,
+      routineConcurrencyTotalLimit: 5,
       // Heartbeat settings
       heartbeatEnabled:      true,
       heartbeatDelayMinutes: 15,
@@ -216,6 +220,8 @@ export default defineComponent({
     this.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
     this.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
+    this.automatedProjectManagementEnabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', true));
+    this.routineConcurrencyTotalLimit = Number(await SullaSettingsModel.get('routineConcurrencyTotalLimit', 5));
     this.botName = await SullaSettingsModel.get('botName', 'Sulla');
     this.primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
     // Load provider/model state from ModelProviderService (source of truth)
@@ -725,6 +731,8 @@ export default defineComponent({
           remoteTimeoutSeconds:  Number(this.remoteTimeoutSeconds) || 60,
           heartbeatEnabled:      Boolean(this.heartbeatEnabled),
           heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 15,
+          automatedProjectManagementEnabled:        Boolean(this.automatedProjectManagementEnabled),
+          routineConcurrencyTotalLimit: Number(this.routineConcurrencyTotalLimit),
           heartbeatPrompt:       String(this.heartbeatPrompt || ''),
           heartbeatProvider:     String(this.heartbeatProvider || 'default'),
           subconsciousProvider:  String(this.subconsciousProvider || 'default'),
@@ -737,6 +745,8 @@ export default defineComponent({
           remoteTimeoutSeconds:  'number',
           heartbeatDelayMinutes: 'number',
           heartbeatEnabled:      'boolean',
+          automatedProjectManagementEnabled:        'boolean',
+          routineConcurrencyTotalLimit: 'number',
         };
 
         for (const [key, value] of Object.entries(settingsToSave)) {
@@ -1648,6 +1658,56 @@ export default defineComponent({
             </select>
             <p class="setting-description">
               Subconscious agents (memory recall, observation, unstuck research) run in the background and need a fast tool-emitting chat model. "Use Primary Provider" mirrors your main provider. Avoid autonomous models like Claude Code here — they over-invest in quick recall tasks.
+            </p>
+          </div>
+        </div>
+
+        <!-- Project Automation Tab -->
+        <div
+          v-if="currentNav === 'project-automation'"
+          class="tab-content"
+        >
+          <h2>Project Automation</h2>
+          <p class="description">
+            Configure the automated Projects dispatcher independently of the Heartbeat agent loop.
+          </p>
+
+          <!-- Enable/Disable Toggle -->
+          <div class="setting-group">
+            <label class="setting-label">Enable Automation PM Work</label>
+            <div class="toggle-switch">
+              <label class="switch">
+                <input
+                  v-model="automatedProjectManagementEnabled"
+                  type="checkbox"
+                >
+                <span class="slider" />
+              </label>
+              <span class="toggle-label">{{ automatedProjectManagementEnabled ? 'Enabled' : 'Disabled' }}</span>
+            </div>
+            <p class="setting-description">
+              When enabled, the dispatcher automatically claims and runs Projects work. When disabled, no protected routine launches automatically.
+            </p>
+          </div>
+
+          <!-- Concurrent agent limit -->
+          <div
+            v-if="automatedProjectManagementEnabled"
+            class="setting-group"
+          >
+            <label class="setting-label">Concurrent agent limit count</label>
+            <div class="delay-input">
+              <input
+                v-model.number="routineConcurrencyTotalLimit"
+                type="number"
+                class="text-input"
+                min="0"
+                max="32"
+                style="width: 120px;"
+              >
+            </div>
+            <p class="setting-description">
+              Maximum number of protected Projects routines (agents) allowed to run at the same time, across all work. 0 = unlimited.
             </p>
           </div>
         </div>

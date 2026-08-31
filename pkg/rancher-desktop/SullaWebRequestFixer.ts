@@ -1,8 +1,6 @@
 import { EventEmitter } from 'events';
 
-import { Session } from 'electron';
-
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import type { Session } from 'electron';
 
 // ---------------------------------------------------------------------------
 // Typed webRequest event names emitted by SullaWebRequestFixer
@@ -38,12 +36,10 @@ function isLocalhost(hostname: string): boolean {
 }
 
 export class SullaWebRequestFixer extends EventEmitter {
-  private cookieHeaderCacheByDomain: Record<string, string> = {};
-  private writeEvent:                (event: SullaWebRequestLogEvent) => void;
+  private writeEvent: (event: SullaWebRequestLogEvent) => void;
   private static readonly LOGGING_ENABLED = true;
   private hasLoggedN8nHealthz = false;
   private static readonly CONNECTIVITY_PROBE_URL_PREFIX = 'https://www.gstatic.com/generate_204';
-  private static readonly COOKIE_PROPERTY_PREFIX = 'webRequestCookieHeader:';
 
   constructor(writeSullaWebRequestEvent: (event: SullaWebRequestLogEvent) => void) {
     super();
@@ -159,7 +155,7 @@ export class SullaWebRequestFixer extends EventEmitter {
         return;
       }
 
-      void (async() => {
+      try {
         const url = details.url.toLowerCase();
         let parsedUrl: URL | undefined;
         const shouldLog = this.shouldLogRequest(details.url);
@@ -183,38 +179,6 @@ export class SullaWebRequestFixer extends EventEmitter {
           details.requestHeaders['anthropic-dangerous-direct-browser-access'] = 'true';
         }
 
-        // COOKIE INJECTION — only for local services
-        if (hostIsLocal) {
-          const domainKey = this.getCookieDomainKey(details.url);
-          const cachedCookieHeader = await this.loadCookieHeaderForDomain(domainKey);
-          if (cachedCookieHeader) {
-            const existingCookie = details.requestHeaders['Cookie'] || '';
-            if (existingCookie) {
-              details.requestHeaders['Cookie'] = this.mergeCookieHeader(existingCookie, cachedCookieHeader.split(';').map((s: string) => s.trim()).filter(Boolean));
-            } else {
-              details.requestHeaders['Cookie'] = cachedCookieHeader;
-            }
-
-            if (shouldLog) {
-              this.writeEvent({
-                direction:    'request_headers',
-                url:          details.url,
-                method:       details.method,
-                resourceType: details.resourceType,
-                payload:      {
-                  requestId:                   details.id,
-                  session:                     'defaultSession',
-                  manualCookieHeaderInjection: 'SUCCESS (from cache)',
-                  injectedCookieHeader:        cachedCookieHeader.substring(0, 120) + '...',
-                  cookieCount:                 cachedCookieHeader.split(';').length,
-                  targetUrl:                   domainKey,
-                  domainKey,
-                },
-              });
-            }
-          }
-        }
-
         if (shouldLog) {
           this.writeEvent({
             direction:    'request_headers',
@@ -226,9 +190,9 @@ export class SullaWebRequestFixer extends EventEmitter {
         }
 
         callback({ requestHeaders: details.requestHeaders });
-      })().catch(() => {
+      } catch {
         callback({ requestHeaders: details.requestHeaders });
-      });
+      }
     });
 
     // ==================== onSendHeaders ====================
@@ -288,49 +252,6 @@ export class SullaWebRequestFixer extends EventEmitter {
     }
   }
 
-  /**
-   * Extract just the name=value pair from a full Set-Cookie string,
-   * stripping attributes like Path, HttpOnly, Secure, etc.
-   */
-  private extractCookieNameValue(setCookieStr: string): { name: string; pair: string } | null {
-    const firstPart = setCookieStr.split(';')[0].trim();
-    const eqIdx = firstPart.indexOf('=');
-    if (eqIdx < 1) return null;
-
-    return { name: firstPart.substring(0, eqIdx).trim(), pair: firstPart };
-  }
-
-  /**
-   * Merge new cookie name=value pairs into existing cached cookie header.
-   * Existing cookies with the same name are replaced; new ones are appended.
-   */
-  private mergeCookieHeader(existing: string, newPairs: string[]): string {
-    const cookieMap = new Map<string, string>();
-
-    // Parse existing cookie header
-    if (existing) {
-      for (const part of existing.split(';')) {
-        const trimmed = part.trim();
-        const eqIdx = trimmed.indexOf('=');
-        if (eqIdx > 0) {
-          const name = trimmed.substring(0, eqIdx).trim();
-          cookieMap.set(name, trimmed);
-        }
-      }
-    }
-
-    // Merge/overwrite with new cookies
-    for (const pair of newPairs) {
-      const eqIdx = pair.indexOf('=');
-      if (eqIdx > 0) {
-        const name = pair.substring(0, eqIdx).trim();
-        cookieMap.set(name, pair);
-      }
-    }
-
-    return Array.from(cookieMap.values()).join('; ');
-  }
-
   private isLocalhostHttp(urlInfo: UrlInfo): boolean {
     const isLocalhost = urlInfo.hostname === 'localhost' || urlInfo.hostname === '127.0.0.1' || urlInfo.hostname === '0.0.0.0';
 
@@ -381,20 +302,6 @@ export class SullaWebRequestFixer extends EventEmitter {
     headers[setCookieHeaderKey] = rewrittenCookies;
     headers['set-cookie'] = rewrittenCookies;
 
-    // Extract only name=value pairs for the Cookie request header
-    const newPairs: string[] = [];
-    for (const cookie of rewrittenCookies) {
-      const parsed = this.extractCookieNameValue(cookie);
-      if (parsed) newPairs.push(parsed.pair);
-    }
-
-    const domainKey = this.getCookieDomainKey(details.url);
-    const existingCookieHeader = this.cookieHeaderCacheByDomain[domainKey] || '';
-    const mergedCookieHeader = this.mergeCookieHeader(existingCookieHeader, newPairs);
-
-    this.cookieHeaderCacheByDomain[domainKey] = mergedCookieHeader;
-    this.persistCookieHeaderForDomain(domainKey, mergedCookieHeader);
-
     this.writeEvent({
       direction:    'response_headers',
       url:          details.url,
@@ -403,11 +310,9 @@ export class SullaWebRequestFixer extends EventEmitter {
       resourceType: details.resourceType,
       payload:      {
         requestId:          details.id,
-        session:            'defaultSession',
+        session:            'persist:sulla-browser',
         cookieRewritePhase: 'after',
         rewrittenSetCookie: rewrittenCookies,
-        mergedCookieHeader: mergedCookieHeader.substring(0, 200),
-        domainKey,
       },
     });
   }
@@ -429,67 +334,5 @@ export class SullaWebRequestFixer extends EventEmitter {
     }
 
     return true;
-  }
-
-  private getCookieDomainKey(url: string): string {
-    const urlInfo = this.getUrlInfo(url);
-
-    return `${ urlInfo.hostname }:${ urlInfo.port }`;
-  }
-
-  private getCookiePropertyName(domainKey: string): string {
-    return `${ SullaWebRequestFixer.COOKIE_PROPERTY_PREFIX }${ domainKey }`;
-  }
-
-  private async loadCookieHeaderForDomain(domainKey: string): Promise<string> {
-    const cachedCookieHeader = this.cookieHeaderCacheByDomain[domainKey] || '';
-
-    if (cachedCookieHeader) {
-      return cachedCookieHeader;
-    }
-
-    const persistedCookieHeader = await SullaSettingsModel.get(this.getCookiePropertyName(domainKey), '');
-    const cookieHeader = typeof persistedCookieHeader === 'string' ? persistedCookieHeader : '';
-
-    if (cookieHeader) {
-      this.cookieHeaderCacheByDomain[domainKey] = cookieHeader;
-    }
-
-    return cookieHeader;
-  }
-
-  private persistCookieHeaderForDomain(domainKey: string, cookieHeader: string): void {
-    void SullaSettingsModel
-      .set(this.getCookiePropertyName(domainKey), cookieHeader, 'string')
-      .catch(() => {});
-  }
-
-  /**
-   * Returns all cached domain keys for localhost/127.0.0.1 services.
-   * Used by the session.cookies listener to broadcast JS-set cookies
-   * to the correct localhost:port domain key.
-   */
-  getLocalhostDomainKeys(): string[] {
-    return Object.keys(this.cookieHeaderCacheByDomain)
-      .filter((key) => key.startsWith('localhost:') || key.startsWith('127.0.0.1:'));
-  }
-
-  onJsCookieChanged(domainKey: string, nameValuePair: string): void {
-    const existing = this.cookieHeaderCacheByDomain[domainKey] || '';
-    const merged = this.mergeCookieHeader(existing, [nameValuePair]);
-
-    if (merged !== existing) {
-      this.cookieHeaderCacheByDomain[domainKey] = merged;
-      this.persistCookieHeaderForDomain(domainKey, merged);
-
-      this.writeEvent({
-        direction: 'js_cookie_changed',
-        payload:   {
-          domainKey,
-          newCookie:    nameValuePair.substring(0, 80),
-          totalCookies: merged.split(';').length,
-        },
-      });
-    }
   }
 }

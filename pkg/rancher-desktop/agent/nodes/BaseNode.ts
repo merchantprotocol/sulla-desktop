@@ -15,8 +15,11 @@ import { parseJson } from '../services/JsonParseService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { toolRegistry } from '../tools/registry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
+import { sanitizeConversationContext } from '../utils/conversationContext';
 import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
+import { prepareProviderMessages } from './contextBudget';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
@@ -612,14 +615,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const templateVars = await getTemplateVariables();
     templateVars['{{agent_name}}'] = agentMeta?.name || agentId || templateVars['{{botName}}'];
     templateVars['{{agent_id}}'] = agentId;
-    templateVars['{{agent_dir}}'] = findAgentDir(agentId) || path.join(resolveSullaAgentsDir(), agentId);
+    templateVars['{{agent_dir}}'] = agentId === DEFAULT_CORE_ROUTINE_AGENT_ID
+      ? ''
+      : findAgentDir(agentId) || path.join(resolveSullaAgentsDir(), agentId);
 
     // Load agent-specific .md files and split into section overrides vs generic prompt
     let agentSectionOverrides = new Map<string, string>();
     let excludeSections = new Set<string>();
     let agentConfig: AgentConfig | null = agentMeta || null;
 
-    if (agentId) {
+    if (agentId && agentId !== DEFAULT_CORE_ROUTINE_AGENT_ID) {
       const agentData = await loadAgentPromptData(agentId);
       if (agentData) {
         agentSectionOverrides = agentData.sectionOverrides;
@@ -895,7 +900,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['conversation_context', 'conversationContext'],
     ];
     const blocks = fields.flatMap(([tag, key]) => {
-      const value = metadata[key];
+      const value = key === 'conversationContext'
+        ? sanitizeConversationContext(metadata[key])
+        : metadata[key];
       return typeof value === 'string' && value.trim()
         ? [`<${ tag }>\n${ value.trim() }\n</${ tag }>`]
         : [];
@@ -964,6 +971,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   protected async shouldInjectObservationsForAgent(state: BaseThreadState): Promise<boolean> {
     const agentId = resolveAgentIdentity(state.metadata);
     if (!agentId) return true;
+    if (agentId === DEFAULT_CORE_ROUTINE_AGENT_ID) return true;
 
     try {
       const agentDir = findAgentDir(agentId);
@@ -1029,7 +1037,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const lastNonSystemMessage = messages.filter(m => m.role !== 'system').pop();
     if (lastNonSystemMessage?.role === 'assistant') {
       console.log(`[${ this.name }] Last message is from assistant — skipping LLM call and marking as done`);
-      // Return a done response that signals the graph should complete
+      // Explicit CONTINUE responses re-enter the same graph node. If the
+      // previous response was already persisted, there is nothing left for
+      // the provider to do. Mark the cycle complete and identify this as a
+      // reused response so AgentNode cannot dispatch the same text again.
+      state.metadata.cycleComplete = true;
       return {
         content:  lastNonSystemMessage.content as string || '',
         metadata: {
@@ -1037,71 +1049,25 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           time_spent:         0,
           finish_reason:      FinishReason.Stop,
           rawProviderContent: lastNonSystemMessage.content,
+          reusedAssistantMessage: true,
         },
       };
     }
 
-    // Pre-flight context check: trim messages to fit the active model's context window
-    const contextWindow = this.llm.getContextWindow();
-    const responseReserve = Math.floor(contextWindow * 0.20);
-    const inputBudgetTokens = contextWindow - responseReserve;
-    const estimateTokens = (text: string) => Math.ceil((text?.length ?? 0) / 4);
-
-    let totalTokens = messages.reduce((sum, m) => {
-      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-      return sum + estimateTokens(content);
-    }, 0);
-
-    if (totalTokens > inputBudgetTokens) {
-      console.warn(`[${ this.name }] Pre-flight trim: ~${ totalTokens } tokens exceeds ${ inputBudgetTokens } budget (ctx=${ contextWindow })`);
-      // Find protected indices: system messages + latest user message
-      const systemIndices = new Set<number>();
-      let latestUserIdx = -1;
-      for (let i = 0; i < messages.length; i++) {
-        if (messages[i].role === 'system') systemIndices.add(i);
-        if (messages[i].role === 'user') latestUserIdx = i;
-      }
-      // Build a set of indices that form tool_use/tool_result pairs so we
-      // never drop one half of a pair (which would corrupt the message array
-      // and cause "tool_call_id not found" API errors).
-      const toolPairIndices = new Set<number>();
-      for (let idx = 0; idx < messages.length; idx++) {
-        const msg = messages[idx];
-        const hasToolUse = msg.role === 'assistant' && Array.isArray(msg.content) &&
-          msg.content.some((b: any) => b?.type === 'tool_use');
-        if (hasToolUse) {
-          const next = messages[idx + 1];
-          const nextHasToolResult = next?.role === 'user' && Array.isArray(next.content) &&
-            next.content.some((b: any) => b?.type === 'tool_result');
-          if (nextHasToolResult) {
-            toolPairIndices.add(idx);
-            toolPairIndices.add(idx + 1);
-          }
-        }
-      }
-
-      // Drop from oldest non-protected until under budget
-      let i = 0;
-      while (totalTokens > inputBudgetTokens && i < messages.length) {
-        if (!systemIndices.has(i) && i !== latestUserIdx && !toolPairIndices.has(i)) {
-          const rawContent = messages[i].content;
-          totalTokens -= estimateTokens(typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent));
-          messages.splice(i, 1);
-          // Rebuild protected indices after splice
-          if (latestUserIdx > i) latestUserIdx--;
-          // Shift toolPairIndices down
-          const shifted = new Set<number>();
-          for (const idx of toolPairIndices) {
-            if (idx > i) shifted.add(idx - 1);
-            else if (idx < i) shifted.add(idx);
-          }
-          toolPairIndices.clear();
-          for (const idx of shifted) toolPairIndices.add(idx);
-        } else {
-          i++;
-        }
-      }
-      console.log(`[${ this.name }] Pre-flight trim complete: ${ messages.length } messages, ~${ totalTokens } tokens`);
+    // Curate the exact provider input after the system prompt/context is in
+    // place. This compacts stale tool payloads before pair-safe eviction.
+    const budget = prepareProviderMessages(messages, this.llm.getContextWindow());
+    messages.splice(0, messages.length, ...budget.messages);
+    (state.metadata as any).contextBudget = {
+      inputBudgetTokens: budget.inputBudgetTokens,
+      beforeTokens:      budget.beforeTokens,
+      afterTokens:       budget.afterTokens,
+      beforeChars:       budget.beforeChars,
+      afterChars:        budget.afterChars,
+      toolResultChars:   budget.toolResultChars,
+    };
+    if (budget.beforeTokens !== budget.afterTokens || budget.beforeChars !== budget.afterChars) {
+      console.log(`[${ this.name }] Provider context curated: ~${ budget.beforeTokens } → ~${ budget.afterTokens } tokens, ${ budget.beforeChars } → ${ budget.afterChars } chars`);
     }
 
     // Check for abort before making LLM calls
@@ -1261,6 +1227,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         tools:       llmTools,
         conversationId,
         nodeName,
+        profileId: (state.metadata as any).profileId,
       }, nodeRunContext);
 
       // Detect empty response (no content AND no tool calls) and retry once with reduced context
@@ -1279,6 +1246,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           tools:       llmTools,
           conversationId,
           nodeName,
+          profileId: (state.metadata as any).profileId,
         });
       }
 
@@ -1332,6 +1300,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             tools:       llmTools,
             conversationId,
             nodeName,
+            profileId: (state.metadata as any).profileId,
           });
           if (retryReply && (retryReply.content?.trim() || retryReply.metadata.tool_calls?.length)) {
             (retryReply.metadata as any).retry_used = true;
@@ -1384,6 +1353,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             console.warn(
               `[${ this.name }:BaseNode] Falling back to secondary provider ` +
               `(from=${ primaryName }/${ primaryId || '(default)' }, to=${ secondaryName }/${ secondaryModel || '(default)' }, reason=${ recovery.kind })`,
+            );
+            void this.wsChatMessage(
+              state,
+              `Provider fallback: ${ primaryName }/${ primaryId || '(default)' } → ${ secondaryName }/${ secondaryModel || '(default)' } (${ recovery.kind })`,
+              'system',
+              'progress',
+              { event: 'provider_fallback', fromProvider: primaryName, fromModel: primaryId, toProvider: secondaryName, toModel: secondaryModel, reason: recovery.kind },
             );
             const chatMessages = messages.filter(msg =>
               ['system', 'user', 'assistant'].includes(msg.role),
@@ -1908,6 +1884,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       return false;
     }
 
+    // Dispatcher leases are renewed by real agent output, not by a live JS
+    // promise. This marker is shared with the dispatcher through the live
+    // graph state and is intentionally updated before transport delivery.
+    (state.metadata as any).lastAgentActivityAt = Date.now();
+
     const threadId = state.metadata.threadId;
 
     // If the graph muted chat output (e.g. during internal planning like
@@ -1964,7 +1945,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     } else {
       state.metadata.hadUserMessages = true;
     }
-
     // If this agent is running inside a workflow, also emit a node_thinking
     // event so the workflow canvas can display the conversation in a bubble.
     // Subconscious subagents set `workflowThinkingLabel` so the frontend

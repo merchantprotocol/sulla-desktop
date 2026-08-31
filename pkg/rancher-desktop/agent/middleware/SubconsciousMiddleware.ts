@@ -21,6 +21,8 @@ import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
+import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
+import { sanitizeConversationContext } from '../utils/conversationContext';
 import { formatDateOnly } from '../utils/formatDateOnly';
 
 import Logging from '@pkg/utils/logging';
@@ -283,15 +285,15 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('skills-observation-recall', 'Recalling what skills exist', skillsRecallPromise.then(ctx => { (state.metadata as any).skillsObservationContext = ctx })));
   }
 
-  // R8. Conversation Reader — NOT YET dispatched here. runConversationReader()
-  // (below) and its GraphRegistry.createConversationReader graph are built and
-  // ready — surfacing relevant prior conversation content into
-  // <conversation_context> the same way R1-R7 surface observations — but
-  // registering it into this parallel fan-out (a `launched.push(...)` /
-  // `awaitedTasks.push(timed(...))` pair setting
-  // `state.metadata.conversationContext`) is deliberately deferred to Sulla
-  // Projects task drqq ("Wire Conversation Writer + Reader into GraphRegistry
-  // subconscious fan-out"), so it can be reviewed/landed as its own change.
+  // R9. Conversation Reader — awaited: relevant prior-thread content selected
+  // by the read-only Conversation Reader, injected as <conversation_context>.
+  // It joins the same Promise.allSettled fan-out as the other recalls so the
+  // primary agent never starts against a half-populated context snapshot.
+  if (options.includeObservations && analyzable) {
+    launched.push('conversation-reader');
+    const conversationRecallPromise = runConversationReader(state);
+    awaitedTasks.push(timed('conversation-reader', 'Recalling prior conversations', conversationRecallPromise.then(ctx => { (state.metadata as any).conversationContext = ctx })));
+  }
 
   console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
@@ -326,7 +328,7 @@ export async function runSubconsciousMiddleware(
  * longer compete with recall for the shared model during the prelude.
  *
  * Skipped inside workflows (same gate as the pre-turn recall pass) and when the
- * turn carried no analyzable user message. Six writers, each scoped to write
+ * turn carried no analyzable user message. Writers are each scoped to write
  * only its own domain:
  *   - general Observation Writer   → observation + Projects work-state rows
  *   - Identity Observer  human      → the human user
@@ -335,6 +337,7 @@ export async function runSubconsciousMiddleware(
  *   - World Observer      world     → external events relevant to us (gated)
  *   - Environment Observer environment → this install/host + repeatable processes
  *   - Skills Observer     skills    → provenance + run outcomes of named skill artifacts
+ *   - Conversation Writer           → searchable terms for the parent thread
  */
 export function runSubconsciousObservationWriters(
   state: BaseThreadState,
@@ -346,8 +349,14 @@ export function runSubconsciousObservationWriters(
   }
   if (!options.includeObservations || !hasAnalyzableUserMessage(state)) return;
 
+  // Every writer still runs to completion with a model in the loop — the
+  // gate only bounds how many run concurrently PROCESS-WIDE (not just within
+  // this turn), so a burst of conversations completing close together
+  // (PM automation, Heartbeat, multiple chat/mobile sessions) can't fire
+  // dozens of background LLM calls at once and starve the primary turn's
+  // own model call. See SubconsciousWriterGate.ts.
   const launch = (label: string, run: () => Promise<unknown>): void => {
-    Promise.resolve().then(run).catch((error) => {
+    Promise.resolve().then(() => runThroughWriterGate(run)).catch((error) => {
       console.error(`[SubconsciousMiddleware] Post-turn ${ label } failed (fire-and-forget):`, error instanceof Error ? error.message : error);
     });
   };
@@ -801,18 +810,8 @@ async function runIdentityObservationRecall(state: BaseThreadState, domain: stri
  * search_conversation_keywords / search_conversation_logs, then returns
  * compact content for <conversation_context> injection.
  *
- * Exported (rather than module-private like its sibling run* helpers) so it
- * is independently unit-testable and directly callable by the follow-up
- * fan-out registration.
- *
- * NOT YET dispatched from runSubconsciousMiddleware's pre-turn recall pass
- * (R1-R7 above). Wiring an R8 entry there — `launched.push('conversation-
- * reader')` / `awaitedTasks.push(timed('conversation-reader', ...,
- * runConversationReader(state).then(ctx => { state.metadata.conversation
- * Context = ctx })))` — plus adding the matching agent config to the live
- * fan-out is deliberately deferred to Sulla Projects task drqq ("Wire
- * Conversation Writer + Reader into GraphRegistry subconscious fan-out").
- * This function is complete and ready for that task to call.
+ * Exported (rather than module-private like its sibling run* helpers) so the
+ * live pre-turn fan-out and focused tests share the exact same execution path.
  */
 export async function runConversationReader(state: BaseThreadState): Promise<string | null> {
   const startTime = Date.now();
@@ -830,7 +829,7 @@ export async function runConversationReader(state: BaseThreadState): Promise<str
 
     const elapsed = Date.now() - startTime;
     const agentMeta = (subState.metadata as any).agent || {};
-    const response = typeof agentMeta.response === 'string' ? agentMeta.response.trim() : '';
+    const response = sanitizeConversationContext(agentMeta.response);
 
     if (!response) {
       perf.log(`[ConversationReader] threadId=${ threadId } chars=0 ms=${ elapsed }`);

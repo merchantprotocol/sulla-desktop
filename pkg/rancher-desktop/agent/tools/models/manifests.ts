@@ -28,6 +28,7 @@ export const modelsToolManifests: ToolManifest[] = [
     schemaDef:   {
       provider: { type: 'string', optional: true, description: 'Optional provider filter, e.g. codex or claude-code.' },
       model:    { type: 'string', optional: true, description: 'Optional exact model id filter.' },
+      profile_id: { type: 'string', optional: true, description: 'Profile boundary for durable meterable usage totals. Defaults to default.' },
       hours:    { type: 'number', optional: true, description: 'Lookback window in hours. Defaults to 24.' },
     },
     operationTypes: ['read'],

@@ -1,4 +1,4 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 function slugify(v: string): string {
@@ -18,13 +18,14 @@ export class CreateProjectWorker extends BaseTool {
     if (!title) return { successBoolean: false, responseString: 'title is required to create a project.' };
 
     try {
-      await WorkItemsModel.ensureTables();
+      const projects = getProjectsApplicationService();
+      await projects.ready();
       const base = slugify(input.slug || title);
       let slug = base;
       let n = 2;
-      while (await WorkItemsModel.getProjectBySlug(slug)) slug = `${ base }-${ n++ }`;
+      while (await projects.getProjectBySlug(slug)) slug = `${ base }-${ n++ }`;
 
-      const record = await WorkItemsModel.upsertProject({
+      const record = await projects.createProject({
         slug,
         title,
         description:    input.description,
@@ -34,12 +35,13 @@ export class CreateProjectWorker extends BaseTool {
         owner:          input.owner,
         due_at:         input.due_at === '' ? null : input.due_at,
         github_repo:    input.github_repo,
+        pipeline_template_id: input.pipeline_template_id,
         source:         input.source || 'agent',
-      });
+      }, { actor: input.actor || 'sulla', source: 'tool' });
 
       return {
         successBoolean: true,
-        responseString: `Project created: "${ record.title }" (id: ${ record.id }, slug: ${ record.slug }, status: ${ record.status }, priority: ${ record.priority })`,
+        responseString: `Project created: "${ record.title }" (id: ${ record.id }, slug: ${ record.slug }, status: ${ record.status }, priority: ${ record.priority }, pipeline_template_id: ${ record.pipeline_template_id })`,
       };
     } catch (err: any) {
       return { successBoolean: false, responseString: `Failed to create project: ${ err?.message }` };

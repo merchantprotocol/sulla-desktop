@@ -3,11 +3,13 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
+import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { emitCodexToolEvent } from './codexToolEvents';
+import { codexSandboxArgs } from './codexSandboxPolicy';
 import { redisClient } from '../database/RedisClient';
 import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
+import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
@@ -29,6 +31,7 @@ interface CodexPrewarmRecord {
   mcpSession:      RegisteredSession | null;
   model:           string;
   existingSession: string | undefined;
+  readOnly:        boolean;
   createdAt:       number;
   closed:          boolean;
   busy:            boolean;
@@ -156,18 +159,20 @@ export class CodexService extends BaseLanguageModel {
    * process before the turn's prompt exists — runCodex and prewarm both
    * write the prompt to stdin themselves, at different times.
    */
-  private buildSpawnArgs(p: { existingSession?: string; mcpSession?: RegisteredSession | null }): string[] {
+  private buildSpawnArgs(p: {
+    existingSession?: string;
+    mcpSession?: RegisteredSession | null;
+    readOnly?: boolean;
+  }): string[] {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
     const codexArgs = ['codex', 'exec'];
     if (p.existingSession) {
       codexArgs.push('resume', shq(p.existingSession));
     }
-    codexArgs.push(
-      '--json',
-      '--dangerously-bypass-approvals-and-sandbox',
-      '--skip-git-repo-check',
-    );
+    codexArgs.push('--json');
+    codexArgs.push(...codexSandboxArgs(!!p.readOnly));
+    codexArgs.push('--skip-git-repo-check');
     if (p.mcpSession) {
       for (const override of buildCodexMcpOverrides(p.mcpSession)) {
         codexArgs.push('-c', shq(override));
@@ -230,7 +235,8 @@ export class CodexService extends BaseLanguageModel {
 
       const limactlPath = paths.limactl;
       const limaHome = paths.lima;
-      const args = this.buildSpawnArgs({ existingSession, mcpSession });
+      const readOnly = !!(state.metadata as any)?.verifierReadOnly;
+      const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly });
       const proc = childProcess.spawn(limactlPath, args, {
         env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
       });
@@ -240,6 +246,7 @@ export class CodexService extends BaseLanguageModel {
         mcpSession,
         model:     this.model || 'codex',
         existingSession,
+        readOnly,
         createdAt: Date.now(),
         closed:    false,
         busy:      false,
@@ -272,12 +279,17 @@ export class CodexService extends BaseLanguageModel {
    * was minted concurrently) must also evict the record, not just a model
    * mismatch.
    */
-  private claimPrewarm(convId: string, model: string, existingSession: string | undefined): CodexPrewarmRecord | null {
+  private claimPrewarm(
+    convId: string,
+    model: string,
+    existingSession: string | undefined,
+    readOnly: boolean,
+  ): CodexPrewarmRecord | null {
     const rec = this.prewarmed.get(convId);
     if (!rec) return null;
     this.prewarmed.delete(convId);
     if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
-    if (rec.closed || rec.model !== model || rec.existingSession !== existingSession) {
+    if (rec.closed || rec.model !== model || rec.existingSession !== existingSession || rec.readOnly !== readOnly) {
       this.killPrewarmRecord(rec);                       // dead, model, or session mismatch
       return null;
     }
@@ -321,8 +333,8 @@ export class CodexService extends BaseLanguageModel {
 
   /** Non-streaming chat — buffers the whole response and returns it. */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    const { text } = await this.runCodex(messages, {}, options);
-    return { text };
+    const result = await this.runCodex(messages, {}, options);
+    return result;
   }
 
   protected normalizeResponse(raw: any): NormalizedResponse {
@@ -330,10 +342,10 @@ export class CodexService extends BaseLanguageModel {
     return {
       content:  text,
       metadata: {
-        tokens_used:       0,
+        tokens_used:       usageTokenTotal(raw?.usage),
         time_spent:        0,
-        prompt_tokens:     0,
-        completion_tokens: 0,
+        prompt_tokens:     Number(raw?.usage?.input_tokens ?? 0),
+        completion_tokens: Number(raw?.usage?.output_tokens ?? 0),
         model:             this.getModel(),
         finish_reason:     FinishReason.Stop,
       },
@@ -347,25 +359,29 @@ export class CodexService extends BaseLanguageModel {
     options: {
       signal?:         AbortSignal;
       conversationId?: string;
+      profileId?:      string;
+      usageEventId?:   string;
       state?:          BaseThreadState | any;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
 
     try {
-      const { text } = await this.runCodex(messages, callbacks, options);
-
-      return {
-        content:  text,
+      const result = await this.runCodex(messages, callbacks, options);
+      const response: NormalizedResponse = {
+        content:  result.text,
         metadata: {
-          tokens_used:       0,
+          tokens_used:       usageTokenTotal(result.usage),
           time_spent:        Math.round(performance.now() - startTime),
-          prompt_tokens:     0,
-          completion_tokens: 0,
+          prompt_tokens:     Number(result.usage?.input_tokens ?? 0),
+          completion_tokens: Number(result.usage?.output_tokens ?? 0),
           model:             this.getModel(),
           finish_reason:     FinishReason.Stop,
         },
       };
+      await this.recordMeterableTokens(response, options.profileId, options.usageEventId, this.usageEventId(messages, options, this.getModel()));
+
+      return response;
     } catch (err) {
       console.warn('[CodexService] chatStream failed:', err);
       throw err;
@@ -570,6 +586,9 @@ Every time, in this order:
 This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 </environment>`);
 
+    const browserController = graphBrowserControllerContext(state);
+    if (browserController) stableParts.push(browserController);
+
     const parts: string[] = [];
 
     // Only send the stable tier when it's new to this session or has changed
@@ -596,7 +615,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     callbacks: Partial<StreamCallbacks>,
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
-  ): Promise<{ text: string }> {
+  ): Promise<{ text: string; usage?: any }> {
     // Auth lives in ~/.codex/auth.json (written by CodexOAuth, self-refreshed
     // by the CLI). Rebuild it from the stored OAuth tokens if missing.
     const hasAuth = await ensureCodexAuthFile();
@@ -653,14 +672,19 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // Speculative boot: adopt a process pre-warmed for this conversation
     // during the accumulator phase; otherwise spawn fresh below. Flag off →
     // adopted is always null and the legacy path runs byte-for-byte as
-    // before. --dangerously-bypass-approvals-and-sandbox: codex runs inside
-    // the Lima VM, which IS the sandbox — its own landlock layer is
-    // redundant here and approval prompts have no TTY to land on. The
+    // before. Normal actor runs use --dangerously-bypass-approvals-and-sandbox:
+    // codex runs inside the Lima VM, which IS the sandbox. Verifier runs are
+    // different: their graph state carries verifierReadOnly, so Codex uses its
+    // read-only sandbox and cannot mutate a checkout even through native shell.
+    // The
     // prompt is fed via stdin (`-` positional), NOT as an argv element — a
     // large transcript on the command line overflows limactl's SSH
     // multiplexing channel (same failure mode ClaudeCodeService hit).
     const speculative = await this.speculativeBootEnabled();
-    const adopted = speculative ? this.claimPrewarm(convId, this.model || 'codex', existingSession) : null;
+    const readOnly = !!(options.state?.metadata as any)?.verifierReadOnly;
+    const adopted = speculative
+      ? this.claimPrewarm(convId, this.model || 'codex', existingSession, readOnly)
+      : null;
 
     let mcpSession: RegisteredSession | null = adopted?.mcpSession ?? null;
     if (options.state) {
@@ -675,7 +699,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         log.log(`[CodexService] MCP session setup failed, continuing without sulla-native tools: ${ (err as Error)?.message ?? err }`);
       }
     }
-    const args = this.buildSpawnArgs({ existingSession, mcpSession });
+    const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly });
 
     return await new Promise((resolve, reject) => {
       let mcpCleaned = false;
@@ -729,7 +753,10 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       let errorMessage = '';
       let lastUsage: any = null;
 
-      const onAbort = () => {
+      // Kill the spawn on both sides of the SSH boundary — mirrors
+      // ClaudeCodeService.killSpawn. Used by both explicit abort and the
+      // stall watchdog below.
+      const killSpawn = () => {
         // 1) Kill the host-side limactl process (closes the SSH session; with
         //    `exec` in the inner shell the remote codex usually gets SIGHUP).
         try { proc.kill('SIGTERM') } catch { /* already dead */ }
@@ -750,6 +777,44 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         } catch (err) {
           log.log(`[CodexService] Remote pkill failed: ${ (err as Error)?.message ?? err }`);
         }
+      };
+
+      // ── Stall watchdog ──────────────────────────────────────────────
+      // A codex process whose upstream connection dies mid-run can sit
+      // silent forever — no stdout, no exit, no error — leaving the promise
+      // unsettled and the UI stuck on "Isolated environment ready" /
+      // "calling model" with no recovery. ClaudeCodeService already carries
+      // this exact protection (observed hangs up to 7.7h); codex never had
+      // it. Liveness = any stdout/stderr byte, so long in-CLI tool runs
+      // reset the clock; only a completely dead stream trips the kill.
+      const STALL_TIMEOUT_MS = 15 * 60 * 1_000;
+      const STALL_CHECK_MS = 30 * 1_000;
+      let lastStreamActivityAt = Date.now();
+      let stalled = false;
+      let stallTimer: NodeJS.Timeout | null = null;
+      const stopStallWatchdog = () => {
+        if (stallTimer) {
+          clearInterval(stallTimer);
+          stallTimer = null;
+        }
+      };
+      const startStallWatchdog = () => {
+        lastStreamActivityAt = Date.now();
+        stallTimer = setInterval(() => {
+          const silentMs = Date.now() - lastStreamActivityAt;
+          if (silentMs < STALL_TIMEOUT_MS) return;
+          stalled = true;
+          stopStallWatchdog();
+          log.warn(`[CodexService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing codex (convId=${ convId })`);
+          killSpawn();
+        }, STALL_CHECK_MS);
+      };
+      if (adoptedSpawned) startStallWatchdog();
+      else proc.once('spawn', startStallWatchdog);
+
+      const onAbort = () => {
+        stopStallWatchdog();
+        killSpawn();
       };
       if (options.signal) {
         if (options.signal.aborted) onAbort();
@@ -900,6 +965,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       };
 
       proc.stdout.on('data', (chunk) => {
+        lastStreamActivityAt = Date.now();
         stdoutBuffer += chunk.toString('utf-8');
         const lines = stdoutBuffer.split('\n');
         stdoutBuffer = lines.pop() ?? '';
@@ -907,6 +973,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       });
 
       proc.stderr.on('data', (chunk) => {
+        lastStreamActivityAt = Date.now();
         const text = chunk.toString('utf-8');
         stderrBuffer += text;
         const trimmed = text.trim();
@@ -916,15 +983,25 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       });
 
       proc.on('error', (err) => {
+        stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
         cleanupMcp();
         reject(err);
       });
 
       proc.on('close', (code) => {
+        stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
         cleanupMcp();
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
+
+        // Stall-watchdog kill — surface a clear, retryable error instead of
+        // falling through to the generic no-output message.
+        if (stalled) {
+          const silentMin = Math.round(STALL_TIMEOUT_MS / 60_000);
+          reject(new Error(`Codex stalled — no stream activity for ${ silentMin } minutes, so the run was terminated. Please try again.`));
+          return;
+        }
 
         // Binary missing — checked BEFORE the resume heuristic: sh's
         // "codex: not found" must not be mistaken for a dead thread (and the
@@ -980,7 +1057,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         }
 
         log.log(`[CodexService] runCodex ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
-        resolve({ text: textCollected });
+        resolve({ text: textCollected, usage: lastUsage });
       });
     });
   }

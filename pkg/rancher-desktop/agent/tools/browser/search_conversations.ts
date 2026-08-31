@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import readline from 'node:readline';
+
 import { BaseTool, ToolResponse } from '../base';
 
 import { ChatMessageModel } from '@pkg/agent/database/models/ChatMessageModel';
@@ -52,6 +55,63 @@ function buildTranscript(messages: Array<{ role?: string; content?: any }>): str
     transcript = `… [earlier turns omitted]\n\n${ transcript.slice(-TRANSCRIPT_CHAR_BUDGET) }`;
   }
   return transcript;
+}
+
+type LogTranscript = {
+  messages: Array<{ role?: string; content?: any }>;
+  complete: boolean;
+  incompleteReason?: string;
+};
+
+/** Read a conversation_history.log_file without claiming a complete transcript
+ * when the file is absent, truncated, or contains malformed JSONL. */
+async function readLogTranscript(logFile: string): Promise<LogTranscript> {
+  if (!fs.existsSync(logFile)) {
+    return { messages: [], complete: false, incompleteReason: `log file is missing (${ logFile })` };
+  }
+
+  const messages: Array<{ role?: string; content?: any }> = [];
+  let malformedLines = 0;
+  let sawCompletion = false;
+  const fileStream = fs.createReadStream(logFile, { encoding: 'utf-8' });
+  const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
+
+  try {
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let event: any;
+      try {
+        event = JSON.parse(trimmed);
+      } catch {
+        malformedLines++;
+        continue;
+      }
+
+      if (event.type === 'message' && event.role && event.content != null) {
+        messages.push({ role: event.role, content: event.content });
+      } else if (event.type === 'tool_call') {
+        messages.push({
+          role: 'assistant',
+          content: `[tool_call: ${ event.toolName || 'tool' }]`,
+        });
+      } else if (event.type === 'graph_completed') {
+        sawCompletion = event.status === 'completed';
+      }
+    }
+  } finally {
+    rl.close();
+  }
+
+  const incompleteReason = malformedLines > 0
+    ? `${ malformedLines } malformed JSONL line(s)`
+    : (!sawCompletion ? 'no completed graph event' : undefined);
+
+  return {
+    messages,
+    complete: !incompleteReason,
+    ...(incompleteReason ? { incompleteReason } : {}),
+  };
 }
 
 /**
@@ -208,15 +268,30 @@ export class SearchConversationsWorker extends BaseTool {
           }
         }
 
+        // 3) Last-resort durable source: conversation_history.log_file. Keep
+        // the incomplete marker explicit; a partial JSONL stream is evidence
+        // of partial work, never a fabricated completed transcript.
+        let logTranscript: LogTranscript | null = null;
+        if (messages.length === 0 && record?.log_file) {
+          logTranscript = await readLogTranscript(record.log_file);
+          messages = logTranscript.messages;
+        }
+
         if (messages.length === 0) {
+          const incomplete = logTranscript?.incompleteReason
+            ? ` Incomplete transcript: ${ logTranscript.incompleteReason }.`
+            : '';
           return {
             successBoolean: true,
-            responseString: `No stored transcript found for ${ input.threadId ? `threadId "${ input.threadId }"` : `id "${ input.id }"` }.${ record ? ` (Conversation "${ title }" exists but its messages are not retrievable.)` : '' }`,
+            responseString: `${ incomplete || `No stored transcript found for ${ input.threadId ? `threadId "${ input.threadId }"` : `id "${ input.id }"` }.` }${ record ? ` (Conversation "${ title }" exists but its messages are not retrievable.)` : '' }`,
           };
         }
 
         const transcript = buildTranscript(messages);
-        const header = `Conversation: ${ title }${ record?.last_active_at ? ` — last active ${ new Date(record.last_active_at).toLocaleString() }` : '' } (${ messages.length } messages stored)`;
+        const completeness = logTranscript && !logTranscript.complete
+          ? ` INCOMPLETE TRANSCRIPT: ${ logTranscript.incompleteReason }.`
+          : '';
+        const header = `Conversation: ${ title }${ record?.last_active_at ? ` — last active ${ new Date(record.last_active_at).toLocaleString() }` : '' } (${ messages.length } messages stored)${ completeness }`;
 
         return {
           successBoolean: true,

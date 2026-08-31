@@ -1,5 +1,5 @@
 // ChatInterface.ts
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, type ComputedRef } from 'vue';
 
 import { ChatMessageQueue, createMessageQueue, type QueuedMessage } from './ChatMessageQueue';
 
@@ -7,6 +7,8 @@ import { AgentPersonaService } from '@pkg/agent';
 import type { PersonaSidebarAsset } from '@pkg/agent';
 import { getAgentPersonaRegistry, AgentPersonaRegistry, type ChatMessage as RegistryChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
+
+import { touchChatStorageScope } from './ChatStorageGc';
 
 import type { PendingAttachment } from './AgentComposer.vue';
 
@@ -26,6 +28,7 @@ export class ChatInterface {
   private readonly persona:            AgentPersonaService;
   private readonly registry:           AgentPersonaRegistry;
   private readonly channelId:          string;
+  private readonly tabId?:             string;
   /** Unique key for this tab's localStorage — scoped by tabId when provided */
   private readonly storageScope:       string;
   private readonly messagesStorageKey: string;
@@ -37,6 +40,7 @@ export class ChatInterface {
   readonly currentAgentId: ReturnType<typeof computed<string>>;
 
   readonly messages = ref<ChatMessage[]>([]);
+  readonly messagesRevision: ComputedRef<number>;
 
   /**
    * @param channelId  WebSocket channel (shared across tabs, e.g. 'sulla-desktop')
@@ -46,14 +50,17 @@ export class ChatInterface {
    */
   constructor(channelId: string = DEFAULT_CHANNEL, tabId?: string) {
     this.channelId = channelId;
+    this.tabId = tabId;
     // Use tabId for storage scoping when available, otherwise fall back to channelId
     this.storageScope = tabId ? `${ channelId }_${ tabId }` : channelId;
+    touchChatStorageScope(this.storageScope);
     this.messagesStorageKey = `chat_messages_${ this.storageScope }`;
     this.currentAgentId = computed(() => this.channelId);
     this.hasSentMessageKey = `chat_has_sent_message_${ this.storageScope }`;
     this.hasSentMessage = ref(localStorage.getItem(this.hasSentMessageKey) === 'true');
     this.registry = getAgentPersonaRegistry();
     this.persona = this.registry.getOrCreatePersonaService(channelId, tabId);
+    this.messagesRevision = computed(() => this.persona.messagesRevision.value);
 
     // Initialize message queue
     this.messageQueue = createMessageQueue();
@@ -69,15 +76,14 @@ export class ChatInterface {
     // Restore persisted messages from localStorage
     this.restoreMessages();
 
-    // Watch persona messages for persistence. The UI mirror updates
-    // immediately; the localStorage write is debounced because this deep
-    // watcher fires on EVERY streaming delta — an undebounced persist did a
-    // full JSON.stringify of the message window per chunk (tens of MB of
-    // serialization work across one long response).
-    watch(() => this.persona.messages, () => {
+    // Mirror explicit message revisions instead of deep-watching the full
+    // transcript. A deep watcher traversed every historical message for every
+    // stream delta before this callback even ran, recreating the renderer
+    // starvation that the persistence debounce was meant to prevent.
+    watch(() => this.persona.messagesRevision.value, () => {
       this.messages.value = [...this.persona.messages];
       this.schedulePersist();
-    }, { deep: true });
+    });
 
     // Watch graphRunning to process next queued message when current one completes
     watch(() => this.persona.graphRunning.value, (isRunning) => {
@@ -237,8 +243,16 @@ export class ChatInterface {
   }
 
   stop(): void {
-    console.log(`[ChatInterface:stop] channelId=${ this.channelId }, graphRunning was ${ this.persona.graphRunning.value }`);
-    this.persona.emitStopSignal(this.channelId);
+    const threadId = this.persona.getThreadId();
+    console.log(`[ChatInterface:stop] channelId=${ this.channelId }, tabId=${ this.tabId ?? '(none)' }, threadId=${ threadId ?? '(none)' }, graphRunning was ${ this.persona.graphRunning.value }`);
+    if (threadId) {
+      this.persona.emitStopSignal(this.channelId);
+    } else {
+      // Never emit an unscoped stop. Multiple tabs intentionally share one
+      // channel, so a missing thread id must fail closed instead of risking a
+      // channel-wide abort in an older backend.
+      console.warn(`[ChatInterface:stop] ignored unscoped stop for channelId=${ this.channelId }, tabId=${ this.tabId ?? '(none)' }`);
+    }
     this.persona.graphRunning.value = false;
     // Clear the queue when stopping
     this.messageQueue.clear();

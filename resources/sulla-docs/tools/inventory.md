@@ -1,6 +1,6 @@
 # Tool Inventory
 
-Master list of every tool the agent can call. **Regenerated from the source manifests (`pkg/rancher-desktop/agent/tools/<category>/manifests.ts`) on 2026-08-19 — 262 tools across 30 categories.** Each line is `sulla <category>/<tool> — purpose`.
+Master list of every tool the agent can call. **Regenerated from the source manifests (`pkg/rancher-desktop/agent/tools/<category>/manifests.ts`) on 2026-08-23 — 265 tools across 30 categories.** Each line is `sulla <category>/<tool> — purpose`.
 
 > The `rules` category (user-created guardrail rules) and its **Security Conscience** enforcement were **retired 2026-08-19** and are intentionally omitted here. Some `rules/*` tool code may still linger in a given build; treat it as vestigial and don't re-add it to this doc.
 
@@ -82,7 +82,8 @@ sulla <category> --help          # what THIS install exposes right now
 
 → See [`functions/authoring.md`](../functions/authoring.md)
 
-## browser — web automation (23 tools)
+## browser — web automation (24 tools)
+- `sulla browser/browser_controller` — Graph-bound in-app Browser delegation for explicitly capable scheduled graphs; fails closed elsewhere.
 - `sulla browser/tab` — Open / navigate / close a tab (`action: upsert | remove`).
 - `sulla browser/list` — List open tabs (assetId, URL, title, ready/loading).
 - `sulla browser/snapshot` — Dehydrated DOM with clickable handles.
@@ -117,6 +118,8 @@ sulla <category> --help          # what THIS install exposes right now
 **Pull requests:** `github_create_pr`, `github_get_pr`, `github_list_prs`, `github_update_pr`, `github_ready_pr`, `github_close_pr`, `github_merge_pr`, `github_add_pr_review`, `github_list_pr_reviews`, `github_request_pr_reviewers`, `github_get_pr_files`.
 **Releases/CI:** `github_create_release`, `github_check_runs`, `github_trigger_workflow_run`.
 **Projects V2 boards:** `github_list_projects`, `github_add_issue_to_project`, `github_set_project_field`.
+
+**Knowledge Base associations:** Projects exposes `link_knowledge_item`, `unlink_knowledge_item`, and `list_linked_knowledge`. Memory exposes `episodic_search`, `episodic_resolve`, `episodic_recall`, `episodic_link_project_item`, `episodic_unlink_project_item`, and `episodic_list_linked_project_items` over the same FK-backed association model.
 **Heartbeat issue-discovery (#500):** `heartbeat_new_issues`, `heartbeat_claim_issue`.
 
 `git_push`/`git_pull` inject the vault PAT automatically — never extract it for raw git. Merges require `confirm:true`. → See [`tools/github.md`](github.md)
@@ -150,7 +153,7 @@ sulla <category> --help          # what THIS install exposes right now
 - `sulla vault/vault_set_credential` — Create / update a credential.
 - `sulla vault/vault_set_active_account` — Set the default account for an integration.
 - `sulla vault/vault_list` — List saved website credentials (no passwords).
-- `sulla vault/vault_autofill` — Inject saved credentials into the active browser tab.
+- `sulla vault/vault_autofill` — Inject saved credentials into the active or explicitly targeted background browser tab, with origin and non-empty-field verification.
 - `sulla vault/vault_delete_credential` — Delete a credential property (requires `confirm:true`).
 
 → See [`tools/vault.md`](vault.md)
@@ -198,7 +201,7 @@ sulla <category> --help          # what THIS install exposes right now
 
 Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`. → See [`mobile/overview.md`](../mobile/overview.md)
 
-## project — Projects project-state (the ONE work-state store) (13 tools)
+## project — Projects project-state (the ONE work-state store) (16 tools)
 - `sulla project/list_project_items` — List projects / epics / tasks (filter by kind / status / priority / project / epic / parent / assignee).
 - `sulla project/get_project_item` — One item + children + comments.
 - `sulla project/search_project_items` — Title + description search (dedupe before create).
@@ -208,6 +211,9 @@ Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`. → S
 - `sulla project/create_task` / `update_task` — Task CRUD (`parent_id` for a subtask).
 - `sulla project/add_task_comment` — Append a note (author defaults `sulla`; Heartbeat passes `heartbeat`; UI stamps `human`).
 - `sulla project/list_task_comments` — Comment thread, oldest first.
+- `sulla project/list_task_waits` — Inspect durable external waits and monitor ownership.
+- `sulla project/register_task_wait` — Idempotently register one structured external wait and initial comment.
+- `sulla project/cancel_task_wait` — Cancel an obsolete active wait; terminal tasks cancel automatically.
 - `sulla project/archive_project_item` — Soft-archive a project / epic / task (cascades).
 
 The ONE project-state store — not CRM, distinct from the `~/sulla/projects/<slug>/PROJECT.md` PRDs. → See [`tools/project.md`](project.md)

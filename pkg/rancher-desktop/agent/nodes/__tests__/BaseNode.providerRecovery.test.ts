@@ -74,7 +74,8 @@ jest.unstable_mockModule('../../services/JsonParseService', () => ({
 
 jest.unstable_mockModule('../../services/WebSocketClientService', () => ({
   getWebSocketClientService: jest.fn(() => ({
-    send: jest.fn(),
+    isConnected: jest.fn(() => true),
+    send:        jest.fn(),
   })),
 }));
 
@@ -152,5 +153,41 @@ describe('BaseNode provider recovery', () => {
         fallback_model:  'gpt-5',
       },
     });
+  });
+
+  it('ends the graph cycle without re-dispatching an already persisted assistant response', async() => {
+    const { BaseNode } = await import('../BaseNode');
+
+    class TestNode extends BaseNode<any> {
+      async execute(state: any) {
+        const reply = await this.normalizedChat(state, 'System prompt', { disableTools: true });
+        return { state, decision: { type: 'end' as const }, response: reply };
+      }
+    }
+
+    const state: any = {
+      messages: [
+        { role: 'user', content: 'Please answer.' },
+        { role: 'assistant', content: 'Already displayed.' },
+      ],
+      metadata: {
+        threadId:      'test-thread',
+        wsChannel:     'test-channel',
+        options:       {},
+        cycleComplete: false,
+      },
+    };
+
+    const node = new TestNode('test-node', 'TestNode');
+    const result: any = await node.execute(state);
+
+    expect(result.response).toMatchObject({
+      content:  'Already displayed.',
+      metadata: { reusedAssistantMessage: true },
+    });
+    expect(state.metadata.cycleComplete).toBe(true);
+    expect(primaryChatStreamMock).not.toHaveBeenCalled();
+    expect(primaryChatMock).not.toHaveBeenCalled();
+    expect(secondaryChatMock).not.toHaveBeenCalled();
   });
 });

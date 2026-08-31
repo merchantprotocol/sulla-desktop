@@ -24,6 +24,7 @@ import * as path from 'path';
 import yaml from 'yaml';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -640,8 +641,11 @@ export function initSullaRoutineTemplateEvents(): void {
 }
 
 export interface RoutineExecutionResult {
-  executionId: string;
-  workflowId:  string;
+  /** Graph/thread execution id used by GraphRegistry. */
+  executionId:         string;
+  /** Durable playbook execution id used by checkpoints and workflow_executions. */
+  playbookExecutionId?: string;
+  workflowId:          string;
 }
 
 /**
@@ -659,6 +663,21 @@ export interface RoutineExecutionOptions {
    * activation marks it failed and starts a new run anyway.
    */
   force?:             boolean;
+  /** Trusted immutable workflow definition captured by a durable dispatcher. */
+  definitionSnapshot?: WorkflowDefinition;
+  /** Durable lane-entry scope. Absent for ordinary user/scheduled runs. */
+  executionScope?: { taskId: string; generation: number };
+  /** Deterministic playbook execution id for idempotent dispatch. */
+  executionId?: string;
+  /** Optional lifecycle callback for trusted in-process dispatchers. */
+  onStarted?:          (executionId: string) => void | Promise<void>;
+  onSettled?:          (result: { executionId: string; status: 'completed' | 'failed'; error?: string; outcome?: unknown }) => void | Promise<void>;
+  /** Internal only: concurrency is guarded by a task-scoped durable ledger. */
+  allowConcurrent?:   boolean;
+  /** Queue behind protected-routine capacity instead of failing on backpressure. */
+  waitForCapacity?:   boolean;
+  /** Protected automation class used by the global mechanical-work limiter. */
+  routineKind?: 'planning' | 'execution' | 'review' | 'repair' | 'dreaming' | 'other';
 }
 
 export async function executeRoutine(
@@ -670,18 +689,16 @@ export async function executeRoutine(
     throw new Error('executeRoutine: workflowId is required');
   }
 
-  const executionId = `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
+  const { RoutineConcurrencyPolicy } = await import('@pkg/agent/services/RoutineConcurrencyPolicy');
+  const { WorkflowModel } = await import('@pkg/agent/database/models/WorkflowModel');
+  const workflow = await WorkflowModel.findById(workflowId);
+  const protectedKind = options?.routineKind
+    ?? (workflow?.attributes.system
+      ? (workflowId === 'core-routine-dream-about-human' ? 'dreaming' : 'other')
+      : null);
+  let routineSlotId: string | null = null;
+  const graphExecutionId = options?.executionId ?? `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
   const WS_CHANNEL = 'sulla-desktop';
-
-  const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
-  const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
-
-  const graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, executionId);
-  const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
-  const state = (graphResult as { state: Record<string, any> }).state;
-
-  state.metadata = state.metadata ?? {};
-  state.metadata.scopedWorkflowId = workflowId;
 
   // Pass through the user payload as-is. When empty, the playbook's
   // createPlaybookState will substitute the routine framing into the
@@ -689,23 +706,110 @@ export async function executeRoutine(
   // LLMs misread that as an imperative and trigger recursive workflow calls.
   const message = (triggerPayload ?? '').trim();
 
-  const activation = await activateWorkflowOnState(state as any, {
+  if (protectedKind && await RoutineConcurrencyPolicy.isEnabled()) {
+    await RoutineConcurrencyPolicy.reclaimStale();
+    const limit = await RoutineConcurrencyPolicy.resolveLimit(protectedKind);
+    const slotContext = {
+      owner:  options?.executionId ?? workflowId,
+      taskId: options?.executionScope?.taskId,
+    };
+    routineSlotId = options?.waitForCapacity
+      ? await RoutineConcurrencyPolicy.acquireWhenAvailable(protectedKind, limit, slotContext)
+      : await RoutineConcurrencyPolicy.acquire(protectedKind, limit, slotContext);
+    if (!routineSlotId) {
+      throw new Error(`Routine concurrency limit reached for ${ protectedKind } work.`);
+    }
+  }
+
+  // Do not create a graph or playbook driver until capacity is owned. A
+  // queued planning council must not leave orphan threads while waiting.
+  const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
+  const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
+  const graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, graphExecutionId);
+  const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
+  const state = (graphResult as { state: Record<string, any> }).state;
+  state.metadata = state.metadata ?? {};
+  state.metadata.scopedWorkflowId = workflowId;
+
+  let activation;
+  try {
+    activation = await activateWorkflowOnState(state as any, {
     workflowId,
     message,
     startNodeId:       options?.startNodeId,
     resumeExecutionId: options?.resumeExecutionId,
     force:             options?.force,
-  });
+    definitionSnapshot: options?.definitionSnapshot,
+    executionScope:    options?.executionScope,
+    executionId:       options?.executionId,
+    allowConcurrent:   options?.allowConcurrent,
+    });
+  } catch (error) {
+    if (routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
+    throw error;
+  }
 
   if (!activation.ok) {
+    if (routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
     throw new Error(activation.responseString);
   }
 
-  void graph.execute(state).catch((err) => {
+  const executionId = state.metadata.activeWorkflow?.executionId;
+  if (!executionId) throw new Error('Workflow activation did not produce an execution id.');
+
+  await options?.onStarted?.(executionId);
+
+  const slotHeartbeat = routineSlotId
+    ? setInterval(() => { if (routineSlotId) void RoutineConcurrencyPolicy.heartbeat(routineSlotId); }, 30_000)
+    : null;
+  const releaseRoutineSlot = async() => {
+    if (slotHeartbeat) clearInterval(slotHeartbeat);
+    if (routineSlotId) {
+      const id = routineSlotId;
+      routineSlotId = null;
+      await RoutineConcurrencyPolicy.release(id);
+    }
+  };
+
+  graph.execute(state).then(async() => {
+    const terminal = state.metadata.activeWorkflow;
+    const status = terminal?.status === 'failed' ? 'failed' : 'completed';
+    const outputs = terminal?.nodeOutputs && typeof terminal.nodeOutputs === 'object'
+      ? terminal.nodeOutputs as Record<string, { result?: unknown }>
+      : {};
+    const orderedNodeIds = Array.isArray(terminal?.definition?.nodes)
+      ? terminal.definition.nodes.map((node: { id: string }) => node.id).reverse()
+      : Object.keys(outputs).reverse();
+    let outcome: unknown;
+    for (const nodeId of orderedNodeIds) {
+      const result = outputs[nodeId]?.result;
+      if (result && typeof result === 'object') { outcome = result; break }
+      if (typeof result !== 'string') continue;
+      try {
+        const normalized = result.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+        const parsed = JSON.parse(normalized);
+        if (parsed && typeof parsed === 'object') { outcome = parsed; break }
+      } catch { /* ordinary prose and response nodes are not structured outcomes */ }
+    }
+    await options?.onSettled?.({ executionId, status, error: terminal?.error, outcome });
+    await releaseRoutineSlot();
+  }).catch(async(err) => {
     console.error(`[Sulla] routine execution ${ executionId } failed:`, err);
+    await options?.onSettled?.({
+      executionId,
+      status: 'failed',
+      error:  err instanceof Error ? err.message : String(err),
+    });
+    await releaseRoutineSlot();
   });
 
   console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);
 
-  return { executionId, workflowId };
+  let playbookExecutionId: string | undefined;
+  try {
+    const parsed = JSON.parse(activation.responseString);
+    if (typeof parsed?.executionId === 'string') playbookExecutionId = parsed.executionId;
+  } catch { /* activation errors were handled above; response parsing is best-effort */ }
+
+  return { executionId, playbookExecutionId, workflowId };
 }

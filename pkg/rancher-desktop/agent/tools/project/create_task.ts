@@ -1,4 +1,4 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -22,8 +22,10 @@ export class CreateTaskWorker extends BaseTool {
       : undefined;
 
     try {
-      await WorkItemsModel.ensureTables();
-      const record = await WorkItemsModel.insertTask({
+      const projects = getProjectsApplicationService();
+      await projects.ready();
+      const actor = input.actor || 'sulla';
+      const record = await projects.createTask({
         epic_id:      epicId,
         parent_id:    parentId,
         title,
@@ -36,8 +38,8 @@ export class CreateTaskWorker extends BaseTool {
         github_issue: input.github_issue,
         position:     typeof input.position === 'number' ? input.position : undefined,
         source:       input.source || 'agent',
-        actor:        input.actor || 'sulla',
-      });
+        actor,
+      }, { actor, source: 'tool' });
 
       return {
         successBoolean: true,

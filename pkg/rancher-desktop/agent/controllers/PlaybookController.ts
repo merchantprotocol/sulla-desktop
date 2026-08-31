@@ -56,6 +56,7 @@ const ORCHESTRATOR_REENTRY_MAX_MS = parseInt(
 import { throwIfAborted } from '../services/AbortService';
 import { getConversationLogger } from '../services/ConversationLogger';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
+import { ChatMessageModel } from '../database/models/ChatMessageModel';
 import {
   processNextStep,
   resolveDecision,
@@ -65,11 +66,13 @@ import {
 } from '../workflow/WorkflowPlaybook';
 import { detectAgentNodeError } from '../workflow/agentNodeError';
 import {
+  inheritSubAgentToolPolicy,
   lockedCoreBlockedError,
   resolveAgentTaskForDispatch,
 } from '../workflow/lockedCoreRoutineExecution';
 
 import type { WorkflowPlaybookState, PlaybookNodeOutput } from '../workflow/types';
+import { shouldWakeWorkflowConversation } from '../workflow/workflowContinuation';
 
 // ============================================================================
 // PLAYBOOK DEBUG LOGGER
@@ -212,6 +215,11 @@ export class PlaybookController<TState = any> {
   private isProcessingPlaybook = false;
   private _continuationQueued = false;
 
+  private isWorkflowLive(state: TState, executionId: string): boolean {
+    const active = (state as any).metadata?.activeWorkflow;
+    return active?.status === 'running' && active.executionId === executionId;
+  }
+
   constructor(graph: PlaybookGraphInterface<TState>) {
     this.graph = graph;
   }
@@ -267,6 +275,29 @@ export class PlaybookController<TState = any> {
     if (playbook?.status !== 'running') {
       console.log(`[PlaybookController] Skipping — playbook status is '${ playbook?.status }', not 'running'`);
       return state;
+    }
+
+    // Durable execution ownership: claim once, then renew on every frontier
+    // tick. A lost lease fails closed so a second runtime cannot double-run.
+    if (playbook.executionId) {
+      try {
+        const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
+        const leaseMeta = playbook as any;
+        const ownerId = leaseMeta._leaseOwner || `runtime-${ process.pid }`;
+        const token = leaseMeta._leaseToken || `${ ownerId }:${ playbook.executionId }`;
+        const lease = leaseMeta._leaseToken
+          ? await WorkflowExecutionModel.renewHeartbeat(playbook.executionId, ownerId, token, 60000)
+          : await WorkflowExecutionModel.acquireLease(playbook.executionId, ownerId, 60000, token);
+        if (!lease) {
+          console.warn(`[PlaybookController] Lease lost for ${ playbook.executionId }; refusing to advance`);
+          return state;
+        }
+        leaseMeta._leaseOwner = ownerId;
+        leaseMeta._leaseToken = token;
+      } catch (err) {
+        console.warn('[PlaybookController] Failed to claim/renew workflow lease; refusing to advance:', err);
+        return state;
+      }
     }
 
     // External stop/pause request via `sulla meta/stop_workflow` or
@@ -2107,6 +2138,15 @@ export class PlaybookController<TState = any> {
         playbookState: slimPlaybook as any,
         nodeOutput,
       });
+
+      // Planning councils use a task-scoped lease instead of the generic
+      // workflow-wide concurrency guard. A durable checkpoint proves the
+      // council is alive, so refresh that lease before stale recovery can
+      // reclaim it and launch a duplicate council for the same task.
+      if (playbook.workflowId === 'core-routine-plan-project-task') {
+        const { WorkTaskPlanningRunModel } = await import('../database/models/WorkTaskPlanningRunModel');
+        await WorkTaskPlanningRunModel.touchByExecution(playbook.executionId);
+      }
     } catch (err) {
       console.warn(`[PlaybookController:Checkpoint] Failed to save checkpoint for "${ nodeLabel }":`, err);
     }
@@ -2168,17 +2208,36 @@ export class PlaybookController<TState = any> {
     };
 
     meta.activeWorkflow = undefined;
+    // Terminal workflows own no future driver work. Late callbacks are
+    // fenced by execution id and must not spawn post-terminal threads.
+    this.pendingSubAgents.clear();
+    this.pendingCompletions.length = 0;
+    this.pendingFailures.length = 0;
+    this.pendingEscalations.length = 0;
+    this._continuationQueued = false;
 
     // Persist final execution status so boot recovery doesn't pick it up again.
     try {
       const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
       if (outcome === 'completed') {
-        await WorkflowExecutionModel.markCompleted(playbook.executionId);
+        await WorkflowExecutionModel.settle(playbook.executionId, 'completed');
       } else {
-        await WorkflowExecutionModel.markFailed(playbook.executionId, error);
+        await WorkflowExecutionModel.settle(playbook.executionId, 'failed', error);
       }
     } catch (e) {
       console.warn('[PlaybookController] Failed to update workflow execution status:', e);
+    }
+
+    // The Projects planning ledger is task-scoped (unlike the generic
+    // workflow ledger). Reconcile a workflow that stopped before its
+    // recordkeeper moved the task out of planning, so no task is stranded.
+    if (playbook.workflowId === 'core-routine-plan-project-task') {
+      try {
+        const { PlanningCouncilService } = await import('../services/PlanningCouncilService');
+        await PlanningCouncilService.handleWorkflowFinished(playbook.executionId, outcome, error);
+      } catch (e) {
+        console.warn('[PlaybookController] Failed to reconcile planning council:', e);
+      }
     }
 
     const nodeLines = nodeSummaries
@@ -2359,6 +2418,7 @@ export class PlaybookController<TState = any> {
     subState.messages.push({ role: 'user', content: prompt });
 
     subState.metadata.isSubAgent = true;
+    inheritSubAgentToolPolicy(_state, subState, config);
 
     const parentChannel = (_state as any).metadata?.wsChannel || 'workbench';
     subState.metadata.workflowNodeId = nodeId;
@@ -2374,7 +2434,20 @@ export class PlaybookController<TState = any> {
         `Sub-agent "${ agentId || nodeId }"`,
         () => graph.execute(subState),
       );
+
     } finally {
+      // Persist the graph turn even when the provider/worker throws after
+      // emitting messages. This closes the crash window between playbook
+      // nodes and leaves a truthful partial transcript for recovery readers.
+      const persistedState = finalState || subState;
+      await ChatMessageModel.saveThreadState(threadId, {
+        thread: {
+          id:       threadId,
+          title:    String((persistedState as any)?.metadata?.agent?.name || agentId || nodeId),
+          messages: Array.isArray((persistedState as any)?.messages) ? (persistedState as any).messages : [],
+        },
+      });
+
       // Deregister from the parent's active-sub-agents list. Must run on
       // every exit path — success, contract-violation, or thrown error —
       // so an abort that fans out to stale threadIds doesn't see zombies.
@@ -2424,10 +2497,15 @@ export class PlaybookController<TState = any> {
     nodeLabel: string,
     maxRetries: number,
   ): void {
+    const workflowExecutionId = (state as any).metadata?.activeWorkflow?.executionId;
     const attempt = async(attemptNum: number): Promise<void> => {
       try {
         console.log(`[PlaybookController] Sub-agent "${ nodeLabel }" attempt ${ attemptNum }/${ maxRetries }`);
         const result = await this.executeSubAgent(state, nodeId, agentId, prompt, config);
+        if (!workflowExecutionId || !this.isWorkflowLive(state, workflowExecutionId)) {
+          this.pendingSubAgents.delete(nodeId);
+          return;
+        }
         const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
 
         if (result.contractStatus === 'blocked') {
@@ -2526,6 +2604,10 @@ export class PlaybookController<TState = any> {
           this.triggerPlaybookContinuation(state);
         }
       } catch (err: any) {
+        if (!workflowExecutionId || !this.isWorkflowLive(state, workflowExecutionId)) {
+          this.pendingSubAgents.delete(nodeId);
+          return;
+        }
         const errorMsg = err.message || String(err);
         console.error(`[PlaybookController] Sub-agent "${ nodeLabel }" threw (attempt ${ attemptNum }/${ maxRetries }):`, errorMsg);
 
@@ -2581,6 +2663,8 @@ export class PlaybookController<TState = any> {
   // ─── Continuation Trigger ───────────────────────────────────────
 
   private triggerPlaybookContinuation(state: TState): void {
+    const executionId = (state as any).metadata?.activeWorkflow?.executionId;
+    if (!executionId || !this.isWorkflowLive(state, executionId)) return;
     if (this.isProcessingPlaybook) {
       this._continuationQueued = true;
       console.log('[PlaybookController] Playbook already processing, queued continuation for after unlock');
@@ -2588,7 +2672,12 @@ export class PlaybookController<TState = any> {
     }
 
     const meta = (state as any).metadata;
-    if (meta?.waitingForUser || meta?.cycleComplete) {
+    // Workflow continuations must re-enter the playbook while an active
+    // workflow is still running. These flags can be inherited from the
+    // surrounding chat state (and are intentionally used for normal chat
+    // wake-ups), but treating them as idle here strands a completed child at
+    // the frontier and leaves the execution running forever.
+    if (shouldWakeWorkflowConversation(meta)) {
       const channel = meta?.wsChannel;
       const threadId = meta?.threadId;
       if (channel && threadId) {

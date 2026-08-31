@@ -8,6 +8,7 @@ import { getIntegrationService } from './agent/services/IntegrationService';
 import { getSchedulerService } from '@pkg/agent/services/SchedulerService';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
 import { getTaskDispatcherService } from '@pkg/agent/services/TaskDispatcherService';
+import { getExternalWaitMonitorService } from '@pkg/agent/services/ExternalWaitMonitorService';
 import { getWorkflowSchedulerService } from '@pkg/agent/services/WorkflowSchedulerService';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getBackendGraphWebSocketService } from '@pkg/agent/services/BackendGraphWebSocketService';
@@ -213,6 +214,17 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => {
       getTaskDispatcherService().destroy();
       console.log('[Background] TaskDispatcherService destroyed');
+    },
+  );
+
+  lifecycle.register('external-wait-monitor', ['database-manager', 'redis'],
+    async() => {
+      await getExternalWaitMonitorService().initialize();
+      console.log('[Background] ExternalWaitMonitorService initialized');
+    },
+    async() => {
+      getExternalWaitMonitorService().destroy();
+      console.log('[Background] ExternalWaitMonitorService destroyed');
     },
   );
 

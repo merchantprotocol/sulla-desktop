@@ -71,6 +71,7 @@ const REQUIRED_CONFIG_FIELDS: Record<WorkflowNodeSubtype, string[]> = {
 // ── Optional config fields per subtype (allowed but not required) ──
 
 const OPTIONAL_CONFIG_FIELDS: Partial<Record<WorkflowNodeSubtype, string[]>> = {
+  agent:          ['inheritParentToolPolicy'],
   schedule:       ['frequency', 'intervalMinutes', 'hour', 'minute', 'dayOfWeek', 'dayOfMonth', 'timezone'],
   function:       ['inputs', 'integrationAccounts', 'timeoutOverride'],
   'sub-workflow': ['agentId', 'orchestratorPrompt'],
@@ -79,7 +80,7 @@ const OPTIONAL_CONFIG_FIELDS: Partial<Record<WorkflowNodeSubtype, string[]>> = {
 
 const VALID_TOP_LEVEL_KEYS = new Set([
   'id', 'name', 'description', 'version', 'enabled',
-  'createdAt', 'updatedAt', 'nodes', 'edges', 'viewport',
+  'createdAt', 'updatedAt', 'laneContract', 'nodes', 'edges', 'viewport',
 ]);
 
 const VALID_NODE_KEYS = new Set(['id', 'type', 'position', 'data']);
@@ -121,6 +122,13 @@ export function validateWorkflowDefinition(def: any, filePath?: string): Validat
   }
   if (!Array.isArray(def.edges)) {
     issues.push({ severity: 'error', path: '/edges', message: '"edges" must be an array' });
+  }
+  if (def.laneContract !== undefined) {
+    if (!def.laneContract || typeof def.laneContract !== 'object' || Array.isArray(def.laneContract)) {
+      issues.push({ severity: 'error', path: '/laneContract', message: '"laneContract" must be an object' });
+    } else if (def.laneContract.input !== 'project.lane-entry.v1' || def.laneContract.output !== 'project.lane-outcome.v1') {
+      issues.push({ severity: 'error', path: '/laneContract', message: 'Project lane workflows must use the v1 lane-entry and lane-outcome envelopes' });
+    }
   }
 
   // ── Node validation ──

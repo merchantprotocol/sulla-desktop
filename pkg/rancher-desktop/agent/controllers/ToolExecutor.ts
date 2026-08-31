@@ -497,10 +497,16 @@ export class ToolExecutor {
   // --------------------------------------------------------------------------
 
   async getToolPolicyBlockReason(state: BaseThreadState, toolName: string): Promise<string | null> {
-    const policy = (state.metadata as any).__toolAccessPolicy as {
+    const callPolicy = (state.metadata as any).__toolAccessPolicy as {
       allowedCategories: string[] | null;
       allowedToolNames:  string[] | null;
     } | undefined;
+    const stateAllowedToolNames = (state.metadata as any).allowedToolNames;
+    const policy = callPolicy ?? (
+      Array.isArray(stateAllowedToolNames)
+        ? { allowedCategories: null, allowedToolNames: stateAllowedToolNames }
+        : undefined
+    );
 
     if (!policy) return null;
 
@@ -666,6 +672,7 @@ export class ToolExecutor {
     error?: string,
     result?: any,
   ): Promise<boolean> {
+    (state.metadata as any).lastAgentActivityAt = Date.now();
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
     const cappedResult = capWireResult(result);
     const sent = await this.dispatchToWebSocket(connectionId, {
@@ -734,6 +741,7 @@ export class ToolExecutor {
     action: string,
     result: ToolResult,
   ): Promise<void> {
+    (state.metadata as any).lastAgentActivityAt = Date.now();
     if (action === 'emit_chat_message') return;
 
     const formatPayload = (payload: unknown, maxLen?: number): string => {

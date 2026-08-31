@@ -1,4 +1,4 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -15,14 +15,16 @@ export class AddTaskCommentWorker extends BaseTool {
     if (!body) return { successBoolean: false, responseString: 'body is required.' };
 
     try {
-      await WorkItemsModel.ensureTables();
-      const comment = await WorkItemsModel.addComment({
+      const projects = getProjectsApplicationService();
+      await projects.ready();
+      const actor = input.actor || 'sulla';
+      const comment = await projects.addComment({
         task_id: taskId,
         body,
         // Direct Sulla chat is the default author for tool-driven comments;
         // Heartbeat should pass author="heartbeat"; the desktop UI stamps "human".
         author:  input.author || input.actor || 'sulla',
-      });
+      }, { actor, source: 'tool' });
       return {
         successBoolean: true,
         responseString: `Comment added on task ${ taskId } (id: ${ comment.id }, author: ${ comment.author }).`,

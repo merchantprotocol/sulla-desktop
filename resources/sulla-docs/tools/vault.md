@@ -36,7 +36,7 @@ This is the most important thing to understand. Every credential has one of four
 | `sulla vault/vault_set_credential` | Create or update one credential property (encrypted on write) |
 | `sulla vault/vault_set_active_account` | Mark which account is the default for an integration |
 | `sulla vault/vault_list` | List all saved website credentials (for autofill); passwords never returned |
-| `sulla vault/vault_autofill` | Trigger browser injection of stored username/password into the active tab |
+| `sulla vault/vault_autofill` | Inject stored username/password into the active tab, or an explicit background tab via `assetId`; success requires non-empty field verification |
 
 ## Common requests
 
@@ -70,13 +70,18 @@ sulla github_account_id/github '{"method":"GET","path":"/user/repos"}'
 The integration proxy injects the PAT from the vault. Agent never touches the token.
 
 ### "Autofill my password on this site"
-1. Make sure the user is on the site (check the active browser tab)
+1. Make sure the user is on the site and identify the intended browser tab
 2. Trigger:
    ```bash
    sulla vault/vault_autofill '{"origin":"https://github.com"}'
    ```
-3. The vault service finds the matching account, executes JS in the tab via `window.sullaBridge.detectLoginForm()` + `setValue()`, auto-submits after 200ms
-4. The password never appears in the tool response
+   To target a specific background tab, include its exact `assetId`:
+   ```bash
+   sulla vault/vault_autofill '{"origin":"https://github.com","assetId":"github-login"}'
+   ```
+3. The vault service resolves that exact tab through the browser registry, verifies its origin, fills via `window.sullaBridge.detectLoginForm()` + `setValue()`, and proves every expected field is non-empty before reporting success or auto-submitting
+4. If the target runtime is not initialized, the page rejects a value, or the origin differs, the tool returns a failure tied to the target `assetId`
+5. The password never appears in the tool response
 
 If no matching account: tell the user, offer to save one via `vault_set_credential`.
 

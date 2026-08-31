@@ -176,6 +176,10 @@ export const defaultSettings = {
     heartbeatEnabled:          false,
     heartbeatDelayMinutes:     15,
     heartbeatPrompt,
+    /** Durable external waits run in shadow mode until comment suppression is enabled. */
+    externalWaitMonitorEnabled:          true,
+    externalWaitCommentSuppressionEnabled: false,
+    externalWaitMonitorConcurrency:      4,
     /** Heartbeat provider: 'default' uses primary provider, or a specific provider id like 'grok', 'anthropic', 'ollama' */
     heartbeatProvider:         'default',
     /** Sulla username for authentication */

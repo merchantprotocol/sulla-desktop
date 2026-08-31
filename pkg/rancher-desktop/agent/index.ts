@@ -19,6 +19,15 @@ export type { MarketplaceEntry, InstalledExtension } from './services/ExtensionS
 
 // Models
 export { AgentPersonaService } from './database/models/AgentPersonaModel';
+export { AgentDefinitionModel } from './database/models/AgentDefinitionModel';
+export type {
+  AgentDefinition,
+  AgentDefinitionInput,
+  AgentDefinitionPatch,
+  AgentDefinitionStatus,
+  ModelPriorityEntry,
+} from './database/models/AgentDefinitionModel';
+export { AgentDefinitionService, agentDefinitionService } from './services/AgentDefinitionService';
 export type {
   PersonaTemplateId,
   PersonaStatus,

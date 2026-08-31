@@ -163,10 +163,22 @@ export class SubconsciousAgentNode extends BaseNode {
     }
 
     // Close thinking bubble before tool cards so thinking appears between them.
-    // file_search, read_file, and memory tools render as thinking (not cards), so skip those.
+    // Every tool actually granted to a subconscious agent (GraphRegistry.ts
+    // *_TOOLS lists + conversationReaderPolicy/conversationWriterPolicy)
+    // renders as thinking, not a card — the subconscious is never supposed to
+    // surface visible tool cards in the parent chat. Keep this set in sync
+    // with those grants; a name missing here silently leaks a tool card.
     const THINKING_TOOLS = new Set([
       'file_search', 'read_file',
+      // Observation Writer / Observation Recall
       'add_observational_memory', 'remove_observational_memory',
+      'search_observations', 'list_observations',
+      // Identity Observer (writer) / Identity Observation Recall — all 6 domains
+      'add_identity_observation', 'remove_identity_observation',
+      'search_identity_observations', 'list_identity_observations',
+      // Conversation Reader / Conversation Writer
+      'search_conversation_keywords', 'search_conversation_logs',
+      'upsert_conversation_keywords',
       'vault_list', 'vault_is_enabled', 'search_conversations',
       'recall_index_lookup', 'recall_index_store',
       'search_history', 'github_read_file', 'get_human_presence', 'list_tabs',

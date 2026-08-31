@@ -50,6 +50,36 @@ import { up as up_0059, down as down_0059 } from './0059_allow_skills_identity_d
 import { up as up_0060, down as down_0060 } from './0060_add_skill_slug_to_identity_observations';
 import { up as up_0061, down as down_0061 } from './0061_add_work_task_activity';
 import { up as up_0062, down as down_0062 } from './0062_create_work_task_dispatches';
+import { up as up_0063, down as down_0063 } from './0063_normalize_autonomous_task_ownership';
+import { up as up_0064, down as down_0064 } from './0064_add_verification_dispatches';
+import { up as up_0065, down as down_0065 } from './0065_create_work_task_waits';
+import { up as up_0066, down as down_0066 } from './0066_create_work_task_recovery_attempts';
+import { up as up_0067, down as down_0067 } from './0067_add_review_disposition_evidence';
+import { up as up_0068, down as down_0068 } from './0068_create_lifecycle_capabilities';
+import { up as up_0069, down as down_0069 } from './0069_create_work_lane_definitions';
+import { up as up_0070, down as down_0070 } from './0070_create_lane_workflow_bindings';
+import { up as up_0071, down as down_0071 } from './0071_scope_lane_workflow_executions';
+import { up as up_0072, down as down_0072 } from './0072_create_work_task_planning_runs';
+import { up as up_0074, down as down_0074 } from './0074_semantic_lane_runtime_helpers';
+import { up as up_0075, down as down_0075 } from './0075_add_project_views_and_scheduling';
+import { up as up_0076, down as down_0076 } from './0076_extend_work_task_dispatch_custody';
+import { up as up_0077, down as down_0077 } from './0077_create_work_item_knowledge_links';
+import { up as up_0078, down as down_0078 } from './0078_create_work_routine_slots';
+import { up as up_0079, down as down_0079 } from './0079_create_work_task_artifact_custody';
+import { up as up_0080, down as down_0080 } from './0080_settle_work_task_waits_on_replan';
+import { up as up_0081, down as down_0081 } from './0081_add_workflow_execution_leases';
+import { up as up_0082, down as down_0082 } from './0082_create_artifact_receipts';
+import { up as up_0083, down as down_0083 } from './0083_create_work_task_dependencies';
+import { up as up_0084, down as down_0084 } from './0084_activate_protected_review';
+import { up as up_0085, down as down_0085 } from './0085_add_conveyor_metrics_indexes';
+import { up as up_0086, down as down_0086 } from './0086_create_projects_domain_event_outbox';
+import { up as up_0087, down as down_0087 } from './0087_create_project_pipeline_templates';
+import { up as up_0088, down as down_0088 } from './0088_add_generation_to_artifact_receipts';
+import { up as up_0089, down as down_0089 } from './0089_create_agent_definitions';
+import { up as up_0090, down as down_0090 } from './0090_create_work_task_outcome_journal';
+import { up as up_0091, down as down_0091 } from './0091_create_dispatcher_liveness';
+import { up as up_0092, down as down_0092 } from './0092_allow_core_lane_bindings';
+import { up as up_0093, down as down_0093 } from './0093_create_meterable_usage_ledger';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -101,4 +131,34 @@ export const migrationsRegistry = [
   { name: '0060_add_skill_slug_to_identity_observations',         up: up_0060, down: down_0060 },
   { name: '0061_add_work_task_activity',                           up: up_0061, down: down_0061 },
   { name: '0062_create_work_task_dispatches',                      up: up_0062, down: down_0062 },
+  { name: '0063_normalize_autonomous_task_ownership',              up: up_0063, down: down_0063 },
+  { name: '0064_add_verification_dispatches',                       up: up_0064, down: down_0064 },
+  { name: '0065_create_work_task_waits',                            up: up_0065, down: down_0065 },
+  { name: '0066_create_work_task_recovery_attempts',                up: up_0066, down: down_0066 },
+  { name: '0067_add_review_disposition_evidence',                   up: up_0067, down: down_0067 },
+  { name: '0068_create_lifecycle_capabilities',                    up: up_0068, down: down_0068 },
+  { name: '0069_create_work_lane_definitions',                     up: up_0069, down: down_0069 },
+  { name: '0070_create_lane_workflow_bindings',                    up: up_0070, down: down_0070 },
+  { name: '0071_scope_lane_workflow_executions',                    up: up_0071, down: down_0071 },
+  { name: '0072_create_work_task_planning_runs',                   up: up_0072, down: down_0072 },
+  { name: '0074_semantic_lane_runtime_helpers',                    up: up_0074, down: down_0074 },
+  { name: '0075_add_project_views_and_scheduling',                 up: up_0075, down: down_0075 },
+  { name: '0076_extend_work_task_dispatch_custody',                up: up_0076, down: down_0076 },
+  { name: '0077_create_work_item_knowledge_links',                 up: up_0077, down: down_0077 },
+  { name: '0078_create_work_routine_slots',                        up: up_0078, down: down_0078 },
+  { name: '0079_create_work_task_artifact_custody',                up: up_0079, down: down_0079 },
+  { name: '0080_settle_work_task_waits_on_replan',                 up: up_0080, down: down_0080 },
+  { name: '0081_add_workflow_execution_leases',                    up: up_0081, down: down_0081 },
+  { name: '0082_create_artifact_receipts',                         up: up_0082, down: down_0082 },
+  { name: '0083_create_work_task_dependencies',                    up: up_0083, down: down_0083 },
+  { name: '0084_activate_protected_review',                        up: up_0084, down: down_0084 },
+  { name: '0085_add_conveyor_metrics_indexes',                     up: up_0085, down: down_0085 },
+  { name: '0086_create_projects_domain_event_outbox',              up: up_0086, down: down_0086 },
+  { name: '0087_create_project_pipeline_templates',                 up: up_0087, down: down_0087 },
+  { name: '0088_add_generation_to_artifact_receipts',                up: up_0088, down: down_0088 },
+  { name: '0089_create_agent_definitions',                           up: up_0089, down: down_0089 },
+  { name: '0090_create_work_task_outcome_journal',                  up: up_0090, down: down_0090 },
+  { name: '0091_create_dispatcher_liveness',                         up: up_0091, down: down_0091 },
+  { name: '0092_allow_core_lane_bindings',                           up: up_0092, down: down_0092 },
+  { name: '0093_create_meterable_usage_ledger',                       up: up_0093, down: down_0093 },
 ] as const;
