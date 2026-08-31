@@ -69,6 +69,8 @@ export interface RoutineSlotContext {
   taskId?: string | null;
 }
 
+const wait = (milliseconds: number): Promise<void> => new Promise(resolve => setTimeout(resolve, milliseconds));
+
 function clampLimit(value: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
   const floored = Math.floor(value);
@@ -158,6 +160,21 @@ export class RoutineConcurrencyPolicy {
       );
       return id;
     });
+  }
+
+  /** Queue behind capacity instead of converting routine backpressure into failure. */
+  static async acquireWhenAvailable(
+    kind: ProtectedRoutineKind,
+    limit: number,
+    context: RoutineSlotContext = {},
+    pollMs = 1_000,
+  ): Promise<string> {
+    for (;;) {
+      await this.reclaimStale();
+      const slot = await this.acquire(kind, limit, context);
+      if (slot) return slot;
+      await wait(Math.max(100, pollMs));
+    }
   }
 
   static async release(slotId: string): Promise<void> {

@@ -104,7 +104,7 @@ describe('PlanningCouncilService', () => {
     expect(executeRoutineMock).toHaveBeenCalledWith(
       'core-routine-plan-project-task',
       expect.stringContaining('"original_blocker":"Exact blocker"'),
-      { allowConcurrent: true, routineKind: 'planning' },
+      { allowConcurrent: true, routineKind: 'planning', waitForCapacity: true },
     );
     expect(attachExecutionMock).toHaveBeenCalledWith('planning-1', 'wfp-1');
     expect(addCommentMock).toHaveBeenCalledWith(expect.objectContaining({

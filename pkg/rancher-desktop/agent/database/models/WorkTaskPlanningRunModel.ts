@@ -165,7 +165,19 @@ export class WorkTaskPlanningRunModel {
              finished_at = now()
        WHERE task_id = $1
          AND status = 'active'
-         AND heartbeat_at <= now() - ($2 * interval '1 minute')
+         AND (
+           (execution_id IS NULL AND heartbeat_at <= now() - ($2 * interval '1 minute'))
+           OR (execution_id IS NOT NULL AND (
+             NOT EXISTS (SELECT 1 FROM workflow_executions execution WHERE execution.execution_id = work_task_planning_runs.execution_id)
+             OR EXISTS (
+               SELECT 1 FROM workflow_executions execution
+                WHERE execution.execution_id = work_task_planning_runs.execution_id
+                  AND (execution.status NOT IN ('running', 'suspended')
+                    OR (execution.lease_expires_at IS NOT NULL AND execution.lease_expires_at <= now())
+                    OR execution.heartbeat_at <= now() - ($2 * interval '1 minute'))
+             )
+           ))
+         )
        RETURNING id
     `, [taskId, staleMinutes]);
     return Boolean(row);
@@ -181,7 +193,19 @@ export class WorkTaskPlanningRunModel {
                error = 'planning council lease expired or app restarted',
                finished_at = now()
          WHERE status = 'active'
-           AND heartbeat_at <= now() - ($1 * interval '1 minute')
+           AND (
+             (execution_id IS NULL AND heartbeat_at <= now() - ($1 * interval '1 minute'))
+             OR (execution_id IS NOT NULL AND (
+               NOT EXISTS (SELECT 1 FROM workflow_executions execution WHERE execution.execution_id = work_task_planning_runs.execution_id)
+               OR EXISTS (
+                 SELECT 1 FROM workflow_executions execution
+                  WHERE execution.execution_id = work_task_planning_runs.execution_id
+                    AND (execution.status NOT IN ('running', 'suspended')
+                      OR (execution.lease_expires_at IS NOT NULL AND execution.lease_expires_at <= now())
+                      OR execution.heartbeat_at <= now() - ($1 * interval '1 minute'))
+               )
+             ))
+           )
         RETURNING task_id
       `, [staleMinutes]);
       if (stale.rows.length === 0) return [];

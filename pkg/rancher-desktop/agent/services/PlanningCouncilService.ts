@@ -67,7 +67,7 @@ export class PlanningCouncilService {
   }
 
   static async recoverOnStartup(): Promise<void> {
-    const taskIds = await WorkTaskPlanningRunModel.recoverStale(0);
+    const taskIds = await WorkTaskPlanningRunModel.recoverStale(45);
     for (const taskId of taskIds) {
       await WorkItemsModel.addComment({
         task_id: taskId,
@@ -145,7 +145,7 @@ export class PlanningCouncilService {
       const execution = await executeRoutine(
         PROJECT_TASK_PLANNING_WORKFLOW_ID,
         JSON.stringify(snapshot),
-        { allowConcurrent: true, routineKind: 'planning' },
+        { allowConcurrent: true, routineKind: 'planning', waitForCapacity: true },
       );
       await WorkTaskPlanningRunModel.attachExecution(claim.run.id, execution.playbookExecutionId ?? execution.executionId);
       await WorkItemsModel.addComment({

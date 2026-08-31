@@ -674,6 +674,8 @@ export interface RoutineExecutionOptions {
   onSettled?:          (result: { executionId: string; status: 'completed' | 'failed'; error?: string; outcome?: unknown }) => void | Promise<void>;
   /** Internal only: concurrency is guarded by a task-scoped durable ledger. */
   allowConcurrent?:   boolean;
+  /** Queue behind protected-routine capacity instead of failing on backpressure. */
+  waitForCapacity?:   boolean;
   /** Protected automation class used by the global mechanical-work limiter. */
   routineKind?: 'planning' | 'execution' | 'review' | 'repair' | 'dreaming' | 'other';
 }
@@ -698,16 +700,6 @@ export async function executeRoutine(
   const graphExecutionId = options?.executionId ?? `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
   const WS_CHANNEL = 'sulla-desktop';
 
-  const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
-  const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
-
-  const graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, graphExecutionId);
-  const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
-  const state = (graphResult as { state: Record<string, any> }).state;
-
-  state.metadata = state.metadata ?? {};
-  state.metadata.scopedWorkflowId = workflowId;
-
   // Pass through the user payload as-is. When empty, the playbook's
   // createPlaybookState will substitute the routine framing into the
   // trigger node's output. Do NOT synthesize a "Run routine X" string —
@@ -717,14 +709,27 @@ export async function executeRoutine(
   if (protectedKind && await RoutineConcurrencyPolicy.isEnabled()) {
     await RoutineConcurrencyPolicy.reclaimStale();
     const limit = await RoutineConcurrencyPolicy.resolveLimit(protectedKind);
-    routineSlotId = await RoutineConcurrencyPolicy.acquire(protectedKind, limit, {
+    const slotContext = {
       owner:  options?.executionId ?? workflowId,
       taskId: options?.executionScope?.taskId,
-    });
+    };
+    routineSlotId = options?.waitForCapacity
+      ? await RoutineConcurrencyPolicy.acquireWhenAvailable(protectedKind, limit, slotContext)
+      : await RoutineConcurrencyPolicy.acquire(protectedKind, limit, slotContext);
     if (!routineSlotId) {
       throw new Error(`Routine concurrency limit reached for ${ protectedKind } work.`);
     }
   }
+
+  // Do not create a graph or playbook driver until capacity is owned. A
+  // queued planning council must not leave orphan threads while waiting.
+  const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
+  const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
+  const graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, graphExecutionId);
+  const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
+  const state = (graphResult as { state: Record<string, any> }).state;
+  state.metadata = state.metadata ?? {};
+  state.metadata.scopedWorkflowId = workflowId;
 
   let activation;
   try {
