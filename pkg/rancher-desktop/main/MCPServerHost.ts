@@ -49,6 +49,7 @@ import {
   formatQuestionResolution,
   normalizeQuestions,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
+import { buildReadAdapterHandler, resolveVerifierReadTools } from './verifierReadAdapter';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 
@@ -475,6 +476,35 @@ export class MCPServerHost {
         };
       },
     );
+
+    // read_adapter — the verifier's only viable read path. Verifier runs
+    // (verifierReadOnly) execute CLI models under a network-denying sandbox
+    // (codex --sandbox read-only inside the Lima VM), so shelling out to the
+    // `sulla` CLI fails with curl exit 7 before it can reach the tools
+    // bridge. This handler runs in the host process — outside that sandbox —
+    // and dispatches straight to the same ToolRegistry worker the CLI would
+    // hit, allowlisted to the dispatcher-stamped read-only adapter catalog.
+    const verifierReadTools = resolveVerifierReadTools(session.state.metadata);
+    if (verifierReadTools) {
+      server.registerTool(
+        'read_adapter',
+        {
+          description: [
+            'Run one read-only verification adapter tool and return its result.',
+            'Your shell runs inside a network-denying sandbox, so `sulla <category>/<tool>` commands',
+            '(including those returned by browse_tools) fail with no output — call THIS tool instead',
+            'for every canonical read. Pass the bare tool name and its JSON arguments.',
+            `Allowed tools: ${ verifierReadTools.join(', ') }.`,
+            'Use browse_tools to discover each tool\'s parameter JSON, then invoke it here.',
+          ].join(' '),
+          inputSchema: {
+            tool: z.string().describe('Bare tool name from the read-only adapter catalog, e.g. "github_get_pr" or "get_project_item".'),
+            args: z.record(z.any()).optional().describe('JSON arguments for the tool, exactly as documented by browse_tools.'),
+          },
+        },
+        buildReadAdapterHandler(verifierReadTools, name => toolRegistry.getTool(name)),
+      );
+    }
 
     // Scheduled providers run inside Lima and cannot launch host-app-specific
     // controller binaries. Capability-enabled graphs receive this narrow

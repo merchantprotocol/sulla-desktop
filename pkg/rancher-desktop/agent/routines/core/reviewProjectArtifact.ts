@@ -32,6 +32,8 @@ const READ_ONLY = [
   'You are an independent read-only reviewer. Inspect canonical evidence; summaries are only leads.',
   'Never edit files or records, change Projects state, commit, push, merge, deploy, spend money,',
   'send external communication, or perform destructive actions. Return evidence, not instructions to trust you.',
+  'Your shell is sandboxed without network access, so `sulla` CLI commands return nothing — run every',
+  'catalog read through the sulla-native MCP tool `read_adapter` ({"tool":"<bare name>","args":{...}}).',
 ].join(' ');
 
 const reviewerNode = (
