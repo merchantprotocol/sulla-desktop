@@ -134,4 +134,28 @@ describe('ProjectsApplicationService lifecycle boundary', () => {
     }, { actor: 'stale-routine', source: 'routine' })).rejects.toThrow('Stale stage generation');
     expect(repo.updateTask).not.toHaveBeenCalled();
   });
+
+  it('returns blocked work to the first execution-role lane, not the next ordered lane', async() => {
+    const repo = repository();
+    repo.getTask.mockResolvedValue({ ...current, status: 'blocked' });
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('ready-custom');
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'listLaneEntries').mockResolvedValue([
+      { generation: 12, lane_key: 'blocked' },
+    ] as any);
+    jest.spyOn(LifecycleCapabilityModel, 'assertActorCanManageTask').mockResolvedValue();
+    jest.spyOn(WorkLaneDefinitionModel, 'validateTaskStatus').mockResolvedValue({
+      lane_key: 'ready-custom', semantic_role: 'execution',
+    } as any);
+    const service = new ProjectsApplicationService(repo);
+
+    await expect(service.transitionTaskToExecution({
+      taskId: 'task-1', expectedGeneration: 12,
+    }, { actor: 'planning-council', source: 'routine' })).resolves.toMatchObject({
+      fromStage: 'blocked', toStage: 'ready-custom', previousGeneration: 12,
+    });
+    expect(WorkLaneDefinitionModel.preferredLaneKey).toHaveBeenCalledWith(
+      'project-1', 'execution', 'todo', 'first',
+    );
+    expect(repo.updateTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ status: 'ready-custom' }));
+  });
 });
