@@ -20,6 +20,8 @@
  */
 
 export interface GraphToolCallResult {
+  // Index signature required for assignability to the MCP SDK's CallToolResult.
+  [key: string]: unknown;
   content: { type: 'text'; text: string }[];
   isError?: boolean;
 }
