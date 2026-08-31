@@ -139,6 +139,10 @@ describe('ProjectsApplicationService lifecycle boundary', () => {
     const repo = repository();
     repo.getTask.mockResolvedValue({ ...current, status: 'blocked' });
     jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('ready-custom');
+    jest.spyOn(WorkLaneDefinitionModel, 'resolveEffective').mockResolvedValue([
+      { lane_key: 'blocked', position: 90, enabled: true, archived: false },
+      { lane_key: 'ready-custom', position: 20, enabled: true, archived: false },
+    ] as any);
     jest.spyOn(WorkLaneWorkflowBindingModel, 'listLaneEntries').mockResolvedValue([
       { generation: 12, lane_key: 'blocked' },
     ] as any);
