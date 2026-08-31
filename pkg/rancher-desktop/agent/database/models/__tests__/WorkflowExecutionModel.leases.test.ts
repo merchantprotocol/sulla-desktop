@@ -32,6 +32,17 @@ describe('WorkflowExecutionModel leases', () => {
     await WorkflowExecutionModel.suspendAllRunning();
     expect(db.queryAll.mock.calls[0][0]).toContain('lease_expires_at = NOW()');
   });
+  it('retires only old executions with no owner, lease, or heartbeat', async() => {
+    const client: any = { query: jest.fn()
+      .mockResolvedValueOnce({ rows: [{ execution_id: 'stale' }] })
+      .mockResolvedValueOnce({ rows: [] }) };
+    db.transaction.mockImplementation(async(fn: any) => fn(client));
+    expect(await WorkflowExecutionModel.reapStaleLeaselessExecutions()).toEqual(['stale']);
+    expect(client.query.mock.calls[0][0]).toContain("owner_id IS NULL");
+    expect(client.query.mock.calls[0][0]).toContain("heartbeat_at IS NULL");
+    expect(client.query.mock.calls[0][0]).toContain("INTERVAL '1 hour'");
+    expect(client.query.mock.calls[1][0]).toContain('work_lane_entry_automations');
+  });
   it('recovers through one transaction and reads the last checkpoint', async() => {
     const client = { query: jest.fn()
       .mockResolvedValueOnce({ rows: [{ execution_id: 'e1', status: 'running', attempt_count: 1 }] })

@@ -5,6 +5,7 @@ import {
   type ClaimedPlanningRun,
 } from '../database/models/WorkTaskPlanningRunModel';
 import { WorkflowModel } from '../database/models/WorkflowModel';
+import { WorkflowExecutionModel } from '../database/models/WorkflowExecutionModel';
 import { recordReceipt } from './ArtifactReceiptService';
 import { getProjectsApplicationService } from '../projects/application/ProjectsApplicationService';
 
@@ -67,6 +68,7 @@ export class PlanningCouncilService {
   }
 
   static async recoverOnStartup(): Promise<void> {
+    await WorkflowExecutionModel.reapStaleLeaselessExecutions();
     const taskIds = await WorkTaskPlanningRunModel.recoverStale(45);
     for (const taskId of taskIds) {
       await WorkItemsModel.addComment({
