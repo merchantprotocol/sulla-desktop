@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { postgresClient } from '../../PostgresClient';
 import { WorkTaskDependencyModel } from '../WorkTaskDependencyModel';
+import { DISPATCHER_RECONCILED_LANE_MESSAGE } from '../WorkflowExecutionModel';
 import {
   LANE_ENTRY_INPUT_ENVELOPE, LANE_OUTCOME_OUTPUT_ENVELOPE,
   WorkLaneWorkflowBindingModel,
@@ -114,6 +115,23 @@ describe('WorkLaneWorkflowBindingModel', () => {
     expect(result).toEqual({ created: false, entry: expect.objectContaining({ generation: 4 }) });
     expect(client.query.mock.calls[0][0]).toContain('pg_advisory_xact_lock');
     expect(client.query).toHaveBeenCalledTimes(3);
+  });
+
+  it('boot retry reclaims reconciler-killed rows only while their lane generation is current', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await WorkLaneWorkflowBindingModel.listRecoverable();
+    const listSql = (postgresClient.query as any).mock.calls[0][0];
+    expect(listSql).toContain(`lane.outcome->>'message' = '${ DISPATCHER_RECONCILED_LANE_MESSAGE }'`);
+    expect(listSql).toContain('task.status = lane.lane_key');
+    expect(listSql).toContain('newer.generation > lane.generation');
+
+    await WorkLaneWorkflowBindingModel.resetFailed('entry-1');
+    const resetSql = (postgresClient.query as any).mock.calls[1][0];
+    expect(resetSql).toContain(`outcome->>'message' = '${ DISPATCHER_RECONCILED_LANE_MESSAGE }'`);
+    expect(resetSql).toContain("status = 'pending'");
+    expect(resetSql).toContain('task.status = lane.lane_key');
+    expect(resetSql).toContain('newer.generation > lane.generation');
   });
 
   it('does not let an unresolved dependency block entry into blocked', async() => {

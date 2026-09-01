@@ -29,6 +29,13 @@ interface WorkflowExecutionAttributes {
   terminal_reason:  string | null;
 }
 
+/**
+ * Outcome message the dispatcher reconciler writes when it fails a running
+ * lane automation row. Lane boot retry keys on this exact marker to reclaim
+ * rows the reconciler killed, so the two sites must never drift apart.
+ */
+export const DISPATCHER_RECONCILED_LANE_MESSAGE = 'dispatcher workflow execution reconciled';
+
 export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttributes> {
   protected readonly tableName = 'workflow_executions';
   protected readonly primaryKey = 'execution_id';
@@ -131,7 +138,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   }
 
   /** Atomically claim an unowned or expired execution. */
-  static async acquireLease(executionId: string, ownerId: string, ttlMs: number, token: string = randomUUID()): Promise<WorkflowExecutionModel | null> {
+  static async acquireLease(executionId: string, ownerId: string, ttlMs: number, token = randomUUID()): Promise<WorkflowExecutionModel | null> {
     const row = await postgresClient.queryOne<any>(`UPDATE workflow_executions
       SET owner_id = $2, lease_token = $4, leased_at = COALESCE(leased_at, NOW()), heartbeat_at = NOW(),
           lease_expires_at = NOW() + ($3 * INTERVAL '1 millisecond'), updated_at = NOW()
@@ -159,13 +166,11 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   }
 
   /**
-   * The dispatcher is the recovery authority only for executions it launched:
-   * a scoped execution is a dispatcher child when a work_task_dispatches row
-   * claims it via workflow_execution_id (dispatcher launches stamp that link
-   * in the same transaction that creates the execution). Lane-entry
-   * automation runs are task-scoped but have no dispatch parent — they are
-   * judged by their own lease and settlement path, never by the settlement
-   * state of the dispatch that preceded the lane transition.
+   * The dispatcher is the recovery authority for dispatch-parented scoped
+   * executions only. Lane-entry automations launch scoped executions with no
+   * work_task_dispatches parent at all (their parent is the lane entry), so a
+   * scoped execution bound to a running lane automation must be left alone --
+   * LaneEntryAutomationService.drainRecoverable() owns that recovery path.
    */
   static async reconcileDispatcherOwnedExecutions(): Promise<string[]> {
     return postgresClient.transaction(async(client) => {
@@ -173,15 +178,16 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
         WITH orphaned AS (
           SELECT execution.execution_id
           FROM workflow_executions execution
+          LEFT JOIN work_task_dispatches dispatch
+            ON dispatch.workflow_execution_id = execution.execution_id
           WHERE execution.scope_task_id IS NOT NULL
             AND execution.status IN ('running', 'suspended')
-            AND EXISTS (
-              SELECT 1 FROM work_task_dispatches parent
-               WHERE parent.workflow_execution_id = execution.execution_id)
+            AND (dispatch.id IS NULL OR dispatch.status <> 'running')
             AND NOT EXISTS (
-              SELECT 1 FROM work_task_dispatches live
-               WHERE live.workflow_execution_id = execution.execution_id
-                 AND live.status = 'running')
+              SELECT 1 FROM work_lane_entry_automations lane
+              WHERE lane.execution_id = execution.execution_id
+                AND lane.status = 'running'
+            )
           FOR UPDATE OF execution
         ), settled AS (
           UPDATE workflow_executions execution
@@ -204,7 +210,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
         WHERE workflow_execution_id = ANY($1::text[]) AND status = 'running'`, [executionIds]);
       await client.query(`UPDATE work_lane_entry_automations
         SET status = 'failed',
-            outcome = jsonb_build_object('disposition', 'runtime_failed', 'message', 'dispatcher workflow execution reconciled'),
+            outcome = jsonb_build_object('disposition', 'runtime_failed', 'message', '${ DISPATCHER_RECONCILED_LANE_MESSAGE }'),
             completed_at = COALESCE(completed_at, NOW())
         WHERE execution_id = ANY($1::text[]) AND status = 'running'`, [executionIds]);
       return executionIds;

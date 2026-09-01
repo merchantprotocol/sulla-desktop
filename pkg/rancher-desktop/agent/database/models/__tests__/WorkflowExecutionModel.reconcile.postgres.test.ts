@@ -15,7 +15,8 @@ import { up as createLaneWorkflowBindings } from '../../migrations/0070_create_l
 import { up as scopeLaneWorkflowExecutions } from '../../migrations/0071_scope_lane_workflow_executions';
 import { up as extendDispatchCustody } from '../../migrations/0076_extend_work_task_dispatch_custody';
 import { up as addWorkflowExecutionLeases } from '../../migrations/0081_add_workflow_execution_leases';
-import { WorkflowExecutionModel } from '../WorkflowExecutionModel';
+import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
+import { DISPATCHER_RECONCILED_LANE_MESSAGE, WorkflowExecutionModel } from '../WorkflowExecutionModel';
 
 const connectionString = process.env.SULLA_INTEGRATION_POSTGRES_URL;
 const describeWithPostgres = connectionString ? describe : describe.skip;
@@ -25,6 +26,8 @@ describeWithPostgres('WorkflowExecutionModel dispatcher reconciliation (migrated
   let bootstrapPool: Pool;
   let pool: Pool;
   const originalTransaction = postgresClient.transaction;
+  const originalQuery = postgresClient.query;
+  const originalQueryOne = postgresClient.queryOne;
 
   beforeAll(async() => {
     bootstrapPool = new Pool({ connectionString, max: 1 });
@@ -36,6 +39,9 @@ describeWithPostgres('WorkflowExecutionModel dispatcher reconciliation (migrated
       createLaneDefinitions, createLaneWorkflowBindings, scopeLaneWorkflowExecutions,
       extendDispatchCustody, addWorkflowExecutionLeases,
     ]) await pool.query(migration as any);
+    await pool.query(`
+      INSERT INTO workflows (id, name, status, definition)
+      VALUES ('workflow-1', 'Workflow 1', 'production', '{}'::jsonb)`);
     await pool.query(`INSERT INTO work_projects (id, slug, title) VALUES ('p1', 'p1', 'Reconcile')`);
     await pool.query(`INSERT INTO work_epics (id, project_id, title) VALUES ('e1', 'p1', 'Reconcile')`);
     await pool.query(`INSERT INTO work_tasks (id, project_id, epic_id, title) VALUES ('t1', 'p1', 'e1', 'Task 1')`);
@@ -54,10 +60,16 @@ describeWithPostgres('WorkflowExecutionModel dispatcher reconciliation (migrated
         client.release();
       }
     };
+    (postgresClient as any).query = async(text: string, params: unknown[] = []) =>
+      (await pool.query(text, params)).rows;
+    (postgresClient as any).queryOne = async(text: string, params: unknown[] = []) =>
+      (await pool.query(text, params)).rows[0] ?? null;
   }, 30_000);
 
   afterAll(async() => {
     (postgresClient as any).transaction = originalTransaction;
+    (postgresClient as any).query = originalQuery;
+    (postgresClient as any).queryOne = originalQueryOne;
     await pool?.end();
     await bootstrapPool?.query(`DROP SCHEMA "${ schema }" CASCADE`);
     await bootstrapPool?.end();
@@ -118,5 +130,42 @@ describeWithPostgres('WorkflowExecutionModel dispatcher reconciliation (migrated
     const lane = (await pool.query(`
       SELECT status FROM work_lane_entry_automations WHERE id = 'lane-entry-1'`)).rows[0];
     expect(lane.status).toBe('running');
+  });
+
+  it('retries a reconciler-killed lane row only while its lane generation remains current', async() => {
+    await pool.query(`UPDATE work_tasks SET status = 'blocked' WHERE id = 't1'`);
+    await pool.query(`
+      UPDATE work_lane_entry_automations
+         SET status = 'failed', completed_at = now(),
+             workflow_id = 'workflow-1',
+             outcome = jsonb_build_object(
+               'disposition', 'runtime_failed',
+               'message', $1::text)
+       WHERE id = 'lane-entry-1'`, [DISPATCHER_RECONCILED_LANE_MESSAGE]);
+    await pool.query(`
+      UPDATE workflow_executions SET status = 'failed', completed_at = now()
+       WHERE execution_id = 'lane-exec-t1-2'`);
+
+    expect((await WorkLaneWorkflowBindingModel.listRecoverable()).map(row => row.id))
+      .toContain('lane-entry-1');
+    await expect(WorkLaneWorkflowBindingModel.resetFailed('lane-entry-1'))
+      .resolves.toMatchObject({ status: 'pending', execution_id: null, outcome: null });
+
+    await pool.query(`
+      INSERT INTO work_lane_entry_automations
+        (id, task_id, generation, lane_key, resolution_source, status, workflow_id)
+      VALUES ('lane-entry-newer', 't1', 3, 'blocked', 'core', 'pending',
+              'workflow-1')`);
+    await pool.query(`
+      UPDATE work_lane_entry_automations
+         SET status = 'failed', completed_at = now(),
+             outcome = jsonb_build_object(
+               'disposition', 'runtime_failed',
+               'message', $1::text)
+       WHERE id = 'lane-entry-1'`, [DISPATCHER_RECONCILED_LANE_MESSAGE]);
+
+    expect((await WorkLaneWorkflowBindingModel.listRecoverable()).map(row => row.id))
+      .not.toContain('lane-entry-1');
+    await expect(WorkLaneWorkflowBindingModel.resetFailed('lane-entry-1')).resolves.toBeNull();
   });
 });

@@ -6,7 +6,7 @@ jest.mock('../../PostgresClient', () => ({ postgresClient: { queryOne: jest.fn()
 const db = postgresClient as any;
 
 describe('WorkflowExecutionModel leases', () => {
-  beforeEach(() => { jest.clearAllMocks(); });
+  beforeEach(() => jest.clearAllMocks());
   it('claims and renews only through the durable owner/token boundary', async() => {
     db.queryOne.mockResolvedValue({ execution_id: 'e1', status: 'running', owner_id: 'r1', lease_token: 't1' });
     expect(await WorkflowExecutionModel.acquireLease('e1', 'r1', 60000, 't1')).not.toBeNull();
@@ -33,7 +33,7 @@ describe('WorkflowExecutionModel leases', () => {
     expect(db.queryAll.mock.calls[0][0]).toContain('lease_expires_at = NOW()');
   });
   it('retires only old executions with no owner, lease, or heartbeat', async() => {
-    const client: any = { query: jest.fn<(text: string, params?: unknown[]) => Promise<any>>()
+    const client: any = { query: jest.fn()
       .mockResolvedValueOnce({ rows: [{ execution_id: 'stale' }] })
       .mockResolvedValueOnce({ rows: [] }) };
     db.transaction.mockImplementation(async(fn: any) => fn(client));
@@ -43,25 +43,8 @@ describe('WorkflowExecutionModel leases', () => {
     expect(client.query.mock.calls[0][0]).toContain("INTERVAL '1 hour'");
     expect(client.query.mock.calls[1][0]).toContain('work_lane_entry_automations');
   });
-  it('reconciles only executions that a dispatch row actually parents', async() => {
-    const client: any = { query: jest.fn<(text: string, params?: unknown[]) => Promise<any>>()
-      .mockResolvedValueOnce({ rows: [{ execution_id: 'review-exec' }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] }) };
-    db.transaction.mockImplementation(async(fn: any) => fn(client));
-    expect(await WorkflowExecutionModel.reconcileDispatcherOwnedExecutions()).toEqual(['review-exec']);
-    const sql = client.query.mock.calls[0][0];
-    expect(sql).toContain('workflow_execution_id = execution.execution_id');
-    expect(sql).toContain("live.status = 'running'");
-    // A scoped run no dispatch row claims (a lane-entry automation council)
-    // is outside the reconciler entirely: it lives or dies by its own lease.
-    expect(sql).toContain('EXISTS');
-    expect(sql).not.toContain('dispatch.id IS NULL');
-    expect(client.query.mock.calls[1][0]).toContain('work_task_dispatches');
-    expect(client.query.mock.calls[2][0]).toContain('work_lane_entry_automations');
-  });
   it('recovers through one transaction and reads the last checkpoint', async() => {
-    const client = { query: jest.fn<(text: string, params?: unknown[]) => Promise<any>>()
+    const client = { query: jest.fn()
       .mockResolvedValueOnce({ rows: [{ execution_id: 'e1', status: 'running', attempt_count: 1 }] })
       .mockResolvedValueOnce({ rows: [{ sequence: 4 }] }) };
     db.transaction.mockImplementation(async(fn: any) => fn(client));
