@@ -7,6 +7,7 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
 import { getAgentOverrideService, getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
+import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { classifyLLMFailure, redactLLMFailureMessage, sameLLMRoute } from '../languagemodels/providerRecovery';
 import { SystemPromptBuilder, type PromptBuildContext, type DbPromptSection, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
@@ -677,9 +678,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Detect provider — use the same routing logic as the LLM call itself
     // so the system prompt's provider-conditional sections (e.g. Anthropic
     // cache blocks vs OpenAI response format) match the model we'll invoke.
-    const isSubAgentForPrompt = !!(state.metadata as any).isSubAgent;
     const overrideLLMForPrompt = await getAgentOverrideService((state.metadata as any).agent);
-    const llm = overrideLLMForPrompt ?? (isSubAgentForPrompt
+    const llm = overrideLLMForPrompt ?? (resolveModelSlot(state.metadata as any) === 'subconscious'
       ? await getSubconsciousService()
       : await getPrimaryService());
     const providerName = llm?.getProviderName?.() || 'anthropic';
@@ -1005,13 +1005,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   ): Promise<NormalizedResponse | null> {
     // Agent-definition override first: an agent whose config.yaml declares
     // model/provider gets its own service instance regardless of role slot.
-    // Otherwise: subconscious agents (observation writer/recall,
-    // summarizer) need a fast tool-emitting chat peer, not the
-    // autonomous Claude-Code-style primary. Route them to the dedicated
-    // subconscious provider (falls back to secondary, then primary).
-    const isSubAgent = !!(state.metadata as any).isSubAgent;
+    // Otherwise route by graph-stamped model slot: work-executing sub-agents
+    // (dispatcher workers/verifiers, workflow nodes, spawned workers) stamp
+    // modelSlot='primary' so autonomous work runs on the primary chain on
+    // every install; only subconscious observers (observation writer/recall,
+    // summarizer) keep the fast subconscious chat peer.
     const agentOverrideLLM = await getAgentOverrideService((state.metadata as any).agent);
-    this.llm = agentOverrideLLM ?? (isSubAgent
+    this.llm = agentOverrideLLM ?? (resolveModelSlot(state.metadata as any) === 'subconscious'
       ? await getSubconsciousService()
       : await getPrimaryService());
 

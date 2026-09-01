@@ -2062,6 +2062,9 @@ async function buildSubconsciousState(opts: {
       cycleComplete:        false,
       waitingForUser:       false,
       isSubAgent:           true,
+      // Observers are the one sub-agent class that belongs on the fast
+      // subconscious chat peer (see modelSlotRouting.ts).
+      modelSlot:            'subconscious',
       subAgentDepth:        0,
       llmModel,
       llmLocal,

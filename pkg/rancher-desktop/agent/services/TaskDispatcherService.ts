@@ -676,6 +676,9 @@ export class TaskDispatcherService {
         state.messages.push({ role: 'user', content: this.buildWorkerPrompt(task, dispatch.id, dispatch.agent_id) });
       }
       state.metadata.isSubAgent = true;
+      // Dispatched workers and verifiers do real work; they must chat through
+      // the primary model chain, not the subconscious observer slot.
+      state.metadata.modelSlot = 'primary';
       state.metadata.subAgentDepth = 1;
       state.metadata.workflowParentChannel = 'task-dispatcher';
       state.metadata.options ??= {};

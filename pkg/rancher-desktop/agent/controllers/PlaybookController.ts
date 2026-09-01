@@ -1756,6 +1756,9 @@ export class PlaybookController<TState = any> {
               const subPlaybook = createPlaybookState(subDefinition, step.payload);
               subState.metadata.activeWorkflow = subPlaybook;
               subState.metadata.isSubAgent = true;
+              // Workflow-node agents do real work — primary model chain, not
+              // the subconscious observer slot.
+              subState.metadata.modelSlot = 'primary';
 
               const parentChannel = (state as any).metadata?.wsChannel || 'workbench';
               subState.metadata.workflowNodeId = step.nodeId;
@@ -2418,6 +2421,9 @@ export class PlaybookController<TState = any> {
     subState.messages.push({ role: 'user', content: prompt });
 
     subState.metadata.isSubAgent = true;
+    // Workflow-node agents do real work — primary model chain, not the
+    // subconscious observer slot.
+    subState.metadata.modelSlot = 'primary';
     inheritSubAgentToolPolicy(_state, subState, config);
 
     const parentChannel = (_state as any).metadata?.wsChannel || 'workbench';
