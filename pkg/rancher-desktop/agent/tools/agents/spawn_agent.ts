@@ -120,8 +120,10 @@ export class SpawnAgentWorker extends BaseTool {
         // Inject the task prompt
         subState.messages.push({ role: 'user', content: task.prompt });
 
-        // Mark as sub-agent
+        // Mark as sub-agent. Spawned agents do real delegated work — primary
+        // model chain, not the subconscious observer slot.
         subState.metadata.isSubAgent = true;
+        subState.metadata.modelSlot = 'primary';
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;
 
