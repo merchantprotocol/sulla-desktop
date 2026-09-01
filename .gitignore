@@ -6,7 +6,7 @@
 /dist/
 /e2e/reports/
 /go.work.sum
-/node_modules/
+/node_modules
 /resources/cert-manager*
 /resources/darwin/
 /resources/host/
