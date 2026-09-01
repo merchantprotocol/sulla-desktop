@@ -88,30 +88,13 @@ export function initSullaEvents(): void {
   // cold boot. These tasks used to fire on a blind 5s timer (workflow
   // recovery) or one unretried initialize() (gateway lobby), die with
   // ECONNREFUSED 127.0.0.1:30116, and stay dead until the next app restart.
-  // Retry DB initialization with a flat backoff, then run both once.
+  // Wait behind the shared unbounded DB boot gate, then run both once: a
+  // finite deadline here turned a slow cold start into a session-long
+  // recovery outage (2026-08-31 boot).
   (async() => {
-    const DB_BOOT_RETRY_MS = 5_000;
-    const DB_BOOT_DEADLINE_MS = 5 * 60_000;
-    const t0 = Date.now();
-    let dbReady = false;
+    const { awaitDatabaseReady } = await import('@pkg/main/dbBootGate');
 
-    while (Date.now() - t0 < DB_BOOT_DEADLINE_MS) {
-      try {
-        const { getDatabaseManager } = await import('@pkg/agent/database/DatabaseManager');
-
-        await getDatabaseManager().initialize(); // returns immediately once initialized
-        dbReady = true;
-        break;
-      } catch {
-        await new Promise(resolve => setTimeout(resolve, DB_BOOT_RETRY_MS));
-      }
-    }
-
-    if (!dbReady) {
-      console.error(`[initSullaEvents] Database not ready after ${ DB_BOOT_DEADLINE_MS / 1000 }s — workflow recovery and gateway lobby skipped this session`);
-
-      return;
-    }
+    await awaitDatabaseReady();
 
     try {
       const { recoverOnBoot } = await import('@pkg/agent/workflow/WorkflowRecoveryService');

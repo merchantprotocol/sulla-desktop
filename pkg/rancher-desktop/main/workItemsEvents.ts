@@ -428,7 +428,13 @@ export function initWorkItemsEvents(): void {
 
   // Domain events are the durable orchestration handoff. Drain them after IPC
   // setup so a crash after task commit cannot strand a lane transition.
-  import('@pkg/agent/projects/application/ProjectsOrchestrationEventService')
+  // Both boot drains wait behind the shared DB gate: this module initializes
+  // before Postgres accepts connections on a cold boot, and an ungated first
+  // attempt dies with ECONNREFUSED and never runs again — leaving every
+  // pending transition stranded until the next restart (2026-08-31 boot).
+  import('@pkg/main/dbBootGate')
+    .then(({ awaitDatabaseReady }) => awaitDatabaseReady())
+    .then(() => import('@pkg/agent/projects/application/ProjectsOrchestrationEventService'))
     .then(({ getProjectsOrchestrationEventService }) => getProjectsOrchestrationEventService().drain(50))
     .catch(error => console.warn('[WorkItems] Projects orchestration recovery failed:', error));
 
@@ -442,7 +448,10 @@ export function initWorkItemsEvents(): void {
       .then(({ LaneEntryAutomationService }) => LaneEntryAutomationService.drainRecoverable(50))
       .catch(error => console.warn('[WorkItems] Lane-entry automation recovery failed:', error));
   };
-  sweepLaneEntries();
+  import('@pkg/main/dbBootGate')
+    .then(({ awaitDatabaseReady }) => awaitDatabaseReady())
+    .then(sweepLaneEntries)
+    .catch(error => console.warn('[WorkItems] Lane-entry boot sweep failed to start:', error));
   setInterval(sweepLaneEntries, 5 * 60_000);
 }
 

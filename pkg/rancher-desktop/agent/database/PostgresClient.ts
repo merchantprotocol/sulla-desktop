@@ -158,8 +158,14 @@ export class PostgresClient {
   /**
    * Wait until PostgreSQL is actually reachable from the host.
    * Called by ServiceLifecycleManager before DatabaseManager starts.
+   *
+   * The default is intentionally unbounded: the lifecycle manager treats a
+   * rejected service start as permanently unavailable for this process, so a
+   * finite boot retry budget can brick every DB-dependent service after a
+   * slow cold start. Callers that need a bounded probe can still pass an
+   * explicit maxAttempts value.
    */
-  async waitForReady(maxAttempts = 30, intervalMs = 1000): Promise<void> {
+  async waitForReady(maxAttempts = Number.POSITIVE_INFINITY, intervalMs = 1000): Promise<void> {
     const password = await SullaSettingsModel.get('sullaServicePassword', 'sulla_dev_password');
 
     for (let i = 1; i <= maxAttempts; i++) {
@@ -183,7 +189,8 @@ export class PostgresClient {
         if (i === maxAttempts) {
           throw new Error(`PostgreSQL not reachable after ${ maxAttempts } attempts`);
         }
-        console.log(`[PostgresClient] waitForReady attempt ${ i }/${ maxAttempts } failed, retrying...`);
+        const attemptLabel = Number.isFinite(maxAttempts) ? `${ i }/${ maxAttempts }` : `${ i }`;
+        console.log(`[PostgresClient] waitForReady attempt ${ attemptLabel } failed, retrying...`);
         await new Promise(resolve => setTimeout(resolve, intervalMs));
       } finally {
         try { await probe?.end() } catch { /* ignore */ }
