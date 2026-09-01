@@ -199,13 +199,18 @@ export class WorkTaskWaitModel {
          RETURNING *
       `, [id, observation.fingerprint, nextStatus, observation.nextCheckAt, changed, terminal]);
       if (changed || terminal) {
-        await client.query(`
+        const moved = await client.query<{ status: string }>(`
           UPDATE work_tasks
              SET status = $2, assignee = $3, updated_at = now(),
                  last_moved_at = now(), last_activity_at = now(),
                  last_moved_by = 'external-wait-monitor'
            WHERE id = $1 AND status = 'blocked'
         `, [current.task_id, nextStatus === 'failed' ? 'planning' : 'in_review', nextStatus === 'failed' ? 'dispatcher' : 'heartbeat']);
+        if (moved.rows[0]) {
+          const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
+          await recordTaskTransitionWithClient(client, current.task_id, 'blocked', moved.rows[0].status,
+            'external-wait-monitor', 'external-wait');
+        }
       }
       return { changed: changed || terminal, wait: updated.rows[0] ?? null };
     });
@@ -226,12 +231,17 @@ export class WorkTaskWaitModel {
       `, [id, message.slice(0, 2000), nextCheckAt, terminalAfter]);
       const wait = result.rows[0] ?? null;
       if (wait?.status === 'failed') {
-        await client.query(`
+        const moved = await client.query<{ status: string }>(`
           UPDATE work_tasks SET status = 'planning', assignee = 'dispatcher',
             updated_at = now(), last_moved_at = now(), last_activity_at = now(),
             last_moved_by = 'external-wait-monitor'
           WHERE id = $1 AND status = 'blocked'
         `, [wait.task_id]);
+        if (moved.rows[0]) {
+          const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
+          await recordTaskTransitionWithClient(client, wait.task_id, 'blocked', moved.rows[0].status,
+            'external-wait-monitor', 'external-wait-failure');
+        }
       }
       return { terminal: wait?.status === 'failed', wait };
     });

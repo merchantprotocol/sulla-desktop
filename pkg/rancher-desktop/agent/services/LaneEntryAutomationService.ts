@@ -144,6 +144,10 @@ export class LaneEntryAutomationService {
           : await WorkLaneWorkflowBindingModel.resetMissingExecution(entry.id, entry.execution_id);
         if (!reset) continue;
       }
+      if (entry.status === 'failed') {
+        const reset = await WorkLaneWorkflowBindingModel.resetFailed(entry.id);
+        if (!reset) continue;
+      }
       results.push(await LaneEntryAutomationService.dispatchEntry(entry.id));
     }
     return results;

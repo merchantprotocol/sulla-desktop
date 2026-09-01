@@ -357,6 +357,7 @@ export class WorkLaneWorkflowBindingModel {
         LEFT JOIN workflow_executions execution ON execution.execution_id = lane.execution_id
        WHERE lane.workflow_id IS NOT NULL AND (
          lane.status = 'pending'
+         OR (lane.status = 'failed' AND lane.outcome->>'disposition' IN ('dispatch_failed', 'delegation_failed'))
          OR (lane.status = 'running' AND (
            execution.execution_id IS NULL OR execution.status IN ('completed', 'failed')
            OR (execution.status IN ('running', 'suspended')
@@ -375,6 +376,18 @@ export class WorkLaneWorkflowBindingModel {
        WHERE id = $1 AND status = 'pending' AND execution_id IS NULL
        RETURNING *
     `, [id, executionId]);
+    return rows[0] ?? null;
+  }
+
+  static async resetFailed(id: string): Promise<LaneEntryAutomationRecord | null> {
+    const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
+      UPDATE work_lane_entry_automations
+         SET execution_id = NULL, status = 'pending', started_at = NULL,
+             completed_at = NULL, outcome = NULL
+       WHERE id = $1 AND status = 'failed'
+         AND outcome->>'disposition' IN ('dispatch_failed', 'delegation_failed')
+       RETURNING *
+    `, [id]);
     return rows[0] ?? null;
   }
 
