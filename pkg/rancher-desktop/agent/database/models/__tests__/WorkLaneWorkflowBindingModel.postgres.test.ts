@@ -9,11 +9,14 @@ import { up as createWorkItems } from '../../migrations/0044_create_work_items_t
 import { up as addWorkTaskActor } from '../../migrations/0047_add_work_task_actor';
 import { up as addCoreWorkflowFields } from '../../migrations/0055_add_system_and_content_hash_to_workflows';
 import { up as addWorkTaskActivity } from '../../migrations/0061_add_work_task_activity';
+import { up as createWorkTaskDispatches } from '../../migrations/0062_create_work_task_dispatches';
+import { up as addVerificationDispatches } from '../../migrations/0064_add_verification_dispatches';
 import { up as createLaneDefinitions } from '../../migrations/0069_create_work_lane_definitions';
 import { up as createLaneWorkflowBindings } from '../../migrations/0070_create_lane_workflow_bindings';
 import { up as scopeLaneWorkflowExecutions } from '../../migrations/0071_scope_lane_workflow_executions';
 import { up as createPlanningRuns } from '../../migrations/0072_create_work_task_planning_runs';
 import { up as addProjectViewsAndScheduling } from '../../migrations/0075_add_project_views_and_scheduling';
+import { up as extendDispatchCustody } from '../../migrations/0076_extend_work_task_dispatch_custody';
 import { up as addWorkflowExecutionLeases } from '../../migrations/0081_add_workflow_execution_leases';
 import { up as createWorkTaskDependencies } from '../../migrations/0083_create_work_task_dependencies';
 import { up as createProjectsDomainEventOutbox } from '../../migrations/0086_create_projects_domain_event_outbox';
@@ -22,7 +25,7 @@ import {
   LANE_ENTRY_INPUT_ENVELOPE, LANE_OUTCOME_OUTPUT_ENVELOPE,
   WorkLaneWorkflowBindingModel,
 } from '../WorkLaneWorkflowBindingModel';
-import { WorkflowExecutionModel } from '../WorkflowExecutionModel';
+import { DISPATCHER_RECONCILED_LANE_MESSAGE, WorkflowExecutionModel } from '../WorkflowExecutionModel';
 
 const connectionString = process.env.SULLA_INTEGRATION_POSTGRES_URL;
 const describeWithPostgres = connectionString ? describe : describe.skip;
@@ -41,6 +44,9 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
     await pool.query(createWorkItems);
     await pool.query(addWorkTaskActor);
     await pool.query(addWorkTaskActivity);
+    await pool.query(createWorkTaskDispatches);
+    await pool.query(addVerificationDispatches);
+    await pool.query(extendDispatchCustody);
     await pool.query(createLaneDefinitions);
     await pool.query(createLaneWorkflowBindings);
     await pool.query(scopeLaneWorkflowExecutions);
@@ -349,5 +355,76 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
       status:       'failed',
       outcome:      { disposition: 'runtime_failed', message: 'runtime failure' },
     });
+  }, 30_000);
+
+  it('reconciles only dispatcher-parented orphans, spares live lane automations, and boot-retries reconciled rows', async() => {
+    await pool.query(`
+      INSERT INTO work_tasks (id, project_id, epic_id, title, status)
+      VALUES ('task-reconcile', 'project-1', 'epic-1', 'Reconcile task', 'backlog');
+    `);
+    jest.spyOn(LaneEntryAutomationService, 'dispatchEntry').mockImplementation(async(id) =>
+      (await WorkLaneWorkflowBindingModel.getLaneEntry(id))!);
+
+    await WorkItemsModel.updateTask('task-reconcile', { status: 'todo', actor: 'integration-test' });
+    const laneEntry = (await WorkLaneWorkflowBindingModel.listLaneEntries('task-reconcile'))[0];
+    const laneExecution = 'lane-exec-task-reconcile-1';
+    await WorkLaneWorkflowBindingModel.markStarted(laneEntry.id, laneExecution);
+    await WorkflowExecutionModel.markRunning({
+      executionId:     laneExecution,
+      workflowId:      'workflow-1',
+      workflowName:    'Workflow 1',
+      workflowSlug:    'workflow-1',
+      scopeTaskId:     'task-reconcile',
+      scopeGeneration: 1,
+    });
+    await WorkflowExecutionModel.markRunning({
+      executionId:     'dispatcher-orphan-exec',
+      workflowId:      'workflow-1',
+      workflowName:    'Workflow 1',
+      workflowSlug:    'workflow-1',
+      scopeTaskId:     'task-orphan',
+      scopeGeneration: 1,
+    });
+
+    const reconciled = await WorkflowExecutionModel.reconcileDispatcherOwnedExecutions();
+
+    expect(reconciled).toContain('dispatcher-orphan-exec');
+    expect(reconciled).not.toContain(laneExecution);
+    expect((await pool.query(
+      'SELECT status FROM workflow_executions WHERE execution_id = $1', [laneExecution],
+    )).rows[0]).toMatchObject({ status: 'running' });
+    expect(await WorkLaneWorkflowBindingModel.getLaneEntry(laneEntry.id))
+      .toMatchObject({ status: 'running', execution_id: laneExecution });
+
+    // Rows the pre-fix reconciler already killed must re-enter boot retry.
+    await pool.query(`
+      UPDATE work_lane_entry_automations
+         SET status = 'failed',
+             outcome = jsonb_build_object('disposition', 'runtime_failed', 'message', $1::text),
+             completed_at = now()
+       WHERE id = $2
+    `, [DISPATCHER_RECONCILED_LANE_MESSAGE, laneEntry.id]);
+    await pool.query(
+      'UPDATE workflow_executions SET status = $1, completed_at = now() WHERE execution_id = $2',
+      ['failed', laneExecution]);
+
+    const recoverable = await WorkLaneWorkflowBindingModel.listRecoverable();
+    expect(recoverable.map(row => row.id)).toContain(laneEntry.id);
+    await expect(WorkLaneWorkflowBindingModel.resetFailed(laneEntry.id))
+      .resolves.toMatchObject({ status: 'pending', execution_id: null, outcome: null });
+
+    // A later lane generation makes the old row historical. Boot recovery must
+    // never replay that stale generation, even if it carries a retryable marker.
+    await WorkItemsModel.updateTask('task-reconcile', { status: 'in_review', actor: 'integration-test' });
+    await pool.query(`
+      UPDATE work_lane_entry_automations
+         SET status = 'failed',
+             outcome = jsonb_build_object('disposition', 'runtime_failed', 'message', $1::text),
+             completed_at = now()
+       WHERE id = $2
+    `, [DISPATCHER_RECONCILED_LANE_MESSAGE, laneEntry.id]);
+    expect((await WorkLaneWorkflowBindingModel.listRecoverable()).map(row => row.id))
+      .not.toContain(laneEntry.id);
+    await expect(WorkLaneWorkflowBindingModel.resetFailed(laneEntry.id)).resolves.toBeNull();
   }, 30_000);
 });
