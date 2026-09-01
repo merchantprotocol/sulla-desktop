@@ -5,6 +5,7 @@ import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
 import { buildClaudeLaunchCommand } from './claudeLaunchCommand';
+import { BASE_DISALLOWED_TOOLS, SUBCONSCIOUS_NATIVE_TOOL_DENYLIST } from './claudeToolPolicy';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
@@ -45,33 +46,11 @@ const perf = Logging.perf;
  * (or ANTHROPIC_API_KEY) and stay out of its auth lifecycle.
  */
 
-/**
- * Base `--disallowedTools` set applied to EVERY claude spawn (primary and
- * subconscious): the built-in AskUserQuestion (routed through the sulla-native
- * MCP tool instead) and Claude Code's built-in task/todo list, which competes
- * with Sulla Projects. See buildSpawnArgs for the full rationale.
- */
-const BASE_DISALLOWED_TOOLS = 'AskUserQuestion TaskCreate TaskUpdate TaskList TaskGet TodoWrite TodoRead';
-
-/**
- * Additional native tools disabled for SUBCONSCIOUS (observer) spawns only.
- *
- * Subconscious agents (observation/identity writers + recalls, summarizer,
- * digester) are OBSERVERS — their entire job is to read the conversation and
- * record memory through their Sulla DB tools. They must never take real action
- * on the host. Their Sulla-registry toolset is already locked down to DB tools
- * via `allowedToolNames`, but that gate does NOT govern Claude Code's OWN
- * built-in tools. Spawned with --dangerously-skip-permissions, the CLI would
- * otherwise hand an observer full Read/Write/Edit/Bash/Grep/WebFetch access —
- * so a subconscious pass could (and did) start editing files instead of just
- * observing. Denylisting the native actor tools here makes acting structurally
- * impossible, matching the observer invariant (observers get DB tools only,
- * never filesystem/shell/source-control/browser/code-editing tools).
- *
- * Names include current + legacy aliases (e.g. KillShell/KillBash) so a rename
- * on either side is harmless — an unknown disallowed name is simply ignored.
- */
-const SUBCONSCIOUS_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit NotebookEdit Bash BashOutput KillShell KillBash Glob Grep WebFetch WebSearch Task SlashCommand';
+// Native-tool policy (BASE_DISALLOWED_TOOLS + SUBCONSCIOUS_NATIVE_TOOL_DENYLIST)
+// lives in claudeToolPolicy.ts so tests can assert it without importing this
+// service's full dependency graph. Includes the zj21 sub-agent spawn lockdown:
+// Task/Agent are disallowed on every spawn — delegation goes through
+// `sulla agents/spawn_agent`, whose completions durably wake the parent graph.
 
 /** Idle timeout for a speculatively-booted process that is never claimed. */
 const PREWARM_IDLE_REAP_MS = 60_000;
@@ -264,6 +243,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
       // (Postgres) — there must be exactly one task system, not a second
       // in-memory to-do list. NOTE: TaskOutput / TaskStop are background-process
       // controls (not the to-do list) and stay enabled.
+      //
+      // Also disable native sub-agent spawning (Task, and its Agent rename).
+      // Provider-native sub-agents report completion to this process only, so
+      // their finished work dies with it; delegation must go through
+      // `sulla agents/spawn_agent`, which durably wakes the parent graph (zj21).
       //
       // Subconscious observers additionally lose the native actor tools
       // (Read/Write/Edit/Bash/…) — see SUBCONSCIOUS_NATIVE_TOOL_DENYLIST.
