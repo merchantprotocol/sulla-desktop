@@ -6,7 +6,7 @@ import * as path from 'path';
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { emitCodexToolEvent } from './codexToolEvents';
-import { codexSandboxArgs } from './codexSandboxPolicy';
+import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { redisClient } from '../database/RedisClient';
 import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
 import { graphBrowserControllerContext } from '../utils/graphBrowserController';
@@ -173,6 +173,12 @@ export class CodexService extends BaseLanguageModel {
     codexArgs.push('--json');
     codexArgs.push(...codexSandboxArgs(!!p.readOnly));
     codexArgs.push('--skip-git-repo-check');
+    // Structurally disallow codex's native sub-agent spawning — delegation
+    // goes through `sulla agents/spawn_agent` so completions durably wake the
+    // parent graph (zj21). See CODEX_NATIVE_SPAWN_FEATURE_PINS.
+    for (const pin of CODEX_NATIVE_SPAWN_FEATURE_PINS) {
+      codexArgs.push('-c', shq(pin));
+    }
     if (p.mcpSession) {
       for (const override of buildCodexMcpOverrides(p.mcpSession)) {
         codexArgs.push('-c', shq(override));
