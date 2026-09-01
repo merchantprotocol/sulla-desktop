@@ -214,7 +214,7 @@ export class SpawnAgentWorker extends BaseTool {
 
     // ── Async mode: fire and forget ─────────────────────────────
     if (async_) {
-      const job = await createJob(tasks.length);
+      const job = await createJob(tasks.length, parentChannel, parentThreadId);
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
       jobAbortSignal = getJobAbortSignal(job.jobId);
@@ -222,14 +222,16 @@ export class SpawnAgentWorker extends BaseTool {
       // Launch in background — do not await
       executeAll()
         .then(async(results) => {
-          completeJob(job.jobId, results);
+          await completeJob(job.jobId, results);
           console.log(`[spawn_agent] Async job ${ job.jobId } completed — ${ results.length } result(s)`);
           await emitProactiveCompletion(parentChannel, job.jobId, results);
           // Feed the results back INTO the orchestrator's loop, not just onto a
           // UI card. Without this the parent's turn already ended and nothing
           // re-invokes it — the results would strand and the orchestrator would
           // report that the sub-agents "died".
-          wakeParentGraph(parentChannel, parentThreadId, job.jobId, results);
+          const delivered = await wakeParentGraph(parentChannel, parentThreadId, job.jobId, results);
+          const { markCompletionDelivered } = await import('./jobRegistry');
+          if (delivered) await markCompletionDelivered(job.jobId);
         })
         .catch(async(err) => {
           failJob(job.jobId, (err as Error).message);
@@ -283,20 +285,20 @@ export class SpawnAgentWorker extends BaseTool {
 //
 // No-op when there is no parent thread to resume (falls back to card-only,
 // the legacy behaviour).
-function wakeParentGraph(
+async function wakeParentGraph(
   parentChannel: string,
   parentThreadId: string | undefined,
   jobId: string,
   results: AgentJobResult[],
   failureReason?: string,
-): void {
-  if (!parentThreadId) return;
+): Promise<boolean> {
+  if (!parentThreadId) return false;
 
   try {
     const ws = getWebSocketClientService();
     const content = buildWakeContent(jobId, results, failureReason);
 
-    ws.send(parentChannel, {
+    await ws.send(parentChannel, {
       type: 'user_message',
       data: {
         content,
@@ -312,8 +314,10 @@ function wakeParentGraph(
       },
     });
     console.log(`[spawn_agent] Woke parent graph — channel="${ parentChannel }" thread="${ parentThreadId.slice(-8) }" job=${ jobId }`);
+    return true;
   } catch (e) {
     console.warn('[spawn_agent] wakeParentGraph failed:', e);
+    return false;
   }
 }
 

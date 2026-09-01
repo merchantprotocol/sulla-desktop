@@ -80,6 +80,7 @@ import { up as up_0090, down as down_0090 } from './0090_create_work_task_outcom
 import { up as up_0091, down as down_0091 } from './0091_create_dispatcher_liveness';
 import { up as up_0092, down as down_0092 } from './0092_allow_core_lane_bindings';
 import { up as up_0093, down as down_0093 } from './0093_create_meterable_usage_ledger';
+import { up as up_0094, down as down_0094 } from './0094_durable_agent_completion_delivery';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -161,4 +162,5 @@ export const migrationsRegistry = [
   { name: '0091_create_dispatcher_liveness',                         up: up_0091, down: down_0091 },
   { name: '0092_allow_core_lane_bindings',                           up: up_0092, down: down_0092 },
   { name: '0093_create_meterable_usage_ledger',                       up: up_0093, down: down_0093 },
+  { name: '0094_durable_agent_completion_delivery',                   up: up_0094, down: down_0094 },
 ] as const;

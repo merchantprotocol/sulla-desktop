@@ -34,6 +34,9 @@ export interface AgentJob {
   taskCount:  number;
   results:    AgentJobResult[];
   error?:     string;
+  parentChannel?: string;
+  parentThreadId?: string;
+  completionDeliveredAt?: number | null;
 }
 
 const JOB_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -68,6 +71,9 @@ function rowToJob(r: any): AgentJob {
     taskCount:  Number(r.task_count) || 0,
     results:    Array.isArray(r.results) ? r.results : [],
     error:      r.error ?? undefined,
+    parentChannel: r.parent_channel ?? undefined,
+    parentThreadId: r.parent_thread_id ?? undefined,
+    completionDeliveredAt: r.completion_delivered_at ? new Date(r.completion_delivered_at).getTime() : null,
   };
 }
 
@@ -92,7 +98,7 @@ function ensureBootSweep(): Promise<void> {
 
 // ── API ────────────────────────────────────────────────────────────────
 
-export async function createJob(taskCount: number): Promise<AgentJob> {
+export async function createJob(taskCount: number, parentChannel?: string, parentThreadId?: string): Promise<AgentJob> {
   await ensureBootSweep();
   jobCounter += 1;
   const jobId = `agent-job-${ Date.now() }-${ jobCounter }`;
@@ -103,16 +109,19 @@ export async function createJob(taskCount: number): Promise<AgentJob> {
     finishedAt: null,
     taskCount,
     results:    [],
+    parentChannel,
+    parentThreadId,
+    completionDeliveredAt: null,
   };
 
   jobs.set(jobId, job);
   abortControllers.set(jobId, new AbortController());
 
   await dbWrite(
-    `INSERT INTO agent_jobs (job_id, status, task_count, created_at)
-     VALUES ($1, 'running', $2, to_timestamp($3 / 1000.0))
+    `INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, created_at)
+     VALUES ($1, 'running', $2, $4, $5, to_timestamp($3 / 1000.0))
      ON CONFLICT (job_id) DO NOTHING`,
-    [jobId, taskCount, job.createdAt],
+    [jobId, taskCount, job.createdAt, parentChannel ?? null, parentThreadId ?? null],
   );
 
   return job;
@@ -189,7 +198,7 @@ export async function getAllJobs(): Promise<AgentJob[]> {
   return Array.from(jobs.values());
 }
 
-export function completeJob(jobId: string, results: AgentJobResult[]): void {
+export async function completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
   const job = jobs.get(jobId);
   if (!job) return;
   abortControllers.delete(jobId);
@@ -198,7 +207,7 @@ export function completeJob(jobId: string, results: AgentJobResult[]): void {
   // 'stopped' verdict but record whatever partial results came back.
   if (job.status === 'stopped') {
     job.results = results;
-    void dbWrite(`UPDATE agent_jobs SET results = $2::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(results)]);
+    await dbWrite(`UPDATE agent_jobs SET results = $2::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(results)]);
 
     return;
   }
@@ -207,10 +216,37 @@ export function completeJob(jobId: string, results: AgentJobResult[]): void {
   job.finishedAt = Date.now();
   job.results = results;
 
-  void dbWrite(
-    `UPDATE agent_jobs SET status = 'completed', finished_at = now(), results = $2::jsonb WHERE job_id = $1`,
+  await dbWrite(
+    `UPDATE agent_jobs SET status = 'completed', finished_at = now(), results = $2::jsonb, completion_delivered_at = NULL WHERE job_id = $1`,
     [jobId, JSON.stringify(results)],
   );
+}
+
+/** Mark a persisted completion delivered only after the graph wake was sent. */
+export async function markCompletionDelivered(jobId: string): Promise<void> {
+  const job = jobs.get(jobId);
+  if (job) job.completionDeliveredAt = Date.now();
+  await dbWrite(
+    `UPDATE agent_jobs SET completion_delivered_at = now() WHERE job_id = $1 AND status = 'completed' AND completion_delivered_at IS NULL`,
+    [jobId],
+  );
+}
+
+/** Read completed reports whose graph wake was not durably acknowledged. */
+export async function getPendingCompletions(): Promise<AgentJob[]> {
+  await ensureBootSweep();
+  try {
+    const rows = await postgresClient.query(
+      `SELECT * FROM agent_jobs
+         WHERE status = 'completed' AND completion_delivered_at IS NULL
+           AND parent_channel IS NOT NULL AND parent_thread_id IS NOT NULL
+         ORDER BY finished_at ASC`,
+    ) as any[];
+    return (rows ?? []).map(rowToJob);
+  } catch (err) {
+    console.warn('[jobRegistry] pending completion read failed:', (err as Error).message);
+    return [];
+  }
 }
 
 export function failJob(jobId: string, error: string): void {
