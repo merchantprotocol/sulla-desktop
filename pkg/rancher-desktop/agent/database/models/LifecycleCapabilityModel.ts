@@ -348,6 +348,10 @@ export class LifecycleCapabilityModel {
     `, [taskId, input.actor]);
     if (!updated.rows[0]) return { settled: false, alreadySettled: true };
 
+    const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
+    await recordTaskTransitionWithClient(client, taskId, current.status, updated.rows[0].status,
+      input.actor, 'review-reject');
+
     const receipt = buildReceipt({
       taskId,
       eventType:         'repair',

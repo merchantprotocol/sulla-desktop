@@ -111,6 +111,11 @@ export class WorkTaskPlanningRunModel {
            RETURNING *
         `, [taskId, planningLaneKey]);
         claimedTask = moved.rows[0] ?? task;
+        if (moved.rows[0]) {
+          const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
+          await recordTaskTransitionWithClient(client, taskId, task.status, moved.rows[0].status,
+            'planning-council', 'planning-council-claim');
+        }
       }
 
       return { run: inserted.rows[0], task: claimedTask };

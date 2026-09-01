@@ -96,6 +96,7 @@ export interface ClaimabilityExplanation {
   reason: string;
   unresolved: UnresolvedDependency[];
   chain: DependencyChainEntry[];
+  exclusionReasons?: string[];
 }
 
 function normalizeRelation(value?: DependencyRelationType | string | null): DependencyRelationType {
@@ -344,6 +345,60 @@ export class WorkTaskDependencyModel {
   /** Human/agent-facing claimability explanation with the transitive chain. */
   static async explainClaimability(taskId: string, maxDepth = 25): Promise<ClaimabilityExplanation> {
     const unresolved = await this.listUnresolvedDependencies(taskId);
+    const task = await postgresClient.queryOne<{
+      id: string;
+      status: string;
+      archived: boolean;
+      assignee: string | null;
+      labels: string[] | null;
+      epic_status: string | null;
+      project_status: string | null;
+      epic_archived: boolean | null;
+      project_archived: boolean | null;
+      has_active_child: boolean;
+      has_running_dispatch: boolean;
+    }>(`
+      SELECT t.id, t.status, t.archived, t.assignee, t.labels,
+             e.status AS epic_status, p.status AS project_status,
+             e.archived AS epic_archived, p.archived AS project_archived,
+             EXISTS (
+               SELECT 1 FROM work_tasks child
+                WHERE child.parent_id = t.id AND child.archived = false
+                  AND child.status NOT IN ('done', 'cancelled', 'parked')
+             ) AS has_active_child,
+             EXISTS (
+               SELECT 1 FROM work_task_dispatches d
+                WHERE d.task_id = t.id AND d.status = 'running'
+             ) AS has_running_dispatch
+        FROM work_tasks t
+        LEFT JOIN work_epics e ON e.id = t.epic_id
+        LEFT JOIN work_projects p ON p.id = e.project_id
+       WHERE t.id = $1
+    `, [taskId]);
+    const exclusionReasons: string[] = [];
+    if (!task) exclusionReasons.push('task is missing');
+    else {
+      if (task.archived) exclusionReasons.push('task is archived');
+      if (!['todo', 'in_review'].includes(task.status)) {
+        exclusionReasons.push(`status '${ task.status }' is not a claimable execution or review lane`);
+      }
+      if (task.epic_status === null || task.epic_archived) exclusionReasons.push('epic is missing or archived');
+      else if (['done', 'cancelled', 'parked', 'blocked'].includes(task.epic_status)) {
+        exclusionReasons.push(`epic is '${ task.epic_status }'`);
+      }
+      if (task.project_status === null || task.project_archived) exclusionReasons.push('project is missing or archived');
+      else if (['done', 'cancelled', 'parked', 'blocked'].includes(task.project_status)) {
+        exclusionReasons.push(`project is '${ task.project_status }'`);
+      }
+      if (task.assignee && !['heartbeat', 'dispatcher', 'verifier'].includes(task.assignee.toLowerCase())) {
+        exclusionReasons.push(`assignee '${ task.assignee }' is outside autonomous ownership`);
+      }
+      if ((task.labels ?? []).some(label => ['gated', 'decision', 'human', 'manual', 'no-auto-dispatch'].includes(label.trim().toLowerCase()))) {
+        exclusionReasons.push('task has a non-autonomous label');
+      }
+      if (task.has_active_child) exclusionReasons.push('task has open non-terminal children');
+      if (task.has_running_dispatch) exclusionReasons.push('task already has a running dispatch');
+    }
     const chainRows = await postgresClient.query<any>(
       `WITH RECURSIVE chain AS (
          SELECT d.depends_on_task_id AS task_id, d.relation_type, 1 AS depth
@@ -369,10 +424,11 @@ export class WorkTaskDependencyModel {
       depth:        r.depth,
       resolved:     r.status === 'done',
     }));
-    const claimable = unresolved.length === 0;
+    const reasons = [...unresolved.map(u => u.reason), ...exclusionReasons];
+    const claimable = reasons.length === 0;
     const reason = claimable
-      ? `Task ${ taskId } is claimable: no unresolved dependencies.`
-      : `Task ${ taskId } is NOT claimable — ${ unresolved.map(u => u.reason).join('; ') }`;
-    return { taskId, claimable, reason, unresolved, chain };
+      ? `Task ${ taskId } is claimable: no dispatcher or review exclusions.`
+      : `Task ${ taskId } is NOT claimable — ${ reasons.join('; ') }`;
+    return { taskId, claimable, reason, unresolved, chain, exclusionReasons };
   }
 }

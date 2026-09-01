@@ -827,7 +827,7 @@ export class WorkTaskDispatchModel {
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `, [auditId, task.id, attemptNumber, outcome, reason, task.status, task.assignee, task.last_activity_at]);
 
-        await client.query(`
+        const moved = await client.query<WorkTaskRecord>(`
           WITH inserted AS (
             INSERT INTO work_task_comments (id, task_id, body, author)
             VALUES ($1, $2, $3, 'dispatcher')
@@ -847,6 +847,11 @@ export class WorkTaskDispatchModel {
           `Outcome: ${ nextStatus }/${ nextAssignee }. Undo: ${ undo }.`,
           nextStatus, nextAssignee,
         ]);
+        if (moved.rows[0]) {
+          const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
+          await recordTaskTransitionWithClient(client, task.id, task.status, moved.rows[0].status,
+            TASK_ASSIGNEES.dispatcher, 'orphan-recovery');
+        }
         results.push({ taskId: task.id, outcome, attemptNumber });
       }
       return results;
@@ -1277,6 +1282,11 @@ export class WorkTaskDispatchModel {
       if (!moved.rows[0]) {
         throw new Error(`Task ${ taskId } is no longer owned by dispatch ${ id }`);
       }
+      if (['planning', 'blocked'].includes(moved.rows[0].status)) {
+        const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
+        await recordTaskTransitionWithClient(client, taskId, 'in_progress', moved.rows[0].status,
+          'dispatcher', 'dispatch-outcome');
+      }
       // Finalization is the durable ownership handoff. Releasing the stage
       // claim in this same transaction is required for journal replay after a
       // process death: runClaim's finally block may never execute after
@@ -1602,14 +1612,19 @@ export class WorkTaskDispatchModel {
         artifacts:          [{ type: 'reviewed_artifact', canonicalRef: artifactSha, hash: artifactSha }],
         evidence:           { kind: 'dispatch', ref: id },
       }), 'verifier');
-      await client.query(`
+      const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
                completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
          WHERE id = $1 AND status = 'in_review'
-      `, [taskId, transition.status, transition.assignee]);
+        `, [taskId, transition.status, transition.assignee]);
+        if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
+          const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
+          await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
+            'dispatcher', 'dispatch-outcome');
+        }
       return finalVerdict;
     });
   }
@@ -1773,7 +1788,7 @@ export class WorkTaskDispatchModel {
         }), 'verifier');
       }
 
-      await client.query(`
+      const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
@@ -1781,6 +1796,11 @@ export class WorkTaskDispatchModel {
                completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
          WHERE id = $1 AND status = 'in_review'
       `, [taskId, transition.status, transition.assignee]);
+      if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
+        const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
+        await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
+          'verifier', 'protected-review-outcome');
+      }
       return finalDisposition;
     });
   }
@@ -1831,12 +1851,17 @@ export class WorkTaskDispatchModel {
           evidence:          { kind: 'dispatch', ref: id },
         }), 'verifier');
       }
-      await client.query(`
+      const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier'
          WHERE id = $1 AND status = 'in_review'
       `, [taskId, terminal ? 'planning' : 'in_review', terminal ? 'dispatcher' : 'heartbeat']);
+      if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
+        const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
+        await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
+          'verifier', 'verification-failure');
+      }
       return true;
     });
   }
