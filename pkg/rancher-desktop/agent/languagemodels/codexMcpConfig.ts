@@ -33,5 +33,10 @@ export function buildCodexMcpOverrides(session?: CodexMcpSessionConfig | null): 
   return [
     `mcp_servers.sulla-native.url=${ JSON.stringify(session.url) }`,
     `mcp_servers.sulla-native.bearer_token_env_var=${ JSON.stringify(CODEX_MCP_TOKEN_ENV) }`,
+    // The verifier intentionally runs with approval_policy=never.  Codex's
+    // read-only shell sandbox still gates MCP calls unless the graph-bound
+    // server is explicitly trusted, so approve this in-process, allowlisted
+    // surface at the server boundary rather than weakening the shell sandbox.
+    'mcp_servers.sulla-native.default_tools_approval_mode="approve"',
   ];
 }
