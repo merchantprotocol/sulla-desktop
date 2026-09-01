@@ -67,20 +67,21 @@ export class CheckAgentJobsWorker extends BaseTool {
         };
       }
 
-      // Completed — return results and clean up
+      // Completed — return results. Keep an undelivered completion in the
+      // durable outbox so boot recovery can still wake its parent graph.
       const allSuccess = job.results.every(r => r.status === 'completed');
 
       const formatted = job.results.map(r =>
         `### ${ r.label } [${ r.status.toUpperCase() }]\n${ r.output }`,
       ).join('\n\n---\n\n');
 
-      deleteJob(jobId);
+      if (job.completionDeliveredAt) deleteJob(jobId);
 
       return {
         successBoolean: allSuccess,
         responseString: job.results.length === 1
           ? job.results[0].output
-          : `${ job.results.length } sub-agent(s) completed.\n\n${ formatted }`,
+          : `${ job.results.length } sub-agent(s) completed.${ job.completionDeliveredAt ? '' : ' Completion remains queued for parent-graph recovery.' }\n\n${ formatted }`,
       };
     }
 

@@ -5,6 +5,7 @@ import { AbortService } from './AbortService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
+import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 
@@ -129,6 +130,12 @@ export class BackendGraphWebSocketService {
     // Subscribe to any custom agent channels from ~/sulla/agents/
     this.subscribeToAgentChannels().catch(err =>
       console.warn('[BackendGraphWS] Failed to subscribe to agent channels:', err));
+
+    // The database-backed completion outbox must replay only after the graph
+    // channels are subscribed; otherwise a recovered wake can be emitted into
+    // an empty in-process bus and incorrectly acknowledged as delivered.
+    recoverPendingAgentCompletions().catch(err =>
+      console.warn('[BackendGraphWS] Failed to recover agent completions:', err));
   }
 
   /**
