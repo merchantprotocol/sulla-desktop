@@ -131,7 +131,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   }
 
   /** Atomically claim an unowned or expired execution. */
-  static async acquireLease(executionId: string, ownerId: string, ttlMs: number, token = randomUUID()): Promise<WorkflowExecutionModel | null> {
+  static async acquireLease(executionId: string, ownerId: string, ttlMs: number, token: string = randomUUID()): Promise<WorkflowExecutionModel | null> {
     const row = await postgresClient.queryOne<any>(`UPDATE workflow_executions
       SET owner_id = $2, lease_token = $4, leased_at = COALESCE(leased_at, NOW()), heartbeat_at = NOW(),
           lease_expires_at = NOW() + ($3 * INTERVAL '1 millisecond'), updated_at = NOW()
@@ -158,18 +158,30 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     return rows.map(WorkflowExecutionModel.hydrate);
   }
 
-  /** The dispatcher is the sole recovery authority for scoped executions. */
+  /**
+   * The dispatcher is the recovery authority only for executions it launched:
+   * a scoped execution is a dispatcher child when a work_task_dispatches row
+   * claims it via workflow_execution_id (dispatcher launches stamp that link
+   * in the same transaction that creates the execution). Lane-entry
+   * automation runs are task-scoped but have no dispatch parent — they are
+   * judged by their own lease and settlement path, never by the settlement
+   * state of the dispatch that preceded the lane transition.
+   */
   static async reconcileDispatcherOwnedExecutions(): Promise<string[]> {
     return postgresClient.transaction(async(client) => {
       const rows = await client.query<{ execution_id: string }>(`
         WITH orphaned AS (
           SELECT execution.execution_id
           FROM workflow_executions execution
-          LEFT JOIN work_task_dispatches dispatch
-            ON dispatch.workflow_execution_id = execution.execution_id
           WHERE execution.scope_task_id IS NOT NULL
             AND execution.status IN ('running', 'suspended')
-            AND (dispatch.id IS NULL OR dispatch.status <> 'running')
+            AND EXISTS (
+              SELECT 1 FROM work_task_dispatches parent
+               WHERE parent.workflow_execution_id = execution.execution_id)
+            AND NOT EXISTS (
+              SELECT 1 FROM work_task_dispatches live
+               WHERE live.workflow_execution_id = execution.execution_id
+                 AND live.status = 'running')
           FOR UPDATE OF execution
         ), settled AS (
           UPDATE workflow_executions execution
