@@ -14,6 +14,7 @@ describe('CodexService MCP bridge', () => {
     expect(overrides).toEqual([
       'mcp_servers.sulla-native.url="http://host.lima.internal:43123/mcp"',
       'mcp_servers.sulla-native.bearer_token_env_var="SULLA_MCP_SESSION_TOKEN"',
+      'mcp_servers.sulla-native.default_tools_approval_mode="approve"',
     ]);
     expect(CODEX_MCP_TOKEN_ENV).toBe('SULLA_MCP_SESSION_TOKEN');
   });
