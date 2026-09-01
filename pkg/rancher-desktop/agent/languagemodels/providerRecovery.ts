@@ -52,7 +52,13 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
     };
   }
 
-  if (/\b402\b/.test(lower) || lower.includes('balance exhausted') || lower.includes('usage balance') || lower.includes('weekly limit')) {
+  if (
+    /\b402\b/.test(lower) ||
+    lower.includes('balance exhausted') ||
+    lower.includes('usage balance') ||
+    lower.includes('weekly limit') ||
+    lower.includes('session limit')
+  ) {
     return {
       kind:            'quota',
       retryPrimary:    false,

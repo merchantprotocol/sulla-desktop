@@ -13,6 +13,12 @@ describe('providerRecovery', () => {
       retryPrimary:    false,
       fallbackAllowed: true,
     });
+
+    expect(classifyLLMFailure(new Error("You've hit your session limit · resets 3:50pm"))).toMatchObject({
+      kind:            'quota',
+      retryPrimary:    false,
+      fallbackAllowed: true,
+    });
   });
 
   it('classifies process and stream failures as retryable before fallback', () => {
