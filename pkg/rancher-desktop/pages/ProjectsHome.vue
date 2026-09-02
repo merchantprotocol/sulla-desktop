@@ -1325,6 +1325,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import type { SemanticStage, WorkConveyorMetricsModel } from '@pkg/agent/database/models/WorkConveyorMetricsModel';
 import type { BackpressureDecision, RoleCounts, WipLimits } from '@pkg/agent/services/ProjectAutomationWipLimits';
+import { formatDateOnly } from '@pkg/agent/utils/formatDateOnly';
 import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
 import ProjectDependencyGraph from '@pkg/components/projects/ProjectDependencyGraph.vue';
 import {
@@ -1797,8 +1798,8 @@ async function onColumnDrop(colKey: string): Promise<void> {
 }
 
 // ══ date helpers ══
-function ymd(iso?: string | null): string {
-  return iso ? iso.slice(0, 10) : '';
+function ymd(value?: unknown): string {
+  return formatDateOnly(value);
 }
 function isoFromYmd(v: string): string | null {
   return v ? new Date(`${ v }T00:00:00`).toISOString() : null;
