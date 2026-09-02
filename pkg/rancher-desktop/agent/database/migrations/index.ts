@@ -82,6 +82,7 @@ import { up as up_0092, down as down_0092 } from './0092_allow_core_lane_binding
 import { up as up_0093, down as down_0093 } from './0093_create_meterable_usage_ledger';
 import { up as up_0094, down as down_0094 } from './0094_durable_agent_completion_delivery';
 import { up as up_0095, down as down_0095 } from './0095_add_lane_human_approval';
+import { up as up_0096, down as down_0096 } from './0096_unique_github_pr_mirrors';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -165,4 +166,5 @@ export const migrationsRegistry = [
   { name: '0093_create_meterable_usage_ledger',                       up: up_0093, down: down_0093 },
   { name: '0094_durable_agent_completion_delivery',                   up: up_0094, down: down_0094 },
   { name: '0095_add_lane_human_approval',                              up: up_0095, down: down_0095 },
+  { name: '0096_unique_github_pr_mirrors',                             up: up_0096, down: down_0096 },
 ] as const;

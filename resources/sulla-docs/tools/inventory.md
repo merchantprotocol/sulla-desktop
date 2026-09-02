@@ -201,7 +201,9 @@ sulla <category> --help          # what THIS install exposes right now
 
 Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`. → See [`mobile/overview.md`](../mobile/overview.md)
 
-## project — Projects project-state (the ONE work-state store) (16 tools)
+## project — Projects project-state (the ONE work-state store)
+
+- `sulla project/reconcile_github_pr_mirror` — Dry-run-by-default, explicitly scoped GitHub PR projection into Projects; no repositories, destination, or schedule ship by default.
 - `sulla project/list_project_items` — List projects / epics / tasks (filter by kind / status / priority / project / epic / parent / assignee).
 - `sulla project/get_project_item` — One item + children + comments.
 - `sulla project/search_project_items` — Title + description search (dedupe before create).

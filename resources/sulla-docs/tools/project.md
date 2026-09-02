@@ -68,6 +68,12 @@ Reads:
 | `sulla project/list_task_waits` | Durable external waits. Active unchanged waits are monitor-owned. |
 | `sulla project/project_report` | Standup: completed work plus separate actionable, blocked-recovery, and planning-in-flight queues. Within each priority block, least-recent activity comes first. Injected as `<project_report>` on first chat turn. |
 
+Explicit projections:
+
+| Tool | Use |
+|---|---|
+| `sulla project/reconcile_github_pr_mirror` | Mirror explicitly supplied GitHub repositories into one supplied Projects epic. It defaults to `dry_run:true`, validates destination lanes before writing, preserves Projects-owned prose and labels, and records durable repository+PR identity. No repository, destination, enablement, or schedule ships in product defaults. |
+
 Writes — explicit create / update, **no upsert**:
 
 | Tool | Use |
@@ -104,7 +110,9 @@ slug. `WorkLaneDefinitionSeeder` runs on every boot, reasserts missing built-in
 definitions, and adds every unknown task status as a visible manual lane using
 the exact existing status value. Neither seeder remaps task status.
 
-Optional GitHub mapping on tasks: `github_issue`. Not a live sync.
+Optional GitHub mapping on tasks: `github_issue`. It is not a live sync by itself;
+the opt-in `reconcile_github_pr_mirror` projection requires explicit repositories,
+destination, and an installation-local schedule.
 
 ## External waits
 
