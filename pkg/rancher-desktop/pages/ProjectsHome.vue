@@ -1,18 +1,33 @@
 <!--
   ProjectsHome — the Projects project state (issue ledger).
 
-  Reads AND writes the Postgres work tables (work_projects → work_epics →
-  work_tasks → work_task_comments) through the useProjects composable /
+  Reads AND writes Projects records (projects → epics → tasks → comments)
+  through the useProjects composable /
   work-items:* IPC bridge. Full CRUD: create/edit/archive projects, epics and
   tasks, edit every value, and comment on issues.
 
   Layout: pick a project on the left, its epics and issues render on the right.
   Today = epics-as-sections list; Board = the four status columns; Projects =
-  the all-projects overview. Clicking an issue opens the detail drawer.
+  the all-projects overview. Clicking an issue opens its full-screen route.
 -->
 <template>
   <div class="projects-home">
-    <div class="ph-body">
+    <ProjectIssueDetail
+      v-if="issueRouteId && taskMode === 'edit'"
+      :task-id="issueRouteId"
+      :detail="issueDetail"
+      :project-title="issueProjectTitle"
+      :epic-title="issueEpicTitle"
+      :loading="issueDetailLoading"
+      :busy="saving"
+      :error="issueDetailError"
+      :status-label="statusLabel"
+      @close="closeTask"
+      @refresh="refreshIssueDetail"
+      @comment="postDetailComment"
+      @decide="decideHumanGate"
+    />
+    <div v-show="!issueRouteId || taskMode === 'create'" class="ph-body">
       <!-- project list -->
       <aside class="ph-side">
         <div class="ph-side-h">
@@ -873,12 +888,12 @@
 
     <!-- ══════════ TASK DETAIL DRAWER ══════════ -->
     <div
-      v-if="openTask"
+      v-if="openTask && taskMode === 'create'"
       class="ph-scrim"
       @click="closeTask"
     />
     <aside
-      v-if="openTask"
+      v-if="openTask && taskMode === 'create'"
       class="ph-drawer"
     >
       <div class="ph-dh">
@@ -1322,11 +1337,15 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 
 import type { SemanticStage, WorkConveyorMetricsModel } from '@pkg/agent/database/models/WorkConveyorMetricsModel';
 import type { BackpressureDecision, RoleCounts, WipLimits } from '@pkg/agent/services/ProjectAutomationWipLimits';
+import type { ProjectsIssueDetail } from '@pkg/agent/services/ProjectsIssueDetailService';
+import { formatDateOnly } from '@pkg/agent/utils/formatDateOnly';
 import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
 import ProjectDependencyGraph from '@pkg/components/projects/ProjectDependencyGraph.vue';
+import ProjectIssueDetail from '@pkg/components/projects/ProjectIssueDetail.vue';
 import {
   useProjects,
   type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
@@ -1345,6 +1364,8 @@ const {
   resolveView, saveView,
   listTaskDependencies, setTaskDependency, removeTaskDependency,
 } = useProjects();
+const route = useRoute();
+const router = useRouter();
 
 const PROJECT_VIEWS: { key: ProjectViewType; label: string; icon: string }[] = [
   { key: 'board', label: 'Board', icon: '▦' },
@@ -1404,6 +1425,7 @@ onMounted(async() => {
     console.error('[ProjectsHome] initial load failed:', err);
   });
   await restoreProjectView();
+  await openIssueFromRoute();
   automationStatus.value = await ipcRenderer.invoke('work-items:automation-status').catch(() => null);
   await loadConveyorHealth();
   refreshTimer = setInterval(() => {
@@ -1797,8 +1819,8 @@ async function onColumnDrop(colKey: string): Promise<void> {
 }
 
 // ══ date helpers ══
-function ymd(iso?: string | null): string {
-  return iso ? iso.slice(0, 10) : '';
+function ymd(value?: unknown): string {
+  return formatDateOnly(value);
 }
 function isoFromYmd(v: string): string | null {
   return v ? new Date(`${ v }T00:00:00`).toISOString() : null;
@@ -1808,6 +1830,11 @@ function isoFromYmd(v: string): string | null {
 type TaskDraft = UpsertTaskInput & { id?: string };
 const openTask = ref<WorkTaskRecord | null>(null);
 const taskMode = ref<'edit' | 'create'>('edit');
+const issueDetail = ref<ProjectsIssueDetail | null>(null);
+const issueDetailLoading = ref(false);
+const issueDetailError = ref('');
+let issueRouteWasPushed = false;
+const issueRouteId = computed(() => typeof route.query.issue === 'string' ? route.query.issue : '');
 const taskDraft = reactive<TaskDraft>({ title: '' });
 const taskComments = ref<WorkCommentRecord[]>([]);
 const taskDependencies = ref<WorkTaskDependencyRecord[]>([]);
@@ -1849,16 +1876,57 @@ function fillTaskDraft(t: Partial<WorkTaskRecord> & { epic_id?: string | null })
   taskDraft.github_issue = t.github_issue ?? '';
 }
 
-async function openTaskDrawer(t: WorkTaskRecord): Promise<void> {
+async function openTaskDrawer(t: WorkTaskRecord, syncRoute = true): Promise<void> {
   taskMode.value = 'edit';
   openTask.value = t;
   fillTaskDraft(t);
-  [taskComments.value, taskDependencies.value] = await Promise.all([
-    loadComments(t.id),
-    listTaskDependencies(t.project_id),
-  ]);
+  if (selectedId.value !== t.project_id) select(t.project_id);
+  await Promise.all([refreshIssueDetail(t.id), listTaskDependencies(t.project_id).then(rows => { taskDependencies.value = rows })]);
+  taskComments.value = issueDetail.value?.comments ?? [];
   dependencyCandidate.value = '';
+  if (syncRoute && route.query.issue !== t.id) {
+    issueRouteWasPushed = true;
+    await router.push({ query: { ...route.query, issue: t.id } });
+  }
 }
+
+const issueProjectTitle = computed(() => projects.value.find(project => project.id === openTask.value?.project_id)?.title ?? 'Projects');
+const issueEpicTitle = computed(() => sel.value?.epics.find(epic => epic.id === openTask.value?.epic_id)?.title ?? 'Issue');
+
+async function refreshIssueDetail(taskId = issueRouteId.value || openTask.value?.id || ''): Promise<void> {
+  if (!taskId || taskMode.value !== 'edit') return;
+  issueDetailLoading.value = true;
+  issueDetailError.value = '';
+  try {
+    issueDetail.value = await ipcRenderer.invoke('work-items:issue-detail', taskId);
+    openTask.value = issueDetail.value.task;
+    if (selectedId.value !== issueDetail.value.task.project_id) select(issueDetail.value.task.project_id);
+    fillTaskDraft(issueDetail.value.task);
+    taskComments.value = issueDetail.value.comments;
+  } catch (error: any) {
+    issueDetailError.value = error?.message ?? String(error);
+  } finally {
+    issueDetailLoading.value = false;
+  }
+}
+
+async function openIssueFromRoute(): Promise<void> {
+  const taskId = issueRouteId.value;
+  if (!taskId || (openTask.value?.id === taskId && taskMode.value === 'edit')) return;
+  issueRouteWasPushed = false;
+  taskMode.value = 'edit';
+  openTask.value = null;
+  issueDetail.value = null;
+  await refreshIssueDetail(taskId);
+}
+
+watch(() => route.query.issue, (issue) => {
+  if (typeof issue === 'string' && issue) openIssueFromRoute().catch(() => undefined);
+  else if (taskMode.value === 'edit') {
+    openTask.value = null;
+    issueDetail.value = null;
+  }
+});
 
 const currentDependencies = computed(() => taskDependencies.value
   .filter(dependency => dependency.task_id === taskDraft.id));
@@ -1963,7 +2031,19 @@ function openNewTask(epicId: string): void {
 }
 
 function closeTask(): void {
+  if (taskMode.value === 'edit' && issueRouteId.value) {
+    if (issueRouteWasPushed) {
+      issueRouteWasPushed = false;
+      router.back();
+    } else {
+      const query = { ...route.query };
+      delete query.issue;
+      router.replace({ query }).catch(() => undefined);
+    }
+  }
   openTask.value = null;
+  issueDetail.value = null;
+  issueDetailError.value = '';
   newComment.value = '';
 }
 
@@ -2025,6 +2105,38 @@ async function postComment(): Promise<void> {
     taskComments.value = await loadComments(taskDraft.id);
     if (tab.value === 'activity') await refreshActivity();
     newComment.value = '';
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function postDetailComment(body: string): Promise<void> {
+  if (!taskDraft.id) return;
+  saving.value = true;
+  try {
+    await addComment(taskDraft.id, body, 'human');
+    await refreshIssueDetail();
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function decideHumanGate(decision: 'approved' | 'rejected', reason: string): Promise<void> {
+  if (!taskDraft.id) return;
+  saving.value = true;
+  issueDetailError.value = '';
+  try {
+    issueDetail.value = await ipcRenderer.invoke('work-items:human-gate-decision', {
+      taskId:        taskDraft.id,
+      decision,
+      reason,
+      expectedStage: issueDetail.value?.humanGate.currentStage ?? '',
+    });
+    await load();
+    openTask.value = issueDetail.value.task;
+    fillTaskDraft(issueDetail.value.task);
+  } catch (error: any) {
+    issueDetailError.value = error?.message ?? String(error);
   } finally {
     saving.value = false;
   }

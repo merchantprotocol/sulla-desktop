@@ -122,6 +122,7 @@ describe('WorkLaneWorkflowBindingModel', () => {
 
     await WorkLaneWorkflowBindingModel.listRecoverable();
     const listSql = (postgresClient.query as any).mock.calls[0][0];
+    expect(listSql).toContain("IN ('dispatch_failed', 'delegation_failed')");
     expect(listSql).toContain(`lane.outcome->>'message' = '${ DISPATCHER_RECONCILED_LANE_MESSAGE }'`);
     expect(listSql).toContain('task.status = lane.lane_key');
     expect(listSql).toContain('newer.generation > lane.generation');

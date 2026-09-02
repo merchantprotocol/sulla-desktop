@@ -102,6 +102,10 @@ export class GrokService extends OpenAICompatibleService {
     super(config);
   }
 
+  override getProviderName(): string {
+    return 'Grok';
+  }
+
   override getContextWindow(): number {
     return GROK_SUBSCRIPTION_CONTEXT_WINDOWS[this.model] ?? super.getContextWindow();
   }

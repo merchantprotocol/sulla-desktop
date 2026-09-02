@@ -1354,13 +1354,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
               `[${ this.name }:BaseNode] Falling back to secondary provider ` +
               `(from=${ primaryName }/${ primaryId || '(default)' }, to=${ secondaryName }/${ secondaryModel || '(default)' }, reason=${ recovery.kind })`,
             );
-            void this.wsChatMessage(
-              state,
-              `Provider fallback: ${ primaryName }/${ primaryId || '(default)' } → ${ secondaryName }/${ secondaryModel || '(default)' } (${ recovery.kind })`,
-              'system',
-              'progress',
-              { event: 'provider_fallback', fromProvider: primaryName, fromModel: primaryId, toProvider: secondaryName, toModel: secondaryModel, reason: recovery.kind },
-            );
+            // Successful provider failover is intentionally silent in chat.
+            // The warning above retains the diagnostic trail without surfacing
+            // an operational detail that does not require user action.
             const chatMessages = messages.filter(msg =>
               ['system', 'user', 'assistant'].includes(msg.role),
             );
