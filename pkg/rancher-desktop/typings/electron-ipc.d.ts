@@ -436,6 +436,8 @@ export interface IpcMainInvokeEvents {
     laneCapability: import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneRuntimeCapability;
   };
   'work-items:comments':        (taskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord[];
+  'work-items:issue-detail':    (taskId: string) => import('@pkg/agent/services/ProjectsIssueDetailService').ProjectsIssueDetail;
+  'work-items:human-gate-decision': (input: { taskId: string; decision: 'approved' | 'rejected'; reason?: string; expectedStage: string }) => import('@pkg/agent/services/ProjectsIssueDetailService').ProjectsIssueDetail;
   'work-items:artifact-evidence': (commentId: string) => { receipt: import('@pkg/agent/database/models/ArtifactReceiptModel').ArtifactReceiptRow; evidence: unknown } | null;
   'work-items:activity':        (opts?: { projectId?: string; author?: string; limit?: number }) => import('@pkg/agent/database/models/WorkItemsModel').WorkActivityRecord[];
   'work-items:automation-status': () => {

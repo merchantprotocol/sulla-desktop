@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
+import { DISPATCHER_RECONCILED_LANE_MESSAGE } from './WorkflowExecutionModel';
 
 import { postgresClient } from '../PostgresClient';
 
@@ -354,10 +355,23 @@ export class WorkLaneWorkflowBindingModel {
              execution.error AS workflow_execution_error,
              execution.lease_expires_at
         FROM work_lane_entry_automations lane
+        JOIN work_tasks task ON task.id = lane.task_id
+          AND task.archived = false AND task.status = lane.lane_key
+        JOIN work_projects project ON project.id = task.project_id AND project.archived = false
+        JOIN work_epics epic ON epic.id = task.epic_id AND epic.archived = false
         LEFT JOIN workflow_executions execution ON execution.execution_id = lane.execution_id
-       WHERE lane.workflow_id IS NOT NULL AND (
+       WHERE lane.workflow_id IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM work_lane_entry_automations newer
+            WHERE newer.task_id = lane.task_id AND newer.generation > lane.generation
+         )
+         AND (
          lane.status = 'pending'
-         OR (lane.status = 'failed' AND lane.outcome->>'disposition' IN ('dispatch_failed', 'delegation_failed'))
+         OR (lane.status = 'failed' AND (
+           lane.outcome->>'disposition' IN ('dispatch_failed', 'delegation_failed')
+           OR (lane.outcome->>'disposition' = 'runtime_failed'
+               AND lane.outcome->>'message' = '${ DISPATCHER_RECONCILED_LANE_MESSAGE }')
+         ))
          OR (lane.status = 'running' AND (
            execution.execution_id IS NULL OR execution.status IN ('completed', 'failed')
            OR (execution.status IN ('running', 'suspended')
@@ -381,12 +395,20 @@ export class WorkLaneWorkflowBindingModel {
 
   static async resetFailed(id: string): Promise<LaneEntryAutomationRecord | null> {
     const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
-      UPDATE work_lane_entry_automations
+      UPDATE work_lane_entry_automations lane
          SET execution_id = NULL, status = 'pending', started_at = NULL,
              completed_at = NULL, outcome = NULL
-       WHERE id = $1 AND status = 'failed'
-         AND outcome->>'disposition' IN ('dispatch_failed', 'delegation_failed')
-       RETURNING *
+        FROM work_tasks task
+       WHERE lane.id = $1 AND lane.status = 'failed'
+         AND task.id = lane.task_id AND task.archived = false AND task.status = lane.lane_key
+         AND NOT EXISTS (
+           SELECT 1 FROM work_lane_entry_automations newer
+            WHERE newer.task_id = lane.task_id AND newer.generation > lane.generation
+         )
+         AND (lane.outcome->>'disposition' IN ('dispatch_failed', 'delegation_failed')
+              OR (lane.outcome->>'disposition' = 'runtime_failed'
+                  AND lane.outcome->>'message' = '${ DISPATCHER_RECONCILED_LANE_MESSAGE }'))
+       RETURNING lane.*
     `, [id]);
     return rows[0] ?? null;
   }

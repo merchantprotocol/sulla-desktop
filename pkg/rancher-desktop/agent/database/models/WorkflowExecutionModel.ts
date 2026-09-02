@@ -29,6 +29,13 @@ interface WorkflowExecutionAttributes {
   terminal_reason:  string | null;
 }
 
+/**
+ * Outcome message the dispatcher reconciler writes when it fails a running
+ * lane automation row. Lane boot retry keys on this exact marker to reclaim
+ * rows the reconciler killed, so the two sites must never drift apart.
+ */
+export const DISPATCHER_RECONCILED_LANE_MESSAGE = 'dispatcher workflow execution reconciled';
+
 export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttributes> {
   protected readonly tableName = 'workflow_executions';
   protected readonly primaryKey = 'execution_id';
@@ -158,7 +165,13 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     return rows.map(WorkflowExecutionModel.hydrate);
   }
 
-  /** The dispatcher is the sole recovery authority for scoped executions. */
+  /**
+   * The dispatcher is the recovery authority for dispatch-parented scoped
+   * executions only. Lane-entry automations launch scoped executions with no
+   * work_task_dispatches parent at all (their parent is the lane entry), so a
+   * scoped execution bound to a running lane automation must be left alone --
+   * LaneEntryAutomationService.drainRecoverable() owns that recovery path.
+   */
   static async reconcileDispatcherOwnedExecutions(): Promise<string[]> {
     return postgresClient.transaction(async(client) => {
       const rows = await client.query<{ execution_id: string }>(`
@@ -170,6 +183,11 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
           WHERE execution.scope_task_id IS NOT NULL
             AND execution.status IN ('running', 'suspended')
             AND (dispatch.id IS NULL OR dispatch.status <> 'running')
+            AND NOT EXISTS (
+              SELECT 1 FROM work_lane_entry_automations lane
+              WHERE lane.execution_id = execution.execution_id
+                AND lane.status = 'running'
+            )
           FOR UPDATE OF execution
         ), settled AS (
           UPDATE workflow_executions execution
@@ -192,7 +210,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
         WHERE workflow_execution_id = ANY($1::text[]) AND status = 'running'`, [executionIds]);
       await client.query(`UPDATE work_lane_entry_automations
         SET status = 'failed',
-            outcome = jsonb_build_object('disposition', 'runtime_failed', 'message', 'dispatcher workflow execution reconciled'),
+            outcome = jsonb_build_object('disposition', 'runtime_failed', 'message', '${ DISPATCHER_RECONCILED_LANE_MESSAGE }'),
             completed_at = COALESCE(completed_at, NOW())
         WHERE execution_id = ANY($1::text[]) AND status = 'running'`, [executionIds]);
       return executionIds;

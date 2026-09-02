@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { down, up } from '../0095_unique_github_pr_mirrors';
+import { down, up } from '../0096_unique_github_pr_mirrors';
 
-describe('0095_unique_github_pr_mirrors', () => {
+describe('0096_unique_github_pr_mirrors', () => {
   it('enforces stable identity only for active opt-in mirror tasks', () => {
     expect(up).toContain('CREATE TABLE IF NOT EXISTS github_pr_project_mirrors');
     expect(up).toContain('UNIQUE (provider, owner, repository, pull_number)');
