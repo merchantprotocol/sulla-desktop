@@ -11,7 +11,7 @@ describe('reconcile_github_pr_mirror manifest', () => {
     expect(manifest?.schemaDef.epic_id).toMatchObject({ type: 'string' });
     expect(manifest?.schemaDef.parent_id).toMatchObject({ type: 'string', optional: true });
     expect(manifest?.schemaDef.dry_run).toMatchObject({ type: 'boolean', optional: true });
-    expect(JSON.stringify(manifest)).not.toContain('dataripple-org');
+    expect(manifest?.schemaDef.repositories).not.toHaveProperty('default');
     const module = await manifest!.loader();
     expect(typeof (module).ReconcileGitHubPRMirrorWorker).toBe('function');
   });

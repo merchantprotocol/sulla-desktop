@@ -3,14 +3,14 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 import { GitHubPullRequestMirrorService } from '../GitHubPullRequestMirrorService';
 
-const repository = { owner: 'dataripple-org', repo: 'ripple-receptionist-worker' };
+const repository = { owner: 'example-org', repo: 'backend-api' };
 
 function pull(overrides: Record<string, unknown> = {}) {
   return {
     number:              42,
     title:               'Fix the thing',
     body:                'Canonical body',
-    html_url:            'https://github.com/dataripple-org/ripple-receptionist-worker/pull/42',
+    html_url:            'https://github.com/example-org/backend-api/pull/42',
     state:               'open',
     draft:               false,
     merged:              false,
@@ -85,8 +85,8 @@ describe('GitHubPullRequestMirrorService', () => {
     expect(db.createTask).toHaveBeenCalledWith(expect.objectContaining({
       epic_id:      'epic',
       parent_id:    null,
-      source_ref:   'github-pr:dataripple-org/ripple-receptionist-worker#42',
-      github_issue: 'https://github.com/dataripple-org/ripple-receptionist-worker/pull/42',
+      source_ref:   'github-pr:example-org/backend-api#42',
+      github_issue: 'https://github.com/example-org/backend-api/pull/42',
       title:        'Review backend PR #42 — Fix the thing',
       status:       'backlog',
     }), { actor: 'mirror', source: 'routine' });
@@ -102,7 +102,7 @@ describe('GitHubPullRequestMirrorService', () => {
     const db = projects([{
       id:           'existing',
       created_at:   '2026-09-01',
-      source_ref:   'github-pr:dataripple-org/ripple-receptionist-worker#42',
+      source_ref:   'github-pr:example-org/backend-api#42',
       github_issue: pr.html_url,
       title:        'Review backend PR #42 — Fix the thing',
       description,
@@ -121,7 +121,7 @@ describe('GitHubPullRequestMirrorService', () => {
     const existing = {
       id:           'existing',
       created_at:   '2026-09-01',
-      source_ref:   'github-pr:dataripple-org/ripple-receptionist-worker#42',
+      source_ref:   'github-pr:example-org/backend-api#42',
       github_issue: '',
       title:        '',
       description:  '',
@@ -142,7 +142,7 @@ describe('GitHubPullRequestMirrorService', () => {
   it('reports pre-existing duplicate identities and never creates another', async() => {
     const existing = {
       created_at:   '2026-09-01',
-      source_ref:   'github-pr:dataripple-org/ripple-receptionist-worker#42',
+      source_ref:   'github-pr:example-org/backend-api#42',
       github_issue: '',
       title:        '',
       description:  '',
@@ -152,7 +152,7 @@ describe('GitHubPullRequestMirrorService', () => {
     };
     const db = projects([{ ...existing, id: 'one' }, { ...existing, id: 'two', created_at: '2026-09-02' }]);
     const result = await new GitHubPullRequestMirrorService(github() as any, db as any, store() as any).reconcile(input);
-    expect(result.duplicates).toEqual(['dataripple-org/ripple-receptionist-worker#42']);
+    expect(result.duplicates).toEqual(['example-org/backend-api#42']);
     expect(db.createTask).not.toHaveBeenCalled();
     expect(db.updateTask).toHaveBeenCalledTimes(1);
   });
@@ -162,8 +162,8 @@ describe('GitHubPullRequestMirrorService', () => {
     const concurrentlyCreated = {
       id:           'winner',
       created_at:   '2026-09-02',
-      source_ref:   'github-pr:dataripple-org/ripple-receptionist-worker#42',
-      github_issue: 'https://github.com/dataripple-org/ripple-receptionist-worker/pull/42',
+      source_ref:   'github-pr:example-org/backend-api#42',
+      github_issue: 'https://github.com/example-org/backend-api/pull/42',
       title:        'Review backend PR #42 — Fix the thing',
       description:  '',
       status:       'backlog',
@@ -200,7 +200,7 @@ describe('GitHubPullRequestMirrorService', () => {
     const db = projects([{
       id:           'existing',
       created_at:   '2026-09-01',
-      source_ref:   'github-pr:dataripple-org/ripple-receptionist-worker#42',
+      source_ref:   'github-pr:example-org/backend-api#42',
       github_issue: '',
       title:        '',
       description:  'Human note that must survive.',
