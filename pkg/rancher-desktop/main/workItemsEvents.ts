@@ -123,6 +123,22 @@ export function initWorkItemsEvents(): void {
     return projects.listComments(taskId);
   });
 
+  ipcMainProxy.handle('work-items:issue-detail', async(_event: unknown, taskId: string) => {
+    if (!taskId) throw new Error('taskId is required.');
+    const { loadProjectsIssueDetail } = await import('@pkg/agent/services/ProjectsIssueDetailService');
+    return loadProjectsIssueDetail(taskId);
+  });
+
+  ipcMainProxy.handle('work-items:human-gate-decision', async(_event: unknown, input: {
+    taskId: string; decision: 'approved' | 'rejected'; reason?: string; expectedStage: string;
+  }) => {
+    if (!input?.taskId || !input.expectedStage || !['approved', 'rejected'].includes(input.decision)) {
+      throw new Error('A taskId, expected stage, and approved/rejected decision are required.');
+    }
+    const { decideProjectsHumanGate } = await import('@pkg/agent/services/ProjectsIssueDetailService');
+    return decideProjectsHumanGate(input.taskId, input.decision, input.reason ?? '', input.expectedStage);
+  });
+
   ipcMainProxy.handle('work-items:artifact-evidence', async(_event: unknown, commentId: string) => {
     if (!commentId) return null;
     const { ArtifactReceiptModel } = await import('@pkg/agent/database/models/ArtifactReceiptModel');

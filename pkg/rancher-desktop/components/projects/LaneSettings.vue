@@ -75,6 +75,7 @@
           <div class="ls-badges">
             <span>{{ provenanceLabel(lane) }}</span>
             <span>{{ lane.semantic_role }}</span>
+            <span v-if="lane.requires_human_approval">human approval</span>
             <span v-if="lane.system_required">protected required</span>
             <span v-if="lane.archived">archived</span>
             <span v-else>{{ lane.semantic_role === 'manual' ? 'manual' : 'automated-capable' }}</span>
@@ -200,6 +201,10 @@
             </select>
           </label>
         </div>
+        <label class="ls-check">
+          <input v-model="editor.requiresHumanApproval" type="checkbox">
+          Require a human approval before this lane can advance
+        </label>
         <div class="ls-footer">
           <button
             type="submit"
@@ -419,6 +424,7 @@ const editor = reactive({
   description:  '',
   color:        '#5096b3',
   semanticRole: 'manual' as WorkLaneSemanticRole,
+  requiresHumanApproval: false,
 });
 const archiveDialog = reactive({
   open: false, lane: null as EffectiveWorkLane | null, preview: null as ArchiveWorkLanePreview | null, destination: '',
@@ -461,10 +467,10 @@ function provenanceLabel(lane: EffectiveWorkLane): string {
 }
 
 function openCreate(): void {
-  Object.assign(editor, { open: true, create: true, lane: null, laneKey: '', displayName: '', description: '', color: '#5096b3', semanticRole: 'manual' });
+  Object.assign(editor, { open: true, create: true, lane: null, laneKey: '', displayName: '', description: '', color: '#5096b3', semanticRole: 'manual', requiresHumanApproval: false });
 }
 function openEdit(lane: EffectiveWorkLane): void {
-  Object.assign(editor, { open: true, create: false, lane, laneKey: lane.lane_key, displayName: lane.display_name, description: lane.description, color: lane.color || '#5096b3', semanticRole: lane.semantic_role });
+  Object.assign(editor, { open: true, create: false, lane, laneKey: lane.lane_key, displayName: lane.display_name, description: lane.description, color: lane.color || '#5096b3', semanticRole: lane.semantic_role, requiresHumanApproval: lane.requires_human_approval });
 }
 async function saveLane(): Promise<void> {
   await run(async() => {
@@ -477,6 +483,7 @@ async function saveLane(): Promise<void> {
         description:   editor.description,
         color:         editor.color,
         semantic_role: editor.semanticRole,
+        requires_human_approval: editor.requiresHumanApproval,
         position:      lanes.value.length,
       });
     } else if (editor.lane) {
@@ -492,9 +499,10 @@ async function saveLane(): Promise<void> {
           icon:          editor.lane.icon,
           position:      editor.lane.position,
           semantic_role: editor.semanticRole,
+          requires_human_approval: editor.requiresHumanApproval,
         });
       } else {
-        await updateLane(editor.lane.id, { display_name: editor.displayName, description: editor.description, color: editor.color, semantic_role: editor.semanticRole });
+        await updateLane(editor.lane.id, { display_name: editor.displayName, description: editor.description, color: editor.color, semantic_role: editor.semanticRole, requires_human_approval: editor.requiresHumanApproval });
       }
     }
     editor.open = false; message.value = 'Lane saved.'; await reload(); emit('refresh');
@@ -688,7 +696,9 @@ defineExpose({ openEdit, openAssignment });
 .ls-modal { width: 480px; max-width: calc(100vw - 40px); max-height: calc(100vh - 50px); overflow: auto; background: var(--psurface); border: 1px solid var(--pborder); border-radius: 14px; padding: 22px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
 .ls-modal.wide { width: 620px; }
 .ls-modal label { display: grid; gap: 5px; margin-top: 14px; color: var(--ptext2); font-size: 12px; }
-.ls-modal input:not([type=radio]), .ls-modal textarea, .ls-modal select { width: 100%; background: var(--psurface2); border: 1px solid var(--pborder); border-radius: 7px; color: var(--ptext); padding: 8px; }
+.ls-modal input:not([type=radio]):not([type=checkbox]), .ls-modal textarea, .ls-modal select { width: 100%; background: var(--psurface2); border: 1px solid var(--pborder); border-radius: 7px; color: var(--ptext); padding: 8px; }
+.ls-modal .ls-check { display: flex; align-items: flex-start; gap: 8px; }
+.ls-check input { margin-top: 2px; accent-color: var(--pacc); }
 .ls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.ls-modal fieldset { margin-top: 14px; border: 1px solid var(--pborder); border-radius: 8px; }.ls-modal fieldset label { display: flex; align-items: center; }
 .ls-provenance { margin-top: 15px; padding: 12px; background: var(--psurface2); border-radius: 8px; font-size: 12px; }.ls-provenance ol { padding-left: 20px; color: var(--ptext3); }.ls-provenance li.effective { color: var(--pacc); font-weight: 600; }
 .ls-footer { display: flex; gap: 8px; margin-top: 20px; }.ls-footer button { border: 1px solid var(--pborder); border-radius: 7px; }
