@@ -26,6 +26,23 @@ const TASK_STATUS_DESC = 'the task\'s current pipeline stage key — project-con
 const PRIORITY_DESC = 'critical | high | medium | low.';
 
 export const projectToolManifests: ToolManifest[] = [
+  {
+    name:        'reconcile_github_pr_mirror',
+    description: 'Deterministically mirror GitHub pull requests into child Projects issues. GitHub remains read-only and authoritative; stable repository plus PR number identity makes repeated runs idempotent, while merged/closed/reopened PRs reconcile to matching task stages without deleting history. This tool has no default repositories or schedule; installation-private workflows must supply all scope.',
+    category:    'project',
+    schemaDef:   {
+      repositories: { type: 'array', description: 'Explicit repository objects: [{owner, repo}]. No repositories are configured by default.' },
+      epic_id:       { type: 'string', description: 'Destination Projects epic id.' },
+      parent_id:     { type: 'string', optional: true, description: 'Optional destination parent task id. It must belong to the destination epic.' },
+      open_status:   { type: 'string', optional: true, description: 'Stage for newly discovered or reopened PRs. Default backlog.' },
+      terminal_status: { type: 'string', optional: true, description: 'Stage for merged or closed-unmerged PRs. Default done.' },
+      actor:         { type: 'string', optional: true, description: 'Audit actor. Default github-pr-mirror.' },
+      dry_run:       { type: 'boolean', optional: true, description: 'Preview without Projects or mirror-ledger writes. Defaults true.' },
+      batch_size:    { type: 'number', optional: true, description: 'Maximum PRs processed in one run, 1-500. Defaults 100.' },
+    },
+    operationTypes: ['read', 'create', 'update'],
+    loader:         () => import('./reconcile_github_pr_mirror'),
+  },
   // ── reads ────────────────────────────────────────────────────────────
   {
     name:        'list_project_items',
