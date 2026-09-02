@@ -37,6 +37,7 @@ export interface WorkLaneDefinitionRecord {
   enabled:         boolean;
   archived:        boolean;
   system_required: boolean;
+  requires_human_approval: boolean;
   created_by:      string | null;
   updated_by:      string | null;
   created_at:      string;
@@ -63,6 +64,7 @@ export interface CreateWorkLaneInput {
   semantic_role?:   WorkLaneSemanticRole;
   enabled?:         boolean;
   system_required?: boolean;
+  requires_human_approval?: boolean;
   actor?:           string;
 }
 
@@ -74,6 +76,7 @@ export interface UpdateWorkLaneInput {
   position?:      number;
   semantic_role?: WorkLaneSemanticRole;
   enabled?:       boolean;
+  requires_human_approval?: boolean;
   actor?:         string;
 }
 
@@ -192,15 +195,18 @@ export class WorkLaneDefinitionModel {
     const rows = await postgresClient.query<WorkLaneDefinitionRecord>(`
       INSERT INTO work_lane_definitions (
         id, lane_key, scope, project_id, base_lane_key, display_name, description,
-        color, icon, position, semantic_role, enabled, system_required, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        color, icon, position, semantic_role, enabled, system_required,
+        requires_human_approval, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *
     `, [
       generateId(), laneKey, scope, projectId, scope === 'project' ? baseLaneKey : null,
       input.display_name.trim() || titleFromKey(laneKey), input.description ?? '',
       input.color ?? null, input.icon ?? null, input.position ?? 0,
       input.semantic_role ?? inherited?.semantic_role ?? 'manual', input.enabled ?? true,
-      inherited?.system_required ?? input.system_required ?? false, input.actor ?? 'sulla',
+      inherited?.system_required ?? input.system_required ?? false,
+      input.requires_human_approval ?? inherited?.requires_human_approval ?? false,
+      input.actor ?? 'sulla',
     ]);
     return rows[0];
   }
@@ -232,6 +238,9 @@ export class WorkLaneDefinitionModel {
     if (changes.position !== undefined) assign('position', changes.position);
     if (changes.semantic_role !== undefined) assign('semantic_role', changes.semantic_role);
     if (changes.enabled !== undefined) assign('enabled', changes.enabled);
+    if (changes.requires_human_approval !== undefined) {
+      assign('requires_human_approval', changes.requires_human_approval);
+    }
     values.push(id);
     const rows = await postgresClient.query<WorkLaneDefinitionRecord>(
       `UPDATE work_lane_definitions SET ${ sets.join(', ') } WHERE id = $${ values.length } RETURNING *`, values,
@@ -465,10 +474,12 @@ export class WorkLaneDefinitionModel {
           result = await client.query(`
             INSERT INTO work_lane_definitions (
               id, lane_key, scope, project_id, base_lane_key, display_name, description,
-              color, icon, position, semantic_role, enabled, system_required, created_by
+              color, icon, position, semantic_role, enabled, system_required,
+              requires_human_approval, created_by
             )
             SELECT $1, lane_key, 'project', $2, lane_key, display_name, description,
-              color, icon, $3, semantic_role, enabled, system_required, $4
+              color, icon, $3, semantic_role, enabled, system_required,
+              requires_human_approval, $4
               FROM work_lane_definitions
              WHERE scope = 'global_default' AND project_id IS NULL AND lane_key = $5
                AND reset_at IS NULL
@@ -511,8 +522,9 @@ export class WorkLaneDefinitionModel {
       await postgresClient.query<WorkLaneDefinitionRecord>(`
         INSERT INTO work_lane_definitions (
           id, lane_key, scope, project_id, base_lane_key, display_name, description,
-          color, icon, position, semantic_role, enabled, system_required, created_by
-        ) VALUES ($1, $2, 'global_default', NULL, NULL, $3, '', NULL, NULL, $4, 'manual', true, false, $5)
+          color, icon, position, semantic_role, enabled, system_required,
+          requires_human_approval, created_by
+        ) VALUES ($1, $2, 'global_default', NULL, NULL, $3, '', NULL, NULL, $4, 'manual', true, false, false, $5)
         RETURNING *
       `, [
         generateId(), status,

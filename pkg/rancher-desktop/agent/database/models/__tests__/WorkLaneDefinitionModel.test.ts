@@ -19,6 +19,7 @@ function lane(overrides: Partial<WorkLaneDefinitionRecord> = {}): WorkLaneDefini
     enabled:         true,
     archived:        false,
     system_required: false,
+    requires_human_approval: false,
     created_by:      'test',
     updated_by:      null,
     created_at:      '2026-08-23T00:00:00Z',
@@ -70,6 +71,16 @@ describe('WorkLaneDefinitionModel', () => {
     const sql = (postgresClient.query as any).mock.calls[0][0] as string;
     expect(sql).toContain('display_name');
     expect(sql).not.toContain('lane_key =');
+  });
+
+  it('persists a configured human approval gate on a lane', async() => {
+    (postgresClient as any).queryOne = jest.fn(() => Promise.resolve(lane()));
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([lane({ requires_human_approval: true })]));
+
+    await WorkLaneDefinitionModel.update('lane-1', { requires_human_approval: true });
+
+    expect((postgresClient.query as any).mock.calls[0][0]).toContain('requires_human_approval');
+    expect((postgresClient.query as any).mock.calls[0][1]).toContain(true);
   });
 
   it('rejects direct disabling before any lane update can hide populated tasks', async() => {

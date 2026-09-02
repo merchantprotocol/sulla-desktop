@@ -22,4 +22,10 @@ describe('LaneSettings UI contract', () => {
     expect(source).toContain('removeLaneWorkflowBinding');
     expect(source).not.toContain('postgresClient');
   });
+
+  it('lets a lane require a human approval gate', () => {
+    expect(source).toContain('requiresHumanApproval');
+    expect(source).toContain('requires_human_approval');
+    expect(source).toContain('Require a human approval before this lane can advance');
+  });
 });
