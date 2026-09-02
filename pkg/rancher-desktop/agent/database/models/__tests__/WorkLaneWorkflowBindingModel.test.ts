@@ -117,7 +117,7 @@ describe('WorkLaneWorkflowBindingModel', () => {
     expect(client.query).toHaveBeenCalledTimes(3);
   });
 
-  it('boot retry reclaims lane rows the dispatcher reconciler failed, not just dispatch/delegation failures', async() => {
+  it('boot retry reclaims reconciler-killed rows only while their lane generation is current', async() => {
     (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
 
     await WorkLaneWorkflowBindingModel.listRecoverable();
