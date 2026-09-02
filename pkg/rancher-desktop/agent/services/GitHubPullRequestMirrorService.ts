@@ -60,7 +60,6 @@ export interface PullRequestMirrorStore {
 
 const SOURCE_PREFIX = 'github-pr:';
 const MIRROR_LABELS = ['github-pr-mirror', 'pr-review'];
-const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'parked']);
 const BLOCK_START = '<!-- sulla:github-pr-mirror -->';
 const BLOCK_END = '<!-- /sulla:github-pr-mirror -->';
 
@@ -135,7 +134,7 @@ function renderDescription(existing: string | undefined, snapshot: ReturnType<ty
 }
 function desiredStatus(pr: PullRequest, existing: WorkTaskRecord | undefined, openStatus: string, terminalStatus: string): string | undefined {
   if (pr.merged || pr.state === 'closed') return terminalStatus;
-  if (!existing || TERMINAL_STATUSES.has(existing.status)) return openStatus;
+  if (!existing || existing.status === terminalStatus) return openStatus;
   return undefined;
 }
 function changed(existing: WorkTaskRecord, values: Record<string, unknown>): boolean {
@@ -149,7 +148,7 @@ function lifecycleComment(pr: PullRequest, existing: WorkTaskRecord | undefined,
   if (!existing) return `Mirror created from GitHub at head ${ head }.`;
   if (pr.merged && existing.status !== terminalStatus) return `GitHub reports this pull request merged at head ${ head }; mirror moved to ${ terminalStatus }.`;
   if (pr.state === 'closed' && !pr.merged && existing.status !== terminalStatus) return `GitHub reports this pull request closed without merge; mirror moved to ${ terminalStatus }.`;
-  if (pr.state === 'open' && TERMINAL_STATUSES.has(existing.status)) return 'GitHub reports this pull request reopened; mirror returned to the configured intake stage.';
+  if (pr.state === 'open' && existing.status === terminalStatus) return 'GitHub reports this pull request reopened; mirror returned to the configured intake stage.';
   if (previousHead && previousHead !== head) return `GitHub head changed from ${ previousHead } to ${ head }; metadata resynchronized without resetting its stage.`;
   return null;
 }
@@ -229,9 +228,10 @@ export class GitHubPullRequestMirrorService {
         const existing = existingByIdentity.get(key);
         const { snapshot, fingerprint } = snapshotFor(pr, target.repository, checks.check_runs, reviews);
         const status = desiredStatus(pr, existing, input.openStatus, input.terminalStatus);
-        const labels = [...new Set([...(existing?.labels ?? []), ...MIRROR_LABELS, target.repository.repo.includes('frontend') ? 'frontend' : 'backend'])];
+        // Repository classification is installation policy, not product logic.
+        const labels = [...new Set([...(existing?.labels ?? []), ...MIRROR_LABELS])];
         const values: Record<string, unknown> = {
-          title:        `Review ${ target.repository.repo.includes('frontend') ? 'frontend' : 'backend' } PR #${ pr.number } — ${ pr.title }`,
+          title:        `Review PR #${ pr.number } — ${ pr.title }`,
           description:  renderDescription(existing?.description, snapshot, fingerprint),
           github_issue: pr.html_url,
           labels,
@@ -269,7 +269,7 @@ export class GitHubPullRequestMirrorService {
         } else if (changed(existing, values)) {
           result.updated++;
           if (status === input.terminalStatus && existing.status !== input.terminalStatus) result.terminalized++;
-          if (status === input.openStatus && TERMINAL_STATUSES.has(existing.status)) result.reopened++;
+          if (status === input.openStatus && existing.status === input.terminalStatus) result.reopened++;
           if (!input.dryRun) task = await this.projects.updateTask(existing.id, { ...values, actor: input.actor } as UpdateTaskInput, { actor: input.actor, source: 'routine' }) ?? existing;
         } else result.unchanged++;
         if (!input.dryRun && task) {

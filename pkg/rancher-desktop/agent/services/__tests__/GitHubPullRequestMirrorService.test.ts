@@ -38,19 +38,19 @@ function github(pr = pull()) {
   };
 }
 
-function projects(tasks: any[] = []) {
+function projects(tasks: any[] = [], lanes: { lane_key: string; enabled: boolean; archived: boolean }[] = [
+  { lane_key: 'backlog', enabled: true, archived: false },
+  { lane_key: 'done', enabled: true, archived: false },
+]) {
   return {
     ready:                 jest.fn(() => Promise.resolve(undefined)),
     getEpic:               jest.fn(() => Promise.resolve({ id: 'epic', project_id: 'project', archived: false })),
     getTask:               jest.fn(() => Promise.resolve(null)),
-    resolveEffectiveLanes: jest.fn(() => Promise.resolve([
-      { lane_key: 'backlog', enabled: true, archived: false },
-      { lane_key: 'done', enabled: true, archived: false },
-    ])),
-    listTasks:  jest.fn(() => Promise.resolve(tasks)),
-    createTask: jest.fn((input: any, _context: any) => Promise.resolve({ ...input, id: 'new-task' })),
-    updateTask: jest.fn((_id: string, input: any, _context: any) => Promise.resolve(input)),
-    addComment: jest.fn(() => Promise.resolve(undefined)),
+    resolveEffectiveLanes: jest.fn(() => Promise.resolve(lanes)),
+    listTasks:             jest.fn(() => Promise.resolve(tasks)),
+    createTask:            jest.fn((input: any, _context: any) => Promise.resolve({ ...input, id: 'new-task' })),
+    updateTask:            jest.fn((_id: string, input: any, _context: any) => Promise.resolve(input)),
+    addComment:            jest.fn(() => Promise.resolve(undefined)),
   };
 }
 
@@ -87,11 +87,22 @@ describe('GitHubPullRequestMirrorService', () => {
       parent_id:    null,
       source_ref:   'github-pr:example-org/backend-api#42',
       github_issue: 'https://github.com/example-org/backend-api/pull/42',
-      title:        'Review backend PR #42 — Fix the thing',
+      title:        'Review PR #42 — Fix the thing',
       status:       'backlog',
     }), { actor: 'mirror', source: 'routine' });
     expect(db.createTask.mock.calls[0][0].description).toContain('Head SHA: abcdef1234');
     expect(db.createTask.mock.calls[0][0].description).toContain('Canonical body');
+  });
+
+  it('does not infer installation-specific repository classifications', async() => {
+    const db = projects();
+    await new GitHubPullRequestMirrorService(github() as any, db as any, store() as any).reconcile(input);
+
+    const created = db.createTask.mock.calls[0][0];
+    expect(created.title).toBe('Review PR #42 — Fix the thing');
+    expect(created.labels).toEqual(['github-pr-mirror', 'pr-review']);
+    expect(created.labels).not.toContain('frontend');
+    expect(created.labels).not.toContain('backend');
   });
 
   it('does not duplicate an unchanged mirrored PR', async() => {
@@ -104,10 +115,10 @@ describe('GitHubPullRequestMirrorService', () => {
       created_at:   '2026-09-01',
       source_ref:   'github-pr:example-org/backend-api#42',
       github_issue: pr.html_url,
-      title:        'Review backend PR #42 — Fix the thing',
+      title:        'Review PR #42 — Fix the thing',
       description,
       status:       'in_progress',
-      labels:       ['github-pr-mirror', 'pr-review', 'backend'],
+      labels:       ['github-pr-mirror', 'pr-review'],
       source:       'github-pr-mirror',
     }]);
     const result = await new GitHubPullRequestMirrorService(github(pr) as any, db as any, store() as any).reconcile(input);
@@ -134,9 +145,46 @@ describe('GitHubPullRequestMirrorService', () => {
     await new GitHubPullRequestMirrorService(github(closed) as any, closedDb as any, store() as any).reconcile(input);
     expect(closedDb.updateTask).toHaveBeenCalledWith('existing', expect.objectContaining({ status: 'done' }), expect.anything());
 
-    const reopenedDb = projects([{ ...existing, status: 'cancelled' }]);
+    const reopenedDb = projects([{ ...existing, status: 'done' }]);
     await new GitHubPullRequestMirrorService(github() as any, reopenedDb as any, store() as any).reconcile(input);
     expect(reopenedDb.updateTask).toHaveBeenCalledWith('existing', expect.objectContaining({ status: 'backlog' }), expect.anything());
+  });
+
+  it('reopens against an arbitrary caller-configured terminal status, not a fixed vocabulary', async() => {
+    const customInput = { ...input, openStatus: 'intake', terminalStatus: 'shipped' };
+    const lanes = [
+      { lane_key: 'intake', enabled: true, archived: false },
+      { lane_key: 'shipped', enabled: true, archived: false },
+    ];
+    const existing = {
+      id:           'existing',
+      created_at:   '2026-09-01',
+      source_ref:   'github-pr:example-org/backend-api#42',
+      github_issue: '',
+      title:        '',
+      description:  '',
+      status:       'shipped',
+      labels:       [],
+      source:       '',
+    };
+    const db = projects([existing], lanes);
+    const result = await new GitHubPullRequestMirrorService(github() as any, db as any, store() as any).reconcile(customInput);
+
+    expect(result.reopened).toBe(1);
+    expect(db.updateTask).toHaveBeenCalledWith('existing', expect.objectContaining({ status: 'intake' }), expect.anything());
+
+    const updatedExisting = { ...existing, ...db.updateTask.mock.calls[0][1] };
+    const stableExisting = { ...updatedExisting, status: 'cancelled' };
+    const stableDb = projects([stableExisting], [
+      { lane_key: 'intake', enabled: true, archived: false },
+      { lane_key: 'shipped', enabled: true, archived: false },
+      { lane_key: 'cancelled', enabled: true, archived: false },
+    ]);
+    const stableResult = await new GitHubPullRequestMirrorService(github() as any, stableDb as any, store() as any)
+      .reconcile({ ...customInput });
+    expect(stableResult.reopened).toBe(0);
+    expect(stableResult.unchanged).toBe(1);
+    expect(stableDb.updateTask).not.toHaveBeenCalled();
   });
 
   it('reports pre-existing duplicate identities and never creates another', async() => {
@@ -164,7 +212,7 @@ describe('GitHubPullRequestMirrorService', () => {
       created_at:   '2026-09-02',
       source_ref:   'github-pr:example-org/backend-api#42',
       github_issue: 'https://github.com/example-org/backend-api/pull/42',
-      title:        'Review backend PR #42 — Fix the thing',
+      title:        'Review PR #42 — Fix the thing',
       description:  '',
       status:       'backlog',
       labels:       [],
