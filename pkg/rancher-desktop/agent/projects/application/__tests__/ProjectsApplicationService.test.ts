@@ -162,4 +162,34 @@ describe('ProjectsApplicationService lifecycle boundary', () => {
     );
     expect(repo.updateTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ status: 'ready-custom' }));
   });
+
+  it('rejects a stale generation on the execution-lane transition without moving the task', async() => {
+    const repo = repository();
+    repo.getTask.mockResolvedValue({ ...current, status: 'blocked' });
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('ready-custom');
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'listLaneEntries').mockResolvedValue([
+      { generation: 12, lane_key: 'blocked' },
+    ] as any);
+    const service = new ProjectsApplicationService(repo);
+
+    await expect(service.transitionTaskToExecution({
+      taskId: 'task-1', expectedGeneration: 11,
+    }, { actor: 'planning-council', source: 'routine' })).rejects.toThrow('Stale stage generation');
+    expect(repo.updateTask).not.toHaveBeenCalled();
+  });
+
+  it('rejects a lane-entry ledger inconsistent with the task status at the same generation', async() => {
+    const repo = repository();
+    repo.getTask.mockResolvedValue({ ...current, status: 'blocked' });
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('ready-custom');
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'listLaneEntries').mockResolvedValue([
+      { generation: 12, lane_key: 'in_progress' },
+    ] as any);
+    const service = new ProjectsApplicationService(repo);
+
+    await expect(service.transitionTaskToExecution({
+      taskId: 'task-1', expectedGeneration: 12,
+    }, { actor: 'planning-council', source: 'routine' })).rejects.toThrow('Stale stage generation');
+    expect(repo.updateTask).not.toHaveBeenCalled();
+  });
 });
