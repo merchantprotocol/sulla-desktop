@@ -39,6 +39,7 @@ export class GitHubGetPRWorker extends BaseTool {
         `State: ${ pr.state }${ pr.draft ? ' (draft)' : '' }${ pr.merged ? ' (merged)' : '' }`,
         `Author: ${ pr.user?.login }`,
         `Head: ${ pr.head.ref } (${ pr.head.sha.slice(0, 8) }) → Base: ${ pr.base.ref }`,
+        `Head SHA (full): ${ pr.head.sha }`,
         `Commits: ${ pr.commits }  |  Changed files: ${ pr.changed_files }  |  +${ pr.additions }/-${ pr.deletions }`,
         `Comments: ${ pr.comments }  |  Review comments: ${ pr.review_comments }`,
         `Reviewers: ${ reviewers }`,
