@@ -757,7 +757,18 @@ export class TaskDispatcherService {
         } else if (verificationOwner === 'core-routine') {
           const { value: parsed, reason: parseFailureReason } = this.parseProtectedReview(finalState.metadata?.lastCompletedWorkflow);
           if (!parsed) {
-            await WorkTaskDispatchModel.failVerification(dispatch.id, `malformed_protected_review_output:${ parseFailureReason }`);
+            // A missing disposition can mean the synthesis node correctly abstained on a generation superseded mid-flight, not a malformed output.
+            const liveTask = await WorkItemsModel.getTask(task.id);
+            if (liveTask?.status !== 'in_review') {
+              const currentArtifacts = await this.resolveReviewArtifacts(task, comments, dispatch.origin_evidence);
+              const currentGenerationHash = WorkTaskDispatchModel.reviewGenerationHash(currentArtifacts);
+              await WorkTaskDispatchModel.failVerification(
+                dispatch.id,
+                `artifact_generation_changed:${ generationHash }:${ currentGenerationHash }`,
+              );
+            } else {
+              await WorkTaskDispatchModel.failVerification(dispatch.id, `malformed_protected_review_output:${ parseFailureReason }`);
+            }
           } else {
             const currentArtifacts = await this.resolveReviewArtifacts(task, comments, dispatch.origin_evidence);
             const currentGenerationHash = WorkTaskDispatchModel.reviewGenerationHash(currentArtifacts);

@@ -26,6 +26,7 @@ const touchMock: any = jest.fn(() => Promise.resolve());
 const hasActiveDispatchForTaskMock: any = jest.fn(() => Promise.resolve(false));
 const addCommentMock: any = jest.fn(() => Promise.resolve());
 const updateTaskMock: any = jest.fn(() => Promise.resolve());
+const getTaskMock: any = jest.fn(() => Promise.resolve({ id: 'task-core', status: 'in_review' }));
 const executeMock: any = jest.fn();
 const graphGetMock: any = jest.fn(() => Promise.resolve({
   graph: { execute: executeMock },
@@ -107,6 +108,7 @@ jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
   WorkItemsModel: {
     addComment:   addCommentMock,
     updateTask:   updateTaskMock,
+    getTask:      getTaskMock,
     listComments: jest.fn(() => Promise.resolve([{ author: 'worker', body: 'Draft PR #123 at head.' }])),
   },
 }));
@@ -810,6 +812,123 @@ describe('TaskDispatcherService', () => {
         reviewerAgentIds:    ['sulla-desktop'],
         artifactHash:        hash,
       }), expect.any(Array),
+    );
+  });
+
+  it('settles a synthesis abstention as artifact_generation_changed when the task is no longer live in_review', async() => {
+    claimNextReviewMock
+      .mockResolvedValueOnce({
+        task: {
+          id:           'task-core',
+          title:        'Core review',
+          description:  'Verify all criteria.',
+          project_id:   'p',
+          epic_id:      'e',
+          priority:     'critical',
+          github_issue: null,
+        },
+        dispatch: {
+          id:              'verify-core',
+          task_id:         'task-core',
+          agent_id:        'sulla-desktop',
+          thread_id:       'core-thread',
+          kind:            'verification',
+          attempt:         1,
+          origin_agent_id: 'sulla-desktop',
+        },
+        stage_claim: { id: 'review-stage-core' },
+      })
+      .mockResolvedValue(null);
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled' || key === 'taskReviewCoreRoutineEnabled') return Promise.resolve(true);
+      if (key === 'taskVerifierOwner') return Promise.resolve('core-routine');
+      return Promise.resolve(fallback);
+    });
+    resolvePullRequestHeadsMock.mockResolvedValue([]);
+    getTaskMock.mockResolvedValueOnce({ id: 'task-core', status: 'todo' });
+    executeMock.mockResolvedValue({
+      metadata: {
+        agent:                 { status: 'completed' },
+        finalSummary:          'Routine complete.',
+        lastCompletedWorkflow: {
+          workflowId:  'core-routine-review-project-artifact',
+          executionId: 'wfp-review-2',
+          outcome:     'completed',
+          nodeResults: [{ nodeId: 'node-review-synthesize', result: 'No disposition JSON is being issued: there is no live in_review generation to transition.' }],
+        },
+      },
+      messages: [],
+    });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    service.destroy();
+
+    expect(getTaskMock).toHaveBeenCalledWith('task-core');
+    expect(failVerificationMock).toHaveBeenCalledWith(
+      'verify-core', expect.stringMatching(/^artifact_generation_changed:/),
+    );
+    expect(failVerificationMock).not.toHaveBeenCalledWith(
+      'verify-core', expect.stringMatching(/^malformed_protected_review_output:/),
+    );
+  });
+
+  it('settles a missing disposition as malformed_protected_review_output when the task is still live in_review', async() => {
+    claimNextReviewMock
+      .mockResolvedValueOnce({
+        task: {
+          id:           'task-core',
+          title:        'Core review',
+          description:  'Verify all criteria.',
+          project_id:   'p',
+          epic_id:      'e',
+          priority:     'critical',
+          github_issue: null,
+        },
+        dispatch: {
+          id:              'verify-core',
+          task_id:         'task-core',
+          agent_id:        'sulla-desktop',
+          thread_id:       'core-thread',
+          kind:            'verification',
+          attempt:         1,
+          origin_agent_id: 'sulla-desktop',
+        },
+        stage_claim: { id: 'review-stage-core' },
+      })
+      .mockResolvedValue(null);
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled' || key === 'taskReviewCoreRoutineEnabled') return Promise.resolve(true);
+      if (key === 'taskVerifierOwner') return Promise.resolve('core-routine');
+      return Promise.resolve(fallback);
+    });
+    resolvePullRequestHeadsMock.mockResolvedValue([]);
+    getTaskMock.mockResolvedValueOnce({ id: 'task-core', status: 'in_review' });
+    executeMock.mockResolvedValue({
+      metadata: {
+        agent:                 { status: 'completed' },
+        finalSummary:          'Routine complete.',
+        lastCompletedWorkflow: {
+          workflowId:  'core-routine-review-project-artifact',
+          executionId: 'wfp-review-3',
+          outcome:     'completed',
+          nodeResults: [{ nodeId: 'node-review-synthesize', result: 'not json' }],
+        },
+      },
+      messages: [],
+    });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    service.destroy();
+
+    expect(getTaskMock).toHaveBeenCalledWith('task-core');
+    expect(failVerificationMock).toHaveBeenCalledWith(
+      'verify-core', 'malformed_protected_review_output:missing_or_invalid_disposition',
     );
   });
 
