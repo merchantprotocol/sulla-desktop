@@ -175,6 +175,66 @@ describe('WorkLaneDefinitionModel', () => {
     );
   });
 
+  it('resolves the first active execution lane, skipping disabled and archived candidates', async() => {
+    const active = [
+      lane({ id: 'l-backlog', lane_key: 'backlog', semantic_role: 'backlog', position: 0 }),
+      lane({ id: 'l-todo', lane_key: 'todo', semantic_role: 'execution', position: 1, enabled: false }),
+      lane({ id: 'l-legacy-exec', lane_key: 'legacy-exec', semantic_role: 'execution', position: 2, archived: true }),
+      lane({ id: 'l-ready-custom', lane_key: 'ready-custom', semantic_role: 'execution', position: 3 }),
+      lane({ id: 'l-planning', lane_key: 'planning', semantic_role: 'planning', position: 4 }),
+      lane({ id: 'l-review', lane_key: 'in_review', semantic_role: 'review', position: 5 }),
+      lane({ id: 'l-blocked', lane_key: 'blocked', semantic_role: 'blocked', position: 6 }),
+      lane({ id: 'l-done', lane_key: 'done', semantic_role: 'terminal', position: 7 }),
+    ];
+    (postgresClient as any).queryOne = jest.fn(() => Promise.resolve({ present: true }));
+    (postgresClient as any).query = jest.fn(() => Promise.resolve(active));
+
+    await expect(WorkLaneDefinitionModel.preferredLaneKey('p1', 'execution', 'todo', 'first'))
+      .resolves.toBe('ready-custom');
+  });
+
+  it('prefers the compatibility key on a position tie between active role lanes', async() => {
+    const active = [
+      lane({ id: 'l-backlog', lane_key: 'backlog', semantic_role: 'backlog', position: 0 }),
+      lane({ id: 'l-other-exec', lane_key: 'other-exec', semantic_role: 'execution', position: 1 }),
+      lane({ id: 'l-todo', lane_key: 'todo', semantic_role: 'execution', position: 1 }),
+      lane({ id: 'l-planning', lane_key: 'planning', semantic_role: 'planning', position: 2 }),
+      lane({ id: 'l-review', lane_key: 'in_review', semantic_role: 'review', position: 3 }),
+      lane({ id: 'l-blocked', lane_key: 'blocked', semantic_role: 'blocked', position: 4 }),
+      lane({ id: 'l-done', lane_key: 'done', semantic_role: 'terminal', position: 5 }),
+    ];
+    (postgresClient as any).queryOne = jest.fn(() => Promise.resolve({ present: true }));
+    (postgresClient as any).query = jest.fn(() => Promise.resolve(active));
+
+    await expect(WorkLaneDefinitionModel.preferredLaneKey('p1', 'execution', 'todo', 'first'))
+      .resolves.toBe('todo');
+  });
+
+  it('throws when a project has no active lane for the requested role', async() => {
+    const active = [
+      lane({ id: 'l-backlog', lane_key: 'backlog', semantic_role: 'backlog', position: 0 }),
+      lane({ id: 'l-todo', lane_key: 'todo', semantic_role: 'execution', position: 1 }),
+      lane({ id: 'l-planning', lane_key: 'planning', semantic_role: 'planning', position: 2 }),
+      lane({ id: 'l-review', lane_key: 'in_review', semantic_role: 'review', position: 3 }),
+      lane({ id: 'l-blocked', lane_key: 'blocked', semantic_role: 'blocked', position: 4 }),
+      lane({ id: 'l-done', lane_key: 'done', semantic_role: 'terminal', position: 5 }),
+    ];
+    (postgresClient as any).queryOne = jest.fn(() => Promise.resolve({ present: true }));
+    (postgresClient as any).query = jest.fn(() => Promise.resolve(active));
+
+    await expect(WorkLaneDefinitionModel.preferredLaneKey('p1', 'manual', 'parked', 'first'))
+      .rejects.toThrow('Project p1 has no active manual lane.');
+  });
+
+  it('falls back to the compatibility key when the lane runtime capability is not ready', async() => {
+    (postgresClient as any).queryOne = jest.fn(() => Promise.resolve({ present: false }));
+    (postgresClient as any).query = jest.fn();
+
+    await expect(WorkLaneDefinitionModel.preferredLaneKey('p1', 'execution', 'todo', 'first'))
+      .resolves.toBe('todo');
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
   it('materializes a project override when reordering an inherited lane', async() => {
     const client = {
       query: (jest.fn() as any)
