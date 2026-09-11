@@ -701,6 +701,78 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const dockerComposeScript = '#!/bin/sh\nset -o errexit\napk info -e docker-cli-compose >/dev/null 2>&1 || { apk update && apk add --no-cache docker-cli-compose; }';
     const pythonNodeScript = '#!/bin/sh\nset -o errexit\napk info -e python3 nodejs npm >/dev/null 2>&1 || apk add --no-cache python3 py3-pip nodejs npm git jq yq tree rsync curl nano vim';
 
+    // Swap. The VM ships with none, and `/` is tmpfs — so page cache, /tmp and
+    // /var/log all compete for the same finite RAM with no relief valve. Under
+    // pressure the kernel can only reclaim or OOM, which shows up as kswapd0 /
+    // kcompactd0 burning CPU and multi-second stalls on unrelated syscalls
+    // (measured: 731s of kcompactd CPU across four days of uptime, with free
+    // memory dipping to ~350MB of 12.9GB).
+    //
+    // The swapfile has to live on /mnt/data: that's the only persistent disk,
+    // and a swapfile on tmpfs would be backed by the very RAM it's meant to
+    // relieve (the kernel rejects it outright).
+    //
+    // Deliberately no `set -o errexit` and every failure path exits 0 — swap is
+    // an optimisation, and a full disk or a slow first-boot dd must never be
+    // able to block the VM from starting.
+    const swapScript = [
+      '#!/bin/sh',
+      'SWAPFILE=/mnt/data/swapfile',
+      'SIZE_MB=4096',
+      '# Already active (re-run of this provision script on a live VM).',
+      'grep -q "$SWAPFILE" /proc/swaps 2>/dev/null && exit 0',
+      '# Persistent data volume must be mounted; / is tmpfs and cannot host swap.',
+      '[ -d /mnt/data ] || exit 0',
+      'if [ ! -f "$SWAPFILE" ]; then',
+      '  # Leave headroom so we never fill the volume docker/images also share.',
+      '  avail_mb=$(df -Pm /mnt/data 2>/dev/null | awk \'NR==2{print $4}\')',
+      '  if [ -n "$avail_mb" ] && [ "$avail_mb" -lt $((SIZE_MB + 4096)) ]; then',
+      '    echo "[sulla-swap] only ${avail_mb}MB free on /mnt/data; skipping swapfile" >&2',
+      '    exit 0',
+      '  fi',
+      '  # Must be a real (non-sparse) file — swapon rejects holes.',
+      '  dd if=/dev/zero of="$SWAPFILE" bs=1M count="$SIZE_MB" 2>/dev/null || { rm -f "$SWAPFILE"; exit 0; }',
+      'fi',
+      'chmod 600 "$SWAPFILE" 2>/dev/null',
+      '# mkswap is idempotent; re-run it if swapon rejects a stale/partial file.',
+      'swapon "$SWAPFILE" 2>/dev/null && exit 0',
+      'mkswap "$SWAPFILE" >/dev/null 2>&1 || { rm -f "$SWAPFILE"; exit 0; }',
+      'swapon "$SWAPFILE" 2>/dev/null || echo "[sulla-swap] swapon failed; continuing without swap" >&2',
+      'exit 0',
+    ].join('\n');
+
+    // Cap log growth. `/` is tmpfs here, so every byte under /var/log is a byte
+    // of RAM. crond + the stock hourly /etc/periodic/hourly/logrotate hook are
+    // both already running, but logrotate only knows about the handful of logs
+    // that shipped a config (acpid, rsync, rc) — the threat proxy writes two
+    // high-volume logs that nothing rotates, and they had grown to 384MB of
+    // resident memory before being truncated by hand.
+    //
+    // /etc is tmpfs too, so the config is rewritten on every boot rather than
+    // installed once. size+copytruncate (not create) matters: mitmdump holds
+    // these files open, and renaming out from under it would orphan the inode
+    // and leak the memory we are trying to reclaim.
+    const logRotateScript = [
+      '#!/bin/sh',
+      '[ -d /etc/logrotate.d ] || exit 0',
+      "cat > /etc/logrotate.d/sulla-vm <<'SULLA_LOGROTATE'",
+      '# Managed by Sulla Desktop (lima.ts). / is tmpfs: log bytes are RAM bytes.',
+      '/var/log/sulla-threat-proxy.log',
+      '/var/log/sulla-threat-proxy.stdout.log',
+      '/var/log/sulla-threat-proxy.stderr.log',
+      '{',
+      '    size 16M',
+      '    rotate 1',
+      '    copytruncate',
+      '    compress',
+      '    missingok',
+      '    notifempty',
+      '}',
+      'SULLA_LOGROTATE',
+      'chmod 644 /etc/logrotate.d/sulla-vm',
+      'exit 0',
+    ].join('\n');
+
     // Real GNU bash. The base image only ships busybox (/bin/sh -> /bin/ash).
     // Claude Code's Bash tool launches its persistent shell with bash-only
     // options (e.g. `-O expand_aliases`) and sources a snapshot that uses bash
@@ -723,7 +795,15 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     config.provision = config.provision.filter((p: { script?: string }) => {
       const s = p.script ?? '';
 
-      return !s.includes('docker-cli-compose') && !s.includes('py3-pip nodejs npm') && !s.includes('apk info -W /bin/bash');
+      return !s.includes('docker-cli-compose') && !s.includes('py3-pip nodejs npm') && !s.includes('apk info -W /bin/bash') &&
+        !s.includes('/mnt/data/swapfile') && !s.includes('/etc/logrotate.d/sulla-vm');
+    });
+
+    // Enable swap before anything else provisions — the npm installs below are
+    // the most memory-hungry step of a first boot.
+    config.provision.push({
+      mode:   'system',
+      script: swapScript,
     });
 
     if (this.cfg?.containerEngine?.name === ContainerEngine.MOBY) {
@@ -743,6 +823,12 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     config.provision.push({
       mode:   'system',
       script: bashScript,
+    });
+
+    // Keep tmpfs-resident logs from silently eating RAM.
+    config.provision.push({
+      mode:   'system',
+      script: logRotateScript,
     });
 
     // Install Claude Code CLI.
