@@ -712,17 +712,31 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // and a swapfile on tmpfs would be backed by the very RAM it's meant to
     // relieve (the kernel rejects it outright).
     //
+    // Sized at 8GiB from observation rather than a rule of thumb: a 4GiB file
+    // saturated to 91% within hours on a 12.9GB-RAM VM (mostly cold pages from
+    // idle dev servers — a single react-router dev process accounted for 1.3GB).
+    // A full swapfile is a closed relief valve: the kernel can no longer evict
+    // cold anonymous pages and the next spike goes straight back to reclaim/OOM.
+    // /mnt/data had 78GB free, so the headroom is nearly free.
+    //
     // Deliberately no `set -o errexit` and every failure path exits 0 — swap is
     // an optimisation, and a full disk or a slow first-boot dd must never be
     // able to block the VM from starting.
     const swapScript = [
       '#!/bin/sh',
       'SWAPFILE=/mnt/data/swapfile',
-      'SIZE_MB=4096',
+      'SIZE_MB=8192',
       '# Already active (re-run of this provision script on a live VM).',
       'grep -q "$SWAPFILE" /proc/swaps 2>/dev/null && exit 0',
       '# Persistent data volume must be mounted; / is tmpfs and cannot host swap.',
       '[ -d /mnt/data ] || exit 0',
+      '# Resize an existing swapfile if SIZE_MB changed. Only reachable when swap',
+      '# is not yet active (see the /proc/swaps check above), i.e. early boot, so',
+      '# dropping the file cannot strand pages that are currently swapped out.',
+      'if [ -f "$SWAPFILE" ]; then',
+      '  cur_mb=$(( $(wc -c < "$SWAPFILE" 2>/dev/null || echo 0) / 1048576 ))',
+      '  [ "$cur_mb" -ne "$SIZE_MB" ] && rm -f "$SWAPFILE"',
+      'fi',
       'if [ ! -f "$SWAPFILE" ]; then',
       '  # Leave headroom so we never fill the volume docker/images also share.',
       '  avail_mb=$(df -Pm /mnt/data 2>/dev/null | awk \'NR==2{print $4}\')',
