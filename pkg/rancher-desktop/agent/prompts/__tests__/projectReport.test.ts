@@ -25,8 +25,27 @@ jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () =>
   },
 }));
 
+const activeWaitIdsMock: any = jest.fn();
+const listWaitsMock: any = jest.fn();
+const settingsGetMock: any = jest.fn();
+const dependencyHoldsMock: any = jest.fn();
+
+jest.unstable_mockModule('../../database/models/WorkTaskWaitModel', () => ({
+  WorkTaskWaitModel: { activeTaskIds: activeWaitIdsMock, list: listWaitsMock },
+}));
+jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
+  SullaSettingsModel: { get: settingsGetMock },
+}));
+jest.unstable_mockModule('../../database/models/WorkTaskDependencyModel', () => ({
+  WorkTaskDependencyModel: { listUnresolvedForTasks: dependencyHoldsMock },
+}));
+
 describe('buildProjectReport activity rotation queues', () => {
   beforeEach(() => {
+    activeWaitIdsMock.mockReset().mockResolvedValue(new Set());
+    listWaitsMock.mockReset().mockResolvedValue([]);
+    settingsGetMock.mockReset().mockImplementation((_key: string, fallback: boolean) => Promise.resolve(fallback));
+    dependencyHoldsMock.mockReset().mockResolvedValue([]);
     ensureTablesMock.mockReset().mockResolvedValue(undefined);
     listProjectsMock.mockReset().mockResolvedValue([{ id: 'project-1', title: 'Operator Platform' }]);
     listEpicsMock.mockReset().mockResolvedValue([{ id: 'epic-1', project_id: 'project-1', title: 'Heartbeat' }]);
@@ -89,5 +108,97 @@ describe('buildProjectReport activity rotation queues', () => {
     expect(report).toContain('Do not plan, execute, review, poll, reclaim, or mutate task status');
     expect(report).not.toContain('council of independent high-reasoning planners');
     expect(report).not.toContain('as many independent tasks as available sub-agent capacity allows');
+  });
+  function wait(overrides: Record<string, unknown> = {}) {
+    return {
+      wait_kind:                   'external_job',
+      target_key:                  'job',
+      task_id:                     'action-old',
+      due_at:                      null,
+      next_check_at:               '2027-09-17T10:45:00Z',
+      consecutive_unchanged_count: 0,
+      ...overrides,
+    };
+  }
+
+  async function waitRows(waits: ReturnType<typeof wait>[]) {
+    listWaitsMock.mockResolvedValue(waits);
+    const { buildProjectReport } = await import('../projectReport');
+    const report = await buildProjectReport();
+    return report.split('\n').filter(line => line.startsWith('- **'));
+  }
+
+  it('distinguishes years and labels event dormancy without inferring adapters from prose', async() => {
+    const rows = await waitRows([2026, 2027].map(year => wait({
+      next_check_at: `${ year }-09-17T03:45:00-07:00`,
+      target:        { description: 'Adapter installed; poll provider every minute' },
+    })));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain('awaiting external event or explicit adapter');
+    expect(rows[0]).toContain('technical next_check_at 2026-09-17 10:45 UTC');
+    expect(rows[1]).toContain('technical next_check_at 2027-09-17 10:45 UTC');
+    expect(rows.join('\n')).not.toContain('next poll');
+  });
+
+  it('distinguishes undated human approval from a timed human gate', async() => {
+    const rows = await waitRows([
+      wait({ wait_kind: 'human_gate' }),
+      wait({ wait_kind: 'human_gate', due_at: '2026-09-17T10:45:00Z' }),
+    ]);
+    expect(rows[0]).toContain('awaiting human approval (no deadline)');
+    expect(rows[1]).toContain('awaiting human approval · due 2026-09-17 10:45 UTC');
+    expect(rows.join('\n')).not.toContain('next poll');
+  });
+
+  it('keeps scheduled deadlines distinct from next GitHub polls', async() => {
+    const rows = await waitRows([
+      wait({ wait_kind: 'scheduled_time', due_at: '2026-09-17T10:45:00Z' }),
+      wait({ wait_kind: 'github_checks' }),
+    ]);
+    expect(rows[0]).toContain('scheduled deadline 2026-09-17 10:45 UTC');
+    expect(rows[0]).toContain('technical next_check_at 2027-09-17 10:45 UTC');
+    expect(rows[1]).toContain('next poll 2027-09-17 10:45 UTC');
+  });
+
+  it('preserves invalid dates and handles missing scheduled deadlines without throwing', async() => {
+    const rows = await waitRows([
+      wait({ wait_kind: 'scheduled_time', due_at: 'invalid-due', next_check_at: 'invalid-check' }),
+      wait({ wait_kind: 'scheduled_time', next_check_at: null }),
+    ]);
+    expect(rows[0]).toContain('scheduled deadline invalid-due');
+    expect(rows[0]).toContain('technical next_check_at invalid-check');
+    expect(rows[1]).toContain('scheduled deadline not set');
+  });
+
+  it.each([
+    [false, true, 'Monitor disabled:', 2],
+    [true, false, 'Shadow mode:', 2],
+    [true, true, 'Heartbeat must not poll or comment on unchanged waits.', 1],
+  ])('preserves monitor/suppression behavior enabled=%s suppression=%s', async(enabled, suppression, disclosure, count) => {
+    settingsGetMock.mockImplementation((key: string) => Promise.resolve(
+      key === 'externalWaitMonitorEnabled' ? enabled : suppression,
+    ));
+    activeWaitIdsMock.mockResolvedValue(new Set(['action-old']));
+    listWaitsMock.mockResolvedValue([wait({ wait_kind: 'github_checks' })]);
+    const { buildProjectReport } = await import('../projectReport');
+    const report = await buildProjectReport();
+    expect(report).toContain(disclosure);
+    expect(report).toContain(`Actionable now (${ count } of ${ count })`);
+    expect(report).toContain(enabled ? 'next poll 2027-09-17' : 'stored next poll (monitor disabled) 2027-09-17');
+  });
+
+  it('keeps protected lifecycle waits out of the monitor queue and preserves dependency holds', async() => {
+    heartbeatAccessByTaskMock.mockResolvedValue(new Map([
+      ['action-old', { mode: 'protected_owner', owner: 'dispatcher' }],
+      ['action-new', { mode: 'heartbeat_fallback', owner: 'heartbeat' }],
+    ]));
+    dependencyHoldsMock.mockResolvedValue([{ taskId: 'action-new', dependsOnTaskId: 'upstream', dependsOnStatus: 'todo' }]);
+    listWaitsMock.mockResolvedValue([wait()]);
+    const { buildProjectReport } = await import('../projectReport');
+    const report = await buildProjectReport({ lifecycleAware: true });
+    expect(report).toContain('Monitor-owned external waits (0)');
+    expect(report).toContain('Explicit Heartbeat fallback (0 of 0)');
+    expect(report).toContain('blocked by upstream (todo)');
+    expect(report).toContain('owner dispatcher');
   });
 });

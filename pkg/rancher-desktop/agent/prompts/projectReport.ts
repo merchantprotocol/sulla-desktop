@@ -13,7 +13,7 @@ import { LifecycleCapabilityModel } from '../database/models/LifecycleCapability
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
 import { WorkTaskDependencyModel } from '../database/models/WorkTaskDependencyModel';
-import { WorkTaskWaitModel } from '../database/models/WorkTaskWaitModel';
+import { WorkTaskWaitModel, type WorkTaskWaitRecord } from '../database/models/WorkTaskWaitModel';
 
 export interface ProjectReportOpts {
   hours?:          number;
@@ -34,7 +34,22 @@ function fmt(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
 
-  return `${ d.getMonth() + 1 }/${ d.getDate() } ${ String(d.getHours()).padStart(2, '0') }:${ String(d.getMinutes()).padStart(2, '0') }`;
+  return `${ d.toISOString().slice(0, 16).replace('T', ' ') } UTC`;
+}
+
+function waitTiming(wait: WorkTaskWaitRecord, monitorEnabled: boolean): string {
+  const technicalCheck = `technical next_check_at ${ fmt(wait.next_check_at) }`;
+
+  switch (wait.wait_kind) {
+  case 'external_job':
+    return `awaiting external event or explicit adapter · ${ technicalCheck } (not a scheduled provider poll)`;
+  case 'human_gate':
+    return `${ wait.due_at ? `awaiting human approval · due ${ fmt(wait.due_at) }` : 'awaiting human approval (no deadline)' } · ${ technicalCheck }`;
+  case 'scheduled_time':
+    return `scheduled deadline ${ wait.due_at ? fmt(wait.due_at) : 'not set' } · ${ technicalCheck }`;
+  case 'github_checks':
+    return `${ monitorEnabled ? 'next poll' : 'stored next poll (monitor disabled)' } ${ fmt(wait.next_check_at) }`;
+  }
 }
 
 export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<string> {
@@ -92,8 +107,8 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   const scopedActiveWaits = activeWaits.filter(wait => scopedTaskIds.has(wait.task_id));
   const dependencyHeldIds = new Set(dependencyHolds.map(hold => hold.taskId));
   const actionableRows = openRows.filter(t =>
-    t.status !== 'blocked' && t.status !== 'planning' && !dependencyHeldIds.has(t.id)
-      && (!suppressionEnabled || !activeWaitIds.has(t.id)),
+    t.status !== 'blocked' && t.status !== 'planning' && !dependencyHeldIds.has(t.id) &&
+      (!suppressionEnabled || !activeWaitIds.has(t.id)),
   );
   const blockedRows = openRows.filter(t => t.status === 'blocked');
   const planningRows = openRows.filter(t => t.status === 'planning');
@@ -147,11 +162,13 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
 
   lines.push('');
   lines.push(`## ⏳ Monitor-owned external waits (${ scopedActiveWaits.length })`);
-  lines.push(suppressionEnabled
-    ? '_These waits are omitted from actionable work until a material delta reactivates them. Heartbeat must not poll or comment on unchanged waits._'
-    : '_Shadow mode: monitor decisions are recorded, but actionable filtering/comment suppression is not enabled yet._');
+  lines.push(!monitorEnabled
+    ? '_Monitor disabled: stored wait dates do not imply active checks; actionable filtering/comment suppression is disabled._'
+    : suppressionEnabled
+      ? '_These waits are omitted from actionable work until a material delta reactivates them. Heartbeat must not poll or comment on unchanged waits._'
+      : '_Shadow mode: monitor decisions are recorded, but actionable filtering/comment suppression is not enabled yet._');
   for (const wait of scopedActiveWaits.slice(0, nextLimit)) {
-    lines.push(`- **${ wait.wait_kind }** ${ wait.target_key } · task ${ wait.task_id } · next ${ fmt(wait.next_check_at) } · unchanged ${ wait.consecutive_unchanged_count }`);
+    lines.push(`- **${ wait.wait_kind }** ${ wait.target_key } · task ${ wait.task_id } · ${ waitTiming(wait, monitorEnabled) } · unchanged ${ wait.consecutive_unchanged_count }`);
   }
 
   lines.push('');
