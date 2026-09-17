@@ -14,6 +14,7 @@
 import * as fsSync from 'fs';
 import * as osUtil from 'os';
 import * as pathUtil from 'path';
+import { randomUUID } from 'node:crypto';
 
 // Sub-agent durability. The legacy `SULLA_SUB_AGENT_TIMEOUT_MS` was a flat
 // wall-clock kill — it killed agents that were actively producing tokens
@@ -54,6 +55,7 @@ const ORCHESTRATOR_REENTRY_MAX_MS = parseInt(
 );
 
 import { throwIfAborted } from '../services/AbortService';
+import { WorkflowLeaseHeartbeat, WorkflowLeaseLostError } from '../workflow/WorkflowLeaseHeartbeat';
 import { getConversationLogger } from '../services/ConversationLogger';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { ChatMessageModel } from '../database/models/ChatMessageModel';
@@ -212,6 +214,8 @@ export class PlaybookController<TState = any> {
     orchestratorAttempted?: boolean;
   }[] = [];
 
+  private workflowLease: { executionId: string; heartbeat: WorkflowLeaseHeartbeat } | null = null;
+
   private isProcessingPlaybook = false;
   private _continuationQueued = false;
 
@@ -242,7 +246,20 @@ export class PlaybookController<TState = any> {
 
     try {
       return await this._processWorkflowPlaybookInner(state);
+    } catch (error) {
+      if (!(error instanceof WorkflowLeaseLostError)) throw error;
+      const active = (state as any).metadata?.activeWorkflow;
+      if (active?.status === 'running') {
+        active.status = 'failed';
+        active.error = error.message;
+      }
+      console.warn('[PlaybookController] Stopped after losing durable workflow ownership:', error.message);
+      return state;
     } finally {
+      if ((state as any).metadata?.activeWorkflow?.status !== 'running') {
+        this.workflowLease?.heartbeat.stop();
+        this.workflowLease = null;
+      }
       (state as any).metadata.workflowNodeId = prevWorkflowNodeId;
       (state as any).metadata.workflowParentChannel = prevWorkflowParentChannel;
       this.isProcessingPlaybook = false;
@@ -277,26 +294,35 @@ export class PlaybookController<TState = any> {
       return state;
     }
 
-    // Durable execution ownership: claim once, then renew on every frontier
-    // tick. A lost lease fails closed so a second runtime cannot double-run.
+    // Renew independently of frontier progress: a single node may take minutes.
+    // Ownership is local to this controller, never inherited from a checkpoint.
     if (playbook.executionId) {
-      try {
+      if (this.workflowLease?.executionId === playbook.executionId) {
+        await this.workflowLease.heartbeat.assertOwned();
+      } else {
+        this.workflowLease?.heartbeat.stop();
         const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
-        const leaseMeta = playbook as any;
-        const ownerId = leaseMeta._leaseOwner || `runtime-${ process.pid }`;
-        const token = leaseMeta._leaseToken || `${ ownerId }:${ playbook.executionId }`;
-        const lease = leaseMeta._leaseToken
-          ? await WorkflowExecutionModel.renewHeartbeat(playbook.executionId, ownerId, token, 60000)
-          : await WorkflowExecutionModel.acquireLease(playbook.executionId, ownerId, 60000, token);
-        if (!lease) {
-          console.warn(`[PlaybookController] Lease lost for ${ playbook.executionId }; refusing to advance`);
-          return state;
-        }
-        leaseMeta._leaseOwner = ownerId;
-        leaseMeta._leaseToken = token;
-      } catch (err) {
-        console.warn('[PlaybookController] Failed to claim/renew workflow lease; refusing to advance:', err);
-        return state;
+        const ownerId = `runtime-${ process.pid }`;
+        const token = randomUUID();
+        const lease = await WorkflowExecutionModel.acquireLease(playbook.executionId, ownerId, 60000, token);
+        if (!lease) throw new WorkflowLeaseLostError(`Workflow lease unavailable for ${ playbook.executionId }`);
+        const heartbeat = new WorkflowLeaseHeartbeat(async() => {
+          const renewed = await WorkflowExecutionModel.renewHeartbeat(playbook.executionId, ownerId, token, 60000);
+          return renewed !== null;
+        }, (error) => {
+          const active = (state as any).metadata?.activeWorkflow;
+          if (active?.executionId !== playbook.executionId) return;
+          active.status = 'failed';
+          active.error = error.message;
+          this.pendingSubAgents.clear();
+          this.pendingCompletions.length = 0;
+          this.pendingFailures.length = 0;
+          this.pendingEscalations.length = 0;
+          this._continuationQueued = false;
+          (state as any).metadata?.options?.abort?.abort?.();
+        });
+        this.workflowLease = { executionId: playbook.executionId, heartbeat };
+        heartbeat.start();
       }
     }
 
@@ -721,6 +747,7 @@ export class PlaybookController<TState = any> {
           break;
         }
 
+        await this.workflowLease?.heartbeat.assertOwned();
         const step: PlaybookStepResult = processNextStep(currentPlaybook);
         meta.activeWorkflow = step.updatedPlaybook;
 
@@ -2010,6 +2037,7 @@ export class PlaybookController<TState = any> {
         }
       }
     } catch (err: any) {
+      if (err instanceof WorkflowLeaseLostError) throw err;
       console.error(`[PlaybookController] Walker crashed:`, err);
       const failedPlaybook = { ...meta.activeWorkflow, status: 'failed' as const, error: err.message || String(err) };
       this.emitPlaybookEvent(state, 'workflow_failed', { error: err.message || String(err) });
@@ -2113,6 +2141,7 @@ export class PlaybookController<TState = any> {
     nodeSubtype: string,
     nodeOutput: unknown,
   ): Promise<void> {
+    await this.workflowLease?.heartbeat.assertOwned();
     try {
       const { WorkflowCheckpointModel } = await import('../database/models/WorkflowCheckpointModel');
       const sequence = Object.keys(playbook.nodeOutputs ?? {}).length;
@@ -2188,6 +2217,9 @@ export class PlaybookController<TState = any> {
     outcome: 'completed' | 'failed',
     error?: string,
   ): Promise<TState> {
+    await this.workflowLease?.heartbeat.assertOwned();
+    this.workflowLease?.heartbeat.stop();
+    this.workflowLease = null;
     const meta = (state as any).metadata;
 
     const nodeSummaries = Object.values(playbook.nodeOutputs ?? {}).map((output: PlaybookNodeOutput) => ({
