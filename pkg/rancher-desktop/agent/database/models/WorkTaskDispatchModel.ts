@@ -343,7 +343,7 @@ export class WorkTaskDispatchModel {
                 AND downstream_project.archived = false
                 AND NOT (downstream_project.status = ANY($1::text[]))
                 AND NOT (downstream_epic.status = ANY($1::text[]))
-                AND (downstream.assignee IS NULL OR LOWER(downstream.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
+                AND (downstream.assignee IS NULL OR LOWER(downstream.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
                 AND NOT EXISTS (
                   SELECT 1 FROM unnest(COALESCE(downstream.labels, '{}')) AS downstream_label
                    WHERE LOWER(downstream_label) = ANY($3::text[])
@@ -469,7 +469,7 @@ export class WorkTaskDispatchModel {
            AND p.archived = false
            AND NOT (p.status = ANY($1::text[]))
            AND NOT (e.status = ANY($1::text[]))
-           AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
+           AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
            AND NOT EXISTS (
              SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
               WHERE LOWER(label) = ANY($2::text[])
@@ -604,7 +604,7 @@ export class WorkTaskDispatchModel {
          AND p.archived = false
          AND NOT (p.status = ANY($1::text[]))
          AND NOT (e.status = ANY($1::text[]))
-         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
+         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
          AND NOT EXISTS (
            SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
             WHERE LOWER(label) = ANY($2::text[])
@@ -678,7 +678,7 @@ export class WorkTaskDispatchModel {
          AND p.archived = false
          AND NOT (p.status = ANY($1::text[]))
          AND NOT (e.status = ANY($1::text[]))
-         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
+         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
          AND NOT EXISTS (
            SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
             WHERE LOWER(label) = ANY($2::text[])

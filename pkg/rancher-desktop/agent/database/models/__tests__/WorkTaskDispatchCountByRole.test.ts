@@ -39,7 +39,7 @@ describe('WorkTaskDispatchModel.countByRole (issue #711)', () => {
     // resolved COALESCE expression unambiguously.
     expect(sql).toContain('GROUP BY 1');
     expect(sql).not.toContain('GROUP BY semantic_role');
-    expect(sql).toContain("LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'verifier')");
+    expect(sql).toContain("LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier')");
     expect(sql).toContain('NOT (p.status = ANY($1::text[]))');
   });
 
