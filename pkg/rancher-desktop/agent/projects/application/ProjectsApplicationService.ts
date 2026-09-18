@@ -128,6 +128,7 @@ export interface ReadyTasksInput {
 
 export interface ReadyTasksResult {
   ready:   WorkTaskRecord[];
+  runnablePrerequisites: WorkTaskRecord[];
   blocked: { task: WorkTaskRecord; holds: TaskDependencyHold[] }[];
 }
 
@@ -656,7 +657,28 @@ export class ProjectsApplicationService {
       if (taskHolds?.length) blocked.push({ task, holds: taskHolds });
       else ready.push(task);
     }
-    return { ready, blocked };
+    // Follow unresolved edges outside the initial project/epic/page too.
+    // Never promote or reassign a prerequisite: normal ownership and lane
+    // gates still decide whether the dispatcher can run it.
+    const seen = new Set(candidates.map(task => task.id));
+    const runnablePrerequisites: WorkTaskRecord[] = [];
+    let frontier = [...new Set(holds.filter(hold => hold.policy === 'pending').map(hold => hold.dependsOnTaskId))];
+    while (frontier.length) {
+      const ids = frontier.filter(id => !seen.has(id));
+      if (!ids.length) break;
+      ids.forEach(id => seen.add(id));
+      const tasks = (await Promise.all(ids.map(id => this.repository.getTask(id))))
+        .filter((task): task is WorkTaskRecord => !!task && !task.archived);
+      const nextHolds = await WorkTaskDependencyModel.listUnresolvedForTasks(tasks.map(task => task.id));
+      const held = new Set(nextHolds.map(hold => hold.taskId));
+      for (const task of tasks) {
+        if (!held.has(task.id) && (await WorkTaskDependencyModel.explainClaimability(task.id)).claimable) {
+          runnablePrerequisites.push(task);
+        }
+      }
+      frontier = [...new Set(nextHolds.filter(hold => hold.policy === 'pending').map(hold => hold.dependsOnTaskId))];
+    }
+    return { ready, blocked, runnablePrerequisites };
   }
 
   /**

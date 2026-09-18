@@ -11,7 +11,7 @@ jest.unstable_mockModule('../../tools/workflow/stop_workflow', () => ({ stopKey:
 jest.unstable_mockModule('../../tools/workflow/pause_workflow', () => ({ pauseKey: () => 'pause' }));
 jest.unstable_mockModule('../../database/models/WorkflowPendingCompletionModel', () => ({ WorkflowPendingCompletionModel: { findPending: jest.fn(async() => []) } }));
 jest.unstable_mockModule('../../database/models/WorkflowExecutionModel', () => ({ WorkflowExecutionModel: {
-  acquireLease: jest.fn(async() => ({})), renewHeartbeat: jest.fn(async() => ({})), settle: jest.fn(),
+  acquireLease: jest.fn(async() => ({})), renewHeartbeat: jest.fn(async() => ({})), settle: jest.fn(async() => ({})),
 } }));
 jest.unstable_mockModule('../../database/models/WorkflowCheckpointModel', () => ({ WorkflowCheckpointModel: { saveCheckpoint: jest.fn() } }));
 jest.unstable_mockModule('../../workflow/WorkflowPlaybook', () => ({
@@ -43,7 +43,7 @@ describe('PlaybookController lease fencing', () => {
     await controller.processWorkflowPlaybook(state);
     expect(WorkflowExecutionModel.acquireLease).toHaveBeenCalledWith('resumed', expect.stringContaining('runtime-'), 60000, expect.any(String));
     expect((WorkflowExecutionModel.acquireLease as any).mock.calls[0][3]).not.toBe('old-checkpoint-token');
-    expect(WorkflowExecutionModel.settle).toHaveBeenCalledWith('resumed', 'completed');
+    expect(WorkflowExecutionModel.settle).toHaveBeenCalledWith('resumed', 'completed', undefined, undefined);
     expect(state.metadata.activeWorkflow).toBeUndefined();
     expect(jest.getTimerCount()).toBe(0);
   });

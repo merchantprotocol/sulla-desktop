@@ -341,7 +341,7 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
     await WorkflowExecutionModel.markCompleted(execution1);
     await WorkflowExecutionModel.markCompleted(execution1);
     expect(await WorkLaneWorkflowBindingModel.getLaneEntry(generation1.id)).toMatchObject({
-      execution_id: execution1, status: 'completed', outcome: { disposition: 'completed' },
+      execution_id: execution1, status: 'running', outcome: { disposition: 'completion_pending' },
     });
 
     const generation2 = (await WorkLaneWorkflowBindingModel.claimLaneEntry(
@@ -455,4 +455,26 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
       .not.toContain(laneEntry.id);
     await expect(WorkLaneWorkflowBindingModel.resetFailed(laneEntry.id)).resolves.toBeNull();
   }, 30_000);
+  it('persists completion evidence until lane settlement and recovers it after a lost callback', async() => {
+    await pool.query(`INSERT INTO work_tasks (id, project_id, epic_id, title, status)
+      VALUES ('task-receipt', 'project-1', 'epic-1', 'Receipt recovery', 'todo')`);
+    const { entry } = await WorkLaneWorkflowBindingModel.claimLaneEntry('task-receipt', 'todo', 'integration-test');
+    const executionId = 'lane-exec-task-receipt-1';
+    await WorkLaneWorkflowBindingModel.markStarted(entry.id, executionId);
+    await WorkflowExecutionModel.markRunning({ executionId, workflowId: 'workflow-1', workflowName: 'Workflow 1', workflowSlug: 'workflow-1' });
+    const evidence = { artifact: 'verified-result', checks: ['passed'] };
+    await WorkflowExecutionModel.settle(executionId, 'completed', undefined, evidence);
+    expect(await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id)).toMatchObject({
+      status: 'running', outcome: { disposition: 'completion_pending', workflowOutcome: evidence },
+    });
+    const dispatch = jest.spyOn(LaneEntryAutomationService, 'dispatchEntry');
+    await LaneEntryAutomationService.drainRecoverable();
+    expect(await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id)).toMatchObject({
+      status: 'completed', outcome: { disposition: 'completed', workflowOutcome: evidence },
+    });
+    expect(dispatch.mock.calls.some(([id]) => id === entry.id)).toBe(false);
+    await LaneEntryAutomationService.drainRecoverable();
+    expect((await WorkLaneWorkflowBindingModel.listRecoverable()).some(row => row.id === entry.id)).toBe(false);
+  });
+
 });

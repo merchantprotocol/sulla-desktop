@@ -1,7 +1,7 @@
 import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
-/** Bulk readiness query: tasks in a project (optionally one epic) split into ready vs dependency-blocked, with exact holds. */
+/** Bulk readiness query: tasks in a project (optionally one epic) split into ready vs dependency-blocked, with exact holds and runnable transitive prerequisites outside the initial page. */
 export class ListReadyTasksWorker extends BaseTool {
   name = '';
   description = '';

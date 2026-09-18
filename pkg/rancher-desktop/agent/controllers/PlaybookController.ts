@@ -1,3 +1,4 @@
+import { workflowTerminalResult } from '../services/WorkflowTerminalResult';
 /**
  * PlaybookController — workflow/playbook orchestration extracted from Graph.ts.
  *
@@ -2255,13 +2256,19 @@ export class PlaybookController<TState = any> {
     try {
       const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
       if (outcome === 'completed') {
-        await WorkflowExecutionModel.settle(playbook.executionId, 'completed');
+        const settled = await WorkflowExecutionModel.settle(playbook.executionId, 'completed', undefined, workflowTerminalResult(meta, playbook.executionId)?.outcome);
+        if (!settled) throw new Error(`Workflow ${ playbook.executionId } lost terminal settlement ownership.`);
       } else {
         await WorkflowExecutionModel.settle(playbook.executionId, 'failed', error);
       }
     } catch (e) {
       console.warn('[PlaybookController] Failed to update workflow execution status:', e);
+      meta.lastCompletedWorkflow.outcome = 'failed';
+      meta.lastCompletedWorkflow.error = 'Durable workflow settlement was not confirmed.';
+      throw e;
     }
+
+    await meta.onRoutineTerminal?.();
 
     // The Projects planning ledger is task-scoped (unlike the generic
     // workflow ledger). Reconcile a workflow that stopped before its

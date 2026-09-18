@@ -22,7 +22,7 @@ describe('ProjectsApplicationService.readyTasks', () => {
     const listUnresolvedForTasks = jest.spyOn(WorkTaskDependencyModel, 'listUnresolvedForTasks').mockResolvedValue([
       { taskId: 'task-2', dependsOnTaskId: 'task-0', dependsOnStatus: 'todo', dependsOnTitle: 'Blocker', policy: 'pending', reason: "prerequisite task-0 is 'todo', not yet done" } as any,
     ]);
-    const service = new ProjectsApplicationService(repository({ listTasks }));
+    const service = new ProjectsApplicationService(repository({ listTasks, getTask: jest.fn(async() => null) }));
 
     const result = await service.readyTasks({ projectId: 'project-1' });
 
@@ -35,10 +35,31 @@ describe('ProjectsApplicationService.readyTasks', () => {
     expect(result.blocked[0].holds[0].dependsOnTaskId).toBe('task-0');
   });
 
+  it('follows dependencies beyond the initial page to runnable leaves without releasing human gates', async() => {
+    const tasks: Record<string, any> = {
+      middle: { id: 'middle', status: 'todo' },
+      leaf: { id: 'leaf', status: 'todo', assignee: 'sulla-desktop' },
+      human: { id: 'human', status: 'todo', assignee: 'human' },
+    };
+    const hold = (taskId: string, dependsOnTaskId: string) => ({ taskId, dependsOnTaskId, policy: 'pending' }) as any;
+    jest.spyOn(WorkTaskDependencyModel, 'listUnresolvedForTasks').mockImplementation(async(ids) =>
+      ids.includes('root') ? [hold('root', 'middle')] : ids.includes('middle')
+        ? [hold('middle', 'leaf'), hold('middle', 'human')] : []);
+    jest.spyOn(WorkTaskDependencyModel, 'explainClaimability').mockImplementation(async(id) => ({ claimable: id === 'leaf' }) as any);
+    const service = new ProjectsApplicationService(repository({
+      listTasks: jest.fn(async() => [{ id: 'root' }]),
+      getTask: jest.fn(async(id: string) => tasks[id] ?? null),
+    }));
+    const result = await service.readyTasks({ projectId: 'project-1', limit: 1 });
+    expect(result.ready).toEqual([]);
+    expect(result.runnablePrerequisites).toEqual([tasks.leaf]);
+    expect(result.blocked[0].task.id).toBe('root');
+  });
+
   it('scopes to one epic and respects an explicit limit', async() => {
     const listTasks = jest.fn((_opts?: any) => Promise.resolve([]));
     jest.spyOn(WorkTaskDependencyModel, 'listUnresolvedForTasks').mockResolvedValue([]);
-    const service = new ProjectsApplicationService(repository({ listTasks }));
+    const service = new ProjectsApplicationService(repository({ listTasks, getTask: jest.fn(async() => null) }));
 
     await service.readyTasks({ projectId: 'project-1', epicId: 'epic-1', limit: 25 });
 
@@ -48,12 +69,12 @@ describe('ProjectsApplicationService.readyTasks', () => {
   it('returns an empty result without querying holds when there are no candidates', async() => {
     const listTasks = jest.fn(() => Promise.resolve([]));
     const listUnresolvedForTasks = jest.spyOn(WorkTaskDependencyModel, 'listUnresolvedForTasks').mockResolvedValue([]);
-    const service = new ProjectsApplicationService(repository({ listTasks }));
+    const service = new ProjectsApplicationService(repository({ listTasks, getTask: jest.fn(async() => null) }));
 
     const result = await service.readyTasks({ projectId: 'project-1' });
 
     expect(listUnresolvedForTasks).toHaveBeenCalledWith([]);
-    expect(result).toEqual({ ready: [], blocked: [] });
+    expect(result).toEqual({ ready: [], blocked: [], runnablePrerequisites: [] });
   });
 });
 
