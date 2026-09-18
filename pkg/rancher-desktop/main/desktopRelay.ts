@@ -36,6 +36,7 @@ import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
 import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import Logging from '@pkg/utils/logging';
+import { mobileCompanionRequest } from './mobileCompanion';
 
 const console = Logging.background;
 
@@ -61,6 +62,9 @@ type Role = 'desktop' | 'mobile';
 
 interface IncomingMessage {
   type:            string;
+  requestId?: string;
+  method?: string;
+  params?: Record<string, unknown>;
   messages?:       Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
   conversationId?: string;
   /**
@@ -286,7 +290,7 @@ export class DesktopRelayClient {
       return;
     }
 
-    const url = `${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop&token=${ encodeURIComponent(token) }`;
+    const url = `${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop&deviceId=${ encodeURIComponent(await getDesktopDeviceId()) }&token=${ encodeURIComponent(token) }`;
 
     // Log without the token to avoid leaking into local log files.
     if (this.failedAttempts <= 1 || this.failedAttempts % 20 === 0) {
@@ -439,6 +443,17 @@ export class DesktopRelayClient {
       return;
     }
 
+    if (msg.type === 'companion_request') {
+      if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
+      try {
+        const result = await mobileCompanionRequest(msg.method || '', msg.params || {});
+        this.send({ type: 'companion_response', requestId: msg.requestId, result });
+      } catch (error) {
+        this.send({ type: 'companion_response', requestId: msg.requestId, error: error instanceof Error ? error.message : 'Request failed' });
+      }
+      return;
+    }
+
     if (msg.type === 'chat') {
       // When mobile targets a specific desktop, only the matching device
       // should handle the request. This is enforced client-side because the
@@ -451,7 +466,8 @@ export class DesktopRelayClient {
             return;
           }
         } catch (err) {
-          console.warn('[DesktopRelay] device_id lookup failed; handling chat anyway:', err);
+          console.warn('[DesktopRelay] device_id lookup failed; refusing targeted chat:', err);
+          return;
         }
       }
       await this.handleChatRequest(msg);

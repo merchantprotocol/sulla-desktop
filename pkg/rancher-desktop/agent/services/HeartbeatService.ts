@@ -295,7 +295,8 @@ export class HeartbeatService {
     try {
       // System prompt is now built by SystemPromptBuilder in HeartbeatNode.
       // The user message is just a timestamp trigger for the heartbeat cycle.
-      const fullPrompt = this.buildHeartbeatPrompt('');
+      const instructions = await SullaSettingsModel.get('heartbeatMobileInstructions', '');
+      const fullPrompt = this.buildHeartbeatPrompt(instructions ? `Current instructions from the human (existing approval boundaries still apply):\n${ instructions }` : '');
 
       console.log('[HeartbeatService] Dispatching to HeartbeatGraph via GraphRegistry');
 
