@@ -36,7 +36,7 @@ import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
 import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import Logging from '@pkg/utils/logging';
-import { mobileCompanionRequest } from './mobileCompanion';
+
 
 const console = Logging.background;
 
@@ -93,6 +93,7 @@ interface Status {
 // Exported for tests only — production code must go through getDesktopRelayClient().
 export class DesktopRelayClient {
   private ws: WebSocket | null = null;
+  private deviceId = '';
   private currentRoom: string | null = null;
   private reconnectDelay = RECONNECT_BASE_MS;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -290,7 +291,8 @@ export class DesktopRelayClient {
       return;
     }
 
-    const url = `${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop&deviceId=${ encodeURIComponent(await getDesktopDeviceId()) }&token=${ encodeURIComponent(token) }`;
+    this.deviceId = await getDesktopDeviceId();
+    const url = `${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop&deviceId=${ encodeURIComponent(this.deviceId) }&token=${ encodeURIComponent(token) }`;
 
     // Log without the token to avoid leaking into local log files.
     if (this.failedAttempts <= 1 || this.failedAttempts % 20 === 0) {
@@ -446,7 +448,16 @@ export class DesktopRelayClient {
     if (msg.type === 'companion_request') {
       if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
       try {
-        const result = await mobileCompanionRequest(msg.method || '', msg.params || {});
+        const { mobileCompanionRequest } = await import('./mobileCompanion');
+        const result = msg.method === 'chat.runs' ? { conversations: [...this.activeConversations] } : await mobileCompanionRequest(msg.method || '', msg.params || {});
+        if (msg.method === 'chat.answer') {
+          const threadId = String(msg.params?.conversationId || '');
+          const content = JSON.stringify({ sullaCard: { version: 1, kind: 'decision_result', deviceId: this.deviceId, content: 'Your response was received.', answeredId: msg.params?.id, answers: msg.params?.answers, decision: msg.params?.decision } });
+          const ts = new Date().toISOString();
+          const id = deriveMessageId(threadId, 'tool', content, ts);
+          await this.scribeTurn(threadId, 'tool', content, { id, ts });
+          this.sendChatFrame(threadId, { type: 'card', content, id });
+        }
         this.send({ type: 'companion_response', requestId: msg.requestId, result });
       } catch (error) {
         this.send({ type: 'companion_response', requestId: msg.requestId, error: error instanceof Error ? error.message : 'Request failed' });
@@ -674,10 +685,42 @@ export class DesktopRelayClient {
     const lastActivityByThread = new Map<string, string>();
 
     wsService.onMessage(MOBILE_RELAY_CHANNEL, async(msg: WebSocketMessage) => {
+      if (msg.type === 'progress') {
+        const data = (msg.data || {}) as any;
+        const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
+        if (!threadId || !['tool_call', 'tool_result'].includes(data.phase)) return;
+        const card = { version: 1, kind: 'tool', deviceId: await getDesktopDeviceId(), toolCard: {
+          toolName: data.toolName || 'Tool', status: data.phase === 'tool_call' ? 'running' : data.success === false ? 'failed' : 'success',
+          args: data.args, result: data.result, error: data.error,
+        } };
+        const content = JSON.stringify({ sullaCard: card });
+        const ts = new Date().toISOString();
+        const id = deriveMessageId(threadId, 'tool', content, ts);
+        await this.scribeTurn(threadId, 'tool', content, { id, ts });
+        this.sendChatFrame(threadId, { type: 'card', content, id });
+        return;
+      }
       if (msg.type === 'assistant_message') {
         const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
         const kind = typeof data.kind === 'string' ? data.kind : '';
         const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
+        const richKinds = ['tool_question', 'tool_approval', 'citation', 'file_patch', 'proactive', 'workflow_document', 'sub_agent_activity', 'html', 'tool'];
+        if (threadId && richKinds.includes(kind)) {
+          const { registerMobileCard } = await import('./mobileCompanion');
+          registerMobileCard(threadId, kind, data);
+          // Persist a versioned envelope through the existing durable history path.
+          // Never serialize arbitrary event metadata, tokens or execution context.
+          const card = { version: 1, kind, deviceId: await getDesktopDeviceId(), content: data.content || '',
+            toolQuestion: data.toolQuestion, toolApproval: data.toolApproval, citations: data.citations,
+            filePatch: data.filePatch, workflow: data.workflow, headline: data.headline, body: data.body,
+            toolCard: data.toolCard, subAgentActivity: data.subAgentActivity };
+          const content = JSON.stringify({ sullaCard: card });
+          const ts = new Date().toISOString();
+          const id = deriveMessageId(threadId, 'tool', content, ts);
+          await this.scribeTurn(threadId, 'tool', content, { id, ts });
+          this.sendChatFrame(threadId, { type: 'card', content, id });
+          return;
+        }
         const raw = typeof data.content === 'string' ? data.content : '';
         if (!raw) return;
         if (!threadId) {
@@ -797,7 +840,7 @@ export class DesktopRelayClient {
       console.error(`[DesktopRelay] BUG: refusing to send ${ type } frame without conversationId`);
       return;
     }
-    this.send({ ...payload, conversationId });
+    this.send({ ...payload, conversationId, deviceId: this.deviceId });
   }
 
   private sendUnchecked(payload: Record<string, unknown>) {
