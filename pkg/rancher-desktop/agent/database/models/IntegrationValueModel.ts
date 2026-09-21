@@ -1,3 +1,4 @@
+import { normalizeVaultCredentialValue } from '../../services/vaultCredentialSchema';
 import { BaseModel } from '../BaseModel';
 
 const VAULT_PREFIX = '$VAULT$';
@@ -25,8 +26,16 @@ function ipcDecrypt(value: string): string {
   try {
     const { ipcRenderer } = require('electron');
     const result = ipcRenderer.sendSync('vault:decrypt-sync', value);
-    return result || value;
-  } catch { return value }
+    if (typeof result !== 'string') {
+      throw new Error('VAULT_DECRYPT_FAILED: sync decrypt returned a non-string result');
+    }
+    if (!result) {
+      throw new Error('VAULT_DECRYPT_FAILED: sync decrypt failed');
+    }
+    return result;
+  } catch (error) {
+    throw error instanceof Error ? error : new Error('VAULT_DECRYPT_FAILED: sync decrypt failed');
+  }
 }
 
 function ipcEncrypt(value: string): string {
@@ -93,6 +102,9 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
 
   /** Decrypt a value if it's vault-encrypted, otherwise return as-is */
   private static decryptValue(value: string): string {
+    if (typeof value !== 'string') {
+      throw new Error('INVALID_VAULT_ROW: credential value must be a string');
+    }
     if (!value?.startsWith(VAULT_PREFIX)) return value;
     // Main process: direct
     const vault = getVaultDirect();
@@ -117,8 +129,12 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
 
   /** Decrypt the value attribute on a model instance */
   private static decryptModel(model: IntegrationValueModel): IntegrationValueModel {
-    if (model.attributes.value) {
-      model.attributes.value = this.decryptValue(model.attributes.value);
+    const normalized = normalizeVaultCredentialValue(model.attributes);
+    if ('code' in normalized) {
+      throw new Error(`${ normalized.code }: ${ normalized.message }`);
+    }
+    if (normalized.value) {
+      model.attributes.value = this.decryptValue(normalized.value);
     }
     return model;
   }
