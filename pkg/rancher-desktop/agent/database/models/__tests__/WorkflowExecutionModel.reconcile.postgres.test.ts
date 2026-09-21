@@ -15,6 +15,7 @@ import { up as createLaneWorkflowBindings } from '../../migrations/0070_create_l
 import { up as scopeLaneWorkflowExecutions } from '../../migrations/0071_scope_lane_workflow_executions';
 import { up as extendDispatchCustody } from '../../migrations/0076_extend_work_task_dispatch_custody';
 import { up as addWorkflowExecutionLeases } from '../../migrations/0081_add_workflow_execution_leases';
+import { WorkflowLeaseHeartbeat } from '../../../workflow/WorkflowLeaseHeartbeat';
 import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
 import { DISPATCHER_RECONCILED_LANE_MESSAGE, WorkflowExecutionModel } from '../WorkflowExecutionModel';
 
@@ -73,6 +74,35 @@ describeWithPostgres('WorkflowExecutionModel dispatcher reconciliation (migrated
     await pool?.end();
     await bootstrapPool?.query(`DROP SCHEMA "${ schema }" CASCADE`);
     await bootstrapPool?.end();
+  });
+
+  it('keeps a slow node out of recovery and fences it after durable settlement', async() => {
+    await WorkflowExecutionModel.markRunning({ executionId: 'slow-node', workflowId: 'workflow-1', workflowName: 'Slow node', workflowSlug: 'slow-node' });
+    const token = randomUUID();
+    await WorkflowExecutionModel.acquireLease('slow-node', 'slow-worker', 600, token);
+    expect(await WorkflowExecutionModel.acquireLease('slow-node', 'slow-worker', 600, randomUUID())).toBeNull();
+    expect(await WorkflowExecutionModel.renewHeartbeat('slow-node', 'slow-worker', 'stale-token', 600)).toBeNull();
+    let lost = false;
+    const heartbeat = new WorkflowLeaseHeartbeat(async() =>
+      (await WorkflowExecutionModel.renewHeartbeat('slow-node', 'slow-worker', token, 600)) !== null,
+    () => { lost = true; }, 50, 200);
+    heartbeat.start();
+    try {
+      // Run multiple recovery sweeps across more than two original lease lifetimes.
+      for (let sweep = 0; sweep < 8; sweep++) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        expect(await WorkflowExecutionModel.recover('slow-node', 'recovery-worker')).toBeNull();
+      }
+      const row = (await pool.query("SELECT status, attempt_count FROM workflow_executions WHERE execution_id = 'slow-node'")).rows[0];
+      expect(row).toMatchObject({ status: 'running', attempt_count: 0 });
+      await WorkflowExecutionModel.settle('slow-node', 'failed', 'external cancellation');
+      await expect(heartbeat.assertOwned()).rejects.toThrow('terminal');
+      expect(lost).toBe(true);
+      const terminal = (await pool.query("SELECT status, terminal_reason FROM workflow_executions WHERE execution_id = 'slow-node'")).rows[0];
+      expect(terminal).toMatchObject({ status: 'failed', terminal_reason: 'external cancellation' });
+    } finally {
+      heartbeat.stop();
+    }
   });
 
   it('leaves a live lane-automation council alone after its originating dispatch settled terminal', async() => {

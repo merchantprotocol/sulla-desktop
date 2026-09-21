@@ -6,7 +6,7 @@ import {
 } from '../TaskOwnership';
 
 describe('normalizeAutonomousTaskOwnership', () => {
-  it.each(['sulla', 'heartbeat', 'dispatcher'])(
+  it.each(['sulla', 'heartbeat', 'dispatcher', 'sulla-desktop'])(
     'routes ordinary sulla-owned todos written by %s to the dispatcher',
     (actor) => {
       expect(normalizeAutonomousTaskOwnership({

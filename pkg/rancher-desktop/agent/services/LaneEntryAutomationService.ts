@@ -75,37 +75,7 @@ export class LaneEntryAutomationService {
         executionScope:     { taskId: entry.task_id, generation: entry.generation },
         executionId,
         onSettled:          async(result) => {
-          const outcome = result.outcome && typeof result.outcome === 'object'
-            ? result.outcome as Record<string, any>
-            : {};
-          let transitionReceipt: unknown = null;
-          if (result.status === 'completed' && outcome.transition) {
-            const transition = outcome.transition as { mode?: string; stageKey?: string };
-            const { getProjectsApplicationService } = await import('../projects/application/ProjectsApplicationService');
-            const projects = getProjectsApplicationService();
-            const context = { actor: 'sulla' as const, source: 'routine' as const };
-            if (transition.mode === 'next') {
-              transitionReceipt = await projects.transitionTaskRelative({
-                taskId: entry.task_id, direction: 'next', expectedGeneration: entry.generation,
-                custody: outcome.custody,
-              }, context);
-            } else if (transition.mode === 'specific' && typeof transition.stageKey === 'string') {
-              transitionReceipt = await projects.transitionTaskStage({
-                taskId: entry.task_id, stageKey: transition.stageKey, expectedGeneration: entry.generation,
-                custody: outcome.custody,
-              }, context);
-            } else {
-              throw new Error('Lane workflow returned an invalid transition outcome.');
-            }
-          }
-          await WorkLaneWorkflowBindingModel.markOutcome(
-            entry.id,
-            result.executionId,
-            result.status,
-            result.status === 'completed'
-              ? { disposition: 'completed', workflowOutcome: outcome, transitionReceipt }
-              : { disposition: 'runtime_failed', message: result.error ?? 'Unknown workflow failure' },
-          );
+          await LaneEntryAutomationService.settleEntry(entry, result);
         },
       });
       if (result.executionId !== executionId) {
@@ -121,35 +91,87 @@ export class LaneEntryAutomationService {
     }
   }
 
+  private static async settleEntry(entry: LaneEntryAutomationRecord,
+    result: { executionId: string; status: 'completed' | 'failed'; outcome?: unknown; error?: string }): Promise<void> {
+    const current = await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id);
+    if (!current || current.status !== 'running' || current.execution_id !== result.executionId) return;
+    const outcome = result.outcome && typeof result.outcome === 'object'
+      ? result.outcome as Record<string, any>
+      : {};
+    let transitionReceipt: unknown = null;
+    if (result.status === 'completed' && outcome.transition) {
+      const transition = outcome.transition as { mode?: string; stageKey?: string };
+      const { getProjectsApplicationService } = await import('../projects/application/ProjectsApplicationService');
+      const projects = getProjectsApplicationService();
+      const context = { actor: 'sulla' as const, source: 'routine' as const };
+      if (transition.mode === 'next') {
+        transitionReceipt = await projects.transitionTaskRelative({
+          taskId: entry.task_id, direction: 'next', expectedGeneration: entry.generation,
+          custody: outcome.custody,
+        }, context);
+      } else if (transition.mode === 'specific' && typeof transition.stageKey === 'string') {
+        transitionReceipt = await projects.transitionTaskStage({
+          taskId: entry.task_id, stageKey: transition.stageKey, expectedGeneration: entry.generation,
+          custody: outcome.custody,
+        }, context);
+      } else {
+        throw new Error('Lane workflow returned an invalid transition outcome.');
+      }
+    }
+    await WorkLaneWorkflowBindingModel.markOutcome(
+      entry.id,
+      result.executionId,
+      result.status,
+      result.status === 'completed'
+        ? { disposition: 'completed', workflowOutcome: outcome, transitionReceipt }
+        : { disposition: 'runtime_failed', message: result.error ?? 'Unknown workflow failure' },
+    );
+  }
+
+  private static readonly recovering = new Set<string>();
+
   /** Drain committed lane-entry outbox rows after a crash or app restart. */
   static async drainRecoverable(limit = 50, includeInterrupted = false): Promise<LaneEntryAutomationRecord[]> {
     const recoverable = await WorkLaneWorkflowBindingModel.listRecoverable(limit, includeInterrupted);
     const results: LaneEntryAutomationRecord[] = [];
-    for (const entry of recoverable) {
-      if (entry.status === 'running' && entry.execution_id) {
-        if (entry.workflow_execution_status === 'completed' || entry.workflow_execution_status === 'failed') {
-          const settled = await WorkLaneWorkflowBindingModel.markOutcome(
-            entry.id,
-            entry.execution_id,
-            entry.workflow_execution_status,
-            entry.workflow_execution_status === 'completed'
-              ? { disposition: 'completed', recovered: true }
-              : { disposition: 'runtime_failed', message: entry.workflow_execution_error ?? 'Unknown workflow failure', recovered: true },
-          );
-          if (settled) results.push(settled);
-          continue;
+    await Promise.allSettled(recoverable.filter(entry => !this.recovering.has(entry.id)).map(async(entry) => {
+      this.recovering.add(entry.id);
+      try {
+        if (entry.status === 'running' && entry.execution_id) {
+          if (entry.workflow_execution_status === 'completed' || entry.workflow_execution_status === 'failed') {
+            if (entry.workflow_execution_status === 'completed' && (entry.outcome as any)?.disposition !== 'completion_pending') {
+              await this.settleEntry(entry, { executionId: entry.execution_id, status: 'failed',
+                error: 'Missing durable terminal receipt; manual reconciliation required.' });
+            } else if (entry.workflow_execution_status === 'completed') {
+              await this.settleEntry(entry, {
+                executionId: entry.execution_id, status: 'completed',
+                outcome: (entry.outcome as any)?.workflowOutcome,
+              });
+            } else {
+              await this.settleEntry(entry, {
+                executionId: entry.execution_id, status: 'failed', error: entry.workflow_execution_error ?? 'Unknown workflow failure',
+              });
+            }
+            const settled = await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id);
+            if (settled) results.push(settled);
+            return;
+          }
+          const reset = entry.workflow_execution_status === 'running' || entry.workflow_execution_status === 'suspended'
+            ? await WorkLaneWorkflowBindingModel.resetInterruptedExecution(entry.id, entry.execution_id)
+            : await WorkLaneWorkflowBindingModel.resetMissingExecution(entry.id, entry.execution_id);
+          if (!reset) return;
         }
-        const reset = entry.workflow_execution_status === 'running' || entry.workflow_execution_status === 'suspended'
-          ? await WorkLaneWorkflowBindingModel.resetInterruptedExecution(entry.id, entry.execution_id)
-          : await WorkLaneWorkflowBindingModel.resetMissingExecution(entry.id, entry.execution_id);
-        if (!reset) continue;
+        if (entry.status === 'failed') {
+          const reset = await WorkLaneWorkflowBindingModel.resetFailed(entry.id);
+          if (!reset) return;
+        }
+        results.push(await LaneEntryAutomationService.dispatchEntry(entry.id));
+      } catch (error) {
+        console.warn(`[LaneEntryAutomation] Recovery failed for ${ entry.id }; continuing other cards`, error);
+      } finally {
+        this.recovering.delete(entry.id);
       }
-      if (entry.status === 'failed') {
-        const reset = await WorkLaneWorkflowBindingModel.resetFailed(entry.id);
-        if (!reset) continue;
-      }
-      results.push(await LaneEntryAutomationService.dispatchEntry(entry.id));
-    }
+    }));
     return results;
   }
 

@@ -1,5 +1,6 @@
 export const TASK_ASSIGNEES = {
   dispatcher:  'dispatcher',
+  desktop:     'sulla-desktop',
   heartbeat:   'heartbeat',
   human:       'human',
   legacySulla: 'sulla',
@@ -8,12 +9,14 @@ export const TASK_ASSIGNEES = {
 export const AUTONOMOUS_TASK_ASSIGNEES = [
   TASK_ASSIGNEES.heartbeat,
   TASK_ASSIGNEES.dispatcher,
+  TASK_ASSIGNEES.desktop,
 ] as const;
 
 export const AUTONOMOUS_TASK_ACTORS = [
   TASK_ASSIGNEES.legacySulla,
   TASK_ASSIGNEES.heartbeat,
   TASK_ASSIGNEES.dispatcher,
+  TASK_ASSIGNEES.desktop,
 ] as const;
 
 export const NON_AUTONOMOUS_TASK_LABELS = [

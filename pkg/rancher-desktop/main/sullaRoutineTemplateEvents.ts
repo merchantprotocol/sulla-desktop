@@ -22,6 +22,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import yaml from 'yaml';
+import { workflowTerminalResult } from '@pkg/agent/services/WorkflowTerminalResult';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
@@ -771,36 +772,28 @@ export async function executeRoutine(
     }
   };
 
-  graph.execute(state).then(async() => {
-    const terminal = state.metadata.activeWorkflow;
-    const status = terminal?.status === 'failed' ? 'failed' : 'completed';
-    const outputs = terminal?.nodeOutputs && typeof terminal.nodeOutputs === 'object'
-      ? terminal.nodeOutputs as Record<string, { result?: unknown }>
-      : {};
-    const orderedNodeIds = Array.isArray(terminal?.definition?.nodes)
-      ? terminal.definition.nodes.map((node: { id: string }) => node.id).reverse()
-      : Object.keys(outputs).reverse();
-    let outcome: unknown;
-    for (const nodeId of orderedNodeIds) {
-      const result = outputs[nodeId]?.result;
-      if (result && typeof result === 'object') { outcome = result; break }
-      if (typeof result !== 'string') continue;
-      try {
-        const normalized = result.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-        const parsed = JSON.parse(normalized);
-        if (parsed && typeof parsed === 'object') { outcome = parsed; break }
-      } catch { /* ordinary prose and response nodes are not structured outcomes */ }
+  let settled = false;
+  const settle = async(result: { executionId: string; status: 'completed' | 'failed'; error?: string; outcome?: unknown }) => {
+    if (settled || result.executionId !== executionId) return;
+    settled = true;
+    try {
+      await options?.onSettled?.(result);
+    } finally {
+      delete state.metadata.onRoutineTerminal;
+      await releaseRoutineSlot();
     }
-    await options?.onSettled?.({ executionId, status, error: terminal?.error, outcome });
-    await releaseRoutineSlot();
+  };
+  // A graph yield is not workflow completion. The controller also calls this
+  // after an asynchronous continuation reaches its durable terminal state.
+  state.metadata.onRoutineTerminal = async() => {
+    const result = workflowTerminalResult(state.metadata, executionId);
+    if (result) await settle(result);
+  };
+  graph.execute(state).then(async() => {
+    await state.metadata.onRoutineTerminal?.();
   }).catch(async(err) => {
     console.error(`[Sulla] routine execution ${ executionId } failed:`, err);
-    await options?.onSettled?.({
-      executionId,
-      status: 'failed',
-      error:  err instanceof Error ? err.message : String(err),
-    });
-    await releaseRoutineSlot();
+    await settle({ executionId, status: 'failed', error: err instanceof Error ? err.message : String(err) });
   });
 
   console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);

@@ -15,7 +15,7 @@ describe('WorkTaskDispatchModel downstream-first backpressure', () => {
 
     const [sql, params] = queryOne.mock.calls[0];
     expect(sql).toContain("t.status = 'in_review'");
-    expect(sql).toContain("LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'verifier')");
+    expect(sql).toContain("LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier')");
     expect(sql).toContain("FROM unnest(COALESCE(t.labels, '{}')) AS label");
     expect(sql).not.toContain("d.status = 'running'");
     expect(params).toEqual([
@@ -32,7 +32,7 @@ describe('WorkTaskDispatchModel downstream-first backpressure', () => {
 
     const sql = query.mock.calls[0][0];
     expect(sql).toContain("downstream.status = 'in_review'");
-    expect(sql).toContain("LOWER(downstream.assignee) IN ('heartbeat', 'dispatcher', 'verifier')");
+    expect(sql).toContain("LOWER(downstream.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier')");
     expect(sql).toContain("LOWER(downstream_label) = ANY($3::text[])");
     expect(sql.indexOf("downstream.status = 'in_review'"))
       .toBeLessThan(sql.indexOf('FOR UPDATE OF t SKIP LOCKED'));

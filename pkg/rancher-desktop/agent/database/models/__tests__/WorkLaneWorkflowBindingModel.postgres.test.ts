@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { Pool } from 'pg';
 
@@ -18,7 +19,9 @@ import { up as createPlanningRuns } from '../../migrations/0072_create_work_task
 import { up as addProjectViewsAndScheduling } from '../../migrations/0075_add_project_views_and_scheduling';
 import { up as extendDispatchCustody } from '../../migrations/0076_extend_work_task_dispatch_custody';
 import { up as addWorkflowExecutionLeases } from '../../migrations/0081_add_workflow_execution_leases';
+import { up as createArtifactReceipts } from '../../migrations/0082_create_artifact_receipts';
 import { up as createWorkTaskDependencies } from '../../migrations/0083_create_work_task_dependencies';
+import { up as addReceiptGeneration } from '../../migrations/0088_add_generation_to_artifact_receipts';
 import { up as createProjectsDomainEventOutbox } from '../../migrations/0086_create_projects_domain_event_outbox';
 import { WorkItemsModel } from '../WorkItemsModel';
 import {
@@ -27,17 +30,29 @@ import {
 } from '../WorkLaneWorkflowBindingModel';
 import { DISPATCHER_RECONCILED_LANE_MESSAGE, WorkflowExecutionModel } from '../WorkflowExecutionModel';
 
+// Exercise database transitions without starting desktop graphs from commit hooks.
+jest.unstable_mockModule('../../../services/TaskDispatcherService', () => ({
+  getTaskDispatcherService: () => ({ forceCheck: async() => {} }),
+}));
+jest.unstable_mockModule('../../../projects/application/ProjectsApplicationService', () => ({
+  getProjectsApplicationService: jest.fn(),
+}));
+
 const connectionString = process.env.SULLA_INTEGRATION_POSTGRES_URL;
 const describeWithPostgres = connectionString ? describe : describe.skip;
 
 describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integration', () => {
+  const schema = `lane_binding_${ randomUUID().replaceAll('-', '') }`;
+  let bootstrapPool: Pool;
   let pool: Pool;
   const originalQuery = postgresClient.query;
   const originalQueryOne = postgresClient.queryOne;
   const originalTransaction = postgresClient.transaction;
 
   beforeAll(async() => {
-    pool = new Pool({ connectionString, max: 8 });
+    bootstrapPool = new Pool({ connectionString, max: 1 });
+    await bootstrapPool.query(`CREATE SCHEMA "${ schema }"`);
+    pool = new Pool({ connectionString, max: 8, options: `-c search_path=${ schema }` });
     await pool.query(createWorkflows);
     await pool.query(createWorkflowExecutions);
     await pool.query(addCoreWorkflowFields);
@@ -53,6 +68,8 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
     await pool.query(createPlanningRuns);
     await addProjectViewsAndScheduling(pool as any);
     await pool.query(addWorkflowExecutionLeases);
+    await pool.query(createArtifactReceipts);
+    await pool.query(addReceiptGeneration);
     await createWorkTaskDependencies(pool as any);
     await pool.query(createProjectsDomainEventOutbox);
 
@@ -108,6 +125,8 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
     (postgresClient as any).queryOne = originalQueryOne;
     (postgresClient as any).transaction = originalTransaction;
     await pool?.end();
+    await bootstrapPool?.query(`DROP SCHEMA "${ schema }" CASCADE`);
+    await bootstrapPool?.end();
   });
 
   afterEach(() => {
@@ -245,6 +264,10 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
   }, 30_000);
 
   it('settles a dependency-held planning council when moving the task to blocked', async() => {
+    // The preceding rollback test intentionally has no blocked lane.
+    await pool.query(`INSERT INTO work_lane_definitions
+      (id, lane_key, scope, display_name, semantic_role, system_required)
+      VALUES ('lane-blocked', 'blocked', 'global_default', 'Blocked', 'blocked', true)`);
     await pool.query(`
       INSERT INTO work_tasks (id, project_id, epic_id, title, status)
       VALUES
@@ -318,7 +341,7 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
     await WorkflowExecutionModel.markCompleted(execution1);
     await WorkflowExecutionModel.markCompleted(execution1);
     expect(await WorkLaneWorkflowBindingModel.getLaneEntry(generation1.id)).toMatchObject({
-      execution_id: execution1, status: 'completed', outcome: { disposition: 'completed' },
+      execution_id: execution1, status: 'running', outcome: { disposition: 'completion_pending' },
     });
 
     const generation2 = (await WorkLaneWorkflowBindingModel.claimLaneEntry(
@@ -334,6 +357,11 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
       scopeTaskId:     'task-runtime',
       scopeGeneration: 2,
     });
+    // Recovery must leave a fresh run alone; only an expired lease is interrupted.
+    await WorkflowExecutionModel.acquireLease(execution2, 'interrupted-runtime', 60_000);
+    expect(await WorkLaneWorkflowBindingModel.resetInterruptedExecution(generation2.id, execution2)).toBeNull();
+    await pool.query(`UPDATE workflow_executions SET lease_expires_at = now() - interval '1 second'
+      WHERE execution_id = $1`, [execution2]);
     await expect(WorkLaneWorkflowBindingModel.resetInterruptedExecution(generation2.id, execution2))
       .resolves.toMatchObject({ status: 'pending', execution_id: null });
 
@@ -427,4 +455,26 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
       .not.toContain(laneEntry.id);
     await expect(WorkLaneWorkflowBindingModel.resetFailed(laneEntry.id)).resolves.toBeNull();
   }, 30_000);
+  it('persists completion evidence until lane settlement and recovers it after a lost callback', async() => {
+    await pool.query(`INSERT INTO work_tasks (id, project_id, epic_id, title, status)
+      VALUES ('task-receipt', 'project-1', 'epic-1', 'Receipt recovery', 'todo')`);
+    const { entry } = await WorkLaneWorkflowBindingModel.claimLaneEntry('task-receipt', 'todo', 'integration-test');
+    const executionId = 'lane-exec-task-receipt-1';
+    await WorkLaneWorkflowBindingModel.markStarted(entry.id, executionId);
+    await WorkflowExecutionModel.markRunning({ executionId, workflowId: 'workflow-1', workflowName: 'Workflow 1', workflowSlug: 'workflow-1' });
+    const evidence = { artifact: 'verified-result', checks: ['passed'] };
+    await WorkflowExecutionModel.settle(executionId, 'completed', undefined, evidence);
+    expect(await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id)).toMatchObject({
+      status: 'running', outcome: { disposition: 'completion_pending', workflowOutcome: evidence },
+    });
+    const dispatch = jest.spyOn(LaneEntryAutomationService, 'dispatchEntry');
+    await LaneEntryAutomationService.drainRecoverable();
+    expect(await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id)).toMatchObject({
+      status: 'completed', outcome: { disposition: 'completed', workflowOutcome: evidence },
+    });
+    expect(dispatch.mock.calls.some(([id]) => id === entry.id)).toBe(false);
+    await LaneEntryAutomationService.drainRecoverable();
+    expect((await WorkLaneWorkflowBindingModel.listRecoverable()).some(row => row.id === entry.id)).toBe(false);
+  });
+
 });

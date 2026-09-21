@@ -87,7 +87,7 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[0][0]).toContain('LOWER(t.assignee) = ANY($2::text[])');
     expect(query.mock.calls[0][1]).toEqual([
       ['done', 'cancelled', 'parked', 'blocked'],
-      ['heartbeat', 'dispatcher'],
+      ['heartbeat', 'dispatcher', 'sulla-desktop'],
       ['gated', 'decision', 'human', 'manual', 'no-auto-dispatch'],
     ]);
     expect(query.mock.calls[0][0]).toContain('child.parent_id = t.id');

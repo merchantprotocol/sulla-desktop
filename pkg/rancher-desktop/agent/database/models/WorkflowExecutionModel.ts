@@ -290,16 +290,16 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   }
 
   /** Terminal settlement is compare-and-set; repeated calls are no-ops. */
-  static async settle(executionId: string, outcome: 'completed' | 'failed', error?: string): Promise<WorkflowExecutionModel | null> {
+  static async settle(executionId: string, outcome: 'completed' | 'failed', error?: string, workflowOutcome?: unknown): Promise<WorkflowExecutionModel | null> {
     const row = await postgresClient.queryOne<any>(`WITH settled AS (
       UPDATE workflow_executions SET status = $2::text, completed_at = COALESCE(completed_at, NOW()), terminal_at = COALESCE(terminal_at, NOW()), terminal_reason = CASE WHEN $2::text = 'failed' THEN COALESCE($3::text, terminal_reason) ELSE terminal_reason END, error = CASE WHEN $2::text = 'failed' THEN COALESCE($3::text, error) ELSE error END, owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
       WHERE execution_id = $1 AND status IN ('running', 'suspended') RETURNING *),
       lane_settled AS (
       UPDATE work_lane_entry_automations
-      SET status = $2::text, outcome = CASE WHEN $2::text = 'completed' THEN jsonb_build_object('disposition', 'completed') ELSE jsonb_build_object('disposition', 'runtime_failed', 'message', COALESCE($3::text, 'Unknown workflow failure')) END, completed_at = NOW()
+      SET status = CASE WHEN $2::text = 'completed' THEN 'running' ELSE 'failed' END, outcome = CASE WHEN $2::text = 'completed' THEN jsonb_build_object('disposition', 'completion_pending', 'workflowOutcome', $4::jsonb) ELSE jsonb_build_object('disposition', 'runtime_failed', 'message', COALESCE($3::text, 'Unknown workflow failure')) END, completed_at = NOW()
       WHERE execution_id = (SELECT execution_id FROM settled) AND status = 'running'
       RETURNING execution_id)
-      SELECT * FROM settled;`, [executionId, outcome, error ?? null]);
+      SELECT * FROM settled;`, [executionId, outcome, error ?? null, JSON.stringify(workflowOutcome ?? null)]);
     return row ? WorkflowExecutionModel.hydrate(row) : null;
   }
 

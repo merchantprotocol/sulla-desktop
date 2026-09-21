@@ -390,7 +390,7 @@ export class WorkTaskDependencyModel {
       else if (['done', 'cancelled', 'parked', 'blocked'].includes(task.project_status)) {
         exclusionReasons.push(`project is '${ task.project_status }'`);
       }
-      if (task.assignee && !['heartbeat', 'dispatcher', 'verifier'].includes(task.assignee.toLowerCase())) {
+      if (task.assignee && !['heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'].includes(task.assignee.toLowerCase())) {
         exclusionReasons.push(`assignee '${ task.assignee }' is outside autonomous ownership`);
       }
       if ((task.labels ?? []).some(label => ['gated', 'decision', 'human', 'manual', 'no-auto-dispatch'].includes(label.trim().toLowerCase()))) {
