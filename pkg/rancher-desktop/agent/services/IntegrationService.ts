@@ -2,6 +2,7 @@
 // Provides CRUD operations for integration connection properties
 // Supports multiple accounts per integration via account_id
 
+import { normalizeVaultCredentialValues, type VaultCredentialReadResult } from './vaultCredentialSchema';
 import { IntegrationValueModel } from '../database/models/IntegrationValueModel';
 import { getSelectBoxProvider, type SelectOption } from '../integrations/select_box';
 
@@ -196,26 +197,35 @@ export class IntegrationService {
   // ─── Value CRUD (account-aware) ───────────────────────────────────
 
   async setIntegrationValue(input: IntegrationValueInput): Promise<IntegrationValue> {
-    const accountId = input.account_id || DEFAULT_ACCOUNT_ID;
+    const integrationId = typeof input.integration_id === 'string' ? input.integration_id.trim() : '';
+    const property = typeof input.property === 'string' ? input.property.trim() : '';
+    const value = typeof input.value === 'string' ? input.value : String(input.value ?? '');
+    if (!integrationId || !property) {
+      throw new Error('Integration values require an integration_id and property.');
+    }
+
+    const accountId = typeof input.account_id === 'string' && input.account_id.trim()
+      ? input.account_id.trim()
+      : DEFAULT_ACCOUNT_ID;
 
     // If this is the first account for this integration, auto-mark as default
-    const existingAccounts = await IntegrationValueModel.getDistinctAccounts(input.integration_id);
+    const existingAccounts = await IntegrationValueModel.getDistinctAccounts(integrationId);
     const isFirstAccount = existingAccounts.length === 0 || (existingAccounts.length === 1 && existingAccounts[0] === accountId);
 
     const { model, wasUpdate } = await IntegrationValueModel.upsert(
-      input.integration_id,
+      integrationId,
       accountId,
-      input.property,
-      input.value,
+      property,
+      value,
     );
 
     // Auto-set default on first account
     if (isFirstAccount && !model.attributes.is_default) {
-      await IntegrationValueModel.setDefaultAccount(input.integration_id, accountId);
+      await IntegrationValueModel.setDefaultAccount(integrationId, accountId);
     }
 
     const action = wasUpdate ? 'updated' : 'created';
-    console.log(`[IntegrationService] ${ wasUpdate ? 'Updated' : 'Created' } value: ${ input.integration_id }/${ accountId }.${ input.property }`);
+    console.log(`[IntegrationService] ${ wasUpdate ? 'Updated' : 'Created' } value: ${ integrationId }/${ accountId }.${ property }`);
 
     const value = this.modelToValue(model);
     this.notifyValueChange(value, action);
@@ -308,6 +318,21 @@ export class IntegrationService {
 
     console.log(`[IntegrationService] Fetched ${ models.length } form values for ${ integrationId }/${ acctId }`);
     return models.map(m => this.modelToValue(m));
+  }
+
+  async getSerializableFormValues(integrationId: string, accountId: string): Promise<VaultCredentialReadResult> {
+    try {
+      const models = await IntegrationValueModel.getFormValues(integrationId, accountId, SYSTEM_PROPERTIES);
+      return normalizeVaultCredentialValues(models.map(m => this.modelToValue(m)));
+    } catch (error) {
+      return {
+        success: false,
+        error:   {
+          code:    'VAULT_DECRYPT_FAILED',
+          message: error instanceof Error ? error.message : 'Unable to read vault credential.',
+        },
+      };
+    }
   }
 
   async setFormValues(inputs: IntegrationValueInput[]): Promise<IntegrationValue[]> {

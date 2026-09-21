@@ -289,6 +289,7 @@ export interface IpcMainInvokeEvents {
   'open-capture-studio':   () => void;
   'sulla-settings:get':    (key: string) => any;
   'sulla-settings:set':    (key: string, value: any, cast?: string) => any;
+  'vault:read-account':    (data: { integrationId: string; accountId: string }) => import('@pkg/agent/services/vaultCredentialSchema').VaultCredentialReadResult;
 
   // DB-backed System Prompt editor (Language Model Settings)
   'system-prompt:list':              () => import('@pkg/agent/database/models/SystemPromptSectionModel').SystemPromptSectionRecord[];

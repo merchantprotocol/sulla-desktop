@@ -752,17 +752,38 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return true;
   });
 
+  ipcMainProxy.handle('vault:read-account', async(_event: Electron.IpcMainInvokeEvent, data: { integrationId: string; accountId: string }) => {
+    try {
+      const result = await getIntegrationService().getSerializableFormValues(data.integrationId, data.accountId);
+      return result;
+    } catch {
+      return {
+        success: false,
+        error: {
+          code:    'VAULT_DECRYPT_FAILED',
+          message: 'Unable to read vault credential.',
+        },
+      };
+    }
+  });
+
   // Sync decrypt/encrypt for renderer-side IntegrationValueModel
   const { ipcMain } = await import('electron');
-  ipcMain.on('vault:decrypt-sync', (event, encrypted: string) => {
+  ipcMain.on('vault:decrypt-sync', (event, encrypted: unknown) => {
     try {
+      if (typeof encrypted !== 'string') {
+        event.returnValue = '';
+        return;
+      }
       if (vaultKey.isUnlocked() && vaultKey.isEncrypted(encrypted)) {
         event.returnValue = vaultKey.decrypt(encrypted);
       } else {
         event.returnValue = encrypted;
       }
     } catch {
-      event.returnValue = encrypted;
+      // Return only a primitive sentinel. Returning the malformed input can
+      // cross Electron's sync IPC boundary as a host object and terminate V8.
+      event.returnValue = '';
     }
   });
 

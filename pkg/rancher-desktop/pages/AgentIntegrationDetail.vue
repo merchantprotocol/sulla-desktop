@@ -1108,7 +1108,11 @@ const cancelAddAccount = () => {
 };
 
 const loadFormDataForAccount = async(integrationId: string, accountId: string) => {
-  const formValues = await integrationService.getFormValues(integrationId, accountId);
+  const result = await ipcRenderer.invoke('vault:read-account', { integrationId, accountId });
+  if (!result.success) {
+    throw new Error(`${ result.error?.code || 'VAULT_READ_FAILED' }: ${ result.error?.message || 'Unable to read vault credential.' }`);
+  }
+  const formValues = result.values || [];
   const formDataObj: Record<string, string> = {};
 
   formValues.forEach(value => {
