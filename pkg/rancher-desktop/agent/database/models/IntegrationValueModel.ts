@@ -133,9 +133,14 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     if ('code' in normalized) {
       throw new Error(`${ normalized.code }: ${ normalized.message }`);
     }
-    if (normalized.value) {
-      model.attributes.value = this.decryptValue(normalized.value);
-    }
+    model.attributes.value_id = normalized.value_id;
+    model.attributes.integration_id = normalized.integration_id;
+    model.attributes.account_id = normalized.account_id;
+    model.attributes.property = normalized.property;
+    model.attributes.is_default = normalized.is_default;
+    model.attributes.created_at = normalized.created_at ? new Date(normalized.created_at) : new Date(0);
+    model.attributes.updated_at = normalized.updated_at ? new Date(normalized.updated_at) : new Date(0);
+    model.attributes.value = this.decryptValue(normalized.value);
     return model;
   }
 
