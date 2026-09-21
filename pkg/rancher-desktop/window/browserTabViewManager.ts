@@ -1005,15 +1005,111 @@ export class BrowserTabViewManager {
     }
   }
 
-  private attachListeners(tabId: string, view: WebContentsView, mainWindow: Electron.BrowserWindow): void {
-    const wc = view.webContents;
+  /**
+   * Window-open policy shared by browser tabs and any popup they spawn.
+   *
+   * `target="_blank"` links and plain `window.open(url)` calls become Sulla
+   * tabs — that is what the user expects from the embedded browser.
+   *
+   * Sized popups (`window.open(url, name, 'width=…,height=…')`, disposition
+   * `new-window`) must stay real popups. Denying them makes `window.open()`
+   * return `null`, which silently breaks every popup-based federated login:
+   * Google Identity Services logs "Failed to open popup window", then the
+   * `display=popup` / `redirect_uri=gis_transform` URL we re-opened as a tab
+   * has no opener to postMessage the credential back to, so accounts.google.com
+   * bounces through /restart → /signin/oauth → /accountchooser forever.
+   */
+  private buildWindowOpenHandler(mainWindow: Electron.BrowserWindow) {
+    return (details: Electron.HandlerDetails): Electron.WindowOpenHandlerResponse => {
+      if (this.isPopupRequest(details)) {
+        return {
+          action:                        'allow',
+          outlivesOpener:                false,
+          overrideBrowserWindowOptions:  {
+            autoHideMenuBar: true,
+            // Deliberately no width/height here — Electron already derives
+            // those from `details.features`, and hardcoding them would
+            // override the size the opener asked for.
+            webPreferences:  {
+              session:              this.ensureSession(),
+              webSecurity:          false,
+              contextIsolation:     false,
+              nodeIntegration:      false,
+              backgroundThrottling: false,
+            },
+          },
+        };
+      }
 
-    // Intercept target="_blank" links and window.open() calls so they open
-    // in a new Sulla browser tab instead of spawning an external window.
-    wc.setWindowOpenHandler((details) => {
       openUrlInApp(details.url);
 
       return { action: 'deny' };
+    };
+  }
+
+  /**
+   * True when the page asked for a popup window rather than a new tab.
+   *
+   * Chromium reports `new-window` for `window.open` calls that carry window
+   * features; `features` is also non-empty in that case. Anything else —
+   * `foreground-tab`, `background-tab`, `default` — is a link the user would
+   * expect to land in a Sulla tab.
+   */
+  private isPopupRequest(details: Electron.HandlerDetails): boolean {
+    if (details.disposition !== 'new-window' && !details.features) {
+      return false;
+    }
+
+    // Only real web content gets a native window; never javascript:, file:,
+    // data: or app:// URLs, which would escape the browser sandbox.
+    try {
+      const { protocol } = new URL(details.url);
+
+      return protocol === 'https:' || protocol === 'http:';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Apply browser-tab semantics to a popup Electron just created for us:
+   * same window-open policy, console forwarding, and a guard so a popup can
+   * never outlive the app window it belongs to.
+   */
+  private configurePopupWindow(popup: Electron.BrowserWindow, url: string, mainWindow: Electron.BrowserWindow): void {
+    console.log(`[BrowserTabView] popup window opened url=${ url }`);
+
+    popup.webContents.setWindowOpenHandler(this.buildWindowOpenHandler(mainWindow));
+    popup.webContents.on('did-create-window', (nested, details) => {
+      this.configurePopupWindow(nested, details.url, mainWindow);
+    });
+
+    popup.webContents.on('console-message', (event) => {
+      console.log(`[BrowserTabView:popup@${ event.lineNumber }] [${ event.level }] ${ event.message }`);
+    });
+
+    const closePopup = () => {
+      if (!popup.isDestroyed()) {
+        popup.close();
+      }
+    };
+
+    mainWindow.once('closed', closePopup);
+    popup.once('closed', () => mainWindow.removeListener('closed', closePopup));
+
+    popup.once('ready-to-show', () => popup.focus());
+  }
+
+  private attachListeners(tabId: string, view: WebContentsView, mainWindow: Electron.BrowserWindow): void {
+    const wc = view.webContents;
+
+    wc.setWindowOpenHandler(this.buildWindowOpenHandler(mainWindow));
+
+    // A real popup keeps `window.opener` alive; that channel is how federated
+    // sign-in hands the credential back. Wire the new window into the same
+    // session/handlers the tab views use so nested popups behave too.
+    wc.on('did-create-window', (popup, details) => {
+      this.configurePopupWindow(popup, details.url, mainWindow);
     });
 
     const sendState = () => {

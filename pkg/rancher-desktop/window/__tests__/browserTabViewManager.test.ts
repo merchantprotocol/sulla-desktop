@@ -191,6 +191,55 @@ describe('BrowserTabViewManager', () => {
     expect(webContents.focus).toHaveBeenCalled();
   });
 
+  describe('window.open policy', () => {
+    const popupDetails = {
+      url:         'https://accounts.google.com/o/oauth2/v2/auth?client_id=x&display=popup',
+      frameName:   '',
+      features:    'toolbar=no,width=500,height=600',
+      disposition: 'new-window',
+    } as any;
+
+    it('opens a real popup window for sized window.open calls so window.opener survives', async() => {
+      const { BrowserTabViewManager } = await loadManager();
+      const { openUrlInApp } = await import('@pkg/window');
+      const manager = BrowserTabViewManager.getInstance();
+
+      const result = (manager as any).buildWindowOpenHandler(mockMainWindow)(popupDetails);
+
+      expect(result.action).toBe('allow');
+      expect(result.overrideBrowserWindowOptions.webPreferences.session).toBe(mockBrowserSession);
+      // Electron derives the popup size from `features`; overriding it here
+      // would ignore the size the opener asked for.
+      expect(result.overrideBrowserWindowOptions).not.toHaveProperty('width');
+      expect(openUrlInApp).not.toHaveBeenCalled();
+    });
+
+    it('routes target="_blank" links into a Sulla tab', async() => {
+      const { BrowserTabViewManager } = await loadManager();
+      const { openUrlInApp } = await import('@pkg/window');
+      const manager = BrowserTabViewManager.getInstance();
+
+      const result = (manager as any).buildWindowOpenHandler(mockMainWindow)({
+        ...popupDetails,
+        url:         'https://example.com/docs',
+        features:    '',
+        disposition: 'foreground-tab',
+      });
+
+      expect(result).toEqual({ action: 'deny' });
+      expect(openUrlInApp).toHaveBeenCalledWith('https://example.com/docs');
+    });
+
+    it('never grants a native window to non-web schemes', async() => {
+      const { BrowserTabViewManager } = await loadManager();
+      const manager = BrowserTabViewManager.getInstance();
+
+      for (const url of ['file:///etc/passwd', 'app://index.html', 'data:text/html,<h1>x', 'not a url']) {
+        expect((manager as any).isPopupRequest({ ...popupDetails, url })).toBe(false);
+      }
+    });
+  });
+
   it('constructs tabs with the shared persistent session and visible-page throttling policy', async() => {
     const { BrowserTabViewManager } = await loadManager();
     const manager = BrowserTabViewManager.getInstance();
