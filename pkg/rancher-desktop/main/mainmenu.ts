@@ -10,6 +10,7 @@ import Logging from '@pkg/utils/logging';
 import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openComputerUseSettings, openMain, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
+import { openProcessManager } from '@pkg/window/processManager';
 
 const console = Logging.mainmenu;
 
@@ -692,6 +693,10 @@ function getMacApplicationMenu(): MenuItem[] {
           async click() {
             await updateManager.checkForUpdates('manual');
           },
+        },
+        {
+          label: 'Process Manager…',
+          click: openProcessManager,
         },
         { type: 'separator' },
         {
