@@ -182,6 +182,11 @@ export default {
       template: path.join(import.meta.dirname, 'public', 'audio-settings.html'),
       filename: 'audio-settings.html',
     },
+    'process-manager': {
+      entry:    path.join(import.meta.dirname, 'entry', 'process-manager.ts'),
+      template: path.join(import.meta.dirname, 'public', 'process-manager.html'),
+      filename: 'process-manager.html',
+    },
     'computer-use-settings': {
       entry:    path.join(import.meta.dirname, 'entry', 'computer-use-settings.ts'),
       template: path.join(import.meta.dirname, 'public', 'computer-use-settings.html'),
