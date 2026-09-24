@@ -114,3 +114,27 @@ The BackendGraphWebSocketService routes messages by channel name:
 | `calendar_event` | Calendar trigger |
 
 Messages keyed by `${channelId}|${threadId}` for concurrent execution.
+
+## Goal ownership in system-prompt assembly
+
+`agent/prompts/sections/goalOwnership.ts` defines the shared `goal_ownership`
+section. The section registry enables it in full, minimal, and local modes at
+priority 25, after Soul. Base-only (`none`) calls do not receive it. The policy
+keeps responsibility scoped to the assigned outcome, requires verified completion,
+preserves unfinished goals across new messages, and respects stops, approvals,
+and existing workflow ownership. It does not implement message queueing or retries.
+
+The section is separate from Soul so an existing customized Soul row or agent
+`soul.md` does not hide the new instruction. `systemPromptSectionDefaults.ts`
+provides its enabled-by-default database seed and Reset to default content.
+Normal builder precedence still applies to `goal_ownership` itself: explicit
+agent override, then database content, then the compiled fallback. Explicit
+section exclusions are honored.
+
+`BaseNode` loads database rows and disabled-section exclusions before calling
+`SystemPromptBuilder`. The separate `buildFullSystemPrompt` helper also uses the
+section registry, so the compiled policy reaches generated Claude Code/Codex
+memory files. That helper currently does not load database sections; changing a
+DB row alone therefore does not update every provider's generated memory file.
+Ship source changes through merge and rebuild, then verify a newly assembled
+prompt/new CLI session. An already-running session is not proof of activation.

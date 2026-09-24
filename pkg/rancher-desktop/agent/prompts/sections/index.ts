@@ -10,6 +10,7 @@ import { buildChannelAwarenessSection } from './channelAwareness';
 import { buildCitationsSection } from './citations';
 import { buildCompletionWrappersSection } from './completionWrappers';
 import { buildEnvironmentSection } from './environment';
+import { buildGoalOwnershipSection } from './goalOwnership';
 import { buildHeartbeatSection } from './heartbeat';
 import { buildIdentitySection } from './identity';
 import { buildNarrationPolicySection } from './narrationPolicy';
@@ -30,6 +31,7 @@ import { buildWorkspaceSection } from './workspace';
 // 'local' mode includes condensed variants of most sections for small-context local LLMs.
 SystemPromptBuilder.register('identity', buildIdentitySection, ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('soul', buildSoulSection, ['full', 'local']);
+SystemPromptBuilder.register('goal_ownership', buildGoalOwnershipSection, ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('safety', buildSafetySection, ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('tooling', buildToolingSection, ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('narration_policy', buildNarrationPolicySection, ['full', 'local']);
