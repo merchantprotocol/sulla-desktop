@@ -91,3 +91,62 @@ Unresolved variables remain as `{{literal}}` — they do NOT throw errors.
 | `condition` | `condition-true`, `condition-false` | — |
 | `loop` | `loop-start`, `loop-exit` | `loop-entry`, `loop-back` |
 | All others | `null` | `null` |
+
+## Refusing overlapping executions
+
+Set `concurrencyPolicy: forbid` at the definition root to admit at most one active
+execution for that workflow ID. Admission uses a PostgreSQL transaction and
+advisory lock before publishing the playbook state. Manual starts, scheduler
+starts, partial runs, checkpoint resumes, and force starts all use this guard.
+A database error refuses activation. An active suspended execution also blocks
+new starts; `force` and internal `allowConcurrent` do not override this policy.
+
+```yaml
+concurrencyPolicy: forbid
+auto_restart: false
+```
+
+The policy records `auto_restart: false` even if the definition omits that field.
+Automatic lease recovery, stale-row cleanup, and checkpoint supersession leave
+these executions alone. Failed singleton workflows remain suspended because a
+failed parent cannot prove that an external worker has stopped. Verify all worker
+processes have terminated before explicitly settling the suspended execution;
+then a new run can start. There is no automatic timeout takeover. Successful
+completion releases admission only after pending workers have finished.
+
+For each worker node, `data.config.maxAgents: 1` rejects an orchestrator response
+containing more than one nonempty `<PROMPT>` task before any agents are launched.
+It does not restrict tools available inside that agent; configure the worker's
+tool policy separately if recursive delegation must be prohibited.
+
+Singleton workflows do not retry worker launches automatically, since a timed-out
+launch does not prove that the prior process stopped. Nested workflow calls and
+workflow transfers involving a singleton source or target are refused; launch
+that workflow through its normal activation entry point instead. Keep the
+singleton definition stable while a run is active.
+
+## Deterministic preflight admission (zero-AI empty cycles)
+
+Set a top-level `preflight` to gate every activation behind a local Sulla
+function. The function runs in-process before any agent graph, memory recall,
+or model call exists. Its outputs must include a boolean `shouldRun`; anything
+else — missing key, wrong type, function failure, runtime error — fails closed
+and no AI starts. When `shouldRun` is false the activation is skipped entirely.
+
+```yaml
+preflight:
+  functionRef: ripplecore-ready-prs   # slug under ~/sulla/functions/
+  inputs:                             # passed to the function verbatim
+    owner: dataripple-org
+    repositories: [repo-a, repo-b]
+```
+
+When `shouldRun` is true, the trigger payload delivered to the workflow becomes
+`{"trigger": <original payload>, "preflight": <function outputs>}` so nodes can
+read the verified scan through `{{trigger}}` without re-fetching it with AI.
+
+Preflight applies to scheduled fires, catch-up dispatch, manual runs, and direct
+activation; `force`/`allowConcurrent` do not bypass it. Checkpoint resume,
+restart-from-checkpoint, and partial (`startNodeId`) runs are refused for
+preflight workflows because they would replay a stale scan as fresh evidence.
+An already-active execution skips before the function even runs.

@@ -1,5 +1,9 @@
 import { jest } from '@jest/globals';
 
+const mockLoadWorkflow = jest.fn<() => Promise<any>>();
+const mockAdmitSingleton = jest.fn<() => Promise<void>>();
+jest.unstable_mockModule('../../../workflow/WorkflowRegistry', () => ({ getWorkflowRegistry: () => ({ loadWorkflow: mockLoadWorkflow }) }));
+
 const mockFindCheckpointBefore = jest.fn<() => Promise<any>>();
 const mockFindByNode = jest.fn<() => Promise<any>>();
 const mockFindByExecution = jest.fn<() => Promise<any[]>>();
@@ -17,6 +21,7 @@ jest.unstable_mockModule('../../../database/models/WorkflowCheckpointModel', () 
 jest.unstable_mockModule('../../../database/models/WorkflowExecutionModel', () => ({
   WorkflowExecutionModel: {
     markRunning:            mockMarkRunning,
+    admitSingleton:         mockAdmitSingleton,
     markSupersededIfActive: mockMarkSupersededIfActive,
   },
 }));
@@ -47,6 +52,7 @@ describe('RestartFromCheckpointWorker', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockLoadWorkflow.mockResolvedValue(null);
     mockFindCheckpointBefore.mockResolvedValue(null);
     mockFindByNode.mockResolvedValue(null);
     mockFindByExecution.mockResolvedValue([checkpoint()]);
@@ -66,6 +72,20 @@ describe('RestartFromCheckpointWorker', () => {
     expect(mockFindCheckpointBefore).not.toHaveBeenCalled();
     expect(mockFindByExecution).not.toHaveBeenCalled();
     expect(mockMarkRunning).not.toHaveBeenCalled();
+  });
+
+  test('honors a current singleton policy on an older checkpoint and refuses overlap', async() => {
+    mockLoadWorkflow.mockResolvedValue({ concurrencyPolicy: 'forbid' });
+    mockAdmitSingleton.mockRejectedValue(new Error('active execution'));
+    const state: any = { metadata: {} };
+    const worker = new RestartFromCheckpointWorker();
+    worker.setState(state);
+    const result = await (worker as any)._validatedCall({ executionId: 'wfp-original', nodeId: 'node-dah-prune' });
+    expect(result.successBoolean).toBe(false);
+    expect(result.responseString).toContain('active execution');
+    expect(mockMarkRunning).not.toHaveBeenCalled();
+    expect(mockMarkSupersededIfActive).not.toHaveBeenCalled();
+    expect(state.metadata.activeWorkflow).toBeUndefined();
   });
 
   test('persists and attaches the exact restarted execution before success', async() => {

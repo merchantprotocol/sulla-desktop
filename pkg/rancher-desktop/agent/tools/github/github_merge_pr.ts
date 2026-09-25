@@ -19,6 +19,10 @@ export class GitHubMergePRWorker extends BaseTool {
     const commitTitle   = typeof input.commit_title === 'string' ? input.commit_title : undefined;
     const commitMessage = typeof input.commit_message === 'string' ? input.commit_message : undefined;
     const confirm = input.confirm === true;
+    const sha = typeof input.sha === 'string' ? input.sha.trim() : undefined;
+    if (input.sha !== undefined && (!sha || !/^[a-f0-9]{40}$/i.test(sha))) {
+      return { successBoolean: false, responseString: 'sha must be the full tested PR head SHA.' };
+    }
 
     if (!owner || !repo) {
       return { successBoolean: false, responseString: 'Missing required fields: owner, repo.' };
@@ -49,10 +53,14 @@ export class GitHubMergePRWorker extends BaseTool {
         repo,
         pull_number:    pullNumber,
         merge_method:   mergeMethod,
+        sha,
         commit_title:   commitTitle,
         commit_message: commitMessage,
       });
 
+      if (!response.data.merged) {
+        return { successBoolean: false, responseString: `Merge refused: ${ response.data.message }` };
+      }
       return {
         successBoolean: true,
         responseString:

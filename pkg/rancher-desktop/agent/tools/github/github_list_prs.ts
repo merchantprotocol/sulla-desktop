@@ -15,9 +15,13 @@ export class GitHubListPRsWorker extends BaseTool {
     const head   = typeof input.head === 'string' ? input.head.trim() : undefined;
     const sort   = ['created', 'updated', 'popularity', 'long-running'].includes(input.sort) ? input.sort : 'updated';
     const limit  = typeof input.limit === 'number' ? Math.min(input.limit, 100) : 20;
+    const page = input.page === undefined ? 1 : input.page;
 
     if (!owner || !repo) {
       return { successBoolean: false, responseString: 'Missing required fields: owner, repo.' };
+    }
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1) {
+      return { successBoolean: false, responseString: 'page and limit must be positive integers.' };
     }
 
     const integrationService = getIntegrationService();
@@ -29,7 +33,7 @@ export class GitHubListPRsWorker extends BaseTool {
     const octokit = new Octokit({ auth: tokenValue.value });
 
     try {
-      const { data: prs } = await octokit.pulls.list({
+      const { data: prs, headers } = await octokit.pulls.list({
         owner,
         repo,
         state:    state as any,
@@ -37,10 +41,14 @@ export class GitHubListPRsWorker extends BaseTool {
         head,
         sort:     sort as any,
         per_page: limit,
+        page,
       });
+      const hasNextPage = /rel="next"/.test(headers.link || '');
+      const pagination = `Page ${ page } (up to ${ limit } PRs). ` +
+        (hasNextPage ? `More pages available: request page=${ page + 1 } with the same filters.` : 'No further pages.');
 
       if (prs.length === 0) {
-        return { successBoolean: true, responseString: `No ${ state } pull requests in ${ owner }/${ repo }.` };
+        return { successBoolean: true, responseString: `No ${ state } pull requests on page ${ page } in ${ owner }/${ repo }.\n${ pagination }` };
       }
 
       const lines = prs.map((pr, i) => {
@@ -56,7 +64,7 @@ export class GitHubListPRsWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `${ prs.length } ${ state } pull requests in ${ owner }/${ repo }:\n\n${ lines.join('\n\n') }`,
+        responseString: `${ prs.length } ${ state } pull requests in ${ owner }/${ repo }:\n${ pagination }\n\n${ lines.join('\n\n') }`,
       };
     } catch (err: any) {
       const msg = err?.response?.data?.message || err?.message || String(err);

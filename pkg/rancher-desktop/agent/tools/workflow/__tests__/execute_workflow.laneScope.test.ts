@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
 
 const findActiveByLaneScope = jest.fn<(...args: any[]) => Promise<any>>();
+const findByExecution = jest.fn<(...args: any[]) => Promise<any>>();
+const recentExecutions = jest.fn<(...args: any[]) => Promise<any>>();
+jest.unstable_mockModule('../../../database/models/WorkflowCheckpointModel', () => ({ WorkflowCheckpointModel: { findByExecution, recentExecutions } }));
+const admitSingleton = jest.fn<(...args: any[]) => Promise<void>>();
 const markRunning = jest.fn<(...args: any[]) => Promise<void>>();
 
 jest.unstable_mockModule('../../../database/models/WorkflowExecutionModel', () => ({
@@ -11,6 +15,7 @@ jest.unstable_mockModule('../../../database/models/WorkflowExecutionModel', () =
     findActiveByWorkflow: jest.fn(),
     markFailed:           jest.fn(),
     markRunning,
+    admitSingleton,
   },
 }));
 
@@ -77,5 +82,39 @@ describe('activateWorkflowOnState lane scope', () => {
     }, state)).resolves.toMatchObject({ ok: false });
     expect(markRunning).not.toHaveBeenCalled();
     expect(state.metadata.activeWorkflow).toBeUndefined();
+  });
+});
+
+
+describe('singleton admission', () => {
+  afterEach(() => { jest.clearAllMocks(); });
+  it.each([{}, { force: true }, { allowConcurrent: true }, { startNodeId: 'trigger' }])('fails closed before state mutation for %j', async(flags) => {
+    admitSingleton.mockRejectedValue(new Error('active execution'));
+    const state: any = { metadata: {}, messages: [] };
+    const result = await activate({ workflowId: snapshot.id, definitionSnapshot: { ...snapshot, concurrencyPolicy: 'forbid' }, ...flags }, state);
+    expect(result.ok).toBe(false);
+    expect(result.responseString).toContain('active execution');
+    expect(state.metadata.activeWorkflow).toBeUndefined();
+    expect(markRunning).not.toHaveBeenCalled();
+  });
+  it.each([{ resume: true }, { resumeExecutionId: 'prior' }])('does not publish a resumed checkpoint when admission fails for %j', async(flags) => {
+    const checkpoint = { attributes: { playbook_state: { definition: snapshot, executionId: 'prior', status: 'running', completedNodeIds: [], currentNodeIds: ['trigger'] } } };
+    findByExecution.mockResolvedValue([checkpoint]);
+    recentExecutions.mockResolvedValue([checkpoint]);
+    admitSingleton.mockRejectedValue(new Error('database unavailable'));
+    const state: any = { metadata: {}, messages: [] };
+    const result = await activate({ workflowId: snapshot.id, definitionSnapshot: { ...snapshot, concurrencyPolicy: 'forbid' }, ...flags }, state);
+    expect(result.ok).toBe(false);
+    expect(result.responseString).toContain('database unavailable');
+    expect(state.metadata.activeWorkflow).toBeUndefined();
+  });
+  it('publishes state only after durable admission and records a single execution', async() => {
+    const state: any = { metadata: {}, messages: [] };
+    admitSingleton.mockImplementation(async() => { expect(state.metadata.activeWorkflow).toBeUndefined(); });
+    const result = await activate({ workflowId: snapshot.id, definitionSnapshot: { ...snapshot, concurrencyPolicy: 'forbid' } }, state);
+    expect(result.ok).toBe(true);
+    expect(admitSingleton).toHaveBeenCalledTimes(1);
+    expect(markRunning).not.toHaveBeenCalled();
+    expect(state.metadata.activeWorkflow.definition.concurrencyPolicy).toBe('forbid');
   });
 });

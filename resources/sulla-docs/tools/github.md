@@ -64,3 +64,14 @@ sulla github/github_create_pr '{"owner":"merchantprotocol","repo":"sulla-desktop
 - Commit author is the repo's configured git identity.
 - Merges and destructive ops (`github_merge_pr`, `github_delete_repo`) require `confirm:true`.
 - Pushed changes to a running app still need a **rebuild/restart** to take effect in the binary.
+
+### Tested PR heads and complete inventories
+
+`github/merge_pr` accepts optional `sha`, the full 40-character tested head SHA.
+GitHub rejects the request if the PR head changed before the merge. A response
+with `merged: false` is reported as a failure. This does not pin the base branch;
+recheck main and required CI before merging and verify main afterward.
+
+`github/list_prs` accepts `page` (positive integer, default 1), with `limit` up to
+100 per page. Follow the returned next-page indication using the same filters
+until no next page remains to inventory every open PR, including drafts.

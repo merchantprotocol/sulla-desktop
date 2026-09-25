@@ -47,6 +47,7 @@ export interface ActivateWorkflowInput {
 
 export interface ActivateWorkflowResult {
   ok:             boolean;
+  skipped?:       'preflight_empty' | 'already_active';
   /** JSON-ready string for the caller to surface to the model. */
   responseString: string;
 }
@@ -178,13 +179,58 @@ export async function activateWorkflowOnState(
     }
   }
 
+  // Admission happens before the routine entry point creates an agent graph.
+  // Resume/partial starts would replay stale checkpoint evidence, so preflight
+  // routines always start fresh after the deterministic function approves.
+  if (definition.preflight !== undefined) {
+    if (input.resume || input.resumeExecutionId || input.startNodeId) {
+      return { ok: false, responseString: 'Preflight workflows require a fresh run; checkpoint/partial replay is disabled.' };
+    }
+    try {
+      const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+      const active = await WorkflowExecutionModel.findActiveByWorkflow(definition.id);
+      if (active) return { ok: false, skipped: 'already_active', responseString: 'Workflow already active; skipped before preflight and AI.' };
+      const preflight = definition.preflight;
+      if (!preflight || typeof preflight.functionRef !== 'string'
+        || !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(preflight.functionRef)
+        || (preflight.inputs !== undefined && (!preflight.inputs || typeof preflight.inputs !== 'object' || Array.isArray(preflight.inputs)))) {
+        throw new Error('Invalid preflight configuration.');
+      }
+      const { runFunctionStructured } = await import('../function/function_run');
+      const result = await runFunctionStructured({ slug: preflight.functionRef, inputs: preflight.inputs });
+      const outputs = result.outputs;
+      if (!result.successBoolean || !outputs || typeof outputs !== 'object' || Array.isArray(outputs) || typeof outputs.shouldRun !== 'boolean') {
+        throw new Error('Preflight function failed or did not return a boolean shouldRun.');
+      }
+      if (!outputs.shouldRun) return { ok: false, skipped: 'preflight_empty', responseString: 'Preflight found no work; skipped without AI.' };
+      message = JSON.stringify({ trigger: message, preflight: outputs });
+    } catch (error) {
+      return { ok: false, responseString: `Preflight failed closed: ${ error instanceof Error ? error.message : String(error) }` };
+    }
+  }
+
+  const singleton = definition.concurrencyPolicy === 'forbid';
+  const admit = async(playbook: WorkflowPlaybookState): Promise<void> => {
+    if (!singleton) return;
+    if (playbook.definition.id !== definition.id) throw new Error('Checkpoint belongs to another workflow.');
+    // Preserve the admission policy even for checkpoints saved before it existed.
+    playbook.definition = { ...playbook.definition, concurrencyPolicy: 'forbid' };
+    const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+    await WorkflowExecutionModel.admitSingleton({
+      executionId: playbook.executionId, workflowId: definition.id,
+      workflowName: definition.name, workflowSlug: workflowId,
+      triggerInput: message,
+      scopeTaskId: executionScope?.taskId, scopeGeneration: executionScope?.generation,
+    });
+  };
+
   // Concurrent-run guard: block if this workflow already has a running or
   // suspended execution. Pass force=true to override (e.g. UI "Start Fresh"
   // choice, boot recovery). When forcing, flip the stale row to failed so
   // we don't leave two concurrent "running" rows behind.
   const force = (input as any).force === true;
   const allowConcurrent = input.allowConcurrent === true;
-  try {
+  if (!singleton) try {
     const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
     const active = executionScope
       ? await WorkflowExecutionModel.findActiveByLaneScope(definition.id, executionScope.taskId, executionScope.generation)
@@ -248,13 +294,14 @@ export async function activateWorkflowOnState(
           pendingDecision: undefined,
         };
 
+        await admit(resumedState);
         state.metadata.activeWorkflow = resumedState;
 
         console.log(`[ExecuteWorkflow] Resuming execution ${ resumeExecutionId } → ${ resumedState.executionId }, completed=${ resumedState.completedNodeIds.length }, frontier=[${ resumedState.currentNodeIds.join(', ') }]`);
 
         try {
           const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-          await WorkflowExecutionModel.markRunning({
+          if (!singleton) await WorkflowExecutionModel.markRunning({
             executionId:  resumedState.executionId,
             workflowId:   definition.id,
             workflowName: definition.name,
@@ -294,13 +341,14 @@ export async function activateWorkflowOnState(
       }
       const lastNodeId = (checkpoints[checkpoints.length - 1].attributes as any).node_id;
       const playbook = createPlaybookStateFromNode(definition, lastNodeId, seedOutputs);
+      await admit(playbook);
       state.metadata.activeWorkflow = playbook;
 
       console.log(`[ExecuteWorkflow] Resumed execution ${ resumeExecutionId } via legacy seed-outputs path → ${ playbook.executionId }, restarting at ${ lastNodeId }`);
 
       try {
         const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-        await WorkflowExecutionModel.markRunning({
+        if (!singleton) await WorkflowExecutionModel.markRunning({
           executionId:  playbook.executionId,
           workflowId:   definition.id,
           workflowName: definition.name,
@@ -334,6 +382,7 @@ export async function activateWorkflowOnState(
   if (startNodeId) {
     try {
       const playbook = createPlaybookStateFromNode(definition, startNodeId);
+      await admit(playbook);
       state.metadata.activeWorkflow = playbook;
 
       console.log(`[ExecuteWorkflow] Partial run of "${ definition.name }" starting at ${ startNodeId } — executionId=${ playbook.executionId }`);
@@ -379,13 +428,14 @@ export async function activateWorkflowOnState(
             pendingDecision: undefined,
           };
 
+          await admit(resumedState);
           state.metadata.activeWorkflow = resumedState;
 
           console.log(`[ExecuteWorkflow] Resuming workflow "${ definition.name }" from checkpoint — original=${ savedState.executionId }, new=${ resumedState.executionId }, completed=${ resumedState.completedNodeIds.length } nodes, frontier=[${ resumedState.currentNodeIds.join(', ') }]`);
 
           try {
             const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-            await WorkflowExecutionModel.markRunning({
+            if (!singleton) await WorkflowExecutionModel.markRunning({
               executionId:  resumedState.executionId,
               workflowId:   definition.id,
               workflowName: definition.name,
@@ -409,6 +459,7 @@ export async function activateWorkflowOnState(
         }
       }
     } catch (err) {
+      if (singleton) return { ok: false, responseString: `Singleton resume failed closed: ${ err instanceof Error ? err.message : String(err) }` };
       console.warn(`[ExecuteWorkflow] Checkpoint lookup failed, starting fresh:`, err);
     }
   }
@@ -418,6 +469,7 @@ export async function activateWorkflowOnState(
     const playbook = createPlaybookState(definition, message);
     if (input.executionId) playbook.executionId = input.executionId;
 
+    await admit(playbook);
     state.metadata.activeWorkflow = playbook;
 
     // Verify state propagation
@@ -427,7 +479,7 @@ export async function activateWorkflowOnState(
     try {
       const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
       const autoRestart = (definition as any).auto_restart !== false;
-      await WorkflowExecutionModel.markRunning({
+      if (!singleton) await WorkflowExecutionModel.markRunning({
         executionId:  playbook.executionId,
         workflowId:   definition.id,
         workflowName: definition.name,

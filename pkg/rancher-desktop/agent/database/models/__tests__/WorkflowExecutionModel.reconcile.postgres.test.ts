@@ -76,6 +76,27 @@ describeWithPostgres('WorkflowExecutionModel dispatcher reconciliation (migrated
     await bootstrapPool?.end();
   });
 
+  it('admits exactly one simultaneous singleton and never recovers its expired lease', async() => {
+    await pool.query(`INSERT INTO workflows (id, name, status, definition) VALUES ('singleton-workflow', 'Singleton', 'production', '{}'::jsonb)`);
+    const attempts = await Promise.allSettled(Array.from({ length: 12 }, (_, index) =>
+      WorkflowExecutionModel.admitSingleton({ executionId: `singleton-${ index }`, workflowId: 'singleton-workflow', workflowName: 'Singleton', workflowSlug: 'singleton' })));
+    expect(attempts.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const rows = (await pool.query("SELECT * FROM workflow_executions WHERE workflow_id = 'singleton-workflow'")).rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].auto_restart).toBe(false);
+    await pool.query("UPDATE workflow_executions SET lease_expires_at = NOW() - INTERVAL '1 minute', attempt_count = max_attempts WHERE execution_id = $1", [rows[0].execution_id]);
+    expect(await WorkflowExecutionModel.recover(rows[0].execution_id)).toBeNull();
+    expect((await pool.query('SELECT status FROM workflow_executions WHERE execution_id = $1', [rows[0].execution_id])).rows[0].status).toBe('running');
+    await WorkflowExecutionModel.admitSingleton({ executionId: 'independent-singleton', workflowId: 'workflow-1', workflowName: 'Independent', workflowSlug: 'independent' });
+    await WorkflowExecutionModel.markCompleted('independent-singleton');
+    await WorkflowExecutionModel.markSuspended(rows[0].execution_id);
+    await expect(WorkflowExecutionModel.admitSingleton({ executionId: 'singleton-replacement', workflowId: 'singleton-workflow', workflowName: 'Singleton', workflowSlug: 'singleton' })).rejects.toThrow('active execution');
+    await pool.query("UPDATE workflow_executions SET started_at = NOW() - INTERVAL '1 day', owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL WHERE execution_id = $1", [rows[0].execution_id]);
+    expect(await WorkflowExecutionModel.reapStaleLeaselessExecutions()).not.toContain(rows[0].execution_id);
+    await WorkflowExecutionModel.markCompleted(rows[0].execution_id);
+    await WorkflowExecutionModel.admitSingleton({ executionId: 'singleton-next', workflowId: 'singleton-workflow', workflowName: 'Singleton', workflowSlug: 'singleton' });
+  });
+
   it('keeps a slow node out of recovery and fences it after durable settlement', async() => {
     await WorkflowExecutionModel.markRunning({ executionId: 'slow-node', workflowId: 'workflow-1', workflowName: 'Slow node', workflowSlug: 'slow-node' });
     const token = randomUUID();

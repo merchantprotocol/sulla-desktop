@@ -1096,7 +1096,14 @@ export class PlaybookController<TState = any> {
             }
 
             const parsedPrompts = parsePromptTags(orchestratorResponse);
-            const cleanedMessage = orchestratorResponse
+            const singleAgentOnly = step.config.maxAgents === 1;
+            if (singleAgentOnly && parsedPrompts.length > 1) {
+              const error = 'Agent node maxAgents: 1 forbids parallel prompt dispatch.';
+              return await this.releaseWorkflow(state, { ...meta.activeWorkflow, status: 'failed', error }, 'failed', error);
+            }
+            const cleanedMessage = singleAgentOnly && parsedPrompts.length === 1
+              ? parsedPrompts[0].content
+              : orchestratorResponse
               .replace(/<PROMPT[^>]*>[\s\S]*?<\/PROMPT>/gi, '')
               .replace(/SPAWN_COUNT:\s*\d+\s*/gi, '')
               .trim();
@@ -1105,7 +1112,7 @@ export class PlaybookController<TState = any> {
             `<completion-contract>\nYour final response here\n</completion-contract>`;
 
             // Phase 2: Launch sub-agent(s)
-            if (parsedPrompts.length > 0) {
+            if (parsedPrompts.length > 0 && !singleAgentOnly) {
             // Batch delegation
               const cappedPrompts = parsedPrompts.slice(0, 10);
               console.log(`[PlaybookController] Orchestrator delegated ${ cappedPrompts.length } prompts for "${ subNodeLabel }"`);
@@ -1237,7 +1244,9 @@ export class PlaybookController<TState = any> {
               subAgentPromptParts.push(contractWrapper);
 
               const subAgentPrompt = subAgentPromptParts.join('\n\n');
-              const maxRetries = 3;
+              // A timeout does not prove the underlying worker stopped. A
+              // singleton must retain admission instead of launching a retry.
+              const maxRetries = currentPlaybook.definition.concurrencyPolicy === 'forbid' ? 1 : 3;
               const nodeId = step.nodeId;
               const agentId = step.agentId;
 
@@ -1770,6 +1779,9 @@ export class PlaybookController<TState = any> {
             if (!subDefinition) {
               throw new Error(`Sub-workflow not found: ${ step.workflowId }`);
             }
+            if (subDefinition.concurrencyPolicy === 'forbid' || currentPlaybook.definition.concurrencyPolicy === 'forbid') {
+              throw new Error('Singleton workflows must run through normal admission, without nested workflow handoffs.');
+            }
 
             if (step.agentId) {
               console.log(`[PlaybookController] Delegating sub-workflow "${ subWfLabel }" to agent "${ step.agentId }"`);
@@ -1864,6 +1876,9 @@ export class PlaybookController<TState = any> {
 
             if (!targetDefinition) {
               throw new Error(`Transfer target workflow not found: ${ step.targetWorkflowId }`);
+            }
+            if (targetDefinition.concurrencyPolicy === 'forbid' || currentPlaybook.definition.concurrencyPolicy === 'forbid') {
+              throw new Error('Singleton workflows must run through normal admission, without workflow transfers.');
             }
 
             this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: transferLabel, output: { transferred: step.targetWorkflowId } });
@@ -2218,6 +2233,10 @@ export class PlaybookController<TState = any> {
     outcome: 'completed' | 'failed',
     error?: string,
   ): Promise<TState> {
+    if (playbook.definition.concurrencyPolicy === 'forbid' && outcome === 'completed' && this.pendingSubAgents.size > 0) {
+      outcome = 'failed';
+      error = 'Singleton cannot complete while a sub-agent may still be running.';
+    }
     await this.workflowLease?.heartbeat.assertOwned();
     this.workflowLease?.heartbeat.stop();
     this.workflowLease = null;
@@ -2255,7 +2274,11 @@ export class PlaybookController<TState = any> {
     // Persist final execution status so boot recovery doesn't pick it up again.
     try {
       const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
-      if (outcome === 'completed') {
+      if (playbook.definition.concurrencyPolicy === 'forbid' && outcome === 'failed') {
+        // A failed parent does not prove its external worker stopped. Retain
+        // admission until an operator verifies termination and settles the row.
+        await WorkflowExecutionModel.markSuspended(playbook.executionId);
+      } else if (outcome === 'completed') {
         const settled = await WorkflowExecutionModel.settle(playbook.executionId, 'completed', undefined, workflowTerminalResult(meta, playbook.executionId)?.outcome);
         if (!settled) throw new Error(`Workflow ${ playbook.executionId } lost terminal settlement ownership.`);
       } else {
