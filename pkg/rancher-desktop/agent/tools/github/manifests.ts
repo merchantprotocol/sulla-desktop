@@ -397,6 +397,7 @@ export const githubToolManifests: ToolManifest[] = [
       owner:          { type: 'string', description: 'Repository owner.' },
       repo:           { type: 'string', description: 'Repository name.' },
       pull_number:    { type: 'number', description: 'PR number to merge.' },
+      sha:            { type: 'string', optional: true, description: 'Full tested head SHA. GitHub refuses the merge if the PR head has changed.' },
       merge_method:   { type: 'string', optional: true, description: 'merge | squash | rebase (default "merge").' },
       commit_title:   { type: 'string', optional: true, description: 'Override commit title (squash and merge methods only).' },
       commit_message: { type: 'string', optional: true, description: 'Override commit body.' },
@@ -607,7 +608,7 @@ export const githubToolManifests: ToolManifest[] = [
   },
   {
     name:        'github_list_prs',
-    description: 'List pull requests in a repository with optional filters for state, base branch, head branch, and sort order.',
+    description: 'List one page of pull requests with optional filters. Follow the returned next-page instruction to inventory every PR, including drafts.',
     category:    'github',
     schemaDef:   {
       owner: { type: 'string', description: 'Repository owner (username or organization)' },
@@ -617,6 +618,7 @@ export const githubToolManifests: ToolManifest[] = [
       head:  { type: 'string', optional: true, description: 'Filter by head branch name (or user:branch)' },
       sort:  { type: 'enum', enum: ['created', 'updated', 'popularity', 'long-running'], optional: true, default: 'updated', description: 'Sort order' },
       limit: { type: 'number', optional: true, default: 20, description: 'Max PRs to return (capped at 100)' },
+      page:  { type: 'number', optional: true, default: 1, description: 'Positive page number. Keep filters unchanged while following next-page results.' },
     },
     operationTypes: ['read'],
     loader:         () => import('./github_list_prs'),

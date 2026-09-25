@@ -236,6 +236,9 @@ export type WorkflowStatus = 'draft' | 'production' | 'archive';
 // ── Top-level workflow definition (saved as YAML to ~/sulla/workflows/<status>/) ──
 
 export interface WorkflowDefinition {
+  /** Refuse overlapping runs, including force restart and checkpoint resume. */
+  concurrencyPolicy?: 'forbid';
+  auto_restart?: boolean;
   id:          string;
   name:        string;
   description: string;

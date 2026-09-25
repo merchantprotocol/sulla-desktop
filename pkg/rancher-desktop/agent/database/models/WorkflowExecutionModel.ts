@@ -106,6 +106,19 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     );
   }
 
+  /** Serialize admission across processes; an active row is never stolen. */
+  static async admitSingleton(params: Parameters<typeof WorkflowExecutionModel.markRunning>[0]): Promise<void> {
+    await postgresClient.transaction(async(client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`workflow-singleton:${ params.workflowId }`]);
+      const active = await client.query(`SELECT execution_id FROM workflow_executions
+        WHERE workflow_id = $1 AND status IN ('running', 'suspended') LIMIT 1`, [params.workflowId]);
+      if (active.rows.length) {
+        throw new Error(`Workflow already has an active execution (${ active.rows[0].execution_id }); wait for it to finish. Force restart is disabled.`);
+      }
+      await WorkflowExecutionModel.markRunning({ ...params, autoRestart: false }, client);
+    });
+  }
+
   /** Graceful shutdown: mark as suspended so boot recovery can find it. */
   static async markSuspended(executionId: string): Promise<void> {
     await postgresClient.query(
@@ -161,7 +174,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   }
 
   static async findStaleExecutions(now = new Date()): Promise<WorkflowExecutionModel[]> {
-    const rows = await postgresClient.queryAll<any>(`SELECT * FROM workflow_executions WHERE status IN ('running', 'suspended') AND scope_task_id IS NULL AND lease_expires_at IS NOT NULL AND lease_expires_at <= $1 ORDER BY lease_expires_at ASC`, [now]);
+    const rows = await postgresClient.queryAll<any>(`SELECT * FROM workflow_executions WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND scope_task_id IS NULL AND lease_expires_at IS NOT NULL AND lease_expires_at <= $1 ORDER BY lease_expires_at ASC`, [now]);
     return rows.map(WorkflowExecutionModel.hydrate);
   }
 
@@ -182,6 +195,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
             ON dispatch.workflow_execution_id = execution.execution_id
           WHERE execution.scope_task_id IS NOT NULL
             AND execution.status IN ('running', 'suspended')
+            AND execution.auto_restart = TRUE
             AND (dispatch.id IS NULL OR dispatch.status <> 'running')
             AND NOT EXISTS (
               SELECT 1 FROM work_lane_entry_automations lane
@@ -234,6 +248,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
                error = COALESCE(error, 'stale execution had no lease or heartbeat'),
                updated_at = NOW()
          WHERE status IN ('running', 'suspended')
+           AND auto_restart = TRUE
            AND owner_id IS NULL
            AND lease_token IS NULL
            AND lease_expires_at IS NULL
@@ -257,7 +272,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     const row = await postgresClient.queryOne<{ next_expiry: Date | null }>(`
       SELECT MIN(lease_expires_at) AS next_expiry
       FROM workflow_executions
-      WHERE status IN ('running', 'suspended') AND lease_expires_at IS NOT NULL`);
+      WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND lease_expires_at IS NOT NULL`);
     return row?.next_expiry ? new Date(row.next_expiry) : null;
   }
 
@@ -269,14 +284,14 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
       const token = `${ ownerId }:${ executionId }`;
       const row = (await client.query(`UPDATE workflow_executions
         SET owner_id = $2, lease_token = $3, leased_at = NOW(), heartbeat_at = NOW(), lease_expires_at = NOW() + ($4 * INTERVAL '1 millisecond'), attempt_count = attempt_count + 1, updated_at = NOW()
-        WHERE execution_id = $1 AND status IN ('running', 'suspended') AND lease_expires_at <= NOW() AND attempt_count < max_attempts RETURNING *`, [executionId, ownerId, token, ttlMs])).rows[0];
+        WHERE execution_id = $1 AND status IN ('running', 'suspended') AND auto_restart = TRUE AND lease_expires_at <= NOW() AND attempt_count < max_attempts RETURNING *`, [executionId, ownerId, token, ttlMs])).rows[0];
       if (!row) {
         await client.query(`WITH exhausted AS (
           UPDATE workflow_executions SET status = 'failed', completed_at = NOW(), terminal_at = NOW(),
             terminal_reason = 'recovery_attempt_ceiling', error = 'recovery attempt ceiling exceeded',
             owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
           WHERE execution_id = $1 AND status IN ('running', 'suspended')
-            AND lease_expires_at <= NOW() AND attempt_count >= max_attempts
+            AND auto_restart = TRUE AND lease_expires_at <= NOW() AND attempt_count >= max_attempts
           RETURNING execution_id
         ) UPDATE work_lane_entry_automations SET status = 'failed',
             outcome = jsonb_build_object('disposition', 'runtime_failed', 'message', 'recovery attempt ceiling exceeded'),
@@ -314,7 +329,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     await postgresClient.query(
       `UPDATE workflow_executions
        SET status = 'failed', completed_at = NOW(), error = 'superseded_by_checkpoint_restart', updated_at = NOW()
-       WHERE execution_id = $1 AND status IN ('running', 'suspended')`,
+       WHERE execution_id = $1 AND status IN ('running', 'suspended') AND auto_restart = TRUE`,
       [executionId],
     );
   }

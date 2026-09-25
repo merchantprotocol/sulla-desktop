@@ -134,3 +134,14 @@ describe('validateWorkflowDefinition', () => {
     expect(errs.some(e => e.path.endsWith('/config/triggerDescription'))).toBe(true);
   });
 });
+
+
+describe('workflow concurrency configuration', () => {
+  const base = () => makeDefinition({ id: 'node-1', type: 'workflow', position: { x: 0, y: 0 }, data: { category: 'trigger', subtype: 'manual', label: 'Start', config: { triggerType: 'manual', triggerDescription: 'Start' } } });
+  it('accepts strict admission and disabled automatic recovery', () => {
+    expect(errors({ ...base(), concurrencyPolicy: 'forbid', auto_restart: false })).toEqual([]);
+  });
+  it.each([{ concurrencyPolicy: 'replace' }, { auto_restart: 'false' }])('rejects unsupported policy values %j', (config) => {
+    expect(errors({ ...base(), ...config })).not.toEqual([]);
+  });
+});

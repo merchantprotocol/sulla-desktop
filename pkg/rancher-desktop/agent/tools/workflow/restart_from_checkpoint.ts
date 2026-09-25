@@ -148,8 +148,13 @@ export class RestartFromCheckpointWorker extends BaseTool {
     // from workflow history and the concurrent-run guard.
     try {
       const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-      await WorkflowExecutionModel.markSupersededIfActive(executionId);
-      await WorkflowExecutionModel.markRunning({
+      const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
+      const currentDefinition = await getWorkflowRegistry().loadWorkflow(savedState.workflowId);
+      const singleton = savedState.definition.concurrencyPolicy === 'forbid' || currentDefinition?.concurrencyPolicy === 'forbid';
+      if (singleton) rebuiltState.definition = { ...rebuiltState.definition, concurrencyPolicy: 'forbid' };
+      if (!singleton) await WorkflowExecutionModel.markSupersededIfActive(executionId);
+      const persist = singleton ? WorkflowExecutionModel.admitSingleton.bind(WorkflowExecutionModel) : WorkflowExecutionModel.markRunning.bind(WorkflowExecutionModel);
+      await persist({
         executionId:  rebuiltState.executionId,
         workflowId:   savedState.workflowId,
         workflowName: savedState.definition.name,

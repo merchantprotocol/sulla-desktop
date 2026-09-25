@@ -71,7 +71,7 @@ const REQUIRED_CONFIG_FIELDS: Record<WorkflowNodeSubtype, string[]> = {
 // ── Optional config fields per subtype (allowed but not required) ──
 
 const OPTIONAL_CONFIG_FIELDS: Partial<Record<WorkflowNodeSubtype, string[]>> = {
-  agent:          ['inheritParentToolPolicy'],
+  agent:          ['inheritParentToolPolicy', 'maxAgents'],
   schedule:       ['frequency', 'intervalMinutes', 'hour', 'minute', 'dayOfWeek', 'dayOfMonth', 'timezone'],
   function:       ['inputs', 'integrationAccounts', 'timeoutOverride'],
   'sub-workflow': ['agentId', 'orchestratorPrompt'],
@@ -79,7 +79,7 @@ const OPTIONAL_CONFIG_FIELDS: Partial<Record<WorkflowNodeSubtype, string[]>> = {
 };
 
 const VALID_TOP_LEVEL_KEYS = new Set([
-  'id', 'name', 'description', 'version', 'enabled',
+  'id', 'name', 'description', 'version', 'enabled', 'concurrencyPolicy', 'auto_restart',
   'createdAt', 'updatedAt', 'laneContract', 'nodes', 'edges', 'viewport',
 ]);
 
@@ -101,6 +101,19 @@ export function validateWorkflowDefinition(def: any, filePath?: string): Validat
   if (!def || typeof def !== 'object') {
     issues.push({ severity: 'error', path: '/', message: 'Workflow definition is not an object' });
     return issues;
+  }
+
+  if (def.concurrencyPolicy !== undefined && def.concurrencyPolicy !== 'forbid') {
+    issues.push({ severity: 'error', path: '/concurrencyPolicy', message: 'Only concurrencyPolicy: forbid is supported.' });
+  }
+  if (def.auto_restart !== undefined && typeof def.auto_restart !== 'boolean') {
+    issues.push({ severity: 'error', path: '/auto_restart', message: 'auto_restart must be boolean.' });
+  }
+  for (const node of Array.isArray(def.nodes) ? def.nodes : []) {
+    const maxAgents = node?.data?.config?.maxAgents;
+    if (maxAgents !== undefined && maxAgents !== 1) {
+      issues.push({ severity: 'error', path: `/nodes/${ node.id }/data/config/maxAgents`, message: 'Only maxAgents: 1 is supported.' });
+    }
   }
 
   // ── Top-level keys ──
