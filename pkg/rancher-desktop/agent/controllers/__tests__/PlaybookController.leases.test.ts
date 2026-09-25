@@ -14,6 +14,9 @@ jest.unstable_mockModule('../../database/models/WorkflowExecutionModel', () => (
   acquireLease: jest.fn(async() => ({})), renewHeartbeat: jest.fn(async() => ({})), settle: jest.fn(async() => ({})), markSuspended: jest.fn(async() => undefined),
 } }));
 jest.unstable_mockModule('../../database/models/WorkflowCheckpointModel', () => ({ WorkflowCheckpointModel: { saveCheckpoint: jest.fn() } }));
+const invokeTool = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ success: true, result: 'browser verified' });
+const createTool = jest.fn<(...args: any[]) => Promise<any>>().mockImplementation(() => Promise.resolve({ invoke: invokeTool }));
+jest.unstable_mockModule('../../tools/registry', () => ({ toolRegistry: { createTool } }));
 const loadWorkflow = jest.fn<(...args: any[]) => Promise<any>>();
 jest.unstable_mockModule('../../workflow/WorkflowRegistry', () => ({ getWorkflowRegistry: () => ({ loadWorkflow }) }));
 jest.unstable_mockModule('../../workflow/WorkflowPlaybook', () => ({
@@ -167,5 +170,25 @@ describe('singleton worker lifecycle', () => {
     expect(controller.executeSubAgent).not.toHaveBeenCalled();
     expect(state.metadata.lastCompletedWorkflow.outcome).toBe('failed');
     expect(state.metadata.lastCompletedWorkflow.error).toContain('normal admission');
+  });
+});
+
+describe('native tool graph custody', () => {
+  it('creates a fresh tool and passes the exact owning graph state', async() => {
+    const state: any = { messages: [], metadata: { threadId: 'owned-graph', activeWorkflow: {
+      status: 'running', executionId: 'native-run', workflowId: 'native', completedNodeIds: [], currentNodeIds: ['tool'], nodeOutputs: {},
+      definition: { name: 'Native', nodes: [{ id: 'tool', data: { label: 'Browser', subtype: 'tool-call' } }], edges: [] },
+    } } };
+    const params = { tool: 'tab', args: { url: 'about:blank', active: false } };
+    (WorkflowExecutionModel.renewHeartbeat as any).mockResolvedValue({});
+    (processNextStep as any)
+      .mockImplementationOnce((playbook: any) => ({ action: 'execute_tool_call', nodeId: 'tool', toolName: 'browser_controller', params, updatedPlaybook: playbook }))
+      .mockImplementationOnce((playbook: any) => ({ action: 'workflow_completed', updatedPlaybook: playbook }));
+    const controller: any = new PlaybookController({ execute: async() => state, getEntryPoint: () => 'agent', getNode: () => null });
+    controller.emitPlaybookEvent = jest.fn();
+    controller.emitEdgeActivations = jest.fn();
+    await controller.processWorkflowPlaybook(state);
+    expect(createTool).toHaveBeenCalledWith('browser_controller');
+    expect(invokeTool).toHaveBeenCalledWith(params, state);
   });
 });

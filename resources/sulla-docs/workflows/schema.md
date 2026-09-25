@@ -150,3 +150,24 @@ activation; `force`/`allowConcurrent` do not bypass it. Checkpoint resume,
 restart-from-checkpoint, and partial (`startNodeId`) runs are refused for
 preflight workflows because they would replay a stale scan as fresh evidence.
 An already-active execution skips before the function even runs.
+
+## Scheduled browser opt-in
+
+Set top-level `browser: true` in a saved routine to grant the graph-owned
+`browser_controller` when run by the scheduler, catch-up, or Routines UI.
+The executor reads the admitted definition, never instructions in the trigger.
+It supplies the slim scheduled tools (browse_tools, exec, read_file, write_file,
+browser_controller). Hidden-browser or existing tool-policy restrictions fail
+closed. Ordinary workflows remain unchanged. Native tool-call nodes use fresh
+workers bound to their owning graph, so browser ownership cannot leak between
+concurrent runs. Use `toolName: browser_controller` directly, not a nested CLI
+call: CLI calls do not carry the graph capability.
+
+Native tool-call `defaults` preserve JSON objects, arrays, numbers, booleans and
+null. Only string leaves interpolate templates such as `{{trigger}}`.
+
+Browser capability is not permission to bypass website controls. Keep platform
+rules, explicit transmission authority, human challenge handling, duplicate
+prevention and submission receipts in the application routine. A completed
+workflow can still report a blocked application; dashboard counts must use
+submission receipts rather than workflow completion.

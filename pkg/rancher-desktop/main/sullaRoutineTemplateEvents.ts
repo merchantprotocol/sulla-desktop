@@ -768,6 +768,17 @@ export async function executeRoutine(
   const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
   const state = (graphResult as { state: Record<string, any> }).state;
   state.metadata = { ...state.metadata, ...admissionState.metadata };
+  const { configureRoutineBrowser } = await import('@pkg/agent/workflow/routineBrowser');
+  // Use the admitted immutable definition (including resume/snapshot), not a
+  // second mutable workflow lookup or caller-supplied trigger instructions.
+  try {
+    await configureRoutineBrowser(state as any, state.metadata.activeWorkflow.definition);
+  } catch (error) {
+    const { WorkflowExecutionModel } = await import('@pkg/agent/database/models/WorkflowExecutionModel');
+    await WorkflowExecutionModel.markFailed(state.metadata.activeWorkflow.executionId, String(error));
+    if (routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
+    throw error;
+  }
 
   const executionId = state.metadata.activeWorkflow?.executionId;
   if (!executionId) throw new Error('Workflow activation did not produce an execution id.');
