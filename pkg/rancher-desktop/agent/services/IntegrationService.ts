@@ -227,9 +227,9 @@ export class IntegrationService {
     const action = wasUpdate ? 'updated' : 'created';
     console.log(`[IntegrationService] ${ wasUpdate ? 'Updated' : 'Created' } value: ${ integrationId }/${ accountId }.${ property }`);
 
-    const value = this.modelToValue(model);
-    this.notifyValueChange(value, action);
-    return value;
+    const savedValue = this.modelToValue(model);
+    this.notifyValueChange(savedValue, action);
+    return savedValue;
   }
 
   async setMultipleValues(inputs: IntegrationValueInput[]): Promise<IntegrationValue[]> {
