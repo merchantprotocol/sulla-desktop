@@ -175,16 +175,27 @@ describe('singleton worker lifecycle', () => {
 
 describe('native tool graph custody', () => {
   it('creates a fresh tool and passes the exact owning graph state', async() => {
-    const state: any = { messages: [], metadata: { threadId: 'owned-graph', activeWorkflow: {
-      status: 'running', executionId: 'native-run', workflowId: 'native', completedNodeIds: [], currentNodeIds: ['tool'], nodeOutputs: {},
-      definition: { name: 'Native', nodes: [{ id: 'tool', data: { label: 'Browser', subtype: 'tool-call' } }], edges: [] },
-    } } };
+    const state: any = {
+      messages: [],
+      metadata: {
+        threadId:       'owned-graph',
+        activeWorkflow: {
+          status:           'running',
+          executionId:      'native-run',
+          workflowId:       'native',
+          completedNodeIds: [],
+          currentNodeIds:   ['tool'],
+          nodeOutputs:      {},
+          definition:       { name: 'Native', nodes: [{ id: 'tool', data: { label: 'Browser', subtype: 'tool-call' } }], edges: [] },
+        },
+      },
+    };
     const params = { tool: 'tab', args: { url: 'about:blank', active: false } };
     (WorkflowExecutionModel.renewHeartbeat as any).mockResolvedValue({});
     (processNextStep as any)
       .mockImplementationOnce((playbook: any) => ({ action: 'execute_tool_call', nodeId: 'tool', toolName: 'browser_controller', params, updatedPlaybook: playbook }))
       .mockImplementationOnce((playbook: any) => ({ action: 'workflow_completed', updatedPlaybook: playbook }));
-    const controller: any = new PlaybookController({ execute: async() => state, getEntryPoint: () => 'agent', getNode: () => null });
+    const controller: any = new PlaybookController({ execute: () => Promise.resolve(state), getEntryPoint: () => 'agent', getNode: () => null });
     controller.emitPlaybookEvent = jest.fn();
     controller.emitEdgeActivations = jest.fn();
     await controller.processWorkflowPlaybook(state);
