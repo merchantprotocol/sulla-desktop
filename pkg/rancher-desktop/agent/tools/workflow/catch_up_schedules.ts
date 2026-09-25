@@ -114,16 +114,18 @@ export async function runCatchUpScan(
       }
 
       try {
-        // Same entry point the cron callback uses. Fire-and-forget: routine
-        // runs can take minutes and this tool must return promptly.
+        // Same admission path as cron/manual. It returns once the graph is
+        // launched, or immediately after a deterministic no-work decision.
         const { executeRoutine } = await import('@pkg/main/sullaRoutineTemplateEvents');
 
-        void executeRoutine(
+        const result = await executeRoutine(
           id,
           `Catch-up: the scheduled run of "${ name }" expected at ${ prevFire.toISOString() } was missed (app offline or scheduler dormant). Run it now.`,
-        ).catch((err: unknown) => {
-          console.error(`[CatchUpSchedules] Dispatched catch-up for "${ name }" failed:`, err);
-        });
+        );
+        if (result.skipped) {
+          lines.push(`  • ${ name } — skipped: ${ result.skipped } (no AI started)`);
+          continue;
+        }
         dispatchedCount++;
         lines.push(`  • ${ name } — MISSED ${ prevFire.toISOString() } → DISPATCHED (verify via workflow_executions)`);
       } catch (err) {

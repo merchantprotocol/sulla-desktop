@@ -84,6 +84,16 @@ export class FunctionRunWorker extends BaseTool {
   };
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
+    return runFunctionStructured(input);
+  }
+}
+
+export interface StructuredFunctionResult extends ToolResponse {
+  outputs?: Record<string, unknown>;
+}
+
+/** Shared runtime/vault/history path for tools and deterministic workflow admission. */
+export async function runFunctionStructured(input: { slug: string; inputs?: Record<string, unknown>; version?: string }): Promise<StructuredFunctionResult> {
     const slug: string = input.slug;
     const inputs: Record<string, unknown> = (input.inputs && typeof input.inputs === 'object') ? input.inputs : {};
     const version: string = input.version || '1.0.0';
@@ -91,7 +101,7 @@ export class FunctionRunWorker extends BaseTool {
     const record: RunRecord = { slug, version, inputs, success: false, startedAt: new Date() };
 
     const lines: string[] = [];
-    const failAndRecord = async(stage: RunRecord['errorStage'], msg: string): Promise<ToolResponse> => {
+    const failAndRecord = async(stage: RunRecord['errorStage'], msg: string): Promise<StructuredFunctionResult> => {
       record.errorStage = stage;
       record.error = msg;
       record.success = false;
@@ -248,8 +258,7 @@ export class FunctionRunWorker extends BaseTool {
     record.durationMs = durationMs;
     await writeRunHistory(record);
 
-    return { successBoolean: true, responseString: lines.join('\n') };
-  }
+    return { successBoolean: true, responseString: lines.join('\n'), outputs };
 }
 
 async function writeRunHistory(record: RunRecord): Promise<void> {

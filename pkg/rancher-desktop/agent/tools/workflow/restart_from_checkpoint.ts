@@ -150,6 +150,9 @@ export class RestartFromCheckpointWorker extends BaseTool {
       const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
       const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
       const currentDefinition = await getWorkflowRegistry().loadWorkflow(savedState.workflowId);
+      if (savedState.definition.preflight !== undefined || currentDefinition?.preflight !== undefined) {
+        throw new Error('Preflight workflows require a fresh run; checkpoint replay is disabled.');
+      }
       const singleton = savedState.definition.concurrencyPolicy === 'forbid' || currentDefinition?.concurrencyPolicy === 'forbid';
       if (singleton) rebuiltState.definition = { ...rebuiltState.definition, concurrencyPolicy: 'forbid' };
       if (!singleton) await WorkflowExecutionModel.markSupersededIfActive(executionId);

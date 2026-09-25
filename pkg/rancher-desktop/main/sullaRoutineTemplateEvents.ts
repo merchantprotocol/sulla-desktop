@@ -329,6 +329,9 @@ function buildWorkflowFromTemplate({ slug, manifest, doc }: WrapOptions): Record
   return {
     id:          workflowId,
     name:        `${ name } · new routine`,
+    ...(doc.preflight !== undefined ? { preflight: doc.preflight } : {}),
+    ...(doc.concurrencyPolicy !== undefined ? { concurrencyPolicy: doc.concurrencyPolicy } : {}),
+    ...(doc.auto_restart !== undefined ? { auto_restart: doc.auto_restart } : {}),
     description,
     version:     '0.1.0',
     enabled:     true,
@@ -646,6 +649,7 @@ export interface RoutineExecutionResult {
   executionId:         string;
   /** Durable playbook execution id used by checkpoints and workflow_executions. */
   playbookExecutionId?: string;
+  skipped?: 'preflight_empty' | 'already_active';
   workflowId:          string;
 }
 
@@ -722,19 +726,14 @@ export async function executeRoutine(
     }
   }
 
-  // Do not create a graph or playbook driver until capacity is owned. A
-  // queued planning council must not leave orphan threads while waiting.
-  const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
+  // Activate on plain data first: singleton and deterministic preflight can
+  // decline without constructing an agent, recalling memory, or calling a model.
   const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
-  const graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, graphExecutionId);
-  const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
-  const state = (graphResult as { state: Record<string, any> }).state;
-  state.metadata = state.metadata ?? {};
-  state.metadata.scopedWorkflowId = workflowId;
+  const admissionState = { metadata: { scopedWorkflowId: workflowId }, messages: [] };
 
   let activation;
   try {
-    activation = await activateWorkflowOnState(state as any, {
+    activation = await activateWorkflowOnState(admissionState as any, {
     workflowId,
     message,
     startNodeId:       options?.startNodeId,
@@ -752,8 +751,23 @@ export async function executeRoutine(
 
   if (!activation.ok) {
     if (routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
+    if (activation.skipped) return { workflowId, executionId: '', skipped: activation.skipped };
     throw new Error(activation.responseString);
   }
+
+  let graphResult;
+  try {
+    const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
+    graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, graphExecutionId);
+  } catch (error) {
+    if (routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
+    // Keep admitted singleton rows active if graph construction failed. They
+    // must not be automatically replaced while execution ownership is uncertain.
+    throw error;
+  }
+  const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
+  const state = (graphResult as { state: Record<string, any> }).state;
+  state.metadata = { ...state.metadata, ...admissionState.metadata };
 
   const executionId = state.metadata.activeWorkflow?.executionId;
   if (!executionId) throw new Error('Workflow activation did not produce an execution id.');

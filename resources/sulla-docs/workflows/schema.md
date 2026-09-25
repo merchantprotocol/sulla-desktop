@@ -124,3 +124,29 @@ launch does not prove that the prior process stopped. Nested workflow calls and
 workflow transfers involving a singleton source or target are refused; launch
 that workflow through its normal activation entry point instead. Keep the
 singleton definition stable while a run is active.
+
+## Deterministic preflight admission (zero-AI empty cycles)
+
+Set a top-level `preflight` to gate every activation behind a local Sulla
+function. The function runs in-process before any agent graph, memory recall,
+or model call exists. Its outputs must include a boolean `shouldRun`; anything
+else — missing key, wrong type, function failure, runtime error — fails closed
+and no AI starts. When `shouldRun` is false the activation is skipped entirely.
+
+```yaml
+preflight:
+  functionRef: ripplecore-ready-prs   # slug under ~/sulla/functions/
+  inputs:                             # passed to the function verbatim
+    owner: dataripple-org
+    repositories: [repo-a, repo-b]
+```
+
+When `shouldRun` is true, the trigger payload delivered to the workflow becomes
+`{"trigger": <original payload>, "preflight": <function outputs>}` so nodes can
+read the verified scan through `{{trigger}}` without re-fetching it with AI.
+
+Preflight applies to scheduled fires, catch-up dispatch, manual runs, and direct
+activation; `force`/`allowConcurrent` do not bypass it. Checkpoint resume,
+restart-from-checkpoint, and partial (`startNodeId`) runs are refused for
+preflight workflows because they would replay a stale scan as fresh evidence.
+An already-active execution skips before the function even runs.

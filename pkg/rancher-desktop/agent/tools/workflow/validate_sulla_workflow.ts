@@ -79,7 +79,7 @@ const OPTIONAL_CONFIG_FIELDS: Partial<Record<WorkflowNodeSubtype, string[]>> = {
 };
 
 const VALID_TOP_LEVEL_KEYS = new Set([
-  'id', 'name', 'description', 'version', 'enabled', 'concurrencyPolicy', 'auto_restart',
+  'id', 'name', 'description', 'version', 'enabled', 'concurrencyPolicy', 'auto_restart', 'preflight',
   'createdAt', 'updatedAt', 'laneContract', 'nodes', 'edges', 'viewport',
 ]);
 
@@ -105,6 +105,14 @@ export function validateWorkflowDefinition(def: any, filePath?: string): Validat
 
   if (def.concurrencyPolicy !== undefined && def.concurrencyPolicy !== 'forbid') {
     issues.push({ severity: 'error', path: '/concurrencyPolicy', message: 'Only concurrencyPolicy: forbid is supported.' });
+  }
+  if (def.preflight !== undefined) {
+    const preflight = def.preflight;
+    if (!preflight || typeof preflight !== 'object' || Array.isArray(preflight)
+      || typeof preflight.functionRef !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(preflight.functionRef)
+      || (preflight.inputs !== undefined && (!preflight.inputs || typeof preflight.inputs !== 'object' || Array.isArray(preflight.inputs)))) {
+      issues.push({ severity: 'error', path: '/preflight', message: 'preflight requires a functionRef slug and optional object inputs.' });
+    }
   }
   if (def.auto_restart !== undefined && typeof def.auto_restart !== 'boolean') {
     issues.push({ severity: 'error', path: '/auto_restart', message: 'auto_restart must be boolean.' });

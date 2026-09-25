@@ -47,6 +47,7 @@ export interface ActivateWorkflowInput {
 
 export interface ActivateWorkflowResult {
   ok:             boolean;
+  skipped?:       'preflight_empty' | 'already_active';
   /** JSON-ready string for the caller to surface to the model. */
   responseString: string;
 }
@@ -175,6 +176,36 @@ export async function activateWorkflowOnState(
         ok:             false,
         responseString: `Workflow "${ workflowId }" does not have a "${ wsChannel }" trigger. You can only execute workflows that match your trigger type. Check your available workflows in the system prompt.`,
       };
+    }
+  }
+
+  // Admission happens before the routine entry point creates an agent graph.
+  // Resume/partial starts would replay stale checkpoint evidence, so preflight
+  // routines always start fresh after the deterministic function approves.
+  if (definition.preflight !== undefined) {
+    if (input.resume || input.resumeExecutionId || input.startNodeId) {
+      return { ok: false, responseString: 'Preflight workflows require a fresh run; checkpoint/partial replay is disabled.' };
+    }
+    try {
+      const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+      const active = await WorkflowExecutionModel.findActiveByWorkflow(definition.id);
+      if (active) return { ok: false, skipped: 'already_active', responseString: 'Workflow already active; skipped before preflight and AI.' };
+      const preflight = definition.preflight;
+      if (!preflight || typeof preflight.functionRef !== 'string'
+        || !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(preflight.functionRef)
+        || (preflight.inputs !== undefined && (!preflight.inputs || typeof preflight.inputs !== 'object' || Array.isArray(preflight.inputs)))) {
+        throw new Error('Invalid preflight configuration.');
+      }
+      const { runFunctionStructured } = await import('../function/function_run');
+      const result = await runFunctionStructured({ slug: preflight.functionRef, inputs: preflight.inputs });
+      const outputs = result.outputs;
+      if (!result.successBoolean || !outputs || typeof outputs !== 'object' || Array.isArray(outputs) || typeof outputs.shouldRun !== 'boolean') {
+        throw new Error('Preflight function failed or did not return a boolean shouldRun.');
+      }
+      if (!outputs.shouldRun) return { ok: false, skipped: 'preflight_empty', responseString: 'Preflight found no work; skipped without AI.' };
+      message = JSON.stringify({ trigger: message, preflight: outputs });
+    } catch (error) {
+      return { ok: false, responseString: `Preflight failed closed: ${ error instanceof Error ? error.message : String(error) }` };
     }
   }
 
