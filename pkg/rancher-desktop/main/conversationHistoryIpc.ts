@@ -62,7 +62,7 @@ export function initConversationHistoryIpc(): void {
       type:      entry.type,
       thread_id: entry.thread_id,
       title:     entry.title,
-      url:        entry.url,
+      url:       entry.url,
       favicon:   entry.favicon,
       tab_id:    entry.tab_id,
       status:    entry.status ?? 'active',

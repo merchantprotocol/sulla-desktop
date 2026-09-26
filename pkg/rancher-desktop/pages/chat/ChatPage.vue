@@ -93,6 +93,7 @@ import FileTreeRail      from './components/files/FileTreeRail.vue';
 import EmptyState        from './components/empty/EmptyState.vue';
 
 import { restoreChatFromHistory } from './services/historyRestore';
+
 import { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
 
 import { ChatController }        from './controller/ChatController';

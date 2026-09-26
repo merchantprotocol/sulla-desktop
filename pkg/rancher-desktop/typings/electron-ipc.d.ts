@@ -175,14 +175,14 @@ export interface IpcMainEvents {
 
   // #region Conversation History
   'conversation-history:record': (entry: {
-    id:        string;
-    type:      'chat' | 'browser' | 'workflow' | 'graph';
+    id:         string;
+    type:       'chat' | 'browser' | 'workflow' | 'graph';
     thread_id?: string;
-    title?:    string;
-    url?:      string;
-    favicon?:  string;
-    tab_id?:   string;
-    status?:   'active' | 'closed' | 'archived' | 'deleted';
+    title?:     string;
+    url?:       string;
+    favicon?:   string;
+    tab_id?:    string;
+    status?:    'active' | 'closed' | 'archived' | 'deleted';
   }) => void;
   'conversation-history:link-threads': (links: { id: string; threadId: string }[]) => void;
   'conversation-history:close': (id: string) => void;
