@@ -39,9 +39,9 @@ yarn build  # For production
 - **GitHub Discussions**: Join our [community forum](https://github.com/merchantprotocol/sulla-desktop/discussions) for free support
 - **Bug Reports**: Report issues on [GitHub Issues](https://github.com/merchantprotocol/sulla-desktop/issues)
 
-### Premium Support
+### Setup Help
 
-For direct access to our developers and priority support, join our [SKOOL community](https://www.skool.com/sulla) ($47/month).
+Want help setting Sulla up for your business? [Book a free 30-minute call](https://sulladesktop.com/booking.html) or email custom@sulladesktop.com. Everything else lives on the [Support page](https://sulladesktop.com/support).
 
 ## Next Steps
 
