@@ -5,11 +5,19 @@ The vault stores credentials for every integration the user has connected — AP
 ## How it's protected
 
 - **Storage:** Postgres table `integration_values` (encrypted at rest with the `$VAULT$` prefix marker)
-- **Encryption:** AES-256-GCM with a Vault Master Key (VMK) derived from the user's master password via PBKDF2 (100k iterations, 32-byte salt)
-- **VMK at rest:** encrypted via Electron `safeStorage` (OS keychain integration), backed up via recovery key
-- **Files in `~/.sulla/`:** `vault-salt`, `vault-key.enc`, `vault-key.backup`, `vault-recovery-hash`, `vault-verify`
-- **Unlock:** auto on app start via `safeStorage`; falls back to master password or recovery key
+- **Encryption:** AES-256-GCM with a random 256-bit Vault Master Key (VMK). Legacy vaults derived the VMK from the master password (PBKDF2-SHA512, 100k iterations); they keep working unchanged.
+- **VMK wrapping:** master password → PBKDF2-SHA512 (210k iterations) → key that wraps the VMK (`vault-key.wrapped`). A password change only re-wraps the VMK, so stored credentials, the recovery key, and existing backups all stay valid. Nothing is re-encrypted.
+- **VMK at rest:** cached via Electron `safeStorage` (OS keychain), and wrapped by the recovery key (`vault-key.backup`)
+- **Files in `~/.sulla/`** (all mode 0600, written atomically): `vault-key.wrapped` (or legacy `vault-salt`), `vault-key.enc`, `vault-key.backup`, `vault-recovery-hash`, `vault-verify`
+- **Unlock:** auto on app start via `safeStorage`; falls back to master password or recovery key. Every candidate key is verified against the canary (or, if the canary is missing, against real stored ciphertext) before it's accepted. Repeated failures are throttled.
+- **Fail closed:** if the vault exists but is locked, credential writes are refused (`VAULT_LOCKED`) rather than being stored in plaintext.
 - **VMK lives in memory only** — never serialized, never sent over IPC
+
+### Backups (loss protection)
+
+Credentials live in Postgres inside the VM, so a VM reset would otherwise lose them. Sulla writes **automatic encrypted snapshots** to `~/.sulla/vault-backups/`: at startup, every 6 hours, and 30s after any credential change. Identical snapshots are skipped, and retention keeps the newest 20, one per day for 30 days, and one per month for 12 months.
+
+A snapshot contains ciphertext only, plus the wrapped key material. It can be restored on any machine with the **master password or recovery key** from when it was made: Passwords & Accounts → Import → pick the snapshot. Restore merges (it never overwrites newer values), runs as a single transaction, and takes a safety snapshot first. "Export (Encrypted)" produces the same self-contained format.
 
 The agent runs inside Lima but the vault files live on the host. The agent talks to the vault through tools, not files.
 
@@ -93,7 +101,7 @@ sulla vault/vault_read_secrets '{"account_type":"openai","include_secrets":true}
 Otherwise, default to masked output.
 
 ### "Remove my GitHub credential"
-There's no dedicated delete tool. Set the property to empty or use the integrations UI. Confirm before destructive ops.
+Use `vault/vault_delete_credential` with `{"confirm":true}` after the user confirms. Automatic backups keep the prior value recoverable.
 
 ## Hard rules
 
@@ -102,11 +110,16 @@ There's no dedicated delete tool. Set the property to empty or use the integrati
 - **Default to the proxy pattern** (`sulla <account>/<slug>`) over reading and re-passing secrets
 - **Don't try to bypass `none`/`metadata` access levels** — escalate to the user, don't workaround
 - **Browser autofill never returns the password** to the agent. That's intentional.
+- **`llm_access` is user-only.** `vault_set_credential` refuses to write it.
+- **Overwriting an existing secret** with `vault_set_credential` requires `{"confirm":true}`. Only set it when the user asked for the change.
+- **Functions and workflow steps** only receive a secret when the account allows it: never at `none`/`metadata`, and website logins only at `full` (function code can echo values back to the agent).
 
 ## Reference
 
 - Tool manifests: `pkg/rancher-desktop/agent/tools/integrations/manifests.ts`
 - Vault service: `pkg/rancher-desktop/agent/services/VaultKeyService.ts`
+- Backups: `pkg/rancher-desktop/agent/services/VaultBackupService.ts`
+- Access policy: `pkg/rancher-desktop/agent/services/vaultAccessPolicy.ts`
 - Integration service: `pkg/rancher-desktop/agent/services/IntegrationService.ts`
 - LLM access map: `pkg/rancher-desktop/agent/integrations/select_box/VaultLlmAccess.ts`
 - Autofill flow: `pkg/rancher-desktop/agent/tools/integrations/vault_autofill.ts`
