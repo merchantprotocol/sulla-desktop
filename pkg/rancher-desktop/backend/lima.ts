@@ -2965,30 +2965,12 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Escape '$' as '$$' so Docker Compose doesn't interpret them as variable references
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     const sullaServicePassword = escapeForCompose(await SullaSettingsModel.get('sullaServicePassword') || 'sulla_dev_password');
-    const sullaN8nEncryptionKey = escapeForCompose(await SullaSettingsModel.get('sullaN8nEncryptionKey') || 'changeMeToA32CharRandomString1234');
 
     // Modify dynamic values like passwords
     if (compose.services?.postgres?.environment) {
       compose.services.postgres.environment = compose.services.postgres.environment.map((env: string) => {
         if (env.startsWith('POSTGRES_PASSWORD=')) {
           return `POSTGRES_PASSWORD=${ sullaServicePassword }`;
-        }
-        return env;
-      });
-    }
-    if (compose.services?.n8n?.environment) {
-      compose.services.n8n.environment = compose.services.n8n.environment.map((env: string) => {
-        if (env.startsWith('N8N_ENCRYPTION_KEY=')) {
-          return `N8N_ENCRYPTION_KEY=${ sullaN8nEncryptionKey }`;
-        }
-        if (env.startsWith('N8N_USER_MANAGEMENT_JWT_SECRET=')) {
-          return `N8N_USER_MANAGEMENT_JWT_SECRET=${ sullaN8nEncryptionKey }`;
-        }
-        if (env.startsWith('N8N_BASIC_AUTH_PASSWORD=')) {
-          return `N8N_BASIC_AUTH_PASSWORD=${ sullaServicePassword }`;
-        }
-        if (env.startsWith('DB_POSTGRESDB_PASSWORD=')) {
-          return `DB_POSTGRESDB_PASSWORD=${ sullaServicePassword }`;
         }
         return env;
       });

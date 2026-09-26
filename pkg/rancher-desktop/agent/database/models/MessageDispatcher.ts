@@ -1244,12 +1244,11 @@ const TOOL_VERB_MAP: Record<string, string> = {
   redis_get:                   'Reading cache',
   redis_set:                   'Writing cache',
   redis_del:                   'Clearing cache',
-  // N8n / Workflows
+  // Workflows
   execute_workflow:            'Running workflow',
   validate_workflow:           'Validating workflow',
   patch_workflow:              'Patching workflow',
   diagnose_webhook:            'Diagnosing webhook',
-  restart_n8n_container:       'Restarting n8n',
   // Playwright / Browser
   click_element:               'Clicking',
   get_page_snapshot:           'Capturing page',
@@ -1287,7 +1286,7 @@ function toolNameToVerb(toolName: string): string {
   if (toolName.startsWith('pg_')) return 'Querying database';
   if (toolName.startsWith('redis_')) return 'Using cache';
   if (toolName.startsWith('slack_')) return 'Using Slack';
-  if (toolName.startsWith('n8n_') || toolName.includes('workflow')) return 'Working on workflow';
+  if (toolName.includes('workflow')) return 'Working on workflow';
 
   return 'Working';
 }

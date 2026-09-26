@@ -18,7 +18,6 @@ import { redisClient } from '@pkg/agent/database/RedisClient';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 
-import { createN8nService } from './agent/services/N8nService';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
 import paths from '@pkg/utils/paths';
@@ -1294,9 +1293,6 @@ export async function afterBackgroundLoaded() {
       console.error('[Background] DatabaseManager failed to initialize:', err);
     }
   });
-
-  // Initialize N8nService (reads API key from settings, no DB model dependency)
-  await createN8nService();
 }
 
 /**

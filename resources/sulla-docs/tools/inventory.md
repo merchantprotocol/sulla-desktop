@@ -305,7 +305,7 @@ sulla <account_id>/<integration_slug> '{"method":"GET","path":"/api/...","body":
 ```bash
 sulla jonathonbyrdziaks_token/github '{"method":"GET","path":"/user/repos"}'
 ```
-Account IDs are discoverable via `sulla vault/vault_list_accounts '{"account_type":"<slug>"}'`. Credentials are auto-injected — the agent never handles raw tokens. Third-party tools (e.g. n8n) install as **recipes** (extensions) and are reached via this proxy after install — no special tool category needed.
+Account IDs are discoverable via `sulla vault/vault_list_accounts '{"account_type":"<slug>"}'`. Credentials are auto-injected — the agent never handles raw tokens. Third-party tools (e.g. Twenty CRM) install as **recipes** (extensions) and are reached via this proxy after install — no special tool category needed.
 
 ---
 

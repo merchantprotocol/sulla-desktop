@@ -38,7 +38,7 @@ Next, you will enter details such as:
 How this is used:
 
 - Your name helps personalize AI interactions.
-- Your email and password are used for account and connected feature setup, including integrations like n8n.
+- Your email and password are used for account and connected feature setup, including your integrations.
 
 ## Step 3: Configure your remote model provider
 

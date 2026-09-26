@@ -275,21 +275,10 @@ const handleAccountSubmit = async() => {
   const sullaServicePassword = await SullaSettingsModel.get('sullaServicePassword', SullaSettingsModel.generatePassword());
   await SullaSettingsModel.set('sullaServicePassword', sullaServicePassword, 'string');
 
-  // Load sullaN8nEncryptionKey from SullaSettingsModel
+  // Shared install secret. The name is historical (it began as n8n's key);
+  // marketplace recipes use it as their generic secret via {{sullaN8nEncryptionKey}}.
   const loadedKey = await SullaSettingsModel.get('sullaN8nEncryptionKey', SullaSettingsModel.generateEncryptionKey());
   await SullaSettingsModel.set('sullaN8nEncryptionKey', loadedKey, 'string');
-
-  // Pre-generate n8n API key ID and JWT token for recipe migrations
-  const n8nServiceUserId = '00000000-0000-0000-0000-000000000001';
-  const sullaN8nApiKeyId = await SullaSettingsModel.get('sullaN8nApiKeyId', SullaSettingsModel.generateN8nApiKeyId());
-  await SullaSettingsModel.set('sullaN8nApiKeyId', sullaN8nApiKeyId, 'string');
-  const sullaN8nApiKey = await SullaSettingsModel.get('sullaN8nApiKey');
-  if (!sullaN8nApiKey) {
-    const generatedKey = await SullaSettingsModel.generateN8nApiKeyToken(n8nServiceUserId, loadedKey);
-    await SullaSettingsModel.set('sullaN8nApiKey', generatedKey, 'string');
-    await SullaSettingsModel.set('serviceAccountApiKey', generatedKey, 'string');
-    console.log('[FirstRunWelcome] Generated sullaN8nApiKey');
-  }
 
   // Generate API bearer token for the chat completions API
   const sullaApiToken = await SullaSettingsModel.get('sullaApiToken');

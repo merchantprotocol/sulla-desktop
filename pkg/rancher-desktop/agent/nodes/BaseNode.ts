@@ -952,19 +952,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   }
 
   /**
-   * Check if n8n integration is connected via IntegrationService.
-   * Returns false if the service is unavailable or no account is connected.
-   */
-  protected async isN8nEnabled(): Promise<boolean> {
-    try {
-      const { getIntegrationService } = await import('../services/IntegrationService');
-      return await getIntegrationService().isAnyAccountConnected('n8n');
-    } catch {
-      return false;
-    }
-  }
-
-  /**
    * Check if the current agent opts into observation injection.
    * Planning pipeline agents (observer, thinker, etc.) opt out via config.yaml.
    */
@@ -1156,12 +1143,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             'set_field', 'wait_for_element', 'browse_page', 'synthesize_tabs',
           ]);
           llmTools = llmTools.filter((t: any) => !browserTools.has(t?.function?.name));
-        }
-
-        // Block n8n tools when n8n integration is not connected
-        if (!await this.isN8nEnabled()) {
-          const n8nToolNames = new Set(toolRegistry.getToolNamesForCategory('n8n'));
-          llmTools = llmTools.filter((t: any) => !n8nToolNames.has(t?.function?.name));
         }
 
         // Inject Anthropic-native computer use tools (only in dynamic mode)

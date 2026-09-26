@@ -102,7 +102,6 @@ ${ sullaDocs }/
 │   ├── notify.md                       # notify_user + presence detection
 │   ├── slack.md                        # Messaging, user search, threads
 │   ├── agents.md                       # spawn_agent (under meta/) + check_agent_jobs
-│   ├── n8n.md                          # Separate workflow engine (may not be installed)
 │   ├── applescript.md                  # macOS app automation (per-app allowlist)
 │   └── computer-use.md                 # What's shipped vs what's planned
 ├── workflows/

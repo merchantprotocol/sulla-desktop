@@ -305,10 +305,10 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'browse_tools',
-    description: 'Discover available sulla CLI tools by category or keyword. Returns ready-to-run `sulla <category>/<tool>` commands with descriptions and parameter JSON. IMPORTANT: the commands it returns are NOT directly callable tools — you invoke each one by passing the full command string to the `exec` tool (e.g. exec({command: "sulla docker/ps \'{}\'"})). NEVER call execute_workflow for any command listed here — execute_workflow is only for named n8n/Sulla workflows. Call this before attempting any sulla CLI invocation you are unsure about.',
+    description: 'Discover available sulla CLI tools by category or keyword. Returns ready-to-run `sulla <category>/<tool>` commands with descriptions and parameter JSON. IMPORTANT: the commands it returns are NOT directly callable tools — you invoke each one by passing the full command string to the `exec` tool (e.g. exec({command: "sulla docker/ps \'{}\'"})). NEVER call execute_workflow for any command listed here — execute_workflow is only for named Sulla workflows. Call this before attempting any sulla CLI invocation you are unsure about.',
     category:    'meta',
     schemaDef:   {
-      category: { type: 'string', optional: true, description: 'Tool category to list (e.g. docker, github, slack, redis, pg, playwright, calendar, n8n, kubectl, lima, chrome, vault, extensions, rdctl, meta, agents, skills, bridge).' },
+      category: { type: 'string', optional: true, description: 'Tool category to list (e.g. docker, github, slack, redis, pg, playwright, calendar, kubectl, lima, chrome, vault, extensions, rdctl, meta, agents, skills, bridge).' },
       query:    { type: 'string', optional: true, description: 'Keyword to search tool names and descriptions across all categories.' },
     },
     operationTypes: ['read'],

@@ -141,7 +141,6 @@ export interface BaseThreadState {
     finalSummary:          string;
     totalSummary?:         string;
     finalState:            'failed' | 'running' | 'completed';
-    n8nLiveEventsEnabled?: boolean;
 
     // parent graph return
     returnTo: string | null;
@@ -632,7 +631,6 @@ export async function createInitialThreadState<T extends BaseThreadState>(
     finalSummary:         '',
     totalSummary:         '',
     finalState:           'running',
-    n8nLiveEventsEnabled: false,
     returnTo:             null,
   };
 

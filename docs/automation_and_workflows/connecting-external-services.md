@@ -1,6 +1,6 @@
 # Connecting External Services
 
-This guide explains how to connect external services for n8n-based automations in Sulla Desktop.
+This guide explains how to connect external services so your Sulla automations can use them.
 
 ## Recommended method: add credentials in Integrations
 
@@ -21,7 +21,7 @@ When you connect services there:
 
 Once saved, those credentials can be used by your automation setup flows.
 
-## Why this helps with n8n workflows
+## Why this helps your automations
 
 Centralized credentials make workflow setup faster:
 
