@@ -1,6 +1,6 @@
 # Sulla Tools — GitHub / Git
 
-**52 tools** — local git on the shared Mac filesystem, plus the GitHub REST/GraphQL API. All authenticated by the vault PAT.
+**53 tools** — local git on the shared Mac filesystem, plus the GitHub REST/GraphQL API. All authenticated by the vault PAT.
 
 ## Authentication
 
@@ -41,8 +41,8 @@ sulla github/git_commit '{"absolutePath":"/path/to/repo","message":"feat: X","fi
 ## Issues (7)
 `github_create_issue`, `github_get_issue`, `github_get_issues`, `github_get_issue_comments` (PRs are issues — pass the PR number), `github_update_issue`, `github_close_issue` (reason `completed`/`not_planned`), `github_comment_on_issue`.
 
-## Pull requests (11)
-`github_create_pr` (`draft:true` for draft), `github_get_pr`, `github_list_prs`, `github_update_pr`, `github_ready_pr` (draft → ready; drafts can't be merged), `github_close_pr`, `github_merge_pr` (`merge`/`squash`/`rebase`, requires `confirm:true`), `github_add_pr_review` (APPROVE / REQUEST_CHANGES / COMMENT), `github_list_pr_reviews`, `github_request_pr_reviewers`, `github_get_pr_files`.
+## Pull requests (12)
+`github_create_pr` (`draft:true` for draft), `github_get_pr`, `github_list_prs`, `github_update_pr`, `github_ready_pr` (draft → ready; drafts can't be merged), `github_draft_pr` (ready → draft; **requires `comment`** saying what to fix, posted before the conversion — the reversible way to hand work back instead of leaving it in limbo), `github_close_pr`, `github_merge_pr` (`merge`/`squash`/`rebase`, requires `confirm:true`), `github_add_pr_review` (APPROVE / REQUEST_CHANGES / COMMENT), `github_list_pr_reviews`, `github_request_pr_reviewers`, `github_get_pr_files`.
 
 ```bash
 sulla github/github_create_pr '{"owner":"merchantprotocol","repo":"sulla-desktop","title":"feat: X","head":"feature/x","base":"main","draft":true}'

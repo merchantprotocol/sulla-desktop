@@ -110,12 +110,12 @@ sulla <category> --help          # what THIS install exposes right now
 
 → See [`tools/browser.md`](browser.md)
 
-## github — git + GitHub API (52 tools)
+## github — git + GitHub API (53 tools)
 **Local git:** `git_status`, `git_add`, `git_commit`, `git_push`, `git_pull`, `git_branch`, `git_checkout`, `git_log`, `git_diff`, `git_blame`, `git_conflicts`, `git_stash`, `git_worktree`.
 **Repo/init:** `github_init`, `github_add_remote`, `github_create_repo`, `github_get_repo`, `github_list_repos`, `github_delete_repo`, `github_fork_repo`, `github_list_branches`, `github_create_ref`, `github_delete_ref`.
 **Files via API:** `github_read_file`, `github_create_file`, `github_update_file`.
 **Issues:** `github_create_issue`, `github_get_issue`, `github_get_issues`, `github_get_issue_comments`, `github_update_issue`, `github_close_issue`, `github_comment_on_issue`.
-**Pull requests:** `github_create_pr`, `github_get_pr`, `github_list_prs`, `github_update_pr`, `github_ready_pr`, `github_close_pr`, `github_merge_pr`, `github_add_pr_review`, `github_list_pr_reviews`, `github_request_pr_reviewers`, `github_get_pr_files`.
+**Pull requests:** `github_create_pr`, `github_get_pr`, `github_list_prs`, `github_update_pr`, `github_ready_pr`, `github_draft_pr` (ready → draft, requires `comment`), `github_close_pr`, `github_merge_pr`, `github_add_pr_review`, `github_list_pr_reviews`, `github_request_pr_reviewers`, `github_get_pr_files`.
 **Releases/CI:** `github_create_release`, `github_check_runs`, `github_trigger_workflow_run`.
 **Projects V2 boards:** `github_list_projects`, `github_add_issue_to_project`, `github_set_project_field`.
 
