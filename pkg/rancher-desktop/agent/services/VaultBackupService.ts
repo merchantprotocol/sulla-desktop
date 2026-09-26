@@ -128,10 +128,24 @@ export function selectSnapshotsToKeep(names: string[]): Set<string> {
   return keep;
 }
 
-class PostgresVaultRowStore implements VaultRowStore {
-  async listRows(): Promise<VaultRow[]> {
+/** Minimal DB surface, so the SQL can be exercised against a scratch database. */
+export interface VaultRowDb {
+  queryAll(sql: string, params: unknown[]): Promise<any[]>;
+  transaction<T>(fn: (client: { query(sql: string, params: unknown[]): Promise<{ rowCount: number | null }> }) => Promise<T>): Promise<T>;
+}
+
+export class PostgresVaultRowStore implements VaultRowStore {
+  constructor(private readonly db?: VaultRowDb) {}
+
+  private async client(): Promise<VaultRowDb> {
+    if (this.db) return this.db;
     const { postgresClient } = await import('../database/PostgresClient');
-    const rows = await postgresClient.queryAll(
+
+    return postgresClient as unknown as VaultRowDb;
+  }
+
+  async listRows(): Promise<VaultRow[]> {
+    const rows = await (await this.client()).queryAll(
       `SELECT "integration_id", "account_id", "property", "value", "is_default", "created_at", "updated_at"
          FROM "integration_values"`,
       [],
@@ -149,9 +163,7 @@ class PostgresVaultRowStore implements VaultRowStore {
   }
 
   async applyRows(rows: VaultRow[], mode: RestoreMode): Promise<RestoreResult> {
-    const { postgresClient } = await import('../database/PostgresClient');
-
-    return postgresClient.transaction(async(client) => {
+    return (await this.client()).transaction(async(client) => {
       const result: RestoreResult = { inserted: 0, updated: 0, skipped: 0 };
 
       for (const r of rows) {
