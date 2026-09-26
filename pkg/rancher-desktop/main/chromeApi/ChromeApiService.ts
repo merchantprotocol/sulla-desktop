@@ -210,6 +210,8 @@ export class ChromeApiService implements ChromeApi {
 
   // Downloads
   private activeDownloads = new Map<string, DownloadItem>();
+  /** Live Electron items behind chrome.downloads ids, for cancel/pause/resume. */
+  private electronDownloads = new Map<string, Electron.DownloadItem>();
   private downloadCounter = 0;
 
   // History (in-memory + SullaSettingsModel persistence)
@@ -234,6 +236,10 @@ export class ChromeApiService implements ChromeApi {
   private constructor(tabViewManager: BrowserTabViewManager) {
     this.tabViewManager = tabViewManager;
     this.bindWebRequestFixer();
+    // chrome.webNavigation events and chrome.history recording were defined
+    // but never attached to any tab, so neither ever fired (search_history
+    // always came back empty). Hook every tab view as it is created.
+    tabViewManager.onViewCreated?.((tabId, wc) => this.attachWebNavigationListeners(tabId, wc));
   }
 
   /**
@@ -256,6 +262,7 @@ export class ChromeApiService implements ChromeApi {
           this.attachFixerListeners(f);
         }
       }, 1_000);
+      poll.unref?.();
     }
   }
 
@@ -360,14 +367,14 @@ export class ChromeApiService implements ChromeApi {
 
     create: async(props: TabCreateProperties): Promise<ChromeTab> => {
       const tabId = `chrome-tab-${ ++this.tabCounter }-${ Date.now() }`;
-      const bounds = { x: 0, y: 0, width: 1280, height: 720 };
 
       if (props.hidden) {
         // Create a detached WebContentsView — functional but not visible
         const browserSession = getBrowserSession();
         const view = new WebContentsView({
           webPreferences: {
-            webSecurity:      false,
+            // Same-origin policy on, like every other browser-session view.
+            webSecurity:      true,
             contextIsolation: false,
             nodeIntegration:  false,
             session:          browserSession,
@@ -379,6 +386,7 @@ export class ChromeApiService implements ChromeApi {
         }
 
         this.hiddenViews.set(tabId, view);
+        this.attachWebNavigationListeners(tabId, view.webContents);
 
         view.webContents.loadURL(props.url).catch((err) => {
           console.error(`[ChromeApi] Hidden tab load failed tabId=${ tabId }:`, err);
@@ -386,7 +394,10 @@ export class ChromeApiService implements ChromeApi {
 
         console.log(`[ChromeApi] Created hidden tab tabId=${ tabId } url=${ props.url }`);
       } else {
-        this.tabViewManager.createView(tabId, props.url, bounds);
+        // Go through the registry (not the view manager directly) so the tab
+        // shows up in the tab strip, can be closed from the UI, and is
+        // covered by the agent-tab cap. The registry creates the view.
+        tabRegistry.open({ assetId: tabId, url: props.url, origin: 'agent' });
 
         if (props.active !== false) {
           this.tabViewManager.setFocusedTab(tabId);
@@ -409,7 +420,8 @@ export class ChromeApiService implements ChromeApi {
         (view.webContents as any).close?.();
         this.hiddenViews.delete(tabId);
         console.log(`[ChromeApi] Removed hidden tab tabId=${ tabId }`);
-      } else {
+      } else if (!tabRegistry.close(tabId)) {
+        // Not registry-owned (legacy view) — tear the view down directly.
         this.tabViewManager.destroyView(tabId);
       }
 
@@ -462,7 +474,7 @@ export class ChromeApiService implements ChromeApi {
       const hiddenView = this.hiddenViews.get(tabId);
 
       if (hiddenView) {
-        hiddenView.webContents.goBack();
+        hiddenView.webContents.navigationHistory.goBack();
       } else {
         this.tabViewManager.goBack(tabId);
       }
@@ -472,7 +484,7 @@ export class ChromeApiService implements ChromeApi {
       const hiddenView = this.hiddenViews.get(tabId);
 
       if (hiddenView) {
-        hiddenView.webContents.goForward();
+        hiddenView.webContents.navigationHistory.goForward();
       } else {
         this.tabViewManager.goForward(tabId);
       }
@@ -516,19 +528,14 @@ export class ChromeApiService implements ChromeApi {
 
     insertCSS: async(injection: CSSInjection): Promise<void> => {
       const { tabId } = injection.target;
-      const code = `(() => {
-        const style = document.createElement('style');
-        style.textContent = ${ JSON.stringify(injection.css) };
-        document.head.appendChild(style);
-      })()`;
+      // Native insertion: works before <head> exists and isn't blocked by the
+      // page's Content-Security-Policy (an injected <style> tag is, on most
+      // large sites) — the same guarantee chrome.scripting.insertCSS gives.
+      const wc = this.hiddenViews.get(tabId)?.webContents ?? this.tabViewManager.getWebContents(tabId);
 
-      const hiddenView = this.hiddenViews.get(tabId);
-
-      if (hiddenView) {
-        await hiddenView.webContents.executeJavaScript(code, true);
-      } else {
-        await this.tabViewManager.executeJavaScript(tabId, code);
-      }
+      if (!wc) throw new Error(`[ChromeApi] insertCSS: no tab ${ tabId }`);
+      this.tabViewManager.wakeView(tabId);
+      await wc.insertCSS(injection.css);
     },
   };
 
@@ -853,7 +860,14 @@ export class ChromeApiService implements ChromeApi {
    * into the chrome.webNavigation event system.
    */
   attachWebNavigationListeners(tabId: string, wc: Electron.WebContents): void {
-    wc.on('will-navigate', (_event, url) => {
+    // did-start-navigation (not will-navigate): will-navigate only fires for
+    // page-initiated navigations, missing address-bar, agent and loadURL ones.
+    wc.on('did-start-navigation', (details: any, legacyUrl?: string, legacyInPlace?: boolean, legacyMainFrame?: boolean) => {
+      const url = details?.url ?? legacyUrl;
+      const isMainFrame = details?.isMainFrame ?? legacyMainFrame;
+      const isSameDocument = details?.isSameDocument ?? legacyInPlace;
+
+      if (!url || !isMainFrame || isSameDocument) return;
       this.webNavBeforeNavigate.emit({ tabId, url, timeStamp: Date.now() });
     });
 
@@ -1018,10 +1032,20 @@ export class ChromeApiService implements ChromeApi {
       this.activeDownloads.set(downloadId, item);
       this.downloadCreatedEvent.emit(item);
 
-      // Trigger the actual download via the browser session
+      // Download in the BROWSER session (the user's cookies, and where our
+      // will-download listener lives). This used to call downloadURL on the
+      // main window — the default session — so the listener never fired, the
+      // item sat "in_progress" forever and the file came down without the
+      // user's login. Match on URL so a download the user starts at the same
+      // moment isn't claimed by this request.
       const sess = getBrowserSession();
+      const onWillDownload = (_event: Electron.Event, electronItem: Electron.DownloadItem) => {
+        const chain = electronItem.getURLChain?.() ?? [];
+        if (electronItem.getURL() !== options.url && !chain.includes(options.url)) return;
+        sess.removeListener('will-download', onWillDownload);
+        clearTimeout(claimTimeout);
+        this.electronDownloads.set(downloadId, electronItem);
 
-      sess.once('will-download', (_event, electronItem) => {
         if (options.filename) {
           electronItem.setSavePath(options.filename);
         }
@@ -1029,25 +1053,32 @@ export class ChromeApiService implements ChromeApi {
         item.totalBytes = electronItem.getTotalBytes();
         item.filename = electronItem.getFilename();
 
-        electronItem.on('updated', (_event, state) => {
+        electronItem.on('updated', (_e, state) => {
           item.bytesReceived = electronItem.getReceivedBytes();
           item.state = state === 'progressing' ? 'in_progress' : 'interrupted';
           this.downloadChangedEvent.emit({ id: downloadId, state: { current: item.state } });
         });
 
-        electronItem.once('done', (_event, state) => {
+        electronItem.once('done', (_e, state) => {
+          this.electronDownloads.delete(downloadId);
           item.state = state === 'completed' ? 'complete' : 'interrupted';
           item.bytesReceived = electronItem.getReceivedBytes();
           this.downloadChangedEvent.emit({ id: downloadId, state: { current: item.state } });
         });
-      });
+      };
+      // If the server never starts a download (e.g. it serves a page), stop
+      // listening and report the item as interrupted instead of leaking.
+      const claimTimeout = setTimeout(() => {
+        sess.removeListener('will-download', onWillDownload);
+        if (item.state === 'in_progress' && !this.electronDownloads.has(downloadId)) {
+          item.state = 'interrupted';
+          this.downloadChangedEvent.emit({ id: downloadId, state: { current: 'interrupted' } });
+        }
+      }, 60_000);
+      claimTimeout.unref?.();
 
-      // Initiate the download from main process
-      const mainWindow = require('@pkg/window').getWindow('main-agent');
-
-      if (mainWindow) {
-        mainWindow.webContents.downloadURL(options.url);
-      }
+      sess.on('will-download', onWillDownload);
+      sess.downloadURL(options.url);
 
       return downloadId;
     },
@@ -1064,20 +1095,21 @@ export class ChromeApiService implements ChromeApi {
 
     cancel: async(downloadId: string): Promise<void> => {
       const item = this.activeDownloads.get(downloadId);
+      this.electronDownloads.get(downloadId)?.cancel();
 
-      if (item) {
+      if (item && item.state === 'in_progress') {
         item.state = 'interrupted';
         this.downloadChangedEvent.emit({ id: downloadId, state: { current: 'interrupted' } });
       }
     },
 
     pause: async(downloadId: string): Promise<void> => {
-      // Electron doesn't expose pause on DownloadItem from main process
-      console.log(`[ChromeApi] downloads.pause(${ downloadId }) — not supported`);
+      this.electronDownloads.get(downloadId)?.pause();
     },
 
     resume: async(downloadId: string): Promise<void> => {
-      console.log(`[ChromeApi] downloads.resume(${ downloadId }) — not supported`);
+      const electronItem = this.electronDownloads.get(downloadId);
+      if (electronItem?.canResume()) electronItem.resume();
     },
 
     onCreated: this.downloadCreatedEvent as ChromeEvent<[DownloadItem]>,

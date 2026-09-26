@@ -1234,130 +1234,15 @@ export function buildGuestBridgeScript(): string {
   // Expose globally
   window[GLOBAL] = bridge;
 
-  /* ------------------------------------------------------------------ */
-  /*  Passive event streaming to host                                   */
-  /* ------------------------------------------------------------------ */
-
-  // Click listener
-  document.addEventListener('click', function (e) {
-    var source = e.target;
-    var target = source && typeof source.closest === 'function'
-      ? source.closest('button, [role="button"], a[href], [data-test-id], input, textarea, select')
-      : null;
-    if (!target) return;
-
-    emitToHost('sulla:click', {
-      text: (target.textContent || '').trim().slice(0, 120),
-      tagName: target.tagName,
-      id: target.id || '',
-      name: target.name || '',
-      dataTestId: target.getAttribute('data-test-id') || '',
-      disabled: !!target.disabled,
-      timestamp: Date.now(),
-    });
-  }, true);
-
-  // Route / URL change listener (SPA-friendly)
-  var lastPathname = location.href;
-  var contentEmitTimer = null;
-  function checkRouteChange() {
-    if (location.href !== lastPathname) {
-      lastPathname = location.href;
-      emitToHost('sulla:routeChanged', {
-        url: location.href,
-        path: location.pathname + location.hash,
-        title: document.title,
-        timestamp: Date.now(),
-      });
-      // Re-emit reader content after navigation settles
-      if (contentEmitTimer) clearTimeout(contentEmitTimer);
-      contentEmitTimer = setTimeout(emitReaderContent, 1500);
-    }
-  }
-  setInterval(checkRouteChange, 500);
-
-  // Also catch pushState / replaceState
-  var origPushState = history.pushState;
-  var origReplaceState = history.replaceState;
-  history.pushState = function () {
-    origPushState.apply(this, arguments);
-    checkRouteChange();
-  };
-  history.replaceState = function () {
-    origReplaceState.apply(this, arguments);
-    checkRouteChange();
-  };
-  window.addEventListener('popstate', checkRouteChange);
-
-  // Emit initial injection event
-  emitToHost('sulla:injected', {
-    url: location.href,
-    title: document.title,
-    timestamp: Date.now(),
-  });
-
-  // Auto-emit reader content after page settles
-  function emitReaderContent() {
-    var content = bridge.getReaderContent();
-    if (content && content.contentLength > 100) {
-      emitToHost('sulla:pageContent', {
-        title: content.title,
-        url: content.url,
-        content: content.content,
-        contentLength: content.contentLength,
-        truncated: content.truncated,
-        timestamp: Date.now(),
-      });
-    }
-  }
-
-  // Emit content after initial page load settles
-  setTimeout(emitReaderContent, 1500);
-
-  /* ------------------------------------------------------------------ */
-  /*  Alert / Confirm / Prompt interception                             */
-  /*  Captures dialog content and streams it to the host before the     */
-  /*  native dialog fires.                                              */
-  /* ------------------------------------------------------------------ */
-  (function interceptDialogs() {
-    var origAlert = window.alert;
-    var origConfirm = window.confirm;
-    var origPrompt = window.prompt;
-
-    window.alert = function (msg) {
-      emitToHost('sulla:dialog', {
-        dialogType: 'alert',
-        message: String(msg || '').slice(0, 2000),
-        url: location.href,
-        title: document.title,
-        timestamp: Date.now(),
-      });
-      return origAlert.call(window, msg);
-    };
-
-    window.confirm = function (msg) {
-      emitToHost('sulla:dialog', {
-        dialogType: 'confirm',
-        message: String(msg || '').slice(0, 2000),
-        url: location.href,
-        title: document.title,
-        timestamp: Date.now(),
-      });
-      return origConfirm.call(window, msg);
-    };
-
-    window.prompt = function (msg, defaultVal) {
-      emitToHost('sulla:dialog', {
-        dialogType: 'prompt',
-        message: String(msg || '').slice(0, 2000),
-        defaultValue: String(defaultVal || ''),
-        url: location.href,
-        title: document.title,
-        timestamp: Date.now(),
-      });
-      return origPrompt.call(window, msg, defaultVal);
-    };
-  })();
+  // Passive event streaming (sulla:click with button text, sulla:routeChanged
+  // via 500ms polling + a history.pushState monkey-patch, sulla:injected, a
+  // full reader-mode extraction of every page as sulla:pageContent, and
+  // alert/confirm/prompt wrappers) used to run here in EVERY frame of every
+  // page. Nothing consumes those events any more (the webview host bridge
+  // they fed was removed), so they cost CPU and IPC on every load, leaked
+  // page text and click targets into the main process, and made the bridge
+  // detectable/fragile (patched history + dialogs). Agent tools read the page
+  // on demand through window.sullaBridge / window.__sulla instead.
 
 })();
 

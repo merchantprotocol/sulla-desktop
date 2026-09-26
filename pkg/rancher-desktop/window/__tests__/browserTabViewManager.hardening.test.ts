@@ -16,7 +16,9 @@ const mockBrowserSession = {
   setUserAgent:          jest.fn(),
   on:                    jest.fn(),
   getPreloadScripts:     jest.fn(() => []),
-  registerPreloadScript: jest.fn(),
+  registerPreloadScript:       jest.fn(),
+  setPermissionCheckHandler:   jest.fn(),
+  setPermissionRequestHandler: jest.fn(),
 };
 
 function makeWebContents() {

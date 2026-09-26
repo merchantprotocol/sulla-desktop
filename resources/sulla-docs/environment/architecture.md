@@ -89,6 +89,16 @@ All function containers mount `~/sulla/functions/` read-only.
 
 ---
 
+## Browser tabs: security model
+
+Browser tabs are `WebContentsView`s in the `persist:sulla-browser` session. They run arbitrary websites, so everything in this session counts as **untrusted web content**:
+
+- **Injected scripts** — `browserTabPreload.ts` injects `window.sullaBridge` (DOM helpers for `GuestBridge.ts`) and `window.__sulla` (the runtime used by `browser/exec`) into every frame at document-start. They do nothing until an agent tool calls them; there is no passive event streaming.
+- **IPC** — `main/ipcGuestGuard.ts` is imported first in `background.ts` and wraps every `ipcMain` handler/listener. Senders from the browser session are rejected unless the channel is on `GUEST_ALLOWED_CHANNELS` (`sulla-settings-get` for `theme` only, and `browser-tab-view:bridge-event`). Any new channel the tab preload uses must be added there.
+- **Vault** — bridge events are bound to `event.senderFrame.origin`; a page only ever sees and autofills accounts saved for its own origin.
+- **Site permissions** — `main/browserTabs/browserPermissions.ts`: camera/mic, location, clipboard read, screen share etc. prompt once per site (saved in `userData/browser-site-permissions.json`); pages the user can't see (parked/agent tabs) are denied without a prompt. Fullscreen, pointer lock, DRM and notifications are allowed.
+- **`chrome.*`** — web pages get no `chrome.*` APIs (same as Chrome). `main/chromeApi/ChromeApiService.ts` is Sulla's *internal* implementation of the Chrome extension API shape, used by agent tools and Sulla's own UI over `chrome-api:*` IPC — which web content cannot reach. Sulla does not load Chrome extensions today; supporting them would mean `session.extensions.loadExtension` plus mapping these APIs onto the extension runtime.
+
 ## Vue Renderer
 
 The renderer cannot access the filesystem directly. All file ops go through IPC to the main process. Chat messages are sent over WebSocket to the BackendGraphWebSocketService.

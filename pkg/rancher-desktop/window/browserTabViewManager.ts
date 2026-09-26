@@ -4,6 +4,7 @@ import Electron, { WebContentsView } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
+import { BrowserPermissionPolicy, SitePermissionStore, originOf } from '@pkg/main/browserTabs/browserPermissions';
 import { BROWSER_SESSION_PARTITION, getBrowserSession } from '@pkg/main/browserTabs/browserSession';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -118,6 +119,8 @@ export class BrowserTabViewManager {
   private vaultIndex: { builtAt: number; byOrigin: Map<string, VaultAccountMatch[]> } | null = null;
   private vaultIndexBuild: Promise<Map<string, VaultAccountMatch[]>> | null = null;
   private sessionInitialised = false;
+  /** Subscribers notified for every tab view created (see onViewCreated). */
+  private viewCreatedListeners = new Set<(tabId: string, wc: Electron.WebContents) => void>();
   private webRequestFixer: SullaWebRequestFixer | null = null;
 
   private constructor() {}
@@ -192,6 +195,8 @@ export class BrowserTabViewManager {
         }).catch(() => {});
       });
 
+      this.installPermissionPolicy(sess);
+
       // Register the browser tab preload script so the guest bridge is
       // injected at document-start — before any page JavaScript runs.
       const preloadId = 'sulla-browser-tab-preload';
@@ -209,6 +214,55 @@ export class BrowserTabViewManager {
     }
 
     return sess;
+  }
+
+  /**
+   * Site permissions (camera, mic, location, clipboard read, …). Without a
+   * handler Electron silently grants every request to every website. See
+   * browserPermissions.ts for the policy.
+   */
+  private installPermissionPolicy(sess: Electron.Session): void {
+    let storePath: string | null = null;
+    try {
+      storePath = path.join(Electron.app.getPath('userData'), 'browser-site-permissions.json');
+    } catch { /* tests / app not ready — keep decisions in memory */ }
+
+    const policy = new BrowserPermissionPolicy(new SitePermissionStore(storePath), async(origin, description) => {
+      const parent = getWindow('main-agent');
+      const options: Electron.MessageBoxOptions = {
+        type:      'question',
+        buttons:   ['Block', 'Allow'],
+        defaultId: 0,
+        cancelId:  0,
+        message:   `${ new URL(origin).host } wants to ${ description }`,
+        detail:    'Sulla will remember your choice for this site.',
+      };
+      const { response } = parent && !parent.isDestroyed()
+        ? await Electron.dialog.showMessageBox(parent, options)
+        : await Electron.dialog.showMessageBox(options);
+
+      return response === 1;
+    });
+
+    const isUserVisible = (wc: Electron.WebContents): boolean => {
+      if (this.focusedTabId && this.views.get(this.focusedTabId)?.webContents === wc) return true;
+      // Popup windows (OAuth, "sized" window.open) are real, visible windows.
+      try {
+        return !!Electron.BrowserWindow.fromWebContents(wc);
+      } catch {
+        return false;
+      }
+    };
+
+    sess.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
+      return policy.check(permission, originOf(requestingOrigin) ?? originOf((details as any)?.requestingUrl), details as any);
+    });
+    sess.setPermissionRequestHandler((wc, permission, callback, details) => {
+      const origin = originOf((details as any)?.requestingUrl) ?? originOf(wc.getURL());
+
+      policy.request({ permission, origin, details: details as any, userVisible: isUserVisible(wc) })
+        .then(callback, () => callback(false));
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -285,6 +339,13 @@ export class BrowserTabViewManager {
 
     // Wire up event listeners that forward state to the renderer
     this.attachListeners(tabId, view, mainWindow);
+    for (const listener of this.viewCreatedListeners) {
+      try {
+        listener(tabId, view.webContents);
+      } catch (err) {
+        console.warn(`[BrowserTabView] view-created listener failed tabId=${ tabId }:`, err);
+      }
+    }
 
     view.webContents.loadURL(url).catch((err) => {
       console.error(`[BrowserTabView] Failed to load URL for tabId=${ tabId }:`, err);
@@ -403,6 +464,18 @@ export class BrowserTabViewManager {
     this.focusedTabId = tabId;
     if (tabId) this.viewHealth.set(tabId, this.newViewHealth());
     this.reconcileVisibility();
+  }
+
+  /**
+   * Observe every tab view as it is created — e.g. ChromeApiService attaches
+   * chrome.webNavigation / history listeners here. Existing views are
+   * replayed so late subscribers miss nothing. Returns an unsubscribe fn.
+   */
+  onViewCreated(listener: (tabId: string, wc: Electron.WebContents) => void): () => void {
+    this.viewCreatedListeners.add(listener);
+    for (const [tabId, view] of this.views) listener(tabId, view.webContents);
+
+    return () => this.viewCreatedListeners.delete(listener);
   }
 
   getFocusedTab(): string | null {

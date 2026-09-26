@@ -1,3 +1,8 @@
+// MUST stay the first import: it patches ipcMain before any module registers
+// a handler, so web content in browser tabs can't reach privileged IPC.
+// eslint-disable-next-line import-x/order
+import '@pkg/main/ipcGuestGuard';
+
 import { execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
