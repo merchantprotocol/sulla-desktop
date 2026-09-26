@@ -186,11 +186,8 @@ export class FrontendGraphWebSocketService {
 
     // Always refresh model context from current settings so existing threads
     // follow the currently selected frontend model/provider.
-    const mode = await SullaSettingsModel.get('modelMode', 'local');
-    state.metadata.llmLocal = mode === 'local';
-    state.metadata.llmModel = mode === 'remote'
-      ? await SullaSettingsModel.get('remoteModel', '')
-      : await SullaSettingsModel.get('sullaModel', '');
+    state.metadata.llmLocal = false;
+    state.metadata.llmModel = await SullaSettingsModel.get('remoteModel', '');
 
     try {
       // Notify AgentPersonaService about the threadId so it stores it

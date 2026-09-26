@@ -508,7 +508,7 @@ onMounted(async() => {
 
 // Model selector — shares the same global model settings
 const modelName = ref('');
-const modelMode = ref<'local' | 'remote'>('local');
+const modelMode = ref<'local' | 'remote'>('remote');
 const systemReady = ref(true);
 const isRunning = computed<boolean>(() => true);
 
