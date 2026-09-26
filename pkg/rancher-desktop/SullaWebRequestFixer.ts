@@ -35,15 +35,58 @@ function isLocalhost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0';
 }
 
+/**
+ * Make a webRequest log event safe to persist. URLs lose their query string
+ * and fragment (tokens, OAuth codes, signed-URL secrets); header maps keep
+ * only header NAMES (values carry cookies and Authorization); Set-Cookie
+ * lists keep only cookie names; cookie previews are dropped.
+ */
+export function redactWebRequestEvent(event: SullaWebRequestLogEvent): SullaWebRequestLogEvent {
+  const redactUrl = (url?: string) => {
+    if (!url) return url;
+    try {
+      const parsed = new URL(url);
+
+      return `${ parsed.origin }${ parsed.pathname }${ parsed.search || parsed.hash ? '?…' : '' }`;
+    } catch {
+      return url.split(/[?#]/)[0];
+    }
+  };
+  const headerNames = (headers: unknown) => (headers && typeof headers === 'object') ? Object.keys(headers) : undefined;
+  const cookieNames = (cookies: unknown) => (Array.isArray(cookies) ? cookies : [])
+    .map(c => String(c).split('=')[0].trim())
+    .filter(Boolean);
+
+  const payload = event.payload && typeof event.payload === 'object' ? { ...event.payload } : event.payload;
+  if (payload && typeof payload === 'object') {
+    if ('requestHeaders' in payload) payload.requestHeaders = headerNames(payload.requestHeaders);
+    if ('responseHeaders' in payload) payload.responseHeaders = headerNames(payload.responseHeaders);
+    if ('originalSetCookie' in payload) payload.originalSetCookie = cookieNames(payload.originalSetCookie);
+    if ('rewrittenSetCookie' in payload) payload.rewrittenSetCookie = cookieNames(payload.rewrittenSetCookie);
+    delete payload.cookiePreview;
+  }
+
+  return { ...event, url: redactUrl(event.url), payload };
+}
+
 export class SullaWebRequestFixer extends EventEmitter {
   private writeEvent: (event: SullaWebRequestLogEvent) => void;
-  private static readonly LOGGING_ENABLED = true;
+  /**
+   * Per-request logging is a debugging aid, OFF by default. When it was always
+   * on it wrote 4-6 synchronous log lines per request from every tab (94% of
+   * sulla.log, ~33 MB/day) including full request headers, cookie previews
+   * and Set-Cookie values. Enable with SULLA_DEBUG_WEBREQUEST=1; even then
+   * events are redacted (see redactWebRequestEvent).
+   */
+  private static readonly LOGGING_ENABLED = process.env.SULLA_DEBUG_WEBREQUEST === '1';
   private hasLoggedN8nHealthz = false;
   private static readonly CONNECTIVITY_PROBE_URL_PREFIX = 'https://www.gstatic.com/generate_204';
 
   constructor(writeSullaWebRequestEvent: (event: SullaWebRequestLogEvent) => void) {
     super();
-    this.writeEvent = SullaWebRequestFixer.LOGGING_ENABLED ? writeSullaWebRequestEvent : () => {};
+    this.writeEvent = SullaWebRequestFixer.LOGGING_ENABLED
+      ? event => writeSullaWebRequestEvent(redactWebRequestEvent(event))
+      : () => {};
   }
 
   private getUrlInfo(url: string): UrlInfo {
@@ -321,6 +364,7 @@ export class SullaWebRequestFixer extends EventEmitter {
    *
    */
   private shouldLogRequest(url: string): boolean {
+    if (!SullaWebRequestFixer.LOGGING_ENABLED) return false;
     if (url.startsWith(SullaWebRequestFixer.CONNECTIVITY_PROBE_URL_PREFIX)) {
       return false;
     }

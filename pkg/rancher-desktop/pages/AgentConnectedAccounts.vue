@@ -161,11 +161,51 @@
               <button
                 type="button"
                 class="px-3 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-500 transition-colors"
-                @click="importVault"
+                @click="importVault()"
               >
                 Import
               </button>
             </div>
+            <form
+              v-if="importSecretFile"
+              class="flex items-center justify-end gap-2 mb-4"
+              @submit.prevent="submitImportSecret"
+            >
+              <span class="text-xs text-slate-400">This backup was made with a different vault key.</span>
+              <input
+                v-model="importSecret"
+                type="password"
+                autocomplete="off"
+                placeholder="Its master password or recovery key"
+                class="px-2 py-1 text-xs rounded-md bg-transparent border border-slate-700 text-slate-200 w-64"
+              >
+              <button
+                type="submit"
+                class="px-3 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-500 transition-colors"
+              >
+                Restore
+              </button>
+              <button
+                type="button"
+                class="px-3 py-1.5 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-500 transition-colors"
+                @click="cancelImportSecret"
+              >
+                Cancel
+              </button>
+            </form>
+            <p
+              v-if="vaultNotice"
+              class="mb-4 text-right text-xs"
+              :class="vaultNoticeIsError ? 'text-red-400' : 'text-slate-400'"
+            >
+              {{ vaultNotice }}
+            </p>
+            <p
+              v-else-if="backupSummary"
+              class="mb-4 text-right text-xs text-slate-500"
+            >
+              {{ backupSummary }}
+            </p>
             <div class="flex gap-6">
               <!-- Filter Sidebar -->
               <nav class="hidden md:block w-48 shrink-0">
@@ -475,31 +515,74 @@ async function lockVault() {
   }
 }
 
+const vaultNotice = ref('');
+const vaultNoticeIsError = ref(false);
+const importSecretFile = ref('');
+const importSecret = ref('');
+const backupSummary = ref('');
+
+function showVaultNotice(message: string, isError = false) {
+  vaultNotice.value = message;
+  vaultNoticeIsError.value = isError;
+}
+
+async function loadBackupSummary() {
+  try {
+    const status = await ipcRenderer.invoke('vault:backup-status');
+    const count = status?.snapshots?.length ?? 0;
+
+    backupSummary.value = count > 0
+      ? `Automatic encrypted backups: ${ count } snapshot${ count === 1 ? '' : 's' } in ${ status.dir }`
+      : '';
+  } catch { /* older main process */ }
+}
+
 async function exportVault(encrypted: boolean) {
   try {
     const result = await ipcRenderer.invoke('vault:export', { encrypted });
     if (result.success) {
-      console.log(`[Vault] Exported ${ result.count } accounts to ${ result.path }`);
+      showVaultNotice(encrypted
+        ? `Encrypted backup of ${ result.count } accounts saved to ${ result.path }. Restore it with your master password or recovery key.`
+        : `Exported ${ result.count } accounts in PLAIN TEXT to ${ result.path }. Delete that file once you no longer need it.`);
     } else if (!result.canceled) {
-      console.error('[Vault] Export failed:', result.error);
+      showVaultNotice(`Export failed: ${ result.error }`, true);
     }
   } catch (err) {
-    console.error('[Vault] Export error:', err);
+    showVaultNotice(`Export failed: ${ (err as Error).message }`, true);
   }
 }
 
-async function importVault() {
+async function importVault(args?: { filePath: string; password: string; recoveryKey: string }) {
   try {
-    const result = await ipcRenderer.invoke('vault:import');
+    const result = await ipcRenderer.invoke('vault:import', args);
     if (result.success) {
-      console.log(`[Vault] Imported ${ result.count } accounts`);
+      importSecretFile.value = '';
+      showVaultNotice(result.format === 'sulla-snapshot'
+        ? `Restored ${ result.inserted } credentials (${ result.skipped } already present${ result.unreadable ? `, ${ result.unreadable } unreadable` : '' }).`
+        : `Imported ${ result.count } accounts.`);
       await loadAccounts(); // Refresh the list
+    } else if (result.needsSecret) {
+      importSecretFile.value = result.filePath;
+      showVaultNotice('');
     } else if (!result.canceled) {
-      console.error('[Vault] Import failed:', result.error);
+      showVaultNotice(`Import failed: ${ result.error }`, true);
     }
   } catch (err) {
-    console.error('[Vault] Import error:', err);
+    showVaultNotice(`Import failed: ${ (err as Error).message }`, true);
   }
+}
+
+async function submitImportSecret() {
+  const secret = importSecret.value;
+
+  importSecret.value = '';
+  // The same string is tried as both; only the matching one can open the backup.
+  await importVault({ filePath: importSecretFile.value, password: secret, recoveryKey: secret });
+}
+
+function cancelImportSecret() {
+  importSecretFile.value = '';
+  importSecret.value = '';
 }
 
 onMounted(async() => {
@@ -509,6 +592,7 @@ onMounted(async() => {
     const isUnlocked = await ipcRenderer.invoke('vault:is-unlocked');
     vaultSecure.value = isSetUp && isUnlocked;
   } catch { /* vault IPC not available */ }
+  loadBackupSummary();
 
   loadAccounts();
 });

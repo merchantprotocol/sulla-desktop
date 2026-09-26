@@ -272,7 +272,7 @@ const loading = chatController.loading;
 
 // Model selector
 const modelName = ref('');
-const modelMode = ref<'local' | 'remote'>('local');
+const modelMode = ref<'local' | 'remote'>('remote');
 const systemReady = ref(true);
 const isRunning = computed<boolean>(() => true);
 

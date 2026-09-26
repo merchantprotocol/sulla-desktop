@@ -169,7 +169,7 @@ export const defaultSettings = {
     remoteModel:               'grok-4-1-fast-reasoning',
     /** Remote API key */
     remoteApiKey:              '',
-    /** Number of retries before falling back to local LLM */
+    /** Number of retries for remote provider requests */
     remoteRetryCount:          3,
     remoteTimeoutSeconds:      60,
     /** Heartbeat settings */

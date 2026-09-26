@@ -700,23 +700,21 @@ async function changePassword() {
 
   changingPassword.value = true;
   try {
-    // Verify current password
-    const verified = await ipcRenderer.invoke('vault:unlock-password', { password: currentPassword.value });
-    if (!verified) {
-      passwordError.value = 'Current password is incorrect.';
-      changingPassword.value = false;
-      return;
-    }
-
-    // Change password and re-encrypt all credentials with the new key
-    await ipcRenderer.invoke('vault:change-password', { newPassword: newPassword.value });
-    passwordSuccess.value = 'Master password updated successfully.';
+    // Main verifies the current password and re-wraps the vault key. Stored
+    // credentials and the existing recovery key stay valid.
+    await ipcRenderer.invoke('vault:change-password', {
+      currentPassword: currentPassword.value,
+      newPassword:     newPassword.value,
+    });
+    passwordSuccess.value = 'Master password updated. Your existing recovery key still works.';
     currentPassword.value = '';
     newPassword.value = '';
     confirmPassword.value = '';
     showChangePassword.value = false;
   } catch (err) {
-    passwordError.value = 'Failed to change password. Please try again.';
+    passwordError.value = String((err as Error)?.message ?? '').includes('VAULT_WRONG_PASSWORD')
+      ? 'Current password is incorrect.'
+      : 'Failed to change password. Please try again.';
     console.error('[MyAccount] Password change failed:', err);
   } finally {
     changingPassword.value = false;

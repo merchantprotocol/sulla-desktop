@@ -75,6 +75,7 @@ import QueueStrip         from './QueueStrip.vue';
 import RunControls        from './RunControls.vue';
 import CommandPopover     from './CommandPopover.vue';
 
+import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
 import { useChatController } from '../../controller/useChatController';
 import { useCommandPopover } from '../../composables/useCommandPopover';
 import { useArtifactMentions } from '../../composables/useArtifactMentions';
@@ -82,6 +83,8 @@ import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
 
 import { defaultSlashCommands, type SlashCommand, type MentionTarget } from '../../models/Command';
+
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
 const controller = useChatController();
 
@@ -317,8 +320,30 @@ function onQuoteFromTurn(ev: Event): void {
     ta.selectionStart = ta.selectionEnd = ta.value.length;
   }, 0);
 }
+// ─── First-run starter automation ────────────────────────────────
+// The first-run wizard saves the automation the user picked. Prefill it
+// once so their first press of Enter starts real work. The key is cleared
+// before prefilling so it can never reappear in another composer.
+async function prefillFirstRunStarter(): Promise<void> {
+  try {
+    const prompt = await SullaSettingsModel.get(FIRST_RUN_STARTER_PROMPT_KEY, '');
+    if (typeof prompt !== 'string' || !prompt.trim() || draft.value) return;
+    await SullaSettingsModel.set(FIRST_RUN_STARTER_PROMPT_KEY, '', 'string');
+    draft.value = prompt;
+    setTimeout(() => {
+      const ta = taRef.value;
+      if (!ta) return;
+      ta.focus();
+      ta.selectionStart = ta.selectionEnd = ta.value.length;
+    }, 0);
+  } catch (err) {
+    console.warn('[Composer] First-run starter prefill skipped:', err);
+  }
+}
+
 onMounted(() => {
   window.addEventListener('chat:quote', onQuoteFromTurn as EventListener);
+  prefillFirstRunStarter().catch(() => { /* logged inside */ });
   // Warm the artifact mention cache so the first `@` keystroke has data.
   artifactMentions.prefetch();
 });

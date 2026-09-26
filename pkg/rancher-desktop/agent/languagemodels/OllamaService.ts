@@ -3,9 +3,9 @@ import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { getIntegrationService } from '../services/IntegrationService';
 
 /**
- * Ollama — local open-source model runner, fully free.
- * OpenAI-compatible API, default at http://localhost:11434/v1
- * Set base_url to host.lima.internal:11434 if running on the host Mac.
+ * Ollama — a user-run Ollama server connected as a custom model provider.
+ * Sulla does not bundle, install or manage Ollama; it talks to the server's
+ * OpenAI-compatible API at the base_url the user configured.
  */
 export class OllamaService extends OpenAICompatibleService {
   static async create(): Promise<OllamaService> {

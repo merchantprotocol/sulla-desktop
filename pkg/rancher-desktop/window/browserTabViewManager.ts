@@ -4,6 +4,7 @@ import Electron, { WebContentsView } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
+import { BrowserPermissionPolicy, SitePermissionStore, originOf } from '@pkg/main/browserTabs/browserPermissions';
 import { BROWSER_SESSION_PARTITION, getBrowserSession } from '@pkg/main/browserTabs/browserSession';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -12,6 +13,45 @@ import { getWindow, openUrlInApp } from '@pkg/window';
 import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
 
 const console = Logging.sulla;
+
+interface VaultAccountMatch {
+  accountId: string;
+  username:  string;
+  origin:    string;
+}
+
+interface PendingCredential {
+  origin:             string;
+  username:           string;
+  password:           string;
+  timer:              ReturnType<typeof setTimeout>;
+  pageTitle?:         string;
+  existingAccountId?: string;
+  frame?:             Electron.WebFrameMain | null;
+}
+
+const VAULT_INDEX_TTL_MS = 30_000;
+
+/** How long a native right-click keeps the injected context menu's actions live. */
+const CONTEXT_MENU_ARM_MS = 2 * 60_000;
+
+/**
+ * The origin a guest frame really has, as reported by the browser process —
+ * never the origin a page claims in its IPC payload. Returns null for opaque
+ * or non-web origins, which never get vault access.
+ */
+export function trustedFrameOrigin(frame: Electron.WebFrameMain | null | undefined): string | null {
+  try {
+    if (!frame || (frame as any).detached) return null;
+    const origin = frame.origin;
+    if (!origin || origin === 'null') return null;
+    const { protocol } = new URL(origin);
+
+    return protocol === 'https:' || protocol === 'http:' ? origin : null;
+  } catch {
+    return null;
+  }
+}
 
 interface ViewHealth {
   captureFailures: number;
@@ -58,13 +98,29 @@ export class BrowserTabViewManager {
    */
   private latestBounds = new Map<string, Electron.Rectangle>();
   private failedUrls = new Map<string, string>(); // tabId → original URL that failed
-  private retryTimers = new Map<string, ReturnType<typeof setInterval>>();
+  private retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * Last time each tab was focused or driven programmatically (agent tools,
+   * input/screenshot IPC). Parked tabs idle longer than IDLE_SLEEP_MS are put
+   * to sleep; see sleepIdleViews / wakeView.
+   */
+  private lastActiveAt = new Map<string, number>();
+  private sleepingTabs = new Set<string>();
   private viewHealth = new Map<string, ViewHealth>();
   private healthMonitor:   ReturnType<typeof setInterval> | null = null;
   private acceptedCertHosts = new Set<string>(); // hosts where user clicked "Proceed"
   /** Credentials captured but not yet saved — keyed by tabId, auto-expires after 90s */
-  private pendingCredentials = new Map<string, { origin: string; username: string; password: string; timer: ReturnType<typeof setTimeout>; pageTitle?: string; existingAccountId?: string }>();
+  private pendingCredentials = new Map<string, PendingCredential>();
+  /**
+   * origin → saved website accounts. Built in one pass over the vault and
+   * reused for VAULT_INDEX_TTL_MS so a login form doesn't cost N+1 vault
+   * queries per page load. Invalidated whenever this manager writes the vault.
+   */
+  private vaultIndex: { builtAt: number; byOrigin: Map<string, VaultAccountMatch[]> } | null = null;
+  private vaultIndexBuild: Promise<Map<string, VaultAccountMatch[]>> | null = null;
   private sessionInitialised = false;
+  /** Subscribers notified for every tab view created (see onViewCreated). */
+  private viewCreatedListeners = new Set<(tabId: string, wc: Electron.WebContents) => void>();
   private webRequestFixer: SullaWebRequestFixer | null = null;
 
   private constructor() {}
@@ -139,6 +195,8 @@ export class BrowserTabViewManager {
         }).catch(() => {});
       });
 
+      this.installPermissionPolicy(sess);
+
       // Register the browser tab preload script so the guest bridge is
       // injected at document-start — before any page JavaScript runs.
       const preloadId = 'sulla-browser-tab-preload';
@@ -156,6 +214,55 @@ export class BrowserTabViewManager {
     }
 
     return sess;
+  }
+
+  /**
+   * Site permissions (camera, mic, location, clipboard read, …). Without a
+   * handler Electron silently grants every request to every website. See
+   * browserPermissions.ts for the policy.
+   */
+  private installPermissionPolicy(sess: Electron.Session): void {
+    let storePath: string | null = null;
+    try {
+      storePath = path.join(Electron.app.getPath('userData'), 'browser-site-permissions.json');
+    } catch { /* tests / app not ready — keep decisions in memory */ }
+
+    const policy = new BrowserPermissionPolicy(new SitePermissionStore(storePath), async(origin, description) => {
+      const parent = getWindow('main-agent');
+      const options: Electron.MessageBoxOptions = {
+        type:      'question',
+        buttons:   ['Block', 'Allow'],
+        defaultId: 0,
+        cancelId:  0,
+        message:   `${ new URL(origin).host } wants to ${ description }`,
+        detail:    'Sulla will remember your choice for this site.',
+      };
+      const { response } = parent && !parent.isDestroyed()
+        ? await Electron.dialog.showMessageBox(parent, options)
+        : await Electron.dialog.showMessageBox(options);
+
+      return response === 1;
+    });
+
+    const isUserVisible = (wc: Electron.WebContents): boolean => {
+      if (this.focusedTabId && this.views.get(this.focusedTabId)?.webContents === wc) return true;
+      // Popup windows (OAuth, "sized" window.open) are real, visible windows.
+      try {
+        return !!Electron.BrowserWindow.fromWebContents(wc);
+      } catch {
+        return false;
+      }
+    };
+
+    sess.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
+      return policy.check(permission, originOf(requestingOrigin) ?? originOf((details as any)?.requestingUrl), details as any);
+    });
+    sess.setPermissionRequestHandler((wc, permission, callback, details) => {
+      const origin = originOf((details as any)?.requestingUrl) ?? originOf(wc.getURL());
+
+      policy.request({ permission, origin, details: details as any, userVisible: isUserVisible(wc) })
+        .then(callback, () => callback(false));
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -189,7 +296,10 @@ export class BrowserTabViewManager {
 
     const view = new WebContentsView({
       webPreferences: {
-        webSecurity:          false,
+        // Same-origin policy stays ON. These tabs hold the user's real logged-in
+        // sessions; with webSecurity off any page could read any other site's
+        // data (fetch with cookies, no CORS) and load mixed content.
+        webSecurity:          true,
         contextIsolation:     false,
         nodeIntegration:      false,
         session:              browserSession,
@@ -214,18 +324,28 @@ export class BrowserTabViewManager {
     this.views.set(tabId, view);
     this.latestBounds.set(tabId, bounds);
     this.viewHealth.set(tabId, this.newViewHealth());
+    this.lastActiveAt.set(tabId, Date.now());
     this.startHealthMonitor();
 
-    // Forward guest console output to main log so we can see errors from the
-    // preload / guest bridge script. Without this, guest-side exceptions are
-    // invisible (the guest webContents isn't a window with its own log).
+    // Forward guest warnings/errors to the main log so preload / guest bridge
+    // failures are visible. info/debug chatter from arbitrary websites is
+    // dropped: it is noise, costs a synchronous log write per line, and can
+    // carry page data we have no business persisting.
     view.webContents.on('console-message', (event) => {
       const { level, message, lineNumber, sourceId } = event;
-      console.log(`[BrowserTabView:${ tabId }] [${ level }] ${ message } (${ sourceId }:${ lineNumber })`);
+      if (level !== 'warning' && level !== 'error') return;
+      console.log(`[BrowserTabView:${ tabId }] [${ level }] ${ String(message).slice(0, 500) } (${ sourceId }:${ lineNumber })`);
     });
 
     // Wire up event listeners that forward state to the renderer
     this.attachListeners(tabId, view, mainWindow);
+    for (const listener of this.viewCreatedListeners) {
+      try {
+        listener(tabId, view.webContents);
+      } catch (err) {
+        console.warn(`[BrowserTabView] view-created listener failed tabId=${ tabId }:`, err);
+      }
+    }
 
     view.webContents.loadURL(url).catch((err) => {
       console.error(`[BrowserTabView] Failed to load URL for tabId=${ tabId }:`, err);
@@ -238,7 +358,7 @@ export class BrowserTabViewManager {
     // of never-viewed tabs still work.
     this.reconcileVisibility();
 
-    console.log(`[BrowserTabView] Created view tabId=${ tabId } url=${ url }`);
+    console.log(`[BrowserTabView] Created view tabId=${ tabId } url=${ redactUrl(url) }`);
   }
 
   destroyView(tabId: string): void {
@@ -262,6 +382,8 @@ export class BrowserTabViewManager {
     this.viewHealth.delete(tabId);
     this.latestBounds.delete(tabId);
     this.failedUrls.delete(tabId);
+    this.lastActiveAt.delete(tabId);
+    this.sleepingTabs.delete(tabId);
     this.clearPendingCredentials(tabId);
     if (this.focusedTabId === tabId) {
       this.focusedTabId = null;
@@ -338,9 +460,22 @@ export class BrowserTabViewManager {
     }
     if (this.focusedTabId === tabId) return;
     console.log(`[BrowserTabView] setFocusedTab ${ this.focusedTabId ?? '(none)' } → ${ tabId ?? '(none)' }`);
+    if (this.focusedTabId) this.lastActiveAt.set(this.focusedTabId, Date.now());
     this.focusedTabId = tabId;
     if (tabId) this.viewHealth.set(tabId, this.newViewHealth());
     this.reconcileVisibility();
+  }
+
+  /**
+   * Observe every tab view as it is created — e.g. ChromeApiService attaches
+   * chrome.webNavigation / history listeners here. Existing views are
+   * replayed so late subscribers miss nothing. Returns an unsubscribe fn.
+   */
+  onViewCreated(listener: (tabId: string, wc: Electron.WebContents) => void): () => void {
+    this.viewCreatedListeners.add(listener);
+    for (const [tabId, view] of this.views) listener(tabId, view.webContents);
+
+    return () => this.viewCreatedListeners.delete(listener);
   }
 
   getFocusedTab(): string | null {
@@ -385,6 +520,8 @@ export class BrowserTabViewManager {
         // capture, while focused pages report visibilityState=visible.
         view.setVisible(true);
         view.webContents.setBackgroundThrottling(false);
+        this.sleepingTabs.delete(tabId);
+        this.lastActiveAt.set(tabId, Date.now());
         const bounds = this.latestBounds.get(tabId);
         if (bounds) view.setBounds(bounds);
         try {
@@ -443,11 +580,75 @@ export class BrowserTabViewManager {
     if (this.healthMonitor) return;
 
     this.healthMonitor = setInterval(() => {
+      this.sleepIdleViews();
       this.probeFocusedView().catch((err) => {
         console.warn('[BrowserTabView] focused-view health probe failed:', err);
       });
     }, BrowserTabViewManager.HEALTH_PROBE_INTERVAL_MS);
     this.healthMonitor.unref?.();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Background-tab sleep
+  // ---------------------------------------------------------------------------
+
+  /** A parked tab nobody has focused or driven for this long is put to sleep. */
+  static readonly IDLE_SLEEP_MS = 2 * 60_000;
+
+  /**
+   * Parked tabs stay attached off-screen and marked visible so agent tools
+   * can capture and drive them instantly — but that also means every hidden
+   * tab ran at full foreground speed forever (rAF, video, timers), burning
+   * CPU/GPU/battery for pages nobody is looking at.
+   *
+   * After IDLE_SLEEP_MS without focus or programmatic use, a parked tab is
+   * hidden (page sees visibilitychange → hidden) and background-throttled,
+   * which is exactly how Chrome treats background tabs. Tabs that are
+   * loading or playing audio are left alone. Any programmatic use goes
+   * through wakeView() first, restoring the proven attached+visible state.
+   */
+  sleepIdleViews(now = Date.now()): void {
+    for (const [tabId, view] of this.views) {
+      if (tabId === this.focusedTabId || this.sleepingTabs.has(tabId)) continue;
+      const wc = view.webContents;
+      try {
+        if (wc.isDestroyed() || wc.isLoading() || wc.isCurrentlyAudible()) continue;
+      } catch {
+        continue;
+      }
+      if (now - (this.lastActiveAt.get(tabId) ?? 0) < BrowserTabViewManager.IDLE_SLEEP_MS) continue;
+
+      try {
+        view.setVisible(false);
+        wc.setBackgroundThrottling(true);
+        this.sleepingTabs.add(tabId);
+      } catch (err) {
+        console.warn(`[BrowserTabView] sleep failed tabId=${ tabId }:`, err);
+      }
+    }
+  }
+
+  /**
+   * Mark a tab as in active programmatic use and, if it was asleep, restore
+   * it to the awake parked state (visible to the compositor, unthrottled) so
+   * screenshots, scripting and input behave exactly as before. Call before
+   * driving a tab that may not be focused.
+   */
+  wakeView(tabId: string): void {
+    const view = this.views.get(tabId);
+    if (!view) return;
+    this.lastActiveAt.set(tabId, Date.now());
+    if (!this.sleepingTabs.delete(tabId)) return;
+    try {
+      view.setVisible(true);
+      view.webContents.setBackgroundThrottling(false);
+    } catch (err) {
+      console.warn(`[BrowserTabView] wake failed tabId=${ tabId }:`, err);
+    }
+  }
+
+  isSleeping(tabId: string): boolean {
+    return this.sleepingTabs.has(tabId);
   }
 
   /**
@@ -469,10 +670,25 @@ export class BrowserTabViewManager {
     const bounds = this.latestBounds.get(tabId);
     if (!bounds || bounds.width < 1 || bounds.height < 1) return;
 
+    // Nothing is on screen to be wedged while the window is hidden or
+    // minimized — skip the GPU readback entirely.
+    const mainWindow = getWindow('main-agent');
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || mainWindow.isMinimized()) return;
+
+    // The wedge signal is "no compositor frame" (empty NativeImage), which a
+    // small region reports just as well as a full-page capture — at a tiny
+    // fraction of the readback cost every probe interval.
+    const probeRect = {
+      x:      0,
+      y:      0,
+      width:  Math.min(64, Math.max(1, Math.floor(bounds.width))),
+      height: Math.min(64, Math.max(1, Math.floor(bounds.height))),
+    };
+
     health.probeInFlight = true;
     try {
       const image = await Promise.race([
-        view.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }),
+        view.webContents.capturePage(probeRect, { stayHidden: true, stayAwake: true }),
         new Promise<never>((_resolve, reject) => setTimeout(
           () => reject(new Error('capturePage health probe timed out')),
           BrowserTabViewManager.HEALTH_PROBE_TIMEOUT_MS,
@@ -585,6 +801,7 @@ export class BrowserTabViewManager {
     if (!wc) {
       return undefined;
     }
+    this.wakeView(tabId);
 
     try {
       return await wc.executeJavaScript(code, true);
@@ -661,48 +878,52 @@ export class BrowserTabViewManager {
   // ---------------------------------------------------------------------------
 
   private static readonly RETRY_INTERVAL_MS = 5_000;
+  private static readonly RETRY_MAX_INTERVAL_MS = 60_000;
 
   /**
-   * Start silently polling a URL that failed to load.  When the server
-   * responds (any HTTP status), stop polling and reload the page.
+   * Silently poll a URL that failed to load and reload the page once the
+   * server answers (any HTTP status). Polls back off from 5s to 60s so a
+   * tab left on a dead dev server doesn't probe it every 5s forever.
    */
   private startRetry(tabId: string, url: string): void {
     this.stopRetry(tabId); // clear any existing timer
 
-    const timer = setInterval(async() => {
-      try {
-        // Use a lightweight HEAD request with a short timeout
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3_000);
+    const attempt = (delayMs: number) => {
+      const timer = setTimeout(async() => {
+        if (this.retryTimers.get(tabId) !== timer) return;
+        try {
+          await Electron.net.fetch(url, {
+            method: 'HEAD',
+            signal: AbortSignal.timeout(3_000) as any,
+          });
+        } catch {
+          // Still unreachable — back off and keep polling
+          if (this.retryTimers.get(tabId) === timer && this.views.has(tabId)) {
+            attempt(Math.min(delayMs * 2, BrowserTabViewManager.RETRY_MAX_INTERVAL_MS));
+          }
 
-        await Electron.net.fetch(url, {
-          method: 'HEAD',
-          signal: controller.signal as any,
-        });
-        clearTimeout(timeout);
-
-        // Server responded — reload the page
-        console.log(`[BrowserTabView] Auto-retry: ${ url } is now reachable, reloading tabId=${ tabId }`);
-        this.stopRetry(tabId);
-        const wc = this.getWebContents(tabId);
-
-        if (wc) {
-          wc.loadURL(url).catch(() => {});
+          return;
         }
-      } catch {
-        // Still unreachable — keep polling
-      }
-    }, BrowserTabViewManager.RETRY_INTERVAL_MS);
 
-    this.retryTimers.set(tabId, timer);
-    console.log(`[BrowserTabView] Auto-retry started for tabId=${ tabId } url=${ url } (every ${ BrowserTabViewManager.RETRY_INTERVAL_MS / 1000 }s)`);
+        if (this.retryTimers.get(tabId) !== timer) return;
+        console.log(`[BrowserTabView] Auto-retry: server reachable again, reloading tabId=${ tabId }`);
+        this.stopRetry(tabId);
+        this.getWebContents(tabId)?.loadURL(url).catch(() => {});
+      }, delayMs);
+
+      timer.unref?.();
+      this.retryTimers.set(tabId, timer);
+    };
+
+    attempt(BrowserTabViewManager.RETRY_INTERVAL_MS);
+    console.log(`[BrowserTabView] Auto-retry started for tabId=${ tabId } (5s backing off to ${ BrowserTabViewManager.RETRY_MAX_INTERVAL_MS / 1000 }s)`);
   }
 
   private stopRetry(tabId: string): void {
     const timer = this.retryTimers.get(tabId);
 
     if (timer) {
-      clearInterval(timer);
+      clearTimeout(timer);
       this.retryTimers.delete(tabId);
     }
   }
@@ -715,79 +936,60 @@ export class BrowserTabViewManager {
    * Attach webContents event listeners that forward navigation/loading state
    * back to the renderer process via the MAIN window's webContents.
    */
-  /**
-   * Check if the vault has saved credentials for the given origin.
-   * If so, send an autofill offer to the renderer.
-   */
-  private async checkVaultForAutofill(tabId: string, origin: string, mainWindow: Electron.BrowserWindow): Promise<void> {
-    try {
+  /** Build (or reuse) the origin → accounts index for saved website logins. */
+  private async vaultAccountsByOrigin(): Promise<Map<string, VaultAccountMatch[]>> {
+    if (this.vaultIndex && Date.now() - this.vaultIndex.builtAt < VAULT_INDEX_TTL_MS) {
+      return this.vaultIndex.byOrigin;
+    }
+    if (this.vaultIndexBuild) return this.vaultIndexBuild;
+
+    this.vaultIndexBuild = (async() => {
+      const byOrigin = new Map<string, VaultAccountMatch[]>();
       const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
       const service = getIntegrationService();
       const accounts = await service.getAccounts('website');
-      const matches: { accountId: string; username: string }[] = [];
 
       for (const acct of accounts) {
         const urlValue = await service.getIntegrationValue('website', 'website_url', acct.account_id);
         if (!urlValue?.value) continue;
-
+        let origin: string;
         try {
-          const savedOrigin = new URL(urlValue.value).origin;
-          if (savedOrigin === origin) {
-            const usernameValue = await service.getIntegrationValue('website', 'username', acct.account_id);
-            matches.push({
-              accountId: acct.account_id,
-              username:  usernameValue?.value || acct.label,
-            });
-          }
-        } catch { /* invalid saved URL */ }
+          origin = new URL(urlValue.value).origin;
+        } catch {
+          continue;
+        }
+        const usernameValue = await service.getIntegrationValue('website', 'username', acct.account_id);
+        const list = byOrigin.get(origin) ?? [];
+        list.push({ accountId: acct.account_id, username: usernameValue?.value || acct.label, origin });
+        byOrigin.set(origin, list);
       }
+      this.vaultIndex = { builtAt: Date.now(), byOrigin };
 
-      if (matches.length > 0 && !mainWindow.isDestroyed()) {
-        safeSend(mainWindow.webContents, 'vault:autofill-offer', {
-          tabId,
-          origin,
-          accounts: matches,
-        });
-      }
-    } catch (err) {
-      console.error('[BrowserTabView] checkVaultForAutofill error:', err);
-    }
+      return byOrigin;
+    })().finally(() => {
+      this.vaultIndexBuild = null;
+    });
+
+    return this.vaultIndexBuild;
+  }
+
+  private invalidateVaultIndex(): void {
+    this.vaultIndex = null;
   }
 
   /**
-   * Send matching vault accounts to the guest page via executeJavaScript.
-   * The page's __sullaVaultSetAccounts() will receive them and show the dropdown.
+   * Send the saved accounts for `frame`'s own origin to that frame. The
+   * page's __sullaVaultSetAccounts() receives them and shows the dropdown.
    */
-  private async sendVaultMatchesToPage(tabId: string, origin: string): Promise<void> {
+  private async sendVaultMatchesToFrame(frame: Electron.WebFrameMain): Promise<void> {
+    const origin = trustedFrameOrigin(frame);
+    if (!origin) return;
     try {
-      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
-      const service = getIntegrationService();
-      const accounts = await service.getAccounts('website');
-      const matches: { accountId: string; username: string; origin: string }[] = [];
-
-      for (const acct of accounts) {
-        const urlValue = await service.getIntegrationValue('website', 'website_url', acct.account_id);
-        if (!urlValue?.value) continue;
-        try {
-          const savedOrigin = new URL(urlValue.value).origin;
-          if (savedOrigin === origin) {
-            const usernameValue = await service.getIntegrationValue('website', 'username', acct.account_id);
-            matches.push({
-              accountId: acct.account_id,
-              username:  usernameValue?.value || acct.label,
-              origin:    savedOrigin,
-            });
-          }
-        } catch { /* invalid URL */ }
-      }
-
-      const view = this.views.get(tabId);
-      if (view && matches.length > 0) {
-        const script = `window.__sullaVaultSetAccounts(${ JSON.stringify(matches) });`;
-        view.webContents.executeJavaScript(script, true).catch(() => {});
-      }
+      const matches = (await this.vaultAccountsByOrigin()).get(origin) ?? [];
+      if (matches.length === 0 || trustedFrameOrigin(frame) !== origin) return;
+      frame.executeJavaScript(`window.__sullaVaultSetAccounts && window.__sullaVaultSetAccounts(${ JSON.stringify(matches) });`).catch(() => {});
     } catch (err) {
-      console.error('[BrowserTabView] sendVaultMatchesToPage error:', err);
+      console.error('[BrowserTabView] sendVaultMatchesToFrame error:', err);
     }
   }
 
@@ -829,6 +1031,7 @@ export class BrowserTabViewManager {
       ]);
       await service.setAccountLabel('website', accountId, `${ label } (${ username })`);
       await service.setConnectionStatus('website', true, accountId);
+      this.invalidateVaultIndex();
       console.log(`[BrowserTabView] Vault credential saved: ${ label } (${ username })`);
     } catch (err) {
       console.error('[BrowserTabView] saveVaultCredential error:', err);
@@ -850,6 +1053,7 @@ export class BrowserTabViewManager {
         property:       'password',
         value:          password,
       });
+      this.invalidateVaultIndex();
       console.log(`[BrowserTabView] Vault password updated for account: ${ accountId }`);
     } catch (err) {
       console.error('[BrowserTabView] updateVaultPassword error:', err);
@@ -866,7 +1070,7 @@ export class BrowserTabViewManager {
    * - Same username + different password → show "Update password?" toast
    * - New username → show "Save new account?" toast
    */
-  private async setPendingCredentials(tabId: string, origin: string, username: string, password: string, pageTitle?: string): Promise<void> {
+  private async setPendingCredentials(tabId: string, origin: string, username: string, password: string, pageTitle?: string, frame?: Electron.WebFrameMain): Promise<void> {
     this.clearPendingCredentials(tabId);
 
     try {
@@ -904,6 +1108,7 @@ export class BrowserTabViewManager {
           timer,
           pageTitle,
           existingAccountId: acct.account_id,
+          frame,
         });
         this.pushSaveToastToPage(tabId, true);
         return;
@@ -912,7 +1117,7 @@ export class BrowserTabViewManager {
       // No matching username — show save-new toast
       const timer = setTimeout(() => this.clearPendingCredentials(tabId), 90_000);
       this.pendingCredentials.set(tabId, {
-        origin, username, password, timer, pageTitle,
+        origin, username, password, timer, pageTitle, frame,
       });
       this.pushSaveToastToPage(tabId, false);
     } catch (err) {
@@ -920,7 +1125,7 @@ export class BrowserTabViewManager {
       // Fallback: show save toast anyway
       const timer = setTimeout(() => this.clearPendingCredentials(tabId), 90_000);
       this.pendingCredentials.set(tabId, {
-        origin, username, password, timer, pageTitle,
+        origin, username, password, timer, pageTitle, frame,
       });
       this.pushSaveToastToPage(tabId, false);
     }
@@ -947,13 +1152,33 @@ export class BrowserTabViewManager {
       return;
     }
     const action = isUpdate ? 'Update' : 'Save';
-    const script = `window.__sullaVaultShowPendingSaveToast(${ JSON.stringify(pending.origin) }, ${ JSON.stringify(pending.username) }, ${ JSON.stringify(action) });`;
+    const script = `window.__sullaVaultShowPendingSaveToast && window.__sullaVaultShowPendingSaveToast(${ JSON.stringify(pending.origin) }, ${ JSON.stringify(pending.username) }, ${ JSON.stringify(action) });`;
 
-    view.webContents.executeJavaScript(script, true).catch(() => {});
+    // Only ever show the toast to a frame that still has the origin the
+    // credential was captured on; after a cross-origin navigation it is gone.
+    if (pending.frame && trustedFrameOrigin(pending.frame) === pending.origin) {
+      pending.frame.executeJavaScript(script).catch(() => {});
+    } else if (trustedFrameOrigin(view.webContents.mainFrame) === pending.origin) {
+      view.webContents.executeJavaScript(script, true).catch(() => {});
+    }
   }
 
-  private async autofillVaultCredential(tabId: string, accountId: string): Promise<void> {
+  /**
+   * Fill a saved login into the frame that asked for it — only when the
+   * account was saved for exactly that frame's origin. Without this check any
+   * page could request any account id and receive its decrypted password.
+   */
+  private async autofillVaultCredential(tabId: string, accountId: string, frame: Electron.WebFrameMain): Promise<void> {
     try {
+      const origin = trustedFrameOrigin(frame);
+      if (!origin) return;
+      const allowed = ((await this.vaultAccountsByOrigin()).get(origin) ?? []).some(a => a.accountId === accountId);
+      if (!allowed) {
+        console.warn(`[BrowserTabView] Refused vault autofill tabId=${ tabId }: account is not saved for ${ origin }`);
+
+        return;
+      }
+
       const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
       const service = getIntegrationService();
       await service.initialize();
@@ -968,8 +1193,9 @@ export class BrowserTabViewManager {
       const password = stored['password'] || '';
       if (!username && !password) return;
 
-      const view = this.views.get(tabId);
-      if (!view) return;
+      // Re-check right before injecting: the frame may have navigated away
+      // while the vault was being read.
+      if (!this.views.has(tabId) || trustedFrameOrigin(frame) !== origin) return;
 
       const script = `
         (function() {
@@ -998,7 +1224,7 @@ export class BrowserTabViewManager {
           }, 200);
         })();
       `;
-      view.webContents.executeJavaScript(script, true).catch(() => {});
+      frame.executeJavaScript(script, true).catch(() => {});
       console.log(`[BrowserTabView] Vault autofill executed for ${ accountId }`);
     } catch (err) {
       console.error('[BrowserTabView] autofillVaultCredential error:', err);
@@ -1032,7 +1258,7 @@ export class BrowserTabViewManager {
             // override the size the opener asked for.
             webPreferences:  {
               session:              this.ensureSession(),
-              webSecurity:          false,
+              webSecurity:          true,
               contextIsolation:     false,
               nodeIntegration:      false,
               backgroundThrottling: false,
@@ -1151,8 +1377,14 @@ export class BrowserTabViewManager {
     // Inject a Shadow DOM context menu directly into the web page.
     // This renders inside the native WebContentsView layer so it's
     // always on top, and Shadow DOM isolates styles from the host page.
+    // The injected menu reports clicks through __sullaBridgeEmit, which the
+    // page itself can also call. Only honour an action while a menu Sulla
+    // actually opened (from a native right-click) is live, and only once.
+    let contextMenuArmedUntil = 0;
+
     wc.on('context-menu', (_event, params) => {
       if (mainWindow.isDestroyed()) return;
+      contextMenuArmedUntil = Date.now() + CONTEXT_MENU_ARM_MS;
 
       const ctx = {
         tabId,
@@ -1186,6 +1418,12 @@ export class BrowserTabViewManager {
         return;
       }
       if (msg.type !== 'context-menu-action') return;
+      if (Date.now() > contextMenuArmedUntil) {
+        console.warn(`[BrowserTabView] ignored context-menu action without an open menu tabId=${ tabId }`);
+
+        return;
+      }
+      contextMenuArmedUntil = 0;
       const { action, ...data } = msg.data || {};
 
       // Always remove the menu element first to avoid it interfering
@@ -1267,7 +1505,7 @@ export class BrowserTabViewManager {
 
       wc.loadURL(`data:text/html;charset=utf-8,${ encodeURIComponent(certPage) }`).catch(() => {});
       this.failedUrls.set(tabId, url);
-      console.warn(`[BrowserTabView] certificate-error tabId=${ tabId } error=${ error } url=${ url }`);
+      console.warn(`[BrowserTabView] certificate-error tabId=${ tabId } error=${ error } url=${ redactUrl(url) }`);
     });
 
     // Intercept the "Proceed anyway" action from the certificate warning page.
@@ -1299,30 +1537,35 @@ export class BrowserTabViewManager {
     // Route vault-related events from the guest bridge to the renderer.
     // Uses wc.ipc.on() which receives the payload as { type, data } directly,
     // matching the preload's ipcRenderer.send('browser-tab-view:bridge-event', { type, data }).
-    wc.ipc.on('browser-tab-view:bridge-event', (_event: Electron.IpcMainEvent, msg: { type: string; data: any }) => {
+    wc.ipc.on('browser-tab-view:bridge-event', (event: Electron.IpcMainEvent, msg: { type: string; data: any }) => {
       if (!msg?.type?.startsWith('sulla:vault:')) return;
+
+      // Pages can call __sullaBridgeEmit themselves (contextIsolation is off),
+      // so the payload's `origin` is attacker-controlled. Vault access is
+      // scoped to the origin the browser process says the SENDING frame has.
+      const frame = event.senderFrame;
+      const origin = trustedFrameOrigin(frame);
+      if (!frame || !origin) return;
 
       const { type, data } = msg;
 
-      if (type === 'sulla:vault:getMatches') {
-        // Query vault for matching accounts and send them back to the page
-        this.sendVaultMatchesToPage(tabId, data.origin);
+      if (type === 'sulla:vault:getMatches' || type === 'sulla:vault:loginFormDetected') {
+        this.sendVaultMatchesToFrame(frame);
       }
 
       if (type === 'sulla:vault:credentialsPending') {
-        this.setPendingCredentials(tabId, data.origin, data.username, data.password, data.title);
+        if (typeof data?.username !== 'string' || typeof data?.password !== 'string') return;
+        this.setPendingCredentials(tabId, origin, data.username, data.password, typeof data.title === 'string' ? data.title : undefined, frame);
       }
 
       if (type === 'sulla:vault:credentialsCaptured') {
         // User clicked "Save" or "Update" — retrieve password from pending store
         const pending = this.pendingCredentials.get(tabId);
 
-        if (pending) {
+        if (pending?.origin === origin) {
           if (pending.existingAccountId) {
-            // Update existing account's password
             this.updateVaultPassword(pending.existingAccountId, pending.password);
           } else {
-            // Save as new account
             this.saveVaultCredential(pending.origin, pending.username, pending.password, pending.pageTitle);
           }
           this.clearPendingCredentials(tabId);
@@ -1333,31 +1576,20 @@ export class BrowserTabViewManager {
         this.clearPendingCredentials(tabId);
       }
 
-      if (type === 'sulla:vault:autofillRequest') {
-        // User clicked an account in the dropdown — autofill the form
-        this.autofillVaultCredential(tabId, data.accountId);
-      }
-
-      if (type === 'sulla:vault:loginFormDetected') {
-        // Login form appeared — send matching accounts to page
-        this.sendVaultMatchesToPage(tabId, data.origin);
+      if (type === 'sulla:vault:autofillRequest' && typeof data?.accountId === 'string') {
+        this.autofillVaultCredential(tabId, data.accountId, frame);
       }
     });
 
     // Also check vault on successful navigation (for pages where the login
     // form is already rendered in the initial HTML, not SPA-injected)
+    // Re-show the save toast after a post-login navigation. (The old
+    // per-load vault lookup here fed an IPC nothing listened to.)
     wc.on('did-stop-loading', () => {
-      const url = wc.getURL();
-      if (url.startsWith('data:') || url === 'about:blank') return;
-      try {
-        const origin = new URL(url).origin;
-        this.checkVaultForAutofill(tabId, origin, mainWindow);
-        // Re-show save toast if there are pending credentials for this tab
-        const pending = this.pendingCredentials.get(tabId);
-        if (pending) {
-          this.pushSaveToastToPage(tabId, !!pending.existingAccountId);
-        }
-      } catch { /* invalid URL */ }
+      const pending = this.pendingCredentials.get(tabId);
+      if (pending) {
+        this.pushSaveToastToPage(tabId, !!pending.existingAccountId);
+      }
     });
 
     // Show a Chrome-style error page when a site can't be reached,
@@ -1373,7 +1605,7 @@ export class BrowserTabViewManager {
       const errorPage = buildErrorPage(validatedURL, errorCode, errorDescription);
 
       wc.loadURL(`data:text/html;charset=utf-8,${ encodeURIComponent(errorPage) }`).catch(() => {});
-      console.warn(`[BrowserTabView] did-fail-load tabId=${ tabId } code=${ errorCode } desc=${ errorDescription } url=${ validatedURL }`);
+      console.warn(`[BrowserTabView] did-fail-load tabId=${ tabId } code=${ errorCode } desc=${ errorDescription } url=${ redactUrl(validatedURL) }`);
 
       // Start polling — check every 5 seconds if the site is back up
       this.startRetry(tabId, validatedURL);
@@ -1382,9 +1614,48 @@ export class BrowserTabViewManager {
 }
 
 /**
- * Generates a Chrome-style error page.
+ * Strip query string and fragment before a URL is logged — they routinely
+ * carry session tokens, OAuth codes and signed-URL secrets.
  */
-function buildErrorPage(url: string, errorCode: number, errorDescription: string): string {
+export function redactUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+
+    if (parsed.protocol === 'data:') return 'data:(redacted)';
+
+    return `${ parsed.origin }${ parsed.pathname }${ parsed.search || parsed.hash ? '?…' : '' }`;
+  } catch {
+    return '(unparseable url)';
+  }
+}
+
+/** Escape text for safe interpolation into HTML element content and quoted attributes. */
+export function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Only http(s) URLs may become clickable links on the generated pages. */
+function safeHref(url: string): string {
+  try {
+    const { protocol } = new URL(url);
+
+    return protocol === 'http:' || protocol === 'https:' ? escapeHtml(url) : '#';
+  } catch {
+    return '#';
+  }
+}
+
+/**
+ * Generates a Chrome-style error page. Every interpolated value is escaped:
+ * URLs, hostnames and error text are attacker-influenced, and this page runs
+ * with the tab preload (bridge + vault hooks) attached.
+ */
+export function buildErrorPage(url: string, errorCode: number, errorDescription: string): string {
   // Map common Chromium network error codes to user-friendly messages
   const messages: Record<number, { title: string; detail: string }> = {
     [-2]:   { title: 'Network error', detail: 'A network error occurred.' },
@@ -1423,7 +1694,7 @@ function buildErrorPage(url: string, errorCode: number, errorDescription: string
 <html>
 <head>
   <meta charset="utf-8">
-  <title>${ info.title }</title>
+  <title>${ escapeHtml(info.title) }</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -1492,20 +1763,22 @@ function buildErrorPage(url: string, errorCode: number, errorDescription: string
 <body>
   <div class="error-container">
     <div class="error-icon">\u26A0\uFE0F</div>
-    <h1>${ info.title }</h1>
-    <p class="hostname">${ hostname }</p>
-    <p class="detail">${ info.detail }</p>
-    <a class="retry-btn" href="${ url }">Reload</a>
-    <p class="error-code">ERR_${ errorDescription.replace(/^net::ERR_/i, '').replace(/\s+/g, '_').toUpperCase() } (${ errorCode })</p>
+    <h1>${ escapeHtml(info.title) }</h1>
+    <p class="hostname">${ escapeHtml(hostname) }</p>
+    <p class="detail">${ escapeHtml(info.detail) }</p>
+    <a class="retry-btn" href="${ safeHref(url) }">Reload</a>
+    <p class="error-code">ERR_${ escapeHtml(errorDescription.replace(/^net::ERR_/i, '').replace(/\s+/g, '_').toUpperCase()) } (${ Number(errorCode) })</p>
   </div>
 </body>
 </html>`;
 }
 
 /**
- * Generates a Chrome-style certificate warning page with Advanced / Proceed option.
+ * Generates a Chrome-style certificate warning page with Advanced / Proceed
+ * option. Certificate subject/issuer come straight from the (untrusted)
+ * server, so every interpolated value is escaped.
  */
-function buildCertErrorPage(url: string, error: string, certificate: Electron.Certificate): string {
+export function buildCertErrorPage(url: string, error: string, certificate: Electron.Certificate): string {
   let hostname = '';
 
   try {
@@ -1580,32 +1853,32 @@ function buildCertErrorPage(url: string, error: string, certificate: Electron.Ce
   <div class="error-container">
     <div class="error-icon">\uD83D\uDD12</div>
     <h1>Your connection is not private</h1>
-    <p class="hostname">${ hostname }</p>
+    <p class="hostname">${ escapeHtml(hostname) }</p>
     <p class="detail">
-      Attackers might be trying to steal your information from <strong>${ hostname }</strong>
+      Attackers might be trying to steal your information from <strong>${ escapeHtml(hostname) }</strong>
       (for example, passwords, messages, or credit cards). The server's security certificate
       is not trusted by this application.
     </p>
-    <a class="btn" href="${ url }">Back to safety</a>
+    <a class="btn" href="${ safeHref(url) }">Back to safety</a>
     <button class="advanced-toggle" onclick="document.getElementById('adv').classList.toggle('open')">
       Advanced
     </button>
     <div id="adv" class="advanced-section">
       <table class="cert-table">
-        <tr><td>Subject</td><td>${ subject }</td></tr>
-        <tr><td>Issuer</td><td>${ issuer }</td></tr>
-        <tr><td>Valid from</td><td>${ validFrom }</td></tr>
-        <tr><td>Valid until</td><td>${ validTo }</td></tr>
-        <tr><td>Fingerprint</td><td>${ fingerprint }</td></tr>
-        <tr><td>Error</td><td>${ error }</td></tr>
+        <tr><td>Subject</td><td>${ escapeHtml(subject) }</td></tr>
+        <tr><td>Issuer</td><td>${ escapeHtml(issuer) }</td></tr>
+        <tr><td>Valid from</td><td>${ escapeHtml(validFrom) }</td></tr>
+        <tr><td>Valid until</td><td>${ escapeHtml(validTo) }</td></tr>
+        <tr><td>Fingerprint</td><td>${ escapeHtml(fingerprint) }</td></tr>
+        <tr><td>Error</td><td>${ escapeHtml(error) }</td></tr>
       </table>
       <p class="proceed-warning">
-        This server could not prove that it is <strong>${ hostname }</strong>; its security
+        This server could not prove that it is <strong>${ escapeHtml(hostname) }</strong>; its security
         certificate is not trusted. Proceeding may expose your data to third parties.
       </p>
-      <a class="btn btn-proceed" href="sulla://accept-cert">Proceed to ${ hostname } (unsafe)</a>
+      <a class="btn btn-proceed" href="sulla://accept-cert">Proceed to ${ escapeHtml(hostname) } (unsafe)</a>
     </div>
-    <p class="error-code">NET::${ error.toUpperCase().replace(/\s+/g, '_') }</p>
+    <p class="error-code">NET::${ escapeHtml(error.toUpperCase().replace(/\s+/g, '_')) }</p>
   </div>
 </body>
 </html>`;

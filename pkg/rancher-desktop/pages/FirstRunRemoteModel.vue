@@ -2,14 +2,14 @@
   <div class="max-w-lg mx-0 p-6 frm-page">
     <form @submit.prevent="handleNext">
       <h2 class="text-2xl font-bold mt-5 mb-4 frm-heading">
-        Remote Model (Optional)
+        Choose the AI Sulla thinks with
       </h2>
       <p class="mb-6 frm-subtext">
-        Optionally enable a remote model. While your system will be fully configured to run a local model, at times that can be very slow, and many people prefer to run a remote model for better performance. You can toggle between local and remote models at any time.
+        Sulla thinks with an AI provider you already use, like Anthropic (Claude), OpenAI or Grok. Sign in or paste an API key. You pay the provider directly for what you use, and you can switch at any time in Settings.
       </p>
 
       <rd-fieldset
-        legend-text="Remote Model Configuration"
+        legend-text="AI provider"
         class="mb-6 frm-fieldset"
       >
         <!-- Provider selector -->
@@ -173,7 +173,7 @@
           type="submit"
           class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 frm-btn-accent"
         >
-          Next
+          Continue
         </button>
       </div>
     </form>
@@ -354,6 +354,14 @@ const testCredentials = async() => {
 };
 
 const handleNext = async() => {
+  // Sulla has no local model fallback, so a provider is required to continue.
+  if (!selectedProviderId.value) {
+    error.value = 'Choose an AI provider to continue.';
+
+    return;
+  }
+  error.value = null;
+
   // If a provider is selected and has values filled, save to SullaSettingsModel
   // (no database/IntegrationService available during first run)
   if (selectedProviderId.value && selectedIntegration.value?.properties) {

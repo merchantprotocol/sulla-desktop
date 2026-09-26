@@ -108,11 +108,11 @@ export class Tray {
       icon:    path.join(paths.resources, 'icons', 'help-circle-16.png'),
       submenu: [
         {
-          id:    'premium-support',
-          label: 'Premium Support',
-          icon:  path.join(paths.resources, 'icons', 'star-16.png'),
+          id:    'support',
+          label: 'Get Support',
+          icon:  path.join(paths.resources, 'icons', 'help-circle-16.png'),
           click() {
-            openUrlInApp('https://www.skool.com/book-more-appointments-8103');
+            openUrlInApp('https://sulladesktop.com/support');
           },
         },
         {

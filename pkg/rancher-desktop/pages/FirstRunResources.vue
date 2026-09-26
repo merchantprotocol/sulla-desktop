@@ -1,54 +1,74 @@
 <template>
-  <div class="mx-auto p-6">
+  <div class="frw p-6">
     <form @submit.prevent="handleNext">
-      <h2 class="text-2xl font-bold mt-5 mb-4 fr-heading">
-        Specify AI Resources
-      </h2>
-      <p class="mb-6 fr-body">
-        Choose the resources allocated to your AI Agent. Your agent and all resources it manages will not be allowed to use more than the allocated resources.
+      <div class="frw-eyebrow">
+        Welcome to Sulla
+      </div>
+      <h1 class="frw-title">
+        Let's get your first automation running.
+      </h1>
+      <p class="frw-lead">
+        Sulla is your executive assistant. You describe a job in plain English, and Sulla builds the automation,
+        runs it on schedule, and keeps it working. Setup takes a few minutes.
       </p>
 
-      <div class="mt-10" />
-      <rd-fieldset
-        legend-text="Virtual Machine Resources"
-        legend-tooltip="Allocate CPU and memory for the AI services"
-        class="mb-6 mt-6 fr-fieldset"
-      >
-        <system-preferences
-          :memory-in-g-b="settings!.virtualMachine.memoryInGB"
-          :number-c-p-us="settings!.virtualMachine.numberCPUs"
-          :avail-memory-in-g-b="availMemoryInGB"
-          :avail-num-c-p-us="availNumCPUs"
-          :reserved-memory-in-g-b="6"
-          :reserved-num-c-p-us="1"
-          :is-locked-memory="false"
-          :is-locked-cpu="false"
-          @update:memory="onMemoryChange"
-          @update:cpu="onCpuChange"
-        />
-      </rd-fieldset>
-
-      <div
-        v-if="resourceError"
-        class="my-4 p-3 border rounded-md fr-error-box"
-      >
-        {{ resourceError }}
+      <div class="frw-how">
+        <div>
+          <span class="frw-num">1</span>
+          <b>Create your account</b>
+          <span>A master password keeps your saved logins encrypted on this computer.</span>
+        </div>
+        <div>
+          <span class="frw-num">2</span>
+          <b>Choose your AI</b>
+          <span>Sign in to Claude, OpenAI, Grok or another provider, or paste an API key.</span>
+        </div>
+        <div>
+          <span class="frw-num">3</span>
+          <b>Pick your first job</b>
+          <span>Choose a starter automation and Sulla sets it up for you.</span>
+        </div>
       </div>
 
-      <button
-        type="button"
-        class="w-full text-left p-2 transition-colors text-sm font-medium fr-btn-toggle"
-        @click="isOptionsOpen = !isOptionsOpen"
-      >
-        Options {{ isOptionsOpen ? '▲' : '▼' }}
-      </button>
+      <div class="frw-resources">
+        <div>
+          <b>Sulla will use {{ settings!.virtualMachine.memoryInGB }} GB of memory and {{ settings!.virtualMachine.numberCPUs }} CPUs</b>
+          <span>Recommended for this computer. Sulla's agents work inside this private, sandboxed space.</span>
+        </div>
+        <button
+          type="button"
+          class="frw-link"
+          @click="isOptionsOpen = !isOptionsOpen"
+        >
+          {{ isOptionsOpen ? 'Done' : 'Adjust' }}
+        </button>
+      </div>
 
       <Transition name="slide">
         <div
           v-show="isOptionsOpen"
           class="mt-2 overflow-hidden"
         >
-          <div class="mb-4">
+          <rd-fieldset
+            legend-text="Memory and CPUs"
+            legend-tooltip="Allocate CPU and memory for the AI services"
+            class="mb-4 mt-2 fr-fieldset"
+          >
+            <system-preferences
+              :memory-in-g-b="settings!.virtualMachine.memoryInGB"
+              :number-c-p-us="settings!.virtualMachine.numberCPUs"
+              :avail-memory-in-g-b="availMemoryInGB"
+              :avail-num-c-p-us="availNumCPUs"
+              :reserved-memory-in-g-b="6"
+              :reserved-num-c-p-us="1"
+              :is-locked-memory="false"
+              :is-locked-cpu="false"
+              @update:memory="onMemoryChange"
+              @update:cpu="onCpuChange"
+            />
+          </rd-fieldset>
+
+          <div class="mb-3">
             <label class="flex items-center">
               <input
                 v-model="enableTelemetry"
@@ -60,7 +80,7 @@
             </label>
           </div>
 
-          <div class="mb-4">
+          <div class="mb-3">
             <label class="flex items-center">
               <input
                 v-model="enableKubernetes"
@@ -74,21 +94,21 @@
         </div>
       </Transition>
 
-      <div class="flex justify-end mt-5">
-        <button
-          v-if="showBack"
-          type="button"
-          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 cursor-pointer fr-btn-secondary"
-          @click="$emit('back')"
-        >
-          Back
-        </button>
+      <div
+        v-if="resourceError"
+        class="my-4 p-3 border rounded-md fr-error-box"
+      >
+        {{ resourceError }}
+      </div>
+
+      <div class="frw-actions">
         <button
           type="submit"
-          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 fr-btn-primary"
+          class="frw-btn"
         >
-          Next
+          Get started →
         </button>
+        <span class="frw-trust">🔒 Your data, memory and passwords stay on this computer.</span>
       </div>
     </form>
   </div>
@@ -143,6 +163,8 @@ onMounted(async() => {
     settings.value.application.pathManagementStrategy = PathManagementStrategy.RcFiles;
     settings.value.kubernetes.enabled = false;
 
+    applyRecommendedResources();
+
     // Set checkbox state from loaded settings
     enableTelemetry.value = settings.value.application.telemetry.enabled;
     enableKubernetes.value = settings.value.kubernetes.enabled;
@@ -173,6 +195,30 @@ onMounted(async() => {
 const availMemoryInGB = computed(() => Math.ceil(os.totalmem() / 2 ** 30));
 const availNumCPUs = computed(() => os.cpus().length);
 
+// Minimums the AI services need (enforced in handleNext).
+const MIN_MEMORY_GB = 5;
+const MIN_CPUS = 3;
+
+/**
+ * Pick sensible VM resources so nobody has to understand sliders before they
+ * see any value: half the machine, clamped to the service minimums and a
+ * reasonable ceiling. Existing allocations that already meet the minimums are
+ * kept, so re-running setup never shrinks a user's choice.
+ */
+function applyRecommendedResources() {
+  const vm = settings.value.virtualMachine;
+
+  if (vm.memoryInGB < MIN_MEMORY_GB) {
+    vm.memoryInGB = Math.min(Math.max(MIN_MEMORY_GB, Math.floor(availMemoryInGB.value / 2)), 16);
+  }
+  if (vm.numberCPUs < MIN_CPUS) {
+    vm.numberCPUs = Math.min(Math.max(MIN_CPUS, Math.floor(availNumCPUs.value / 2)), 8);
+  }
+}
+
+// Show the recommendation immediately; settings-read re-applies it to the loaded values.
+applyRecommendedResources();
+
 const onMemoryChange = (value: number) => {
   settings.value.virtualMachine.memoryInGB = value;
 };
@@ -194,8 +240,8 @@ const onTelemetryChange = async() => {
 };
 
 const handleNext = async() => {
-  if ((settings.value as any).virtualMachine.memoryInGB <= 4 || (settings.value as any).virtualMachine.numberCPUs <= 2) {
-    resourceError.value = 'Please allocate at least 5GB memory and 3 CPUs for the AI services.';
+  if (settings.value.virtualMachine.memoryInGB < MIN_MEMORY_GB || settings.value.virtualMachine.numberCPUs < MIN_CPUS) {
+    resourceError.value = `Sulla needs at least ${ MIN_MEMORY_GB } GB of memory and ${ MIN_CPUS } CPUs. Use Adjust to raise them.`;
   } else {
     resourceError.value = '';
   }
@@ -404,5 +450,118 @@ input:hover, select:hover {
   &:hover {
     background-color: var(--accent-primary-hover);
   }
+}
+
+/* ---- welcome ---- */
+.frw-eyebrow {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--accent-primary, #3d7fa0);
+  margin-top: 8px;
+}
+
+.frw-title {
+  font-size: 34px;
+  line-height: 1.12;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  margin: 10px 0 12px;
+  color: var(--text-primary, #0f172a);
+}
+
+.frw-lead {
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text-secondary, #475569);
+  max-width: 620px;
+}
+
+.frw-how {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 24px 0;
+
+  > div {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 14px;
+    border: 1px solid var(--border-default, #e2e8f0);
+    border-radius: 12px;
+    background: var(--bg-surface-alt, #f8fafc);
+    font-size: 13.5px;
+    color: var(--text-secondary, #475569);
+  }
+
+  b {
+    color: var(--text-primary, #0f172a);
+    font-size: 14.5px;
+  }
+}
+
+.frw-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--accent-primary, #3d7fa0);
+  background: var(--bg-surface-hover, #e4f0f6);
+  margin-bottom: 4px;
+}
+
+.frw-resources {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px dashed var(--border-default, #cbd5e1);
+  font-size: 13.5px;
+  color: var(--text-muted, #64748b);
+
+  > div { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+
+  b { color: var(--text-primary, #0f172a); font-size: 14px; }
+}
+
+.frw-link {
+  background: none;
+  border: none;
+  color: var(--accent-primary, #3d7fa0);
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.frw-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.frw-btn {
+  padding: 12px 22px;
+  border-radius: 11px;
+  font-weight: 700;
+  font-size: 15px;
+  color: #fff;
+  background: var(--accent-primary, #3d7fa0);
+  border: none;
+  cursor: pointer;
+
+  &:hover { filter: brightness(1.06); }
+}
+
+.frw-trust {
+  font-size: 13px;
+  color: var(--text-muted, #64748b);
 }
 </style>

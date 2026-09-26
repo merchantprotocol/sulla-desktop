@@ -445,12 +445,6 @@ function getHelpMenu(isMac: boolean): MenuItem {
         openUrlInApp('https://sulladesktop.com/support');
       },
     },
-    {
-      label: '&Premium Support',
-      click() {
-        openUrlInApp('https://www.skool.com/book-more-appointments-8103');
-      },
-    },
     { type: 'separator' },
     {
       label: 'P&roject Page',

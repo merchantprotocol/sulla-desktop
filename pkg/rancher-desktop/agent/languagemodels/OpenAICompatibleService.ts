@@ -8,7 +8,6 @@ import { ModelDetectionService } from './ModelDetectionService';
  * Handles:
  * - /chat/completions endpoint (standard OpenAI shape)
  * - Automatic retry on 429/5xx
- * - Fallback to local Ollama on final failure
  * - Normalized token usage & timing
  *
  * Providers that use the OpenAI-compatible API (Grok, OpenAI, Kimi, NVIDIA, Custom)
@@ -48,7 +47,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
   }
 
   /**
-   * Send request to remote provider with retry + local LLM fallback.
+   * Send request to remote provider with retry.
    */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
     const endpoint = this.endpointFor(this.model);

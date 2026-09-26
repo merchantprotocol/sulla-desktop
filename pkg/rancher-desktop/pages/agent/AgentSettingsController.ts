@@ -21,14 +21,9 @@ export class AgentSettingsController {
 
   async start(): Promise<void> {
     // Fetch initial settings from SullaSettingsModel
-    this.modelMode.value = await SullaSettingsModel.get('modelMode', 'local');
-
-    if (this.modelMode.value === 'remote') {
-      this.modelName.value = await SullaSettingsModel.get('remoteModel', 'grok-4-1-fast-reasoning');
-      console.log(`[Agent] Remote model configured: ${ await SullaSettingsModel.get('remoteProvider', 'grok') }/${ this.modelName.value }`);
-    } else {
-      this.modelName.value = await SullaSettingsModel.get('sullaModel', 'tinyllama:latest');
-      console.log(`[Agent] Local model configured: ${ this.modelName.value }`);
-    }
+    // Sulla only runs provider models (API key / sign-in, or a user-run Ollama server).
+    this.modelMode.value = 'remote';
+    this.modelName.value = await SullaSettingsModel.get('remoteModel', 'grok-4-1-fast-reasoning');
+    console.log(`[Agent] Model configured: ${ await SullaSettingsModel.get('remoteProvider', 'grok') }/${ this.modelName.value }`);
   }
 }

@@ -696,7 +696,21 @@ function normalizeUrl(input: string): string {
   return `https://www.google.com/search?q=${ encodeURIComponent(trimmed) }`;
 }
 
+// Bounds updates are coalesced to one per animation frame and sent only when
+// they change: ResizeObserver fires continuously while the window is being
+// resized, and each call is an IPC round-trip that resizes a native view.
+let boundsFrame: number | null = null;
+let lastSentBounds = '';
+
 function sendBounds() {
+  if (boundsFrame !== null) return;
+  boundsFrame = requestAnimationFrame(() => {
+    boundsFrame = null;
+    sendBoundsNow();
+  });
+}
+
+function sendBoundsNow() {
   const el = viewContainerRef.value;
   if (!el) return;
   const rect = el.getBoundingClientRect();
@@ -708,6 +722,14 @@ function sendBounds() {
   const x = Math.round(rect.x);
   const y = Math.round(rect.y);
 
+  // A tab hidden via v-show reports a 0×0 rect. Sending that would make main
+  // park the view 1px wide (agent screenshots of a background tab come back
+  // as a sliver) and briefly show stale bounds on re-focus. Keep the last
+  // real bounds instead.
+  if (fullWidth < 1 || fullHeight < 1) return;
+  const key = `${ x },${ y },${ fullWidth },${ fullHeight },${ sidePanelOpen.value }`;
+  if (key === lastSentBounds) return;
+  lastSentBounds = key;
   if (sidePanelOpen.value) {
     // Split the tab area: browser view gets 70%, side panel gets 30%
     const panelWidth = Math.floor(fullWidth * 0.3);
@@ -837,9 +859,9 @@ function onStateUpdate(_event: unknown, state: { tabId: string; url: string; tit
   canGoBack.value = state.canGoBack;
   canGoForward.value = state.canGoForward;
   loading.value = state.isLoading;
-  if (state.title) {
-    updateTab(props.tabId, { title: state.title, url: state.url });
-  }
+  // updateTab ignores unchanged fields, so repeated navigation events for
+  // the same page cost nothing.
+  updateTab(props.tabId, state.title ? { title: state.title, url: state.url } : { url: state.url });
 }
 
 // ResizeObserver for bounds tracking
@@ -867,6 +889,7 @@ watch(shouldShowView, (visible) => {
   if (visible) {
     window.addEventListener('keydown', onKeydown);
     ipcRenderer.invoke('browser-tab-view:focus', props.tabId);
+    lastSentBounds = '';
     nextTick(() => sendBounds());
     // Show this tab's side panel (if it has one) when tab becomes visible
     ipcRenderer.invoke('chrome-api:sidePanel:switchTab' as any, props.tabId);
@@ -926,6 +949,10 @@ onUnmounted(() => {
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
+  }
+  if (boundsFrame !== null) {
+    cancelAnimationFrame(boundsFrame);
+    boundsFrame = null;
   }
 
   if (viewCreated.value) {
