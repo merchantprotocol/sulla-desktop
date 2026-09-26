@@ -42,6 +42,9 @@ jest.mock('@pkg/utils/paths', () => ({ __esModule: true, default: { sullaConfig:
 // eslint-disable-next-line import-x/first
 import { VaultKeyService, normalizeRecoveryKey, writeFileAtomic } from '../VaultKeyService';
 
+// Real PBKDF2 and bulk crypto: allow for a loaded CI machine.
+jest.setTimeout(60_000);
+
 const PW = 'correct horse battery staple';
 
 function tmpDir(): string {

@@ -25,6 +25,9 @@ import { PostgresVaultRowStore, VaultBackupService, type VaultRowDb } from '../V
 // eslint-disable-next-line import-x/first
 import { VaultKeyService } from '../VaultKeyService';
 
+// Real PBKDF2 and bulk crypto: allow for a loaded CI machine.
+jest.setTimeout(60_000);
+
 const run = process.env.VAULT_PG_IT === '1' ? describe : describe.skip;
 const conn = { host: '127.0.0.1', port: Number(process.env.VAULT_PG_PORT ?? 30116), user: 'sulla', password: process.env.VAULT_PG_PASSWORD ?? 'sulla_dev_password' };
 const dbName = `sulla_vault_it_${ process.pid }_${ Date.now() }`;

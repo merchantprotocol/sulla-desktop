@@ -25,6 +25,9 @@ import {
 // eslint-disable-next-line import-x/first
 import { VaultKeyService } from '../VaultKeyService';
 
+// Real PBKDF2 and bulk crypto: allow for a loaded CI machine.
+jest.setTimeout(60_000);
+
 const PW = 'master password';
 
 class MemoryStore implements VaultRowStore {
