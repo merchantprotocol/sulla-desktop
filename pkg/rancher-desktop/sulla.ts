@@ -700,7 +700,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('vault:setup', async(_event: Electron.IpcMainInvokeEvent, data: { masterPassword: string }) => {
-    const result = await vaultKey.setupFromMasterPassword(data.masterPassword);
+    const result = await vaultKey.setupFromMasterPassword(data?.masterPassword ?? '');
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
     setUserLoggedIn(true);
     return { recoveryKey: result.recoveryKey };
@@ -708,8 +708,15 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   ipcMainProxy.handle('vault:change-password', async(_event: Electron.IpcMainInvokeEvent, data: { newPassword: string }) => {
     const { IntegrationValueModel } = await import('@pkg/agent/database/models/IntegrationValueModel');
-    const { recoveryKey, oldDecrypt } = await vaultKey.changePassword(data.newPassword);
-    await IntegrationValueModel.reEncryptAll(oldDecrypt);
+    const { recoveryKey, oldDecrypt, rollback } = await vaultKey.changePassword(data?.newPassword ?? '');
+    try {
+      await IntegrationValueModel.reEncryptAll(oldDecrypt);
+    } catch (error) {
+      // The database transaction has not committed; restore the previous
+      // key files and in-memory key before surfacing the failure.
+      rollback();
+      throw error;
+    }
     return { recoveryKey };
   });
 
@@ -778,7 +785,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       if (vaultKey.isUnlocked() && vaultKey.isEncrypted(encrypted)) {
         event.returnValue = vaultKey.decrypt(encrypted);
       } else {
-        event.returnValue = encrypted;
+        // Fail closed: returning ciphertext here makes callers treat it as a
+        // usable credential and can leak it into downstream integrations.
+        event.returnValue = '';
       }
     } catch {
       // Return only a primitive sentinel. Returning the malformed input can
@@ -787,15 +796,15 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     }
   });
 
-  ipcMain.on('vault:encrypt-sync', (event, plaintext: string) => {
+  ipcMain.on('vault:encrypt-sync', (event, plaintext: unknown) => {
     try {
-      if (vaultKey.isUnlocked()) {
-        event.returnValue = vaultKey.encrypt(plaintext);
-      } else {
-        event.returnValue = plaintext;
+      if (typeof plaintext !== 'string' || !vaultKey.isUnlocked()) {
+        event.returnValue = '';
+        return;
       }
+      event.returnValue = vaultKey.encrypt(plaintext);
     } catch {
-      event.returnValue = plaintext;
+      event.returnValue = '';
     }
   });
 

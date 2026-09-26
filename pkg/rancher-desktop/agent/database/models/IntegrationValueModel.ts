@@ -1,5 +1,6 @@
 import { normalizeVaultCredentialValue } from '../../services/vaultCredentialSchema';
 import { BaseModel } from '../BaseModel';
+import { postgresClient } from '../PostgresClient';
 
 const VAULT_PREFIX = '$VAULT$';
 const isRenderer = typeof process !== 'undefined' && process.type === 'renderer';
@@ -39,12 +40,17 @@ function ipcDecrypt(value: string): string {
 }
 
 function ipcEncrypt(value: string): string {
-  if (!isRenderer) return value;
+  if (!isRenderer) throw new Error('VAULT_LOCKED: renderer encryption is unavailable');
   try {
     const { ipcRenderer } = require('electron');
     const result = ipcRenderer.sendSync('vault:encrypt-sync', value);
-    return result || value;
-  } catch { return value }
+    if (typeof result !== 'string' || !result.startsWith(VAULT_PREFIX)) {
+      throw new Error('VAULT_LOCKED: renderer encryption failed');
+    }
+    return result;
+  } catch (error) {
+    throw error instanceof Error ? error : new Error('VAULT_LOCKED: renderer encryption failed');
+  }
 }
 
 interface IntegrationValueAttributes {
@@ -86,18 +92,12 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
 
   // ─── Vault encryption helpers ──────────────────────────────────────
 
-  /** Encrypt a value if the vault is available, otherwise return as-is */
+  /** Encrypt a credential. Never fall back to plaintext when the vault is locked. */
   private static encryptValue(value: string): string {
-    // Main process: direct
     const vault = getVaultDirect();
-    if (vault?.isUnlocked()) {
-      try { return vault.encrypt(value) } catch { /* fall through */ }
-    }
-    // Renderer: IPC
-    if (isRenderer) {
-      try { return ipcEncrypt(value) } catch { /* fall through */ }
-    }
-    return value;
+    if (vault?.isUnlocked()) return vault.encrypt(value);
+    if (isRenderer) return ipcEncrypt(value);
+    throw new Error('VAULT_LOCKED: cannot store credentials while the vault is locked');
   }
 
   /** Decrypt a value if it's vault-encrypted, otherwise return as-is */
@@ -123,8 +123,7 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
         console.error('[IntegrationValueModel] IPC decrypt failed:', err);
       }
     }
-    console.warn('[IntegrationValueModel] Returning encrypted value as-is — vault may be locked');
-    return value;
+    throw new Error('VAULT_DECRYPT_FAILED: vault is locked or unavailable');
   }
 
   /** Decrypt the value attribute on a model instance */
@@ -199,25 +198,27 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
       [],
     );
 
-    let count = 0;
-    let failed = 0;
-    for (const row of allRows) {
-      try {
-        const plaintext = oldDecrypt(row.value as string);
-        const reEncrypted = vault.encrypt(plaintext);
-        await this.query(
-          `UPDATE "integration_values" SET "value" = $1, "updated_at" = CURRENT_TIMESTAMP WHERE "value_id" = $2`,
-          [reEncrypted, row.value_id],
-        );
-        count++;
-      } catch (err) {
-        failed++;
-        console.error(`[IntegrationValueModel] Failed to re-encrypt value_id=${ row.value_id }:`, err);
-      }
-    }
+    // Preflight every row before changing the database. A single corrupt row
+    // must abort the whole password change rather than create a mixed-key vault.
+    const updates = allRows.map(row => {
+      const plaintext = oldDecrypt(row.value as string);
+      return {
+        valueId:     row.value_id,
+        reEncrypted: vault.encrypt(plaintext),
+      };
+    });
 
-    console.log(`[IntegrationValueModel] Re-encrypted ${ count } values (${ failed } failed)`);
-    return count;
+    await postgresClient.transaction(async(client) => {
+      for (const update of updates) {
+        await client.query(
+          `UPDATE "integration_values" SET "value" = $1, "updated_at" = CURRENT_TIMESTAMP WHERE "value_id" = $2`,
+          [update.reEncrypted, update.valueId],
+        );
+      }
+    });
+
+    console.log(`[IntegrationValueModel] Re-encrypted ${ updates.length } values atomically`);
+    return updates.length;
   }
 
   // ─── Static finders ────────────────────────────────────────────────

@@ -16,13 +16,23 @@ import * as path from 'path';
 import paths from '@pkg/utils/paths';
 
 const VAULT_PREFIX = '$VAULT$';
-const PBKDF2_ITERATIONS = 100_000;
+// Existing vaults use 100k iterations. New vaults use the stronger setting;
+// the metadata file keeps password recovery backward-compatible.
+const LEGACY_PBKDF2_ITERATIONS = 100_000;
+const PBKDF2_ITERATIONS = 600_000;
 const PBKDF2_DIGEST = 'sha512';
 const VMK_LENGTH = 32; // 256-bit
 const GCM_IV_LENGTH = 12;
 const GCM_AUTH_TAG_LENGTH = 16;
 const SALT_LENGTH = 32;
 const RECOVERY_KEY_BYTES = 16; // 128-bit
+const MIN_MASTER_PASSWORD_LENGTH = 12;
+
+interface SafeStorageLike {
+  isEncryptionAvailable(): boolean;
+  encryptString(value: string): Buffer;
+  decryptString(value: Buffer): string;
+}
 
 let vaultKeyServiceInstance: VaultKeyService | null = null;
 
@@ -36,9 +46,11 @@ export function getVaultKeyService(): VaultKeyService {
 export class VaultKeyService {
   private vmk:      Buffer | null = null;
   private sullaDir: string;
+  private safeStorageOverride: SafeStorageLike | null | undefined;
 
-  constructor() {
-    this.sullaDir = paths.sullaConfig;
+  constructor(sullaDir: string = paths.sullaConfig, safeStorage?: SafeStorageLike | null) {
+    this.sullaDir = sullaDir;
+    this.safeStorageOverride = safeStorage;
   }
 
   // ─── File paths ──────────────────────────────────────────────────
@@ -61,6 +73,10 @@ export class VaultKeyService {
 
   private get verifyPath(): string {
     return path.join(this.sullaDir, 'vault-verify');
+  }
+
+  private get kdfConfigPath(): string {
+    return path.join(this.sullaDir, 'vault-kdf.json');
   }
 
   // ─── Initialization ──────────────────────────────────────────────
@@ -105,8 +121,17 @@ export class VaultKeyService {
         return false;
       }
 
-      // Ensure canary exists for existing vaults that predate this check
-      if (!fs.existsSync(this.verifyPath)) {
+      // Ensure the key is authentic before exposing an unlocked vault. Legacy
+      // vaults without a canary get one only after the keychain blob passes
+      // its structural checks.
+      if (fs.existsSync(this.verifyPath)) {
+        if (!this.verifyCanary(this.vmk)) {
+          this.vmk.fill(0);
+          this.vmk = null;
+          console.error('[VaultKeyService] Keychain VMK failed vault verification');
+          return false;
+        }
+      } else {
         this.writeVerifyCanary();
       }
 
@@ -124,11 +149,18 @@ export class VaultKeyService {
    * generate recovery key, create encrypted backup.
    */
   async setupFromMasterPassword(masterPassword: string): Promise<{ recoveryKey: string }> {
+    this.assertMasterPassword(masterPassword);
     this.ensureSullaDir();
 
-    // Generate and store salt
+    // Generate and store salt and KDF metadata atomically.
     const salt = crypto.randomBytes(SALT_LENGTH);
-    fs.writeFileSync(this.saltPath, salt);
+    this.writePrivateFile(this.saltPath, salt);
+    this.writePrivateFile(this.kdfConfigPath, JSON.stringify({
+      algorithm:  'pbkdf2',
+      digest:     PBKDF2_DIGEST,
+      iterations: PBKDF2_ITERATIONS,
+      version:    1,
+    }), 'utf8');
 
     // Derive VMK from master password
     this.vmk = crypto.pbkdf2Sync(masterPassword, salt, PBKDF2_ITERATIONS, VMK_LENGTH, PBKDF2_DIGEST);
@@ -144,7 +176,7 @@ export class VaultKeyService {
       .createHash('sha256')
       .update(recoveryKey)
       .digest('hex');
-    fs.writeFileSync(this.recoveryHashPath, recoveryHash, 'utf-8');
+    this.writePrivateFile(this.recoveryHashPath, recoveryHash, 'utf8');
 
     // Create encrypted backup of VMK using recovery key
     this.createRecoveryBackup(recoveryKey);
@@ -164,16 +196,20 @@ export class VaultKeyService {
   async changePassword(newPassword: string): Promise<{
     recoveryKey: string;
     oldDecrypt:  (encrypted: string) => string;
+    rollback:  () => void;
   }> {
     if (!this.vmk) {
       throw new Error('[VaultKeyService] Vault must be unlocked to change password');
     }
 
-    // Capture the old VMK for re-encryption
+    // Snapshot the old key material so a failed database re-key can restore
+    // the exact previous vault state without leaving credentials unreadable.
     const oldVmk = Buffer.from(this.vmk);
+    const snapshot = this.snapshotPasswordState();
     const oldDecrypt = (encrypted: string): string => {
       if (!encrypted.startsWith(VAULT_PREFIX)) return encrypted;
       const packed = Buffer.from(encrypted.slice(VAULT_PREFIX.length), 'base64');
+      if (packed.length < GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH) throw new Error('[VaultKeyService] Invalid encrypted value');
       const iv = packed.subarray(0, GCM_IV_LENGTH);
       const authTag = packed.subarray(GCM_IV_LENGTH, GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH);
       const ciphertext = packed.subarray(GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH);
@@ -185,7 +221,11 @@ export class VaultKeyService {
     // Now set up the new key (replaces salt, VMK, safeStorage, recovery)
     const result = await this.setupFromMasterPassword(newPassword);
 
-    return { recoveryKey: result.recoveryKey, oldDecrypt };
+    return {
+      recoveryKey: result.recoveryKey,
+      oldDecrypt,
+      rollback:  () => this.restorePasswordState(snapshot, oldVmk),
+    };
   }
 
   // ─── Encrypt / Decrypt ───────────────────────────────────────────
@@ -227,6 +267,9 @@ export class VaultKeyService {
     }
 
     const packed = Buffer.from(encrypted.slice(VAULT_PREFIX.length), 'base64');
+    if (packed.length < GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH) {
+      throw new Error('[VaultKeyService] Invalid encrypted value');
+    }
 
     const iv = packed.subarray(0, GCM_IV_LENGTH);
     const authTag = packed.subarray(GCM_IV_LENGTH, GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH);
@@ -257,16 +300,18 @@ export class VaultKeyService {
   async recoverFromRecoveryKey(recoveryKey: string): Promise<boolean> {
     try {
       // Verify recovery key hash
-      if (fs.existsSync(this.recoveryHashPath)) {
-        const storedHash = fs.readFileSync(this.recoveryHashPath, 'utf-8').trim();
-        const providedHash = crypto
-          .createHash('sha256')
-          .update(recoveryKey)
-          .digest('hex');
-        if (storedHash !== providedHash) {
-          console.error('[VaultKeyService] Recovery key verification failed');
-          return false;
-        }
+      if (!fs.existsSync(this.recoveryHashPath)) {
+        console.error('[VaultKeyService] Recovery key hash is missing');
+        return false;
+      }
+      const storedHash = fs.readFileSync(this.recoveryHashPath, 'utf-8').trim();
+      const providedHash = crypto.createHash('sha256').update(recoveryKey).digest('hex');
+      const storedHashBytes = Buffer.from(storedHash, 'hex');
+      const providedHashBytes = Buffer.from(providedHash, 'hex');
+      if (storedHashBytes.length !== providedHashBytes.length ||
+        !crypto.timingSafeEqual(storedHashBytes, providedHashBytes)) {
+        console.error('[VaultKeyService] Recovery key verification failed');
+        return false;
       }
 
       // Decrypt backup
@@ -294,6 +339,11 @@ export class VaultKeyService {
         decipher.update(backupCiphertext),
         decipher.final(),
       ]);
+      if (this.vmk.length !== VMK_LENGTH) {
+        this.vmk.fill(0);
+        this.vmk = null;
+        return false;
+      }
 
       // Re-store in safeStorage
       this.storeVmkViaSafeStorage();
@@ -322,7 +372,13 @@ export class VaultKeyService {
       }
 
       const salt = fs.readFileSync(this.saltPath);
-      const candidateVmk = crypto.pbkdf2Sync(masterPassword, salt, PBKDF2_ITERATIONS, VMK_LENGTH, PBKDF2_DIGEST);
+      const candidateVmk = crypto.pbkdf2Sync(
+        masterPassword,
+        salt,
+        this.readKdfIterations(),
+        VMK_LENGTH,
+        PBKDF2_DIGEST,
+      );
 
       // Verify the derived key is correct before accepting it
       if (!this.verifyCanary(candidateVmk)) {
@@ -384,7 +440,7 @@ export class VaultKeyService {
     if (!this.vmk) return;
     try {
       const canary = this.encrypt('sulla-vault-canary');
-      fs.writeFileSync(this.verifyPath, canary, 'utf-8');
+      this.writePrivateFile(this.verifyPath, canary, 'utf8');
     } catch (err) {
       console.warn('[VaultKeyService] Failed to write verify canary:', err);
     }
@@ -396,14 +452,16 @@ export class VaultKeyService {
    */
   private verifyCanary(candidateVmk: Buffer): boolean {
     if (!fs.existsSync(this.verifyPath)) {
-      // No canary file — legacy vault, accept the key (can't verify)
-      return true;
+      // Never accept an unverified password: doing so would replace a valid
+      // key with one derived from a typo and make encrypted data unrecoverable.
+      return false;
     }
     try {
       const encrypted = fs.readFileSync(this.verifyPath, 'utf-8');
-      if (!encrypted.startsWith(VAULT_PREFIX)) return true;
+      if (!encrypted.startsWith(VAULT_PREFIX)) return false;
 
       const packed = Buffer.from(encrypted.slice(VAULT_PREFIX.length), 'base64');
+      if (packed.length < GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH) return false;
       const iv = packed.subarray(0, GCM_IV_LENGTH);
       const authTag = packed.subarray(GCM_IV_LENGTH, GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH);
       const ciphertext = packed.subarray(GCM_IV_LENGTH + GCM_AUTH_TAG_LENGTH);
@@ -419,20 +477,41 @@ export class VaultKeyService {
     }
   }
 
-  /** Generate a 128-bit recovery key formatted as XXXX-XXXX-XXXX-XXXX-XXXX-XXXX */
+  /** Generate a 128-bit recovery key formatted as 8 groups of 4 hex chars. */
   generateRecoveryKey(): string {
     const bytes = crypto.randomBytes(RECOVERY_KEY_BYTES);
     const hex = bytes.toString('hex').toUpperCase();
-    // Split into 6 groups of 4-5 chars
-    const groups: string[] = [];
-    for (let i = 0; i < hex.length; i += 5) {
-      groups.push(hex.slice(i, i + 5));
+    return hex.match(/.{1,4}/g)!.join('-');
+  }
+
+  private snapshotPasswordState(): Map<string, Buffer | null> {
+    const snapshot = new Map<string, Buffer | null>();
+    for (const filePath of [
+      this.saltPath,
+      this.kdfConfigPath,
+      this.keyEncPath,
+      this.backupPath,
+      this.recoveryHashPath,
+      this.verifyPath,
+    ]) {
+      snapshot.set(filePath, fs.existsSync(filePath) ? fs.readFileSync(filePath) : null);
     }
-    // Pad to exactly 6 groups
-    while (groups.length < 6) {
-      groups.push(crypto.randomBytes(2).toString('hex').toUpperCase().slice(0, 5));
+    return snapshot;
+  }
+
+  private restorePasswordState(snapshot: Map<string, Buffer | null>, oldVmk: Buffer): void {
+    for (const [filePath, data] of snapshot) {
+      if (data === null) {
+        try { fs.unlinkSync(filePath) } catch (error: any) {
+          if (error?.code !== 'ENOENT') throw error;
+        }
+      } else {
+        this.writePrivateFile(filePath, data);
+      }
     }
-    return groups.slice(0, 6).join('-');
+    if (this.vmk) this.vmk.fill(0);
+    this.vmk = Buffer.from(oldVmk);
+    oldVmk.fill(0);
   }
 
   /** Store VMK in safeStorage, writing encrypted blob to disk */
@@ -441,10 +520,10 @@ export class VaultKeyService {
 
     try {
       const safeStorage = this.getSafeStorage();
-      if (safeStorage && safeStorage.isEncryptionAvailable()) {
+      if (safeStorage?.isEncryptionAvailable()) {
         const vmkBase64 = this.vmk.toString('base64');
         const encrypted = safeStorage.encryptString(vmkBase64);
-        fs.writeFileSync(this.keyEncPath, encrypted);
+        this.writePrivateFile(this.keyEncPath, encrypted);
         console.log('[VaultKeyService] VMK stored via safeStorage');
       } else {
         console.warn('[VaultKeyService] safeStorage unavailable — VMK not persisted to keychain');
@@ -471,12 +550,13 @@ export class VaultKeyService {
 
     // Pack: salt (32) + iv (12) + authTag (16) + ciphertext
     const packed = Buffer.concat([backupSalt, backupIv, authTag, encrypted]);
-    fs.writeFileSync(this.backupPath, packed);
+    this.writePrivateFile(this.backupPath, packed);
     console.log('[VaultKeyService] Recovery backup created');
   }
 
   /** Get Electron safeStorage module, or null if unavailable */
   private getSafeStorage(): typeof import('electron').safeStorage | null {
+    if (this.safeStorageOverride !== undefined) return this.safeStorageOverride as typeof import('electron').safeStorage;
     try {
       const { safeStorage } = require('electron');
       return safeStorage;
@@ -488,7 +568,43 @@ export class VaultKeyService {
   /** Ensure ~/.sulla directory exists */
   private ensureSullaDir(): void {
     if (!fs.existsSync(this.sullaDir)) {
-      fs.mkdirSync(this.sullaDir, { recursive: true });
+      fs.mkdirSync(this.sullaDir, { recursive: true, mode: 0o700 });
+    }
+    try { fs.chmodSync(this.sullaDir, 0o700) } catch { /* best effort on unsupported filesystems */ }
+  }
+
+  private assertMasterPassword(masterPassword: string): void {
+    if (typeof masterPassword !== 'string' || masterPassword.length < MIN_MASTER_PASSWORD_LENGTH) {
+      throw new Error('[VaultKeyService] Master password must be at least ' + MIN_MASTER_PASSWORD_LENGTH + ' characters');
+    }
+  }
+
+  private readKdfIterations(): number {
+    try {
+      const config = JSON.parse(fs.readFileSync(this.kdfConfigPath, 'utf8')) as { iterations?: unknown };
+      if (typeof config.iterations === 'number' &&
+        Number.isInteger(config.iterations) &&
+        config.iterations >= LEGACY_PBKDF2_ITERATIONS &&
+        config.iterations <= 2_000_000) {
+        return config.iterations;
+      }
+    } catch { /* legacy vault or damaged metadata: use the legacy default */ }
+    return LEGACY_PBKDF2_ITERATIONS;
+  }
+
+  /** Write sensitive material with restrictive permissions and an atomic rename. */
+  private writePrivateFile(filePath: string, data: string | Buffer, encoding?: BufferEncoding): void {
+    const temporaryPath = filePath + '.tmp-' + process.pid + '-' + crypto.randomBytes(8).toString('hex');
+    try {
+      fs.writeFileSync(temporaryPath, data, { encoding, mode: 0o600 });
+      try { fs.chmodSync(temporaryPath, 0o600) } catch { /* best effort */ }
+      const fd = fs.openSync(temporaryPath, 'r');
+      try { fs.fsyncSync(fd) } finally { fs.closeSync(fd) }
+      fs.renameSync(temporaryPath, filePath);
+      try { fs.chmodSync(filePath, 0o600) } catch { /* best effort */ }
+    } catch (error) {
+      try { fs.unlinkSync(temporaryPath) } catch { /* best effort cleanup */ }
+      throw error;
     }
   }
 }
