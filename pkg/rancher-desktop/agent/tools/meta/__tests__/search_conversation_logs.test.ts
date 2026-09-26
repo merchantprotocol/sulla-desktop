@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-const mockGetFileAssociations: any = jest.fn(() => Promise.resolve({ log_file: null, training_file: null }));
+const mockGetFileAssociations: any = jest.fn(() => Promise.resolve({ log_file: null }));
 
 jest.unstable_mockModule('../../../database/models/ConversationHistoryModel', () => ({
   ConversationHistoryModel: { getFileAssociations: mockGetFileAssociations },
@@ -35,7 +35,7 @@ describe('SearchConversationLogsWorker', () => {
     originalHome = process.env.SULLA_HOME_DIR;
     process.env.SULLA_HOME_DIR = tmpDir;
     mockGetFileAssociations.mockReset();
-    mockGetFileAssociations.mockResolvedValue({ log_file: null, training_file: null });
+    mockGetFileAssociations.mockResolvedValue({ log_file: null });
   });
 
   afterEach(() => {
@@ -76,7 +76,7 @@ describe('SearchConversationLogsWorker', () => {
 
   it('falls back to conversation_history.log_file when the filename does not match', async() => {
     writeLog('legacy-name.log', 'from db association\n');
-    mockGetFileAssociations.mockResolvedValue({ log_file: 'legacy-name.log', training_file: null });
+    mockGetFileAssociations.mockResolvedValue({ log_file: 'legacy-name.log' });
 
     const result = await (await loadWorker()).invoke({ thread_id: 'db-only-id' });
 

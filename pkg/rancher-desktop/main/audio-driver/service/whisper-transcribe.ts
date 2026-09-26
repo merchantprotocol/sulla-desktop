@@ -440,7 +440,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string, opt
 
   transcribing = true;
 
-  // Use 2 threads max — whisper shares CPU with LlamaCpp and other services.
+  // Use 2 threads max — whisper shares CPU with other services.
   // 4 threads caused whisper-cli to hang under contention.
   const threads = Math.min(os.cpus().length, 2);
 
@@ -458,7 +458,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string, opt
 
   log.debug('WhisperTranscribe', 'Running whisper', { channel, wavPath, model: modelName, threads, timeoutMs });
 
-  // Timeout — if whisper hangs (CPU contention with LlamaCpp), release the mutex so the
+  // Timeout — if whisper hangs (CPU contention), release the mutex so the
   // next flush can try again with fresh audio.
   execFile(status.binaryPath, args, { timeout: timeoutMs }, (err, stdout, stderr) => {
     transcribing = false;

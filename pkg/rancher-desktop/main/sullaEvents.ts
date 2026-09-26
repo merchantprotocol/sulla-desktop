@@ -273,7 +273,6 @@ export function initSullaEvents(): void {
   /**
    * Lightweight stats for the editor footer:
    * - availableBytes: free disk space on the userData volume
-   * - unprocessedTrainingBytes: total size of unprocessed .jsonl session files
    */
   ipcMainProxy.handle('editor-footer-stats', async() => {
     let availableBytes = 0;
@@ -288,30 +287,7 @@ export function initSullaEvents(): void {
       availableBytes = 0;
     }
 
-    let unprocessedTrainingBytes = 0;
-
-    try {
-      const { resolveSullaTrainingDir } = await import('@pkg/agent/utils/sullaPaths');
-      const fs = await import('fs');
-      const path = await import('path');
-      const dir = resolveSullaTrainingDir();
-
-      if (fs.existsSync(dir)) {
-        const entries = fs.readdirSync(dir);
-
-        for (const name of entries) {
-          if (name.endsWith('.jsonl')) {
-            try {
-              const stat = fs.statSync(path.join(dir, name));
-
-              unprocessedTrainingBytes += stat.size;
-            } catch { /* skip */ }
-          }
-        }
-      }
-    } catch { /* skip */ }
-
-    return { availableBytes, unprocessedTrainingBytes };
+    return { availableBytes };
   });
 
 

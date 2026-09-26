@@ -278,10 +278,6 @@ export function findAgentDir(agentId: string): string | null {
   return null;
 }
 
-export function resolveSullaTrainingDir(): string {
-  return path.join(resolveSullaHomeDir(), 'training');
-}
-
 export function resolveSullaLogsDir(): string {
   return path.join(resolveSullaHomeDir(), 'logs');
 }
@@ -502,12 +498,10 @@ export async function bootstrapSullaHome(): Promise<void> {
   const home = resolveSullaHomeDir();
   const logsDir = resolveSullaLogsDir();
 
-  const trainingDir = resolveSullaTrainingDir();
   const conversationsDir = resolveSullaConversationsDir();
 
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(logsDir, { recursive: true });
-  fs.mkdirSync(trainingDir, { recursive: true });
   fs.mkdirSync(conversationsDir, { recursive: true });
 
   // Clone default repos only if missing — preserve any existing local state.

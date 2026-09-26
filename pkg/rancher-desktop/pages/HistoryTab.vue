@@ -244,14 +244,6 @@
           <p class="text-sm text-slate-500 dark:text-slate-400 mb-4">
             This will permanently delete conversation history and associated log files from disk.
           </p>
-          <label class="flex items-center gap-2 mb-4 text-sm text-slate-600 dark:text-slate-400 cursor-pointer select-none">
-            <input
-              v-model="includeTrainingData"
-              type="checkbox"
-              class="rounded border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-red-500 focus:ring-red-500/30"
-            >
-            <span>Also delete training data files <span class="text-red-500 dark:text-red-400">(irreversible)</span></span>
-          </label>
           <div class="flex flex-col gap-2 mb-4">
             <button
               type="button"
@@ -322,7 +314,6 @@ const filterType = ref('');
 const loading = ref(true);
 const entries = ref<HistoryEntry[]>([]);
 const showClearConfirm = ref(false);
-const includeTrainingData = ref(false);
 
 let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -462,9 +453,8 @@ function clearHistory(scope: 'hour' | 'today' | 'all') {
     olderThan = today.toISOString();
   }
 
-  ipcRenderer.send('conversation-history:clear' as any, olderThan, includeTrainingData.value);
+  ipcRenderer.send('conversation-history:clear' as any, olderThan);
   showClearConfirm.value = false;
-  includeTrainingData.value = false;
 
   // Reload after a short delay to let the clear complete
   setTimeout(loadHistory, 500);

@@ -128,7 +128,7 @@ export class AgentModelSelectorController {
 
   /**
    * Select a model — delegates to ModelProviderService via IPC.
-   * The service writes to DB, manages llama-server, and broadcasts state-changed.
+   * The service writes to DB and broadcasts state-changed.
    */
   async selectModel(option: ModelOption): Promise<void> {
     try {

@@ -25,7 +25,6 @@ export interface ConversationHistoryRecord {
   last_active_at: string;
   closed_at?:     string;
   log_file?:      string;
-  training_file?: string;
   last_summary?:  string;
   pinned:         boolean;
   hidden:         boolean;
@@ -45,7 +44,6 @@ export interface RecordConversationInput {
   tab_id?:        string;
   status?:        ConversationHistoryStatus;
   log_file?:      string;
-  training_file?: string;
   last_summary?:  string;
   pinned?:        boolean;
   /** Explicit override. Omit to let recordConversation() derive it from channel_id (see isHiddenChannel). */
@@ -94,7 +92,7 @@ export class ConversationHistoryModel {
           last_active_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           closed_at       TIMESTAMP WITH TIME ZONE,
           log_file        TEXT,
-          training_file   TEXT,  -- reference only; NEVER auto-delete (used for local model training)
+          training_file   TEXT,  -- unused; kept so existing tables need no migration
           last_summary    TEXT,
           pinned          BOOLEAN DEFAULT FALSE,
           hidden          BOOLEAN NOT NULL DEFAULT FALSE
@@ -128,9 +126,9 @@ export class ConversationHistoryModel {
       await postgresClient.query(`
         INSERT INTO ${ ConversationHistoryModel.TABLE }
           (id, thread_id, session_id, type, title, summary, url, favicon,
-           channel_id, agent_id, tab_id, status, log_file, training_file,
+           channel_id, agent_id, tab_id, status, log_file,
            last_summary, pinned, hidden, created_at, last_active_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
         ON CONFLICT (id) DO UPDATE SET
           thread_id      = COALESCE(EXCLUDED.thread_id, ${ ConversationHistoryModel.TABLE }.thread_id),
           session_id     = COALESCE(EXCLUDED.session_id, ${ ConversationHistoryModel.TABLE }.session_id),
@@ -144,7 +142,6 @@ export class ConversationHistoryModel {
           tab_id         = COALESCE(EXCLUDED.tab_id, ${ ConversationHistoryModel.TABLE }.tab_id),
           status         = COALESCE(EXCLUDED.status, ${ ConversationHistoryModel.TABLE }.status),
           log_file       = COALESCE(EXCLUDED.log_file, ${ ConversationHistoryModel.TABLE }.log_file),
-          training_file  = COALESCE(EXCLUDED.training_file, ${ ConversationHistoryModel.TABLE }.training_file),
           last_summary   = COALESCE(EXCLUDED.last_summary, ${ ConversationHistoryModel.TABLE }.last_summary),
           pinned         = COALESCE(EXCLUDED.pinned, ${ ConversationHistoryModel.TABLE }.pinned),
           hidden         = EXCLUDED.hidden OR ${ ConversationHistoryModel.TABLE }.hidden,
@@ -163,7 +160,6 @@ export class ConversationHistoryModel {
         meta.tab_id ?? null,
         meta.status ?? 'active',
         meta.log_file ?? null,
-        meta.training_file ?? null,
         meta.last_summary ?? null,
         meta.pinned ?? false,
         hidden,
@@ -421,18 +417,18 @@ export class ConversationHistoryModel {
   }
 
   /**
-   * Return log_file and training_file paths for cleanup.
+   * Return the log_file path for cleanup.
    */
-  static async getFileAssociations(id: string): Promise<{ log_file: string | null; training_file: string | null }> {
+  static async getFileAssociations(id: string): Promise<{ log_file: string | null }> {
     try {
-      const row = await postgresClient.queryOne<{ log_file: string | null; training_file: string | null }>(`
-        SELECT log_file, training_file FROM ${ ConversationHistoryModel.TABLE }
+      const row = await postgresClient.queryOne<{ log_file: string | null }>(`
+        SELECT log_file FROM ${ ConversationHistoryModel.TABLE }
         WHERE id = $1
       `, [id]);
-      return row ?? { log_file: null, training_file: null };
+      return row ?? { log_file: null };
     } catch (err) {
       console.error('[ConversationHistoryModel] Failed to get file associations:', err);
-      return { log_file: null, training_file: null };
+      return { log_file: null };
     }
   }
 }

@@ -1248,9 +1248,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Send token information to AgentPersona
       this.dispatchTokenInfoToAgentPersona(state, reply);
 
-      // Training data: capture LLM turn (user message + assistant response + reasoning)
-      this.logTrainingTurn(state, nodeRunContext, reply);
-
       return reply;
     } catch (err) {
       const initialRecovery = classifyLLMFailure(err);
@@ -2114,13 +2111,5 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     result: ToolResult,
   ): Promise<void> {
     return this.toolExecutor.appendToolResultMessage(state, action, result);
-  }
-
-  private logTrainingTurn(
-    state: BaseThreadState,
-    runCtx: NodeRunContext,
-    reply: NormalizedResponse,
-  ): void {
-    this.toolExecutor.logTrainingTurn(state, runCtx, reply);
   }
 }

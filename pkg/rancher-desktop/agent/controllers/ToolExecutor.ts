@@ -6,7 +6,6 @@
  *  - WebSocket event emission (tool_call / tool_result progress events)
  *  - Result formatting & state message persistence
  *  - Structured tool run record persistence (deduplication index)
- *  - Training data logging
  *  - Conversation logging
  *
  * BaseNode delegates to this via `processPendingToolCalls()` and `executeToolCalls()`.
@@ -19,7 +18,7 @@ import { toolRegistry } from '../tools/registry';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 import Logging from '@pkg/utils/logging';
 
-import type { NormalizedResponse, ChatMessage } from '../languagemodels/BaseLanguageModel';
+import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
 import type { NodeRunContext } from '../nodes/BaseNode';
 import type { BaseThreadState } from '../nodes/Graph';
 import type { ToolResult } from '../types';
@@ -859,18 +858,6 @@ export class ToolExecutor {
     }
 
     this.ctx.bumpStateVersion(state);
-  }
-
-  /**
-   * Training data logging — removed (local training code removed).
-   * Kept as no-op stub because BaseNode.ts calls this method.
-   */
-  logTrainingTurn(
-    _state: BaseThreadState,
-    _runCtx: NodeRunContext,
-    _reply: NormalizedResponse,
-  ): void {
-    // no-op
   }
 
   // --------------------------------------------------------------------------

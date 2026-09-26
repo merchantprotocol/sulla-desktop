@@ -404,9 +404,6 @@ const handleNext = async() => {
           },
         });
 
-        // Disable the local model server — remote provider covers inference
-        // and the local server consumes significant memory
-        await SullaSettingsModel.set('localServerEnabled', 'false', 'string');
       } catch (err) {
         console.error('[FirstRun] Failed to save credentials:', err);
         error.value = `Failed to save: ${ err instanceof Error ? err.message : String(err) }`;
