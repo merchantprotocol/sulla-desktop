@@ -175,14 +175,16 @@ export interface IpcMainEvents {
 
   // #region Conversation History
   'conversation-history:record': (entry: {
-    id:       string;
-    type:     'chat' | 'browser' | 'workflow' | 'graph';
-    title?:   string;
-    url?:     string;
-    favicon?: string;
-    tab_id?:  string;
-    status?:  'active' | 'closed' | 'archived' | 'deleted';
+    id:        string;
+    type:      'chat' | 'browser' | 'workflow' | 'graph';
+    thread_id?: string;
+    title?:    string;
+    url?:      string;
+    favicon?:  string;
+    tab_id?:   string;
+    status?:   'active' | 'closed' | 'archived' | 'deleted';
   }) => void;
+  'conversation-history:link-threads': (links: { id: string; threadId: string }[]) => void;
   'conversation-history:close': (id: string) => void;
   'conversation-history:clear': (olderThan?: string, includeTrainingData?: boolean) => void;
   // #endregion
@@ -865,6 +867,8 @@ export interface IpcMainInvokeEvents {
   'conversation-history:get-recent': (limit?: number, type?: 'chat' | 'browser' | 'workflow' | 'graph') => {
     id:             string;
     type:           string;
+    thread_id?:     string;
+    tab_id?:        string;
     title?:         string;
     url?:           string;
     favicon?:       string;
@@ -1110,7 +1114,7 @@ export interface IpcRendererEvents {
   // #endregion
 
   // #region Conversation History
-  'conversation-history:navigate':            (entry: { id: string; type: string; url?: string; title?: string; tab_id?: string }) => void;
+  'conversation-history:navigate':            (entry: { id: string; type: string; url?: string; title?: string; tab_id?: string; thread_id?: string }) => void;
   'conversation-history:show-all':            () => void;
   'conversation-history:restore-last-closed': () => void;
   'conversation-history:cleared':             (olderThan?: string) => void;

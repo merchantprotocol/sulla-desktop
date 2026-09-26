@@ -294,6 +294,7 @@ import { useRouter } from 'vue-router';
 
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
+import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 interface HistoryEntry {
@@ -302,6 +303,7 @@ interface HistoryEntry {
   title:          string;
   url?:           string;
   tab_id?:        string;
+  thread_id?:     string;
   status:         string;
   created_at:     string;
   last_active_at: string;
@@ -314,7 +316,7 @@ interface DateGroup {
 }
 
 const { isDark } = useTheme();
-const { createTab, restoreHistoryTab } = useBrowserTabs();
+const { createTab } = useBrowserTabs();
 const router = useRouter();
 
 const searchQuery = ref('');
@@ -421,9 +423,8 @@ function openEntry(entry: HistoryEntry) {
   if (entry.type === 'browser' && entry.url && entry.url !== 'about:blank') {
     tab = createTab(entry.url);
   } else {
-    // Restore with the original tab_id so LocalStoragePersister can find the
-    // thread state keyed to that tab. Falls back to entry.id if tab_id is absent.
-    tab = restoreHistoryTab(entry.tab_id || entry.id, entry.title);
+    // Reopen in the original tab so ChatPage finds the thread keyed to it.
+    tab = restoreChatFromHistory(entry);
   }
 
   router.push(`/Browser/${ tab.id }`);

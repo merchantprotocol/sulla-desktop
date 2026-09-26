@@ -1,11 +1,12 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
 const invokeMock = jest.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({ success: true }));
+const sendMock = jest.fn<(...args: any[]) => void>();
 
 jest.unstable_mockModule('@pkg/utils/ipcRenderer', () => ({
   ipcRenderer: {
     invoke: (...args: any[]) => invokeMock(...args),
-    send:   jest.fn(),
+    send:   (...args: any[]) => sendMock(...args),
     on:     jest.fn(),
   },
 }));
@@ -42,6 +43,7 @@ describe('LocalStoragePersister', () => {
   beforeEach(() => {
     localStorage.clear();
     invokeMock.mockClear();
+    sendMock.mockClear();
   });
 
   afterEach(() => {
@@ -121,5 +123,62 @@ describe('LocalStoragePersister', () => {
     newPersister();
 
     expect(localStorage.getItem('chat:tab:tab_abc')).toBe('some-thread');
+  });
+
+  it('startup backfills History-row thread links from chat:tab:* pointers', () => {
+    localStorage.setItem('chat:tab:tab_a', 't_a');
+    localStorage.setItem('chat:tab:tab_b', 't_b');
+
+    newPersister();
+
+    const call = sendMock.mock.calls.find(c => c[0] === 'conversation-history:link-threads');
+    expect(call?.[1]).toEqual(expect.arrayContaining([
+      { id: 'tab_a', threadId: 't_a' },
+      { id: 'tab_b', threadId: 't_b' },
+    ]));
+  });
+
+  it('setTabThread records the link on the tab History row', () => {
+    const p = newPersister();
+    sendMock.mockClear();
+
+    p.setTabThread('tab_x', 't_x' as any);
+
+    expect(localStorage.getItem('chat:tab:tab_x')).toBe('t_x');
+    expect(sendMock).toHaveBeenCalledWith('conversation-history:link-threads', [{ id: 'tab_x', threadId: 't_x' }]);
+  });
+
+  it('findTabForThread resolves chat thread ids and backend graph thread ids', () => {
+    localStorage.setItem('chat:tab:tab_muh_1', 't_chat');
+    localStorage.setItem('chat_threadId_sulla-desktop_tab_muh_2', 'thread_123_abc');
+    const p = newPersister();
+
+    expect(p.findTabForThread('t_chat')).toBe('tab_muh_1');
+    expect(p.findTabForThread('thread_123_abc')).toBe('tab_muh_2');
+    expect(p.findTabForThread('nope')).toBeNull();
+  });
+
+  it('loadAsync returns DB state on a localStorage miss', async() => {
+    const p = newPersister();
+    invokeMock.mockResolvedValueOnce({ success: true, data: makeState('t_db', 3) });
+
+    const state = await p.loadAsync('t_db' as any);
+
+    expect(state?.thread.messages).toHaveLength(3);
+  });
+
+  it('loadAsync returns null only when the DB definitively has nothing', async() => {
+    const p = newPersister();
+    invokeMock.mockResolvedValueOnce({ success: true, data: null });
+
+    await expect(p.loadAsync('t_none' as any)).resolves.toBeNull();
+  });
+
+  it('loadAsync throws on a DB/IPC failure so callers keep the tab pointer', async() => {
+    const p = newPersister();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    invokeMock.mockResolvedValueOnce({ success: false, error: 'db down' });
+
+    await expect(p.loadAsync('t_err' as any)).rejects.toThrow('db down');
   });
 });

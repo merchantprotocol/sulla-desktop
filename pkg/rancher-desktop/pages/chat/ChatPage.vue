@@ -54,7 +54,7 @@
         <SearchBar />
 
         <EmptyState
-          v-if="!adapter.hasSentMessage.value"
+          v-if="!hasTranscript"
           :suggestions="suggestions"
           @pick="onSuggestion"
         />
@@ -92,6 +92,7 @@ import HistoryRail       from './components/history/HistoryRail.vue';
 import FileTreeRail      from './components/files/FileTreeRail.vue';
 import EmptyState        from './components/empty/EmptyState.vue';
 
+import { restoreChatFromHistory } from './services/historyRestore';
 import { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
 
 import { ChatController }        from './controller/ChatController';
@@ -124,6 +125,7 @@ interface HistoryRecord {
   type:           string;
   title:          string;
   thread_id?:     string;
+  tab_id?:        string;
   status:         string;
   created_at:     string;
   last_active_at: string;
@@ -169,6 +171,7 @@ function initController(): ChatController {
       // controller so the tab mounts, then hydrate it in place from the DB.
       // Only drop the pointer if the DB has nothing either — clearing it on
       // a mere localStorage miss was the bug that made History reopen blank.
+      pendingRestoreId = storedId;
       void hydrateFromDbBackup(storedId);
     }
   }
@@ -179,20 +182,38 @@ function initController(): ChatController {
 // localStorage. Runs after initController returns; hydrates the live
 // controller in place (emits threadHydrated so the transcript renders),
 // or clears the now-confirmed-stale pointer if nothing is found.
+// While set, the provisional fresh thread must not overwrite the tab's
+// pointer — otherwise a failed/slow DB load permanently orphans the real
+// conversation behind an empty thread.
+let pendingRestoreId: ThreadId | null = null;
+
 async function hydrateFromDbBackup(id: ThreadId): Promise<void> {
-  try {
-    const dbState = await persister.loadAsync(id);
-    if (dbState) {
-      controller.hydrate(dbState);
-      // Re-point the tab at the recovered thread id (the provisional fresh
-      // thread briefly overwrote the pointer via the immediate watch below).
-      if (props.tabId) persister.setTabThread(props.tabId, dbState.thread.id);
+  // Restored tabs mount at app start, often before Postgres is reachable —
+  // retry a DB/IPC failure instead of treating it as "not found".
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const dbState = await persister.loadAsync(id);
+      pendingRestoreId = null;
+      if (dbState) {
+        // Don't clobber a conversation the user already started in the
+        // provisional thread while the load was in flight.
+        if (controller.thread.value.messages.length === 0) controller.hydrate(dbState);
+        if (props.tabId) persister.setTabThread(props.tabId, controller.thread.value.id);
+        return;
+      }
+      // Truly nowhere to load from — now it's safe to forget the pointer.
+      if (props.tabId) persister.clearTabThread(props.tabId);
       return;
+    } catch (e) {
+      console.error(`[ChatPage] history DB rehydrate failed (attempt ${ attempt + 1 }):`, e);
+      await new Promise(resolve => setTimeout(resolve, 2_000 * (attempt + 1)));
     }
-    // Truly nowhere to load from — now it's safe to forget the pointer.
-    if (props.tabId) persister.clearTabThread(props.tabId);
-  } catch (e) {
-    console.error('[ChatPage] history DB rehydrate failed:', e);
+  }
+  // Leave the pointer intact so the next open can try again — unless the
+  // user already started a new conversation here, which must stay linked.
+  pendingRestoreId = null;
+  if (props.tabId && controller.thread.value.messages.length > 0) {
+    persister.setTabThread(props.tabId, controller.thread.value.id);
   }
 }
 
@@ -258,6 +279,11 @@ onBeforeUnmount(() => {
 
 // ─── Derived state ────────────────────────────────────────────────
 const hasArtifact      = computed(() => controller.artifacts.value.list.length > 0);
+// The persona's hasSentMessage lives in a per-tab localStorage scope that is
+// LRU-evicted after 20 tabs, so a conversation reopened from History (its
+// transcript hydrated from the thread store / DB) would otherwise be hidden
+// behind the empty "new chat" landing.
+const hasTranscript = computed(() => adapter.hasSentMessage.value || controller.thread.value.messages.length > 0);
 const artifactExpanded = ref(false);
 
 function onArtifactExpand(ev: Event): void {
@@ -314,16 +340,16 @@ const rehydratableThreadIds = computed<Set<ThreadId>>(() => {
   const s = new Set<ThreadId>();
   for (const ctrl of registry.all()) s.add(ctrl.thread.value.id);
   for (const state of persister.list()) s.add(state.thread.id);
+  // History rows reopen through their tab (see onActivate).
+  for (const h of recentHistory.value) if (h.tab_id) s.add(historyToThread(h).id);
   return s;
 });
 
 function onArchivedClick(_id: ThreadId): void {
-  // No hydration path yet for Postgres-only conversations — surface a
-  // transient status so the user isn't left wondering why nothing
-  // happened. Full rehydration would need an IPC to load the thread's
-  // turns from conversation_history, which isn't built yet.
+  // Neither this renderer nor the chat_messages DB backup holds the
+  // transcript (e.g. cleared data) — say so instead of silently no-oping.
   window.dispatchEvent(new CustomEvent('chat:status', {
-    detail: 'That chat is archived — its transcript isn\'t available in this session yet.',
+    detail: 'That chat\'s transcript couldn\'t be found.',
   }));
 }
 
@@ -368,25 +394,32 @@ function onSuggestion(text: string): void {
   controller.send(text);
 }
 
+// Every conversation lives in its own tab: the page renders ONE controller
+// and the persona is bound to this tab's backend thread. Opening another
+// thread via registry.open() built a controller nothing rendered, so the
+// click did nothing. Reopen the thread's own tab instead (restoring it when
+// closed), or — for a thread with no known tab — a new tab pointed at it.
 async function onActivate(id: ThreadId): Promise<void> {
-  const next = registry.activate(id);
-  if (next) return;
-  // Not in memory yet — try to hydrate from disk (localStorage or database).
-  const state = persister.load(id);
-  if (state) {
-    registry.open(state, props.tabId);
-    return;
+  if (id === controller.thread.value.id) return;
+
+  const row = recentHistory.value.find(h => historyToThread(h).id === id);
+  let tabId = row?.tab_id || persister.findTabForThread(id);
+  const title = row?.title || allThreads.value.find(t => t.id === id)?.title || '';
+
+  if (tabId === props.tabId) return;
+  if (tabId) {
+    restoreChatFromHistory({ id: tabId, type: 'chat', tab_id: tabId, thread_id: row ? row.thread_id : id, title });
+  } else {
+    if (!persister.load(id) && !(await persister.loadAsync(id).catch(() => null))) {
+      onArchivedClick(id);
+      return;
+    }
+    const tab = createTab('about:blank', { mode: 'chat' });
+    persister.setTabThread(tab.id, id);
+    if (title) updateTab(tab.id, { title });
+    tabId = tab.id;
   }
-  // localStorage miss — try the durable chat_messages DB backup. Every chat
-  // thread is saved there (LocalStoragePersister.save), so this rehydrates
-  // conversations from prior sessions / after a localStorage eviction.
-  const dbState = await persister.loadAsync(id);
-  if (dbState) {
-    registry.open(dbState, props.tabId);
-    return;
-  }
-  // Truly nowhere to load from — the transcript isn't available.
-  onArchivedClick(id);
+  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId } }));
 }
 
 // ─── Pinboard entries (top of history rail) ───────────────────────
@@ -492,6 +525,7 @@ watch(() => registry.activeId.value, () => { /* noop — registry is reactive */
 // rather than registry.activeId so a thread swap inside the controller
 // (hydrate, rename, etc.) is recorded.
 watch(() => controller.thread.value.id, (newId) => {
+  if (pendingRestoreId && controller.thread.value.messages.length === 0) return;
   if (props.tabId && newId) persister.setTabThread(props.tabId, newId);
 }, { immediate: true });
 

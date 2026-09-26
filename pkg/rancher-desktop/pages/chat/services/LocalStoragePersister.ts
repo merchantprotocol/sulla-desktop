@@ -37,6 +37,14 @@ function isQuotaError(e: unknown): boolean {
     (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22);
 }
 
+/** Fire-and-forget: record tab→thread links on their History rows. */
+function linkHistoryThreads(links: { id: string; threadId: string }[]): void {
+  if (links.length === 0) return;
+  try {
+    ipcRenderer.send('conversation-history:link-threads', links);
+  } catch { /* IPC unavailable outside Electron */ }
+}
+
 export class LocalStoragePersister implements ThreadPersister {
   constructor() {
     try {
@@ -118,9 +126,12 @@ export class LocalStoragePersister implements ThreadPersister {
       const raw = localStorage.getItem(KEY(id));
       if (raw) return JSON.parse(raw) as ThreadState;
 
-      // localStorage miss — load from database
+      // localStorage miss — load from database. An IPC/DB failure is NOT
+      // "not found": throw so callers keep their tab→thread pointer instead
+      // of forgetting a conversation just because Postgres wasn't up yet.
       const result = await ipcRenderer.invoke('chat-messages:load', id);
-      if (result.success && result.data) {
+      if (!result?.success) throw new Error(result?.error || 'chat-messages:load failed');
+      if (result.data) {
         // Restore to localStorage for next time
         try {
           localStorage.setItem(KEY(id), JSON.stringify(result.data));
@@ -133,7 +144,7 @@ export class LocalStoragePersister implements ThreadPersister {
       return null;
     } catch (err) {
       console.error('[LocalStoragePersister] Async load failed:', err);
-      return null;
+      throw err;
     }
   }
 
@@ -160,11 +171,32 @@ export class LocalStoragePersister implements ThreadPersister {
     } catch {}
   }
 
-  /** Remember which thread was last active in a given tab. */
+  /** Remember which thread was last active in a given tab. Also records the
+   *  link on the tab's History row so the conversation stays reachable even
+   *  if this renderer's localStorage loses the pointer. */
   setTabThread(tabId: string, threadId: ThreadId): void {
     try {
       localStorage.setItem(TAB_KEY(tabId), threadId);
     } catch (e) { console.error('[LocalStoragePersister] setTabThread failed:', e); }
+    linkHistoryThreads([{ id: tabId, threadId }]);
+  }
+
+  /**
+   * Find the tab that displays a conversation, given either the chat thread
+   * id (chat:tab:* pointers) or the backend graph thread id the persona
+   * stores per tab (chat_threadId_<agent>_<tabId>) — History lists both kinds.
+   */
+  findTabForThread(threadId: string): string | null {
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || localStorage.getItem(k) !== threadId) continue;
+        if (k.startsWith('chat:tab:')) return k.slice('chat:tab:'.length);
+        const m = /^chat_threadId_[^_]+_(.+)$/.exec(k);
+        if (m) return m[1];
+      }
+    } catch { /* unavailable */ }
+    return null;
   }
 
   /** Look up the last active thread id for a tab, or null if none. */
@@ -282,6 +314,16 @@ export class LocalStoragePersister implements ThreadPersister {
         localStorage.setItem(INDEX_KEY, JSON.stringify(survivors));
       } catch { /* best-effort — blobs are gone either way */ }
     }
+
+    // Backfill History-row → thread links for every tab this renderer knows,
+    // so conversations opened before the link existed stay reopenable.
+    const links: { id: string; threadId: string }[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      const v = k?.startsWith('chat:tab:') ? localStorage.getItem(k) : null;
+      if (k && v) links.push({ id: k.slice('chat:tab:'.length), threadId: v });
+    }
+    linkHistoryThreads(links);
 
     if (orphans.length > 0 || evicted > 0) {
       console.warn(`[LocalStoragePersister] startup GC: removed ${ orphans.length } orphaned blob(s), evicted ${ evicted } old thread(s); chat cache now ${ total } units`);
