@@ -19,6 +19,7 @@
 // consumed by the HTTP server in `main/sullaSecretsServer.ts`.
 import * as crypto from 'crypto';
 
+import { mayInjectSecretIntoAgentCode, resolveLlmAccess } from './vaultAccessPolicy';
 import { IntegrationValueModel } from '../database/models/IntegrationValueModel';
 
 const DEFAULT_TTL_MS = 60_000;
@@ -45,6 +46,7 @@ export type ResolveOutcome =
   | 'expired'
   | 'key-not-allowed'
   | 'key-already-consumed'
+  | 'access-denied'
   | 'not-found';
 
 export class SecretsResolveError extends Error {
@@ -135,6 +137,14 @@ export class SecretsCapabilityService {
     if (cap.consumed.has(envKey)) {
       this.logOutcome(cap.invocationId, envKey, 'key-already-consumed');
       throw new SecretsResolveError('key-already-consumed');
+    }
+
+    // Respect the account's human-chosen AI access level.
+    const accessRow = await IntegrationValueModel.findByKey(ref.integrationId, ref.accountId, 'llm_access');
+    if (!mayInjectSecretIntoAgentCode(ref.integrationId, resolveLlmAccess(accessRow?.attributes.value))) {
+      cap.consumed.add(envKey);
+      this.logOutcome(cap.invocationId, envKey, 'access-denied');
+      throw new SecretsResolveError('access-denied');
     }
 
     const row = await IntegrationValueModel.findByKey(
