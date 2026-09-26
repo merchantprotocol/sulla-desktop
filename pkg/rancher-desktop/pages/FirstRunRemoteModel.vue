@@ -4,11 +4,8 @@
       <h2 class="text-2xl font-bold mt-5 mb-4 frm-heading">
         Choose the AI Sulla thinks with
       </h2>
-      <p class="mb-3 frm-subtext">
-        Connect an account with an AI provider like Anthropic (Claude) or OpenAI for the fastest, most capable results. You pay the provider directly for what you use.
-      </p>
       <p class="mb-6 frm-subtext">
-        Prefer to keep everything offline? Skip this step and Sulla uses a free local model. You can switch at any time in Settings.
+        Sulla thinks with an AI provider you already use, like Anthropic (Claude), OpenAI or Grok. Sign in or paste an API key. You pay the provider directly for what you use, and you can switch at any time in Settings.
       </p>
 
       <rd-fieldset
@@ -176,7 +173,7 @@
           type="submit"
           class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 frm-btn-accent"
         >
-          {{ selectedProviderId ? 'Continue' : 'Skip — use a local model' }}
+          Continue
         </button>
       </div>
     </form>
@@ -357,6 +354,14 @@ const testCredentials = async() => {
 };
 
 const handleNext = async() => {
+  // Sulla has no local model fallback, so a provider is required to continue.
+  if (!selectedProviderId.value) {
+    error.value = 'Choose an AI provider to continue.';
+
+    return;
+  }
+  error.value = null;
+
   // If a provider is selected and has values filled, save to SullaSettingsModel
   // (no database/IntegrationService available during first run)
   if (selectedProviderId.value && selectedIntegration.value?.properties) {

@@ -21,7 +21,7 @@
         <div>
           <span class="frw-num">2</span>
           <b>Choose your AI</b>
-          <span>Connect Claude, OpenAI or another provider, or run a free local model.</span>
+          <span>Sign in to Claude, OpenAI, Grok or another provider, or paste an API key.</span>
         </div>
         <div>
           <span class="frw-num">3</span>
