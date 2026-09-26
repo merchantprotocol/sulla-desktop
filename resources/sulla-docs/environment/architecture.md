@@ -77,6 +77,16 @@ All function containers mount `~/sulla/functions/` read-only.
 
 **VM-first execution:** Agents should keep everyday shell work inside Lima via `exec`. Use `meta/exechost` only when the parent host MUST be used (host-only apps/daemons). Home is mounted into Lima at the same path, so host project files are already reachable without leaving the sandbox.
 
+### Background task completions (Claude Code)
+
+`claude -p` runs in Lima via `ClaudeCodeService`, which keeps one warm CLI process per conversation between turns (the warm pool). When the model starts background work (`Bash run_in_background`, `Monitor`) and it finishes after the turn, the CLI emits `system/task_notification` and runs its own follow-up turn. The parked process keeps being read, and `claudeBackgroundTasks.ts` routes the completion into the owning graph thread:
+
+- **Idle thread** — woken immediately with a `user_message` (`metadata.source: background_task_completion`, `inputSource: system`), the same primitive `spawn_agent` uses; the next turn adopts the same process.
+- **Busy thread** — held and retried every 15s until the thread goes idle (a `user_message` on a running thread would abort it); a turn that starts first gets the notice prepended to its prompt instead.
+- **Sub-agents / observers** — never woken (they have already returned); the notice waits for that conversation's next turn.
+- The 5-minute idle reap is deferred while background tasks are live, up to 4 hours.
+- Warm pool disabled (`claudeCodeWarmPool=false` and `claudeCodeSpeculativeBoot=false`): the turn settles at `result` and the CLI stops its background tasks shortly after; the graph is woken with the `[stopped]` notice.
+
 ---
 
 ## Vue Renderer
