@@ -44,5 +44,5 @@ registerProviderContribution('anthropic', {
 
 // Ollama — shorter prompts for smaller context windows
 registerProviderContribution('ollama', {
-  stablePrefix: 'You are running on a local Ollama model. Keep responses concise to fit within context limits.',
+  stablePrefix: 'You are running on a self-hosted Ollama model. Keep responses concise to fit within context limits.',
 });

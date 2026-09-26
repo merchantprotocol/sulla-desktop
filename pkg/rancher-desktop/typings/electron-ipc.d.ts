@@ -248,7 +248,6 @@ export interface IpcMainInvokeEvents {
   // #region Sulla
   'start-sulla-custom-env': () => void;
   'first-run-wizard-step':  (step: number) => void;
-  'sulla-restart-ollama':   () => void;
   'app-quit':               () => void;
 
   // Onboarding presence — BrowserTabChat + ChatPage call these on mount to
@@ -988,7 +987,6 @@ export interface IpcRendererEvents {
   }) => void;
   'gateway-transcript':     (event: { event_type: string; text?: string; speaker?: string; session_id?: string; is_final?: boolean }) => void;
   'workflow-files-changed': () => void;
-  'ollama-model-status':    (event: Electron.IpcRendererEvent, payload: { status: string; model?: string }) => void;
   'backend-locked':         (action?: string) => void;
   'backend-unlocked':       () => void;
   'settings-update': (

@@ -189,11 +189,8 @@ export class SlackClient {
       state: AgentGraphState;
     };
 
-    const mode = await SullaSettingsModel.get('modelMode', 'local');
-    state.metadata.llmLocal = mode === 'local';
-    state.metadata.llmModel = mode === 'remote'
-      ? await SullaSettingsModel.get('remoteModel', '')
-      : await SullaSettingsModel.get('sullaModel', '');
+    state.metadata.llmLocal = false;
+    state.metadata.llmModel = await SullaSettingsModel.get('remoteModel', '');
 
     state.metadata.wsChannel = SLACK_GRAPH_CHANNEL;
     state.messages.push({

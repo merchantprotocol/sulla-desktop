@@ -156,28 +156,7 @@ export interface RemoteProviderConfig {
 }
 
 /**
- * Overall LLM configuration (legacy)
- */
-export interface LLMConfig {
-  mode:                  'local' | 'remote';
-  // Local
-  localModel:            string;
-  ollamaBase:            string;
-  localTimeoutSeconds?:  number;
-  localRetryCount?:      number;
-  // Remote
-  remoteProvider?:       string;
-  remoteModel?:          string;
-  remoteApiKey?:         string;
-  remoteBaseUrl?:        string;
-  remoteRetryCount?:     number;
-  remoteTimeoutSeconds?: number;
-  // Backend heartbeat provider selection
-  heartbeatProvider?:    string;
-}
-
-/**
- * Abstract base class for all LLM providers (local Ollama, OpenAI-compatible APIs, Anthropic, Groq, xAI, etc.).
+ * Abstract base class for all LLM providers (OpenAI-compatible APIs, Anthropic, Groq, xAI, a user-run Ollama server, etc.).
  *
  * Provides:
  * - Unified chat interface
@@ -214,10 +193,9 @@ export interface LLMConfig {
  *
  * @see {@link ChatMessage} - Unified message shape
  * @see {@link NormalizedResponse} - Guaranteed return format
- * @see {@link LLMConfig} - Constructor config shapes
  */
 export abstract class BaseLanguageModel {
-  protected config:      LLMServiceConfig | LLMConfig | RemoteProviderConfig;
+  protected config:      LLMServiceConfig | RemoteProviderConfig;
   protected model:       string;
   protected baseUrl:     string;
   protected apiKey?:     string;
@@ -225,23 +203,14 @@ export abstract class BaseLanguageModel {
   protected isInitialized = false;
   protected isHealthy = false;
 
-  constructor(config: LLMServiceConfig | LLMConfig | RemoteProviderConfig) {
+  constructor(config: LLMServiceConfig | RemoteProviderConfig) {
     this.config = config;
-    if ('mode' in config) {
-      // Legacy local config (Ollama)
-      this.model = config.localModel;
-      this.baseUrl = config.ollamaBase.endsWith('/')
-        ? config.ollamaBase.slice(0, -1)
-        : config.ollamaBase;
-    } else {
-      // LLMServiceConfig or RemoteProviderConfig
-      this.model = config.model;
-      this.baseUrl = config.baseUrl.endsWith('/')
-        ? config.baseUrl.slice(0, -1)
-        : config.baseUrl;
-      this.apiKey = config.apiKey;
-      this.providerId = config.id;
-    }
+    this.model = config.model;
+    this.baseUrl = config.baseUrl.endsWith('/')
+      ? config.baseUrl.slice(0, -1)
+      : config.baseUrl;
+    this.apiKey = config.apiKey;
+    this.providerId = config.id;
   }
 
   /**
@@ -307,13 +276,6 @@ export abstract class BaseLanguageModel {
    */
   getContextWindow(): number {
     return 128_000; // Safe default for most cloud models
-  }
-
-  /**
-   * Pull a model from the service (only available for local services like Ollama)
-   */
-  pullModel(modelName: string, onProgress?: (status: string) => void): Promise<boolean> {
-    return Promise.resolve(false);
   }
 
   async chat(
@@ -972,5 +934,4 @@ export interface ILLMService {
     signal?:    AbortSignal;
   }): Promise<string | null>;
   healthCheck(): Promise<boolean>;
-  pullModel?(modelName: string, onProgress?: (status: string) => void): Promise<boolean>;
 }

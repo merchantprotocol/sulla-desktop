@@ -600,11 +600,8 @@ export async function createInitialThreadState<T extends BaseThreadState>(
   const now = Date.now();
   const msgId = nextMessageId();
 
-  const mode = await SullaSettingsModel.get('modelMode', 'local');
-  const llmModel = mode === 'remote'
-    ? await SullaSettingsModel.get('remoteModel', '')
-    : await SullaSettingsModel.get('sullaModel', '');
-  const llmLocal = mode === 'local';
+  const llmModel = await SullaSettingsModel.get('remoteModel', '');
+  const llmLocal = false;
 
   const baseMetadata: BaseThreadState['metadata'] = {
     action:               'direct_answer',  // Default action for initial state

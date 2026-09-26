@@ -225,17 +225,7 @@ export class ModelDiscoveryService {
         name:     model.id,
         provider: 'ollama',
       })) || [],
-      staticModels: [
-        { id: 'llama3.2', name: 'Llama 3.2', provider: 'ollama', description: 'Meta Llama 3.2 — general purpose' },
-        { id: 'llama3.1', name: 'Llama 3.1', provider: 'ollama', description: 'Meta Llama 3.1 — general purpose' },
-        { id: 'codellama', name: 'Code Llama', provider: 'ollama', description: 'Meta Code Llama — code generation' },
-        { id: 'deepseek-coder-v2', name: 'DeepSeek Coder V2', provider: 'ollama', description: 'Strong open-source coding model' },
-        { id: 'qwen2.5-coder', name: 'Qwen 2.5 Coder', provider: 'ollama', description: 'Alibaba Qwen coding model' },
-        { id: 'qwen2.5-coder:32b', name: 'Qwen 2.5 Coder 32B', provider: 'ollama', description: 'Full-size Qwen coding model' },
-        { id: 'starcoder2', name: 'StarCoder2', provider: 'ollama', description: 'BigCode StarCoder2 — code completion' },
-        { id: 'mistral', name: 'Mistral 7B', provider: 'ollama', description: 'Fast, capable general model' },
-        { id: 'phi4', name: 'Phi-4', provider: 'ollama', description: 'Microsoft Phi-4 — efficient reasoning' },
-      ],
+      // No static fallback: only list models the user's own server reports.
     },
 
     cohere: {

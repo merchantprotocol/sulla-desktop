@@ -1667,7 +1667,7 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<A
   let llmModel: string;
   let llmLocal: boolean;
 
-  if (heartbeatProvider === 'default' || heartbeatProvider === 'ollama') {
+  if (heartbeatProvider === 'default') {
     llmModel = await getCurrentModel();
     llmLocal = false;
   } else {
@@ -1761,11 +1761,8 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
 
   console.log(`[GraphRegistry] buildAgentState() — wsChannel="${ wsChannel }", threadId="${ id }"`);
 
-  const mode = await SullaSettingsModel.get('modelMode', 'remote');
-  const llmModel = mode === 'remote'
-    ? await SullaSettingsModel.get('remoteModel', '')
-    : await SullaSettingsModel.get('sullaModel', '');
-  const llmLocal = mode === 'local';
+  const llmModel = await SullaSettingsModel.get('remoteModel', '');
+  const llmLocal = false;
 
   const associationRole = knowledgeAssociationRoleForAgentId(wsChannel);
   const loadedAgentConfig = await loadAgentConfig(wsChannel);
@@ -2013,11 +2010,8 @@ async function buildSubconsciousState(opts: {
 }): Promise<BaseThreadState> {
   const threadId = `subconscious_${ Date.now() }_${ ++threadCounter }`;
 
-  const mode = await SullaSettingsModel.get('modelMode', 'remote');
-  const llmModel = mode === 'remote'
-    ? await SullaSettingsModel.get('remoteModel', '')
-    : await SullaSettingsModel.get('sullaModel', '');
-  const llmLocal = mode === 'local';
+  const llmModel = await SullaSettingsModel.get('remoteModel', '');
+  const llmLocal = false;
 
   // Pre-resolve tool schemas for the LLM
   const llmTools = await Promise.all(
