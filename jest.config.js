@@ -23,7 +23,6 @@ export default {
     '<rootDir>/pkg/rancher-desktop/dist',
     '<rootDir>/.git',
     '<rootDir>/.claude',
-    '<rootDir>/e2e',
     '<rootDir>/screenshots',
   ],
   moduleNameMapper: {
