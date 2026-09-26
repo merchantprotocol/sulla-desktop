@@ -11,92 +11,55 @@
         :home-url="'#/FirstRun'"
       />
 
-      <!-- Main agent interface -->
+      <!-- Step bar: where you are, and what's left -->
+      <nav
+        class="fr-steps"
+        aria-label="Setup progress"
+      >
+        <div
+          v-for="(name, index) in stepNames"
+          :key="name"
+          class="fr-step"
+          :class="{ 'is-active': index === currentStep, 'is-done': index < currentStep }"
+        >
+          <span class="fr-step-n">{{ index < currentStep ? '✓' : index + 1 }}</span>
+          <span class="fr-step-t">{{ name }}</span>
+        </div>
+      </nav>
+
+      <div
+        v-if="showSetupProgress"
+        class="fr-setup"
+      >
+        <div class="fr-setup-track">
+          <div
+            class="fr-setup-bar"
+            :style="{ width: `${progressPercent}%` }"
+          />
+        </div>
+        <span class="fr-setup-text">
+          {{ setupStatusText }}
+        </span>
+      </div>
+
       <div
         id="chat-scroll-container"
         ref="chatScrollContainer"
         class="flex min-h-0 flex-1 overflow-y-auto"
       >
-        <div class="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div class="relative flex w-full max-w-8xl flex-1 justify-center sm:px-2 lg:px-8 xl:px-12">
-            <div class="hidden lg:relative lg:block lg:flex-none lg:w-72 xl:w-80 sidebar-bg">
-              <div class="sticky top-[15px] pt-[15px] h-[calc(100vh-5rem-15px)] w-full overflow-x-hidden overflow-y-auto">
-                <div class="p-4">
-                  <h3 class="text-lg font-semibold mb-4 sidebar-title">
-                    Installation Steps
-                  </h3>
-                  <div class="space-y-3">
-                    <div
-                      v-for="(name, index) in stepNames"
-                      :key="index"
-                      class="p-4 rounded-lg border-2 transition-all"
-                      :class="index === currentStep ? 'step-active' : 'step-inactive'"
-                    >
-                      <div class="flex items-center">
-                        <div
-                          class="w-10 h-10 rounded-full flex items-center justify-center mr-4 font-bold text-lg"
-                          :class="index === currentStep ? 'step-number-active' : 'step-number-inactive'"
-                        >
-                          {{ index + 1 }}
-                        </div>
-                        <div class="flex-1">
-                          <div
-                            class="text-sm font-semibold"
-                            :class="index === currentStep ? 'step-name-active' : 'step-name-inactive'"
-                          >
-                            {{ name }}
-                          </div>
-                          <div
-                            class="text-xs mt-1"
-                            :class="index === currentStep ? 'step-desc-active' : 'step-desc-inactive'"
-                          >
-                            {{ index === currentStep ? 'In Progress' : index < currentStep ? 'Completed' : 'Pending' }}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div
-                    v-if="currentStep > 0 && currentStep < 3 && (startupController.state.progressMax.value > 0 || startupController.state.progressMax.value === -1)"
-                    class="mt-6 p-4 rounded-lg progress-container"
-                  >
-                    <h4 class="text-sm font-semibold mb-2 progress-title">
-                      Startup Progress
-                    </h4>
-                    <div class="w-full rounded-full h-2.5 mb-2 progress-track">
-                      <div
-                        class="h-2.5 rounded-full progress-bar"
-                        :style="{ width: `${progressPercent}%` }"
-                      />
-                    </div>
-                    <p class="text-xs progress-description">
-                      {{ startupController.state.progressDescription }}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="max-w-[768px] min-w-0 flex-auto px-4 lg:pr-0 lg:pl-8 xl:px-16">
-              <div
-                id="chat-messages-list"
-                ref="transcriptEl"
-                class="pb-40"
-              >
-                <component
-                  :is="steps[currentStep]"
-                  :startup-controller="startupController"
-                  :show-back="currentStep > 0"
-                  @next="next"
-                  @back="back"
-                />
-              </div>
-            </div>
-
-            <div class="hidden xl:sticky xl:top-0 xl:-mr-6 xl:block xl:max-h-[calc(100vh-12rem)] xl:flex-none xl:overflow-y-auto xl:pr-6">
-              <div class="w-72" />
-            </div>
+        <div class="fr-stage">
+          <div
+            id="chat-messages-list"
+            ref="transcriptEl"
+            class="fr-card"
+          >
+            <component
+              :is="steps[currentStep]"
+              :startup-controller="startupController"
+              :show-back="currentStep > 0"
+              @next="next"
+              @back="back"
+            />
           </div>
         </div>
       </div>
@@ -107,6 +70,7 @@
 <script setup lang="ts">
 import { ref, provide, computed } from 'vue';
 
+import FirstRunFirstAutomation from './FirstRunFirstAutomation.vue';
 import FirstRunRemoteModel from './FirstRunRemoteModel.vue';
 import FirstRunResources from './FirstRunResources.vue';
 import FirstRunWaiting from './FirstRunWaiting.vue';
@@ -122,8 +86,13 @@ import { RecursivePartial } from '@pkg/utils/typeUtils';
 const { isDark, toggleTheme } = useTheme();
 
 const currentStep = ref(0);
-const stepNames = ['Resources', 'Account', 'Remote Model', 'Waiting'];
-const steps = [FirstRunResources, FirstRunWelcome, FirstRunRemoteModel, FirstRunWaiting];
+// Guided setup, modeled on the TrueUp wizard: one clear question per screen,
+// ending in the user's first automation. The backend starts after step 0 and
+// installs in the background while the user answers the rest.
+// Step indexes are part of the main-process contract: reaching the final
+// "Finishing" screen (index 4) sets the wizardFinished condition in background.ts.
+const stepNames = ['Welcome', 'Account', 'Your AI', 'First automation', 'Finishing'];
+const steps = [FirstRunResources, FirstRunWelcome, FirstRunRemoteModel, FirstRunFirstAutomation, FirstRunWaiting];
 
 const settings = ref(defaultSettings);
 
@@ -143,6 +112,14 @@ ipcRenderer.on('k8s-progress', (event, progress) => {
     startupController.state.progressMax.value = progress.max || 100;
     startupController.state.progressDescription.value = progress.description || '';
   }
+});
+
+const showSetupProgress = computed(() => currentStep.value > 0 && currentStep.value < steps.length - 1);
+
+const setupStatusText = computed(() => {
+  const detail = startupController.state.progressDescription.value;
+
+  return detail ? `Setting up your private workspace in the background · ${ detail }` : 'Setting up your private workspace in the background';
 });
 
 const progressPercent = computed(() => {
@@ -185,12 +162,12 @@ const commitChanges = async(settings: RecursivePartial<Settings>) => {
 provide('commitChanges', commitChanges);
 
 // Expose for template
-defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
+defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSetupProgress });
 </script>
 <style lang="scss" scoped>
 .page-root {
-  background: var(--bg-page, var(--body-bg, #ffffff));
-  color: var(--text-primary, var(--body-text, #1f2937));
+  background: var(--bg-page, var(--body-bg, #f7f8fa));
+  color: var(--text-primary, var(--body-text, #0f172a));
 }
 
 .page-root.dark {
@@ -198,211 +175,112 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next });
   color: var(--text-primary, #e6edf3);
 }
 
-.button-area {
-  align-self: flex-end;
-  margin-top: 1.5rem;
+/* ---- step bar ---- */
+.fr-steps {
+  display: flex;
+  justify-content: center;
+  gap: 6px 22px;
+  flex-wrap: wrap;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border-default, #e2e8f0);
 }
 
-.welcome-text {
-  color: var(--text-primary, var(--body-text, #1f2937));
-  margin-bottom: 1rem;
-  line-height: 1.5;
+.dark .fr-steps { border-color: var(--border-default, #262d36); }
+
+.fr-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
 }
 
-.dark .welcome-text {
-  color: var(--text-primary, #e6edf3);
+.fr-step-n {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 800;
+  background: var(--bg-surface-alt, #eef2f6);
+  color: var(--text-muted, #64748b);
 }
 
-.first-run-container {
-  width: 30rem;
-}
+.dark .fr-step-n { background: var(--bg-surface-alt, #1c2128); }
 
-.model-select {
-  width: 100%;
-  padding: 0.5rem;
-  font-size: var(--fs-body);
-  border: 1px solid var(--border-default, var(--header-border, #e5e7eb));
-  border-radius: 4px;
-  background: var(--bg-input, var(--input-bg, #ffffff));
-  color: var(--text-primary, var(--body-text, #1f2937));
-  margin-top: 0.5rem;
+.fr-step.is-active { color: var(--text-primary, #0f172a); }
+.dark .fr-step.is-active { color: var(--text-primary, #e6edf3); }
 
-  option {
-    padding: 0.5rem;
-  }
-
-  option:disabled {
-    color: var(--text-dim, var(--muted, #9ca3af));
-    font-style: italic;
-  }
-}
-
-.dark .model-select {
-  background: var(--bg-input, #21262d);
-  color: var(--text-primary, #e6edf3);
-  border-color: var(--border-default, #30363d);
-}
-
-.model-description {
-  margin-top: 0.5rem;
-  font-size: var(--fs-code);
-  color: var(--text-muted, var(--muted, #6b7280));
-  font-style: italic;
-}
-
-.dark .model-description {
-  color: var(--text-muted, #8b949e);
-}
-
-.model-disabled {
-  color: var(--text-dim, var(--muted, #9ca3af));
-}
-
-.dark .model-disabled {
-  color: var(--text-dim, #6e7681);
-}
-
-/* Sidebar */
-.sidebar-bg {
-  background: var(--bg-surface, var(--body-bg, #f9fafb));
-}
-
-.dark .sidebar-bg {
-  background: var(--bg-surface, #161b22);
-}
-
-.sidebar-title {
-  color: var(--text-primary, var(--body-text, #1f2937));
-}
-
-.dark .sidebar-title {
-  color: var(--text-primary, #e6edf3);
-}
-
-/* Step items */
-.step-active {
-  background: var(--bg-surface-alt, #eff6ff);
-  border-color: var(--accent-primary, #3b82f6);
-}
-
-.dark .step-active {
-  background: var(--bg-surface-alt, #1c2026);
-  border-color: var(--accent-primary, #58a6ff);
-}
-
-.step-inactive {
-  background: var(--bg-surface, var(--body-bg, #ffffff));
-  border-color: var(--border-default, var(--header-border, #e5e7eb));
-}
-
-.dark .step-inactive {
-  background: var(--bg-surface, #161b22);
-  border-color: var(--border-default, #30363d);
-}
-
-.step-number-active {
-  background-color: var(--accent-primary, #3b82f6);
+.fr-step.is-active .fr-step-n,
+.fr-step.is-done .fr-step-n {
+  background: var(--accent-primary, #3d7fa0);
   color: #fff;
 }
 
-.dark .step-number-active {
-  background-color: var(--accent-primary, #58a6ff);
+.fr-step.is-done { color: var(--text-secondary, #475569); }
+
+/* ---- background setup progress ---- */
+.fr-setup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: center;
+  padding: 8px 24px;
+  font-size: 12.5px;
+  color: var(--text-muted, #64748b);
 }
 
-.step-number-inactive {
-  background-color: var(--bg-surface-hover, #f3f4f6);
-  color: var(--text-primary, var(--body-text, #1f2937));
+.fr-setup-track {
+  width: 140px;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--bg-surface-hover, #e2e8f0);
+  overflow: hidden;
+  flex: none;
 }
 
-.dark .step-number-inactive {
-  background-color: var(--bg-surface-hover, #21262d);
-  color: var(--text-primary, #e6edf3);
+.dark .fr-setup-track { background: var(--bg-surface-hover, #262d36); }
+
+.fr-setup-bar {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--accent-primary, #3d7fa0);
+  transition: width .4s ease;
 }
 
-.step-name-active {
-  color: var(--accent-primary, #3b82f6);
+.fr-setup-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 560px;
 }
 
-.dark .step-name-active {
-  color: var(--accent-primary, #58a6ff);
+/* ---- stage + card ---- */
+.fr-stage {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 32px 24px 64px;
 }
 
-.step-name-inactive {
-  color: var(--text-secondary, var(--muted, #4b5563));
+.fr-card {
+  width: 100%;
+  max-width: 760px;
+  background: var(--bg-surface, #fff);
+  border: 1px solid var(--border-default, #e2e8f0);
+  border-radius: 18px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 16px 40px -18px rgba(15, 23, 42, .22);
+  padding: 12px 20px 20px;
 }
 
-.dark .step-name-inactive {
-  color: var(--text-secondary, #8b949e);
-}
-
-.step-desc-active {
-  color: var(--text-muted, var(--muted, #6b7280));
-}
-
-.dark .step-desc-active {
-  color: var(--text-muted, #8b949e);
-}
-
-.step-desc-inactive {
-  color: var(--text-dim, var(--muted, #9ca3af));
-}
-
-.dark .step-desc-inactive {
-  color: var(--text-dim, #6e7681);
-}
-
-/* Progress */
-.progress-container {
-  background: var(--bg-surface, var(--body-bg, #f9fafb));
-}
-
-.dark .progress-container {
+.dark .fr-card {
   background: var(--bg-surface, #161b22);
+  border-color: var(--border-default, #262d36);
+  box-shadow: 0 16px 40px -18px rgba(0, 0, 0, .7);
 }
 
-.progress-title {
-  color: var(--text-primary, var(--body-text, #1f2937));
-}
-
-.dark .progress-title {
-  color: var(--text-primary, #e6edf3);
-}
-
-.progress-track {
-  background: var(--bg-surface-hover, #e5e7eb);
-}
-
-.dark .progress-track {
-  background: var(--bg-surface-hover, #21262d);
-}
-
-.progress-bar {
-  background-color: var(--accent-primary, #3b82f6);
-}
-
-.dark .progress-bar {
-  background-color: var(--accent-primary, #58a6ff);
-}
-
-.progress-description {
-  color: var(--text-muted, var(--muted, #6b7280));
-}
-
-.dark .progress-description {
-  color: var(--text-muted, #8b949e);
-}
-</style>
-
-<style lang="scss">
-html {
-  height: initial;
-}
-
-:root {
-  --progress-bg: var(--bg-surface-hover);
-  --scrollbar-thumb: var(--text-muted);
-  --darker: var(--text-dim);
-  --error: var(--text-error);
-  --checkbox-tick-disabled: var(--text-muted);
-}
+.fr-card :deep(> div) { max-width: none; }
 </style>
