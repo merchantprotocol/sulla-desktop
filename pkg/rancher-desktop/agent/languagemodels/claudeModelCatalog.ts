@@ -13,10 +13,11 @@
 // if the user stored one (guaranteed x-api-key auth, same as AnthropicModels
 // .ts's live path), otherwise the Claude Code subscription OAuth token via
 // Bearer + the `oauth-2025-04-20` beta header. The OAuth header combination
-// is the CLI's own auth pattern but has not been independently verified
-// against /v1/models in this codebase — if Anthropic rejects it for this
-// endpoint, fetchLiveModels degrades to the static safety net below rather
-// than throwing.
+// is the CLI's own auth pattern, and as of 2026-09-25 Anthropic REJECTS it
+// for /v1/models — the endpoint answers 400, so a subscription-only account
+// always degrades to the static safety net below. The OAuth branch is kept
+// in case that changes; until it does, STATIC_FALLBACK is the list those
+// users actually see and must be maintained as such.
 
 import Logging from '@pkg/utils/logging';
 
@@ -36,13 +37,18 @@ const AUTO_SENTINEL: ClaudeCatalogModel = {
 };
 
 // Safety net only — used when live discovery fails or returns nothing, never
-// shown in place of a successful live fetch. IDs are aliases (no date
+// shown in place of a successful live fetch. In practice this list IS what a
+// Claude Code *subscription* account sees: /v1/models rejects the OAuth
+// credential (see fetchLiveModels), so live discovery only succeeds for
+// accounts that stored an API key. Keep it current. IDs are aliases (no date
 // suffix) so they self-update on Anthropic's side. Kept in sync with
 // AnthropicModels.ts's static fallback for the separate "anthropic" provider.
 const STATIC_FALLBACK: ClaudeCatalogModel[] = [
-  { id: 'claude-fable-5',  name: 'Claude Fable 5',  description: 'Most capable — long-horizon agentic work' },
-  { id: 'claude-opus-5',   name: 'Claude Opus 5',   description: 'Frontier reasoning and complex tasks' },
-  { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', description: 'Balanced model for everyday work' },
+  { id: 'claude-fable-5-1', name: 'Claude Fable 5.1', description: 'Most capable — long-horizon agentic work' },
+  { id: 'claude-fable-5',   name: 'Claude Fable 5',   description: 'Previous Fable generation' },
+  { id: 'claude-opus-5-5',  name: 'Claude Opus 5.5',  description: 'Frontier reasoning and complex tasks' },
+  { id: 'claude-opus-5',    name: 'Claude Opus 5',    description: 'Previous Opus generation' },
+  { id: 'claude-sonnet-5',  name: 'Claude Sonnet 5',  description: 'Balanced model for everyday work' },
   { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', description: 'Fast and lightweight — background agents' },
 ];
 
