@@ -390,6 +390,19 @@ export const githubToolManifests: ToolManifest[] = [
     loader:         () => import('./github_ready_pr'),
   },
   {
+    name:        'github_draft_pr',
+    description: 'Return a ready pull request to draft via the GraphQL convertPullRequestToDraft mutation (the inverse of github_ready_pr; REST cannot do this). Requires a "comment" saying what needs to be fixed — the comment is posted before the conversion so a PR never leaves the ready queue unexplained. Reversible with github_ready_pr.',
+    category:    'github',
+    schemaDef:   {
+      owner:       { type: 'string', description: 'Repository owner (username or organization)' },
+      repo:        { type: 'string', description: 'Repository name' },
+      pull_number: { type: 'number', description: 'Pull request number' },
+      comment:     { type: 'string', description: 'Required. What needs to be fixed before this PR is ready again.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./github_draft_pr'),
+  },
+  {
     name:        'github_merge_pr',
     description: 'Merge a GitHub pull request. Destructive — refuses without {"confirm":true}. Supports merge, squash, and rebase methods.',
     category:    'github',
