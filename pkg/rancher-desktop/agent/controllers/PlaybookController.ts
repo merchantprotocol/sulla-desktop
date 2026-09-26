@@ -1391,12 +1391,12 @@ export class PlaybookController<TState = any> {
 
           try {
             const { toolRegistry } = await import('../tools/registry');
-            const tool = await toolRegistry.getTool(step.toolName);
-            const toolResult = await tool.call(step.params);
+            const tool = await toolRegistry.createTool(step.toolName);
+            const toolResult = await tool.invoke(step.params, state);
 
             const resultText = toolResult.success
               ? (toolResult.result || 'Tool completed successfully')
-              : `Tool error: ${ toolResult.error || 'Unknown error' }`;
+              : `Tool error: ${ toolResult.error || toolResult.result || 'Unknown error' }`;
 
             const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, resultText, undefined);
             meta.activeWorkflow = completed.updatedPlaybook;

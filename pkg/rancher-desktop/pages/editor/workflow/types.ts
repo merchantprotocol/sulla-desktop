@@ -240,6 +240,8 @@ export interface WorkflowDefinition {
   concurrencyPolicy?: 'forbid';
   /** Deterministic function admission, before creating an agent graph. */
   preflight?: { functionRef: string; inputs?: Record<string, unknown> };
+  /** Explicit opt-in to the graph-owned browser for scheduled execution. */
+  browser?: boolean;
   auto_restart?: boolean;
   id:          string;
   name:        string;

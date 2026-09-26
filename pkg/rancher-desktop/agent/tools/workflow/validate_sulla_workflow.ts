@@ -79,7 +79,7 @@ const OPTIONAL_CONFIG_FIELDS: Partial<Record<WorkflowNodeSubtype, string[]>> = {
 };
 
 const VALID_TOP_LEVEL_KEYS = new Set([
-  'id', 'name', 'description', 'version', 'enabled', 'concurrencyPolicy', 'auto_restart', 'preflight',
+  'id', 'name', 'description', 'version', 'enabled', 'concurrencyPolicy', 'auto_restart', 'preflight', 'browser',
   'createdAt', 'updatedAt', 'laneContract', 'nodes', 'edges', 'viewport',
 ]);
 
@@ -113,6 +113,9 @@ export function validateWorkflowDefinition(def: any, filePath?: string): Validat
       || (preflight.inputs !== undefined && (!preflight.inputs || typeof preflight.inputs !== 'object' || Array.isArray(preflight.inputs)))) {
       issues.push({ severity: 'error', path: '/preflight', message: 'preflight requires a functionRef slug and optional object inputs.' });
     }
+  }
+  if (def.browser !== undefined && typeof def.browser !== 'boolean') {
+    issues.push({ severity: 'error', path: '/browser', message: 'browser must be boolean.' });
   }
   if (def.auto_restart !== undefined && typeof def.auto_restart !== 'boolean') {
     issues.push({ severity: 'error', path: '/auto_restart', message: 'auto_restart must be boolean.' });

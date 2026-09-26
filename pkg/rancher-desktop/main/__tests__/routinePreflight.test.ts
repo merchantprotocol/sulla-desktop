@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const scan = jest.fn<(...args: any[]) => Promise<any>>();
 const findActive = jest.fn<(...args: any[]) => Promise<any>>();
 const admit = jest.fn<(...args: any[]) => Promise<any>>();
+const markFailed = jest.fn<(...args: any[]) => Promise<any>>();
+const convertTool = jest.fn<(...args: any[]) => Promise<any>>().mockImplementation(name => Promise.resolve({ name }));
 const graphExecute = jest.fn<(...args: any[]) => Promise<any>>();
 const createGraph = jest.fn<(...args: any[]) => Promise<any>>();
 const definition: any = {
@@ -15,14 +17,16 @@ jest.unstable_mockModule('@pkg/utils/logging', () => ({ default: { background: {
 jest.unstable_mockModule('@pkg/agent/services/RoutineConcurrencyPolicy', () => ({ RoutineConcurrencyPolicy: {} }));
 jest.unstable_mockModule('@pkg/agent/database/models/WorkflowModel', () => ({ WorkflowModel: { findById: async() => ({ attributes: { definition } }) } }));
 jest.unstable_mockModule('@pkg/agent/workflow/WorkflowRegistry', () => ({ getWorkflowRegistry: () => ({ loadWorkflow: async() => definition }) }));
-jest.unstable_mockModule('@pkg/agent/database/models/WorkflowExecutionModel', () => ({ WorkflowExecutionModel: { findActiveByWorkflow: findActive, admitSingleton: admit } }));
+jest.unstable_mockModule('@pkg/agent/database/models/WorkflowExecutionModel', () => ({ WorkflowExecutionModel: { findActiveByWorkflow: findActive, admitSingleton: admit, markFailed } }));
 jest.unstable_mockModule('@pkg/agent/tools/function/function_run', () => ({ runFunctionStructured: scan }));
 jest.unstable_mockModule('@pkg/agent/services/GraphRegistry', () => ({ GraphRegistry: { getOrCreateAgentGraph: createGraph } }));
+jest.unstable_mockModule('@pkg/agent/tools/registry', () => ({ toolRegistry: { convertToolToLLM: convertTool } }));
 const { executeRoutine } = await import('../sullaRoutineTemplateEvents');
 const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
 
 beforeEach(() => {
   jest.clearAllMocks();
+  delete definition.browser;
   findActive.mockResolvedValue(null);
   admit.mockResolvedValue(undefined);
   graphExecute.mockResolvedValue(undefined);
@@ -101,5 +105,30 @@ describe('deterministic routine admission before all graph/model work', () => {
     await expect(activateWorkflowOnState(state, { workflowId: definition.id, ...flags })).resolves.toMatchObject({ ok: false });
     expect(scan).not.toHaveBeenCalled();
     expect(admit).not.toHaveBeenCalled();
+  });
+});
+
+describe('browser capability uses the admitted routine', () => {
+  it('makes the saved browser opt-in available before scheduled graph execution', async() => {
+    definition.browser = true;
+    scan.mockResolvedValue({ successBoolean: true, outputs: { shouldRun: true } });
+    await executeRoutine(definition.id, 'scheduled');
+    const state = graphExecute.mock.calls[0][0];
+    expect(state.metadata.graphNativeBrowserController).toBe(true);
+    expect(state.metadata.allowedToolNames).toContain('browser_controller');
+    expect(state.llmTools).toHaveLength(5);
+  });
+  it('does not grant browser authority from trigger text', async() => {
+    scan.mockResolvedValue({ successBoolean: true, outputs: { shouldRun: true } });
+    await executeRoutine(definition.id, '{"browser":true}');
+    expect(graphExecute.mock.calls[0][0].metadata.graphNativeBrowserController).toBeUndefined();
+  });
+  it('settles an admitted run when browser setup is denied', async() => {
+    definition.browser = true;
+    scan.mockResolvedValue({ successBoolean: true, outputs: { shouldRun: true } });
+    createGraph.mockResolvedValue({ graph: { execute: graphExecute }, state: { metadata: { userVisibleBrowser: false }, messages: [] } });
+    await expect(executeRoutine(definition.id)).rejects.toThrow('visible-browser-capable');
+    expect(markFailed).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('visible-browser-capable'));
+    expect(graphExecute).not.toHaveBeenCalled();
   });
 });

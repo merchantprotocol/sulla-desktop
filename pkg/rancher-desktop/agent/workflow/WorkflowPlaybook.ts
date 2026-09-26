@@ -511,7 +511,7 @@ export type PlaybookStepResult =
   | { action: 'workflow_failed'; error: string; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'wait'; nodeId: string; durationMs: number; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'await_user_input'; nodeId: string; promptText: string; updatedPlaybook: WorkflowPlaybookState }
-  | { action: 'execute_tool_call'; nodeId: string; toolName: string; params: Record<string, string>; updatedPlaybook: WorkflowPlaybookState }
+  | { action: 'execute_tool_call'; nodeId: string; toolName: string; params: Record<string, unknown>; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'execute_function'; nodeId: string; functionRef: string; inputs: Record<string, string>; integrationAccounts: Record<string, string | null>; timeoutOverride: string | null; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'transfer_workflow'; nodeId: string; targetWorkflowId: string; payload: unknown; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'waiting_for_sub_agents'; blockedNodeIds: string[]; missingUpstream: string[]; updatedPlaybook: WorkflowPlaybookState };
@@ -948,6 +948,22 @@ function handleToolCallNode(
   };
 }
 
+/** Preserve JSON argument types while interpolating only string leaves. */
+export function resolveToolArgument(
+  value: unknown,
+  triggerPayload: unknown,
+  nodeOutputs: Record<string, PlaybookNodeOutput>,
+  upstreamOutputs: PlaybookNodeOutput[],
+  loopContext?: LoopTemplateContext,
+): unknown {
+  if (typeof value === 'string') return resolveTemplate(value, triggerPayload, nodeOutputs, upstreamOutputs, loopContext);
+  if (Array.isArray(value)) return value.map(item => resolveToolArgument(item, triggerPayload, nodeOutputs, upstreamOutputs, loopContext));
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, resolveToolArgument(item, triggerPayload, nodeOutputs, upstreamOutputs, loopContext)]));
+  }
+  return value;
+}
+
 function handleNativeToolCallNode(
   playbook: WorkflowPlaybookState,
   nodeId: string,
@@ -956,11 +972,11 @@ function handleNativeToolCallNode(
   triggerPayload: unknown,
 ): PlaybookStepResult {
   const toolName = (config.toolName as string) || '';
-  const defaults = (config.defaults as Record<string, string>) || {};
-  const resolvedParams: Record<string, string> = {};
+  const defaults = (config.defaults as Record<string, unknown>) || {};
+  const resolvedParams: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(defaults)) {
-    resolvedParams[key] = resolveTemplate(value, triggerPayload, playbook.nodeOutputs, upstreamOutputs, getLoopContextForNode(playbook, nodeId));
+    resolvedParams[key] = resolveToolArgument(value, triggerPayload, playbook.nodeOutputs, upstreamOutputs, getLoopContextForNode(playbook, nodeId));
   }
 
   return {
