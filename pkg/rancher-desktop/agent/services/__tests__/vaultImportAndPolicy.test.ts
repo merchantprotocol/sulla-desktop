@@ -10,7 +10,7 @@ describe('parseCSV', () => {
       'Mail,https://mail.example,me2,pw2,',
     ].join('\r\n');
 
-    expect(parseCSV(`﻿${ csv }\r\n`)).toEqual([
+    expect(parseCSV(`${ String.fromCharCode(0xFEFF) }${ csv }\r\n`)).toEqual([
       ['name', 'login_uri', 'login_username', 'login_password', 'notes'],
       ['Bank', 'https://bank.example', 'me', 'p,a"ss', 'line one\r\nline two, with comma'],
       ['Mail', 'https://mail.example', 'me2', 'pw2', ''],

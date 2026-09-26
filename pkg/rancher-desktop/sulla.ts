@@ -21,7 +21,6 @@ import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { createN8nService } from './agent/services/N8nService';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
-import { parseCSV } from '@pkg/agent/services/vaultImportParsers';
 import paths from '@pkg/utils/paths';
 import * as path from 'path';
 import { app, webContents } from 'electron';
@@ -30,6 +29,7 @@ import * as fs from 'fs';
 
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
+import { parseCSV } from '@pkg/agent/services/vaultImportParsers';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;
@@ -941,10 +941,17 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     }
   });
 
+  // A follow-up import call (to supply a backup's password) may only name a
+  // file the user already picked in the dialog — never an arbitrary path.
+  const userPickedImportFiles = new Set<string>();
+
   ipcMainProxy.handle('vault:import', async(_event: Electron.IpcMainInvokeEvent, data?: { filePath?: string; password?: string; recoveryKey?: string }) => {
     try {
       let filePath = data?.filePath;
 
+      if (filePath && !userPickedImportFiles.has(filePath)) {
+        return { success: false, error: 'Choose the file to import with the Import button.' };
+      }
       if (!filePath) {
         const mainWindow = window.getWindow('main-agent');
         const result = await dialog.showOpenDialog(mainWindow!, {
@@ -961,6 +968,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
           return { success: false, canceled: true };
         }
         filePath = result.filePaths[0];
+        userPickedImportFiles.add(filePath);
       }
 
       let raw = (await fsPromises.readFile(filePath, 'utf-8')).replace(/^\uFEFF/, '');

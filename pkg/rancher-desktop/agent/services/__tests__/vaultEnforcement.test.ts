@@ -35,11 +35,11 @@ jest.mock('../IntegrationService', () => ({
   }),
 }));
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line import-x/first
 import { IntegrationValueModel } from '../../database/models/IntegrationValueModel';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line import-x/first
 import { IntegrationSetCredentialWorker } from '../../tools/integrations/integration_set_credential';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line import-x/first
 import { SecretsCapabilityService, SecretsResolveError } from '../SecretsCapabilityService';
 
 beforeEach(() => {

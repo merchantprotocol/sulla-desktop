@@ -7,7 +7,7 @@
  * Returns non-empty records; each field is trimmed of surrounding whitespace.
  */
 export function parseCSV(input: string): string[][] {
-  const text = input.replace(/^﻿/, '');
+  const text = input.charCodeAt(0) === 0xFEFF ? input.slice(1) : input;
   const records: string[][] = [];
   let record: string[] = [];
   let field = '';

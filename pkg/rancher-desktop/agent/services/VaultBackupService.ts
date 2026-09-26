@@ -211,10 +211,10 @@ export class VaultBackupService {
   /** Snapshot now, every 6h, and shortly after any credential change. */
   start(onValueChange?: (cb: () => void) => void): void {
     if (this.timer) return;
-    this.timer = setInterval(() => { void this.snapshotSafely('interval') }, AUTO_INTERVAL_MS);
+    this.timer = setInterval(() => { this.snapshotSafely('interval').catch(() => undefined) }, AUTO_INTERVAL_MS);
     this.timer.unref?.();
     onValueChange?.(() => this.scheduleSnapshot());
-    void this.snapshotSafely('startup');
+    this.snapshotSafely('startup').catch(() => undefined);
   }
 
   stop(): void {
@@ -226,7 +226,7 @@ export class VaultBackupService {
 
   scheduleSnapshot(): void {
     if (this.debounce) clearTimeout(this.debounce);
-    this.debounce = setTimeout(() => { void this.snapshotSafely('change') }, CHANGE_DEBOUNCE_MS);
+    this.debounce = setTimeout(() => { this.snapshotSafely('change').catch(() => undefined) }, CHANGE_DEBOUNCE_MS);
     this.debounce.unref?.();
   }
 

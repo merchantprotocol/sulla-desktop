@@ -116,7 +116,7 @@ function vaultDecrypt(key: Buffer, encrypted: string): string {
 }
 
 function canaryMatches(key: Buffer, canary: string | undefined): boolean | null {
-  if (!canary || !canary.startsWith(VAULT_PREFIX)) return null; // cannot tell
+  if (!canary?.startsWith(VAULT_PREFIX)) return null; // cannot tell
   try {
     return vaultDecrypt(key, canary) === CANARY_PLAINTEXT;
   } catch {
@@ -712,7 +712,7 @@ export class VaultKeyService {
 
     try {
       const safeStorage = this.getSafeStorage();
-      if (safeStorage && safeStorage.isEncryptionAvailable()) {
+      if (safeStorage?.isEncryptionAvailable()) {
         writeFileAtomic(this.keyEncPath, safeStorage.encryptString(this.vmk.toString('base64')));
         console.log('[VaultKeyService] VMK stored via safeStorage');
       } else {

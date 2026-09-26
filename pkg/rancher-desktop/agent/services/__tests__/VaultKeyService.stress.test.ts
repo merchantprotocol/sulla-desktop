@@ -39,7 +39,7 @@ jest.mock('fs', () => {
 });
 jest.mock('@pkg/utils/paths', () => ({ __esModule: true, default: { sullaConfig: '/nonexistent' } }));
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line import-x/first
 import { VaultKeyService, normalizeRecoveryKey, writeFileAtomic } from '../VaultKeyService';
 
 const PW = 'correct horse battery staple';

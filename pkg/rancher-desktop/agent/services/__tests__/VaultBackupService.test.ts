@@ -17,12 +17,12 @@ jest.mock('electron', () => ({
 }), { virtual: true });
 jest.mock('@pkg/utils/paths', () => ({ __esModule: true, default: { sullaConfig: '/nonexistent' } }));
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line import-x/first
 import {
   SnapshotNeedsSecretError, VaultBackupService, selectSnapshotsToKeep,
   type RestoreMode, type RestoreResult, type VaultRow, type VaultRowStore,
 } from '../VaultBackupService';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line import-x/first
 import { VaultKeyService } from '../VaultKeyService';
 
 const PW = 'master password';
@@ -136,7 +136,7 @@ it('skips identical snapshots and records every change', async() => {
   expect(await m.backups.createSnapshot('a')).not.toBeNull();
   expect(await m.backups.createSnapshot('b')).toBeNull();
   m.store.put(m.vault, 'github', 'default', 'token', 'ghp_x');
-  await new Promise(r => setTimeout(r, 5)); // distinct timestamp
+  await new Promise(resolve => setTimeout(resolve, 5)); // distinct timestamp
   expect(await m.backups.createSnapshot('c')).not.toBeNull();
   expect(m.backups.listSnapshots()).toHaveLength(2);
 });
