@@ -1322,10 +1322,11 @@ ipcMainProxy.handle('start-sulla-custom-env' as any, async() => {
   await firstRunCoordinator.setCondition('credentialsSet');
 });
 
-// User submitted the last user-driven step (Remote Model) in the first-run wizard
+// User finished the last user-driven step (First automation) in the first-run
+// wizard. Index 4 is the "Finishing" screen — see stepNames in pages/FirstRun.vue.
 ipcMainProxy.handle('first-run-wizard-step' as any, async(_event: any, step: any) => {
   console.log('[FirstRunCoordinator] Wizard reached step:', step);
-  if (step >= 3) {
+  if (step >= 4) {
     await firstRunCoordinator.setCondition('wizardFinished');
   }
 });

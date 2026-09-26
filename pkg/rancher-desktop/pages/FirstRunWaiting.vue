@@ -1,10 +1,14 @@
 <template>
   <div class="frw-container max-w-lg mx-0 p-6">
     <h2 class="frw-title text-2xl font-bold mt-5 mb-4">
-      Congratulations!
+      You're all set. Finishing setup…
     </h2>
+    <p class="frw-subtitle mb-3">
+      Sulla is preparing its private workspace. The first time takes a few minutes, depending on your internet speed.
+      Please leave this window open until it finishes.
+    </p>
     <p class="frw-subtitle mb-6">
-      Now the hard part is just waiting. This process may take a while depending on your Internet connection speed. If this process is interrupted it may make using the software very difficult. lol.
+      When it's ready, Sulla opens automatically. If you picked a first automation, it's waiting in the chat box. Press Enter to start it.
     </p>
 
     <div class="frw-progress-box mt-6 p-4 rounded-lg">

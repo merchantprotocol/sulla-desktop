@@ -6,41 +6,41 @@
       @submit.prevent="handleAccountSubmit"
     >
       <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">
-        Create Your Account
+        Create your account
       </h2>
       <p class="mb-6 secondary-text">
-        Set up your account details and preferences.
+        Your master password locks Sulla and encrypts every login and API key you save. It never leaves this computer.
       </p>
 
       <rd-fieldset
-        legend-text="User Account"
+        legend-text="About you"
         class="mb-6 heading-text"
       >
         <div class="mb-4">
           <label
             for="primaryUserName"
             class="block text-sm font-medium mb-1 label-text"
-          >Primary User Name:</label>
+          >What should Sulla call you?</label>
           <input
             id="primaryUserName"
             v-model="primaryUserName"
             type="text"
             class="w-full p-2 border rounded-md form-input"
-            placeholder="Enter your name (optional)"
+            placeholder="Your first name (optional)"
           >
         </div>
         <div class="mb-4">
           <label
             for="email"
             class="block text-sm font-medium mb-1 label-text"
-          >Email:</label>
+          >Email</label>
           <input
             id="email"
             v-model="sullaEmail"
             type="email"
             class="w-full p-2 border rounded-md form-input"
             :class="{ 'input-error': !!emailError }"
-            placeholder="Enter email"
+            placeholder="you@company.com"
           >
           <p
             v-if="emailError"
@@ -53,17 +53,14 @@
           <label
             for="password"
             class="block text-sm font-medium mb-1 label-text"
-          >Master Password:</label>
-          <p class="text-xs mb-2 secondary-text">
-            This password protects your vault — all saved credentials and API keys are encrypted with it.
-          </p>
+          >Master password</label>
           <input
             id="password"
             v-model="sullaPassword"
             type="password"
             class="w-full p-2 border rounded-md form-input"
             :class="{ 'input-error': !!passwordError }"
-            placeholder="Enter master password"
+            placeholder="At least 8 characters"
           >
           <p
             v-if="passwordError"
@@ -76,14 +73,14 @@
           <label
             for="passwordConfirm"
             class="block text-sm font-medium mb-1 label-text"
-          >Confirm Master Password:</label>
+          >Confirm master password</label>
           <input
             id="passwordConfirm"
             v-model="sullaPasswordConfirm"
             type="password"
             class="w-full p-2 border rounded-md form-input"
             :class="{ 'input-error': !!passwordConfirmError }"
-            placeholder="Re-enter master password"
+            placeholder="Type it again"
           >
           <p
             v-if="passwordConfirmError"
@@ -105,7 +102,7 @@
             checked="true"
             class="mr-2"
           >
-          <span class="text-sm label-text">Subscribe to updates and newsletters</span>
+          <span class="text-sm label-text">Email me product updates and new automation ideas</span>
         </label>
       </rd-fieldset>
 
@@ -277,12 +274,10 @@ const handleAccountSubmit = async() => {
 
   const sullaServicePassword = await SullaSettingsModel.get('sullaServicePassword', SullaSettingsModel.generatePassword());
   await SullaSettingsModel.set('sullaServicePassword', sullaServicePassword, 'string');
-  console.log('[FirstRunWelcome] Loaded sullaServicePassword:', sullaServicePassword);
 
   // Load sullaN8nEncryptionKey from SullaSettingsModel
   const loadedKey = await SullaSettingsModel.get('sullaN8nEncryptionKey', SullaSettingsModel.generateEncryptionKey());
   await SullaSettingsModel.set('sullaN8nEncryptionKey', loadedKey, 'string');
-  console.log('[FirstRunWelcome] Loaded sullaN8nEncryptionKey:', loadedKey);
 
   // Pre-generate n8n API key ID and JWT token for recipe migrations
   const n8nServiceUserId = '00000000-0000-0000-0000-000000000001';
@@ -366,10 +361,9 @@ const finishSetup = async() => {
   } else {
     console.log('[FirstRunWelcome] Not ready to trigger custom environment yet');
     console.log('[FirstRunWelcome] firstRunSullaNetworking:', await SullaSettingsModel.get('firstRunSullaNetworking'));
-    console.log('[FirstRunWelcome] sullaEmail:', await SullaSettingsModel.get('sullaEmail'));
-    console.log('[FirstRunWelcome] sullaPassword:', await SullaSettingsModel.get('sullaPassword'));
-    console.log('[FirstRunWelcome] sullaServicePassword:', await SullaSettingsModel.get('sullaServicePassword'));
-    console.log('[FirstRunWelcome] sullaN8nEncryptionKey:', await SullaSettingsModel.get('sullaN8nEncryptionKey'));
+    // Never log credential values — only whether they are present.
+    console.log('[FirstRunWelcome] sullaEmail set:', !!(await SullaSettingsModel.get('sullaEmail')));
+    console.log('[FirstRunWelcome] sullaPassword set:', !!(await SullaSettingsModel.get('sullaPassword')));
   }
 
   emit('next');
