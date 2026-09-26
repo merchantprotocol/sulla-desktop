@@ -31,7 +31,7 @@
 > Or grab an installer from the [latest release](https://github.com/merchantprotocol/sulla-desktop/releases/latest).
 
 <div align="center">
-  <img src="./docs/sulla-desktop-screen.png" alt="Sulla Desktop" width="720" />
+  <img src="./docs/screenshots/workflow.webp" alt="An Invoice Follow-up automation in Sulla: a Monday trigger, a QuickBooks lookup, a branch by how overdue, an approval step, and a Gmail send" width="820" />
 </div>
 
 ---
@@ -57,6 +57,10 @@ Sulla removes it. You describe the job the way you'd explain it to a new assista
 1. **Describe the job.** Type or say it: *"Every Monday, chase anything unpaid for more than 14 days. Be polite. Anything over 30 days, send to me instead."*
 2. **Sulla builds the workflow.** It turns your words into a visual workflow: a trigger, the steps, and the checkpoints where it asks you. You can read and edit every step, in plain English.
 3. **It runs. You get the results.** It can run on a schedule, from a calendar event, from a chat message, or from a background check. Sulla does the work and only interrupts you when a decision is yours.
+
+<div align="center">
+  <img src="./docs/screenshots/chat.webp" alt="Asking Sulla in chat to chase overdue invoices every Monday" width="720" />
+</div>
 
 ## What people hand to Sulla first
 
