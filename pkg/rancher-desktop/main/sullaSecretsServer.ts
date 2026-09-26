@@ -215,6 +215,7 @@ function statusForOutcome(outcome: string): number {
   case 'unknown-token':        return 401;
   case 'expired':              return 401;
   case 'key-not-allowed':      return 403;
+  case 'access-denied':        return 403;
   case 'key-already-consumed': return 409;
   case 'not-found':            return 404;
   default:                     return 400;

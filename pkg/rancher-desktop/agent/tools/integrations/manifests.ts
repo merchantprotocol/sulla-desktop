@@ -46,13 +46,14 @@ export const integrationsToolManifests: ToolManifest[] = [
   },
   {
     name:        'vault_set_credential',
-    description: 'Store or update a credential for an integration account. The value is encrypted in the vault and never appears in conversation after this call. Use this to save API keys, bearer tokens, base URLs, or other credentials.',
+    description: 'Store or update a credential for an integration account. The value is encrypted in the vault and never appears in conversation after this call. Use this to save API keys, bearer tokens, base URLs, or other credentials. Cannot change llm_access (user-only); overwriting an existing secret requires confirm:true.',
     category:    'vault',
     schemaDef:   {
       account_type: { type: 'string', description: "The slug identifier of the integration (e.g. 'twenty', 'slack', 'github')" },
       property:         { type: 'string', description: "The credential property name (e.g. 'bearer_token', 'api_key', 'base_url')" },
       value:            { type: 'string', description: 'The credential value to store. Will be encrypted in the vault.' },
       account_id:       { type: 'string', optional: true, description: 'Optional account ID. Defaults to the active account.' },
+      confirm:          { type: 'boolean', optional: true, description: 'Required (true) to overwrite an existing, different secret value. Only set when the user asked for the change.' },
     },
     operationTypes: ['update'],
     loader:         () => import('./integration_set_credential'),

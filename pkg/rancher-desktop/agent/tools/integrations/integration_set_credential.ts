@@ -1,4 +1,6 @@
+import { integrations } from '../../integrations/catalog';
 import { getIntegrationService } from '../../services/IntegrationService';
+import { AGENT_PROTECTED_PROPERTIES } from '../../services/vaultAccessPolicy';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -11,7 +13,7 @@ export class IntegrationSetCredentialWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { account_type, property, value, account_id } = input;
+    const { account_type, property, value, account_id, confirm } = input;
 
     if (!account_type || !property || value == null) {
       return {
@@ -20,9 +22,32 @@ export class IntegrationSetCredentialWorker extends BaseTool {
       };
     }
 
+    if (AGENT_PROTECTED_PROPERTIES.has(String(property).trim())) {
+      return {
+        successBoolean: false,
+        responseString: `"${ property }" controls what the AI may access and can only be changed by the user in the vault UI.`,
+      };
+    }
+
     try {
       const service = getIntegrationService();
       await service.initialize();
+
+      // Overwriting a stored secret destroys the only copy the user has.
+      const secretKeys = new Set(['password', 'api_key', 'bearer_token', 'access_token', 'refresh_token', 'client_secret', 'token', 'secret']);
+      for (const p of integrations[account_type]?.properties ?? []) {
+        if (p.type === 'password') secretKeys.add(p.key);
+      }
+      if (secretKeys.has(property) && confirm !== true) {
+        const existing = await service.getIntegrationValue(account_type, property, account_id || undefined);
+        if (existing?.value && existing.value !== String(value)) {
+          return {
+            successBoolean: false,
+            responseString: `Refusing to overwrite the existing ${ account_type }${ account_id ? `/${ account_id }` : '' }.${ property } without explicit confirmation. ` +
+              'The current value would be replaced. Re-call with {"confirm":true} only if the user asked for this change.',
+          };
+        }
+      }
 
       await service.setIntegrationValue({
         integration_id: account_type,

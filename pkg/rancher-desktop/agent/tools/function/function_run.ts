@@ -50,6 +50,14 @@ async function resolveIntegrationEnv(spec: any): Promise<Record<string, string>>
     const integrationId: string | undefined = typeof entry.slug === 'string' ? entry.slug : undefined;
     if (!integrationId) continue;
     const envMap: Record<string, string> = entry.env ?? {};
+    // Function code is agent-authored and can echo env vars back, so honor
+    // the account's AI access level before handing it any secret.
+    const { mayInjectSecretIntoAgentCode, resolveLlmAccess } = await import('../../services/vaultAccessPolicy');
+    const access = await svc.getIntegrationValue(integrationId, 'llm_access');
+    if (!mayInjectSecretIntoAgentCode(integrationId, resolveLlmAccess(access?.value))) {
+      console.warn(`[function_run] Vault access for "${ integrationId }" does not permit injecting secrets into functions — skipped`);
+      continue;
+    }
     for (const [envVarName, vaultProperty] of Object.entries(envMap)) {
       if (typeof vaultProperty !== 'string') continue;
       const row = await svc.getIntegrationValue(integrationId, vaultProperty);
