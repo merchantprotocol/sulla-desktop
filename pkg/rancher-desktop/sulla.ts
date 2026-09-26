@@ -21,6 +21,7 @@ import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { createN8nService } from './agent/services/N8nService';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
+import { parseCSV } from '@pkg/agent/services/vaultImportParsers';
 import paths from '@pkg/utils/paths';
 import * as path from 'path';
 import { app, webContents } from 'electron';
@@ -120,6 +121,25 @@ export async function initiateWindowContext(): Promise<void> {
     await extensionService.initialize();
   } catch (error) {
     console.error('[ExtensionService] Failed to initialize:', error);
+  }
+}
+
+/**
+ * Post-unlock vault housekeeping: encrypt any legacy plaintext rows and make
+ * sure automatic encrypted backups are running. Idempotent and never throws.
+ */
+async function onVaultUnlocked(): Promise<void> {
+  try {
+    const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+
+    if (!getVaultKeyService().isUnlocked()) return;
+    const { IntegrationValueModel } = await import('@pkg/agent/database/models/IntegrationValueModel');
+    const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
+
+    await IntegrationValueModel.migrateToEncrypted();
+    getVaultBackupService().start(cb => getIntegrationService().onValueChange(() => cb()));
+  } catch (err) {
+    console.error('[Vault] Post-unlock housekeeping failed:', err);
   }
 }
 
@@ -261,13 +281,21 @@ export async function instantiateSullaStart(): Promise<void> {
   lifecycle.register('vault', ['database-manager'],
     async() => {
       const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-      const unlocked = await getVaultKeyService().initialize();
+      const { IntegrationValueModel } = await import('@pkg/agent/database/models/IntegrationValueModel');
+      const vaultKeyService = getVaultKeyService();
+
+      // Lets unlock verify a key against real ciphertext if the canary is lost.
+      vaultKeyService.setCiphertextSampleProvider(() => IntegrationValueModel.sampleEncryptedValue());
+      const unlocked = await vaultKeyService.initialize();
 
       console.log(`[Background] Vault initialized: ${ unlocked ? 'unlocked' : 'locked' }`);
+      await onVaultUnlocked();
     },
     async() => {
       const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+      const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
 
+      getVaultBackupService().stop();
       getVaultKeyService().lock();
     },
   );
@@ -700,17 +728,21 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('vault:setup', async(_event: Electron.IpcMainInvokeEvent, data: { masterPassword: string }) => {
+    // Throws VAULT_ALREADY_SET_UP rather than orphaning an existing vault.
     const result = await vaultKey.setupFromMasterPassword(data.masterPassword);
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
     setUserLoggedIn(true);
+    await onVaultUnlocked();
     return { recoveryKey: result.recoveryKey };
   });
 
-  ipcMainProxy.handle('vault:change-password', async(_event: Electron.IpcMainInvokeEvent, data: { newPassword: string }) => {
-    const { IntegrationValueModel } = await import('@pkg/agent/database/models/IntegrationValueModel');
-    const { recoveryKey, oldDecrypt } = await vaultKey.changePassword(data.newPassword);
-    await IntegrationValueModel.reEncryptAll(oldDecrypt);
-    return { recoveryKey };
+  ipcMainProxy.handle('vault:change-password', async(_event: Electron.IpcMainInvokeEvent, data: { currentPassword: string; newPassword: string }) => {
+    // Re-wraps the vault key only: stored credentials, the recovery key and
+    // existing backups all stay valid. Throws VAULT_WRONG_PASSWORD.
+    await vaultKey.changePassword(data?.currentPassword, data?.newPassword);
+    const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
+    await getVaultBackupService().snapshotSafely('password-change');
+    return { success: true };
   });
 
   ipcMainProxy.handle('vault:unlock-password', async(_event: Electron.IpcMainInvokeEvent, data: { password: string }) => {
@@ -718,6 +750,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     if (success) {
       const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
       setUserLoggedIn(true);
+      await onVaultUnlocked();
     }
     return success;
   });
@@ -727,8 +760,28 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     if (success) {
       const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
       setUserLoggedIn(true);
+      await onVaultUnlocked();
     }
     return success;
+  });
+
+  ipcMainProxy.handle('vault:backup-status', async() => {
+    const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
+    const backups = getVaultBackupService();
+
+    return { dir: backups.backupDir, snapshots: backups.listSnapshots() };
+  });
+
+  ipcMainProxy.handle('vault:backup-now', async() => {
+    const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
+
+    try {
+      const file = await getVaultBackupService().createSnapshot('manual', { force: true });
+
+      return { success: !!file, path: file };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   });
 
   ipcMainProxy.handle('vault:logout', async() => {
@@ -787,15 +840,23 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     }
   });
 
-  ipcMain.on('vault:encrypt-sync', (event, plaintext: string) => {
+  ipcMain.on('vault:encrypt-sync', (event, plaintext: unknown) => {
+    // '' means "refused": the renderer model throws instead of persisting
+    // plaintext. Only a never-configured vault stores values as-is.
     try {
-      if (vaultKey.isUnlocked()) {
+      if (typeof plaintext !== 'string') {
+        event.returnValue = '';
+      } else if (vaultKey.isEncrypted(plaintext)) {
+        event.returnValue = plaintext;
+      } else if (vaultKey.isUnlocked()) {
         event.returnValue = vaultKey.encrypt(plaintext);
+      } else if (vaultKey.isSetUp()) {
+        event.returnValue = '';
       } else {
         event.returnValue = plaintext;
       }
     } catch {
-      event.returnValue = plaintext;
+      event.returnValue = '';
     }
   });
 
@@ -848,7 +909,10 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
         if (!vault.isUnlocked()) {
           return { success: false, error: 'Vault is locked' };
         }
-        content = vault.encrypt(JSON.stringify(exportData, null, 2));
+        // Self-contained: restorable on any machine with the master password
+        // or recovery key, and still valid after a password change.
+        const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
+        content = await getVaultBackupService().buildExport();
         defaultName = `sulla-vault-backup-${ new Date().toISOString().slice(0, 10) }.enc`;
       } else {
         content = JSON.stringify(exportData, null, 2);
@@ -868,7 +932,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
         return { success: false, canceled: true };
       }
 
-      await fsPromises.writeFile(result.filePath, content, 'utf-8');
+      await fsPromises.writeFile(result.filePath, content, { encoding: 'utf-8', mode: 0o600 });
       console.log(`[Vault] Exported ${ exportData.length } accounts to ${ result.filePath }`);
       return { success: true, count: exportData.length, path: result.filePath };
     } catch (err: any) {
@@ -877,24 +941,54 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     }
   });
 
-  ipcMainProxy.handle('vault:import', async() => {
+  ipcMainProxy.handle('vault:import', async(_event: Electron.IpcMainInvokeEvent, data?: { filePath?: string; password?: string; recoveryKey?: string }) => {
     try {
-      const mainWindow = window.getWindow('main-agent');
-      const result = await dialog.showOpenDialog(mainWindow!, {
-        title:      'Import Passwords',
-        filters:    [
-          { name: 'Password Files', extensions: ['json', 'csv', 'enc'] },
-          { name: 'All Files', extensions: ['*'] },
-        ],
-        properties: ['openFile'],
-      });
+      let filePath = data?.filePath;
 
-      if (result.canceled || result.filePaths.length === 0) {
-        return { success: false, canceled: true };
+      if (!filePath) {
+        const mainWindow = window.getWindow('main-agent');
+        const result = await dialog.showOpenDialog(mainWindow!, {
+          title:       'Import Passwords',
+          defaultPath: (await import('@pkg/agent/services/VaultBackupService')).getVaultBackupService().backupDir,
+          filters:     [
+            { name: 'Password Files', extensions: ['json', 'csv', 'enc'] },
+            { name: 'All Files', extensions: ['*'] },
+          ],
+          properties: ['openFile'],
+        });
+
+        if (result.canceled || result.filePaths.length === 0) {
+          return { success: false, canceled: true };
+        }
+        filePath = result.filePaths[0];
       }
 
-      const filePath = result.filePaths[0];
-      let raw = await fsPromises.readFile(filePath, 'utf-8');
+      let raw = (await fsPromises.readFile(filePath, 'utf-8')).replace(/^\uFEFF/, '');
+
+      // ── Sulla vault snapshot / encrypted backup (self-contained) ──
+      {
+        const { isVaultSnapshot, getVaultBackupService, SnapshotNeedsSecretError } = await import('@pkg/agent/services/VaultBackupService');
+        let parsedSnapshot: unknown = null;
+
+        try { parsedSnapshot = JSON.parse(raw) } catch { /* not JSON */ }
+        if (isVaultSnapshot(parsedSnapshot)) {
+          try {
+            const restored = await getVaultBackupService().restoreSnapshot(parsedSnapshot, {
+              mode:        'merge',
+              password:    data?.password,
+              recoveryKey: data?.recoveryKey,
+            });
+
+            console.log(`[Vault] Restored snapshot ${ filePath }: ${ restored.inserted } added, ${ restored.skipped } already present`);
+            return { success: true, count: restored.inserted, format: 'sulla-snapshot', ...restored };
+          } catch (err: any) {
+            if (err instanceof SnapshotNeedsSecretError) {
+              return { success: false, needsSecret: true, filePath, error: err.message };
+            }
+            return { success: false, filePath, error: err.message };
+          }
+        }
+      }
 
       // Detect Sulla encrypted file
       if (raw.startsWith('$VAULT$')) {
@@ -961,21 +1055,21 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
       // ── CSV parsing ──
       if (entries.length === 0 && !raw.startsWith('{') && !raw.startsWith('[')) {
-        const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
-        if (lines.length < 2) {
+        // Records, not lines: quoted fields (notes) may contain newlines.
+        const records = parseCSV(raw);
+        if (records.length < 2) {
           return { success: false, error: 'File is empty or has no data rows' };
         }
 
-        const headerLine = lines[0].toLowerCase();
-        const headers = parseCSVLine(headerLine);
-        const dataLines = lines.slice(1);
+        const headers = records[0].map(h => h.toLowerCase());
+        const dataLines = records.slice(1);
 
         if (headers.includes('login_uri') || headers.includes('login_username')) {
           // ── Bitwarden CSV ──
           format = 'bitwarden-csv';
           const col = (row: string[], name: string) => row[headers.indexOf(name)] || '';
           for (const line of dataLines) {
-            const row = parseCSVLine(line);
+            const row = line;
             if (col(row, 'type') !== 'login' && col(row, 'type') !== '') continue;
             entries.push({
               label:    col(row, 'name'),
@@ -992,7 +1086,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
           format = 'lastpass';
           const col = (row: string[], name: string) => row[headers.indexOf(name)] || '';
           for (const line of dataLines) {
-            const row = parseCSVLine(line);
+            const row = line;
             entries.push({
               label:    col(row, 'name'),
               url:      col(row, 'url'),
@@ -1008,7 +1102,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
           format = '1password';
           const col = (row: string[], name: string) => row[headers.indexOf(name)] || '';
           for (const line of dataLines) {
-            const row = parseCSVLine(line);
+            const row = line;
             entries.push({
               label:    col(row, 'title') || col(row, 'name'),
               url:      col(row, 'url') || col(row, 'login_uri'),
@@ -1072,31 +1166,6 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       return { success: false, error: err.message };
     }
   });
-
-  /** Parse a CSV line respecting quoted fields */
-  function parseCSVLine(line: string): string[] {
-    const result: string[] = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (ch === ',' && !inQuotes) {
-        result.push(current.trim());
-        current = '';
-      } else {
-        current += ch;
-      }
-    }
-    result.push(current.trim());
-    return result;
-  }
 
   // ── Vault: credential save & autofill IPC handlers ────────────────────────
   const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
