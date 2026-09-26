@@ -4,6 +4,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
+import {
+  BackgroundCompletionDelivery,
+  ClaudeBackgroundTaskTracker,
+  formatBackgroundNotices,
+  wakeTargetFromState,
+  type WakeTarget,
+} from './claudeBackgroundTasks';
 import { buildClaudeLaunchCommand } from './claudeLaunchCommand';
 import { BASE_DISALLOWED_TOOLS, SUBCONSCIOUS_NATIVE_TOOL_DENYLIST, isObserverSpawn } from './claudeToolPolicy';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
@@ -59,6 +66,21 @@ const PREWARM_IDLE_REAP_MS = 60_000;
 const WARM_IDLE_REAP_MS = 5 * 60_000;
 
 /**
+ * Ceiling on how long a parked process is kept alive past WARM_IDLE_REAP_MS
+ * because it still owns background tasks (Bash run_in_background, Monitor)
+ * or an undelivered completion. Reaping kills those tasks, so the normal idle
+ * reap is deferred while they run — but never forever.
+ */
+const BACKGROUND_TASK_MAX_PARK_MS = 4 * 60 * 60_000;
+
+/**
+ * How long a turn waits for a parked process to finish an autonomous
+ * follow-up turn (the CLI reacting to a background completion) before giving
+ * up on that process and cold-spawning instead.
+ */
+const AUTONOMOUS_TURN_WAIT_MS = 15 * 60_000;
+
+/**
  * A `claude` process speculatively booted during the pre-turn (accumulator)
  * phase, waiting to be adopted by the next runClaude for its conversation.
  * See ClaudeCodeService.prewarm().
@@ -79,6 +101,20 @@ interface PrewarmRecord {
    * delivers its session id. See claimPrewarm.
    */
   pendingStdout?: string;
+  /**
+   * Background-task state for this process (see claudeBackgroundTasks.ts).
+   * Created on the first turn that runs on the process.
+   */
+  bgTracker?:     ClaudeBackgroundTaskTracker;
+  /** Graph thread to wake when a background task finishes while parked. */
+  wakeTarget?:    WakeTarget | null;
+  /** stdout/stderr listeners that keep reading while the process is parked. */
+  parkedStdout?:  (chunk: Buffer) => void;
+  parkedStderr?:  (chunk: Buffer) => void;
+  /** Partial NDJSON line the parked reader was holding when claimed. */
+  parkedBuffer?:  string;
+  /** When the idle reap was first deferred for live background work. */
+  bgHoldSince?:   number;
 }
 
 export class ClaudeCodeService extends BaseLanguageModel {
@@ -88,6 +124,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
   // conversationId → a speculatively-booted process warming up during the
   // pre-turn phase, claimed by the next runClaude. See prewarm().
   private prewarmed = new Map<string, PrewarmRecord>();
+
+  // Routes background-task completions from parked CLI processes back into
+  // their graph threads. See claudeBackgroundTasks.ts.
+  private readonly bgDelivery = new BackgroundCompletionDelivery();
 
   /**
    * Tracks the hash of the stable <sulla_context> payload (platform rules +
@@ -354,6 +394,17 @@ export class ClaudeCodeService extends BaseLanguageModel {
       return null;
     }
 
+    // A warm-parked process has been read continuously by its parked reader
+    // (see parkProcess), so there is nothing stale to drain — and any
+    // `result` it produced while parked was a background-completion turn that
+    // has already been routed to the graph. Hand back only the partial line.
+    if (rec.parkedStdout) {
+      this.unparkProcess(rec);
+      if (rec.parkedBuffer) rec.pendingStdout = rec.parkedBuffer;
+      rec.parkedBuffer = undefined;
+      return rec;
+    }
+
     // Drain anything the process wrote while unclaimed. A prewarm that sat
     // past the CLI's stdin-wait can emit an empty `result` (observed as an
     // instant "claude produced no output" failure on the adopting turn) —
@@ -385,6 +436,109 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (!rec) return;
     this.prewarmed.delete(convId);
     this.killPrewarmRecord(rec);
+  }
+
+  /**
+   * Keep reading a parked process's output instead of pausing it. The CLI
+   * runs an autonomous turn when a background task finishes; its events feed
+   * the tracker, which hands finished completions to bgDelivery. Stderr is
+   * drained too so a chatty CLI can't block on a full pipe while parked.
+   * `carry` is the partial NDJSON line the finishing turn had buffered.
+   */
+  private parkProcess(rec: PrewarmRecord, convId: string, carry = ''): void {
+    const tracker = this.ensureBackgroundTracker(rec, convId);
+    rec.parkedBuffer = carry;
+    rec.parkedStdout = (chunk: Buffer) => {
+      rec.parkedBuffer = (rec.parkedBuffer ?? '') + chunk.toString('utf-8');
+      const lines = rec.parkedBuffer.split('\n');
+      rec.parkedBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let parsed: any;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          continue;
+        }
+        if (parsed?.session_id) this.setSession(convId, parsed.session_id).catch(() => {});
+        tracker.observe(parsed, true);
+      }
+    };
+    rec.parkedStderr = () => { /* discard — nobody owns this process right now */ };
+    rec.proc.stdout.on('data', rec.parkedStdout);
+    rec.proc.stderr.on('data', rec.parkedStderr);
+    rec.proc.stdout.resume();
+    rec.proc.stderr.resume();
+  }
+
+  /** Detach the parked readers and pause the streams for the adopting turn. */
+  private unparkProcess(rec: PrewarmRecord): void {
+    // Pause first, in the same tick, so no chunk is emitted to zero listeners.
+    rec.proc.stdout.pause();
+    rec.proc.stderr.pause();
+    if (rec.parkedStdout) rec.proc.stdout.removeListener('data', rec.parkedStdout);
+    if (rec.parkedStderr) rec.proc.stderr.removeListener('data', rec.parkedStderr);
+    rec.parkedStdout = undefined;
+    rec.parkedStderr = undefined;
+    rec.bgHoldSince = undefined;
+  }
+
+  /** The record's tracker, created on first use and bound to its conversation. */
+  private ensureBackgroundTracker(rec: PrewarmRecord, convId: string): ClaudeBackgroundTaskTracker {
+    rec.bgTracker ??= new ClaudeBackgroundTaskTracker((notices) => {
+      log.log(`[ClaudeCodeService] ${ notices.length } background completion(s) for convId=${ convId } — delivering to graph`);
+      this.bgDelivery.deliver(convId, rec.wakeTarget ?? null, notices);
+    });
+
+    return rec.bgTracker;
+  }
+
+  /**
+   * Idle-reap a parked process after WARM_IDLE_REAP_MS — unless it still owns
+   * live background work, in which case reaping would kill that work before
+   * it can report back. Deferred up to BACKGROUND_TASK_MAX_PARK_MS.
+   */
+  private armParkedReap(rec: PrewarmRecord, convId: string): void {
+    if (rec.reapTimer) clearTimeout(rec.reapTimer);
+    rec.reapTimer = setTimeout(() => {
+      rec.reapTimer = null;
+      if (this.prewarmed.get(convId) !== rec) return;
+      const t = rec.bgTracker;
+      const holding = !!t && (t.liveTaskCount > 0 || t.inAutonomousTurn || t.pendingCount > 0);
+      if (holding && !rec.closed) {
+        rec.bgHoldSince ??= Date.now();
+        if (Date.now() - rec.bgHoldSince < BACKGROUND_TASK_MAX_PARK_MS) {
+          this.armParkedReap(rec, convId);
+          return;
+        }
+        log.warn(`[ClaudeCodeService] Reaping parked proc for convId=${ convId } with ${ t?.liveTaskCount ?? 0 } background task(s) still live after ${ Math.round(BACKGROUND_TASK_MAX_PARK_MS / 60_000) }min`);
+      }
+      this.disposePrewarm(convId);
+    }, WARM_IDLE_REAP_MS);
+    rec.reapTimer.unref?.();
+  }
+
+  /**
+   * If the parked process for this conversation is mid autonomous turn (the
+   * CLI reacting to a background completion), wait for it to finish before
+   * claiming — adopting it mid-turn would settle the new turn on the
+   * autonomous turn's `result`. Gives up after AUTONOMOUS_TURN_WAIT_MS and
+   * discards the process so the caller cold-spawns.
+   */
+  private async waitForAutonomousTurn(convId: string): Promise<void> {
+    const rec = this.prewarmed.get(convId);
+    if (!rec?.bgTracker?.inAutonomousTurn) return;
+    log.log(`[ClaudeCodeService] convId=${ convId } parked proc is finishing a background-completion turn — waiting before adopting`);
+    const deadline = Date.now() + AUTONOMOUS_TURN_WAIT_MS;
+    while (this.prewarmed.get(convId) === rec && rec.bgTracker.inAutonomousTurn && !rec.closed) {
+      if (Date.now() >= deadline) {
+        log.warn(`[ClaudeCodeService] convId=${ convId } autonomous turn still running after ${ Math.round(AUTONOMOUS_TURN_WAIT_MS / 60_000) }min — discarding proc`);
+        this.disposePrewarm(convId);
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
   }
 
   private killPrewarmRecord(rec: PrewarmRecord): void {
@@ -688,6 +842,7 @@ Rules that apply on every turn:
 - Recurring tasks become workflows, not one-off commands
 - Work state lives in the internal Projects system — read and update it with the \`sulla project/*\` tools (\`list_project_items\` / \`get_project_item\` / \`create_task\` / \`update_task\` / \`add_task_comment\`); never keep a separate ad-hoc task list
 - You are part of a live multi-agent network — Heartbeat, Workbench, and other agents are active
+- Background work (Bash run_in_background, Monitor): if it finishes after your turn ends, Sulla wakes this conversation with the completion so you can act on it. Sub-agent and workflow-worker runs are NOT woken after they return — there, wait for the result inside the same turn (bounded loop) instead of promising to report back later
 </platform_context>`);
 
     stableParts.push(`<environment>
@@ -793,7 +948,12 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       convId,
       isNewSession: !existingSession,
     });
-    const prompt = contextPrefix ? `${ contextPrefix }\n\n${ basePrompt }` : basePrompt;
+    // Background completions that could not wake the graph (thread stayed
+    // busy, no wake target, or the wake failed) ride along with this turn so
+    // the model still learns about them.
+    const heldNotices = this.bgDelivery.takePending(convId);
+    const bgPreamble = heldNotices.length ? formatBackgroundNotices(heldNotices) : '';
+    const prompt = [contextPrefix, bgPreamble, basePrompt].filter(Boolean).join('\n\n');
 
     log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
 
@@ -811,6 +971,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // always null and the legacy text path runs byte-for-byte as before.
     const warm = await this.warmPoolEnabled();
     const speculative = warm || await this.speculativeBootEnabled();
+    if (speculative) await this.waitForAutonomousTurn(convId);
     const adopted = speculative ? this.claimPrewarm(convId, this.model || 'claude-code') : null;
 
     // Mint an MCP session bound to the calling graph state, if we have one AND
@@ -905,6 +1066,21 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       }
     }
     if (poolEntry) poolEntry.busy = true;
+
+    // Background-task tracking. Pooled processes keep their tracker across
+    // turns (tasks outlive the turn that started them); a cold, non-pooled
+    // process gets a turn-local one. The wake target is refreshed every turn.
+    const wakeTarget = wakeTargetFromState(options.state);
+    let bgTracker: ClaudeBackgroundTaskTracker;
+    if (poolEntry) {
+      poolEntry.wakeTarget = wakeTarget;
+      bgTracker = this.ensureBackgroundTracker(poolEntry, convId);
+    } else {
+      bgTracker = new ClaudeBackgroundTaskTracker((notices) => {
+        log.log(`[ClaudeCodeService] ${ notices.length } background completion(s) for convId=${ convId } — delivering to graph`);
+        this.bgDelivery.deliver(convId, wakeTarget, notices);
+      });
+    }
 
     // Declared at method scope so the `finally` block below can read it: set
     // true when a warm turn parks its process, which tells finally to skip MCP
@@ -1247,6 +1423,12 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
         if (parsed.session_id) capturedSessionId = parsed.session_id;
 
+        // Background-task bookkeeping. Once this turn has settled (cold mode
+        // kept listening for background completions), nobody owns the
+        // process's output any more, so completions must be delivered.
+        bgTracker.observe(parsed, settled);
+        if (settled) return;
+
         // System init — claude has booted, auth done, MCP tools loaded.
         // Update the heartbeat phase but keep ticking because the model
         // call itself can still add 20–60s.
@@ -1385,6 +1567,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           // process alive for the next turn. finishWarmTurn is defined below and
           // only invoked here (at runtime, after all handlers exist).
           if (warm) finishWarmTurn();
+          else if (!parsed.is_error && bgTracker.liveTaskCount > 0 && textCollected.trim()) settleForBackground();
         }
       };
 
@@ -1472,17 +1655,41 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         if (poolEntry) {
           const entry = poolEntry;
           entry.busy = false;
-          proc.once('exit', () => { entry.closed = true; });
+          // A proc that exits while parked can't run a follow-up turn —
+          // still deliver any completion it announced before dying.
+          proc.once('exit', () => {
+            entry.closed = true;
+            entry.bgTracker?.flush();
+          });
           proc.once('error', () => { entry.closed = true; });
-          if (entry.reapTimer) clearTimeout(entry.reapTimer);
-          entry.reapTimer = setTimeout(() => {
-            if (this.prewarmed.get(convId) === entry) this.disposePrewarm(convId);
-          }, WARM_IDLE_REAP_MS);
-          entry.reapTimer.unref?.();
+          // Keep reading while parked so background completions (and the
+          // CLI's autonomous follow-up turn) reach the graph; the idle reap
+          // is deferred while background tasks are still live.
+          this.parkProcess(entry, convId, stdoutBuffer);
+          stdoutBuffer = '';
+          this.armParkedReap(entry, convId);
           this.prewarmed.set(convId, entry);
           parked = true;
         }
-        log.log(`[ClaudeCodeService] warm turn ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (proc parked)`);
+        const liveBg = poolEntry?.bgTracker?.liveTaskCount ?? 0;
+        log.log(`[ClaudeCodeService] warm turn ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (proc parked${ liveBg ? `, ${ liveBg } background task(s) live` : '' })`);
+        resolve({ text: textCollected, usage: lastUsage });
+      };
+
+      // Cold mode (no warm pool): stdin is closed, so the CLI keeps running
+      // only until its background tasks finish, then exits WITHOUT a follow-up
+      // turn. Settle the turn at `result` instead of holding the graph until
+      // exit, and keep listening so each completion is delivered (onProcClose
+      // flushes them). The stall watchdog stops here: a silent wait on a
+      // background task is not a stall, and killing it would lose the task.
+      const settleForBackground = () => {
+        if (settled) return;
+        settled = true;
+        stopHeartbeat();
+        stopStallWatchdog();
+        options.signal?.removeEventListener('abort', onAbort);
+        if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
+        log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (${ bgTracker.liveTaskCount } background task(s) still live — listening for completion)`);
         resolve({ text: textCollected, usage: lastUsage });
       };
 
@@ -1491,7 +1698,14 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
         if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);   // proc gone → drop from pool
-        if (settled) return;                                           // already resolved (e.g. warm result)
+        if (settled) {
+          // Already resolved (warm result, or cold settleForBackground). Deliver
+          // any background completion the process announced before exiting.
+          if (stdoutBuffer.trim()) processLine(stdoutBuffer);
+          stdoutBuffer = '';
+          bgTracker.flush();
+          return;
+        }
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
         if (settled) return;                                           // a buffered `result` may have settled it
         settled = true;

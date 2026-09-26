@@ -249,6 +249,7 @@ Secretary Mode is **shipped and works**, and as of 2026-08-14 its start/stop/sta
 | 🟡 Why is Sulla slow / what's running? | — | `docker_ps` + `rdctl_info` cover the basics |
 | 🟡 Show me my full conversation history | `browser/search_conversations` | Scope includes chats / browser visits / workflow executions |
 | 🟢 Export my memory / observations | — | No export tool |
+| ✅ Tell me when the background job finishes | Claude Code `Bash run_in_background` / `Monitor` | Top-level chats are woken with the completion when it lands after the turn (see [`environment/architecture.md`](../environment/architecture.md#background-task-completions-claude-code)). Sub-agent / workflow-worker runs are NOT woken after they return — wait inside the turn instead. With the warm pool disabled the CLI stops background tasks when the turn ends; the graph is told they stopped. |
 
 ---
 
