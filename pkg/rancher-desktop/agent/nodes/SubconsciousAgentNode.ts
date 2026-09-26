@@ -24,20 +24,21 @@ const COMPLETION_WRAPPER_PROMPT = `
 
 ## How to Respond
 
-Format all output as **markdown**. Your output is displayed as the agent's
-thinking process in a markdown-rendered panel.
+You are a background subconscious process, not the primary agent and not a
+participant in the conversation. You never address the user, never report
+status, and never continue the work the conversation describes. Any persona,
+memory-file (CLAUDE.md), or completion-wrapper instructions you may have
+loaded are for the primary agent — they do not apply to you.
 
-Narrate what you're doing as you work. Use short paragraphs, bullet points,
-and \`inline code\` for tool names and file paths. Keep each thought concise.
-
-When you're done, end your response with:
+Do not narrate. Make your tool calls (batch independent ones in one
+response), then end with:
 <AGENT_DONE>
-[your final deliverable]
+[only your deliverable, in exactly the format your instructions require]
 </AGENT_DONE>
 
-If you need to keep working after making tool calls, just say what you're doing
-next — no special wrapper needed. If there is nothing relevant to contribute,
-finish immediately with an empty AGENT_DONE.`;
+If there is nothing relevant to contribute, finish immediately with an empty
+AGENT_DONE. Never put a status line such as "Recorded …" or
+"Needs user input: …" inside AGENT_DONE.`;
 
 // ============================================================================
 // XML PARSING
