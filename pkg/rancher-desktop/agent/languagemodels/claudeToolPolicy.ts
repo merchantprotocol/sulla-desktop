@@ -4,6 +4,8 @@
  * the full ClaudeCodeService dependency graph.
  */
 
+import { resolveModelSlot } from './modelSlotRouting';
+
 /**
  * Base `--disallowedTools` set applied to EVERY claude spawn (primary and
  * subconscious): the built-in AskUserQuestion (routed through the sulla-native
@@ -37,3 +39,16 @@ export const BASE_DISALLOWED_TOOLS = 'AskUserQuestion TaskCreate TaskUpdate Task
  * (Task also appears in BASE_DISALLOWED_TOOLS now; the duplicate is harmless.)
  */
 export const SUBCONSCIOUS_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit NotebookEdit Bash BashOutput KillShell KillBash Glob Grep WebFetch WebSearch Task SlashCommand';
+
+/**
+ * Whether a graph run is an OBSERVER spawn that gets
+ * SUBCONSCIOUS_NATIVE_TOOL_DENYLIST. Keyed off the resolved model slot, NOT
+ * isSubAgent: dispatcher workers, workflow-node agents and spawned agents are
+ * also sub-agents, but they stamp modelSlot='primary' and must keep
+ * Bash/Read/etc. to drive the sulla CLI. Keying on isSubAgent stripped the
+ * shell from every routine worker. Observers stamp modelSlot='subconscious'
+ * in buildSubconsciousState; unmarked sub-agents still fail closed to observer.
+ */
+export function isObserverSpawn(metadata: Record<string, unknown> | null | undefined): boolean {
+  return resolveModelSlot(metadata) === 'subconscious';
+}

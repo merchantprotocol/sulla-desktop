@@ -5,7 +5,7 @@ import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
 import { buildClaudeLaunchCommand } from './claudeLaunchCommand';
-import { BASE_DISALLOWED_TOOLS, SUBCONSCIOUS_NATIVE_TOOL_DENYLIST } from './claudeToolPolicy';
+import { BASE_DISALLOWED_TOOLS, SUBCONSCIOUS_NATIVE_TOOL_DENYLIST, isObserverSpawn } from './claudeToolPolicy';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
@@ -309,7 +309,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
         }
       } catch { /* continue without sulla-native tools */ }
 
-      const subconscious = !!(state.metadata as any)?.isSubAgent;
+      const subconscious = isObserverSpawn(state.metadata as any);
       const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, streamJsonInput: true, subconscious });
       const proc = childProcess.spawn(paths.limactl, args, {
         env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
@@ -857,9 +857,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // as a JSON line on stdin (see below) instead of raw text.
     // Observer runs (subconscious writers/recalls/summarizer/digester) lose the
     // native actor tools so they can only observe + write memory, never act on
-    // the host. Keyed off the graph state's isSubAgent flag (set for every
-    // subconscious build in buildSubconsciousState).
-    const subconscious = !!(options.state?.metadata as any)?.isSubAgent;
+    // the host. Keyed off the resolved model slot, not isSubAgent — work
+    // agents are sub-agents too and need their shell (see isObserverSpawn).
+    const subconscious = isObserverSpawn(options.state?.metadata as any);
     const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, streamJsonInput: speculative, subconscious });
 
     const cleanupMcp = () => {

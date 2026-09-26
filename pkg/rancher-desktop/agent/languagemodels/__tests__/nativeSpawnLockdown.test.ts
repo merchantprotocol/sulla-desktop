@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { BASE_DISALLOWED_TOOLS } from '../claudeToolPolicy';
+import { BASE_DISALLOWED_TOOLS, isObserverSpawn } from '../claudeToolPolicy';
 import { CODEX_NATIVE_SPAWN_FEATURE_PINS } from '../codexSandboxPolicy';
 
 /**
@@ -37,5 +37,15 @@ describe('native sub-agent spawn lockdown', () => {
     for (const pin of CODEX_NATIVE_SPAWN_FEATURE_PINS) {
       expect(pin).toMatch(/^features\.[a-z0-9_]+=false$/);
     }
+  });
+
+  it('keeps native actor tools for work sub-agents, strips them only from observers', () => {
+    // Dispatcher workers / workflow nodes / spawn_agent: need Bash for the sulla CLI.
+    expect(isObserverSpawn({ isSubAgent: true, modelSlot: 'primary' })).toBe(false);
+    // buildSubconsciousState observers.
+    expect(isObserverSpawn({ isSubAgent: true, modelSlot: 'subconscious' })).toBe(true);
+    // Unmarked sub-agents fail closed to observer.
+    expect(isObserverSpawn({ isSubAgent: true })).toBe(true);
+    expect(isObserverSpawn({})).toBe(false);
   });
 });
