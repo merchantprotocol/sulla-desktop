@@ -75,6 +75,8 @@ Sulla removes it. You describe the job the way you'd explain it to a new assista
 
 Anything you ask Sulla to do twice is a candidate for an automation, and Sulla will suggest one.
 
+**By role:** Sulla can take on the repeatable work of a social media manager, business development rep, customer support rep, operations and bookkeeping assistant, executive assistant, recruiting coordinator and more. See [Use Cases](https://sulladesktop.com/use-cases.html).
+
 ## An executive assistant, not just a bot
 
 - **Chat or talk to it.** Sulla handles one-off requests as well as recurring ones, and it remembers your preferences between conversations.
@@ -89,13 +91,13 @@ Anything you ask Sulla to do twice is a candidate for an automation, and Sulla w
 - **Approval steps.** Put an approval anywhere in a workflow. Sulla drafts, then waits for your OK before emailing, messaging or posting in your name.
 - **Encrypted vault.** Credentials are encrypted with AES-256 at rest. For each credential you choose whether Sulla can read it or only autofill it, so the agent never sees the secret.
 - **Sandboxed by design.** Sulla's agents work inside an isolated virtual machine with your user folder mounted, not directly on your operating system.
-- **Your data stays home.** Memory, workflows, files and credentials live on your machine. If you use a hosted AI model, each request's text goes to that provider. Use a local model to keep everything offline.
+- **Your data stays home.** Memory, workflows, files and credentials live on your machine. The text of each request goes to the AI provider you connect so it can be processed.
 - **Locks with you.** Log out and the assistant, vault and stored credentials stay locked until you sign back in.
 
 ## Get started
 
 1. **Install Sulla.** Use the one-line installer above or download from [Releases](https://github.com/merchantprotocol/sulla-desktop/releases/latest). The installer handles macOS Gatekeeper for you.
-2. **Choose your AI.** Paste a key from Anthropic, OpenAI or another provider, or run a free local model with llama.cpp.
+2. **Choose your AI.** Sign in to Anthropic, OpenAI, Grok or another provider, or paste an API key.
 3. **Describe your first job.** Pick a starter automation or write your own. Sulla sets it up and runs it once so you can see the result.
 
 **Requirements:** macOS 11+, Windows 10+ or Ubuntu 20.04+. 8 GB RAM minimum, 16 GB recommended. The app is about 1.2 GB, plus space for its workspace.
@@ -124,14 +126,14 @@ For developers and tinkerers, this is what makes the automations durable:
 - **Sulla CLI.** Every tool (browser, GitHub, calendar, vault, Docker, Kubernetes, Slack, workflows, projects and more) is callable as `sulla <category>/<tool> '<json>'` from the sandbox.
 - **Workbench.** File explorer, Monaco editor with diffs, Git management, an integrated terminal into the sandbox, and an agent builder.
 - **Containers.** Docker runs inside the VM, so Sulla can start services for your projects and install one-click recipes (CRMs, media tools, local AI models) from the marketplace.
-- **Models.** Use hosted providers or local open-source models via llama.cpp. Conversations are captured locally as training data for local models.
+- **Models.** Connect Anthropic, OpenAI, Grok or other providers by signing in or with an API key, and switch models at any time.
 
 Forked from [Rancher Desktop](https://github.com/rancher-sandbox/rancher-desktop), which provides the VM and container foundation.
 
 ## FAQ
 
 **Is Sulla free?**
-Yes. The desktop app is free to download and use. Sulla needs an AI model to think with: run a free local model, or connect your own account with a provider like Anthropic or OpenAI and pay them directly for what you use. Most people get the best results from a hosted model.
+Yes. The desktop app is free to download and use. Sulla needs an AI model to think with: connect your own account with a provider like Anthropic, OpenAI or Grok, by signing in or pasting an API key, and pay them directly for what you use.
 
 **Do I need to code?**
 No. Describe what you want and Sulla builds the workflow. Every workflow is also editable on a visual canvas and as a plain file if you want to go deeper.
