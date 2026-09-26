@@ -21,6 +21,7 @@ jest.unstable_mockModule('@pkg/window/browserTabViewManager', () => ({
     getInstance: () => ({
       createView,
       destroyView,
+      wakeView:       jest.fn(),
       getWebContents: (assetId: string) => views.get(assetId) ?? null,
     }),
   },

@@ -129,8 +129,9 @@ class TabRegistryImpl {
       existing.lastAccessedAt = Date.now();
       if (!sameUrl) {
         // Navigate the existing tab.
-        const wc = BrowserTabViewManager.getInstance().getWebContents(input.assetId);
-        wc?.loadURL(input.url).catch(() => {});
+        const manager = BrowserTabViewManager.getInstance();
+        manager.wakeView(input.assetId);
+        manager.getWebContents(input.assetId)?.loadURL(input.url).catch(() => {});
       }
       this.activeAssetId = input.assetId;
       this.notify();
@@ -175,8 +176,13 @@ class TabRegistryImpl {
 
   /** Returns a GuestBridge for the given assetId, or null if the tab doesn't exist. */
   bridge(assetId: string): GuestBridge | null {
-    const wc = BrowserTabViewManager.getInstance().getWebContents(assetId);
-    return wc ? new GuestBridge(wc, assetId) : null;
+    const manager = BrowserTabViewManager.getInstance();
+    const wc = manager.getWebContents(assetId);
+    if (!wc) return null;
+    // A bridge means an agent is about to drive this tab: make sure a slept
+    // background tab is awake (compositor + timers) before it does.
+    manager.wakeView(assetId);
+    return new GuestBridge(wc, assetId);
   }
 
   get(assetId: string): TabRecord | null {
@@ -203,10 +209,11 @@ class TabRegistryImpl {
   updateMeta(assetId: string, patch: Partial<Pick<TabRecord, 'title' | 'url' | 'isLoading'>>): void {
     const rec = this.records.get(assetId);
     if (!rec) return;
-    if (patch.title !== undefined) rec.title = patch.title;
-    if (patch.url !== undefined) rec.url = patch.url;
-    if (patch.isLoading !== undefined) rec.isLoading = patch.isLoading;
-    this.notify();
+    let changed = false;
+    if (patch.title !== undefined && patch.title !== rec.title) { rec.title = patch.title; changed = true }
+    if (patch.url !== undefined && patch.url !== rec.url) { rec.url = patch.url; changed = true }
+    if (patch.isLoading !== undefined && patch.isLoading !== rec.isLoading) { rec.isLoading = patch.isLoading; changed = true }
+    if (changed) this.notify();
   }
 
   onChange(listener: TabsListener): () => void {
@@ -214,8 +221,21 @@ class TabRegistryImpl {
     return () => this.emitter.off('change', listener);
   }
 
+  private notifyScheduled = false;
+
+  /**
+   * Coalesce change events to one per macrotask. A single page load fires
+   * start/navigate/title/stop updates back to back, and each emit is
+   * serialized and sent to every app window; subscribers only need the
+   * latest list.
+   */
   private notify(): void {
-    this.emitter.emit('change', this.list());
+    if (this.notifyScheduled) return;
+    this.notifyScheduled = true;
+    setTimeout(() => {
+      this.notifyScheduled = false;
+      this.emitter.emit('change', this.list());
+    }, 0);
   }
 }
 

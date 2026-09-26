@@ -157,10 +157,29 @@ function enforceAgentTabCap(): void {
 // Run once on startup in case persisted state had >MAX_AGENT_TABS agent tabs.
 enforceAgentTabCap();
 
-// Persist tab state on every change (user-origin tabs only — see persistTabs)
-watch(tabs, (current) => {
-  persistTabs([...current]);
+// Persist tab state (user-origin tabs only — see persistTabs). Debounced:
+// the deep watcher fires on every title/URL/loading tick while pages load,
+// and each persist is a synchronous JSON.stringify + localStorage write on
+// the UI thread. Pending writes are flushed on unload so nothing is lost.
+const PERSIST_DEBOUNCE_MS = 250;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushPersistTabs(): void {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  persistTabs([...tabs]);
+}
+
+watch(tabs, () => {
+  if (persistTimer) return;
+  persistTimer = setTimeout(flushPersistTabs, PERSIST_DEBOUNCE_MS);
 }, { deep: true });
+
+try {
+  window.addEventListener('beforeunload', flushPersistTabs);
+} catch { /* non-browser context */ }
 
 // ── Main-process tab mirror ─────────────────────────────────────────
 // Main owns the list of agent-opened tabs (TabRegistry). When it changes,
@@ -192,8 +211,10 @@ function mirrorMainTabs(mainTabs: MainTabRecord[]): void {
   for (const mt of mainByAsset.values()) {
     const existing = tabs.find(t => t.assetId === mt.assetId);
     if (existing) {
-      existing.title = mt.title;
-      existing.url = mt.url;
+      // Assign only on change so an unchanged broadcast doesn't wake every
+      // deep watcher on the tab list.
+      if (existing.title !== mt.title) existing.title = mt.title;
+      if (existing.url !== mt.url) existing.url = mt.url;
     } else {
       tabs.push({
         id:             mt.assetId,
@@ -445,15 +466,23 @@ export function useBrowserTabs() {
     const tab = tabs.find(t => t.id === id);
 
     if (tab) {
+      // Apply only the fields that actually change. Navigation state updates
+      // repeat the same url/title several times per page load; each no-op
+      // write used to re-persist the tab list and re-record history (an IPC
+      // + DB upsert) for nothing.
+      const changed = (Object.keys(updates) as (keyof typeof updates)[])
+        .filter(key => (tab as any)[key] !== updates[key]);
+      if (changed.length === 0) return;
+
       // Track whether this update turns a user tab into an agent tab, so we
       // only run the cap check when it's meaningful.
       const becameAgentTab = !tab.assetId && !!updates.assetId;
 
-      Object.assign(tab, updates);
+      for (const key of changed) (tab as any)[key] = updates[key];
       tab.lastAccessedAt = Date.now();
 
       // Re-record when URL or title changes (navigation event)
-      if (updates.url || updates.title) {
+      if (changed.includes('url') || changed.includes('title')) {
         recordTabToHistory(tab);
       }
 

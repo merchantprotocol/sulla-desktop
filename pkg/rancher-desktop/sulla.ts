@@ -470,6 +470,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       const viewWc = mgr.getWebContents(tabId);
 
       if (!viewWc) return false;
+      mgr.wakeView(tabId);
       wc = viewWc;
     } else {
       wc = event.sender;
@@ -533,6 +534,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       const viewWc = mgr.getWebContents(tabId);
 
       if (!viewWc) return null;
+      mgr.wakeView(tabId);
       wc = viewWc;
     } else {
       wc = event.sender;
@@ -587,6 +589,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       const viewWc = mgr.getWebContents(tabId);
 
       if (!viewWc) return false;
+      mgr.wakeView(tabId);
       wc = viewWc;
     } else {
       wc = event.sender;

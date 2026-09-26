@@ -8,9 +8,10 @@
 
 import { ipcMain, webContents } from 'electron';
 
-import { safeSend } from '@pkg/utils/safeSend';
-
 import { tabRegistry, type TabRecord } from './TabRegistry';
+import { getBrowserSession } from './browserSession';
+
+import { safeSend } from '@pkg/utils/safeSend';
 
 const CHANGE_CHANNEL = 'tabs:change';
 
@@ -29,10 +30,16 @@ export function initTabsIpc(): void {
     tabRegistry.setActive(assetId);
   });
 
-  // Broadcast changes to every subscribed renderer. WebContents that have
-  // been disposed are silently dropped — see safeSend.
+  // Broadcast changes to Sulla's own renderers. Browser-tab guests (and their
+  // popups) share the browser session and are skipped: they never listen on
+  // this channel, and pushing every open tab's URL and title into arbitrary
+  // web pages' processes is both wasted IPC and a privacy leak. Disposed
+  // WebContents are dropped by safeSend.
   tabRegistry.onChange((tabs) => {
+    const browserSession = getBrowserSession();
+
     for (const wc of webContents.getAllWebContents()) {
+      if (wc.session === browserSession) continue;
       safeSend(wc, CHANGE_CHANNEL, tabs);
     }
   });
