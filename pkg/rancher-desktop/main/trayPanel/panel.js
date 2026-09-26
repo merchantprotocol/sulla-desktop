@@ -142,8 +142,8 @@ document.getElementById('btn-capture-studio').addEventListener('click', () => {
 });
 
 // Settings panel buttons
-document.getElementById('btn-premium-support').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-url', 'https://www.skool.com/book-more-appointments-8103');
+document.getElementById('btn-support').addEventListener('click', () => {
+  ipcRenderer.send('tray-panel:open-url', 'https://sulladesktop.com/support');
 });
 
 document.getElementById('btn-documentation').addEventListener('click', () => {
