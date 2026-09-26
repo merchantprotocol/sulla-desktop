@@ -13,7 +13,6 @@
 // CDP-based methods (screenshot, trusted mouse/keyboard events) use
 // `webContents` APIs directly — no guest-side code needed.
 
-import fs from 'fs';
 import type { WebContents, NativeImage } from 'electron';
 
 function jsArg(value: unknown): string {
@@ -231,17 +230,14 @@ export class GuestBridge {
       try {
         dbg.attach('1.3');
         attached = true;
-        fs.appendFileSync('/tmp/sulla-screenshot-debug.log', `[${ new Date().toISOString() }] dbg.attach ok assetId=${ this.assetId }\n`);
-      } catch (attachErr) {
+      } catch {
         // Already attached by DevTools or a previous call — that's fine, we can still send commands.
         attached = false;
-        fs.appendFileSync('/tmp/sulla-screenshot-debug.log', `[${ new Date().toISOString() }] dbg.attach threw assetId=${ this.assetId } err=${ attachErr }\n`);
       }
 
       try {
         // Ensure Page domain is enabled so captureScreenshot works.
         await dbg.sendCommand('Page.enable');
-        fs.appendFileSync('/tmp/sulla-screenshot-debug.log', `[${ new Date().toISOString() }] Page.enable ok assetId=${ this.assetId }\n`);
 
         const cdpParams: Record<string, unknown> = {
           format,
@@ -267,7 +263,6 @@ export class GuestBridge {
         ]) as { data: string };
 
         const base64 = result?.data;
-        fs.appendFileSync('/tmp/sulla-screenshot-debug.log', `[${ new Date().toISOString() }] Page.captureScreenshot returned dataLen=${ base64?.length ?? 'null' } assetId=${ this.assetId }\n`);
         if (!base64) {
           console.warn(`[GuestBridge] CDP captureScreenshot returned empty data assetId=${ this.assetId }`);
           return null;
@@ -285,7 +280,6 @@ export class GuestBridge {
       const stack = err instanceof Error ? err.stack : '';
       console.warn(`[GuestBridge] captureScreenshot failed assetId=${ this.assetId }: ${ msg }\n${ stack }`);
       try {
-        fs.appendFileSync('/tmp/sulla-screenshot-debug.log', `[${ new Date().toISOString() }] assetId=${ this.assetId } error=${ msg }\n${ stack }\n---\n`);
       } catch { /* ignore */ }
       return null;
     }
