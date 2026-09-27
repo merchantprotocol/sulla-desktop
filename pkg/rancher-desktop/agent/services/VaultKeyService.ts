@@ -79,6 +79,9 @@ export type CiphertextSampleProvider = () => Promise<string | null>;
 
 export type VaultDecryptor = (encrypted: string) => string;
 
+/** The slice of Electron safeStorage the vault uses (injectable for tests). */
+export type SafeStorageLike = Pick<typeof import('electron').safeStorage, 'isEncryptionAvailable' | 'encryptString' | 'decryptString'>;
+
 // ─── Pure crypto helpers ─────────────────────────────────────────────
 
 function gcmSeal(key: Buffer, plaintext: Buffer): Buffer {
@@ -235,7 +238,7 @@ export class VaultKeyService {
   private failedUnlocks = 0;
   private unlockQueue: Promise<unknown> = Promise.resolve();
 
-  constructor(sullaDir?: string) {
+  constructor(sullaDir?: string, private readonly safeStorageOverride?: SafeStorageLike) {
     this.sullaDir = sullaDir ?? paths.sullaConfig;
   }
 
@@ -750,7 +753,8 @@ export class VaultKeyService {
   }
 
   /** Get Electron safeStorage module, or null if unavailable */
-  private getSafeStorage(): typeof import('electron').safeStorage | null {
+  private getSafeStorage(): SafeStorageLike | null {
+    if (this.safeStorageOverride) return this.safeStorageOverride;
     try {
       const { safeStorage } = require('electron');
       return safeStorage ?? null;

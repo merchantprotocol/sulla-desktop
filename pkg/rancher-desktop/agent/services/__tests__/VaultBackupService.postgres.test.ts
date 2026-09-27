@@ -3,27 +3,33 @@
  * because it needs the local Sulla Postgres. It creates and drops its own
  * scratch database and never touches the `sulla` database.
  */
+
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Pool } from 'pg';
 
-jest.mock('electron', () => ({
-  safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString:         (s: string) => Buffer.from(`KC:${ s }`),
-    decryptString:         (b: Buffer) => b.toString().slice(3),
-  },
-}), { virtual: true });
-jest.mock('@pkg/utils/paths', () => ({ __esModule: true, default: { sullaConfig: '/nonexistent' } }));
+import type { VaultRowDb } from '../VaultBackupService';
 
-// eslint-disable-next-line import-x/first
-import { up as createTable } from '../../database/migrations/0013_create_integration_values_table';
-// eslint-disable-next-line import-x/first
-import { PostgresVaultRowStore, VaultBackupService, type VaultRowDb } from '../VaultBackupService';
-// eslint-disable-next-line import-x/first
-import { VaultKeyService } from '../VaultKeyService';
+const keychainStub = {
+  isEncryptionAvailable: () => true,
+  encryptString:         (s: string) => Buffer.from(`KC:${ s }`),
+  decryptString:         (b: Buffer) => b.toString().slice(3),
+};
+
+jest.unstable_mockModule('@pkg/utils/paths', () => ({ __esModule: true, default: { sullaConfig: '/nonexistent' } }));
+
+const { up: createTable } = await import('../../database/migrations/0013_create_integration_values_table');
+const { PostgresVaultRowStore, VaultBackupService } = await import('../VaultBackupService');
+const { VaultKeyService: RealVaultKeyService } = await import('../VaultKeyService');
+
+class VaultKeyService extends RealVaultKeyService {
+  constructor(dir: string) {
+    super(dir, keychainStub);
+  }
+}
 
 // Real PBKDF2 and bulk crypto: allow for a loaded CI machine.
 jest.setTimeout(60_000);

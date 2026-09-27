@@ -2,28 +2,32 @@
  * Loss-protection tests: snapshots must be ciphertext-only, self-contained,
  * and restorable after total loss of the machine's vault files and database.
  */
+
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { afterAll, afterEach, beforeEach, expect, it, jest } from '@jest/globals';
+
+import type { RestoreMode, RestoreResult, VaultRow, VaultRowStore, VaultBackupService as VaultBackupServiceType } from '../VaultBackupService';
+
 const keychain = { available: true };
+const keychainStub = {
+  isEncryptionAvailable: () => keychain.available,
+  encryptString:         (s: string) => Buffer.from(`KC:${ s }`),
+  decryptString:         (b: Buffer) => b.toString().slice(3),
+};
 
-jest.mock('electron', () => ({
-  safeStorage: {
-    isEncryptionAvailable: () => keychain.available,
-    encryptString:         (s: string) => Buffer.from(`KC:${ s }`),
-    decryptString:         (b: Buffer) => b.toString().slice(3),
-  },
-}), { virtual: true });
-jest.mock('@pkg/utils/paths', () => ({ __esModule: true, default: { sullaConfig: '/nonexistent' } }));
+jest.unstable_mockModule('@pkg/utils/paths', () => ({ __esModule: true, default: { sullaConfig: '/nonexistent' } }));
 
-// eslint-disable-next-line import-x/first
-import {
-  SnapshotNeedsSecretError, VaultBackupService, selectSnapshotsToKeep,
-  type RestoreMode, type RestoreResult, type VaultRow, type VaultRowStore,
-} from '../VaultBackupService';
-// eslint-disable-next-line import-x/first
-import { VaultKeyService } from '../VaultKeyService';
+const { SnapshotNeedsSecretError, VaultBackupService, selectSnapshotsToKeep } = await import('../VaultBackupService');
+const { VaultKeyService: RealVaultKeyService } = await import('../VaultKeyService');
+
+class VaultKeyService extends RealVaultKeyService {
+  constructor(dir: string) {
+    super(dir, keychainStub);
+  }
+}
 
 // Real PBKDF2 and bulk crypto: allow for a loaded CI machine.
 jest.setTimeout(60_000);
@@ -80,7 +84,7 @@ class MemoryStore implements VaultRowStore {
   }
 }
 
-const created: VaultBackupService[] = [];
+const created: VaultBackupServiceType[] = [];
 
 afterAll(() => created.forEach(b => b.stop()));
 
@@ -115,7 +119,9 @@ beforeEach(() => {
   jest.spyOn(console, 'warn').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
 });
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.restoreAllMocks();
+});
 
 it('snapshots contain no plaintext, even for rows stored before encryption', async() => {
   const m = await machine();

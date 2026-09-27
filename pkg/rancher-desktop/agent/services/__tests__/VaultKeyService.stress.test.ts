@@ -3,44 +3,50 @@
  * against a real temp directory and real crypto; only Electron's safeStorage
  * (the OS keychain) is faked.
  */
+
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
 const keychain = { available: true };
+const keychainStub = {
+  isEncryptionAvailable: () => keychain.available,
+  encryptString:         (s: string) => Buffer.from(`KC:${ s }`),
+  decryptString:         (b: Buffer) => {
+    const s = b.toString();
 
-jest.mock('electron', () => ({
-  safeStorage: {
-    isEncryptionAvailable: () => keychain.available,
-    encryptString:         (s: string) => Buffer.from(`KC:${ s }`),
-    decryptString:         (b: Buffer) => {
-      const s = b.toString();
+    if (!s.startsWith('KC:')) throw new Error('keychain decrypt failed');
 
-      if (!s.startsWith('KC:')) throw new Error('keychain decrypt failed');
-
-      return s.slice(3);
-    },
+    return s.slice(3);
   },
-}), { virtual: true });
+};
 const renameFault = { target: '' };
 
-jest.mock('fs', () => {
-  const real = jest.requireActual('fs');
-
-  return {
-    ...real,
-    renameSync: (from: string, to: string) => {
+jest.unstable_mockModule('fs', () => {
+  const faulty = {
+    ...fs,
+    renameSync: (from: fs.PathLike, to: fs.PathLike) => {
       if (renameFault.target && String(to).endsWith(renameFault.target)) throw new Error('simulated power loss');
 
-      return real.renameSync(from, to);
+      return fs.renameSync(from, to);
     },
   };
-});
-jest.mock('@pkg/utils/paths', () => ({ __esModule: true, default: { sullaConfig: '/nonexistent' } }));
 
-// eslint-disable-next-line import-x/first
-import { VaultKeyService, normalizeRecoveryKey, writeFileAtomic } from '../VaultKeyService';
+  return { ...faulty, default: faulty };
+});
+jest.unstable_mockModule('@pkg/utils/paths', () => ({ __esModule: true, default: { sullaConfig: '/nonexistent' } }));
+
+const { VaultKeyService: RealVaultKeyService, normalizeRecoveryKey, writeFileAtomic } = await import('../VaultKeyService');
+
+/** Every instance gets the fake OS keychain. */
+class VaultKeyService extends RealVaultKeyService {
+  constructor(dir: string) {
+    super(dir, keychainStub);
+  }
+}
 
 // Real PBKDF2 and bulk crypto: allow for a loaded CI machine.
 jest.setTimeout(60_000);
@@ -87,7 +93,9 @@ beforeEach(() => {
   jest.spyOn(console, 'warn').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
 });
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.restoreAllMocks();
+});
 
 describe('setup and persistence', () => {
   it('round-trips and survives an app restart via the keychain', async() => {

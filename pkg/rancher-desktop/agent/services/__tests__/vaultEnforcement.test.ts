@@ -1,3 +1,5 @@
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
 /**
  * The enforcement points that sit on top of the vault: agents cannot raise
  * their own access or clobber secrets, capability tokens honor llm_access,
@@ -6,7 +8,7 @@
 const values = new Map<string, string>();
 const vaultState = { setUp: true, unlocked: true };
 
-jest.mock('../VaultKeyService', () => ({
+jest.unstable_mockModule('../VaultKeyService', () => ({
   getVaultKeyService: () => ({
     isSetUp:     () => vaultState.setUp,
     isUnlocked:  () => vaultState.unlocked,
@@ -15,12 +17,12 @@ jest.mock('../VaultKeyService', () => ({
     decrypt:     (v: string) => Buffer.from(v.slice(7), 'base64').toString(),
   }),
 }));
-jest.mock('../../database/PostgresClient', () => ({ postgresClient: {} }));
-jest.mock('../../database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { get: async() => null } }));
-jest.mock('../../integrations/catalog', () => ({
+jest.unstable_mockModule('../../database/PostgresClient', () => ({ postgresClient: {} }));
+jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { get: async() => null } }));
+jest.unstable_mockModule('../../integrations/catalog', () => ({
   integrations: { website: { properties: [{ key: 'password', type: 'password' }, { key: 'username', type: 'text' }] } },
 }));
-jest.mock('../IntegrationService', () => ({
+jest.unstable_mockModule('../IntegrationService', () => ({
   getIntegrationService: () => ({
     initialize:          async() => {},
     getIntegrationValue: async(i: string, p: string, a?: string) => {
@@ -35,12 +37,9 @@ jest.mock('../IntegrationService', () => ({
   }),
 }));
 
-// eslint-disable-next-line import-x/first
-import { IntegrationValueModel } from '../../database/models/IntegrationValueModel';
-// eslint-disable-next-line import-x/first
-import { IntegrationSetCredentialWorker } from '../../tools/integrations/integration_set_credential';
-// eslint-disable-next-line import-x/first
-import { SecretsCapabilityService, SecretsResolveError } from '../SecretsCapabilityService';
+const { IntegrationValueModel, encryptForStorage } = await import('../../database/models/IntegrationValueModel');
+const { IntegrationSetCredentialWorker } = await import('../../tools/integrations/integration_set_credential');
+const { SecretsCapabilityService, SecretsResolveError } = await import('../SecretsCapabilityService');
 
 beforeEach(() => {
   values.clear();
@@ -49,7 +48,9 @@ beforeEach(() => {
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.restoreAllMocks();
+});
 
 describe('vault_set_credential', () => {
   const call = (input: any) => (new IntegrationSetCredentialWorker() as any)._validatedCall(input);
@@ -119,7 +120,12 @@ describe('secrets capability honors llm_access', () => {
 });
 
 describe('IntegrationValueModel.encryptValue fails closed', () => {
-  const encryptValue = (v: string) => (IntegrationValueModel as any).encryptValue(v);
+  const fakeVault = {
+    isSetUp:    () => vaultState.setUp,
+    isUnlocked: () => vaultState.unlocked,
+    encrypt:    (v: string) => `$VAULT$${ Buffer.from(v).toString('base64') }`,
+  };
+  const encryptValue = (v: string) => encryptForStorage(v, fakeVault);
 
   it('encrypts when unlocked and never double-wraps', () => {
     const once = encryptValue('pw');
