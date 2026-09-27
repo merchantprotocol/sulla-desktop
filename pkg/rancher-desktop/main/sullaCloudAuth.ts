@@ -97,10 +97,9 @@ async function saveSession(session: CloudSession): Promise<void> {
   // Clear any legacy settings left over from the safeStorage era.
   await clearLegacySettings();
 
-  // Register this desktop with the cloud so mobile's AI Assistant settings
-  // screen sees it as a pairing target, and start the heartbeat so it shows
-  // as online while this process runs.
-  void DevicesCloudApi.register().then(() => DevicesCloudApi.startHeartbeat());
+  // Device registration, heartbeat, secure channel and any opted-in sync
+  // are started by cloudLifecycle.startCloudServices() on sign-in/restore,
+  // not here — saveSession also runs on every token refresh.
 }
 
 async function loadSession(): Promise<CloudSession | null> {
@@ -261,6 +260,31 @@ async function emailRegister(email: string, password: string, name?: string): Pr
   }
   const data = await res.json() as VerifyResponse;
   return { ok: true, data };
+}
+
+/** Passwordless: email a 6-digit code that signs in or creates the account. */
+async function emailCodeStart(email: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${ API_BASE }/auth/email-code/start`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ email }),
+  });
+  if (res.ok) return { ok: true };
+  const body = await res.json().catch(() => ({})) as { error?: string };
+  return { ok: false, error: body.error || `HTTP ${ res.status }` };
+}
+
+async function emailCodeVerify(email: string, code: string, name?: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse & { isNewUser?: boolean } }> {
+  const res = await fetch(`${ API_BASE }/auth/email-code/verify`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ email, code, name, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { error?: string };
+    return { ok: false, error: body.error || `HTTP ${ res.status }` };
+  }
+  return { ok: true, data: await res.json() as VerifyResponse & { isNewUser?: boolean } };
 }
 
 async function appleSignIn(identityToken: string, fullName?: string, email?: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse }> {
@@ -428,12 +452,12 @@ export function initSullaCloudAuthEvents(): void {
       console.warn('[SullaCloudAuth] Auto-pair failed:', err);
     }
     try {
-      // Start the offline-friendly sync loop so claude_messages sent from
-      // mobile while the WS relay is down still get processed on desktop.
-      const { SullaSync } = await import('./sync/SullaSyncService');
-      SullaSync.start();
+      // Always connected while signed in: device registration + secure
+      // channel, plus whichever syncs the owner opted into.
+      const { startCloudServices } = await import('./cloud/cloudLifecycle');
+      await startCloudServices();
     } catch (err) {
-      console.warn('[SullaCloudAuth] Failed to start SullaSync:', err);
+      console.warn('[SullaCloudAuth] Failed to start cloud services:', err);
     }
     console.log(`[SullaCloudAuth] Signed in — user=${ session.userId }, active contractor=${ session.activeContractorId }`);
     return { ok: true, status: await buildStatus() };
@@ -467,6 +491,49 @@ export function initSullaCloudAuthEvents(): void {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
     return completeSignIn(result.data);
+  });
+
+  ipcMainProxy.handle('sulla-cloud:email-code-start', async(_event: unknown, email: string) => {
+    const e = String(email ?? '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, error: 'Enter a valid email address.' };
+    try {
+      return await emailCodeStart(e);
+    } catch {
+      return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.' };
+    }
+  });
+
+  ipcMainProxy.handle('sulla-cloud:email-code-verify', async(_event: unknown, email: string, code: string, name?: string) => {
+    const e = String(email ?? '').trim().toLowerCase();
+    const c = String(code ?? '').replace(/\s+/g, '');
+    if (!e || !/^\d{6}$/.test(c)) {
+      return { ok: false, error: 'Enter the 6-digit code from the email.', status: await buildStatus() };
+    }
+    let result: Awaited<ReturnType<typeof emailCodeVerify>>;
+    try {
+      result = await emailCodeVerify(e, c, name?.trim() || undefined);
+    } catch {
+      return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.', status: await buildStatus() };
+    }
+    if (!result.ok || !result.data) {
+      return { ok: false, error: result.error, status: await buildStatus(result.error) };
+    }
+    // The code is spent and the tokens are in hand. On first run the VM's
+    // Postgres may still be booting, so keep trying to persist the session
+    // (for up to ~2 minutes) instead of forcing the user to request a new code.
+    const deadline = Date.now() + 120_000;
+    for (let delay = 2_000; ; delay = Math.min(delay * 2, 15_000)) {
+      try {
+        const signedIn = await completeSignIn(result.data);
+        return { ...signedIn, isNewUser: !!result.data.isNewUser };
+      } catch (err) {
+        if (Date.now() + delay > deadline) {
+          console.warn('[SullaCloudAuth] Could not save the Sulla Cloud session:', err);
+          return { ok: false, error: 'Your email is verified, but Sulla is still starting up. Wait a minute, then send a new code.', status: await buildStatus().catch(() => ({} as any)) };
+        }
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
   });
 
   ipcMainProxy.handle('sulla-cloud:email-register', async(_event: unknown, email: string, password: string, name?: string): Promise<AuthResult> => {
@@ -565,9 +632,14 @@ export function initSullaCloudAuthEvents(): void {
       await getDesktopRelayClient().setPairedUserId('');
     } catch { /* ignore */ }
     try {
-      const { SullaSync } = await import('./sync/SullaSyncService');
-      SullaSync.stop();
-    } catch { /* ignore — service may not have started */ }
+      const { stopCloudServices } = await import('./cloud/cloudLifecycle');
+      await stopCloudServices();
+      // Approved browsers/phones belong to the signed-out account.
+      const { ApprovedClients } = await import('./cloud/approvedClients');
+      ApprovedClients.removeAll();
+    } catch (err) {
+      console.warn('[SullaCloudAuth] Failed to stop cloud services:', err);
+    }
     DevicesCloudApi.stopHeartbeat();
     console.log('[SullaCloudAuth] Signed out');
     return buildStatus();
@@ -609,16 +681,13 @@ export function initSullaCloudAuthEvents(): void {
         const session = await loadSession();
         if (session) {
           await getDesktopRelayClient().setPairedUserId(session.userId);
-          // Resume device registration + heartbeat so this desktop shows online
-          // for any mobile looking at the AI Assistant settings screen.
-          void DevicesCloudApi.register().then(() => DevicesCloudApi.startHeartbeat());
-          // Resume the offline-friendly sync loop so pulled claude_messages
-          // can be dispatched to Claude even without the WS relay.
+          // Always connected while signed in: registration, heartbeat,
+          // secure channel, and whichever syncs the owner opted into.
           try {
-            const { SullaSync } = await import('./sync/SullaSyncService');
-            SullaSync.start();
+            const { startCloudServices } = await import('./cloud/cloudLifecycle');
+            await startCloudServices();
           } catch (err) {
-            console.warn('[SullaCloudAuth] Failed to start SullaSync on restore:', err);
+            console.warn('[SullaCloudAuth] Failed to start cloud services on restore:', err);
           }
           console.log(`[SullaCloudAuth] Restored session: user=${ session.userId }`);
         } else {
