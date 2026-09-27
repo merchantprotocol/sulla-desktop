@@ -311,6 +311,8 @@ export class HeartbeatService {
       (state.metadata as any).agent = undefined;
       (state.metadata as any).agentLoopCount = 0;
       (state.metadata as any).abortSignal = signal;
+      (state.metadata as any).heartbeatWakeStartedMs = triggerStart;
+      (state.metadata as any).heartbeatIdleGuardFired = false;
 
       // Inject the prompt as a fresh user message
       state.messages = [{
@@ -472,7 +474,7 @@ export class HeartbeatService {
 Current time: ${ timeStr }
 Timezone: ${ tz }
 
-Resume your goals. Re-measure each active goal against its success metric in Projects (or choose the right goals from your north star if none are recorded), take the highest-leverage action that closes the largest gap, and keep working until the goals are accomplished or every remaining step is owned by another lifecycle owner or held at a true authority gate. Ending this wake is a pause, not a stop: record each goal's next milestone before you finish.${ base ? `\n\n${ base }` : '' }`;
+This is your time to think, invent, and try. Read the north star and the idea lab, set aside anything waiting on your Human, brainstorm at least five fresh ideas that could move an active goal, and run a real reversible experiment on the best one. Record the idea, evidence, and verdict in the idea lab, then run the next one while time remains. Do not end on "nothing changed"; when one lane is waiting, switch to a new idea.${ base ? `\n\n${ base }` : '' }`;
 
     return directive;
   }

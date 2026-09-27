@@ -65,9 +65,9 @@ describe('heartbeat goal section', () => {
 
       expect(built.text).toContain('Grow monthly revenue.');
       expect(built.text).not.toContain('Derive the right one');
-      expect(built.text).toContain('# Autonomous Executive Control Plane — Sulla');
+      expect(built.text).toContain('# Heartbeat — Your Time to Think, Invent, and Try');
       expect(built.text).not.toContain('install-local replacement contract');
-      expect(built.text.indexOf('Goal Command')).toBeLessThan(built.text.indexOf('Grow monthly revenue.'));
+      expect(built.text.indexOf('The Wake Loop')).toBeLessThan(built.text.indexOf('Grow monthly revenue.'));
 
       const chat = await SystemPromptBuilder.build(ctx({
         isHeartbeat: false,

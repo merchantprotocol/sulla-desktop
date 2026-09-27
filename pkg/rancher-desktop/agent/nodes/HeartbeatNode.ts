@@ -9,6 +9,7 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
 import { WorkTaskDispatchModel } from '../database/models/WorkTaskDispatchModel';
 import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
+import { buildIdeaLabDigest, IDEA_LAB_PROJECT_SLUG } from '../prompts/heartbeatIdeaLab';
 import { throwIfAborted } from '../services/AbortService';
 import { buildRoutinesDigest } from '../tools/workflow/routines_digest';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
@@ -133,6 +134,19 @@ export class HeartbeatNode extends BaseNode {
     this.injectSubconsciousAssistantContext(state);
     if (!isToolCallLoop) {
       await this.injectHeartbeatProjectReport(state);
+
+      // Every wake is a fresh model session. The idea lab digest is its only
+      // memory of what it already brainstormed and tried, plus a stagnation
+      // alert when it has gone quiet. Failure must never break the cycle.
+      let ideaLab = '';
+      try {
+        ideaLab = await buildIdeaLabDigest();
+      } catch (err) {
+        console.warn(`[HeartbeatNode] Idea lab digest skipped: ${ (err as Error).message }`);
+      }
+      if (ideaLab) {
+        this.mergeHeartbeatContextBlock(state, `\n\n<idea_lab>\n${ ideaLab }\n</idea_lab>`, 'idea_lab');
+      }
     }
 
     // Inject the deterministic, zero-LLM routine-stewardship digest (issue
@@ -708,26 +722,39 @@ export class HeartbeatNode extends BaseNode {
   ): Promise<void> {
     if (outcome.status !== 'done' && outcome.status !== 'blocked') return;
 
-    const snapshot = (state.metadata as any).heartbeatProjectsSnapshot as HeartbeatProjectsSnapshot | undefined;
-    if (!snapshot?.taskId) return;
+    // One nudge per wake. A second idle DONE ends the wake rather than
+    // looping forever; the idea lab stagnation alert carries the pressure
+    // into the next wake.
+    const metadata = state.metadata as any;
+    if (metadata.heartbeatIdleGuardFired) return;
 
     try {
-      const [task, comments] = await Promise.all([
-        WorkItemsModel.getTask(snapshot.taskId),
-        WorkItemsModel.listComments(snapshot.taskId),
-      ]);
-      if (!task) return;
+      const wakeStartedMs = Number(metadata.heartbeatWakeStartedMs) || 0;
+      const snapshot = metadata.heartbeatProjectsSnapshot as HeartbeatProjectsSnapshot | undefined;
+      const sinceMs = wakeStartedMs || snapshot?.capturedAtMs || 0;
+      if (!sinceMs) return;
 
-      const taskMoved =
-        task.status !== snapshot.status ||
-        (task.assignee || null) !== snapshot.assignee ||
-        task.last_moved_at !== snapshot.lastMovedAt;
-      const commentAdded = comments.length > snapshot.commentCount ||
-        comments.some(comment => Date.parse(comment.created_at) >= snapshot.capturedAtMs);
+      // Any Heartbeat-authored Projects write this wake counts: an idea lab
+      // entry, a new task, a move, or a comment. Requiring a comment on the
+      // hydrated task instead forced "still waiting" notes on unchanged work.
+      const [latest] = await WorkItemsModel.listRecentActivity({ author: 'heartbeat', limit: 1 });
+      if (latest?.activity_at && Date.parse(latest.activity_at) >= sinceMs) return;
 
-      if (taskMoved || commentAdded) return;
+      if (snapshot?.taskId) {
+        // Writes that forgot the 'heartbeat' actor still count on the
+        // hydrated task itself.
+        const [task, comments] = await Promise.all([
+          WorkItemsModel.getTask(snapshot.taskId),
+          WorkItemsModel.listComments(snapshot.taskId),
+        ]);
+        if (task && (task.status !== snapshot.status || (task.assignee || null) !== snapshot.assignee)) return;
+        const taskComments = comments || [];
+        if (taskComments.length > snapshot.commentCount) return;
+        if (taskComments.some(comment => Date.parse(comment.created_at) >= sinceMs)) return;
+      }
 
-      const warning = `Projects bookkeeping missing for selected task ${ snapshot.taskId }: sulla project/add_task_comment with author 'heartbeat' or sulla project/update_task with actor 'heartbeat' must run before DONE/BLOCKED. Continuing one more cycle to record progress.`;
+      metadata.heartbeatIdleGuardFired = true;
+      const warning = `This wake has no durable movement yet. Do not end on "nothing changed": brainstorm fresh ideas, run one real reversible experiment, and record it in the idea lab (Projects slug '${ IDEA_LAB_PROJECT_SLUG }', actor 'heartbeat') before ending.`;
       outcome.status = 'continue';
       outcome.summary = warning;
       outcome.statusReport = warning;

@@ -12,58 +12,58 @@
  * turning the manual live-acceptance gate into an automatic signal.
  */
 
-/** Phrases the deployed continuous-operator heartbeat prompt MUST contain. */
+/** Phrases the deployed Heartbeat prompt MUST contain. */
 export const HEARTBEAT_REQUIRED_PHRASES = [
-  // Continuous-operator posture (#587): whole-portfolio work, no per-wake cap.
-  'not a one-task worker',
-  'does not cap you at one item per wake',
-  'Never end a wake idle',
-  // Executive-control-plane doctrine (#673/#675). A deployed prompt missing
-  // any of these has lost its authority boundary, not merely been reworded.
-  'Autonomous Executive Control Plane',
-  'Unblock Ladder',
+  // Inventor posture (2026-09-27): the wake is Heartbeat's time to brainstorm
+  // and run real experiments. Idle "nothing changed" wakes are failures.
+  'Heartbeat — Your Time to Think, Invent, and Try',
+  'A wake that ends with "nothing changed" is a failed wake',
+  'The Wake Loop — Think, Choose, Try, Learn',
+  'Write down at least five fresh ideas',
+  'Thinking about an idea is not trying it',
+  'End the wake only after at least one experiment is recorded',
+  // Durable idea memory across fresh sessions.
+  'The Idea Lab — Your Memory Between Wakes',
+  "slug 'heartbeat-idea-lab'",
+  'Read the lab before brainstorming, every wake',
+  'Never move a lab task into the ordered effective execution-entry lane',
+  // Anti-stagnation rules.
+  'No Idle Wakes',
+  'A focus directive from your Human sets priority, not a cage',
+  "protect their attention, not your activity",
+  'idle wakes in disguise',
+  'stagnation alert',
+  // Goals from the install's north star.
+  'The Heartbeat Goal section carries the north star for this install',
+  'The north star never widens your authority',
+  'A wake ending is a pause, not a stop',
+  // Authority boundary. A deployed prompt missing any of these has lost its
+  // gate, not merely been reworded.
   'Two-Door Rule',
-  'Boot From the Control Plane',
+  '**Irreversible / high-blast:** stage fully, then ask once',
+  'Never push to main',
+  'Design every experiment to fit the reversible door',
+  // Single-owner conveyor.
   'Projects project-state is your only durable agenda',
-  'Single-Owner Projects Conveyor',
+  'RETIRED',
+  'Every state or concern has exactly one owner',
   'protected planning routine',
   'protected execution routine',
   'protected review routine',
   'durable wait monitor',
   'deterministic recovery',
-  'If an owner capability is unavailable',
-  'record a systemic capability exception',
-  'Do not silently assume ownership',
-  'Executive Portfolio Loop',
-  'The Prospector',
-  'Prospecting is **verify-and-route**',
-  'Routine Stewardship',
-  'Durable Movement Per Cycle',
-  'Write every material outcome back to Projects',
-  'never let install-local Markdown replace or append to it',
-  "never flip 'heartbeatEnabled'",
   'create a second dispatch, planning, review, custody, wait, or recovery path',
-  'Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback',
-  'Repeated failures of the same owner capability update one existing systemic recovery item',
-  'Autonomous Conveyor Supervision + Work Discovery',
-  "sulla project/conveyor_health",
   'Never conceal a broken conveyor by manually doing the stranded task',
-  'Never flip Heartbeat to make the dispatcher run',
-  'newly discovered goal-aligned work entered its real planning path',
-  'Notify once when the gate is created or materially changes',
-  'Projects Comment Hygiene — Delta or Silence',
-  'Projects comments are durable audit evidence, not a heartbeat transcript',
-  'If the state and evidence are unchanged, write nothing',
+  "Resolve every task's effective lane and semantic role",
+  // Comment hygiene without the silence trap.
+  'Never post "still blocked," "still waiting," or "unchanged."',
   'One material event gets one concise comment',
-  // Goal-driven operation: choose the right goals from the install's north
-  // star and pursue them across wakes until verified accomplished.
-  'Goal Command — Choose the Right Goals, Then Finish Them',
-  'The Heartbeat Goal section carries the north star for this install',
-  'The north star never widens your authority',
-  'Do not stop until it is accomplished',
-  'A wake ending is a pause, not a stop',
+  'Never brief that nothing changed',
+  'Notify once when a decision is created or materially changes',
   // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.
   'This Prompt Is Frozen',
+  'never let install-local Markdown replace or append to it',
+  "Never flip 'heartbeatEnabled'",
 ] as const;
 
 /**
@@ -94,6 +94,12 @@ export const HEARTBEAT_FORBIDDEN_PHRASES = [
   'reclaim healthy leases based only on time',
   'perform core-routine state transitions directly',
   'one task per wake',
+  // The pre-2026-09-27 control-plane doctrine taught Heartbeat that an
+  // unchanged board meant writing nothing and ending the wake, which produced
+  // hours of "nothing changed this wake" loops. It must not come back.
+  'Projects Comment Hygiene — Delta or Silence',
+  'If the state and evidence are unchanged, write nothing',
+  'Heartbeat must never:',
 ] as const;
 
 export interface HeartbeatInvariantResult {
