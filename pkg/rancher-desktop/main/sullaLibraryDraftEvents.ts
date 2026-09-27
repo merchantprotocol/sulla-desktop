@@ -31,7 +31,7 @@ import Logging from '@pkg/utils/logging';
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
-const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
+const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 const MAX_TEXT_FILE_BYTES = 1 * 1024 * 1024;   // 1 MB per file on fork
 const MAX_FILES_ON_FORK = 2_000;
 

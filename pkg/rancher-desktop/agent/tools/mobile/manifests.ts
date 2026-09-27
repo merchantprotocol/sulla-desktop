@@ -6,7 +6,7 @@ import type { ToolManifest } from '../registry';
  * leads, and messages without picking up the phone.
  *
  * All requests use the user's mobile JWT from vault `sulla-cloud/api_token`.
- * Base URL defaults to https://sulla-workers.jonathon-44b.workers.dev, can
+ * Base URL defaults to https://sulla-workers.merchantprotocol.workers.dev, can
  * be overridden via vault `sulla-cloud/mobile_api_url`.
  */
 export const mobileToolManifests: ToolManifest[] = [

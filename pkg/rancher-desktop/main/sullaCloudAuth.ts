@@ -31,7 +31,7 @@ import { runOAuthFlow } from './sullaOAuthService';
 
 const console = Logging.background;
 
-const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
+const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 const INTEGRATION_ID = 'sulla-cloud';
 
 // Legacy setting keys — cleared on first migration pass.

@@ -40,7 +40,7 @@ import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
-const RELAY_URL = 'wss://sulla-workers.jonathon-44b.workers.dev';
+const RELAY_URL = 'wss://sulla-workers.merchantprotocol.workers.dev';
 // Local WebSocket channel that BackendGraphWebSocketService watches for
 // mobile-originated chats. Must match the constant in that file.
 const MOBILE_RELAY_CHANNEL = 'mobile-relay';

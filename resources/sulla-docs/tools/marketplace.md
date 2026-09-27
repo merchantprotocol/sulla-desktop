@@ -7,7 +7,7 @@ Marketplace kinds: `skill`, `function`, `routine` (alias `workflow`), `recipe`, 
 
 ## How it talks to the cloud
 
-- API: Sulla Cloud workers (`https://sulla-workers.jonathon-44b.workers.dev/marketplace/...`), the same host the Marketplace tab uses.
+- API: Sulla Cloud workers (`https://sulla-workers.merchantprotocol.workers.dev/marketplace/...`), the same host the Marketplace tab uses.
 - **Reads need no sign-in:** `search`, `info`, `download`, `update` and `diff` work signed out.
 - **Writes need a Sulla Cloud session:** `publish`, `unpublish` and `list_published`. The user signs in from the app (Marketplace tab or My Profile). There is no vault token. If the tools say "Sign in to Sulla Cloud", send the user there with `sulla ui/open_tab '{"mode":"marketplace"}'`.
 - Publishing is reviewed. A new submission is **pending** until an admin approves it, then it goes live.

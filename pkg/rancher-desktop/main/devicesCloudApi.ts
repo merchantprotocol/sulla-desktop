@@ -14,7 +14,7 @@ import { getDesktopDeviceMetadata, getDesktopDeviceId } from './deviceIdentity';
 
 const console = Logging.background;
 
-const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
+const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 const HEARTBEAT_INTERVAL_MS = 45_000;
 
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;

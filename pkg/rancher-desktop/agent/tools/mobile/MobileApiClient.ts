@@ -9,7 +9,7 @@
  * - Auth: vault `sulla-cloud` → `api_token` (JWT — same one mobile uses).
  */
 
-const DEFAULT_API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
+const DEFAULT_API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 
 export class MobileApiClient {
   private baseUrlPromise: Promise<string> | null = null;
