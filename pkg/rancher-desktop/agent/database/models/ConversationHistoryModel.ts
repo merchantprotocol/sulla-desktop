@@ -317,6 +317,29 @@ export class ConversationHistoryModel {
   }
 
   /**
+   * Point existing history rows at the chat thread they display. Chat rows are
+   * keyed by tab id, but the transcript lives in chat_messages under the
+   * renderer's thread id — without this link, reopening from History can only
+   * find the transcript through a renderer localStorage pointer. UPDATE-only
+   * (never resurrects a cleared row) and leaves last_active_at alone so a
+   * backfill doesn't reorder History.
+   */
+  static async linkThreads(links: { id: string; threadId: string }[]): Promise<void> {
+    const valid = links.filter(l => l?.id && l?.threadId);
+    if (valid.length === 0) return;
+    try {
+      await postgresClient.query(`
+        UPDATE ${ ConversationHistoryModel.TABLE } AS h
+        SET thread_id = l.thread_id
+        FROM unnest($1::text[], $2::text[]) AS l(id, thread_id)
+        WHERE h.id = l.id AND h.thread_id IS DISTINCT FROM l.thread_id
+      `, [valid.map(l => l.id), valid.map(l => l.threadId)]);
+    } catch (err) {
+      console.error('[ConversationHistoryModel] Failed to link threads:', err);
+    }
+  }
+
+  /**
    * Lookup by thread_id.
    */
   static async getByThread(threadId: string): Promise<ConversationHistoryRecord | null> {

@@ -148,6 +148,7 @@ import { useStartupProgress } from './agent/useStartupProgress';
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import { useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
+import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const route = useRoute();
@@ -466,14 +467,16 @@ function onNavigateTab(ev: Event) {
 }
 
 function onHistoryNavigate(_event: any, ...args: any[]) {
-  const entry = args[0] as { id: string; type: string; url?: string; title?: string; tab_id?: string };
+  const entry = args[0] as { id: string; type: string; url?: string; title?: string; tab_id?: string; thread_id?: string };
   if (!entry) return;
   if (entry.type === 'browser' && entry.url && entry.url !== 'about:blank') {
     const tab = createTab(entry.url);
 
     router.push(`/Browser/${ tab.id }`);
   } else {
-    const tab = createTab('about:blank', { mode: 'chat' as any });
+    // Reopen the conversation in its original tab — a fresh tab has no
+    // thread and always rendered a blank new chat.
+    const tab = restoreChatFromHistory(entry);
 
     router.push(`/Browser/${ tab.id }`);
   }

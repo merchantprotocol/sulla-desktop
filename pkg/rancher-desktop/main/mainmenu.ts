@@ -499,11 +499,12 @@ function historyEntryClick(entry: ConversationHistoryRecord): () => void {
 
     if (existing) {
       sendWhenReady(existing, 'conversation-history:navigate', {
-        id:     entry.id,
-        type:   entry.type,
-        url:    entry.url,
-        title:  entry.title,
-        tab_id: entry.tab_id,
+        id:        entry.id,
+        type:      entry.type,
+        url:       entry.url,
+        title:     entry.title,
+        tab_id:    entry.tab_id,
+        thread_id: entry.thread_id,
       });
     } else {
       openMain();
@@ -513,11 +514,12 @@ function historyEntryClick(entry: ConversationHistoryRecord): () => void {
         if (window) {
           clearInterval(poll);
           sendWhenReady(window, 'conversation-history:navigate', {
-            id:     entry.id,
-            type:   entry.type,
-            url:    entry.url,
-            title:  entry.title,
-            tab_id: entry.tab_id,
+            id:        entry.id,
+            type:      entry.type,
+            url:       entry.url,
+            title:     entry.title,
+            tab_id:    entry.tab_id,
+            thread_id: entry.thread_id,
           });
         }
       }, 50);

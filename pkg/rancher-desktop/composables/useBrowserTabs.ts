@@ -328,14 +328,20 @@ function recordTabToHistory(tab: BrowserTab): void {
     // Skip welcome/blank tabs that aren't chat
     if (tab.mode === 'welcome' || (tab.url === 'about:blank' && tab.mode !== 'chat')) return;
 
+    // Include the durable controller thread id whenever this tab already has
+    // one. The history row must be self-contained; relying only on a later
+    // best-effort link event loses the transcript when startup or Postgres
+    // races the renderer.
+    const threadId = localStorage.getItem('chat:tab:' + tab.id) || undefined;
     ipcRenderer.send('conversation-history:record', {
-      id:      tab.id,
-      type:    historyType,
-      title:   tab.title,
-      url:     tab.url,
-      favicon: tab.favicon,
-      tab_id:  tab.id,
-      status:  'active',
+      id:        tab.id,
+      type:      historyType,
+      title:     tab.title,
+      url:       tab.url,
+      favicon:   tab.favicon,
+      tab_id:    tab.id,
+      thread_id: threadId,
+      status:    'active',
     });
   } catch {
     // IPC may not be available in non-Electron contexts

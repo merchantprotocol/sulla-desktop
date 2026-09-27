@@ -58,17 +58,24 @@ export function initConversationHistoryIpc(): void {
 
   ipcMain.on('conversation-history:record', (_event, entry) => {
     const input: RecordConversationInput = {
-      id:      entry.id,
-      type:    entry.type,
-      title:   entry.title,
-      url:     entry.url,
-      favicon: entry.favicon,
-      tab_id:  entry.tab_id,
-      status:  entry.status ?? 'active',
+      id:        entry.id,
+      type:      entry.type,
+      thread_id: entry.thread_id,
+      title:     entry.title,
+      url:       entry.url,
+      favicon:   entry.favicon,
+      tab_id:    entry.tab_id,
+      status:    entry.status ?? 'active',
     };
 
     ConversationHistoryModel.recordConversation(input)
       .catch(err => console.error('[ConversationHistoryIpc] Failed to record:', err));
+  });
+
+  ipcMain.on('conversation-history:link-threads', (_event, links: { id: string; threadId: string }[]) => {
+    if (!Array.isArray(links)) return;
+    ConversationHistoryModel.linkThreads(links)
+      .catch(err => console.error('[ConversationHistoryIpc] Failed to link threads:', err));
   });
 
   ipcMain.on('conversation-history:close', (_event, id: string) => {
