@@ -472,7 +472,7 @@ export class HeartbeatService {
 Current time: ${ timeStr }
 Timezone: ${ tz }
 
-Your active projects and goals have been loaded into your recall context. Review them and take meaningful action on the highest-priority next step. Work autonomously until you make concrete progress, then summarize what you accomplished.${ base ? `\n\n${ base }` : '' }`;
+Resume your goals. Re-measure each active goal against its success metric in Projects (or choose the right goals from your north star if none are recorded), take the highest-leverage action that closes the largest gap, and keep working until the goals are accomplished or every remaining step is owned by another lifecycle owner or held at a true authority gate. Ending this wake is a pause, not a stop: record each goal's next milestone before you finish.${ base ? `\n\n${ base }` : '' }`;
 
     return directive;
   }

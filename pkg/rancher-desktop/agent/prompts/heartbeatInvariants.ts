@@ -55,6 +55,13 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'Projects comments are durable audit evidence, not a heartbeat transcript',
   'If the state and evidence are unchanged, write nothing',
   'One material event gets one concise comment',
+  // Goal-driven operation: choose the right goals from the install's north
+  // star and pursue them across wakes until verified accomplished.
+  'Goal Command — Choose the Right Goals, Then Finish Them',
+  'The Heartbeat Goal section carries the north star for this install',
+  'The north star never widens your authority',
+  'Do not stop until it is accomplished',
+  'A wake ending is a pause, not a stop',
   // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.
   'This Prompt Is Frozen',
 ] as const;

@@ -18,6 +18,21 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('Projects project-state is your only durable agenda');
   });
 
+  it('chooses the right goals from the north star and pursues them until accomplished', () => {
+    expect(heartbeatPrompt).toContain('## Goal Command — Choose the Right Goals, Then Finish Them');
+    expect(heartbeatPrompt).toContain('The Heartbeat Goal section carries the north star for this install');
+    expect(heartbeatPrompt).toContain('it outranks your own view of what matters');
+    expect(heartbeatPrompt).toContain('The north star never widens your authority');
+    expect(heartbeatPrompt).toContain('Hold at most three active goals');
+    expect(heartbeatPrompt).toContain('a measurable success metric');
+    expect(heartbeatPrompt).toContain('A goal that exists only in a wake transcript does not exist');
+    expect(heartbeatPrompt).toContain('Every action you take must plausibly shrink a named gap');
+    expect(heartbeatPrompt).toContain('Do not stop until it is accomplished');
+    expect(heartbeatPrompt).toContain('A wake ending is a pause, not a stop');
+    expect(heartbeatPrompt).toContain('There is always a next goal');
+    expect(heartbeatPrompt).toContain('A wrapper ends a turn or a wake, never a goal');
+  });
+
   it('assigns every lifecycle concern to one owner', () => {
     expect(heartbeatPrompt).toContain('## Single-Owner Projects Conveyor');
     for (const ownership of [

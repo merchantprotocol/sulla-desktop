@@ -24,6 +24,7 @@ import { resolveSullaDocsDir } from '@pkg/agent/utils/sullaPaths';
 import { heartbeatPrompt } from './heartbeat';
 import { ENVIRONMENT_STATIC_PREAMBLE } from './sections/environment';
 import { GOAL_OWNERSHIP_CONTENT } from './sections/goalOwnership';
+import { HEARTBEAT_GOAL_DEFAULT_CONTENT } from './sections/heartbeatGoal';
 import { SOUL_CONTENT } from './sections/soul';
 
 export type CacheStability = 'stable' | 'semi-stable' | 'dynamic';
@@ -127,6 +128,15 @@ export const SYSTEM_PROMPT_SECTION_DEFAULTS: SystemPromptSectionDefault[] = [
     isGenerated:      false,
     enabledByDefault: true,
     resolveContent:   () => heartbeatPrompt,
+  },
+  {
+    id:               'heartbeat_goal',
+    title:            'Heartbeat Goal',
+    priority:         111,
+    cacheStability:   'stable',
+    isGenerated:      false,
+    enabledByDefault: true,
+    resolveContent:   () => HEARTBEAT_GOAL_DEFAULT_CONTENT,
   },
 ];
 
