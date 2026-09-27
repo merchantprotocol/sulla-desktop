@@ -44,10 +44,9 @@
               </span>
             </p>
             <p class="account-hint">
-              Relay <span class="account-relay-state">({{ relayStatus.connected ? 'connected' : 'waiting for mobile' }})</span> —
-              room
-              <code class="account-mono">{{ relayStatus.pairedUserId || cloudStatus.userId }}</code>
+              Phone relay <span class="account-relay-state">({{ relayStatus.connected ? 'connected' : 'waiting for mobile' }})</span>
             </p>
+            <CloudConnectionCard />
             <button
               type="button"
               class="account-action-btn"
@@ -59,6 +58,9 @@
 
           <!-- Signed-out view -->
           <template v-else>
+            <p class="account-hint">
+              Sign in to Sulla Cloud to reach this computer from the web and your phone. Sulla stays connected while you're signed in; nothing syncs unless you turn it on.
+            </p>
             <div class="account-tabs">
               <button
                 type="button"
@@ -146,7 +148,80 @@
               </div>
             </template>
 
-            <!-- Email flow -->
+            <!-- Email code flow (default): signs in or creates the account -->
+            <template v-else-if="cloudTab === 'email' && emailMode === 'code'">
+              <div class="account-field">
+                <label class="account-label">Email</label>
+                <input
+                  v-model="emailInput"
+                  type="email"
+                  placeholder="you@example.com"
+                  class="account-input"
+                  autocomplete="email"
+                  :disabled="emailCodeSent"
+                >
+              </div>
+              <div
+                v-if="emailCodeSent"
+                class="account-field"
+              >
+                <label class="account-label">Code from the email</label>
+                <input
+                  v-model="emailCode"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  maxlength="7"
+                  placeholder="123456"
+                  class="account-input"
+                >
+              </div>
+              <p
+                v-if="cloudError"
+                class="account-error"
+              >
+                {{ cloudError }}
+              </p>
+              <div class="account-btn-row">
+                <button
+                  v-if="!emailCodeSent"
+                  type="button"
+                  class="account-save-btn"
+                  :disabled="busy || !emailInput"
+                  @click="sendEmailCode"
+                >
+                  {{ busy ? 'Sending...' : 'Email me a code' }}
+                </button>
+                <template v-else>
+                  <button
+                    type="button"
+                    class="account-save-btn"
+                    :disabled="busy || !emailCode"
+                    @click="verifyEmailCode"
+                  >
+                    {{ busy ? 'Verifying...' : 'Verify' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="account-action-btn"
+                    :disabled="busy"
+                    @click="emailCodeSent = false; emailCode = ''"
+                  >
+                    Use a different email
+                  </button>
+                </template>
+                <button
+                  type="button"
+                  class="account-action-btn"
+                  :disabled="busy"
+                  @click="emailMode = 'login'"
+                >
+                  Use a password instead
+                </button>
+              </div>
+            </template>
+
+            <!-- Email + password flow -->
             <template v-else-if="cloudTab === 'email'">
               <div class="account-field">
                 <label class="account-label">Email</label>
@@ -202,6 +277,14 @@
                   @click="emailMode = emailMode === 'login' ? 'register' : 'login'"
                 >
                   {{ emailMode === 'login' ? 'Register' : 'Back to sign in' }}
+                </button>
+                <button
+                  type="button"
+                  class="account-action-btn"
+                  :disabled="busy"
+                  @click="emailMode = 'code'"
+                >
+                  Email me a code instead
                 </button>
               </div>
             </template>
@@ -446,6 +529,7 @@ import { useRouter } from 'vue-router';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import CloudConnectionCard from '@pkg/components/account/CloudConnectionCard.vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const router = useRouter();
@@ -491,7 +575,7 @@ const cloudStatus = ref<CloudStatus>({
   contractorCount:    0,
 });
 const relayStatus = ref<RelayStatus>({ pairedUserId: '', connected: false });
-const cloudTab = ref<'phone' | 'email' | 'apple'>('phone');
+const cloudTab = ref<'phone' | 'email' | 'apple'>('email');
 const cloudError = ref('');
 const busy = ref(false);
 
@@ -502,7 +586,9 @@ const otpCode = ref('');
 const emailInput = ref('');
 const emailPassword = ref('');
 const emailName = ref('');
-const emailMode = ref<'login' | 'register'>('login');
+const emailMode = ref<'code' | 'login' | 'register'>('code');
+const emailCodeSent = ref(false);
+const emailCode = ref('');
 
 const appleToken = ref(''); // kept for compat with existing paste-token IPC
 
@@ -616,6 +702,39 @@ function resetPhoneFlow() {
   otpSent.value = false;
   otpCode.value = '';
   cloudError.value = '';
+}
+
+async function sendEmailCode() {
+  cloudError.value = '';
+  busy.value = true;
+  try {
+    const res = await ipcRenderer.invoke('sulla-cloud:email-code-start', emailInput.value.trim());
+    if (!res.ok) {
+      cloudError.value = res.error || 'Could not send the code.';
+      return;
+    }
+    emailCodeSent.value = true;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function verifyEmailCode() {
+  cloudError.value = '';
+  busy.value = true;
+  try {
+    const res = await ipcRenderer.invoke('sulla-cloud:email-code-verify', emailInput.value.trim(), emailCode.value.trim());
+    cloudStatus.value = res.status;
+    if (!res.ok) {
+      cloudError.value = res.error || 'That code did not work.';
+      return;
+    }
+    emailCode.value = '';
+    emailCodeSent.value = false;
+    await refreshCloudStatus();
+  } finally {
+    busy.value = false;
+  }
 }
 
 async function emailSubmit() {

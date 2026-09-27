@@ -1,6 +1,8 @@
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import { BaseTool, ToolResponse } from '../base';
 
+import { isProtectedSetting } from '@pkg/main/cloud/cloudSettings';
+
 /**
  * Authoritative settings write. Goes through SullaSettingsModel so
  * Postgres and the Redis cache stay in sync. Do NOT use redis_hset
@@ -17,6 +19,15 @@ export class SettingsSetWorker extends BaseTool {
       return {
         successBoolean: false,
         responseString: 'property is required.',
+      };
+    }
+    if (isProtectedSetting(property)) {
+      // Cloud sync / remote access switches are the owner's decision and are
+      // changed only in Settings → Sulla Cloud. An agent (possibly steered by
+      // untrusted content) must not be able to turn on uploads or remote control.
+      return {
+        successBoolean: false,
+        responseString: `"${ property }" is a Sulla Cloud security setting. Only the owner can change it, in Settings → Sulla Cloud.`,
       };
     }
     if (!('value' in (input || {}))) {

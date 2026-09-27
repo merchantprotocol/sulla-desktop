@@ -10,6 +10,7 @@ import { initTabsIpc } from './browserTabs/tabsIpc';
 import { initAgentsIpc } from './agentsIpc';
 import { initClaudeCodeTestEvents } from './claudeCodeTest';
 import { initClaudeOAuthEvents } from './claudeOAuth';
+import { initCloudConnectionEvents } from './cloud/cloudLifecycle';
 import { initOpenAIOAuthEvents } from './openaiOAuth';
 import { initIntegrationOAuthEvents } from './integrationOAuth';
 import { initDesktopRelayEvents } from './desktopRelay';
@@ -78,6 +79,7 @@ export function initSullaEvents(): void {
   initIntegrationOAuthEvents();
   initClaudeCodeTestEvents();
   initDesktopRelayEvents();
+  initCloudConnectionEvents();
   initSullaCloudAuthEvents();
 
   // ─────────────────────────────────────────────────────────────
@@ -919,6 +921,12 @@ export function initSullaEvents(): void {
       getDesktopRelayClient().handleResume();
     } catch (err) {
       console.warn('[Power] Failed to resume desktop relay:', err);
+    }
+    try {
+      const { handleSystemResume } = require('@pkg/main/cloud/cloudLifecycle');
+      handleSystemResume();
+    } catch (err) {
+      console.warn('[Power] Failed to resume secure desktop channel:', err);
     }
 
     // Refresh device presence immediately so mobile's device list shows this
