@@ -29,6 +29,15 @@ import { getActiveContractorId } from '@pkg/main/sullaCloudAuth';
 
 import { enqueueSyncOp } from './syncQueue';
 
+async function conversationSyncEnabled(): Promise<boolean> {
+  try {
+    const { getCloudPreferences } = await import('@pkg/main/cloud/cloudSettings');
+    return (await getCloudPreferences()).conversations;
+  } catch {
+    return false;
+  }
+}
+
 function isPrimaryChatConversation(conversationId: string): boolean {
   // Primary graph chats use `thread_<ts>_<n>` ids. Anything else — workflow
   // traces, subconscious agents, observation runs — is internal and should
@@ -150,6 +159,10 @@ async function writeTurnToSyncLog(input: MirrorInput): Promise<void> {
        ON CONFLICT (id) DO NOTHING`,
       [msgId, contractorId, conversationId, role, content, ts],
     );
+
+    // Local history is always kept. Cloud push only when the owner turned
+    // on conversation sync (Settings → Sulla Cloud; off by default).
+    if (!(await conversationSyncEnabled())) return;
 
     // Enqueue for sync push so mobile and the cloud see the turn.
     if (role !== 'tool') {

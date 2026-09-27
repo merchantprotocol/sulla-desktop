@@ -1,3 +1,4 @@
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { ApprovalService, type UserQuestion } from '@pkg/agent/services/ApprovalService';
 import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
@@ -52,6 +53,33 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
       WorkLaneDefinitionModel.resolveEffective(project.id),
     ]);
     return { project, tasks, lanes, truncated: tasks.length >= 5000 };
+  }
+  // Read-only history for the cloud dashboard. Served live from this
+  // desktop, so it works even when conversation sync to the cloud is off.
+  case 'conversations.list': {
+    const limit = Math.min(Math.max(Number(params.limit) || 50, 1), 200);
+    const conversations = await postgresClient.query(
+      `SELECT id, title, status, last_message_at, last_message_preview, created_at
+         FROM claude_conversations
+        WHERE deleted_at IS NULL
+        ORDER BY last_message_at DESC NULLS LAST
+        LIMIT $1`,
+      [limit],
+    );
+    return { conversations };
+  }
+  case 'conversations.messages': {
+    if (typeof params.conversationId !== 'string' || !params.conversationId || params.conversationId.length > 200) throw new Error('Conversation required');
+    const limit = Math.min(Math.max(Number(params.limit) || 200, 1), 1000);
+    const rows = await postgresClient.query(
+      `SELECT id, role, content, created_at FROM (
+         SELECT id, role, content, created_at FROM claude_messages
+          WHERE conversation_id = $1 AND deleted_at IS NULL
+          ORDER BY created_at DESC LIMIT $2
+       ) recent ORDER BY created_at ASC`,
+      [params.conversationId, limit],
+    );
+    return { conversationId: params.conversationId, messages: rows };
   }
   case 'heartbeat.read':
     return {
