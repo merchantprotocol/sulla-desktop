@@ -3,12 +3,12 @@
  * because it needs the local Sulla Postgres. It creates and drops its own
  * scratch database and never touches the `sulla` database.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Pool } from 'pg';
 
 import type { VaultRowDb } from '../VaultBackupService';

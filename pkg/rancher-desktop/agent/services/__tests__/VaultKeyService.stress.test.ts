@@ -3,12 +3,13 @@
  * against a real temp directory and real crypto; only Electron's safeStorage
  * (the OS keychain) is faked.
  */
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const keychain = { available: true };
 const keychainStub = {

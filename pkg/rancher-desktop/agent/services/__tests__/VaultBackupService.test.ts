@@ -2,11 +2,12 @@
  * Loss-protection tests: snapshots must be ciphertext-only, self-contained,
  * and restorable after total loss of the machine's vault files and database.
  */
-import { afterAll, afterEach, beforeEach, expect, it, jest } from '@jest/globals';
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+
+import { afterAll, afterEach, beforeEach, expect, it, jest } from '@jest/globals';
 
 import type { RestoreMode, RestoreResult, VaultRow, VaultRowStore, VaultBackupService as VaultBackupServiceType } from '../VaultBackupService';
 
