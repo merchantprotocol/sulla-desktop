@@ -12,7 +12,7 @@ import {
   type WakeTarget,
 } from './claudeBackgroundTasks';
 import { buildClaudeLaunchCommand } from './claudeLaunchCommand';
-import { BASE_DISALLOWED_TOOLS, SUBCONSCIOUS_NATIVE_TOOL_DENYLIST, isObserverSpawn } from './claudeToolPolicy';
+import { disallowedToolsFor } from './claudeToolPolicy';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
@@ -53,7 +53,7 @@ const perf = Logging.perf;
  * (or ANTHROPIC_API_KEY) and stay out of its auth lifecycle.
  */
 
-// Native-tool policy (BASE_DISALLOWED_TOOLS + SUBCONSCIOUS_NATIVE_TOOL_DENYLIST)
+// Native-tool policy (disallowedToolsFor: base + observer/worker denylists)
 // lives in claudeToolPolicy.ts so tests can assert it without importing this
 // service's full dependency graph. Includes the zj21 sub-agent spawn lockdown:
 // Task/Agent are disallowed on every spawn — delegation goes through
@@ -252,11 +252,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
     mcpConfigPath:   string | null;
     streamJsonInput: boolean;
     /**
-     * Observer spawn: extend --disallowedTools with the native actor toolset
-     * (Read/Write/Edit/Bash/…) so a subconscious pass can only observe and
-     * write memory, never touch the host. See SUBCONSCIOUS_NATIVE_TOOL_DENYLIST.
+     * Full --disallowedTools value for this spawn's role (disallowedToolsFor):
+     * observers lose the native actor toolset (Read/Write/Edit/Bash/…),
+     * worker sub-agents lose detached-work tools (Monitor/ScheduleWakeup/…).
      */
-    subconscious?:   boolean;
+    disallowedTools: string;
   }): string[] {
     // POSIX single-quote escape. Single-quoted strings are literal in sh, so
     // no backtick/$VAR/! expansion can fire against untrusted text.
@@ -291,9 +291,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
       //
       // Subconscious observers additionally lose the native actor tools
       // (Read/Write/Edit/Bash/…) — see SUBCONSCIOUS_NATIVE_TOOL_DENYLIST.
-      '--disallowedTools', p.subconscious
-        ? `${ BASE_DISALLOWED_TOOLS } ${ SUBCONSCIOUS_NATIVE_TOOL_DENYLIST }`
-        : BASE_DISALLOWED_TOOLS,
+      // Worker sub-agents additionally lose detached-work tools (Monitor,
+      // ScheduleWakeup, cron, …) — see WORKER_DETACHED_WORK_DENYLIST.
+      '--disallowedTools', p.disallowedTools,
     ];
     // stream-json input lets the process boot before the prompt exists (the
     // prompt is fed as a JSON user message on stdin by the caller).
@@ -349,8 +349,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
         }
       } catch { /* continue without sulla-native tools */ }
 
-      const subconscious = isObserverSpawn(state.metadata as any);
-      const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, streamJsonInput: true, subconscious });
+      const disallowedTools = disallowedToolsFor(state.metadata as any);
+      const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, streamJsonInput: true, disallowedTools });
       const proc = childProcess.spawn(paths.limactl, args, {
         env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
       });
@@ -1020,9 +1020,10 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // native actor tools so they can only observe + write memory, never act on
     // the host. Keyed off the resolved model slot (isObserverSpawn), NOT bare
     // isSubAgent — workflow-node agents are sub-agents stamped 'primary' and
-    // must keep Bash/Read to do their work.
-    const subconscious = isObserverSpawn(options.state?.metadata as any);
-    const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, streamJsonInput: speculative, subconscious });
+    // must keep Bash/Read to do their work. Those workers instead lose the
+    // detached-work tools, since nothing they arm can reach them after return.
+    const disallowedTools = disallowedToolsFor(options.state?.metadata as any);
+    const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, streamJsonInput: speculative, disallowedTools });
 
     const cleanupMcp = () => {
       if (mcpSession) {
