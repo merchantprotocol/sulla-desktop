@@ -28,12 +28,22 @@
  * the 15s retry loop, where a direct fetch would silently drop the turn.
  */
 
+import path from 'node:path';
+
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
+import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
+import {
+  describeTurnForAgent,
+  normalizeMobileContent,
+  persistMobileAttachments,
+  transcriptText,
+  type NormalizedMobileTurn,
+} from '@pkg/main/mobileRelayContent';
 import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import Logging from '@pkg/utils/logging';
 
@@ -65,7 +75,9 @@ interface IncomingMessage {
   requestId?: string;
   method?: string;
   params?: Record<string, unknown>;
-  messages?:       Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
+  // content is a string, or text/image/document parts when the phone
+  // attached files — see mobileRelayContent.ts.
+  messages?:       { role: 'user' | 'assistant' | 'system'; content: unknown }[];
   conversationId?: string;
   /**
    * When the mobile picks a specific desktop to route to (AI Assistant →
@@ -581,8 +593,8 @@ export class DesktopRelayClient {
     // Mobile sent a mid-run message. Inject it into the running graph state
     // without aborting — the agent picks it up at the next loop boundary.
     const lastUser = (msg.messages ?? []).slice().reverse().find((m: any) => m.role === 'user');
-    const content = (lastUser?.content ?? '').trim();
-    if (!content) return;
+    const turn = normalizeMobileContent(lastUser?.content);
+    if (!turn.text && !turn.files.length) return;
     const conversationId = msg.conversationId;
     if (!conversationId) {
       console.warn('[DesktopRelay] Rejecting inject without conversationId');
@@ -590,15 +602,21 @@ export class DesktopRelayClient {
       return;
     }
     console.log(`[DesktopRelay] Inject received for conversationId=${ conversationId ?? '(none)' }`);
+    const savedPaths = await this.saveMobileAttachments(conversationId, msg.userMessageId, turn);
     // Injected mid-run turns are part of the conversation record too.
-    await this.scribeTurn(conversationId, 'user', content, { id: msg.userMessageId });
+    await this.scribeTurn(conversationId, 'user', transcriptText(turn), { id: msg.userMessageId });
     const wsService = getWebSocketClientService();
     wsService.send(MOBILE_RELAY_CHANNEL, {
       type:      'inject_message',
       data:      {
-        content,
+        content:  describeTurnForAgent(turn, savedPaths),
         threadId: conversationId,
-        metadata: { source: 'mobile-relay', inputSource: 'keyboard', conversationId },
+        metadata: {
+          source:      'mobile-relay',
+          inputSource: 'keyboard',
+          conversationId,
+          ...(turn.images.length ? { attachments: turn.images } : {}),
+        },
       },
       timestamp: Date.now(),
     });
@@ -646,8 +664,8 @@ export class DesktopRelayClient {
     // payload, pick the last user turn — older messages are already in the
     // thread on the desktop side.
     const lastUser = [...messages].reverse().find(m => m.role === 'user');
-    const content = (lastUser?.content ?? '').trim();
-    if (!content) {
+    const turn = normalizeMobileContent(lastUser?.content);
+    if (!turn.text && !turn.files.length) {
       console.warn('[DesktopRelay] Chat request had no user content; ignoring');
       this.sendChatFrame(conversationId, { type: 'error', reason: 'empty_user_message', userMessageId: msg.userMessageId });
       return;
@@ -661,10 +679,13 @@ export class DesktopRelayClient {
 
     this.ensureMobileChannelBridge();
 
+    const savedPaths = await this.saveMobileAttachments(conversationId, msg.userMessageId, turn);
+
     // Scribe the user turn FIRST — the sync log is the authoritative record,
     // and the turn must survive even if the agent dispatch or the socket
-    // fails right after this point.
-    await this.scribeTurn(conversationId, 'user', content, { id: msg.userMessageId });
+    // fails right after this point. An attachment-only turn is scribed as a
+    // file list so the duplicate check above still recognises a retry.
+    await this.scribeTurn(conversationId, 'user', transcriptText(turn), { id: msg.userMessageId });
 
     // ACK after the user turn is persisted so mobile can clear its outbox
     // without risking a socket-only acknowledgement.
@@ -674,12 +695,13 @@ export class DesktopRelayClient {
     wsService.send(MOBILE_RELAY_CHANNEL, {
       type: 'user_message',
       data: {
-        content,
+        content:  describeTurnForAgent(turn, savedPaths),
         threadId: conversationId,
         metadata: {
           source:         'mobile-relay',
           inputSource:    'keyboard',
           conversationId,
+          ...(turn.images.length ? { attachments: turn.images } : {}),
         },
       },
       timestamp: Date.now(),
@@ -985,6 +1007,22 @@ export class DesktopRelayClient {
    * skipped — in that case the agent runs under a self-created `thread_…`
    * id and the SullaLogger mirror is the scribe instead.
    */
+  /** Save phone attachments where agent tools can open them; never throws. */
+  private async saveMobileAttachments(conversationId: string, messageId: string | undefined, turn: NormalizedMobileTurn): Promise<string[]> {
+    if (!turn.files.length) return [];
+    try {
+      return await persistMobileAttachments(
+        path.join(resolveSullaHomeDir(), 'uploads', 'mobile'),
+        conversationId,
+        messageId || String(Date.now()),
+        turn.files,
+      );
+    } catch (err) {
+      console.warn(`[DesktopRelay] Failed to save mobile attachments for ${ conversationId }:`, err);
+      return [];
+    }
+  }
+
   private async scribeTurn(conversationId: string | undefined, role: 'user' | 'assistant' | 'tool', content: string, opts?: { id?: string, ts?: string }): Promise<void> {
     if (!conversationId || !content.trim()) return;
     await scribeRelayTurn({
