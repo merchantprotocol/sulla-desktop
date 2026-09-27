@@ -4,12 +4,12 @@ import { createJob, completeJob, failJob, getJobAbortSignal } from './jobRegistr
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 import { combineAborts } from '../../services/AbortService';
 import { findAgentDir } from '../../utils/sullaPaths';
+import { parentGraphWakeMessageType, parentGraphWakeRoute } from '../../services/AgentGraphWake';
 
 import type { AgentJobResult } from './jobRegistry';
 
 const MAX_DEPTH = 3;
 const MAX_TASKS = 10;
-
 interface SpawnTask {
   agentId?:   string;
   /** Alias for agentId — the agent config folder name under ~/sulla/agents/.
@@ -301,7 +301,7 @@ async function wakeParentGraph(
     const content = buildWakeContent(jobId, results, failureReason);
 
     await ws.send(parentChannel, {
-      type: 'user_message',
+      type: parentGraphWakeMessageType(),
       data: {
         content,
         threadId: parentThreadId,
@@ -312,6 +312,7 @@ async function wakeParentGraph(
           origin:      'spawn_agent',
           inputSource: 'system',
           jobId,
+          dispatchTarget: parentGraphWakeRoute(),
         },
       },
     });

@@ -6,6 +6,7 @@ import { saveThreadState } from '../nodes/ThreadStateStore';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 
+import { AGENT_GRAPH_WAKE_TYPE } from './AgentGraphWake';
 import type { AgentGraphState } from '../nodes/Graph';
 import type { Ref } from 'vue';
 
@@ -122,7 +123,7 @@ export class FrontendGraphWebSocketService {
       return;
     }
 
-    if (msg.type !== 'user_message') return;
+    if (msg.type !== 'user_message' && msg.type !== AGENT_GRAPH_WAKE_TYPE) return;
 
     const data = typeof msg.data === 'string' ? { content: msg.data } : (msg.data as any);
     const content = (data?.content ?? '').trim();

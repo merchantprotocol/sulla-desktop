@@ -7,6 +7,7 @@ import { BrowserWindow, ipcMain, webContents } from 'electron';
 import { IpcMessageBus } from '@pkg/agent/services/IpcMessageBus';
 import Logging from '@pkg/utils/logging';
 import { safeSend } from '@pkg/utils/safeSend';
+import { isRendererTargetedAgentGraphWake } from '@pkg/agent/services/AgentGraphWake';
 
 const console = Logging.background;
 
@@ -36,6 +37,16 @@ export function initMessageBusIpc(): void {
 
   // Renderer -> Main: send a message on a channel
   ipcMain.on('message-bus:send', (event, channelId: string, message: any) => {
+    // A background completion created by a renderer must return to the exact
+    // renderer that owns the parent AgentGraph. Normal renderer-originated
+    // messages intentionally exclude their sender from the broadcast; using
+    // that path here strands the parent graph forever.
+    const isRendererWake = isRendererTargetedAgentGraphWake(message);
+    if (isRendererWake) {
+      safeSend(event.sender, 'message-bus:message', channelId, message);
+      return;
+    }
+
     // Dispatch into the main-process bus
     bus.dispatch(channelId, message);
     // Broadcast to other renderer windows (not back to sender)
