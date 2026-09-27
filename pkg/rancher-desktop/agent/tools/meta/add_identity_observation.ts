@@ -1,4 +1,4 @@
-import { IdentityObservationsModel, normalizeIdentityDomain } from '../../database/models/IdentityObservationsModel';
+import { IdentityObservationsModel, normalizeIdentityDomain, normalizeIdentityLevel } from '../../database/models/IdentityObservationsModel';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -7,8 +7,9 @@ import { BaseTool, ToolResponse } from '../base';
  * Inserts or updates a row in the `identity_observations` table — the
  * focused, domain-keyed observation subsystem (human / business / world /
  * agent). If an id is provided, that exact row is updated in place.
- * Otherwise, de-duplication updates a substantially similar active row
- * within the same domain.
+ * Otherwise, an exact/substring match in the same domain is updated, and a
+ * paraphrase (trigram similarity ≥ IDENTITY_DUPLICATE_SIMILARITY) of any
+ * active row in ANY domain is skipped rather than inserted again.
  *
  * Levels are CERTAINTY, not priority:
  *   3 — stated fact (the subject directly told us)
@@ -48,6 +49,26 @@ export class AddIdentityObservationWorker extends BaseTool {
         return {
           successBoolean: true,
           responseString: `Remembering (updated): "${ content }" (id: ${ duplicate.id }, domain: ${ domain }, L${ level })`,
+        };
+      }
+
+      // Fail closed on a bad level before any lookup, so an invalid write
+      // can never be reported as "already remembered".
+      normalizeIdentityLevel(level);
+
+      // Paraphrase gate: the same fact re-worded, or already filed under
+      // another domain, is not a new observation. Skip — never overwrite a
+      // distinct row on a fuzzy match; the writer can update by id if this
+      // is a genuine refinement.
+      const similar = await IdentityObservationsModel.findSimilar(content);
+
+      if (similar) {
+        return {
+          successBoolean: true,
+          responseString: `Already remembered (not added): ${ (similar.similarity * 100).toFixed(0) }% similar to [${ similar.id }] in domain "${ similar.domain }": "${ similar.content.slice(0, 200) }". ` +
+            (similar.domain === domain
+              ? `If the new wording adds something real, update that row by passing id "${ similar.id }".`
+              : `Each fact belongs to exactly one domain — do not duplicate it here.`),
         };
       }
 

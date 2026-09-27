@@ -17,6 +17,7 @@
  */
 
 import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
+import { ConversationKeywordsModel } from '../database/models/ConversationKeywordsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
@@ -24,6 +25,7 @@ import { parseJson } from '../services/JsonParseService';
 import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
 import { sanitizeConversationContext } from '../utils/conversationContext';
 import { formatDateOnly } from '../utils/formatDateOnly';
+import { extractRecallTerms } from '../utils/recallTerms';
 
 import Logging from '@pkg/utils/logging';
 
@@ -663,6 +665,47 @@ function extractLatestUserText(state: BaseThreadState): string {
  * search_observations / list_observations tools remain in place for the
  * observation WRITER's dedup path; only the recall dispatch changed.
  */
+/**
+ * Recent real user texts, newest first (subconscious-injected turns skipped).
+ * Recall terms come from these so a short follow-up ("continue", "do it")
+ * still inherits the topic of the turns before it.
+ */
+function recentUserTexts(state: BaseThreadState, count: number): string[] {
+  const out: string[] = [];
+
+  for (let i = state.messages.length - 1; i >= 0 && out.length < count; i--) {
+    const m: any = state.messages[i];
+
+    if (m?.role !== 'user' || m?.metadata?.source === 'subconscious') continue;
+    const c = m.content;
+    const text = typeof c === 'string'
+      ? c
+      : Array.isArray(c) ? c.filter((b: any) => b?.type === 'text' && typeof b.text === 'string').map((b: any) => b.text).join('\n') : '';
+
+    if (text.trim()) out.push(text.trim());
+  }
+
+  return out;
+}
+
+/** Recall terms for this turn: latest user message first, then earlier ones. */
+function turnRecallTerms(state: BaseThreadState): string[] {
+  return extractRecallTerms(recentUserTexts(state, 3));
+}
+
+/**
+ * Pre-turn recall mode. 'sql' (default) ranks rows with indexed SQL in
+ * ~0.1s. 'agent' restores the legacy one-LLM-agent-per-domain recall
+ * (~45s p50 each, measured 2026-09-26) as a rollback switch.
+ */
+async function recallMode(): Promise<'sql' | 'agent'> {
+  try {
+    return (await SullaSettingsModel.get('subconsciousRecallMode', 'sql')) === 'agent' ? 'agent' : 'sql';
+  } catch {
+    return 'sql';
+  }
+}
+
 async function runObservationRecall(state: BaseThreadState): Promise<string | null> {
   const startTime = Date.now();
   const threadId = (state.metadata as any).threadId;
@@ -775,6 +818,16 @@ async function runIdentityObservationRecall(state: BaseThreadState, domain: stri
       return null;
     }
 
+    if (await recallMode() === 'sql') {
+      const terms = turnRecallTerms(state);
+      const hits = terms.length > 0 ? await IdentityObservationsModel.recallRelevant(domain, terms) : [];
+      const elapsed = Date.now() - startTime;
+      const response = formatIdentityRecallLines(hits);
+
+      perf.log(`[IdentityRecall] threadId=${ (state.metadata as any).threadId } domain=${ domain } matched=${ hits.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);
+      return response || null;
+    }
+
     const { graph, state: subState, threadId } = await GraphRegistry.createIdentityObservationRecall(state, domain);
     console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Started | threadId: ${ threadId }`);
 
@@ -782,7 +835,7 @@ async function runIdentityObservationRecall(state: BaseThreadState, domain: stri
 
     const elapsed = Date.now() - startTime;
     const agentMeta = (subState.metadata as any).agent || {};
-    const response = typeof agentMeta.response === 'string' ? agentMeta.response.trim() : '';
+    const response = dropMetaRecallOutput(typeof agentMeta.response === 'string' ? agentMeta.response.trim() : '');
 
     if (!response) {
       perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } chars=0 ms=${ elapsed } path=agent`);
@@ -817,6 +870,18 @@ export async function runConversationReader(state: BaseThreadState): Promise<str
   const startTime = Date.now();
 
   try {
+    if (await recallMode() === 'sql') {
+      const parentThread = String((state.metadata as any).threadId || '');
+      const hits = await ConversationKeywordsModel.recallThreads(turnRecallTerms(state), {
+        excludeThreadIds: parentThread ? [parentThread] : [],
+      });
+      const response = sanitizeConversationContext(formatConversationRecallLines(hits));
+      const elapsed = Date.now() - startTime;
+
+      perf.log(`[ConversationReader] threadId=${ parentThread } matched=${ hits.length } chars=${ response?.length ?? 0 } ms=${ elapsed } path=sql-fast-path`);
+      return response;
+    }
+
     const { graph, state: subState, threadId } = await GraphRegistry.createConversationReader(state);
     console.log(`[SubconsciousMiddleware:ConversationReader] Started | threadId: ${ threadId }`);
 
@@ -829,7 +894,7 @@ export async function runConversationReader(state: BaseThreadState): Promise<str
 
     const elapsed = Date.now() - startTime;
     const agentMeta = (subState.metadata as any).agent || {};
-    const response = sanitizeConversationContext(agentMeta.response);
+    const response = sanitizeConversationContext(dropMetaRecallOutput(agentMeta.response));
 
     if (!response) {
       perf.log(`[ConversationReader] threadId=${ threadId } chars=0 ms=${ elapsed }`);
@@ -849,3 +914,57 @@ export async function runConversationReader(state: BaseThreadState): Promise<str
 // ============================================================================
 // HELPERS
 // ============================================================================
+
+// ============================================================================
+// RECALL FORMATTING
+// ============================================================================
+
+/** Per-domain injected-context budget — recall informs, it must not flood. */
+const IDENTITY_RECALL_MAX_CHARS = 3_000;
+
+/** `[id] L<level>·<category> date — content (basis: …)`, within the char budget. */
+export function formatIdentityRecallLines(hits: Array<{ id: string; level: number; category: string | null; content: string; basis: string | null; created_at: string | Date }>): string {
+  const lines: string[] = [];
+  let used = 0;
+
+  for (const h of hits) {
+    const basis = h.basis ? ` (basis: ${ h.basis.replace(/\s+/g, ' ').slice(0, 160) })` : '';
+    const line = `[${ h.id }] L${ h.level }${ h.category ? `·${ h.category }` : '' } ${ formatDateOnly(h.created_at) } — ${ h.content.replace(/\s+/g, ' ').trim() }${ basis }`;
+
+    if (used + line.length > IDENTITY_RECALL_MAX_CHARS && lines.length > 0) break;
+    lines.push(line);
+    used += line.length + 1;
+  }
+
+  return lines.join('\n');
+}
+
+/** One line per prior thread; the primary agent drills in with recall_conversations. */
+export function formatConversationRecallLines(hits: Array<{ thread_id: string; title: string | null; summary: string | null; last_seen: string | Date; matched_terms: string[] }>): string {
+  return hits.map((h) => {
+    const title = (h.title || 'Untitled conversation').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const summary = h.summary ? ` — ${ h.summary.replace(/\s+/g, ' ').trim().slice(0, 240) }` : '';
+
+    return `- ${ formatDateOnly(h.last_seen) } "${ title }" (thread ${ h.thread_id }; matched: ${ h.matched_terms.slice(0, 6).join(', ') })${ summary }`;
+  }).join('\n');
+}
+
+/**
+ * Legacy LLM recall agents sometimes answered with a status line in the
+ * primary agent's completion-wrapper style ("Recorded the relevant … —
+ * Needs user input: no") instead of observation lines — measured as 100% of
+ * identity-recall output in 3 days of logs (2026-09-26). That text is not
+ * recall; never inject it.
+ */
+export function dropMetaRecallOutput(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const kept = value
+    .split('\n')
+    .filter(line => !/^\s*\[?(recorded|relevant|no action|identified|extracted|memory observation|observations? (recorded|identified))\b.*\]?\s*(needs user input:.*)?$/i.test(line))
+    .filter(line => !/^\s*needs user input:/i.test(line))
+    .filter(line => !/^\s*\[1-3 sentence summary/i.test(line))
+    .join('\n')
+    .trim();
+
+  return kept;
+}
