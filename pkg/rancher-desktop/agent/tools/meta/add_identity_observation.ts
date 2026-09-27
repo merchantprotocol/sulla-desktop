@@ -1,4 +1,4 @@
-import { IdentityObservationsModel, normalizeIdentityDomain } from '../../database/models/IdentityObservationsModel';
+import { IdentityObservationsModel, normalizeIdentityDomain, normalizeIdentityLevel } from '../../database/models/IdentityObservationsModel';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -51,6 +51,10 @@ export class AddIdentityObservationWorker extends BaseTool {
           responseString: `Remembering (updated): "${ content }" (id: ${ duplicate.id }, domain: ${ domain }, L${ level })`,
         };
       }
+
+      // Fail closed on a bad level before any lookup, so an invalid write
+      // can never be reported as "already remembered".
+      normalizeIdentityLevel(level);
 
       // Paraphrase gate: the same fact re-worded, or already filed under
       // another domain, is not a new observation. Skip — never overwrite a
