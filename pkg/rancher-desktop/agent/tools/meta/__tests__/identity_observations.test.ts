@@ -81,6 +81,7 @@ describe('identity observation tools', () => {
 
   it('adds a new identity observation when no duplicate exists', async() => {
     jest.spyOn(IdentityObservationsModel, 'findDuplicate').mockResolvedValue(null);
+    jest.spyOn(IdentityObservationsModel, 'findSimilar').mockResolvedValue(null);
     jest.spyOn(IdentityObservationsModel, 'insert').mockResolvedValue(row());
 
     const result = await addWorker().invoke({
@@ -118,6 +119,7 @@ describe('identity observation tools', () => {
 
   it('fails closed for invalid certainty levels instead of silently downgrading', async() => {
     jest.spyOn(IdentityObservationsModel, 'findDuplicate').mockResolvedValue(null);
+    jest.spyOn(IdentityObservationsModel, 'findSimilar').mockResolvedValue(null);
     jest.spyOn(IdentityObservationsModel, 'insert').mockRejectedValue(new Error('Invalid identity certainty level "9"; expected 1, 2, or 3.'));
 
     const result = await addWorker().invoke({
@@ -128,6 +130,33 @@ describe('identity observation tools', () => {
 
     expect(result.success).toBe(false);
     expect(result.result).toContain('Invalid identity certainty level');
+  });
+
+  it('skips a paraphrase of a row already in the same domain without overwriting it', async() => {
+    jest.spyOn(IdentityObservationsModel, 'findDuplicate').mockResolvedValue(null);
+    jest.spyOn(IdentityObservationsModel, 'findSimilar').mockResolvedValue({ ...row({ id: 'same' }), similarity: 0.62 });
+    const insert = jest.spyOn(IdentityObservationsModel, 'insert');
+    const update = jest.spyOn(IdentityObservationsModel, 'update');
+
+    const result = await addWorker().invoke({ domain: 'human', level: 3, content: 'Jonathon likes direct status reports.' });
+
+    expect(result.success).toBe(true);
+    expect(result.result).toContain('Already remembered (not added)');
+    expect(result.result).toContain('update that row by passing id "same"');
+    expect(insert).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses to file the same fact under a second domain', async() => {
+    jest.spyOn(IdentityObservationsModel, 'findDuplicate').mockResolvedValue(null);
+    jest.spyOn(IdentityObservationsModel, 'findSimilar').mockResolvedValue({ ...row({ id: 'biz1', domain: 'business' }), similarity: 0.55 });
+    const insert = jest.spyOn(IdentityObservationsModel, 'insert');
+
+    const result = await addWorker().invoke({ domain: 'human', level: 3, content: 'Jonathon wants a simple JavaScript game demo for TrueUp.' });
+
+    expect(result.result).toContain('in domain "business"');
+    expect(result.result).toContain('belongs to exactly one domain');
+    expect(insert).not.toHaveBeenCalled();
   });
 
   it('updates an existing duplicate instead of inserting another row', async() => {

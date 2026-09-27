@@ -83,6 +83,7 @@ import { up as up_0093, down as down_0093 } from './0093_create_meterable_usage_
 import { up as up_0094, down as down_0094 } from './0094_durable_agent_completion_delivery';
 import { up as up_0095, down as down_0095 } from './0095_add_lane_human_approval';
 import { up as up_0096, down as down_0096 } from './0096_unique_github_pr_mirrors';
+import { up as up_0097, down as down_0097 } from './0097_add_trigram_index_to_identity_observations';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -167,4 +168,5 @@ export const migrationsRegistry = [
   { name: '0094_durable_agent_completion_delivery',                   up: up_0094, down: down_0094 },
   { name: '0095_add_lane_human_approval',                              up: up_0095, down: down_0095 },
   { name: '0096_unique_github_pr_mirrors',                             up: up_0096, down: down_0096 },
+  { name: '0097_add_trigram_index_to_identity_observations',          up: up_0097, down: down_0097 },
 ] as const;

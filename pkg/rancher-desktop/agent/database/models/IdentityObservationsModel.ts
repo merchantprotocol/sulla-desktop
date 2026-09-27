@@ -16,6 +16,7 @@
 
 import { ObservationsModel } from './ObservationsModel';
 import { postgresClient } from '../PostgresClient';
+import { escapeLikeTerm } from '../../utils/recallTerms';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -100,6 +101,31 @@ export interface IdentityObservationRecord {
   archived:   boolean;
   source:     string | null;
 }
+
+export interface IdentityRecallHit extends IdentityObservationRecord {
+  /** Sum of IDF weights of the query terms this row contains. */
+  score:   number;
+  /** How many distinct query terms matched. */
+  matched: number;
+}
+
+export interface IdentityRecallOptions {
+  /** Max rows returned per domain. */
+  limit?:             number;
+  /** Keep rows scoring at least this fraction of the best row's score. */
+  relativeCutoff?:    number;
+  /** Absolute score floor (auto-lowered for tiny domains). */
+  minScore?:          number;
+  /** Ignore terms present in more than this fraction of the domain's rows. */
+  maxCommonFraction?: number;
+}
+
+/**
+ * Trigram similarity at or above which a new row is treated as already
+ * remembered. Measured on live data: unrelated pairs score 0.1–0.3 (only
+ * ~0.03% reach 0.45); paraphrased duplicates of one fact score 0.45–0.55.
+ */
+export const IDENTITY_DUPLICATE_SIMILARITY = 0.5;
 
 export interface InsertIdentityObservationInput {
   id?:       string;
@@ -597,6 +623,96 @@ export class IdentityObservationsModel {
       if (existing.includes(norm) || norm.includes(existing)) return row;
     }
     return null;
+  }
+
+  /**
+   * SQL recall fast path: rank one domain's active rows against the current
+   * turn's terms. Each term is weighted by inverse document frequency within
+   * the domain (ln(N/df)); terms present in more than maxCommonFraction of
+   * rows ("jonathon", "sulla", …) carry no signal and are ignored. Rows must
+   * match ≥2 terms (unless the turn has ≤2 terms) and score within
+   * relativeCutoff of the best row. Replaces one blocking LLM agent per
+   * domain (~45s p50) with a single indexed query (~0.1s).
+   */
+  static async recallRelevant(domain: string, terms: string[], opts: IdentityRecallOptions = {}): Promise<IdentityRecallHit[]> {
+    const normalizedDomain = normalizeIdentityDomain(domain);
+    const patterns = [...new Set(terms.map(t => t.trim().toLowerCase()).filter(Boolean))]
+      .map(t => `%${ escapeLikeTerm(t) }%`);
+
+    if (patterns.length === 0) return [];
+
+    const limit = Math.max(1, Math.min(opts.limit ?? 8, 50));
+    const relativeCutoff = opts.relativeCutoff ?? 0.5;
+    const minScore = opts.minScore ?? 6;
+    const maxCommonFraction = opts.maxCommonFraction ?? 0.25;
+    const minMatched = patterns.length <= 2 ? 1 : 2;
+
+    const rows = await postgresClient.query<IdentityRecallHit & { top: number }>(
+      `WITH docs AS (
+         SELECT * FROM ${ IdentityObservationsModel.TABLE } WHERE domain = $1 AND archived = false
+       ),
+       n AS (SELECT greatest(count(*), 1)::float AS n FROM docs),
+       t AS (SELECT DISTINCT unnest($2::text[]) AS p),
+       df AS (
+         SELECT t.p, count(d.id)::float AS df
+         FROM t LEFT JOIN docs d ON d.content ILIKE t.p ESCAPE '\\'
+         GROUP BY t.p
+       ),
+       idf AS (
+         SELECT df.p, ln((SELECT n FROM n) / df.df) + 0.1 AS w
+         FROM df
+         WHERE df.df > 0 AND df.df <= greatest((SELECT n FROM n) * $3, 1)
+       ),
+       scored AS (
+         SELECT d.id, sum(idf.w)::float AS score, count(*)::int AS matched
+         FROM docs d JOIN idf ON d.content ILIKE idf.p ESCAPE '\\'
+         GROUP BY d.id
+         HAVING count(*) >= $4
+       )
+       SELECT d.*, s.score, s.matched, max(s.score) OVER () AS top
+       FROM scored s JOIN docs d ON d.id = s.id
+       WHERE s.score >= least($5, 1.5 * ln((SELECT n FROM n) + 1))
+       ORDER BY s.score DESC, d.level DESC, d.created_at DESC
+       LIMIT $6`,
+      [normalizedDomain, patterns, maxCommonFraction, minMatched, minScore, limit],
+    );
+
+    return rows
+      .filter(r => r.score >= relativeCutoff * r.top)
+      .map(({ top: _top, ...hit }) => hit);
+  }
+
+  /**
+   * Most similar active row (trigram similarity ≥ threshold), optionally
+   * restricted to one domain. Used by the writer gate so a fact already
+   * remembered — in this domain or another — is not written again.
+   */
+  static async findSimilar(
+    content: string,
+    opts: { domain?: string; threshold?: number } = {},
+  ): Promise<(IdentityObservationRecord & { similarity: number }) | null> {
+    const text = normalizeRequiredText(content, 'content', MAX_CONTENT_CHARS);
+    const threshold = opts.threshold ?? IDENTITY_DUPLICATE_SIMILARITY;
+    const params: unknown[] = [text, threshold];
+    let domainCond = '';
+
+    if (opts.domain) {
+      params.push(normalizeIdentityDomain(opts.domain));
+      domainCond = 'AND domain = $3';
+    }
+
+    const rows = await postgresClient.query<IdentityObservationRecord & { similarity: number }>(
+      `SELECT *, similarity(content, $1)::float AS similarity
+       FROM ${ IdentityObservationsModel.TABLE }
+       WHERE archived = false ${ domainCond }
+         AND content % $1
+         AND similarity(content, $1) >= $2
+       ORDER BY similarity(content, $1) DESC
+       LIMIT 1`,
+      params,
+    );
+
+    return rows[0] ?? null;
   }
 
   /**
