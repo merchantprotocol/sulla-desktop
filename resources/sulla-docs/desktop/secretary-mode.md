@@ -39,7 +39,7 @@ The 30-second analysis is tagged with `inputSource: 'secretary-analysis'` (or `'
 
 ## Cloud / Relay relationship
 
-Secretary Mode creates a **gateway session** on start (`SecretaryModeController.ts:143-145` via `desktop-session-start` IPC). Today this just connects to the local transcription gateway. The same infrastructure is used by `desktopRelay.ts` (the WebSocket client to `wss://sulla-workers.jonathon-44b.workers.dev`), which means the wiring exists for **Phase 2:** route an idle session to a Cloud-hosted agent so meetings keep being transcribed/analyzed even when the user closes the laptop.
+Secretary Mode creates a **gateway session** on start (`SecretaryModeController.ts:143-145` via `desktop-session-start` IPC). Today this just connects to the local transcription gateway. The same infrastructure is used by `desktopRelay.ts` (the WebSocket client to `wss://sulla-workers.merchantprotocol.workers.dev`), which means the wiring exists for **Phase 2:** route an idle session to a Cloud-hosted agent so meetings keep being transcribed/analyzed even when the user closes the laptop.
 
 That's the "secretary mode handles incoming conversations regardless of whether the user's machine is on" vision. Today: **local only**, but the path is paved.
 

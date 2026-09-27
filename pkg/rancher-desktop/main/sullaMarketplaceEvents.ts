@@ -45,7 +45,7 @@ import Logging from '@pkg/utils/logging';
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
-const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
+const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 
 // ─── Security caps (mirror sullaRoutineImportEvents.ts) ──────────
 const MAX_FILE_BYTES = 100 * 1024 * 1024;   // 100 MB per file

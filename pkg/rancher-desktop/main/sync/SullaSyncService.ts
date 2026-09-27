@@ -25,7 +25,7 @@ import { getLastSeq, setLastSeq } from './syncMeta';
 
 const log = Logging.background;
 
-const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
+const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 const POLL_INTERVAL_MS = 15_000;
 const PUSH_DEBOUNCE_MS = 300;
 

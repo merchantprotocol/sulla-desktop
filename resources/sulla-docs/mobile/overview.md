@@ -15,7 +15,7 @@ Customers dial your provisioned **Twilio number**. **ElevenLabs Conversational A
 
 2. **Messages** — SMS messages and voicemail transcripts. Unread badge.
 
-3. **Sulla** (center button) — **Push-to-Talk (PTT) chat with the AI.** Long-hold the Sulla button → speak → released. Transcript routes through the **Cloudflare Workers relay** (`wss://sulla-workers.jonathon-44b.workers.dev/relay/{room_id}`) to a paired Sulla Desktop, which processes the request and streams the answer back. Hands-free conversation with your desktop AI from anywhere.
+3. **Sulla** (center button) — **Push-to-Talk (PTT) chat with the AI.** Long-hold the Sulla button → speak → released. Transcript routes through the **Cloudflare Workers relay** (`wss://sulla-workers.merchantprotocol.workers.dev/relay/{room_id}`) to a paired Sulla Desktop, which processes the request and streams the answer back. Hands-free conversation with your desktop AI from anywhere.
 
 4. **Recents** — Call history. Active calls show a green "LIVE NOW" badge with real-time transcript streaming via WebSocket to `/calls/bridge/{callId}`. Usage stats: minutes this month, average duration, cost breakdown.
 
@@ -69,7 +69,7 @@ Plus credit packs (50 / 100 / 250 min) — requires an active subscription to pu
 
 ## Backend
 
-- **API:** `https://sulla-workers.jonathon-44b.workers.dev` (Cloudflare Workers, D1 database, R2 blob storage, Durable Objects for the relay)
+- **API:** `https://sulla-workers.merchantprotocol.workers.dev` (Cloudflare Workers, D1 database, R2 blob storage, Durable Objects for the relay)
 - **Twilio** — phone provisioning, call routing, SMS
 - **ElevenLabs** — Conversational AI (the receptionist voice + understanding)
 - **xAI Grok** — website scraping (auto-populate business info), post-call lead extraction

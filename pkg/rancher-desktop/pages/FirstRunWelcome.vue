@@ -332,7 +332,7 @@ const handleRecoveryAcknowledged = async() => {
 const finishSetup = async() => {
   // Submit email subscription to worker if opted in
   if (sullaSubscribeToUpdates.value && sullaEmail.value?.trim()) {
-    fetch('https://email-submission.jonathon-44b.workers.dev/', {
+    fetch('https://email-submission.merchantprotocol.workers.dev/', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
