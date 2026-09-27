@@ -51,6 +51,30 @@ function ipcEncrypt(value: string): string {
   return result;
 }
 
+/** The slice of VaultKeyService the storage decision needs. */
+export interface StorageVault {
+  isUnlocked(): boolean;
+  isSetUp(): boolean;
+  encrypt(value: string): string;
+}
+
+/**
+ * Decide how a credential value is persisted (main process):
+ *   - already `$VAULT$`-encrypted → unchanged (never double-wrap)
+ *   - vault unlocked              → encrypt
+ *   - vault set up but locked     → throw VAULT_LOCKED (no plaintext at rest)
+ *   - no vault configured yet     → as-is; migrateToEncrypted() encrypts it later
+ */
+export function encryptForStorage(value: string, vault: StorageVault | null): string {
+  if (typeof value === 'string' && value.startsWith(VAULT_PREFIX)) return value;
+  if (vault?.isUnlocked()) return vault.encrypt(value);
+  if (vault?.isSetUp()) {
+    throw new Error('VAULT_LOCKED: unlock the vault before saving credentials');
+  }
+
+  return value;
+}
+
 interface IntegrationValueAttributes {
   value_id:       number;
   integration_id: string;
@@ -99,16 +123,11 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
    *     it once a vault exists and is unlocked.
    */
   private static encryptValue(value: string): string {
-    if (typeof value === 'string' && value.startsWith(VAULT_PREFIX)) return value;
-
-    if (isRenderer) return ipcEncrypt(value);
-
-    const vault = getVaultDirect();
-    if (vault?.isUnlocked()) return vault.encrypt(value);
-    if (vault?.isSetUp()) {
-      throw new Error('VAULT_LOCKED: unlock the vault before saving credentials');
+    if (isRenderer) {
+      return typeof value === 'string' && value.startsWith(VAULT_PREFIX) ? value : ipcEncrypt(value);
     }
-    return value;
+
+    return encryptForStorage(value, getVaultDirect());
   }
 
   /** Decrypt a value if it's vault-encrypted, otherwise return as-is */
