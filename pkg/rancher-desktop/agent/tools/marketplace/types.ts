@@ -11,10 +11,10 @@ import * as path from 'path';
 import {
   resolveSullaAgentsDir,
   resolveSullaFunctionsDir,
-  resolveSullaIntegrationsDir,
   resolveSullaRecipesDir,
   resolveSullaRoutinesDir,
-  resolveSullaSkillsDir,
+  resolveSullaUserIntegrationsDir,
+  resolveSullaUserSkillsDir,
 } from '@pkg/agent/utils/sullaPaths';
 
 export const ARTIFACT_KINDS = ['skill', 'function', 'workflow', 'agent', 'recipe', 'integration'] as const;
@@ -43,8 +43,10 @@ export interface ArtifactLayout {
 }
 
 export const KIND_LAYOUTS: Record<ArtifactKind, ArtifactLayout> = {
+  // User-owned dirs — the same ones the Marketplace tab installs into and
+  // the Library publishes from. (~/sulla/resources/* is app-managed.)
   skill: {
-    rootDir:  () => resolveSullaSkillsDir(),
+    rootDir:  () => resolveSullaUserSkillsDir(),
     manifest: 'SKILL.md',
     bundle:   'single',
   },
@@ -72,7 +74,7 @@ export const KIND_LAYOUTS: Record<ArtifactKind, ArtifactLayout> = {
     companions: ['docker-compose.yml', 'installation.yaml'],
   },
   integration: {
-    rootDir:         () => resolveSullaIntegrationsDir(),
+    rootDir:         () => resolveSullaUserIntegrationsDir(),
     manifest:        'dynamic',
     bundle:          'multi',
     companions:      ['INTEGRATION.md'],
@@ -83,6 +85,33 @@ export const KIND_LAYOUTS: Record<ArtifactKind, ArtifactLayout> = {
 
 export function isArtifactKind(value: unknown): value is ArtifactKind {
   return typeof value === 'string' && (ARTIFACT_KINDS as readonly string[]).includes(value);
+}
+
+export const KINDS_HELP = 'skill, function, routine (alias: workflow), agent, recipe, integration';
+
+/**
+ * Normalize user/agent input to an ArtifactKind. The marketplace and the
+ * rest of the app call workflows "routine"; accept both spellings.
+ */
+export function normalizeKind(raw: unknown): ArtifactKind | null {
+  const v = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  const k = v === 'routine' || v === 'routines' ? 'workflow' : v.replace(/s$/, '');
+
+  return isArtifactKind(k) ? k : (isArtifactKind(v) ? v : null);
+}
+
+export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+
+/** Marketplace kind for an artifact kind, or null when the kind isn't distributed there (agents). */
+export function toMarketplaceKind(kind: ArtifactKind): MarketplaceKind | null {
+  if (kind === 'workflow') return 'routine';
+  if (kind === 'agent') return null;
+
+  return kind;
+}
+
+export function fromMarketplaceKind(kind: string): ArtifactKind {
+  return kind === 'routine' ? 'workflow' : (kind as ArtifactKind);
 }
 
 export function artifactDir(kind: ArtifactKind, slug: string): string {

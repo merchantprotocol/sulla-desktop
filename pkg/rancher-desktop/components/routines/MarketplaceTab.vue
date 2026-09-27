@@ -33,6 +33,7 @@
       :installing="mp.installing.value === mp.detail.value.row.id"
       :install-error="mp.installError.value"
       :installed-info="installedForOpenDrawer"
+      :update-available="detailUpdateAvailable"
       @close="onCloseDetail"
       @install="onInstall(mp.detail.value.row.id)"
     />
@@ -213,6 +214,7 @@
             :key="t.id"
             :row="t"
             :installing="mp.installing.value === t.id"
+            :install-state="mp.installStateFor(t)"
             @open="onOpen(t.id)"
             @install="onInstall(t.id)"
           />
@@ -499,9 +501,18 @@ const headingLabel = computed(() => {
 });
 
 const installedForOpenDrawer = computed(() => {
-  if (!mp.detail.value || !mp.lastInstalled.value) return null;
+  const row = mp.detail.value?.row;
+  if (!row) return null;
+  const entry = mp.installedEntryFor(row);
+  if (entry) return { kind: entry.kind, slug: entry.slug, path: entry.path, name: row.name, version: entry.version };
 
   return mp.lastInstalled.value;
+});
+
+const detailUpdateAvailable = computed(() => {
+  const row = mp.detail.value?.row;
+
+  return !!row && mp.installStateFor(row) === 'update';
 });
 
 // Deep-link receiver: AgentRouter dispatches this CustomEvent after
@@ -546,12 +557,20 @@ function onCloseDetail() {
 }
 
 async function onInstall(id: string) {
-  const result = await mp.install(id);
+  const row = mp.templates.value.find(t => t.id === id) ?? mp.detail.value?.row;
+  const overwrite = !!row && mp.installStateFor(row) === 'update';
+  const replaces = overwrite && row ? mp.installedEntryFor(row)?.templateId : undefined;
+  const result = await mp.install(id, { overwrite, replaces });
   if (result) {
+    if (result.alreadyInstalled) {
+      window.alert(`${ result.name } is already installed → ${ result.path }`);
+
+      return;
+    }
     emit('installed', result);
-    window.alert(
-      `Installed ${ result.name } (${ result.kind }) → ${ result.path }`,
-    );
+    window.alert(result.updated
+      ? `Updated ${ result.name } to v${ result.version } → ${ result.path }`
+      : `Installed ${ result.name } (${ result.kind }) → ${ result.path }`);
 
     return;
   }

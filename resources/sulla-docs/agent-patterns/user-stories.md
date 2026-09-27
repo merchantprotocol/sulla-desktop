@@ -189,9 +189,9 @@ See: [`marketplace/overview.md`](../marketplace/overview.md)
 
 ---
 
-## Marketplace artifacts (6 kinds: skill / function / workflow / agent / recipe / integration)
+## Marketplace artifacts (skill / function / routine / recipe / integration)
 
-The generic `marketplace/*` tools work for all 5 artifact kinds. See [`tools/marketplace.md`](../tools/marketplace.md).
+The `marketplace/*` tools work for all five marketplace kinds (`agent` is local-only). See [`tools/marketplace.md`](../tools/marketplace.md).
 
 ### "Search the marketplace"
 ```bash
@@ -230,7 +230,7 @@ sulla marketplace/validate '{"kind":"function","slug":"my-tool"}'
 ```bash
 sulla marketplace/publish '{"kind":"function","slug":"my-tool","version":"1.0.0"}'
 ```
-Requires Sulla Cloud token in vault under `sulla-cloud/api_token`.
+Confirm with the user first (it is public once approved). Requires the user to be signed in to Sulla Cloud in the app; the submission is pending until an admin approves it.
 
 ### "Take down my published artifact"
 ```bash

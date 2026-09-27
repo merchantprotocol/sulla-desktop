@@ -446,7 +446,7 @@ interface BuiltPayload {
     tagline:              string | null;
     version:              string;
     category:             string | null;
-    author_contractor_id: string;
+    author_user_id:       string;
     author_display:       string | null;
     tags:                 string[];
     featured:             boolean;
@@ -672,7 +672,7 @@ export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPaylo
       tagline:               null,
       version,
       category,
-      author_contractor_id:  'local',
+      author_user_id:        'local',
       author_display:        'You',
       tags,
       featured:              false,

@@ -1,31 +1,33 @@
 import { BaseTool, ToolResponse } from '../base';
-import { getMarketplaceClient } from './MarketplaceClient';
+import { getMarketplaceClient, isAuthError, SIGN_IN_HINT } from './MarketplaceClient';
 
-/**
- * List artifacts the current user has published to the marketplace.
- * Hits GET /v1/marketplace/me/published — requires Sulla Cloud token.
- */
+/** Everything the signed-in user has submitted, with review status and reviewer notes. */
 export class MarketplaceListPublishedWorker extends BaseTool {
   name = '';
   description = '';
 
   protected async _validatedCall(_input: any): Promise<ToolResponse> {
     try {
-      const items = await getMarketplaceClient().myPublished();
+      const items = await getMarketplaceClient().mySubmissions();
       if (items.length === 0) {
-        return { successBoolean: true, responseString: `You haven't published any artifacts yet.` };
+        return { successBoolean: true, responseString: 'You haven\'t submitted anything to the marketplace yet.' };
       }
-      const lines = items.map(i => `  - ${ i.kind }/${ i.slug }${ i.version ? ` v${ i.version }` : '' }${ i.updated_at ? ` (updated ${ i.updated_at })` : '' }`);
+      const label: Record<string, string> = { pending: 'pending review', approved: 'live', rejected: 'rejected / withdrawn' };
+      const lines = items.map((i) => {
+        const bundle = i.bundle_status === 'pending' ? ' (bundle not uploaded)' : '';
+        const notes = i.admin_notes ? `\n     reviewer: ${ i.admin_notes.split('\n').slice(-1)[0] }` : '';
+
+        return `  - ${ i.kind }/${ i.slug } v${ i.version } — ${ label[i.status] ?? i.status }${ bundle } · ${ i.download_count ?? 0 } downloads · ${ i.id }${ notes }`;
+      });
+
       return {
         successBoolean: true,
-        responseString: `Your published artifacts (${ items.length }):\n${ lines.join('\n') }`,
+        responseString: `Your marketplace submissions (${ items.length }):\n${ lines.join('\n') }`,
       };
     } catch (err) {
-      const msg = (err as Error).message;
-      if (/HTTP 401|HTTP 403/.test(msg)) {
-        return { successBoolean: false, responseString: `Not authenticated. Set Sulla Cloud token: \`sulla vault/vault_set_credential '{"account_type":"sulla-cloud","property":"api_token","value":"..."}'\`` };
-      }
-      return { successBoolean: false, responseString: `Failed to list published artifacts: ${ msg }` };
+      if (isAuthError(err)) return { successBoolean: false, responseString: `Listing your submissions needs a Sulla Cloud session. ${ SIGN_IN_HINT }` };
+
+      return { successBoolean: false, responseString: `Failed to list your submissions: ${ (err as Error).message }` };
     }
   }
 }

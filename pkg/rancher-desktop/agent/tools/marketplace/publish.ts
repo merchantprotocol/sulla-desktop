@@ -1,103 +1,54 @@
 import * as fs from 'fs';
-import * as path from 'path';
 
 import { BaseTool, ToolResponse } from '../base';
-import { getMarketplaceClient } from './MarketplaceClient';
-import { artifactDir, isArtifactKind, KIND_LAYOUTS, ArtifactKind, resolveArtifactManifestPath } from './types';
-
-const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB per file safety cap
-const TEXT_EXTENSIONS = new Set(['.md', '.yaml', '.yml', '.json', '.py', '.js', '.ts', '.sh', '.txt', '.toml', '.html', '.css', '.svg']);
+import { getMarketplaceClient, isAuthError, SIGN_IN_HINT } from './MarketplaceClient';
+import { artifactDir, KINDS_HELP, KIND_LAYOUTS, normalizeKind, resolveArtifactManifestPath, toMarketplaceKind } from './types';
 
 /**
- * Publish a local artifact to the Sulla Cloud marketplace.
- * Bundles the manifest + companion files and POSTs to the marketplace API.
+ * Publish a local artifact folder to the marketplace using the same pipeline
+ * as the Library's Publish button: sulla/v3 manifest + zip of publishable
+ * files (no .env, .git, node_modules…) → submit → bundle upload. The listing
+ * is pending until an admin approves it.
  */
 export class MarketplacePublishWorker extends BaseTool {
   name = '';
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const kind = typeof input.kind === 'string' ? input.kind.trim().toLowerCase() : '';
+    const kind = normalizeKind(input.kind);
     const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
-    const version = typeof input.version === 'string' ? input.version.trim() : undefined;
+    const version = typeof input.version === 'string' && input.version.trim() ? input.version.trim() : undefined;
 
-    if (!isArtifactKind(kind)) {
-      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe, integration.` };
+    if (!kind) {
+      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: ${ KINDS_HELP }.` };
     }
     if (!slug) {
-      return { successBoolean: false, responseString: `Missing required field: slug.` };
+      return { successBoolean: false, responseString: 'Missing required field: slug.' };
+    }
+    if (!toMarketplaceKind(kind)) {
+      return { successBoolean: false, responseString: 'Agents aren\'t distributed through the marketplace.' };
     }
 
     const dir = artifactDir(kind, slug);
     if (!fs.existsSync(dir)) {
-      return { successBoolean: false, responseString: `Not installed locally: ${ dir }` };
+      return { successBoolean: false, responseString: `Not found locally: ${ dir }` };
     }
-
-    const manifestPath = resolveArtifactManifestPath(kind, slug);
-    if (!manifestPath) {
-      return { successBoolean: false, responseString: `Manifest missing in ${ dir } — cannot publish.` };
+    if (KIND_LAYOUTS[kind].manifest !== 'dynamic' && !resolveArtifactManifestPath(kind, slug)) {
+      return { successBoolean: false, responseString: `${ KIND_LAYOUTS[kind].manifest } missing in ${ dir } — run \`sulla marketplace/validate\` first.` };
     }
-
-    const manifest = fs.readFileSync(manifestPath, 'utf-8');
-    const manifestName = path.basename(manifestPath);
-    const files = collectFiles(kind, dir, manifestName);
 
     try {
-      const result = await getMarketplaceClient().publish({ kind, slug, version, manifest, files });
+      const res = await getMarketplaceClient().publish(kind, dir, slug, version);
+
       return {
         successBoolean: true,
-        responseString: `Published ${ kind }/${ slug } v${ result.version } → ${ result.url }`,
+        responseString: `Submitted ${ input.kind }/${ slug } to the marketplace as ${ res.templateId } (bundle ${ res.bundle_size } bytes).\n` +
+          `Status: ${ res.status } — it goes live once an admin approves it. Track it with \`sulla marketplace/list_published '{}'\`.`,
       };
     } catch (err) {
-      const msg = (err as Error).message;
-      if (/HTTP 401|HTTP 403/.test(msg)) {
-        return { successBoolean: false, responseString: `Publish failed (auth): ${ msg }\nConfigure your Sulla Cloud token: \`sulla vault/vault_set_credential '{"account_type":"sulla-cloud","property":"api_token","value":"..."}'\`` };
-      }
-      if (/ECONNREFUSED|HTTP 404|fetch failed/i.test(msg)) {
-        return { successBoolean: false, responseString: `Publish failed: marketplace API not reachable. The Sulla Cloud marketplace worker may not be deployed yet, or the URL is wrong.\n\nUnderlying error: ${ msg }` };
-      }
-      return { successBoolean: false, responseString: `Publish failed: ${ msg }` };
+      if (isAuthError(err)) return { successBoolean: false, responseString: `Publishing needs a Sulla Cloud session. ${ SIGN_IN_HINT }` };
+
+      return { successBoolean: false, responseString: `Publish failed: ${ (err as Error).message }` };
     }
-  }
-}
-
-function collectFiles(_kind: ArtifactKind, dir: string, manifestName: string): Record<string, string> {
-  void KIND_LAYOUTS;
-  const out: Record<string, string> = {};
-  walk(dir, '', out, manifestName);
-  return out;
-}
-
-function walk(rootDir: string, relBase: string, out: Record<string, string>, manifestName: string) {
-  const here = path.join(rootDir, relBase);
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(here, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '__pycache__') continue;
-
-    const rel = relBase ? path.join(relBase, entry.name) : entry.name;
-
-    if (entry.isDirectory()) {
-      walk(rootDir, rel, out, manifestName);
-      continue;
-    }
-    if (rel === manifestName) continue; // manifest is already sent separately
-
-    const abs = path.join(rootDir, rel);
-    let stat: fs.Stats;
-    try { stat = fs.statSync(abs); } catch { continue; }
-    if (stat.size > MAX_FILE_BYTES) {
-      out[rel] = `__SKIPPED__:${ stat.size } bytes exceeds ${ MAX_FILE_BYTES } cap`;
-      continue;
-    }
-    const ext = path.extname(entry.name).toLowerCase();
-    if (TEXT_EXTENSIONS.has(ext) || stat.size === 0) {
-      try { out[rel] = fs.readFileSync(abs, 'utf-8'); continue; } catch { /* fall through */ }
-    }
-    try { out[rel] = `base64:${ fs.readFileSync(abs).toString('base64') }`; } catch { /* skip unreadable */ }
   }
 }

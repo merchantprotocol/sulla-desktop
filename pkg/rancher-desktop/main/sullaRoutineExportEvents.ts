@@ -33,6 +33,7 @@ import yaml from 'yaml';
 import * as yazl from 'yazl';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import { listBundleFiles } from '@pkg/main/marketplace/bundleFiles';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -85,21 +86,8 @@ function stripRuntime(definition: Record<string, unknown>): Record<string, unkno
   return cleaned;
 }
 
-/** Recursively list files under a directory as absolute paths. */
-function listFilesRecursive(root: string): string[] {
-  const out: string[] = [];
-  const stack: string[] = [root];
-  while (stack.length > 0) {
-    const dir = stack.pop()!;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) stack.push(full);
-      else if (entry.isFile()) out.push(full);
-    }
-  }
-
-  return out;
-}
+// Publishable files only — see marketplace/bundleFiles.ts.
+const listFilesRecursive = listBundleFiles;
 
 function sha256(filePath: string): string {
   const h = crypto.createHash('sha256');

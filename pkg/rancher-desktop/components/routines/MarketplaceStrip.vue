@@ -81,7 +81,7 @@
       <button
         type="button"
         class="btn ghost"
-        :disabled="installing || row.kind === 'recipe'"
+        :disabled="installing || installState === 'installed'"
         @click="$emit('install')"
       >
         {{ installButtonLabel }}
@@ -96,8 +96,9 @@ import { computed } from 'vue';
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 
 const props = defineProps<{
-  row:        MarketplaceBrowseRow;
-  installing: boolean;
+  row:           MarketplaceBrowseRow;
+  installing:    boolean;
+  installState?: 'installed' | 'update' | null;
 }>();
 
 defineEmits<{
@@ -124,7 +125,7 @@ const hiddenTagCount = computed(() => Math.max(0, props.row.tags.length - MAX_VI
 
 const authorDisplay = computed(() => {
   if (props.row.author_display) return props.row.author_display;
-  const suffix = props.row.author_contractor_id?.slice(-8) ?? '';
+  const suffix = props.row.author_user_id?.slice(-8) ?? '';
 
   return suffix ? `#${ suffix }` : 'Unknown';
 });
@@ -140,8 +141,9 @@ function formatBytes(n: number): string {
 }
 
 const installButtonLabel = computed(() => {
-  if (props.row.kind === 'recipe') return 'Website only';
-  if (props.installing) return 'Installing…';
+  if (props.installing) return props.installState === 'update' ? 'Updating…' : 'Installing…';
+  if (props.installState === 'installed') return 'Installed ✓';
+  if (props.installState === 'update') return 'Update';
 
   return 'Install';
 });

@@ -24,7 +24,7 @@ export interface MarketplaceBrowseRow {
   tagline?:             string | null;
   version:              string;
   category?:            string | null;
-  author_contractor_id: string;
+  author_user_id:       string;
   author_display?:      string | null;
   tags:                 string[];
   featured?:            boolean;
@@ -611,12 +611,13 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // Marketplace (Cloudflare workers, sulla/v3 manifest+bundle).
-  // Every call is JWT-gated via getCurrentAccessToken(); `{ error }` comes
-  // back when the caller isn't signed in, the network fails, or the server
-  // returns a non-2xx.
+  // Reads are public (JWT attached when signed in); my-submissions and
+  // takedown need a session. `{ error }` comes back on network failure or
+  // a non-2xx response.
   'marketplace-browse':  (opts?: {
-    kind?:  'routine' | 'skill' | 'function' | 'recipe' | 'integration';
-    q?:     string;
+    kind?:     'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+    q?:        string;
+    category?: string;
     sort?:  'popular' | 'newest' | 'featured';
     page?:  number;
     limit?: number;
@@ -629,11 +630,24 @@ export interface IpcMainInvokeEvents {
   'marketplace-detail':  (id: string) => {
     template: MarketplaceBrowseRow & { manifest: Record<string, unknown> };
   } | { error: string };
-  'marketplace-install': (id: string) => {
-    kind: 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
-    slug: string;
-    path: string;
-    name: string;
+  'marketplace-install': (id: string, opts?: { overwrite?: boolean; replaces?: string }) => {
+    kind:              'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+    slug:              string;
+    path:              string;
+    name:              string;
+    version:           string;
+    alreadyInstalled?: boolean;
+    previousVersion?:  string;
+    updated?:          boolean;
+  } | { error: string };
+  'marketplace-installed': () => {
+    installed: {
+      templateId: string;
+      kind:       'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+      slug:       string;
+      version:    string;
+      path:       string;
+    }[];
   } | { error: string };
   'marketplace-my-submissions': (opts?: {
     page?:  number;

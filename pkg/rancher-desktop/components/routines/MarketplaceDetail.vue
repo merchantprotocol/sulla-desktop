@@ -40,7 +40,7 @@
             v-if="source === 'marketplace'"
             type="button"
             class="btn primary big"
-            :disabled="installing || !!installedInfo"
+            :disabled="installing || (!!installedInfo && !updateAvailable)"
             @click="$emit('install')"
           >
             {{ installButtonLabel }}
@@ -75,7 +75,7 @@
           v-if="installedInfo"
           class="banner ok"
         >
-          Installed → <code>{{ installedInfo.path }}</code>
+          {{ updateAvailable ? `v${installedInfo.version} installed — v${row.version} is available` : 'Installed' }} → <code>{{ installedInfo.path }}</code>
         </div>
       </div>
 
@@ -365,7 +365,8 @@ const props = withDefaults(defineProps<{
   source?:        'marketplace' | 'local';
   installing?:    boolean;
   installError?:  string | null;
-  installedInfo?: { kind: string; slug: string; path: string; name: string } | null;
+  installedInfo?: { kind: string; slug: string; path: string; name: string; version?: string } | null;
+  updateAvailable?: boolean;
   forking?:       boolean;
   forkError?:     string | null;
 }>(), {
@@ -373,6 +374,7 @@ const props = withDefaults(defineProps<{
   installing:    false,
   installError:  null,
   installedInfo: null,
+  updateAvailable: false,
   forking:       false,
   forkError:     null,
 });
@@ -400,7 +402,7 @@ const heroUrl = computed(() => {
 
 const authorDisplay = computed(() => {
   if (props.row.author_display) return props.row.author_display;
-  const suffix = props.row.author_contractor_id?.slice(-8) ?? '';
+  const suffix = props.row.author_user_id?.slice(-8) ?? '';
 
   return suffix ? `#${ suffix }` : 'Unknown';
 });
@@ -469,8 +471,9 @@ const summaryItems = computed<SummaryItem[]>(() => {
 });
 
 const installButtonLabel = computed(() => {
+  if (props.installing) return props.updateAvailable ? 'Updating…' : 'Installing…';
+  if (props.installedInfo && props.updateAvailable) return `Update to v${ props.row.version }`;
   if (props.installedInfo) return 'Installed ✓';
-  if (props.installing) return 'Installing…';
 
   return `Install ${ props.row.kind }`;
 });

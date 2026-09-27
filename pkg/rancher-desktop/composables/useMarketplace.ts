@@ -29,11 +29,26 @@ export interface MarketplaceDetail {
 }
 
 export interface InstallResult {
-  kind: 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
-  slug: string;
-  path: string;
-  name: string;
+  kind:              'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+  slug:              string;
+  path:              string;
+  name:              string;
+  version?:          string;
+  alreadyInstalled?: boolean;
+  previousVersion?:  string;
+  updated?:          boolean;
 }
+
+export interface InstalledEntry {
+  templateId: string;
+  kind:       InstallResult['kind'];
+  slug:       string;
+  version:    string;
+  path:       string;
+}
+
+/** 'installed' = on disk at the listed version; 'update' = on disk, older version. */
+export type InstallState = 'installed' | 'update' | null;
 
 export function useMarketplace() {
   const templates = ref<MarketplaceBrowseRow[]>([]);
@@ -53,6 +68,7 @@ export function useMarketplace() {
   const detailError = ref<string | null>(null);
 
   const installing = ref<string | null>(null); // id currently being installed
+  const installed = ref<Record<string, InstalledEntry>>({}); // by template id
   const lastInstalled = ref<InstallResult | null>(null);
   const installError = ref<string | null>(null);
 
@@ -87,11 +103,15 @@ export function useMarketplace() {
       // which case it ignores the filter and returns mixed results. Post-
       // filtering ensures a selected kind never shows foreign items, even
       // before the worker ships an updated enum.
+      // The server filters by kind; this is only a guard against foreign
+      // rows. Always trust the server total — using the page length here
+      // hid pagination whenever a kind filter was active.
       const rows = res.templates ?? [];
       const filtered = kind.value === 'all' ? rows : rows.filter((t: { kind?: string }) => t.kind === kind.value);
 
       templates.value = filtered;
-      total.value = kind.value === 'all' ? (res.total ?? 0) : filtered.length;
+      total.value = res.total ?? filtered.length;
+      loadInstalled().catch(() => undefined);
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
       templates.value = [];
@@ -129,18 +149,45 @@ export function useMarketplace() {
     detailError.value = null;
   }
 
-  async function install(id: string): Promise<InstallResult | null> {
+  async function loadInstalled(): Promise<void> {
+    try {
+      const res = await ipcRenderer.invoke('marketplace-installed');
+      if ('error' in res) return;
+      const map: Record<string, InstalledEntry> = {};
+      for (const entry of res.installed ?? []) map[entry.templateId] = entry;
+      installed.value = map;
+    } catch {
+      // Installed badges are a nicety — never block browsing on them.
+    }
+  }
+
+  /** The local copy of this listing: same template id, else same kind + slug (an older listing). */
+  function installedEntryFor(row: { id: string; kind: string; slug: string }): InstalledEntry | null {
+    return installed.value[row.id] ??
+      Object.values(installed.value).find(e => e.kind === row.kind && e.slug === row.slug) ??
+      null;
+  }
+
+  function installStateFor(row: { id: string; kind: string; slug: string; version: string }): InstallState {
+    const entry = installedEntryFor(row);
+    if (!entry) return null;
+
+    return entry.templateId === row.id && entry.version === row.version ? 'installed' : 'update';
+  }
+
+  async function install(id: string, opts: { overwrite?: boolean; replaces?: string } = {}): Promise<InstallResult | null> {
     installing.value = id;
     installError.value = null;
     lastInstalled.value = null;
     try {
-      const res = await ipcRenderer.invoke('marketplace-install', id);
+      const res = await ipcRenderer.invoke('marketplace-install', id, { overwrite: opts.overwrite === true, replaces: opts.replaces });
       if ('error' in res) {
         installError.value = res.error;
 
         return null;
       }
       lastInstalled.value = res;
+      await loadInstalled();
 
       return res;
     } catch (err) {
@@ -205,6 +252,10 @@ export function useMarketplace() {
 
     // install
     installing,
+    installed,
+    installStateFor,
+    installedEntryFor,
+    loadInstalled,
     lastInstalled,
     installError,
     clearInstallResult,

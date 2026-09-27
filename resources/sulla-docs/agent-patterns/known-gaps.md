@@ -68,7 +68,7 @@ A third 2026-08-14 pass swept the remaining *absence*-claim rows against the too
 
 ## Marketplace / Extensions
 
-The `marketplace/*` (10 tools, generic across 6 kinds: skill / function / workflow / agent / recipe / integration) and `extensions/{start,stop,get_status}_extension` shipped.
+The `marketplace/*` tools (11, across skill / function / routine / recipe / integration; `agent` is local-only) talk to the live Sulla Cloud marketplace, and `extensions/{start,stop,get_status}_extension` shipped. Reads work signed out; publish, unpublish and list_published need a Sulla Cloud session.
 
 | Request | Severity | Status |
 |---------|----------|--------|
@@ -76,11 +76,11 @@ The `marketplace/*` (10 tools, generic across 6 kinds: skill / function / workfl
 | ✅ Start / stop a recipe | `sulla extensions/start_extension` / `stop_extension '{"confirm":true}'` | shipped |
 | ✅ Build me a new recipe / skill / function / workflow / agent | `sulla marketplace/scaffold '{"kind":"...","slug":"..."}'` | shipped |
 | ✅ Validate before publishing | `sulla marketplace/validate '{"kind":"...","slug":"..."}'` | shipped |
-| ✅ Publish to marketplace | `sulla marketplace/publish` (cloud worker not yet deployed; tool returns clear error) | shipped (client side) |
+| ✅ Publish to marketplace | `sulla marketplace/publish` (needs Sulla Cloud sign-in; lands pending admin review) | shipped |
 | 🟡 Restart in one call | No `restart` tool. Compose `stop_extension` + `start_extension`. |
-| 🟢 Notify me when new artifacts appear | No diff/watch |
+| ✅ Compare local vs marketplace | `sulla marketplace/diff '{"kind":"...","slug":"..."}'` | shipped |
+| 🟢 Notify me when new artifacts appear | No watch |
 | 🟢 Install from a private registry | Unclear if supported |
-| 🔴 Cloud marketplace worker | `sulla-cloud/workers/marketplace` not yet deployed — writes return "not reachable" |
 
 ---
 
@@ -279,9 +279,8 @@ All five closed:
 
 1. **Live workflow state stream** — "what's the workflow doing right now?" (only post-hoc checkpoints today)
 2. **Per-behavior heartbeat toggles** — currently all-or-nothing
-3. **Marketplace cloud worker** (sulla-cloud) — so publish / unpublish actually work end-to-end
-4. **Mobile push relay** (sulla-workers) — the `/push/{user_id}` leg for targets:["mobile"]
-5. **OAuth-flow tooling for integrations** — "connect my Slack" without leaving chat
+3. **Mobile push relay** (sulla-workers) — the `/push/{user_id}` leg for targets:["mobile"]
+4. **OAuth-flow tooling for integrations** — "connect my Slack" without leaving chat
 
 ---
 
