@@ -41,9 +41,9 @@
  * Template variables (`{{...}}`) in values are resolved before saving.
  * Example:
  *   integrations:
- *     n8n:
- *       N8N_API_KEY: "{{sullaN8nApiKey}}"
- *       BASE_URL: "http://localhost:30119"
+ *     twenty:
+ *       api_key: "{{sullaServicePassword}}"
+ *       base_url: "http://localhost:30207"
  *
  * The `env` field is written as a `.env` file in the extension directory.
  * Docker Compose automatically reads it. The `.env` is refreshed on every start.

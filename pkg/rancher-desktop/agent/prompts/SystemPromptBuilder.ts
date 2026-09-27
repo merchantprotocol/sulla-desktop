@@ -337,7 +337,7 @@ class SystemPromptBuilderImpl {
     const dynamicSections = builtSections.filter(s => s.cacheStability === 'dynamic');
 
     // For local/ollama providers, enforce stable-before-dynamic ordering in the text output.
-    // llama-server's KV cache reuses the longest matching prefix — putting all stable (unchanging)
+    // Ollama's KV cache reuses the longest matching prefix — putting all stable (unchanging)
     // content first maximizes cache hits across turns, even if a dynamic section has a low priority.
     const orderedSections = (ctx.provider === 'ollama' || ctx.mode === 'local')
       ? [...stableSections, ...semiStableSections, ...dynamicSections]

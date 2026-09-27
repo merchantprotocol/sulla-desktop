@@ -79,7 +79,6 @@ export class SullaWebRequestFixer extends EventEmitter {
    * events are redacted (see redactWebRequestEvent).
    */
   private static readonly LOGGING_ENABLED = process.env.SULLA_DEBUG_WEBREQUEST === '1';
-  private hasLoggedN8nHealthz = false;
   private static readonly CONNECTIVITY_PROBE_URL_PREFIX = 'https://www.gstatic.com/generate_204';
 
   constructor(writeSullaWebRequestEvent: (event: SullaWebRequestLogEvent) => void) {
@@ -127,7 +126,7 @@ export class SullaWebRequestFixer extends EventEmitter {
       const isLocal = isLocalhost(urlInfo.hostname);
 
       // Only strip security headers and override CSP for local services
-      // (N8N, Twenty CRM, etc.).  External sites (Facebook, LinkedIn, etc.)
+      // (Twenty CRM, etc.).  External sites (Facebook, LinkedIn, etc.)
       // pass through untouched so we look like a normal browser.
       if (isLocal) {
         delete headers['x-frame-options'];
@@ -367,14 +366,6 @@ export class SullaWebRequestFixer extends EventEmitter {
     if (!SullaWebRequestFixer.LOGGING_ENABLED) return false;
     if (url.startsWith(SullaWebRequestFixer.CONNECTIVITY_PROBE_URL_PREFIX)) {
       return false;
-    }
-
-    const isN8nHealthz = /^https?:\/\/(127\.0\.0\.1|localhost):30119\/healthz(?:[/?#]|$)/i.test(url);
-    if (isN8nHealthz) {
-      if (this.hasLoggedN8nHealthz) {
-        return false;
-      }
-      this.hasLoggedN8nHealthz = true;
     }
 
     return true;

@@ -7,7 +7,6 @@
  * - IPC handlers for renderer queries and mutations
  * - Broadcasting state changes to all BrowserWindows
  * - Notifying in-process listeners (LLMRegistry) on change
- * - llama-server lifecycle (start/stop on local ↔ remote transitions)
  *
  * Renderers are thin IPC clients — they never read/write provider settings directly.
  */

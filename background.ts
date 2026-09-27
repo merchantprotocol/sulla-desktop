@@ -606,10 +606,6 @@ Electron.app.whenReady().then(async() => {
     }
 
     await SullaSettingsModel.set('firstRunSullaNetworking', false, 'boolean');
-
-    // Training deps are NOT installed at startup.
-    // They are installed on-demand when the user opens the Model Training
-    // window and clicks "Install Training Environment".
   } catch (ex: any) {
     console.error(`Error starting up: ${ ex }`, ex.stack);
     gone = true;

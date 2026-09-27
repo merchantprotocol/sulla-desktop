@@ -188,9 +188,9 @@ export const defaultSettings = {
     sullaPassword:             '',
     /** Sulla email for authentication */
     sullaEmail:                '',
-    /** Generated service password for PostgreSQL and N8N */
+    /** Generated service password for PostgreSQL */
     sullaServicePassword:      '',
-    /** Generated N8N encryption key */
+    /** Shared install secret. Historical name; marketplace recipes template it as {{sullaN8nEncryptionKey}}. */
     sullaN8nEncryptionKey:     '',
     /** Bearer token for chat completions API authentication */
     sullaApiToken:             '',

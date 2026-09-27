@@ -96,46 +96,6 @@ Closes #123
 
 In this case 123 is the corresponding issue number.
 
-### When End-To-End Tests Fail
-
-Every pull request triggers a full run of testing in the CI system.
-The failures reported by the code style checker (aka the "linter") and the unit tests are usually
-clear and easy to fix (and can be avoided by running `yarn test` locally before creating a commit).
-But when an integration, or e2e test, fails, it's sometimes useful to consult the log files
-for the run.
-
-1. Click on the _Details_ link next to the failing E2E test notification, and
-   navigate to the summary view of the test.
-
-   ![Failure summary screenshot](docs/assets/images/contributing/e2e-summary.png)
-2. From the bottom of the summary view, locate the `failure-reports.zip` link
-   and download it.  (You must be logged in to GitHub to be able to download
-   that file.)
-
-   ![Failure reports screenshot](docs/assets/images/contributing/e2e-failure-reports.png)
-3. Extract that file to find the logs; they are in directories named after each
-   test.  For example, a subset of the log files may include:
-   ```
-   $ ls -l
-   total 62204
-   drwxr-xr-x 29 nobody nobody      928 Oct 12  2020 backend.e2e.spec.ts-logs
-   -rw-r--r--  1 nobody nobody 31616936 Oct 12  2020 backend.e2e.spec.ts-pw-trace.zip
-   $ ls backend.e2e.spec.ts-logs/
-   background.log         k8s.log             networking.log
-   commandLine.log        kube.log            protocol-handler.log
-   dashboardServer.log    lima.ha.stderr.log  server.log
-   deploymentProfile.log  lima.ha.stdout.log  settings.log
-   diagnostics.log        lima.log            shortcuts.log
-   extensions.log         lima.serial.log     steve.log
-   images.log             moby.log            update.log
-   integrations.log       mock.log            window_browser.log
-   k3s.log                nerdctl.log         wsl.log
-   ```
-4. It may be useful to go to https://trace.playwright.dev/ to examine the
-   Playwright traces; they are the files named `*-pw-trace.zip`.  This can be
-   useful for seeing the state of the UI when waiting for elements to appear,
-   disappear, etc.
-
 ## Semantic Versioning
 
 Rancher Desktop follows [semantic versioning](https://semver.org/).

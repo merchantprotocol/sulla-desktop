@@ -1802,26 +1802,6 @@ export default defineComponent({
   overflow: auto;
 }
 
-.active-mode-banner {
-  background: var(--bg-info, var(--primary-bg, rgba(59, 130, 246, 0.1)));
-  border: 1px solid var(--accent-primary, var(--primary, #3b82f6));
-  border-radius: 6px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-
-  .active-label {
-    font-weight: 600;
-    color: var(--accent-primary, var(--primary, #3b82f6));
-  }
-
-  .active-value {
-    color: var(--text-primary, var(--body-text));
-  }
-}
-
 .model-tabs {
   display: flex;
   gap: 0;
@@ -1864,29 +1844,6 @@ export default defineComponent({
     border-bottom-color: var(--accent-primary, var(--primary, #3b82f6));
     font-weight: 500;
     background: var(--bg-active, var(--primary-bg, rgba(59, 130, 246, 0.1)));
-  }
-}
-
-.activate-section {
-  margin-bottom: 1.5rem;
-}
-
-.activate-btn {
-  min-width: 200px;
-
-  &.is-active {
-    background: var(--status-success, var(--success, #22c55e)) !important;
-    border-color: var(--status-success, var(--success, #22c55e)) !important;
-    color: var(--text-on-accent, #fff) !important;
-    opacity: 1 !important;
-    cursor: default;
-  }
-
-  &.is-active:disabled {
-    background: var(--status-success, var(--success, #22c55e)) !important;
-    border-color: var(--status-success, var(--success, #22c55e)) !important;
-    color: var(--text-on-accent, #fff) !important;
-    opacity: 1 !important;
   }
 }
 
@@ -2382,10 +2339,6 @@ export default defineComponent({
   }
 }
 
-.download-progress {
-  margin-top: 1rem;
-}
-
 .progress-bar {
   width: 100%;
   max-width: 400px;
@@ -2412,10 +2365,6 @@ export default defineComponent({
   border-radius: 6px;
   padding: 1rem;
   background: var(--bg-surface, var(--input-bg));
-}
-
-.downloaded-models-list {
-  margin-bottom: 1.5rem;
 }
 
 .model-list {
@@ -2500,26 +2449,6 @@ export default defineComponent({
   color: var(--text-muted, var(--muted));
 }
 
-.download-section {
-  display: flex;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-
-  input {
-    flex: 1;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--border-default, var(--input-border));
-    border-radius: 4px;
-    background-color: var(--bg-input, var(--input-bg));
-    color: var(--text-primary, var(--input-text));
-
-    &:focus {
-      outline: none;
-      border-color: var(--primary);
-    }
-  }
-}
-
 .models-table {
   width: 100%;
   border-collapse: collapse;
@@ -2539,13 +2468,6 @@ export default defineComponent({
   .model-name {
     font-weight: 500;
   }
-}
-
-// Memory tab styles
-.memory-layout {
-  display: flex;
-  gap: 1rem;
-  height: calc(100vh - 280px);
 }
 
 .pages-list {
@@ -2759,250 +2681,6 @@ export default defineComponent({
     padding: 0.25rem 0.5rem;
     font-size: var(--fs-body-sm);
   }
-}
-// Local Models tab styles
-.local-models-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-
-// System resources summary bar
-.system-resources-bar {
-  display: flex;
-  gap: 0.5rem;
-  font-size: var(--fs-body-sm);
-  color: var(--text-muted, var(--muted));
-  padding: 0.5rem 0.75rem;
-  background: var(--bg-surface, var(--input-bg));
-  border-radius: 6px;
-  margin-bottom: 1rem;
-}
-
-.local-model-card {
-  border: 2px solid var(--border-default, var(--input-border));
-  border-radius: 8px;
-  padding: 1rem;
-  cursor: pointer;
-  transition: border-color 0.2s, opacity 0.15s, background 0.2s, box-shadow 0.2s;
-
-  &.is-not-downloaded {
-    opacity: 0.9;
-  }
-
-  &.is-downloaded {
-    opacity: 1;
-  }
-
-  &.is-selected {
-    border-color: var(--accent-primary, var(--primary, #3b82f6));
-    background: var(--bg-active, var(--primary-bg, rgba(59, 130, 246, 0.06)));
-  }
-
-  // Activated model gets a prominent green treatment
-  &.is-activated {
-    border-color: var(--status-success, var(--success, #22c55e));
-    background: var(--bg-success);
-    box-shadow: 0 0 0 1px var(--status-success, var(--success, #22c55e));
-    opacity: 1;
-  }
-
-  &.is-activated.is-selected {
-    border-color: var(--status-success, var(--success, #22c55e));
-    background: var(--bg-success);
-    box-shadow: 0 0 0 1px var(--status-success, var(--success, #22c55e));
-  }
-
-  &:hover {
-    border-color: var(--accent-primary, var(--primary, #3b82f6));
-  }
-
-  &.is-activated:hover {
-    border-color: var(--status-success, var(--success, #22c55e));
-  }
-}
-
-.local-model-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.5rem;
-}
-
-.local-model-badges {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-}
-
-.local-model-name {
-  font-weight: 600;
-  font-size: var(--fs-body);
-}
-
-.local-model-badge {
-  font-size: var(--fs-body-sm);
-  padding: 0.2rem 0.6rem;
-  border-radius: 12px;
-  font-weight: 500;
-
-  &.badge-downloaded {
-    background: var(--bg-success);
-    color: var(--status-success);
-  }
-
-  &.badge-not-downloaded {
-    background: var(--bg-hover);
-    color: var(--text-muted);
-  }
-
-  &.badge-activated {
-    background: var(--status-success, var(--success, #22c55e));
-    color: var(--text-on-accent, #fff);
-    font-weight: 600;
-  }
-}
-
-// Resource fitness indicator dot + label
-.fitness-badge {
-  font-size: var(--fs-body-sm);
-  padding: 0.15rem 0.5rem;
-  border-radius: 12px;
-  font-weight: 500;
-
-  &.fitness-green {
-    background: var(--bg-success);
-    color: var(--status-success, #22c55e);
-  }
-
-  &.fitness-yellow {
-    background: var(--bg-warning);
-    color: var(--status-warning, #f59e0b);
-  }
-
-  &.fitness-red {
-    background: var(--bg-error);
-    color: var(--status-error, #ef4444);
-  }
-}
-
-.local-model-meta {
-  display: flex;
-  gap: 1rem;
-  font-size: var(--fs-body-sm);
-  color: var(--text-muted, var(--muted));
-  margin-bottom: 0.35rem;
-}
-
-.local-model-desc {
-  font-size: var(--fs-code);
-  color: var(--text-muted, var(--muted));
-  margin: 0;
-}
-
-.local-model-actions {
-  margin-top: 0.75rem;
-}
-
-// Prominent download progress indicator
-.local-model-download-progress {
-  margin-top: 0.75rem;
-  padding: 0.75rem;
-  background: var(--bg-info, var(--primary-bg, rgba(59, 130, 246, 0.08)));
-  border: 1px solid var(--accent-primary, var(--primary, #3b82f6));
-  border-radius: 6px;
-
-  .download-status-text {
-    font-size: var(--fs-body);
-    font-weight: 500;
-    color: var(--accent-primary, var(--primary, #3b82f6));
-    margin-bottom: 0.5rem;
-  }
-}
-
-.progress-bar-lg {
-  width: 100%;
-  height: 12px;
-  background: var(--border-default, var(--input-border));
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.progress-fill-lg {
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent-primary, var(--primary, #3b82f6)), var(--text-accent, #6366f1));
-  border-radius: 6px;
-  transition: width 0.3s ease;
-}
-
-.local-model-activate {
-  margin-top: 0.5rem;
-
-  .setting-description {
-    margin-top: 0.5rem;
-  }
-}
-
-// Context size slider
-.context-size-control {
-  margin-top: 1rem;
-  padding: 1rem;
-  background: var(--bg-surface, var(--input-bg));
-  border-radius: 8px;
-  border: 1px solid var(--border-default, var(--input-border));
-}
-
-.context-slider-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-top: 0.5rem;
-}
-
-.context-slider {
-  flex: 1;
-  height: 6px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: var(--border-default, var(--input-border));
-  border-radius: 3px;
-  outline: none;
-
-  &::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: var(--accent-color, #0366d6);
-    cursor: pointer;
-    border: 2px solid var(--bg-surface, #fff);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  }
-}
-
-.context-value-min,
-.context-value-max {
-  font-size: var(--fs-body-sm);
-  color: var(--text-muted, var(--muted));
-  white-space: nowrap;
-  min-width: 2.5rem;
-}
-
-.context-value-max {
-  text-align: right;
-}
-
-.context-readout {
-  margin-top: 0.5rem;
-  font-size: var(--fs-body-sm);
-  font-weight: 600;
-  color: var(--text-primary, var(--body-text));
-}
-
-.context-ram-estimate {
-  font-weight: 400;
-  color: var(--text-muted, var(--muted));
 }
 
 </style>

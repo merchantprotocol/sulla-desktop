@@ -46,16 +46,11 @@
     "test:unit:wsl-helper": "cd ./src/go/wsl-helper/ && go generate ./... && go test ./...",
     "test:extra": "yarn test:extra:api-schema",
     "test:extra:api-schema": "node scripts/ts-wrapper.js scripts/check-api-schema.ts",
-    "test:e2e": "node scripts/ts-wrapper.js scripts/e2e.ts",
-    "test:e2e:screenshots": "node scripts/ts-wrapper.js scripts/e2e.ts --config=screenshots/playwright-config.ts",
     "postinstall": "node scripts/ts-wrapper.js scripts/postinstall.ts",
     "postuninstall": "cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 electron-builder install-app-deps",
     "rddepman": "node scripts/ts-wrapper.js scripts/rddepman.ts",
     "ucmonitor": "node scripts/ts-wrapper.js scripts/unreleased-change-monitor.ts",
-    "dcmonitor": "node scripts/ts-wrapper.js scripts/docker-cli-monitor.ts",
-    "screenshots": "yarn screenshots:light && yarn screenshots:dark",
-    "screenshots:dark": "cross-env THEME=dark yarn test:e2e:screenshots",
-    "screenshots:light": "cross-env THEME=light yarn test:e2e:screenshots"
+    "dcmonitor": "node scripts/ts-wrapper.js scripts/docker-cli-monitor.ts"
   },
   "main": "dist/app/background.js",
   "dependencies": {

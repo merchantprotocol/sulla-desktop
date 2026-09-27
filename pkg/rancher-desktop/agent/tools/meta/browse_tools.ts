@@ -24,7 +24,6 @@ const CATEGORY_TO_INTEGRATION: Record<string, string> = {
   slack:    'slack',
   github:   'github',
   calendar: 'google-calendar',
-  n8n:      'n8n',
   pg:       'postgresql',
   redis:    'redis',
   chrome:   'chrome',

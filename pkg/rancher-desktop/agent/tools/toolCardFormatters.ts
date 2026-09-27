@@ -334,7 +334,7 @@ const formatters: Record<string, Formatter> = {
     return { label: 'Calendar', summary: 'Deleting event' };
   },
 
-  // ── N8N / Workflows ──────────────────────────────────────────────────────
+  // ── Workflows ──────────────────────────────────────────────────────
   execute_workflow(args) {
     return { label: 'Workflow', summary: `Running workflow ${ str(args.workflowId) }` };
   },
@@ -350,9 +350,6 @@ const formatters: Record<string, Formatter> = {
   },
   diagnose_webhook(args) {
     return { label: 'Workflow', summary: `Diagnosing webhook for ${ str(args.workflowId) }` };
-  },
-  restart_n8n_container() {
-    return { label: 'Workflow', summary: 'Restarting n8n container' };
   },
   restart_from_checkpoint(args) {
     return { label: 'Workflow', summary: `Restarting from node ${ str(args.nodeId) }` };
@@ -534,7 +531,6 @@ const PREFIX_LABELS: [string, string][] = [
   ['pg_', 'Database'],
   ['redis_', 'Redis'],
   ['slack_', 'Slack'],
-  ['n8n_', 'Workflow'],
   ['lima_', 'Lima'],
   ['calendar_', 'Calendar'],
 ];

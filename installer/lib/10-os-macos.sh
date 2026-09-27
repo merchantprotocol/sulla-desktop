@@ -419,6 +419,11 @@ macos::create_shortcut() {
   log SHORTCUT "Source: $source_app"
   log SHORTCUT "Destination: $desktop_app"
 
+  # The launcher bundle is generated, not committed.
+  if ! bash "$REPO_DIR/launcher/build-app.sh" >>"$(macos::get_log_dir)/installer.log" 2>&1; then
+    log SHORTCUT "launcher/build-app.sh failed"
+  fi
+
   if [ ! -d "$source_app" ]; then
     log SHORTCUT "Source .app bundle not found — skipping"
     step_warn "Shortcut skipped — .app bundle not found at ${source_app}"

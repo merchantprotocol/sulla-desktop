@@ -195,7 +195,6 @@ async function restoreFromDisk(threadId: string): Promise<BaseThreadState | null
       },
       finalSummary:         '',
       finalState:           'running',
-      n8nLiveEventsEnabled: false,
       returnTo:             null,
     },
   };

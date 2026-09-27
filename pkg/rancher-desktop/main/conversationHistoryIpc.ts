@@ -17,32 +17,14 @@ const console = Logging.background;
  * Delete associated files for a set of history records.
  * Best-effort — files may already be gone.
  *
- * By default only log_file (~/sulla/logs/) is deleted.
- *
- * Training files (~/sulla/conversations/) are NEVER deleted unless
- * includeTrainingData is explicitly true. Training data has its own
- * lifecycle (capture → preprocess → train → archive to processed/)
- * and is used for fine-tuning the local model. Deleting it would
- * destroy irreplaceable training data.
+ * Deletes each record's log_file (~/sulla/logs/).
  */
-async function cleanupFiles(
-  records: ConversationHistoryRecord[],
-  includeTrainingData = false,
-): Promise<void> {
+async function cleanupFiles(records: ConversationHistoryRecord[]): Promise<void> {
   for (const record of records) {
     // Always clean up log files
     if (record.log_file) {
       try {
         await fs.promises.unlink(record.log_file);
-      } catch {
-        // File may already be removed — ignore
-      }
-    }
-
-    // Training files only when explicitly requested
-    if (includeTrainingData && record.training_file) {
-      try {
-        await fs.promises.unlink(record.training_file);
       } catch {
         // File may already be removed — ignore
       }
@@ -83,12 +65,12 @@ export function initConversationHistoryIpc(): void {
       .catch(err => console.error('[ConversationHistoryIpc] Failed to close:', err));
   });
 
-  ipcMain.on('conversation-history:clear', async(_event, olderThan?: string, includeTrainingData?: boolean) => {
+  ipcMain.on('conversation-history:clear', async(_event, olderThan?: string) => {
     try {
       const cutoff = olderThan ? new Date(olderThan) : undefined;
       const deleted = await ConversationHistoryModel.clearHistory(cutoff);
 
-      await cleanupFiles(deleted, includeTrainingData ?? false);
+      await cleanupFiles(deleted);
 
       // Notify renderer that history was cleared
       mainEvents.emit('conversation-history:cleared' as any, olderThan);
@@ -96,7 +78,7 @@ export function initConversationHistoryIpc(): void {
       // Trigger menu rebuild
       mainEvents.emit('conversation-history:changed' as any);
 
-      console.log(`[ConversationHistoryIpc] Cleared ${ deleted.length } history entries (includeTrainingData=${ !!includeTrainingData })`);
+      console.log(`[ConversationHistoryIpc] Cleared ${ deleted.length } history entries`);
     } catch (err) {
       console.error('[ConversationHistoryIpc] Failed to clear history:', err);
     }
@@ -134,7 +116,7 @@ export function initConversationHistoryIpc(): void {
     }
   });
 
-  ipcMain.handle('conversation-history:delete', async(_event, id: string, includeTrainingData?: boolean) => {
+  ipcMain.handle('conversation-history:delete', async(_event, id: string) => {
     try {
       const associations = await ConversationHistoryModel.getFileAssociations(id);
 
@@ -144,15 +126,6 @@ export function initConversationHistoryIpc(): void {
       if (associations.log_file) {
         try {
           await fs.promises.unlink(associations.log_file);
-        } catch {
-          // Already gone
-        }
-      }
-
-      // Training file only when explicitly requested
-      if (includeTrainingData && associations.training_file) {
-        try {
-          await fs.promises.unlink(associations.training_file);
         } catch {
           // Already gone
         }
@@ -169,13 +142,12 @@ export function initConversationHistoryIpc(): void {
 
   mainEvents.on('conversation-history:clear-request' as any, async(...args: unknown[]) => {
     const olderThan = args[0] as string | undefined;
-    const includeTrainingData = (args[1] as boolean) ?? false;
 
     try {
       const cutoff = olderThan ? new Date(olderThan) : undefined;
       const deleted = await ConversationHistoryModel.clearHistory(cutoff);
 
-      await cleanupFiles(deleted, includeTrainingData);
+      await cleanupFiles(deleted);
 
       // Notify all renderer windows
       const { BrowserWindow } = await import('electron');
@@ -193,7 +165,7 @@ export function initConversationHistoryIpc(): void {
       // Trigger menu rebuild
       mainEvents.emit('conversation-history:changed' as any);
 
-      console.log(`[ConversationHistoryIpc] Menu-triggered clear: ${ deleted.length } entries removed (includeTrainingData=${ includeTrainingData })`);
+      console.log(`[ConversationHistoryIpc] Menu-triggered clear: ${ deleted.length } entries removed`);
     } catch (err) {
       console.error('[ConversationHistoryIpc] Failed to clear history (menu):', err);
     }

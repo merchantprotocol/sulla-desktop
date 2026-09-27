@@ -1,35 +1,25 @@
 # Workflow Templates
 
-Use n8n templates to accelerate automation setup in Sulla Desktop.
+Start from a template instead of a blank canvas.
 
-## Browse public n8n workflow templates
+## Where templates live
 
-Go to the official n8n template library:
+- **Library** — templates you've installed or saved, under **Routines → Library**.
+- **Marketplace** — routines, skills, functions and recipes published by the community, under **Routines → Marketplace**. Installing one drops it into your Library.
 
-- https://n8n.io/workflows/
+## How to use a template
 
-You can search by use case, integrations, and workflow type.
-
-## How to use templates with Sulla
-
-You have two easy options:
-
-1. **Copy/paste approach**
-   - Find a template you want.
-   - Copy the template definition/details.
-   - Paste it into your chat with Sulla.
-   - Ask Sulla to adapt it to your exact requirements.
-
-2. **Ask Sulla to find one for you**
-   - Tell Sulla what kind of workflow you want.
-   - Sulla can search public workflow templates, retrieve relevant options, and help configure one.
+1. Open the template from your Library, or ask Sulla in chat to start from it.
+2. Tell Sulla what to change: the trigger schedule, which accounts to use, where results should go.
+3. Run it once and review the result.
+4. Ask for revisions until it matches how you work, then leave it running.
 
 ## Example prompt
 
-"Find a public n8n workflow template for [your use case], import the best option, and adapt it to run daily with output sent to Slack."
+"Start from the Morning Briefing template, run it at 6:30 AM on weekdays, and send it to me in Slack instead of email."
 
 ## Best practice
 
-- Start from an existing template whenever possible.
-- Ask Sulla to customize trigger schedule, integrations, and output format.
-- Test once, then request revisions until it matches your process.
+- Start from an existing template whenever one is close.
+- Add an approval step before anything is sent in your name.
+- Test once, then refine.

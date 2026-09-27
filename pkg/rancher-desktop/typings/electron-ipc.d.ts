@@ -186,7 +186,7 @@ export interface IpcMainEvents {
   }) => void;
   'conversation-history:link-threads': (links: { id: string; threadId: string }[]) => void;
   'conversation-history:close': (id: string) => void;
-  'conversation-history:clear': (olderThan?: string, includeTrainingData?: boolean) => void;
+  'conversation-history:clear': (olderThan?: string) => void;
   // #endregion
 
   // #region In-app browser
@@ -834,7 +834,7 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Editor
-  'editor-footer-stats': () => { availableBytes: number; unprocessedTrainingBytes: number };
+  'editor-footer-stats': () => { availableBytes: number };
   // #endregion
 
   // #region System Resources
@@ -913,7 +913,7 @@ export interface IpcMainInvokeEvents {
     created_at:     string;
     last_active_at: string;
   }[];
-  'conversation-history:delete': (id: string, includeTrainingData?: boolean) => void;
+  'conversation-history:delete': (id: string) => void;
   // #endregion
 
   // #region Chat Messages (persistent storage with DB fallback)

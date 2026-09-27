@@ -265,11 +265,6 @@ export class ChatCompletionsServer {
       await this.handleCompletions(req, res);
     });
 
-    // OpenAI-compatible embeddings endpoint
-    this.app.post('/v1/embeddings', async(req: Request, res: Response) => {
-      await this.handleEmbeddings(req, res);
-    });
-
     // OpenAI-compatible moderations endpoint
     this.app.post('/v1/moderations', async(req: Request, res: Response) => {
       await this.handleModerations(req, res);
@@ -588,83 +583,6 @@ export class ChatCompletionsServer {
       res.json(response);
     } catch (error) {
       console.error('[ChatCompletionsAPI] Error handling completions request:', error);
-      res.status(500).json({
-        error: {
-          message: 'Internal server error',
-          type:    'internal_error',
-        },
-      });
-    }
-  }
-
-  /**
-   * Handle embeddings requests (OpenAI-compatible).
-   */
-  public async handleEmbeddings(req: Request, res: Response) {
-    try {
-      const { model, input, user } = req.body;
-
-      if (!input) {
-        return res.status(400).json({
-          error: {
-            message: 'input is required',
-            type:    'invalid_request_error',
-          },
-        });
-      }
-
-      const inputs = Array.isArray(input) ? input : [input];
-      const llamaBase = 'http://127.0.0.1:30114'; // llama-server base
-
-      const embeddings = [];
-      for (let i = 0; i < inputs.length; i++) {
-        const prompt = inputs[i];
-        if (typeof prompt !== 'string') continue;
-
-        try {
-          // llama-server uses OpenAI-compatible /v1/embeddings endpoint
-          const response = await fetch(`${ llamaBase }/v1/embeddings`, {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ model: model || 'default', input: prompt }),
-          });
-
-          if (!response.ok) {
-            throw new Error(`llama-server embeddings failed: ${ response.status }`);
-          }
-
-          const data = await response.json();
-          const embedding = data.data?.[0]?.embedding || [];
-          embeddings.push({
-            object: 'embedding',
-            embedding,
-            index:  i,
-          });
-        } catch (error) {
-          console.error('[ChatCompletionsAPI] Embeddings error:', error);
-          // Return zero vector as fallback
-          embeddings.push({
-            object:    'embedding',
-            embedding: new Array(768).fill(0), // Common embedding size
-            index:     i,
-          });
-        }
-      }
-
-      const response = {
-        object: 'list',
-        data:   embeddings,
-        model:  model || 'nomic-embed-text',
-        usage:  {
-          prompt_tokens: inputs.reduce((sum, inp) => sum + (typeof inp === 'string' ? Math.ceil(inp.length / 4) : 0), 0),
-          total_tokens:  inputs.reduce((sum, inp) => sum + (typeof inp === 'string' ? Math.ceil(inp.length / 4) : 0), 0),
-        },
-      };
-
-      console.log('[ChatCompletionsAPI] Embeddings response sent');
-      res.json(response);
-    } catch (error) {
-      console.error('[ChatCompletionsAPI] Error handling embeddings request:', error);
       res.status(500).json({
         error: {
           message: 'Internal server error',

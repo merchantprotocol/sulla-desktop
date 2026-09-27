@@ -463,7 +463,6 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
 
     // Fetch settings from SullaSettingsModel
     const sullaServicePassword = await SullaSettingsModel.get('sullaServicePassword') || 'sulla_dev_password';
-    const sullaN8nEncryptionKey = await SullaSettingsModel.get('sullaN8nEncryptionKey') || 'changeMeToA32CharRandomString1234';
 
     const deployments = (SULLA_DEPLOYMENTS as unknown[]).map((doc: unknown) => {
       const deployment = doc as Record<string, unknown>;
@@ -475,26 +474,6 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
         if (containers?.[0]?.env) {
           containers[0].env = (containers[0].env as any[]).map((envVar: any) => {
             if (envVar.name === 'POSTGRES_PASSWORD' || envVar.name === 'DB_POSTGRESDB_PASSWORD') {
-              envVar.value = sullaServicePassword;
-            }
-            return envVar;
-          });
-        }
-      }
-      if (deployment.kind === 'Deployment' && (deployment.metadata as Record<string, unknown>)?.name === 'n8n') {
-        const spec = deployment.spec as Record<string, unknown>;
-        const template = spec?.template as Record<string, unknown>;
-        const podSpec = template?.spec as Record<string, unknown>;
-        const containers = podSpec?.containers as Record<string, unknown>[];
-        if (containers?.[0]?.env) {
-          containers[0].env = (containers[0].env as any[]).map((envVar: any) => {
-            if (envVar.name === 'N8N_ENCRYPTION_KEY') {
-              envVar.value = sullaN8nEncryptionKey;
-            }
-            if (envVar.name === 'N8N_USER_MANAGEMENT_JWT_SECRET') {
-              envVar.value = sullaN8nEncryptionKey;
-            }
-            if (envVar.name === 'N8N_BASIC_AUTH_PASSWORD') {
               envVar.value = sullaServicePassword;
             }
             return envVar;

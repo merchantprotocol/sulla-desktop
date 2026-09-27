@@ -73,16 +73,6 @@ jobs:
         APPLE_ID: ${{ secrets.APPLE_ID }}
         APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-    - name: Build bats.tar.gz
-      if: matrix.platform == 'linux'
-      run: make -C bats bats.tar.gz
-    - name: Upload bats.tar.gz
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-      if: matrix.platform == 'linux'
-      with:
-        name: bats.tar.gz
-        path: bats/bats.tar.gz
-        if-no-files-found: error
     # DMG upload removed — see packaging/electron-builder.yml mac.target
     # for context. We ship a signed+notarized ZIP instead, which works.
     - name: Upload mac zip
@@ -160,7 +150,7 @@ jobs:
         mkdir -p release
         # Flatten artifacts into release directory
         find artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.zip' \) \
-          ! -name 'bats.tar.gz' -exec cp {} release/ \;
+          -exec cp {} release/ \;
         ls -lh release/
     - name: Create release
       uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v2

@@ -92,22 +92,6 @@
           /><path d="M16 2v20" /><path d="M2 12h14" /></svg>
           {{ formatBytes(footerStats.availableBytes) }} free
         </span>
-        <span
-          class="footer-item"
-          :title="`${formatBytes(footerStats.unprocessedTrainingBytes)} of unprocessed training data`"
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          ><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></svg>
-          {{ formatBytes(footerStats.unprocessedTrainingBytes) }} queued
-        </span>
       </div>
       <div class="agent-footer-right">
         <span
@@ -234,7 +218,7 @@ function onModeRailSelect(mode: string, subTab?: string) {
 const appVersion = ref('');
 
 // ── Footer state ──
-const footerStats = reactive({ availableBytes: 0, unprocessedTrainingBytes: 0 });
+const footerStats = reactive({ availableBytes: 0 });
 let footerStatsTimer: ReturnType<typeof setInterval> | undefined;
 
 const backendState = ref('STOPPED');
@@ -311,7 +295,6 @@ async function refreshFooterStats() {
     const stats = await ipcRenderer.invoke('editor-footer-stats');
 
     footerStats.availableBytes = stats.availableBytes;
-    footerStats.unprocessedTrainingBytes = stats.unprocessedTrainingBytes;
   } catch { /* ignore */ }
 }
 

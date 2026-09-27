@@ -463,7 +463,7 @@ export class MCPServerHost {
           'Call this before assuming a capability is unavailable.',
         ].join(' '),
         inputSchema: {
-          category: z.string().optional().describe('Tool category to list (e.g. docker, github, slack, redis, pg, calendar, n8n, kubectl, lima, vault, extensions, rdctl, meta, agents, project, github, memory, observation).'),
+          category: z.string().optional().describe('Tool category to list (e.g. docker, github, slack, redis, pg, calendar, kubectl, lima, vault, extensions, rdctl, meta, agents, project, github, memory, observation).'),
           query:    z.string().optional().describe('Keyword to search tool names and descriptions across all categories.'),
         },
       },
