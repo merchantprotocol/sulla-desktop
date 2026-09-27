@@ -21,17 +21,17 @@
  * issuing client tickets.
  */
 
-import Logging from '@pkg/utils/logging';
-
 import { getDesktopDeviceId } from '../deviceIdentity';
 import { getCurrentAccessToken, getCurrentUserId } from '../sullaCloudAuth';
 import { ApprovedClients } from './approvedClients';
+import { CLOUD_API_BASE } from './cloudEndpoints';
 import { getCloudPreferences } from './cloudSettings';
 import { signDeviceMessage } from './deviceKey';
 import {
   checkPairRequest, NonceCache, pairingCode, verifySignedFrame, type ClientFrameEnvelope,
 } from './secureChannelProtocol';
-import { CLOUD_API_BASE } from './cloudEndpoints';
+
+import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
@@ -43,34 +43,34 @@ const PAIR_WINDOW_MS = 10 * 60_000;
 const MAX_PAIR_PROMPTS_PER_WINDOW = 5;
 
 export interface SecureChannelStatus {
-  state:            'stopped' | 'connecting' | 'connected' | 'error';
-  lastError?:       string;
-  approvedClients:  number;
+  state:           'stopped' | 'connecting' | 'connected' | 'error';
+  lastError?:      string;
+  approvedClients: number;
 }
 
 export type PairingPrompt = (req: { label: string; surface: string; code: string }) => Promise<boolean>;
 
 interface Deps {
-  prompt:     PairingPrompt;
-  dispatch:   (body: Record<string, any>, reply: (frame: Record<string, unknown>) => void, respond: (frame: Record<string, unknown>) => void) => Promise<void>;
-  audit?:     (event: string, detail: Record<string, unknown>) => void;
+  prompt:   PairingPrompt;
+  dispatch: (body: Record<string, any>, reply: (frame: Record<string, unknown>) => void, respond: (frame: Record<string, unknown>) => void) => Promise<void>;
+  audit?:   (event: string, detail: Record<string, unknown>) => void;
 }
 
 export class SecureDesktopChannel {
-  private ws: WebSocket | null = null;
+  private ws:              WebSocket | null = null;
   private running = false;
   private reconnectDelay = RECONNECT_BASE_MS;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimer:  ReturnType<typeof setTimeout> | null = null;
+  private pingTimer:       ReturnType<typeof setInterval> | null = null;
   private lastInboundAt = 0;
-  private state: SecureChannelStatus['state'] = 'stopped';
+  private state:           SecureChannelStatus['state'] = 'stopped';
   private lastError = '';
   private nonces = new NonceCache();
   private pairingInFlight = false;
   private pairPromptTimes: number[] = [];
   // conversationId → clients following it (they get every frame for it).
   private subscribers = new Map<string, Set<string>>();
-  private listeners: Array<(s: SecureChannelStatus) => void> = [];
+  private listeners:       ((s: SecureChannelStatus) => void)[] = [];
   private deviceId = '';
   private userId = '';
 
@@ -80,12 +80,12 @@ export class SecureDesktopChannel {
     if (this.running) return;
     this.running = true;
     this.reconnectDelay = RECONNECT_BASE_MS;
-    void this.connect();
+    this.connect().catch(() => undefined);
   }
 
   stop(): void {
     this.running = false;
-    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null }
     this.teardown();
     this.setState('stopped');
   }
@@ -95,7 +95,7 @@ export class SecureDesktopChannel {
     if (!this.running) return;
     this.teardown();
     this.reconnectDelay = RECONNECT_BASE_MS;
-    void this.connect();
+    this.connect().catch(() => undefined);
   }
 
   getStatus(): SecureChannelStatus {
@@ -104,7 +104,7 @@ export class SecureDesktopChannel {
 
   onStatus(l: (s: SecureChannelStatus) => void): () => void {
     this.listeners.push(l);
-    return () => { this.listeners = this.listeners.filter(x => x !== l); };
+    return () => { this.listeners = this.listeners.filter(x => x !== l) };
   }
 
   /** Revoke an approved browser/phone: forget its key and kick its socket. */
@@ -160,13 +160,13 @@ export class SecureDesktopChannel {
       this.setState('connected');
       console.log('[SecureChannel] Connected');
       this.pingTimer = setInterval(() => {
-        if (Date.now() - this.lastInboundAt > STALE_SOCKET_MS) { this.fail('no inbound traffic'); return; }
-        try { ws.send(JSON.stringify({ type: 'ping' })); } catch { /* watchdog handles it */ }
+        if (Date.now() - this.lastInboundAt > STALE_SOCKET_MS) { this.fail('no inbound traffic'); return }
+        try { ws.send(JSON.stringify({ type: 'ping' })) } catch { /* watchdog handles it */ }
       }, PING_INTERVAL_MS);
     });
     ws.addEventListener('message', (ev) => {
       this.lastInboundAt = Date.now();
-      void this.onMessage(String(ev.data));
+      this.onMessage(String(ev.data)).catch(() => undefined);
     });
     ws.addEventListener('close', (ev: any) => {
       if (this.ws !== ws) return;
@@ -187,11 +187,11 @@ export class SecureDesktopChannel {
   }
 
   private teardown() {
-    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
+    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null }
     if (this.ws) {
       const ws = this.ws;
       this.ws = null;
-      try { ws.close(); } catch { /* already closed */ }
+      try { ws.close() } catch { /* already closed */ }
     }
   }
 
@@ -201,7 +201,7 @@ export class SecureDesktopChannel {
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, RECONNECT_MAX_MS);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      void this.connect();
+      this.connect().catch(() => undefined);
     }, delay);
   }
 
@@ -210,7 +210,7 @@ export class SecureDesktopChannel {
   /** Exposed for tests. */
   async onMessage(raw: string): Promise<void> {
     let env: ClientFrameEnvelope & { type: string };
-    try { env = JSON.parse(raw); } catch { return; }
+    try { env = JSON.parse(raw) } catch { return }
     if (env?.type !== 'client_frame') return; // connected/pong/error from the relay itself
     const clientId = env.from?.clientId;
     if (!clientId) return;
@@ -241,7 +241,8 @@ export class SecureDesktopChannel {
 
     ApprovedClients.touch(clientId);
     const { body } = result.command;
-    const conversationId = typeof body.conversationId === 'string' ? body.conversationId
+    const conversationId = typeof body.conversationId === 'string'
+      ? body.conversationId
       : typeof body.params?.conversationId === 'string' ? body.params.conversationId : '';
     if (conversationId) this.subscribe(conversationId, clientId);
 
@@ -318,8 +319,8 @@ export class SecureDesktopChannel {
   }
 
   private sendRaw(msg: Record<string, unknown>) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    try { this.ws.send(JSON.stringify(msg)); } catch (err) { console.warn('[SecureChannel] send failed:', err); }
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    try { this.ws.send(JSON.stringify(msg)) } catch (err) { console.warn('[SecureChannel] send failed:', err) }
   }
 
   private setState(state: SecureChannelStatus['state']) {
@@ -330,7 +331,7 @@ export class SecureDesktopChannel {
   private broadcastStatus() {
     const s = this.getStatus();
     for (const l of this.listeners) {
-      try { l(s); } catch { /* ignore */ }
+      try { l(s) } catch { /* ignore */ }
     }
   }
 

@@ -22,18 +22,18 @@
 
 import crypto from 'crypto';
 
+import { getDesktopDeviceId } from '../deviceIdentity';
+import { getCurrentAccessToken, getCurrentUserId } from '../sullaCloudAuth';
+import { CLOUD_API_BASE } from './cloudEndpoints';
+import { getCloudPreferences } from './cloudSettings';
+import { signDeviceMessage } from './deviceKey';
+
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import { getVaultBackupService, type VaultSnapshot } from '@pkg/agent/services/VaultBackupService';
 import { getVaultKeyService } from '@pkg/agent/services/VaultKeyService';
 import Logging from '@pkg/utils/logging';
-
-import { getDesktopDeviceId } from '../deviceIdentity';
-import { getCurrentAccessToken, getCurrentUserId } from '../sullaCloudAuth';
-import { CLOUD_API_BASE } from './cloudEndpoints';
-import { getCloudPreferences } from './cloudSettings';
-import { signDeviceMessage } from './deviceKey';
 
 const console = Logging.background;
 
@@ -74,7 +74,7 @@ export async function buildProjectsBody(): Promise<{ body: string; dedupe: strin
   ]);
   const lanes: Record<string, unknown> = {};
   for (const p of projects) {
-    try { lanes[(p as any).id] = await WorkLaneDefinitionModel.resolveEffective((p as any).id); } catch { /* lanes optional */ }
+    try { lanes[(p as any).id] = await WorkLaneDefinitionModel.resolveEffective((p as any).id) } catch { /* lanes optional */ }
   }
   const content = { projects, epics, tasks, lanes };
   const dedupe = crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex');
@@ -82,15 +82,15 @@ export async function buildProjectsBody(): Promise<{ body: string; dedupe: strin
 }
 
 class DesktopObjectSyncImpl {
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer:  ReturnType<typeof setInterval> | null = null;
   private inFlight = new Map<ObjectKind, Promise<ObjectSyncStatus>>();
   private status: Record<ObjectKind, ObjectSyncStatus> = { vault: { kind: 'vault' }, projects: { kind: 'projects' } };
 
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => { void this.syncEnabled(); }, INTERVAL_MS);
+    this.timer = setInterval(() => { this.syncEnabled().catch(() => undefined) }, INTERVAL_MS);
     this.timer.unref?.();
-    void this.syncEnabled();
+    this.syncEnabled().catch(() => undefined);
   }
 
   stop(): void {

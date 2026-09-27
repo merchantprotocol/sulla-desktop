@@ -7,8 +7,8 @@ const store = new Map<string, unknown>();
 mockModules({
   '@pkg/agent/database/models/SullaSettingsModel': {
     SullaSettingsModel: {
-      get: jest.fn(async(k: string, d: unknown) => (store.has(k) ? store.get(k) : d)),
-      set: jest.fn(async(k: string, v: unknown) => { store.set(k, v); }),
+      get: jest.fn((k: string, d: unknown) => Promise.resolve(store.has(k) ? store.get(k) : d)),
+      set: jest.fn((k: string, v: unknown) => { store.set(k, v); return Promise.resolve() }),
     },
   },
 });

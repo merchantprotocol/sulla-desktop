@@ -7,12 +7,12 @@
  * marks us offline after ~2 minutes).
  */
 
-import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
-import Logging from '@pkg/utils/logging';
-
 import { getCloudPreferences } from './cloud/cloudSettings';
 import { getDevicePublicKey } from './cloud/deviceKey';
 import { getDesktopDeviceMetadata, getDesktopDeviceId } from './deviceIdentity';
+
+import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
+import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
@@ -30,12 +30,12 @@ export interface CloudDeviceState {
   error?:     string;
 }
 let deviceState: CloudDeviceState = { registered: false, revoked: false };
-const stateListeners: Array<(s: CloudDeviceState) => void> = [];
+const stateListeners: ((s: CloudDeviceState) => void)[] = [];
 
 function setDeviceState(next: CloudDeviceState) {
   const changed = JSON.stringify(next) !== JSON.stringify(deviceState);
   deviceState = next;
-  if (changed) for (const l of stateListeners) { try { l(next); } catch { /* ignore */ } }
+  if (changed) for (const l of stateListeners) { try { l(next) } catch { /* ignore */ } }
 }
 
 /** Remote-access + sync switches reported with every register/heartbeat. */
@@ -61,7 +61,7 @@ async function postJson(path: string, body: unknown): Promise<{ ok: boolean; sta
       method:  'POST',
       headers: {
         'Content-Type':  'application/json',
-        Authorization: `Bearer ${ token }`,
+        Authorization:  `Bearer ${ token }`,
       },
       body: JSON.stringify(body),
     });

@@ -3,7 +3,7 @@ import { jest } from '@jest/globals';
 
 import mockModules from '@pkg/utils/testUtils/mockModules';
 
-const set = jest.fn(async() => undefined);
+const set = jest.fn(() => Promise.resolve(undefined));
 mockModules({
   '@pkg/agent/database/models/SullaSettingsModel': { SullaSettingsModel: { set, get: jest.fn() } },
 });

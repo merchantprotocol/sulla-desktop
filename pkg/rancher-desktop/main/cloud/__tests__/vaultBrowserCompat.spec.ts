@@ -19,7 +19,18 @@ const maybe = browserModule ? test : test.skip;
 
 function loadBrowserVault() {
   const ctx: any = {
-    window: {}, crypto: globalThis.crypto, TextEncoder, TextDecoder, atob, Uint8Array, JSON, Number, String, Error, setTimeout, clearTimeout,
+    window:   {},
+    crypto:   globalThis.crypto,
+    TextEncoder,
+    TextDecoder,
+    atob,
+    Uint8Array,
+    JSON,
+    Number,
+    String,
+    Error,
+    setTimeout,
+    clearTimeout,
     document: { addEventListener() {}, removeEventListener() {}, hidden: false },
   };
   vm.runInNewContext(fs.readFileSync(browserModule!, 'utf8'), ctx);
@@ -37,8 +48,13 @@ maybe('browser unlock opens a sealed desktop snapshot with the master password o
       { integration_id: 'openai', account_id: 'default', property: 'api_key', value: svc.encrypt('sk-test'), is_default: false },
     ];
     const snapshot = {
-      format: 'sulla-vault-snapshot', version: 2, createdAt: new Date().toISOString(), rowCount: rows.length,
-      keyMaterial: svc.exportKeyMaterial(), rows: [], sealed: svc.encrypt(JSON.stringify(rows)),
+      format:      'sulla-vault-snapshot',
+      version:     2,
+      createdAt:   new Date().toISOString(),
+      rowCount:    rows.length,
+      keyMaterial: svc.exportKeyMaterial(),
+      rows:        [],
+      sealed:      svc.encrypt(JSON.stringify(rows)),
     };
     // Nothing identifying is visible to the server.
     const wire = JSON.stringify(snapshot);

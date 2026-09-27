@@ -31,11 +31,11 @@ export const FRAME_WINDOW_MS = 2 * 60 * 1000;
 export const REMOTE_BODY_TYPES = new Set(['chat', 'inject', 'cancel', 'companion_request']);
 
 export interface ApprovedClient {
-  clientId:   string;
-  publicKey:  string; // base64 raw Ed25519
-  label:      string;
-  surface:    string;
-  approvedAt: string;
+  clientId:    string;
+  publicKey:   string; // base64 raw Ed25519
+  label:       string;
+  surface:     string;
+  approvedAt:  string;
   lastUsedAt?: string;
 }
 
@@ -71,7 +71,7 @@ export function pairingCode(deviceId: string, publicKeyB64: string): string {
 
 export function isRawEd25519Key(publicKeyB64: unknown): publicKeyB64 is string {
   if (typeof publicKeyB64 !== 'string' || publicKeyB64.length > 64) return false;
-  try { return Buffer.from(publicKeyB64, 'base64').length === 32; } catch { return false; }
+  try { return Buffer.from(publicKeyB64, 'base64').length === 32 } catch { return false }
 }
 
 function ed25519Verify(publicKeyB64: string, message: string, sigB64: string): boolean {
@@ -114,11 +114,11 @@ export type VerifyResult = { ok: true; command: VerifiedCommand } | { ok: false;
 export function verifySignedFrame(
   env: ClientFrameEnvelope,
   ctx: {
-    ownUserId:  string;
-    deviceId:   string;
-    approved:   (clientId: string) => ApprovedClient | undefined;
-    nonces:     NonceCache;
-    now?:       number;
+    ownUserId: string;
+    deviceId:  string;
+    approved:  (clientId: string) => ApprovedClient | undefined;
+    nonces:    NonceCache;
+    now?:      number;
   },
 ): VerifyResult {
   const now = ctx.now ?? Date.now();
@@ -134,7 +134,7 @@ export function verifySignedFrame(
   if (!ed25519Verify(client.publicKey, env.signed, env.sig)) return { ok: false, reason: 'bad_signature' };
 
   let payload: any;
-  try { payload = JSON.parse(env.signed); } catch { return { ok: false, reason: 'malformed' }; }
+  try { payload = JSON.parse(env.signed) } catch { return { ok: false, reason: 'malformed' } }
   if (payload?.v !== 1) return { ok: false, reason: 'unsupported_version' };
   if (payload.clientId !== stampedClient) return { ok: false, reason: 'client_mismatch' };
   if (payload.deviceId !== ctx.deviceId) return { ok: false, reason: 'wrong_device' };
@@ -159,6 +159,6 @@ export function checkPairRequest(env: ClientFrameEnvelope, ownUserId: string): {
   if (!isRawEd25519Key(env.publicKey)) return { ok: false, reason: 'bad_key' };
   const clientId = clientIdFromPublicKey(env.publicKey);
   if (env.from?.clientId !== clientId) return { ok: false, reason: 'client_mismatch' };
-  const label = String(env.label || 'Unknown browser').replace(/[\u0000-\u001f]/g, ' ').slice(0, 80);
+  const label = String(env.label || 'Unknown browser').split('').map(ch => (ch.charCodeAt(0) < 32 ? ' ' : ch)).join('').slice(0, 80);
   return { ok: true, clientId, publicKey: env.publicKey, label, surface: env.from.surface === 'mobile' ? 'mobile' : 'web' };
 }

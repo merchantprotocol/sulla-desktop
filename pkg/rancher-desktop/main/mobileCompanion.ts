@@ -1,9 +1,9 @@
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { ApprovalService, type UserQuestion } from '@pkg/agent/services/ApprovalService';
 import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
-import { postgresClient } from '@pkg/agent/database/PostgresClient';
 
 type PendingCard = { conversationId: string; kind: string; questions?: UserQuestion[] };
 const cards = new Map<string, PendingCard>();

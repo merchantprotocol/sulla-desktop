@@ -131,8 +131,9 @@
 </template>
 
 <script setup lang="ts">
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type Pref = 'conversations' | 'vault' | 'projects' | 'remoteAccess';
 
@@ -140,7 +141,7 @@ const status = ref<Record<string, any> | null>(null);
 const busy = ref(false);
 const error = ref('');
 
-const syncItems: Array<{ key: 'conversations' | 'vault' | 'projects'; title: string; detail: string }> = [
+const syncItems: { key: 'conversations' | 'vault' | 'projects'; title: string; detail: string }[] = [
   { key: 'conversations', title: 'Conversations', detail: 'read and continue chats from the web and your phone.' },
   { key: 'vault', title: 'Password vault', detail: 'encrypted backup, locked with your master password. Sulla Cloud can\'t read it.' },
   { key: 'projects', title: 'Projects', detail: 'see projects and tasks on the web while this computer is off.' },

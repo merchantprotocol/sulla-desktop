@@ -901,7 +901,11 @@ export class DesktopRelayClient {
     }
     const secure = this.secureRoutes.get(conversationId);
     if (secure) {
-      try { secure({ ...payload, conversationId, deviceId: this.deviceId }); } catch (err) { console.warn('[DesktopRelay] Secure route send failed:', err); }
+      try {
+        secure({ ...payload, conversationId, deviceId: this.deviceId });
+      } catch (err) {
+        console.warn('[DesktopRelay] Secure route send failed:', err);
+      }
       return;
     }
     this.send({ ...payload, conversationId, deviceId: this.deviceId });

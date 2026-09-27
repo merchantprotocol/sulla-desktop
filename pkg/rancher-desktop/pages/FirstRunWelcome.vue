@@ -215,7 +215,7 @@
           :disabled="resendCooldown > 0 || sendingCode"
           @click="sendCode"
         >
-          {{ resendCooldown > 0 ? `Resend code in ${ resendCooldown }s` : 'Resend code' }}
+          {{ resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code' }}
         </button>
         <button
           type="button"
@@ -470,14 +470,14 @@ const handleAccountSubmit = async() => {
 
     // Email the Sulla Cloud code now so it's waiting by the time the
     // recovery key has been written down.
-    void sendCode();
+    sendCode().catch(() => undefined);
 
     // Show recovery key step
     step.value = 'recovery';
   } catch (err) {
     console.error('[FirstRunWelcome] Vault setup failed:', err);
     // Continue to the Sulla Cloud account anyway — vault can be set up later.
-    void sendCode();
+    sendCode().catch(() => undefined);
     step.value = 'verify';
   }
 };

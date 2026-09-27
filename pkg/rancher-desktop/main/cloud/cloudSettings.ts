@@ -38,7 +38,7 @@ export const CLOUD_SETTING_KEYS = {
 const INITIALIZED_KEY = 'cloudSyncPreferencesInitialized';
 const LEGACY_SYNC_CURSOR_KEY = 'claudeSyncLastSeq';
 
-type Listener = (prefs: CloudPreferences, changed: Array<keyof CloudPreferences>) => void;
+type Listener = (prefs: CloudPreferences, changed: (keyof CloudPreferences)[]) => void;
 const listeners: Listener[] = [];
 
 function asBool(v: unknown, fallback: boolean): boolean {
@@ -72,8 +72,8 @@ export async function getCloudPreferences(): Promise<CloudPreferences> {
 /** Human-initiated change (Settings UI / first run). Only known booleans apply. */
 export async function setCloudPreferences(patch: Partial<Record<keyof CloudPreferences, unknown>>): Promise<CloudPreferences> {
   const before = await getCloudPreferences();
-  const changed: Array<keyof CloudPreferences> = [];
-  for (const key of Object.keys(CLOUD_SETTING_KEYS) as Array<keyof CloudPreferences>) {
+  const changed: (keyof CloudPreferences)[] = [];
+  for (const key of Object.keys(CLOUD_SETTING_KEYS) as (keyof CloudPreferences)[]) {
     const v = patch[key];
     if (typeof v !== 'boolean' || v === before[key]) continue;
     await SullaSettingsModel.set(CLOUD_SETTING_KEYS[key], v, 'boolean');
@@ -82,7 +82,7 @@ export async function setCloudPreferences(patch: Partial<Record<keyof CloudPrefe
   const after = await getCloudPreferences();
   if (changed.length) {
     for (const l of listeners) {
-      try { l(after, changed); } catch (err) { console.warn('[cloudSettings] listener failed:', err); }
+      try { l(after, changed) } catch (err) { console.warn('[cloudSettings] listener failed:', err) }
     }
   }
   return after;

@@ -9,11 +9,11 @@ const approved = new Map<string, any>();
 const prefs = { conversations: false, vault: false, projects: false, remoteAccess: true };
 
 mockModules({
-  '@pkg/utils/logging':           { __esModule: true, default: { background: { log: jest.fn(), warn: jest.fn(), error: jest.fn() } } },
-  '@pkg/main/deviceIdentity':     { getDesktopDeviceId: async() => 'device-1' },
-  '@pkg/main/sullaCloudAuth':     { getCurrentAccessToken: async() => 'token', getCurrentUserId: async() => 'owner' },
-  '@pkg/main/cloud/cloudSettings': { getCloudPreferences: async() => ({ ...prefs }) },
-  '@pkg/main/cloud/deviceKey':    { signDeviceMessage: () => ({ ts: 1, signature: 's' }) },
+  '@pkg/utils/logging':              { __esModule: true, default: { background: { log: jest.fn(), warn: jest.fn(), error: jest.fn() } } },
+  '@pkg/main/deviceIdentity':        { getDesktopDeviceId: () => Promise.resolve('device-1') },
+  '@pkg/main/sullaCloudAuth':        { getCurrentAccessToken: () => Promise.resolve('token'), getCurrentUserId: () => Promise.resolve('owner') },
+  '@pkg/main/cloud/cloudSettings':   { getCloudPreferences: () => Promise.resolve(({ ...prefs })) },
+  '@pkg/main/cloud/deviceKey':       { signDeviceMessage: () => ({ ts: 1, signature: 's' }) },
   '@pkg/main/cloud/approvedClients': {
     ApprovedClients: {
       get:    (id: string) => approved.get(id),
@@ -37,8 +37,11 @@ function makeClient() {
 function signed(c: ReturnType<typeof makeClient>, body: Record<string, unknown>) {
   const s = JSON.stringify({ v: 1, deviceId: 'device-1', clientId: c.clientId, ts: Date.now(), nonce: crypto.randomBytes(16).toString('base64'), body });
   return JSON.stringify({
-    type: 'client_frame', kind: 'signed', from: { userId: 'owner', clientId: c.clientId, surface: 'web' },
-    signed: s, sig: crypto.sign(null, Buffer.from(s), c.privateKey).toString('base64'),
+    type:   'client_frame',
+    kind:   'signed',
+    from:   { userId: 'owner', clientId: c.clientId, surface: 'web' },
+    signed: s,
+    sig:    crypto.sign(null, Buffer.from(s), c.privateKey).toString('base64'),
   });
 }
 
@@ -46,10 +49,12 @@ function setup(promptAnswer = true) {
   const sent: any[] = [];
   const ws = { readyState: 1, send: (m: string) => sent.push(JSON.parse(m)) };
   (globalThis as any).WebSocket = { OPEN: 1 };
-  const prompt = jest.fn(async() => promptAnswer);
-  const dispatch = jest.fn(async(body: any, reply: any, respond: any) => {
+  const prompt = jest.fn(() => Promise.resolve(promptAnswer));
+  const dispatch = jest.fn((body: any, reply: any, respond: any) => {
     if (body.type === 'companion_request') respond({ type: 'companion_response', requestId: body.requestId, result: { ok: 1 } });
     else reply({ type: 'ack', conversationId: body.conversationId });
+
+    return Promise.resolve();
   });
   const ch = new SecureDesktopChannel({ prompt, dispatch });
   ch._setIdentity('owner', 'device-1', ws);
@@ -127,12 +132,12 @@ test('only one pairing dialog at a time, and at most 5 per 10 minutes', async() 
   let release!: (v: boolean) => void;
   const sent: any[] = [];
   (globalThis as any).WebSocket = { OPEN: 1 };
-  const ch = new SecureDesktopChannel({ prompt: () => new Promise<boolean>(r => { release = r; }), dispatch: jest.fn() as any });
+  const ch = new SecureDesktopChannel({ prompt: () => new Promise<boolean>((resolve) => { release = resolve }), dispatch: jest.fn() as any });
   ch._setIdentity('owner', 'device-1', { readyState: 1, send: (m: string) => sent.push(JSON.parse(m)) });
   const a = makeClient();
   const b = makeClient();
   const first = ch.onMessage(JSON.stringify({ type: 'client_frame', kind: 'pair_request', publicKey: a.pub, from: { userId: 'owner', clientId: a.clientId } }));
-  await new Promise(r => setImmediate(r));
+  await new Promise((resolve) => { setImmediate(resolve) });
   await ch.onMessage(JSON.stringify({ type: 'client_frame', kind: 'pair_request', publicKey: b.pub, from: { userId: 'owner', clientId: b.clientId } }));
   expect(sent.at(-1)).toEqual({ type: 'deliver', to: b.clientId, frame: { type: 'pair_result', approved: false, reason: 'pairing_busy' } });
   release(false);

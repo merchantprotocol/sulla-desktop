@@ -14,16 +14,16 @@
 
 import { BrowserWindow, dialog } from 'electron';
 
-import { getIpcMainProxy } from '@pkg/main/ipcMain';
-import Logging from '@pkg/utils/logging';
-
 import { getDesktopRelayClient } from '../desktopRelay';
 import { DevicesCloudApi } from '../devicesCloudApi';
 import { ApprovedClients } from './approvedClients';
 import { getCloudPreferences, onCloudPreferencesChanged, setCloudPreferences, type CloudPreferences } from './cloudSettings';
-import { getDeviceKeyFingerprint } from './deviceKey';
 import { DesktopObjectSync, type ObjectKind } from './desktopObjectSync';
+import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
+
+import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
@@ -86,12 +86,12 @@ function installPrefsListener() {
   prefsListenerInstalled = true;
   onCloudPreferencesChanged((prefs, changed) => {
     if (!signedIn) return;
-    void DevicesCloudApi.heartbeat();
+    DevicesCloudApi.heartbeat().catch(() => undefined);
     if (changed.includes('conversations')) {
-      void (prefs.conversations ? startConversationSync() : stopConversationSync()).catch(err => console.warn('[CloudLifecycle] conversation sync toggle failed:', err));
+      (prefs.conversations ? startConversationSync() : stopConversationSync()).catch(err => console.warn('[CloudLifecycle] conversation sync toggle failed:', err));
     }
-    if (changed.includes('vault') && prefs.vault) void DesktopObjectSync.syncNow('vault', true);
-    if (changed.includes('projects') && prefs.projects) void DesktopObjectSync.syncNow('projects', true);
+    if (changed.includes('vault') && prefs.vault) DesktopObjectSync.syncNow('vault', true).catch(() => undefined);
+    if (changed.includes('projects') && prefs.projects) DesktopObjectSync.syncNow('projects', true).catch(() => undefined);
     broadcast();
   });
   DevicesCloudApi.onStateChange((state) => {
@@ -132,18 +132,18 @@ export function handleSystemResume(): void {
 }
 
 export interface CloudConnectionStatus {
-  signedIn:         boolean;
-  preferences:      CloudPreferences | null;
-  channel:          ReturnType<SecureDesktopChannel['getStatus']> | null;
-  device:           ReturnType<typeof DevicesCloudApi.getState>;
-  keyFingerprint:   string | null;
-  approvedClients:  Array<{ clientId: string; label: string; surface: string; approvedAt: string; lastUsedAt?: string }>;
-  objectSync:       ReturnType<typeof DesktopObjectSync.getStatus>;
+  signedIn:        boolean;
+  preferences:     CloudPreferences | null;
+  channel:         ReturnType<SecureDesktopChannel['getStatus']> | null;
+  device:          ReturnType<typeof DevicesCloudApi.getState>;
+  keyFingerprint:  string | null;
+  approvedClients: { clientId: string; label: string; surface: string; approvedAt: string; lastUsedAt?: string }[];
+  objectSync:      ReturnType<typeof DesktopObjectSync.getStatus>;
 }
 
 export async function getCloudConnectionStatus(): Promise<CloudConnectionStatus> {
   let fingerprint: string | null = null;
-  try { fingerprint = getDeviceKeyFingerprint(); } catch { /* key unreadable */ }
+  try { fingerprint = getDeviceKeyFingerprint() } catch { /* key unreadable */ }
   return {
     signedIn,
     preferences:     await getCloudPreferences().catch(() => null),
@@ -156,9 +156,9 @@ export async function getCloudConnectionStatus(): Promise<CloudConnectionStatus>
 }
 
 function broadcast() {
-  void getCloudConnectionStatus().then((status) => {
+  getCloudConnectionStatus().then((status) => {
     for (const win of BrowserWindow.getAllWindows()) {
-      try { win.webContents.send('sulla-cloud-connection:status-changed', status); } catch { /* window gone */ }
+      try { win.webContents.send('sulla-cloud-connection:status-changed', status) } catch { /* window gone */ }
     }
   }).catch(() => undefined);
 }

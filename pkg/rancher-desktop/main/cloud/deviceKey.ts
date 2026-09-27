@@ -89,7 +89,7 @@ const PURPOSE_TAGS = {
 
 export type DevicePurpose = keyof typeof PURPOSE_TAGS;
 
-export function deviceMessage(purpose: DevicePurpose, parts: Array<string | number>): string {
+export function deviceMessage(purpose: DevicePurpose, parts: (string | number)[]): string {
   for (const p of parts) {
     if (String(p).includes('\n')) throw new Error('message parts must not contain newlines');
   }
@@ -97,7 +97,7 @@ export function deviceMessage(purpose: DevicePurpose, parts: Array<string | numb
 }
 
 /** Sign a purpose-bound message. Returns { ts, signature } (unix seconds, base64). */
-export function signDeviceMessage(purpose: DevicePurpose, parts: Array<string | number>): { ts: number; signature: string } {
+export function signDeviceMessage(purpose: DevicePurpose, parts: (string | number)[]): { ts: number; signature: string } {
   const ts = Math.floor(Date.now() / 1000);
   const message = deviceMessage(purpose, [...parts, ts]);
   const signature = crypto.sign(null, Buffer.from(message), load().key).toString('base64');

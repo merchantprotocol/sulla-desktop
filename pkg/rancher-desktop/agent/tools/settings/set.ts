@@ -1,7 +1,7 @@
-import { isProtectedSetting } from '@pkg/main/cloud/cloudSettings';
-
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import { BaseTool, ToolResponse } from '../base';
+
+import { isProtectedSetting } from '@pkg/main/cloud/cloudSettings';
 
 /**
  * Authoritative settings write. Goes through SullaSettingsModel so
