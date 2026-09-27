@@ -106,10 +106,23 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     );
   }
 
-  /** Serialize admission across processes; an active row is never stolen. */
-  static async admitSingleton(params: Parameters<typeof WorkflowExecutionModel.markRunning>[0]): Promise<void> {
+  /**
+   * Serialize admission across processes; an active row is never stolen —
+   * except the one execution this admission is explicitly resuming, which is
+   * superseded in the same transaction. Without that exception every resume
+   * of a singleton was refused by its own interrupted predecessor, so boot
+   * recovery burned all its attempts and failed the run
+   * ("recovery attempt ceiling exceeded").
+   */
+  static async admitSingleton(
+    params: Parameters<typeof WorkflowExecutionModel.markRunning>[0],
+    options: { supersedesExecutionId?: string } = {},
+  ): Promise<void> {
     await postgresClient.transaction(async(client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`workflow-singleton:${ params.workflowId }`]);
+      if (options.supersedesExecutionId) {
+        await WorkflowExecutionModel.supersede(options.supersedesExecutionId, params.executionId, client);
+      }
       const active = await client.query(`SELECT execution_id FROM workflow_executions
         WHERE workflow_id = $1 AND status IN ('running', 'suspended') LIMIT 1`, [params.workflowId]);
       if (active.rows.length) {
@@ -268,12 +281,36 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     });
   }
 
+  /**
+   * Earliest lease expiry among executions boot recovery can actually claim.
+   * MUST use the same predicate as findStaleExecutions: a task-scoped row
+   * (recovered by the dispatcher / lane automation, not here) with an expired
+   * lease used to make this return a past time forever, re-arming recovery
+   * every second (57k passes/day observed in production).
+   */
   static async nextLeaseExpiry(): Promise<Date | null> {
     const row = await postgresClient.queryOne<{ next_expiry: Date | null }>(`
       SELECT MIN(lease_expires_at) AS next_expiry
       FROM workflow_executions
-      WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND lease_expires_at IS NOT NULL`);
+      WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND scope_task_id IS NULL AND lease_expires_at IS NOT NULL`);
     return row?.next_expiry ? new Date(row.next_expiry) : null;
+  }
+
+  /**
+   * Close an interrupted execution that is being resumed under a new id.
+   * Boot recovery leases the original row before resuming it; nothing else
+   * ever settled that row, so its lease expired and recovery resumed it
+   * AGAIN (duplicate runs) until the attempt ceiling failed it.
+   */
+  static async supersede(originalExecutionId: string, newExecutionId: string, client?: { query: (sql: string, params: unknown[]) => Promise<unknown> }): Promise<void> {
+    const sql = `UPDATE workflow_executions
+      SET status = 'failed', completed_at = COALESCE(completed_at, NOW()), terminal_at = COALESCE(terminal_at, NOW()),
+          terminal_reason = 'resumed', error = $2,
+          owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
+      WHERE execution_id = $1 AND execution_id <> $3 AND status IN ('running', 'suspended')`;
+    const params = [originalExecutionId, `Interrupted; resumed as ${ newExecutionId }`, newExecutionId];
+    if (client) await client.query(sql, params);
+    else await postgresClient.query(sql, params);
   }
 
   /** Claim one stale execution for recovery and return its last checkpoint. */

@@ -29,13 +29,45 @@ export interface SuspendedExecution {
 
 /** Non-auto-restart executions waiting for user decision. Cleared once read. */
 let pendingSuspended: SuspendedExecution[] = [];
+/** Manual-resume executions the user has already been told about. */
+const notifiedManualResumes = new Set<string>();
+
+/**
+ * A suspended run that needs a manual decision also blocks every future run
+ * of a singleton routine. getPendingSuspended() has no caller, so these used
+ * to wait silently forever (a scheduled routine went dark for 9+ hours).
+ * Tell the user once per execution.
+ */
+async function notifyManualResumes(executions: SuspendedExecution[]): Promise<void> {
+  const fresh = executions.filter(e => !notifiedManualResumes.has(e.executionId));
+  if (fresh.length === 0) return;
+  for (const exec of fresh) notifiedManualResumes.add(exec.executionId);
+  console.warn(`[WorkflowRecovery] ${ fresh.length } workflow run(s) paused and waiting for you: ${ fresh.map(e => `${ e.workflowName } (${ e.executionId })`).join(', ') }`);
+  try {
+    const { getChromeApi } = await import('@pkg/main/chromeApi/ChromeApiService');
+    for (const exec of fresh) {
+      await getChromeApi().notifications.create(`workflow-paused-${ exec.executionId }`, {
+        title:   `Routine paused: ${ exec.workflowName }`,
+        message: 'It stopped mid-run and needs a decision before it can run again. Open Routines to resume or stop it.',
+      });
+    }
+  } catch (err) {
+    console.warn('[WorkflowRecovery] could not show paused-routine notification:', err);
+  }
+}
 let leaseRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+/** Re-check interval when the earliest lease is already expired but unclaimable. */
+const STALE_RECHECK_MS = 30_000;
 
 async function scheduleNextLeaseRecovery(WorkflowExecutionModel: any): Promise<void> {
   const next = await WorkflowExecutionModel.nextLeaseExpiry();
   if (!next) return;
   if (leaseRecoveryTimer) clearTimeout(leaseRecoveryTimer);
-  const delay = Math.max(1_000, next.getTime() - Date.now() + 250);
+  // A lease that is ALREADY expired right after a recovery pass is one this
+  // pass could not claim (another worker holds it, or it's not ours to
+  // recover). Re-check at a sane pace instead of spinning every second.
+  const untilExpiry = next.getTime() - Date.now();
+  const delay = untilExpiry <= 0 ? STALE_RECHECK_MS : Math.max(1_000, untilExpiry + 250);
   leaseRecoveryTimer = setTimeout(() => {
     leaseRecoveryTimer = null;
     void recoverOnBoot();
@@ -72,7 +104,9 @@ export async function recoverOnBoot(): Promise<void> {
       return;
     }
 
-    console.log(`[WorkflowRecovery] Found ${ suspended.length } legacy suspended and ${ recovered.length } stale execution(s) to recover.`);
+    if (recovered.length > 0 || suspended.some(e => !notifiedManualResumes.has((e.attributes as any).execution_id))) {
+      console.log(`[WorkflowRecovery] Found ${ suspended.length } legacy suspended and ${ recovered.length } stale execution(s) to recover.`);
+    }
 
     const autoRestarts: SuspendedExecution[] = recovered.filter(entry => entry.autoRestart);
     const manualResumes: SuspendedExecution[] = recovered.filter(entry => !entry.autoRestart);
@@ -104,7 +138,7 @@ export async function recoverOnBoot(): Promise<void> {
     }
 
     if (manualResumes.length > 0) {
-      console.log(`[WorkflowRecovery] ${ manualResumes.length } workflow(s) need manual resume: ${ manualResumes.map(e => e.workflowName).join(', ') }`);
+      await notifyManualResumes(manualResumes);
     }
     await scheduleNextLeaseRecovery(WorkflowExecutionModel);
   } catch (err) {

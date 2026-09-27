@@ -107,12 +107,21 @@ auto_restart: false
 ```
 
 The policy records `auto_restart: false` even if the definition omits that field.
-Automatic lease recovery, stale-row cleanup, and checkpoint supersession leave
-these executions alone. Failed singleton workflows remain suspended because a
-failed parent cannot prove that an external worker has stopped. Verify all worker
-processes have terminated before explicitly settling the suspended execution;
-then a new run can start. There is no automatic timeout takeover. Successful
-completion releases admission only after pending workers have finished.
+Automatic lease recovery and stale-row cleanup leave these executions alone.
+A failed singleton run is **settled as failed** (so the next run, including the
+next scheduled run, is admitted) unless it may have left a worker running: a
+worker still pending, or one whose wait ended in a timeout/abort. Only then does
+the run stay **suspended**, holding admission, because a failed parent cannot
+prove that worker stopped. A suspended run blocks every new start of the
+workflow, so Sulla shows a one-time desktop notification ("Routine paused: …").
+Verify the worker has terminated, then settle or resume the execution; there is
+no automatic timeout takeover. Successful completion releases admission only
+after pending workers have finished.
+
+Resuming an interrupted execution (from the UI, `resumeExecutionId`, or boot
+recovery) runs under a new execution id and settles the original as `failed`
+with `terminal_reason: resumed` in the same admission, so the original can
+neither block its own resume nor be recovered a second time.
 
 For each worker node, `data.config.maxAgents: 1` rejects an orchestrator response
 containing more than one nonempty `<PROMPT>` task before any agents are launched.
