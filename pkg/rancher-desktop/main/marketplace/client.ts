@@ -35,7 +35,7 @@ const console = Logging.background;
  * Base URL for the marketplace API. Must match the one used by
  * `sullaCloudAuth.ts` so the JWT is valid for this host.
  */
-const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
+const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 
 // ─── Types mirroring the marketplace response shapes ────────────────
 // Kept minimal — we only type what our callers consume. The marketplace

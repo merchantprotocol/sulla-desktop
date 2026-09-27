@@ -21,7 +21,7 @@ import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
-const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
+const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 const POLL_INTERVAL_MS = 1_500;
 const POLL_TIMEOUT_MS = 5 * 60 * 1_000; // 5 minutes — matches KV TTL window
 

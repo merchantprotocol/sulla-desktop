@@ -110,7 +110,7 @@ function parseTargets(raw: unknown): NotifyTarget[] {
  * - Mobile user id comes from SullaSettingsModel `mobile.pairedUserId` or
  *   vault `sulla-cloud/paired_user_id`.
  * - Relay URL comes from vault `sulla-cloud/relay_url`
- *   (default: wss://sulla-workers.jonathon-44b.workers.dev).
+ *   (default: wss://sulla-workers.merchantprotocol.workers.dev).
  * - Auth: JWT in vault `sulla-cloud/api_token` (HS256, sub = user_id).
  *
  * If any of the above is missing, throws with a clear message so the agent
@@ -131,7 +131,7 @@ async function sendMobilePush(opts: { title: string; message: string; id: string
     throw new Error('No Sulla Cloud token in vault (sulla-cloud/api_token).');
   }
 
-  const relayBase = String(relayValue?.value || 'https://sulla-workers.jonathon-44b.workers.dev').replace(/\/+$/, '');
+  const relayBase = String(relayValue?.value || 'https://sulla-workers.merchantprotocol.workers.dev').replace(/\/+$/, '');
   const url = `${ relayBase }/push/${ encodeURIComponent(String(pairedUserValue.value)) }`;
 
   const res = await fetch(url, {

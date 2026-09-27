@@ -17,7 +17,7 @@ The agent should be able to explain Sulla Cloud accurately without inventing fea
 
 **Hosted models** — Claude access on Sulla's Anthropic key. No BYOK required. (BYOK-vs-managed details for Cloud customers are not yet documented; do not promise specifics.)
 
-**Cloud relay** — WebSocket relay on Cloudflare Workers (`wss://sulla-workers.jonathon-44b.workers.dev`). Powers:
+**Cloud relay** — WebSocket relay on Cloudflare Workers (`wss://sulla-workers.merchantprotocol.workers.dev`). Powers:
 - Mobile↔Desktop pairing — Sulla Mobile sends work requests to a paired Cloud instance
 - Continuity when the user's laptop is offline — messages route through the relay to the cloud-hosted agent
 - Room-based architecture (room = user_id; HS256 JWT auth)
