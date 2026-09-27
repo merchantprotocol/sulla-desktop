@@ -104,12 +104,39 @@ describe('singleton worker lifecycle', () => {
     return { state, controller, execute };
   }
 
-  it('holds admission after a failed parent even when its child status is unknown', async() => {
+  it('holds admission after a failed parent when a worker timed out and may still be running', async() => {
     const { state, controller } = setup();
+    // A worker was launched and its stop was never confirmed (it timed out).
+    controller.unconfirmedWorkers.set('singleton-run', 1);
     await controller.releaseWorkflow(state, state.metadata.activeWorkflow, 'failed', 'Worker timeout');
     expect(WorkflowExecutionModel.markSuspended).toHaveBeenCalledWith('singleton-run');
     expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
     expect(state.metadata.lastCompletedWorkflow.outcome).toBe('failed');
+  });
+
+  it('settles a failed singleton that never left a worker running, so the next scheduled run is admitted', async() => {
+    const { state, controller } = setup();
+    // e.g. a provider error before/without launching any worker. Suspending
+    // here used to block the routine's schedule forever with no notice.
+    await controller.releaseWorkflow(state, state.metadata.activeWorkflow, 'failed', 'LLM provider unavailable');
+    expect(WorkflowExecutionModel.settle).toHaveBeenCalledWith('singleton-run', 'failed', 'LLM provider unavailable');
+    expect(WorkflowExecutionModel.markSuspended).not.toHaveBeenCalled();
+  });
+
+  it('confirms a worker stopped when its turn returns or it throws, but not on a timeout', async() => {
+    const { state, controller } = setup();
+    controller.executeSubAgentUntracked = jest.fn()
+      .mockResolvedValueOnce({ output: 'ok', contractStatus: 'done' } as never)
+      .mockRejectedValueOnce(new Error('worker crashed') as never)
+      .mockRejectedValueOnce(new Error('Sub-agent timed out after 600s') as never);
+    delete controller.executeSubAgent; // use the real tracking wrapper
+    const run = () => (PlaybookController.prototype as any).executeSubAgent.call(controller, state, 'w', 'a', 'p', {});
+
+    await run();
+    await expect(run()).rejects.toThrow('crashed');
+    expect(controller.unconfirmedWorkers.get('singleton-run') ?? 0).toBe(0);
+    await expect(run()).rejects.toThrow('timed out');
+    expect(controller.unconfirmedWorkers.get('singleton-run')).toBe(1);
   });
 
   it('refuses successful release while a child is pending', async() => {
@@ -138,7 +165,10 @@ describe('singleton worker lifecycle', () => {
     await controller.processWorkflowPlaybook(state);
     expect(controller.executeSubAgentWithRetry).not.toHaveBeenCalled();
     expect(controller.executeSubAgent).not.toHaveBeenCalled();
-    expect(WorkflowExecutionModel.markSuspended).toHaveBeenCalledWith('singleton-run');
+    // No worker was launched, so nothing can still be running: fail cleanly
+    // instead of holding admission.
+    expect(WorkflowExecutionModel.settle).toHaveBeenCalledWith('singleton-run', 'failed', expect.any(String));
+    expect(WorkflowExecutionModel.markSuspended).not.toHaveBeenCalled();
   });
 
   it.each(['One plain task', '<PROMPT>One tagged task</PROMPT>'])('uses one tracked non-retried worker for %s', async(content) => {

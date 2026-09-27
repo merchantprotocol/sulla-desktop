@@ -11,6 +11,12 @@
 import schedule from 'node-schedule';
 
 import { SCHEDULE_TRIGGER } from '@pkg/pages/editor/workflow/types';
+import Logging from '@pkg/utils/logging';
+
+// Persisted logger: with plain console, cron fires and scheduled-run failures
+// never reached a log file, so a routine that silently stopped running (e.g.
+// refused by singleton admission) left no trace anywhere.
+const console = Logging.background;
 
 // ── Types ──
 
@@ -264,7 +270,10 @@ export class WorkflowSchedulerService {
           // Dynamic import — avoids a hard cycle between the scheduler
           // (agent-layer) and the routine execution helper (main-layer).
           const { executeRoutine } = await import('@pkg/main/sullaRoutineTemplateEvents');
-          await executeRoutine(workflowId, `Scheduled trigger fired for routine ${ workflowName }`);
+          const result = await executeRoutine(workflowId, `Scheduled trigger fired for routine ${ workflowName }`);
+          if (result?.skipped) {
+            console.log(`[WorkflowSchedulerService] Scheduled run of "${ workflowName }" skipped: ${ result.skipped }`);
+          }
         } catch (err) {
           console.error(`[WorkflowSchedulerService] Failed to execute scheduled routine "${ workflowName }":`, err);
         }
