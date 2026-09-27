@@ -24,9 +24,10 @@ import * as path from 'path';
 
 import yaml from 'yaml';
 
-import Logging from '@pkg/utils/logging';
-
+import { listBundleFiles } from './bundleFiles';
 import type { MarketplaceKind } from './client';
+
+import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
@@ -36,20 +37,8 @@ const BUNDLE_SCHEMA_VERSION = 1;
 
 // ─── File walk + checksums ──────────────────────────────────────────
 
-function listFilesRecursive(root: string): string[] {
-  const out: string[] = [];
-  const stack: string[] = [root];
-  while (stack.length > 0) {
-    const dir = stack.pop()!;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) stack.push(full);
-      else if (entry.isFile()) out.push(full);
-    }
-  }
-
-  return out;
-}
+// Publishable files only — see marketplace/bundleFiles.ts.
+const listFilesRecursive = listBundleFiles;
 
 function sha256Hex(filePath: string): string {
   const h = crypto.createHash('sha256');

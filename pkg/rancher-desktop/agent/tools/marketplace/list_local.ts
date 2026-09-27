@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseTool, ToolResponse } from '../base';
-import { ARTIFACT_KINDS, ArtifactKind, isArtifactKind, KIND_LAYOUTS } from './types';
+import { ARTIFACT_KINDS, ArtifactKind, isArtifactKind, KIND_LAYOUTS, normalizeKind } from './types';
 
 /**
  * Enumerate locally-installed artifacts. Filterable by kind.
@@ -12,7 +12,7 @@ export class MarketplaceListLocalWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const kindRaw = typeof input.kind === 'string' ? input.kind.trim().toLowerCase() : '';
+    const kindRaw = typeof input.kind === 'string' && input.kind.trim() ? (normalizeKind(input.kind) ?? input.kind.trim().toLowerCase()) : '';
     const kinds: readonly ArtifactKind[] = kindRaw
       ? (isArtifactKind(kindRaw) ? [kindRaw] : [])
       : ARTIFACT_KINDS;

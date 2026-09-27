@@ -1,45 +1,35 @@
 /**
- * MarketplaceClient — thin HTTP layer over the Sulla Cloud marketplace API.
+ * MarketplaceClient — the agent's view of the Sulla Marketplace.
  *
- * The cloud marketplace worker (`sulla-cloud/workers/marketplace`) is not yet
- * deployed. Until it is, write operations (publish/unpublish) return a clear
- * "marketplace API not configured" error documenting the contract. Reads can
- * fall back to the GitHub recipes catalog for `recipe` kind so the agent has
- * something useful even before the cloud worker ships.
+ * A thin adapter over the same code the Marketplace tab uses:
+ *   - HTTP:    main/marketplace/client.ts   (Sulla Cloud workers API)
+ *   - install: main/marketplace/install.ts  (safe unzip, install marker, updates)
+ *   - publish: main/marketplace/publish.ts  (manifest + zip + two-step submit)
  *
- * Configuration:
- * - Base URL: vault `sulla-cloud` integration, property `marketplace_url`.
- *   Falls back to the placeholder default below.
- * - Auth: Bearer token from vault `sulla-cloud` / `api_token`.
- *
- * Contract (the worker should implement):
- *   GET    /v1/marketplace/search?q=&kind=&category=&limit=
- *   GET    /v1/marketplace/artifacts/<kind>/<slug>
- *   GET    /v1/marketplace/artifacts/<kind>/<slug>/download
- *   POST   /v1/marketplace/artifacts/<kind>/<slug>           (publish)
- *   DELETE /v1/marketplace/artifacts/<kind>/<slug>
- *   GET    /v1/marketplace/me/published
+ * The agent addresses artifacts as <kind>/<slug>; the API is keyed by
+ * template id, so every call resolves (kind, slug) → the newest approved
+ * listing first. Browse/info/download work signed-out; publish, unpublish
+ * and list_published need a Sulla Cloud session (sign in from the app).
  */
 
-import { ArtifactKind, ArtifactSummary } from './types';
+import { ArtifactKind, fromMarketplaceKind, MarketplaceKind, toMarketplaceKind } from './types';
 
-const DEFAULT_MARKETPLACE_URL = 'https://marketplace.sulla.dev';
-const RECIPES_CATALOG_URL = 'https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/index.yaml';
-
-export interface PublishPayload {
-  kind:          ArtifactKind;
-  slug:          string;
-  version?:      string;
-  manifest:      string;            // raw manifest contents
-  files:         Record<string, string>; // path → contents (UTF-8 or base64-prefixed)
-}
-
-export interface DownloadResult {
-  kind:     ArtifactKind;
-  slug:     string;
-  version?: string;
-  manifest: string;
-  files:    Record<string, string>;
+export interface MarketplaceListing {
+  id:             string;
+  kind:           ArtifactKind;
+  slug:           string;
+  name:           string;
+  version:        string;
+  description?:   string | null;
+  tagline?:       string | null;
+  category?:      string | null;
+  tags:           string[];
+  author?:        string | null;
+  downloads:      number;
+  bundleSize?:    number | null;
+  updatedAt?:     string;
+  /** Local install of this listing (or an older listing with the same slug), if any. */
+  installed?:     { version: string; path: string; templateId: string } | null;
 }
 
 export interface SearchOptions {
@@ -49,157 +39,158 @@ export interface SearchOptions {
   limit?:    number;
 }
 
+export const SIGN_IN_HINT = 'Sign in to Sulla Cloud in Sulla Desktop (Marketplace tab or My Profile), then retry.';
+
+function requireMarketplaceKind(kind: ArtifactKind): MarketplaceKind {
+  const mk = toMarketplaceKind(kind);
+  if (!mk) throw new Error(`"${ kind }" artifacts aren't distributed through the marketplace.`);
+
+  return mk;
+}
+
+async function api() {
+  return await import('@pkg/main/marketplace/client');
+}
+
+async function installer() {
+  return await import('@pkg/main/marketplace/install');
+}
+
 export class MarketplaceClient {
-  private baseUrlPromise: Promise<string> | null = null;
-  private tokenPromise:   Promise<string | null> | null = null;
+  private toListing(row: any, installed: Awaited<ReturnType<typeof listInstalledSafe>>): MarketplaceListing {
+    const local = installed.find(a => a.templateId === row.id) ??
+      installed.find(a => a.kind === row.kind && a.slug === row.slug) ?? null;
 
-  private async getBaseUrl(): Promise<string> {
-    if (!this.baseUrlPromise) {
-      this.baseUrlPromise = (async() => {
-        try {
-          const { getIntegrationService } = await import('../../services/IntegrationService');
-          const svc = getIntegrationService();
-          const result = await svc.getIntegrationValue('sulla-cloud', 'marketplace_url');
-          if (result?.value) return String(result.value).replace(/\/+$/, '');
-        } catch {
-          // Integration service may not be ready — fall through to default.
-        }
-        return DEFAULT_MARKETPLACE_URL;
-      })();
-    }
-    return this.baseUrlPromise;
+    return {
+      id:          row.id,
+      kind:        fromMarketplaceKind(row.kind),
+      slug:        row.slug,
+      name:        row.name,
+      version:     row.version,
+      description: row.description ?? null,
+      tagline:     row.tagline ?? null,
+      category:    row.category ?? null,
+      tags:        Array.isArray(row.tags) ? row.tags : [],
+      author:      row.author_display ?? null,
+      downloads:   Number(row.download_count ?? 0),
+      bundleSize:  row.bundle_size ?? null,
+      updatedAt:   row.updated_at,
+      installed:   local ? { version: local.version, path: local.path, templateId: local.templateId } : null,
+    };
   }
 
-  private async getToken(): Promise<string | null> {
-    if (!this.tokenPromise) {
-      this.tokenPromise = (async() => {
-        try {
-          const { getIntegrationService } = await import('../../services/IntegrationService');
-          const svc = getIntegrationService();
-          const result = await svc.getIntegrationValue('sulla-cloud', 'api_token');
-          return result?.value ? String(result.value) : null;
-        } catch {
-          return null;
-        }
-      })();
-    }
-    return this.tokenPromise;
-  }
-
-  /** Force a fresh credential lookup on the next call. */
-  invalidate(): void {
-    this.baseUrlPromise = null;
-    this.tokenPromise = null;
-  }
-
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const baseUrl = await this.getBaseUrl();
-    const token = await this.getToken();
-
-    const url = `${ baseUrl }${ path }`;
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
-    if (token) headers.Authorization = `Bearer ${ token }`;
-
-    const res = await fetch(url, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+  async search(opts: SearchOptions): Promise<{ listings: MarketplaceListing[]; total: number }> {
+    const { browseTemplates } = await api();
+    const page = await browseTemplates({
+      kind:     opts.kind ? requireMarketplaceKind(opts.kind) : undefined,
+      q:        opts.query?.trim() || undefined,
+      category: opts.category?.trim() || undefined,
+      limit:    Math.min(Math.max(opts.limit ?? 25, 1), 100),
     });
+    const installed = await listInstalledSafe();
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Marketplace API ${ method } ${ path } → HTTP ${ res.status }: ${ text || res.statusText }`);
+    return { listings: page.templates.map(t => this.toListing(t, installed)), total: page.total };
+  }
+
+  /** Newest approved listing for (kind, slug), or null. */
+  async resolve(kind: ArtifactKind, slug: string): Promise<MarketplaceListing | null> {
+    const { findTemplateBySlug } = await api();
+    const row = await findTemplateBySlug(requireMarketplaceKind(kind), slug);
+    if (!row) return null;
+
+    return this.toListing(row, await listInstalledSafe());
+  }
+
+  async info(kind: ArtifactKind, slug: string): Promise<{ listing: MarketplaceListing; manifest: Record<string, unknown> }> {
+    const listing = await this.resolve(kind, slug);
+    if (!listing) throw new Error(notFound(kind, slug));
+    const { fetchPublicTemplate } = await api();
+    const detail = await fetchPublicTemplate(listing.id);
+
+    return { listing, manifest: detail.manifest ?? {} };
+  }
+
+  async install(kind: ArtifactKind, slug: string, opts: { overwrite?: boolean } = {}) {
+    const listing = await this.resolve(kind, slug);
+    if (!listing) throw new Error(notFound(kind, slug));
+    const { installTemplate } = await installer();
+
+    return {
+      listing,
+      result: await installTemplate(listing.id, {
+        overwrite: opts.overwrite === true,
+        replaces:  listing.installed && listing.installed.templateId !== listing.id ? listing.installed.templateId : undefined,
+      }),
+    };
+  }
+
+  /** Download + safely extract the latest listing into a temp dir. Caller must call `cleanup()`. */
+  async fetchLatest(kind: ArtifactKind, slug: string) {
+    const listing = await this.resolve(kind, slug);
+    if (!listing) throw new Error(notFound(kind, slug));
+    const { fetchAndExtract } = await installer();
+    const extracted = await fetchAndExtract(listing.id);
+    const fs = await import('fs');
+
+    return {
+      listing,
+      rootPath: extracted.rootPath,
+      cleanup:  () => fs.rmSync(extracted.tmpdir, { recursive: true, force: true }),
+    };
+  }
+
+  async publish(kind: ArtifactKind, sourceDir: string, slug: string, version?: string) {
+    const { publishLocalArtifact } = await import('@pkg/main/marketplace/publish');
+
+    return await publishLocalArtifact({
+      kind:      requireMarketplaceKind(kind),
+      sourceDir,
+      slug,
+      overrides: version ? { version } : undefined,
+    });
+  }
+
+  /** Every submission the signed-in user authored (all statuses). */
+  async mySubmissions() {
+    const { listMySubmissions } = await api();
+    const rows: Awaited<ReturnType<typeof listMySubmissions>>['templates'] = [];
+    for (let page = 1; page <= 20; page++) {
+      const res = await listMySubmissions(page, 100);
+      rows.push(...res.templates);
+      if (rows.length >= res.total || res.templates.length === 0) break;
     }
 
-    if (res.status === 204) return undefined as T;
-    return await res.json() as T;
+    return rows;
   }
 
-  async search(opts: SearchOptions): Promise<ArtifactSummary[]> {
-    const params = new URLSearchParams();
-    if (opts.query)    params.set('q', opts.query);
-    if (opts.kind)     params.set('kind', opts.kind);
-    if (opts.category) params.set('category', opts.category);
-    if (opts.limit)    params.set('limit', String(opts.limit));
+  async takedown(templateId: string) {
+    const { takedownTemplate } = await api();
 
-    try {
-      const result = await this.request<{ artifacts: ArtifactSummary[] }>('GET', `/v1/marketplace/search?${ params.toString() }`);
-      return result.artifacts ?? [];
-    } catch (err) {
-      // Fallback: recipes have a static GitHub catalog. Use it for `kind:recipe`
-      // when the cloud API isn't reachable.
-      if (opts.kind === 'recipe' || (!opts.kind && /ECONNREFUSED|HTTP 5\d\d|HTTP 404/.test(String(err)))) {
-        return await this.searchRecipesFromGithub(opts);
-      }
-      throw err;
-    }
+    return await takedownTemplate(templateId);
   }
+}
 
-  async info(kind: ArtifactKind, slug: string): Promise<ArtifactSummary & { metadata: Record<string, unknown> }> {
-    return await this.request('GET', `/v1/marketplace/artifacts/${ kind }/${ encodeURIComponent(slug) }`);
+async function listInstalledSafe() {
+  try {
+    return (await installer()).listInstalled();
+  } catch {
+    return [];
   }
+}
 
-  async download(kind: ArtifactKind, slug: string): Promise<DownloadResult> {
-    return await this.request('GET', `/v1/marketplace/artifacts/${ kind }/${ encodeURIComponent(slug) }/download`);
-  }
+function notFound(kind: ArtifactKind, slug: string): string {
+  return `No approved marketplace listing for ${ kind }/${ slug }. Try \`sulla marketplace/search '{"query":"${ slug }"}'\`.`;
+}
 
-  async publish(payload: PublishPayload): Promise<{ url: string; version: string }> {
-    return await this.request('POST', `/v1/marketplace/artifacts/${ payload.kind }/${ encodeURIComponent(payload.slug) }`, payload);
-  }
-
-  async unpublish(kind: ArtifactKind, slug: string): Promise<void> {
-    await this.request('DELETE', `/v1/marketplace/artifacts/${ kind }/${ encodeURIComponent(slug) }`);
-  }
-
-  async myPublished(): Promise<ArtifactSummary[]> {
-    const result = await this.request<{ artifacts: ArtifactSummary[] }>('GET', '/v1/marketplace/me/published');
-    return result.artifacts ?? [];
-  }
-
-  // ── GitHub fallback for recipes — lets the agent find recipes even before the cloud API ships ──
-
-  private async searchRecipesFromGithub(opts: SearchOptions): Promise<ArtifactSummary[]> {
-    try {
-      const res = await fetch(RECIPES_CATALOG_URL);
-      if (!res.ok) return [];
-      const text = await res.text();
-      const yaml = await import('yaml');
-      const parsed: any = yaml.parse(text);
-      const plugins: any[] = Array.isArray(parsed?.plugins) ? parsed.plugins : [];
-      const q = (opts.query || '').toLowerCase();
-      const results: ArtifactSummary[] = [];
-      for (const p of plugins) {
-        const slug: string = String(p?.slug || '');
-        const labels: Record<string, string> = (p?.labels || {}) as Record<string, string>;
-        const title = labels['org.opencontainers.image.title'] || slug;
-        const description = labels['org.opencontainers.image.description'] || '';
-        const categories = labels['com.docker.extension.categories'] || '';
-        const haystack = `${ slug } ${ title } ${ description } ${ categories }`.toLowerCase();
-        if (q && !haystack.includes(q)) continue;
-        if (opts.category && !categories.toLowerCase().includes(opts.category.toLowerCase())) continue;
-        results.push({
-          kind:        'recipe',
-          slug,
-          name:        title,
-          version:     String(p?.version || ''),
-          description,
-          tags:        categories ? categories.split(',').map(s => s.trim()) : [],
-          publisher:   labels['com.docker.extension.publisher-url'] || '',
-          updated_at:  labels['org.opencontainers.image.created'] || '',
-        });
-        if (opts.limit && results.length >= opts.limit) break;
-      }
-      return results;
-    } catch {
-      return [];
-    }
-  }
+/** True when an error means "not signed in to Sulla Cloud". */
+export function isAuthError(err: unknown): boolean {
+  return /Not signed in to Sulla Cloud|\b401\b|\b403\b|Invalid or expired access token/i.test(String((err as Error)?.message ?? err));
 }
 
 let singleton: MarketplaceClient | null = null;
 
 export function getMarketplaceClient(): MarketplaceClient {
   if (!singleton) singleton = new MarketplaceClient();
+
   return singleton;
 }

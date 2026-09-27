@@ -255,9 +255,9 @@ The ONE project-state store — not CRM, distinct from the `~/sulla/projects/<sl
 
 → See [`tools/ui.md`](ui.md)
 
-## marketplace — generic artifact lifecycle, all 6 kinds (11 tools)
+## marketplace — Sulla Marketplace: search, install, update, diff, publish (11 tools)
 - `search`, `info`, `download`, `scaffold`, `validate`, `publish`, `unpublish`, `list_local`, `list_published`, `update`, `diff`.
-- Kinds: skill / function / workflow / agent / recipe / integration. `unpublish` requires `confirm:true`.
+- Kinds: skill / function / routine (alias workflow) / recipe / integration; `agent` is local-only. Reads work signed out; publish / unpublish / list_published need Sulla Cloud sign-in. `unpublish` requires `confirm:true`.
 
 → See [`tools/marketplace.md`](marketplace.md)
 

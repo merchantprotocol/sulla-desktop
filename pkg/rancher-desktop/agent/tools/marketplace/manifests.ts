@@ -1,11 +1,11 @@
 import type { ToolManifest } from '../registry';
 
-const KINDS_DESC = 'Artifact kind. One of: skill, function, workflow, agent, recipe, integration.';
+const KINDS_DESC = 'Artifact kind. One of: skill, function, routine (alias: workflow), recipe, integration. "agent" is local-only (scaffold/validate/list_local).';
 
 export const marketplaceToolManifests: ToolManifest[] = [
   {
     name:        'search',
-    description: 'Search the Sulla Cloud marketplace for artifacts (skills, functions, workflows, agents, recipes). Filter by query, kind, and category. Falls back to the GitHub recipes catalog when the cloud API is unreachable and kind=recipe.',
+    description: 'Search the Sulla Marketplace (skills, functions, routines, recipes, integrations). Filter by free text, kind, and category. Shows version, author, download count, and whether each listing is already installed or has an update. Works without signing in.',
     category:    'marketplace',
     schemaDef:   {
       query:    { type: 'string', optional: true, description: 'Free-text search across artifact name + description + tags.' },
@@ -18,7 +18,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'info',
-    description: 'Get full metadata for one marketplace artifact, including manifest fields, version, publisher, tags, and any extra labels.',
+    description: 'Full details for one marketplace listing by kind + slug: template id, version, author, category, tags, downloads, manifest metadata and kind summary, and local install status.',
     category:    'marketplace',
     schemaDef:   {
       kind: { type: 'string', description: KINDS_DESC },
@@ -29,7 +29,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'download',
-    description: 'Download a marketplace artifact and materialise it to the appropriate local directory (~/sulla/<kind>s/<slug>/). Skips if already installed unless overwrite:true.',
+    description: 'Install a marketplace listing into its local directory (~/sulla/<kind>s/<dir>/) using the same safe installer as the Marketplace tab. No-op if already installed; pass overwrite:true to reinstall/replace in place (rolled back on failure).',
     category:    'marketplace',
     schemaDef:   {
       kind:      { type: 'string', description: KINDS_DESC },
@@ -66,7 +66,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'publish',
-    description: 'Publish a locally-installed artifact to the Sulla Cloud marketplace. Bundles the manifest + companion files and POSTs them. Requires Sulla Cloud token in the vault under integration "sulla-cloud" property "api_token".',
+    description: 'Submit a local artifact (~/sulla/<kind>s/<slug>/) to the Sulla Marketplace — same pipeline as the Library Publish button. Secrets and junk (.env, .git, node_modules, keys) are never uploaded. The listing is pending until an admin approves it. Requires a Sulla Cloud session (sign in from the app).',
     category:    'marketplace',
     schemaDef:   {
       kind:    { type: 'string', description: KINDS_DESC },
@@ -78,7 +78,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'unpublish',
-    description: 'Remove an artifact you previously published from the marketplace. Refuses without {"confirm":true}. Does NOT touch your local copy.',
+    description: 'Take down your own marketplace submission for kind + slug: approved listings are withdrawn (kept in your submissions as rejected), pending ones are deleted. Refuses without {"confirm":true}. Does NOT touch your local copy. Requires a Sulla Cloud session.',
     category:    'marketplace',
     schemaDef:   {
       kind:    { type: 'string', description: KINDS_DESC },
@@ -100,7 +100,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'list_published',
-    description: 'List artifacts the current user has published to the marketplace. Hits GET /v1/marketplace/me/published — requires Sulla Cloud token.',
+    description: 'List everything you have submitted to the marketplace with its review status (pending / live / rejected), download count, and reviewer notes. Requires a Sulla Cloud session.',
     category:    'marketplace',
     schemaDef:   {},
     operationTypes: ['read'],
@@ -108,7 +108,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'update',
-    description: 'Pull the latest version of an installed artifact from the marketplace, overwriting the local copy. Errors if not installed (use download instead).',
+    description: 'Update an installed marketplace artifact to the latest version, replacing the local copy in place (restored if the update fails). Errors if it isn\'t installed from the marketplace (use download instead).',
     category:    'marketplace',
     schemaDef:   {
       kind: { type: 'string', description: KINDS_DESC },
@@ -119,7 +119,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'diff',
-    description: 'Show files added / removed / changed between the local artifact and the marketplace version. Read-only — does NOT modify anything. Use before `marketplace/update` to preview what would overwrite.',
+    description: 'Show files only in the marketplace, only local, or differing between your installed copy and the latest marketplace version. Read-only. Use before marketplace/update, which replaces the folder.',
     category:    'marketplace',
     schemaDef:   {
       kind: { type: 'string', description: KINDS_DESC },

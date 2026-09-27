@@ -3,120 +3,94 @@ import * as path from 'path';
 
 import { BaseTool, ToolResponse } from '../base';
 import { getMarketplaceClient } from './MarketplaceClient';
-import { ARTIFACT_KINDS, ArtifactKind, artifactDir, isArtifactKind, resolveArtifactManifestPath } from './types';
+import { artifactDir, KINDS_HELP, normalizeKind } from './types';
 
 /**
- * Compare a locally-installed artifact with the marketplace version. Shows
- * which files are added / removed / changed so the user can decide whether
- * to `marketplace/update` (overwrite local) or keep their edits.
+ * Compare a local artifact with the latest marketplace version, file by
+ * file. Read-only — the marketplace copy is extracted to a temp dir and
+ * removed afterwards.
  */
 export class MarketplaceDiffWorker extends BaseTool {
   name = '';
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const kind = typeof input.kind === 'string' ? input.kind.trim().toLowerCase() : '';
+    const kind = normalizeKind(input.kind);
     const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
 
-    if (!isArtifactKind(kind)) {
-      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: ${ ARTIFACT_KINDS.join(', ') }.` };
+    if (!kind) {
+      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: ${ KINDS_HELP }.` };
     }
     if (!slug) {
       return { successBoolean: false, responseString: 'Missing required field: slug.' };
     }
 
-    const dir = artifactDir(kind, slug);
-    if (!fs.existsSync(dir)) {
-      return { successBoolean: false, responseString: `Not installed locally: ${ dir }` };
-    }
-
-    const localFiles = readLocalFileMap(kind, slug, dir);
-
-    let remote;
+    let latest;
     try {
-      remote = await getMarketplaceClient().download(kind, slug);
+      latest = await getMarketplaceClient().fetchLatest(kind, slug);
     } catch (err) {
       return { successBoolean: false, responseString: `Could not fetch marketplace copy: ${ (err as Error).message }` };
     }
 
-    const remoteFiles = buildRemoteFileMap(remote);
+    try {
+      const localDir = latest.listing.installed?.path ?? artifactDir(kind, slug);
+      if (!fs.existsSync(localDir)) {
+        return { successBoolean: false, responseString: `Not installed locally: ${ localDir }` };
+      }
 
-    const allKeys = new Set<string>([...Object.keys(localFiles), ...Object.keys(remoteFiles)]);
-    const added: string[] = [];
-    const removed: string[] = [];
-    const changed: string[] = [];
-    const unchanged: string[] = [];
+      const { isExcludedFromBundle } = await import('@pkg/main/marketplace/bundleFiles');
+      const localFiles = readTree(localDir, isExcludedFromBundle);
+      const remoteFiles = readTree(latest.rootPath, isExcludedFromBundle);
 
-    for (const key of Array.from(allKeys).sort()) {
-      const l = localFiles[key];
-      const r = remoteFiles[key];
-      if (l === undefined && r !== undefined) added.push(key);
-      else if (l !== undefined && r === undefined) removed.push(key);
-      else if (l !== r) changed.push(key);
-      else unchanged.push(key);
-    }
+      const added: string[] = [];
+      const removed: string[] = [];
+      const changed: string[] = [];
+      let unchanged = 0;
+      for (const key of Array.from(new Set([...localFiles.keys(), ...remoteFiles.keys()])).sort()) {
+        const l = localFiles.get(key);
+        const r = remoteFiles.get(key);
+        if (!l && r) added.push(key);
+        else if (l && !r) removed.push(key);
+        else if (l && r && !l.equals(r)) changed.push(key);
+        else unchanged++;
+      }
 
-    const remoteVer = remote.version ? ` v${ remote.version }` : '';
-    const summary = `Diff: local ${ kind }/${ slug } vs marketplace${ remoteVer }`;
+      const localVer = latest.listing.installed ? ` (installed v${ latest.listing.installed.version })` : '';
+      const summary = `Diff: local ${ input.kind }/${ slug }${ localVer } vs marketplace v${ latest.listing.version } — ${ localDir }`;
 
-    if (added.length === 0 && removed.length === 0 && changed.length === 0) {
-      return {
-        successBoolean: true,
-        responseString: `${ summary }\n  ✓ identical (${ unchanged.length } file(s) match)`,
-      };
-    }
+      if (added.length + removed.length + changed.length === 0) {
+        return { successBoolean: true, responseString: `${ summary }\n  ✓ identical (${ unchanged } file(s) match)` };
+      }
 
-    const lines: string[] = [summary];
-    if (added.length > 0)   lines.push(`\nAdded in marketplace (${ added.length }) — \`marketplace/update\` will pull these:\n${ added.map(f => `  + ${ f }`).join('\n') }`);
-    if (removed.length > 0) lines.push(`\nRemoved from marketplace (${ removed.length }) — local-only files; \`marketplace/update\` will leave them:\n${ removed.map(f => `  - ${ f }`).join('\n') }`);
-    if (changed.length > 0) lines.push(`\nDiffering (${ changed.length }):\n${ changed.map(f => `  ~ ${ f }`).join('\n') }`);
-    if (unchanged.length > 0) lines.push(`\n${ unchanged.length } file(s) identical.`);
+      const lines = [summary];
+      if (added.length > 0) lines.push(`\nOnly in marketplace (${ added.length }) — \`marketplace/update\` adds these:\n${ added.map(f => `  + ${ f }`).join('\n') }`);
+      if (removed.length > 0) lines.push(`\nOnly local (${ removed.length }) — \`marketplace/update\` replaces the folder, so these would be removed:\n${ removed.map(f => `  - ${ f }`).join('\n') }`);
+      if (changed.length > 0) lines.push(`\nDiffering (${ changed.length }) — \`marketplace/update\` overwrites local edits:\n${ changed.map(f => `  ~ ${ f }`).join('\n') }`);
+      if (unchanged > 0) lines.push(`\n${ unchanged } file(s) identical.`);
 
-    return {
-      successBoolean: true,
-      responseString: lines.join('\n'),
-    };
-  }
-}
-
-function readLocalFileMap(kind: ArtifactKind, slug: string, dir: string): Record<string, string> {
-  const out: Record<string, string> = {};
-
-  // Include the manifest under the canonical key
-  const manifestPath = resolveArtifactManifestPath(kind, slug);
-  if (manifestPath) {
-    const rel = path.relative(dir, manifestPath);
-    try { out[rel] = fs.readFileSync(manifestPath, 'utf-8'); } catch { /* skip */ }
-  }
-
-  walkLocal(dir, '', out, manifestPath ? path.basename(manifestPath) : null);
-  return out;
-}
-
-function walkLocal(rootDir: string, relBase: string, out: Record<string, string>, manifestBasename: string | null) {
-  const here = path.join(rootDir, relBase);
-  let entries: fs.Dirent[];
-  try { entries = fs.readdirSync(here, { withFileTypes: true }); } catch { return; }
-  for (const entry of entries) {
-    if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '__pycache__') continue;
-    const rel = relBase ? path.join(relBase, entry.name) : entry.name;
-    const abs = path.join(rootDir, rel);
-    if (entry.isDirectory()) { walkLocal(rootDir, rel, out, manifestBasename); continue; }
-    if (manifestBasename && rel === manifestBasename) continue; // already captured
-    try { out[rel] = fs.readFileSync(abs, 'utf-8'); } catch {
-      try { out[rel] = `base64:${ fs.readFileSync(abs).toString('base64') }`; } catch { /* skip */ }
+      return { successBoolean: true, responseString: lines.join('\n') };
+    } finally {
+      latest.cleanup();
     }
   }
 }
 
-function buildRemoteFileMap(remote: { manifest?: string; files?: Record<string, string>; manifestFilename?: string }): Record<string, string> {
-  const out: Record<string, string> = {};
-  // Flatten: treat the manifest as just another file (keyed by filename if we have one).
-  if (remote.manifest && remote.manifestFilename) {
-    out[remote.manifestFilename] = remote.manifest;
-  } else if (remote.manifest) {
-    out['__manifest__'] = remote.manifest; // unnamed — diff still works on key match
+function readTree(root: string, excluded: (name: string, isDir: boolean) => boolean): Map<string, Buffer> {
+  const out = new Map<string, Buffer>();
+  const stack = [''];
+  while (stack.length > 0) {
+    const rel = stack.pop()!;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(path.join(root, rel), { withFileTypes: true }) } catch { continue }
+    for (const e of entries) {
+      if (excluded(e.name, e.isDirectory())) continue;
+      const childRel = rel ? `${ rel }/${ e.name }` : e.name;
+      if (e.isDirectory()) stack.push(childRel);
+      else if (e.isFile()) {
+        try { out.set(childRel, fs.readFileSync(path.join(root, childRel))) } catch { /* unreadable → treat as absent */ }
+      }
+    }
   }
-  for (const [k, v] of Object.entries(remote.files || {})) out[k] = v;
+
   return out;
 }

@@ -2,14 +2,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseTool, ToolResponse } from '../base';
-import { ARTIFACT_KINDS, ArtifactKind, artifactDir, isArtifactKind, KIND_LAYOUTS, resolveArtifactManifestPath } from './types';
+import { ARTIFACT_KINDS, ArtifactKind, artifactDir, isArtifactKind, KIND_LAYOUTS, resolveArtifactManifestPath, normalizeKind } from './types';
 
 export class MarketplaceValidateWorker extends BaseTool {
   name = '';
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const kind = typeof input.kind === 'string' ? input.kind.trim().toLowerCase() : '';
+    const kind = normalizeKind(input.kind) ?? (typeof input.kind === 'string' ? input.kind.trim().toLowerCase() : '');
     const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
 
     if (!isArtifactKind(kind)) {

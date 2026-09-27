@@ -38,6 +38,7 @@ import {
   type MarketplaceKind,
   type MarketplaceTemplateDetail,
 } from './marketplace/client';
+import { listBundleFiles } from './marketplace/bundleFiles';
 import { buildManifest } from './marketplace/manifestBuilder';
 
 const console = Logging.background;
@@ -171,20 +172,8 @@ function resolveBundleRoot(tmpdir: string): { rootPath: string; dirName: string 
   return { rootPath: path.join(tmpdir, dirs[0].name), dirName: dirs[0].name };
 }
 
-function listFilesRecursive(root: string): string[] {
-  const out: string[] = [];
-  const stack: string[] = [root];
-  while (stack.length > 0) {
-    const dir = stack.pop()!;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) stack.push(full);
-      else if (entry.isFile()) out.push(full);
-    }
-  }
-
-  return out;
-}
+// Publishable files only — see marketplace/bundleFiles.ts.
+const listFilesRecursive = listBundleFiles;
 
 function zipDirectory(sourceDir: string, slug: string, zipPath: string): Promise<void> {
   if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
@@ -433,48 +422,18 @@ export function initSullaBundleEvents(): void {
       return { error: `bundle source does not exist: ${ sourceDir }` };
     }
 
-    // 2. Build the sulla/v3 manifest from the bundle on disk.
-    let manifest: Record<string, unknown>;
+    // 2–4. Build manifest, zip publishable files, two-step submit.
     try {
-      manifest = buildManifest(kind, { slug, bundleRoot: sourceDir, overrides });
-    } catch (err) {
-      return { error: `manifest build failed: ${ err instanceof Error ? err.message : String(err) }` };
-    }
+      const { publishLocalArtifact } = await import('./marketplace/publish');
+      const result = await publishLocalArtifact({ kind, sourceDir, slug, overrides });
 
-    // 3. Zip the bundle to tmp.
-    const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-publish-'));
-    const zipPath = path.join(tmpdir, `${ slug }.zip`);
+      console.log(`[marketplace-publish] ok kind=${ kind } slug=${ slug } → tpl=${ result.templateId }`);
 
-    try {
-      await zipDirectory(sourceDir, slug, zipPath);
-
-      // 4. Two-step submit.
-      const submit = await submitManifest({
-        kind,
-        name:        String((manifest.metadata as any)?.name ?? slug),
-        description: String((manifest.metadata as any)?.description ?? ''),
-        version:     String((manifest.metadata as any)?.version ?? '1.0.0'),
-        tags:        Array.isArray((manifest.metadata as any)?.tags) ? (manifest.metadata as any).tags : [],
-        manifest,
-      });
-
-      const upload = await uploadBundle(submit.id, zipPath);
-
-      console.log(`[marketplace-publish] ok kind=${ kind } slug=${ slug } → tpl=${ submit.id }`);
-
-      return {
-        templateId:    submit.id,
-        slug:          submit.slug,
-        bundle_status: upload.bundle_status,
-        bundle_size:   upload.bundle_size,
-        status:        upload.status,
-      };
+      return result;
     } catch (err) {
       console.error(`[marketplace-publish] failed kind=${ kind } slug=${ slug }`, err);
 
       return { error: err instanceof Error ? err.message : String(err) };
-    } finally {
-      rmrfSync(tmpdir);
     }
   });
 

@@ -24,6 +24,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
@@ -35,7 +36,8 @@ const console = Logging.background;
  * Base URL for the marketplace API. Must match the one used by
  * `sullaCloudAuth.ts` so the JWT is valid for this host.
  */
-const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
+export const MARKETPLACE_API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
+const API_BASE = MARKETPLACE_API_BASE;
 
 // ─── Types mirroring the marketplace response shapes ────────────────
 // Kept minimal — we only type what our callers consume. The marketplace
@@ -50,7 +52,8 @@ export interface MarketplaceTemplateDetail {
   name:                 string;
   description?:         string | null;
   version:              string;
-  author_contractor_id: string;
+  author_user_id:       string;
+  author_display?:      string | null;
   tags?:                string[];
   status:               'pending' | 'approved' | 'rejected';
   bundle_status:        'pending' | 'uploaded' | 'missing';
@@ -85,7 +88,8 @@ export interface MySubmissionRow {
   name:                 string;
   description?:         string | null;
   version:              string;
-  author_contractor_id: string;
+  author_user_id:       string;
+  author_display?:      string | null;
   tags:                 string[];
   status:               'pending' | 'approved' | 'rejected';
   bundle_status:        'pending' | 'uploaded' | 'missing';
@@ -165,6 +169,82 @@ async function readJsonOrThrow<T>(res: Response, context: string): Promise<T> {
   }
 }
 
+// ─── Public reads ───────────────────────────────────────────────────
+// Browse / detail / download are public on the server. Send the JWT when
+// the user is signed in (harmless, and future-proof for per-user fields),
+// but never require it — the agent's marketplace tools and signed-out
+// flows depend on these working without a session.
+
+export interface BrowseOptions {
+  kind?:     MarketplaceKind;
+  q?:        string;
+  category?: string;
+  sort?:     'popular' | 'newest' | 'featured';
+  page?:     number;
+  limit?:    number;
+}
+
+export interface BrowseRow extends Omit<MarketplaceTemplateDetail, 'manifest'> {
+  tagline?:    string | null;
+  category?:   string | null;
+  featured?:   boolean;
+  hero_media?: { type: string; url: string; poster?: string } | null;
+}
+
+export interface BrowsePage {
+  templates: BrowseRow[];
+  total:     number;
+  page:      number;
+  limit:     number;
+}
+
+async function optionalAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    const token = await getCurrentAccessToken();
+
+    return token ? { Authorization: `Bearer ${ token }` } : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function publicFetch(pathAndQuery: string): Promise<Response> {
+  return fetch(`${ API_BASE }${ pathAndQuery }`, { headers: await optionalAuthHeaders() });
+}
+
+export async function browseTemplates(opts: BrowseOptions = {}): Promise<BrowsePage> {
+  const qs = new URLSearchParams();
+  if (opts.kind) qs.set('kind', opts.kind);
+  if (opts.q) qs.set('q', opts.q);
+  if (opts.category) qs.set('category', opts.category);
+  if (opts.sort) qs.set('sort', opts.sort);
+  if (opts.page) qs.set('page', String(opts.page));
+  if (opts.limit) qs.set('limit', String(opts.limit));
+  const query = qs.toString();
+  const res = await publicFetch(`/marketplace/browse${ query ? `?${ query }` : '' }`);
+
+  return readJsonOrThrow<BrowsePage>(res, 'browseTemplates');
+}
+
+export async function fetchPublicTemplate(templateId: string): Promise<MarketplaceTemplateDetail> {
+  const res = await publicFetch(`/marketplace/templates/${ encodeURIComponent(templateId) }`);
+  const body = await readJsonOrThrow<{ template: MarketplaceTemplateDetail }>(res, 'fetchPublicTemplate');
+
+  return body.template;
+}
+
+/**
+ * Resolve a (kind, slug) pair to the approved template the marketplace
+ * would serve for it. Slugs aren't unique server-side (a re-submission gets
+ * a new row), so pick the most recently updated approved row.
+ */
+export async function findTemplateBySlug(kind: MarketplaceKind, slug: string): Promise<BrowseRow | null> {
+  const page = await browseTemplates({ kind, q: slug, sort: 'newest', limit: 100 });
+  const matches = page.templates.filter(t => t.kind === kind && t.slug === slug);
+
+  return matches[0] ?? null;
+}
+
 // ─── Public API ─────────────────────────────────────────────────────
 
 /**
@@ -214,7 +294,6 @@ export async function downloadBundleToFile(
   // needed.
   const out = fs.createWriteStream(destFile);
 
-  const { Readable } = require('stream');
   const nodeStream = Readable.fromWeb(res.body as any);
   await pipeline(nodeStream, out);
 
@@ -273,7 +352,6 @@ export async function uploadBundle(
   // from a node stream keeps memory bounded for the 25 MB cap.
   const nodeStream = fs.createReadStream(zipPath);
 
-  const { Readable } = require('stream');
   const webStream = Readable.toWeb(nodeStream);
 
   const res = await fetchWithAuthRetry(url, {
