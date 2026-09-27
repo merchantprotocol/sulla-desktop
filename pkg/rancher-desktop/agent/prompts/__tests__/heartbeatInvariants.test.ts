@@ -13,26 +13,26 @@ import {
 } from '../heartbeatInvariants';
 
 describe('checkHeartbeatPromptInvariants', () => {
-  it('passes on the real continuous-operator heartbeat prompt', () => {
+  it('passes on the real heartbeat prompt', () => {
     const result = checkHeartbeatPromptInvariants(heartbeatPrompt);
     expect(result.ok).toBe(true);
     expect(result.missing).toEqual([]);
     expect(result.forbidden).toEqual([]);
   });
 
-  it('fails when a required continuous-operator phrase is missing (stale/reverted prompt)', () => {
-    const stripped = heartbeatPrompt.split('Never end a wake idle').join('');
+  it('fails when a required phrase is missing (stale/reverted prompt)', () => {
+    const stripped = heartbeatPrompt.split('No Idle Wakes').join('');
     const result = checkHeartbeatPromptInvariants(stripped);
     expect(result.ok).toBe(false);
-    expect(result.missing).toContain('Never end a wake idle');
+    expect(result.missing).toContain('No Idle Wakes');
   });
 
   it('fails when the operator doctrine or freeze covenant is stripped from a deployed prompt', () => {
     for (const phrase of [
       'Two-Door Rule',
-      'The Prospector',
-      'If an owner capability is unavailable',
-      'Write every material outcome back to Projects',
+      'The Idea Lab — Your Memory Between Wakes',
+      'Every state or concern has exactly one owner',
+      'Design every experiment to fit the reversible door',
       'This Prompt Is Frozen',
     ]) {
       const stripped = heartbeatPrompt.split(phrase).join('');
@@ -61,7 +61,6 @@ describe('checkHeartbeatPromptInvariants', () => {
   });
 
   it('keeps blocked planning, execution, review, waiting, and recovery single-owned', () => {
-    expect(heartbeatPrompt).toContain('Single-Owner Projects Conveyor');
     expect(heartbeatPrompt).toContain('protected planning routine');
     expect(heartbeatPrompt).toContain('protected execution routine');
     expect(heartbeatPrompt).toContain('protected review routine');
@@ -95,6 +94,9 @@ describe('checkHeartbeatPromptInvariants', () => {
       'reclaim healthy leases based only on time',
       'perform core-routine state transitions directly',
       'one task per wake',
+      'Projects Comment Hygiene — Delta or Silence',
+      'If the state and evidence are unchanged, write nothing',
+      'Heartbeat must never:',
     ]) {
       const result = checkHeartbeatPromptInvariants(`${ heartbeatPrompt }\n${ phrase }`);
       expect(result.ok).toBe(false);
@@ -102,18 +104,18 @@ describe('checkHeartbeatPromptInvariants', () => {
     }
   });
 
-  it('pins missing-capability, single-recovery, durable-wait, Projects, and freeze behavior', () => {
+  it('pins idea lab, anti-idle, Projects, gate, and freeze behavior', () => {
     for (const phrase of [
-      'Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback',
-      'Repeated failures of the same owner capability update one existing systemic recovery item',
-      'Notify once when the gate is created or materially changes',
-      'Projects Comment Hygiene — Delta or Silence',
-      'Projects comments are durable audit evidence, not a heartbeat transcript',
-      'If the state and evidence are unchanged, write nothing',
+      "slug 'heartbeat-idea-lab'",
+      'A focus directive from your Human sets priority, not a cage',
+      'protect their attention, not your activity',
+      'stagnation alert',
+      'Never brief that nothing changed',
+      'Notify once when a decision is created or materially changes',
       'One material event gets one concise comment',
       'Projects project-state is your only durable agenda',
       'never let install-local Markdown replace or append to it',
-      "never flip 'heartbeatEnabled'",
+      "Never flip 'heartbeatEnabled'",
     ]) {
       const stripped = heartbeatPrompt.split(phrase).join('');
       const result = checkHeartbeatPromptInvariants(stripped);
@@ -188,7 +190,7 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
 
     expect(built.includedSections).toContain('heartbeat');
     expect(built.includedSections).not.toContain('agent_prompt');
-    expect(built.text).toContain('## Single-Owner Projects Conveyor');
+    expect(built.text).toContain('## Respect the Conveyor');
     expect(built.text).not.toContain('STALE LOCAL HEARTBEAT OVERRIDE');
     expect(built.text).not.toContain('STALE LOCAL PLAYBOOK CONTENT');
     expect(built.text).not.toContain('STALE DB HEARTBEAT OVERRIDE');

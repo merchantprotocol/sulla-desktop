@@ -9,6 +9,8 @@ const getEpicMock: any = jest.fn();
 const getTaskMock: any = jest.fn();
 const listCommentsMock: any = jest.fn();
 const latestCommentAtByTaskMock: any = jest.fn();
+const listRecentActivityMock: any = jest.fn(() => Promise.resolve([]));
+const getProjectBySlugMock: any = jest.fn(() => Promise.resolve(null));
 const filterHeartbeatEligibleMock: any = jest.fn((tasks: any[]) => Promise.resolve(tasks));
 const enrichPromptMock: any = jest.fn(() => Promise.resolve('healthy heartbeat prompt'));
 const heartbeatAccessByTaskMock: any = jest.fn((tasks: any[]) => Promise.resolve(
@@ -43,6 +45,8 @@ jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
     getTask:               getTaskMock,
     listComments:          listCommentsMock,
     latestCommentAtByTask: latestCommentAtByTaskMock,
+    listRecentActivity:    listRecentActivityMock,
+    getProjectBySlug:      getProjectBySlugMock,
   },
 }));
 
@@ -85,6 +89,8 @@ async function makeNode(): Promise<any> {
 
 describe('HeartbeatNode Projects context injection', () => {
   beforeEach(() => {
+    listRecentActivityMock.mockReset().mockResolvedValue([]);
+    getProjectBySlugMock.mockReset().mockResolvedValue(null);
     buildProjectReportMock.mockReset();
     ensureTablesMock.mockReset();
     listProjectsMock.mockReset();
@@ -425,12 +431,12 @@ describe('HeartbeatNode Projects context injection', () => {
     expect(injected.match(/<\/selected_project_item>/g)).toHaveLength(1);
   });
 
-  it('forces another loop when DONE arrives without a selected-project-task Projects write', async() => {
-    const node = await makeNode();
-    const state: any = {
+  const idleDoneFixture = () => ({
+    state: {
       messages: [],
       metadata: {
         cycleComplete:              true,
+        heartbeatWakeStartedMs:     Date.parse('2026-08-17T11:10:00.000Z'),
         heartbeatProjectsSnapshot: {
           taskId:       'task1',
           status:       'todo',
@@ -440,92 +446,66 @@ describe('HeartbeatNode Projects context injection', () => {
           capturedAtMs: Date.parse('2026-08-17T11:10:00.000Z'),
         },
       },
-    };
-    const outcome = {
+    } as any,
+    outcome: {
       status:              'done',
       summary:             'Finished.',
-      statusReport:        null,
+      statusReport:        null as string | null,
       blockerReason:       null,
       unblockRequirements: null,
-    };
+    } as any,
+  });
 
-    getTaskMock.mockResolvedValue({
-      id:            'task1',
-      status:        'todo',
-      assignee:      'heartbeat',
-      last_moved_at: '2026-08-17T11:00:00.000Z',
-    });
-    listCommentsMock.mockResolvedValue([
-      {
-        id:         'comment1',
-        task_id:    'task1',
-        body:       'old',
-        author:     'sulla',
-        created_at: '2026-08-17T10:55:00.000Z',
-      },
-    ]);
+  it('forces one more loop when DONE arrives with no Heartbeat Projects write this wake', async() => {
+    const node = await makeNode();
+    const { state, outcome } = idleDoneFixture();
+    getTaskMock.mockResolvedValue({ id: 'task1', status: 'todo', assignee: 'heartbeat' });
+    listRecentActivityMock.mockResolvedValue([{ activity_at: '2026-08-17T10:30:00.000Z' }]);
+    listCommentsMock.mockResolvedValue([{ id: 'comment1', task_id: 'task1', body: 'old', author: 'sulla', created_at: '2026-08-17T10:55:00.000Z' }]);
 
     await node.enforceHeartbeatProjectsWrite(state, outcome);
 
+    expect(listRecentActivityMock).toHaveBeenCalledWith({ author: 'heartbeat', limit: 1 });
     expect(outcome.status).toBe('continue');
-    expect(outcome.statusReport).toContain('Projects bookkeeping missing for selected task task1');
+    expect(outcome.statusReport).toContain('no durable movement yet');
+    expect(outcome.statusReport).toContain("'heartbeat-idea-lab'");
     expect(state.metadata.cycleComplete).toBe(false);
+    expect(state.metadata.heartbeatIdleGuardFired).toBe(true);
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0].metadata.source).toBe('heartbeat_projects_guard');
     expect(state.metadata._version).toBe(1);
   });
 
-  it('allows DONE when the selected task received a new Projects comment', async() => {
+  it('nudges only once per wake so an idle DONE cannot loop forever', async() => {
     const node = await makeNode();
-    const state: any = {
-      messages: [],
-      metadata: {
-        cycleComplete:              true,
-        heartbeatProjectsSnapshot: {
-          taskId:       'task1',
-          status:       'todo',
-          assignee:     'heartbeat',
-          lastMovedAt:  '2026-08-17T11:00:00.000Z',
-          commentCount: 1,
-          capturedAtMs: Date.parse('2026-08-17T11:10:00.000Z'),
-        },
-      },
-    };
-    const outcome = {
-      status:              'done',
-      summary:             'Finished.',
-      statusReport:        null,
-      blockerReason:       null,
-      unblockRequirements: null,
-    };
-
-    getTaskMock.mockResolvedValue({
-      id:            'task1',
-      status:        'todo',
-      assignee:      'heartbeat',
-      last_moved_at: '2026-08-17T11:00:00.000Z',
-    });
-    listCommentsMock.mockResolvedValue([
-      {
-        id:         'comment1',
-        task_id:    'task1',
-        body:       'old',
-        author:     'sulla',
-        created_at: '2026-08-17T10:55:00.000Z',
-      },
-      {
-        id:         'comment2',
-        task_id:    'task1',
-        body:       'new',
-        author:     'sulla',
-        created_at: '2026-08-17T11:11:00.000Z',
-      },
-    ]);
+    const { state, outcome } = idleDoneFixture();
+    state.metadata.heartbeatIdleGuardFired = true;
 
     await node.enforceHeartbeatProjectsWrite(state, outcome);
 
     expect(outcome.status).toBe('done');
     expect(state.messages).toHaveLength(0);
+  });
+
+  it('allows DONE when Heartbeat wrote anywhere in Projects this wake, such as the idea lab', async() => {
+    const node = await makeNode();
+    const { state, outcome } = idleDoneFixture();
+    listRecentActivityMock.mockResolvedValue([{ activity_at: '2026-08-17T11:12:00.000Z', project_slug: 'heartbeat-idea-lab' }]);
+
+    await node.enforceHeartbeatProjectsWrite(state, outcome);
+
+    expect(outcome.status).toBe('done');
+    expect(state.messages).toHaveLength(0);
+  });
+
+  it('allows DONE when the hydrated task moved this wake', async() => {
+    const node = await makeNode();
+    const { state, outcome } = idleDoneFixture();
+    getTaskMock.mockResolvedValue({ id: 'task1', status: 'planning', assignee: 'heartbeat' });
+
+    await node.enforceHeartbeatProjectsWrite(state, outcome);
+
+    expect(outcome.status).toBe('done');
   });
 
   it('carries Projects comments from one heartbeat cycle into the next selected task hydration', async() => {

@@ -311,6 +311,8 @@ export class HeartbeatService {
       (state.metadata as any).agent = undefined;
       (state.metadata as any).agentLoopCount = 0;
       (state.metadata as any).abortSignal = signal;
+      (state.metadata as any).heartbeatWakeStartedMs = triggerStart;
+      (state.metadata as any).heartbeatIdleGuardFired = false;
 
       // Inject the prompt as a fresh user message
       state.messages = [{
@@ -472,7 +474,7 @@ export class HeartbeatService {
 Current time: ${ timeStr }
 Timezone: ${ tz }
 
-Your active projects and goals have been loaded into your recall context. Review them and take meaningful action on the highest-priority next step. Work autonomously until you make concrete progress, then summarize what you accomplished.${ base ? `\n\n${ base }` : '' }`;
+This is your time to think, invent, and try. Read the north star and the idea lab, set aside anything waiting on your Human, brainstorm at least five fresh ideas that could move an active goal, and run a real reversible experiment on the best one. Record the idea, evidence, and verdict in the idea lab, then run the next one while time remains. Do not end on "nothing changed"; when one lane is waiting, switch to a new idea.${ base ? `\n\n${ base }` : '' }`;
 
     return directive;
   }

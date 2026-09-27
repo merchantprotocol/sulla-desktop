@@ -1,23 +1,35 @@
 import { postgresClient } from '../PostgresClient';
 
 export interface HeartbeatRunAuditInput {
-  runId:                         string;
-  startedAt:                     Date;
-  completedAt?:                  Date | null;
-  durationMs?:                   number | null;
-  eventType:                     'started' | 'completed' | 'error' | 'aborted';
-  status?:                       string | null;
-  statusNote?:                   string | null;
-  blockerReason?:                string | null;
-  error?:                        string | null;
-  cycleCount?:                   number | null;
-  selectedProjectId?:            string | null;
-  selectedEpicId?:               string | null;
-  selectedTaskId?:               string | null;
-  selectedTaskStatus?:           string | null;
-  selectedTaskAssignee?:         string | null;
-  selectedTaskLastMovedAt?:      string | null;
-  selectedTaskCommentCount?:     number | null;
+  runId:                     string;
+  startedAt:                 Date;
+  completedAt?:              Date | null;
+  durationMs?:               number | null;
+  eventType:                 'started' | 'completed' | 'error' | 'aborted';
+  status?:                   string | null;
+  statusNote?:               string | null;
+  blockerReason?:            string | null;
+  error?:                    string | null;
+  cycleCount?:               number | null;
+  selectedProjectId?:        string | null;
+  selectedEpicId?:           string | null;
+  selectedTaskId?:           string | null;
+  selectedTaskStatus?:       string | null;
+  selectedTaskAssignee?:     string | null;
+  selectedTaskLastMovedAt?:  string | Date | null;
+  selectedTaskCommentCount?: number | null;
+}
+
+/**
+ * Normalize a timestamp for a TIMESTAMPTZ parameter. Project rows hand back
+ * Date objects that callers stringify with String(date), producing
+ * "Wed Sep 02 2026 10:06:56 GMT-0700 (Pacific Daylight Time)"; Postgres
+ * rejects that zone and the whole completion upsert was silently dropped.
+ */
+export function toAuditTimestamp(value: string | Date | null | undefined): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 export class HeartbeatRunAuditModel {
@@ -102,8 +114,8 @@ export class HeartbeatRunAuditModel {
            updated_at = NOW()`,
         [
           input.runId,
-          input.startedAt,
-          input.completedAt ?? null,
+          toAuditTimestamp(input.startedAt),
+          toAuditTimestamp(input.completedAt),
           input.durationMs ?? null,
           input.eventType,
           input.status ?? null,
@@ -116,7 +128,7 @@ export class HeartbeatRunAuditModel {
           input.selectedTaskId ?? null,
           input.selectedTaskStatus ?? null,
           input.selectedTaskAssignee ?? null,
-          input.selectedTaskLastMovedAt ?? null,
+          toAuditTimestamp(input.selectedTaskLastMovedAt),
           input.selectedTaskCommentCount ?? null,
         ],
       );

@@ -1445,7 +1445,7 @@ export default defineComponent({
                       class="sp-badge sp-badge--warn"
                     >partly generated</span>
                     <span
-                      v-if="section.id === 'heartbeat'"
+                      v-if="section.id === 'heartbeat' || section.id === 'heartbeat_goal'"
                       class="sp-badge sp-badge--dim"
                     >heartbeat agent only</span>
                   </div>

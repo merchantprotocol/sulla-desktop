@@ -12,6 +12,7 @@ import { buildCompletionWrappersSection } from './completionWrappers';
 import { buildEnvironmentSection } from './environment';
 import { buildGoalOwnershipSection } from './goalOwnership';
 import { buildHeartbeatSection } from './heartbeat';
+import { buildHeartbeatGoalSection } from './heartbeatGoal';
 import { buildIdentitySection } from './identity';
 import { buildNarrationPolicySection } from './narrationPolicy';
 import { buildObservationalMemorySection } from './observationalMemory';
@@ -45,6 +46,7 @@ SystemPromptBuilder.register('citations', buildCitationsSection, ['full', 'minim
 SystemPromptBuilder.register('agent_prompt', buildAgentPromptSection, ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('channel_awareness', buildChannelAwarenessSection, ['full', 'local']);
 SystemPromptBuilder.register('heartbeat', buildHeartbeatSection, ['full', 'local']);
+SystemPromptBuilder.register('heartbeat_goal', buildHeartbeatGoalSection, ['full', 'local']);
 SystemPromptBuilder.register('silent_reply', buildSilentReplySection, ['full', 'local']);
 
 // Per-turn dynamic content (current time, live agent roster, voice-mode
