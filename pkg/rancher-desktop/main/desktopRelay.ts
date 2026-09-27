@@ -108,6 +108,10 @@ export class DesktopRelayClient {
   // AbortController state is needed anymore — the agent owns aborts now.
   // Subscription guard so we only hook the mobile-relay channel once.
   private mobileChannelBridged = false;
+  // Conversations started over the secure desktop channel (Sulla Cloud
+  // dashboard). Their frames go back through the channel to the approved
+  // client that sent them, never to the legacy mobile relay room.
+  private secureRoutes = new Map<string, (frame: Record<string, unknown>) => void>();
 
   // ── Liveness tracking ──────────────────────────────────────
   // The DO auto-responds to application-level "ping" frames with "pong",
@@ -447,25 +451,12 @@ export class DesktopRelayClient {
 
     if (msg.type === 'companion_request') {
       if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
-      try {
-        const { mobileCompanionRequest } = await import('./mobileCompanion');
-        const result = msg.method === 'chat.runs' ? { conversations: [...this.activeConversations] } : await mobileCompanionRequest(msg.method || '', msg.params || {});
-        if (msg.method === 'chat.answer') {
-          const threadId = String(msg.params?.conversationId || '');
-          const content = JSON.stringify({ sullaCard: { version: 1, kind: 'decision_result', deviceId: this.deviceId, content: 'Your response was received.', answeredId: msg.params?.id, answers: msg.params?.answers, decision: msg.params?.decision } });
-          const ts = new Date().toISOString();
-          const id = deriveMessageId(threadId, 'tool', content, ts);
-          await this.scribeTurn(threadId, 'tool', content, { id, ts });
-          this.sendChatFrame(threadId, { type: 'card', content, id });
-        }
-        this.send({ type: 'companion_response', requestId: msg.requestId, result });
-      } catch (error) {
-        this.send({ type: 'companion_response', requestId: msg.requestId, error: error instanceof Error ? error.message : 'Request failed' });
-      }
+      await this.runCompanionRequest(msg, frame => this.send(frame));
       return;
     }
 
     if (msg.type === 'chat') {
+      if (msg.conversationId) this.secureRoutes.delete(msg.conversationId);
       // When mobile targets a specific desktop, only the matching device
       // should handle the request. This is enforced client-side because the
       // relay DO broadcasts to every desktop peer in the room.
@@ -486,63 +477,131 @@ export class DesktopRelayClient {
     }
 
     if (msg.type === 'cancel') {
-      // Mobile hit the stop button. Publish stop_run on the mobile-relay
-      // channel — BackendGraphWebSocketService.handleChannelMessage handles
-      // stop_run by aborting the active agent run (which propagates through
-      // ClaudeCodeService → limactl kill + in-VM claude pkill).
-      const conversationId = msg.conversationId;
-      if (!conversationId) {
-        console.warn('[DesktopRelay] Rejecting cancel without conversationId');
-        this.sendMissingConversationError(msg.userMessageId);
-        return;
-      }
-      console.log(`[DesktopRelay] Cancel received for conversationId=${ conversationId }`);
-      const wsService = getWebSocketClientService();
-      wsService.send(MOBILE_RELAY_CHANNEL, {
-        type:      'stop_run',
-        data:      { threadId: conversationId },
-        timestamp: Date.now(),
-      });
-      // Stop the keepalive — run is cancelled.
-      const kt = this.keepaliveTimers.get(conversationId);
-      if (kt) { clearInterval(kt); this.keepaliveTimers.delete(conversationId); }
-      this.activeConversations.delete(conversationId);
-      // Ack back to mobile so it knows the run ended without waiting for
-      // `done` (which may never arrive after an abort). The mobile session
-      // socket stays open — this is not a close signal.
-      this.sendChatFrame(conversationId, { type: 'stopped' });
+      if (msg.conversationId) this.secureRoutes.delete(msg.conversationId);
+      this.handleCancel(msg);
       return;
     }
 
     if (msg.type === 'inject') {
-      // Mobile sent a mid-run message. Inject it into the running graph state
-      // without aborting — the agent picks it up at the next loop boundary.
-      const lastUser = (msg.messages ?? []).slice().reverse().find((m: any) => m.role === 'user');
-      const content = (lastUser?.content ?? '').trim();
-      if (!content) return;
-      const conversationId = msg.conversationId;
-      if (!conversationId) {
-        console.warn('[DesktopRelay] Rejecting inject without conversationId');
-        this.sendMissingConversationError(msg.userMessageId);
-        return;
-      }
-      console.log(`[DesktopRelay] Inject received for conversationId=${ conversationId ?? '(none)' }`);
-      // Injected mid-run turns are part of the conversation record too.
-      await this.scribeTurn(conversationId, 'user', content, { id: msg.userMessageId });
-      const wsService = getWebSocketClientService();
-      wsService.send(MOBILE_RELAY_CHANNEL, {
-        type:      'inject_message',
-        data:      {
-          content,
-          threadId: conversationId,
-          metadata: { source: 'mobile-relay', inputSource: 'keyboard', conversationId },
-        },
-        timestamp: Date.now(),
-      });
+      if (msg.conversationId) this.secureRoutes.delete(msg.conversationId);
+      await this.handleInject(msg);
       return;
     }
 
     console.log(`[DesktopRelay] Unknown message type: ${ msg.type }`);
+  }
+
+  /**
+   * Entry point for commands that arrived over the secure desktop channel
+   * and were already verified by secureChannel.ts (approved client key,
+   * signature, device binding, replay window, owner user id).
+   *
+   * `reply` delivers conversation frames (ack/chunk/message/done/…) to the
+   * client(s) following that conversation; `respond` answers this one
+   * request (companion responses, validation errors).
+   */
+  async handleRemoteCommand(
+    msg: IncomingMessage,
+    reply: (frame: Record<string, unknown>) => void,
+    respond: (frame: Record<string, unknown>) => void,
+  ): Promise<void> {
+    if (!this.deviceId) this.deviceId = await getDesktopDeviceId();
+    if (msg.type === 'companion_request') {
+      if (!msg.requestId) return;
+      const threadId = typeof msg.params?.conversationId === 'string' ? msg.params.conversationId : '';
+      if (threadId) this.setSecureRoute(threadId, reply);
+      await this.runCompanionRequest(msg, respond);
+      return;
+    }
+    const conversationId = msg.conversationId;
+    if (typeof conversationId !== 'string' || !conversationId || conversationId.length > 200) {
+      respond({ type: 'error', reason: 'missing_conversation_id', userMessageId: msg.userMessageId });
+      return;
+    }
+    this.setSecureRoute(conversationId, reply);
+    if (msg.type === 'chat') await this.handleChatRequest(msg);
+    else if (msg.type === 'cancel') this.handleCancel(msg);
+    else if (msg.type === 'inject') await this.handleInject(msg);
+  }
+
+  private setSecureRoute(conversationId: string, reply: (frame: Record<string, unknown>) => void) {
+    this.secureRoutes.delete(conversationId);
+    this.secureRoutes.set(conversationId, reply);
+    // Bounded: oldest routes fall back to the legacy relay (and history sync).
+    while (this.secureRoutes.size > 500) this.secureRoutes.delete(this.secureRoutes.keys().next().value!);
+  }
+
+  private async runCompanionRequest(msg: IncomingMessage, respond: (frame: Record<string, unknown>) => void) {
+    try {
+      const { mobileCompanionRequest } = await import('./mobileCompanion');
+      const result = msg.method === 'chat.runs' ? { conversations: [...this.activeConversations] } : await mobileCompanionRequest(msg.method || '', msg.params || {});
+      if (msg.method === 'chat.answer') {
+        const threadId = String(msg.params?.conversationId || '');
+        const content = JSON.stringify({ sullaCard: { version: 1, kind: 'decision_result', deviceId: this.deviceId, content: 'Your response was received.', answeredId: msg.params?.id, answers: msg.params?.answers, decision: msg.params?.decision } });
+        const ts = new Date().toISOString();
+        const id = deriveMessageId(threadId, 'tool', content, ts);
+        await this.scribeTurn(threadId, 'tool', content, { id, ts });
+        this.sendChatFrame(threadId, { type: 'card', content, id });
+      }
+      respond({ type: 'companion_response', requestId: msg.requestId, result });
+    } catch (error) {
+      respond({ type: 'companion_response', requestId: msg.requestId, error: error instanceof Error ? error.message : 'Request failed' });
+    }
+  }
+
+  private handleCancel(msg: IncomingMessage) {
+    // Mobile hit the stop button. Publish stop_run on the mobile-relay
+    // channel — BackendGraphWebSocketService.handleChannelMessage handles
+    // stop_run by aborting the active agent run (which propagates through
+    // ClaudeCodeService → limactl kill + in-VM claude pkill).
+    const conversationId = msg.conversationId;
+    if (!conversationId) {
+      console.warn('[DesktopRelay] Rejecting cancel without conversationId');
+      this.sendMissingConversationError(msg.userMessageId);
+      return;
+    }
+    console.log(`[DesktopRelay] Cancel received for conversationId=${ conversationId }`);
+    const wsService = getWebSocketClientService();
+    wsService.send(MOBILE_RELAY_CHANNEL, {
+      type:      'stop_run',
+      data:      { threadId: conversationId },
+      timestamp: Date.now(),
+    });
+    // Stop the keepalive — run is cancelled.
+    const kt = this.keepaliveTimers.get(conversationId);
+    if (kt) { clearInterval(kt); this.keepaliveTimers.delete(conversationId); }
+    this.activeConversations.delete(conversationId);
+    // Ack back to mobile so it knows the run ended without waiting for
+    // `done` (which may never arrive after an abort). The mobile session
+    // socket stays open — this is not a close signal.
+    this.sendChatFrame(conversationId, { type: 'stopped' });
+  }
+
+  private async handleInject(msg: IncomingMessage) {
+    // Mobile sent a mid-run message. Inject it into the running graph state
+    // without aborting — the agent picks it up at the next loop boundary.
+    const lastUser = (msg.messages ?? []).slice().reverse().find((m: any) => m.role === 'user');
+    const content = (lastUser?.content ?? '').trim();
+    if (!content) return;
+    const conversationId = msg.conversationId;
+    if (!conversationId) {
+      console.warn('[DesktopRelay] Rejecting inject without conversationId');
+      this.sendMissingConversationError(msg.userMessageId);
+      return;
+    }
+    console.log(`[DesktopRelay] Inject received for conversationId=${ conversationId ?? '(none)' }`);
+    // Injected mid-run turns are part of the conversation record too.
+    await this.scribeTurn(conversationId, 'user', content, { id: msg.userMessageId });
+    const wsService = getWebSocketClientService();
+    wsService.send(MOBILE_RELAY_CHANNEL, {
+      type:      'inject_message',
+      data:      {
+        content,
+        threadId: conversationId,
+        metadata: { source: 'mobile-relay', inputSource: 'keyboard', conversationId },
+      },
+      timestamp: Date.now(),
+    });
   }
 
   /**
@@ -632,7 +691,7 @@ export class DesktopRelayClient {
     // 15 s and is cleared when the agent emits graph_execution_complete.
     // Skipped while mobile is offline — resumed on peer rejoin.
     this.activeConversations.add(conversationId);
-    if (this.mobilePeerOnline) {
+    if (this.mobilePeerOnline || this.secureRoutes.has(conversationId)) {
       this.startKeepalive(conversationId);
     }
   }
@@ -838,6 +897,11 @@ export class DesktopRelayClient {
     if (!conversationId) {
       const type = typeof payload.type === 'string' ? payload.type : 'unknown';
       console.error(`[DesktopRelay] BUG: refusing to send ${ type } frame without conversationId`);
+      return;
+    }
+    const secure = this.secureRoutes.get(conversationId);
+    if (secure) {
+      try { secure({ ...payload, conversationId, deviceId: this.deviceId }); } catch (err) { console.warn('[DesktopRelay] Secure route send failed:', err); }
       return;
     }
     this.send({ ...payload, conversationId, deviceId: this.deviceId });

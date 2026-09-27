@@ -332,6 +332,14 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud:apple-sign-in':         (identityToken: string, fullName?: string, email?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:apple-sign-in-browser': () => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:logout':                () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
+  'sulla-cloud:email-code-start':      (email: string) => { ok: boolean; error?: string };
+  'sulla-cloud:email-code-verify':     (email: string, code: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  // Settings → Sulla Cloud (see main/cloud/cloudLifecycle.ts). Status shape: CloudConnectionStatus.
+  'sulla-cloud-connection:get-status':        () => Record<string, any>;
+  'sulla-cloud-connection:set-preferences':   (patch: { conversations?: boolean; vault?: boolean; projects?: boolean; remoteAccess?: boolean }) => Record<string, any>;
+  'sulla-cloud-connection:revoke-client':     (clientId: string) => Record<string, any>;
+  'sulla-cloud-connection:sync-now':          (kind: 'vault' | 'projects') => Record<string, any>;
+  'sulla-cloud-connection:delete-cloud-copy': (kind: 'vault' | 'projects') => Record<string, any>;
 
   /** Desktop relay — pairing + status */
   'desktop-relay:get-status':         () => { pairedUserId: string; connected: boolean; lastError?: string };
@@ -985,6 +993,7 @@ export interface IpcRendererEvents {
   'claude-oauth:progress':          (text: string) => void;
   'claude-oauth:url':               (url: string) => void;
   'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;
+  'sulla-cloud-connection:status-changed': (status: Record<string, any>) => void;
   'tab-context-menu:selected':      (action: string, tabData: Record<string, unknown>) => void;
   'more-menu:selected':             (action: string, extra: Record<string, unknown> | null) => void;
   'more-menu:fetch-history':        () => void;

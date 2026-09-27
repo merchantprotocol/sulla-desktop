@@ -10,6 +10,8 @@
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import Logging from '@pkg/utils/logging';
 
+import { getCloudPreferences } from './cloud/cloudSettings';
+import { getDevicePublicKey } from './cloud/deviceKey';
 import { getDesktopDeviceMetadata, getDesktopDeviceId } from './deviceIdentity';
 
 const console = Logging.background;
@@ -20,15 +22,41 @@ const HEARTBEAT_INTERVAL_MS = 45_000;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let cachedDeviceId: string | null = null;
 
+/** What the cloud last told us about this desktop's standing. */
+export interface CloudDeviceState {
+  registered: boolean;
+  revoked:    boolean;
+  /** Registration refused (e.g. device key mismatch / owned by another account). */
+  error?:     string;
+}
+let deviceState: CloudDeviceState = { registered: false, revoked: false };
+const stateListeners: Array<(s: CloudDeviceState) => void> = [];
+
+function setDeviceState(next: CloudDeviceState) {
+  const changed = JSON.stringify(next) !== JSON.stringify(deviceState);
+  deviceState = next;
+  if (changed) for (const l of stateListeners) { try { l(next); } catch { /* ignore */ } }
+}
+
+/** Remote-access + sync switches reported with every register/heartbeat. */
+async function reportedPreferences(): Promise<{ remoteAccess: 'enabled' | 'disabled'; syncSettings: Record<string, boolean> } | Record<string, never>> {
+  try {
+    const p = await getCloudPreferences();
+    return { remoteAccess: p.remoteAccess ? 'enabled' : 'disabled', syncSettings: { conversations: p.conversations, vault: p.vault, projects: p.projects } };
+  } catch {
+    return {};
+  }
+}
+
 // The 45s heartbeat retries forever, so an unreachable cloud logged the same
 // failure ~1,900×/day. Log the first failure per endpoint, then every 40th,
 // and announce recovery.
 const failCounts = new Map<string, number>();
 
-async function postJson(path: string, body: unknown): Promise<boolean> {
+async function postJson(path: string, body: unknown): Promise<{ ok: boolean; status: number; data: any }> {
   try {
     const token = await getCurrentAccessToken();
-    if (!token) return false;
+    if (!token) return { ok: false, status: 0, data: null };
     const res = await fetch(`${ API_BASE }${ path }`, {
       method:  'POST',
       headers: {
@@ -43,7 +71,8 @@ async function postJson(path: string, body: unknown): Promise<boolean> {
       console.log(`[DevicesApi] ${ path } recovered after ${ n } consecutive failures`);
     }
     failCounts.delete(path);
-    return res.ok;
+    const data = await res.json().catch(() => null);
+    return { ok: res.ok, status: res.status, data };
   } catch (err) {
     const n = (failCounts.get(path) ?? 0) + 1;
 
@@ -51,7 +80,7 @@ async function postJson(path: string, body: unknown): Promise<boolean> {
     if (n === 1 || n % 40 === 0) {
       console.log(`[DevicesApi] ${ path } failed: ${ err }${ n > 1 ? ` (${ n } consecutive failures, logging every 40th)` : '' }`);
     }
-    return false;
+    return { ok: false, status: 0, data: null };
   }
 }
 
@@ -59,7 +88,7 @@ export const DevicesCloudApi = {
   async register(): Promise<string | null> {
     try {
       const meta = await getDesktopDeviceMetadata();
-      const ok = await postJson('/devices/register', {
+      const res = await postJson('/devices/register', {
         deviceId:   meta.deviceId,
         deviceType: meta.deviceType,
         platform:   meta.platform,
@@ -68,8 +97,18 @@ export const DevicesCloudApi = {
         name:       meta.name,
         osVersion:  meta.osVersion,
         appVersion: meta.appVersion,
+        // Ed25519 public key; the private half never leaves ~/.sulla.
+        publicKey:  getDevicePublicKey(),
+        ...(await reportedPreferences()),
       });
-      if (!ok) return null;
+      if (!res.ok) {
+        if (res.status === 409) {
+          console.warn(`[DevicesApi] register refused: ${ res.data?.error }`);
+          setDeviceState({ registered: false, revoked: false, error: res.data?.error || 'registration_refused' });
+        }
+        return null;
+      }
+      setDeviceState({ registered: true, revoked: !!res.data?.revoked });
       cachedDeviceId = meta.deviceId;
       console.log(`[DevicesApi] registered ${ meta.deviceId }`);
       return meta.deviceId;
@@ -83,7 +122,10 @@ export const DevicesCloudApi = {
     try {
       const deviceId = cachedDeviceId ?? (await getDesktopDeviceId());
       cachedDeviceId = deviceId;
-      await postJson('/devices/heartbeat', { deviceId });
+      const res = await postJson('/devices/heartbeat', { deviceId, ...(await reportedPreferences()) });
+      if (res.ok && typeof res.data?.revoked === 'boolean' && res.data.revoked !== deviceState.revoked) {
+        setDeviceState({ ...deviceState, revoked: res.data.revoked });
+      }
     } catch {
       // Next tick will retry.
     }
@@ -99,6 +141,18 @@ export const DevicesCloudApi = {
     heartbeatTimer = setInterval(() => {
       void DevicesCloudApi.heartbeat();
     }, HEARTBEAT_INTERVAL_MS);
+  },
+
+  getState(): CloudDeviceState {
+    return deviceState;
+  },
+
+  onStateChange(listener: (s: CloudDeviceState) => void): () => void {
+    stateListeners.push(listener);
+    return () => {
+      const i = stateListeners.indexOf(listener);
+      if (i >= 0) stateListeners.splice(i, 1);
+    };
   },
 
   stopHeartbeat(): void {
