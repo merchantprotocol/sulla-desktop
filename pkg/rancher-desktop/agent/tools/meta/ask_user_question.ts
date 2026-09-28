@@ -70,7 +70,7 @@ export class AskUserQuestionWorker extends BaseTool {
       kind: 'question', title: questions[0].question, questions,
       conversationId: this.state?.metadata?.threadId || '',
       channel: this.state?.metadata?.wsChannel || '',
-    }, timeoutMs);
+    }, timeoutMs, this.state?.metadata?.options?.abort?.signal);
     const questionId = record.id;
 
     // Emit the question card over the same WS pipeline chat messages use.

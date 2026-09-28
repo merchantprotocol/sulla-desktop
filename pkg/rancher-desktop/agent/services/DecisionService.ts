@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 
 import { postgresClient } from '../database/PostgresClient';
+
 import type { DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
 /** Durable inbox; execution stays parked in the ORIGINAL caller, never a new graph.
@@ -10,27 +11,32 @@ import type { DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/sha
 export class DecisionService {
   private readonly session = randomUUID();
   private readonly listeners = new Set<(record: DecisionRecord) => void>();
-  subscribe(listener: (record: DecisionRecord) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
-  private changed(record: DecisionRecord): void { for (const listener of this.listeners) { try { listener(record); } catch { /* persistence remains authoritative */ } } }
+  subscribe(listener: (record: DecisionRecord) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
+  private changed(record: DecisionRecord): void { for (const listener of this.listeners) { try { listener(record) } catch { /* persistence remains authoritative */ } } }
   private readonly waiting = new Map<string, {
-    record: DecisionRecord;
-    settle: (outcome: DecisionOutcome) => void;
-    timer: ReturnType<typeof setTimeout>;
-    busy: boolean;
+    record:  DecisionRecord;
+    settle:  (outcome: DecisionOutcome) => void;
+    timer:   ReturnType<typeof setTimeout>;
+    busy:    boolean;
+    cleanup: () => void;
   }>();
 
-  async request(input: Omit<DecisionRecord, 'id' | 'status' | 'createdAt' | 'expiresAt'>, timeoutMs = 30 * 60_000) {
+  async request(input: Omit<DecisionRecord, 'id' | 'status' | 'createdAt' | 'expiresAt'>, timeoutMs = 30 * 60_000, signal?: AbortSignal) {
+    if (signal?.aborted) throw new Error('Request cancelled');
     if (!input.conversationId || !input.channel) throw new Error('Approval requires the original conversation. No action was executed.');
     const now = Date.now();
     const record: DecisionRecord = { ...input, id: randomUUID(), status: 'pending', createdAt: now, expiresAt: now + timeoutMs };
     await postgresClient.query('INSERT INTO human_decisions (id, session_id, status, record) VALUES ($1, $2, $3, $4::jsonb)',
       [record.id, this.session, record.status, JSON.stringify(record)]);
     let settle!: (value: DecisionOutcome) => void;
-    const result = new Promise<DecisionOutcome>(resolve => { settle = resolve; });
-    const timer = setTimeout(() => { void this.expire(record.id); }, timeoutMs);
+    const result = new Promise<DecisionOutcome>(resolve => { settle = resolve });
+    const timer = setTimeout(() => { this.expire(record.id) }, timeoutMs);
     timer.unref?.();
-    this.waiting.set(record.id, { record, settle, timer, busy: false });
-    this.changed(record);
+    const abort = () => { this.expire(record.id) };
+    this.waiting.set(record.id, { record, settle, timer, busy: false, cleanup: () => signal?.removeEventListener('abort', abort) });
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    else this.changed(record);
     return { record, result };
   }
 
@@ -45,8 +51,10 @@ export class DecisionService {
   }
 
   async resolve(response: DecisionResponse): Promise<{ settled: boolean; conversationId?: string; reason?: string }> {
+    if (!response || typeof response.id !== 'string' || typeof response.conversationId !== 'string') return { settled: false, reason: 'Request and conversation are required.' };
     const entry = this.waiting.get(response.id);
-    if (!entry || entry.record.conversationId !== response.conversationId || entry.busy) {
+    if (!entry) return { settled: false, reason: 'Request is no longer waiting.' };
+    if (entry.record.conversationId !== response.conversationId || entry.busy) {
       return { settled: false, reason: 'Already answered, unavailable, or not this conversation.' };
     }
     if (Date.now() >= entry.record.expiresAt) {
@@ -78,24 +86,26 @@ export class DecisionService {
       entry.record = next;
       this.changed(next);
       if (action !== 'deferred') {
+        entry.cleanup();
         clearTimeout(entry.timer);
         this.waiting.delete(response.id);
         entry.settle({ status: action, answers });
       }
       return { settled: true, conversationId: next.conversationId };
-    } finally { entry.busy = false; }
+    } finally { entry.busy = false }
   }
 
   async expire(id: string): Promise<void> {
     const entry = this.waiting.get(id);
     if (!entry) return;
     if (entry.busy) {
-      entry.timer = setTimeout(() => { void this.expire(id); }, 100);
+      entry.timer = setTimeout(() => { this.expire(id) }, 100);
       entry.timer.unref?.();
       return;
     }
     this.waiting.delete(id);
     clearTimeout(entry.timer);
+    entry.cleanup();
     entry.settle({ status: 'expired', answers: [] });
     this.changed({ ...entry.record, status: 'expired' });
     try {

@@ -85,3 +85,10 @@ test('policy updates apply only to exact selected tool', async() => {
   await service.setPolicy('git_push', false);
   expect(await service.policies()).toEqual([]);
 });
+test('stopping the original caller expires its request rather than running later', async() => {
+  const service = new DecisionService(); const controller = new AbortController();
+  const request = await service.request(input(), 1000, controller.signal);
+  controller.abort();
+  expect((await request.result).status).toBe('expired');
+  expect((await service.resolve({ id: request.record.id, conversationId: 'original-a', action: 'approved' })).settled).toBe(false);
+});

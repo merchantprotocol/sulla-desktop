@@ -105,6 +105,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `overview.md` — Sulla Cloud: managed compute, hosted models, pricing, when to recommend
 
 ## desktop/
+- `decide.md` — Desktop Decide inbox, original-conversation approval routing, categorized tool policies, Cloud/mobile sync
 - `capture-studio.md` — Multi-track screen/camera/mic/system-audio recorder; 13 headless `capture/*` tools for teleprompter / mic / speaker / screenshots (multi-source recording still user-driven)
 - `secretary-mode.md` — Live meeting transcription + auto action items (Cmd+Shift+S)
 

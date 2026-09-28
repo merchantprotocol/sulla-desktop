@@ -6,8 +6,9 @@ const listTasks = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue(
 const set = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue(undefined);
 const resolveQuestion = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
 const resolve = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
+const decisionResolve = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ settled: true, conversationId: 'original' });
 mockModules({
-  '@pkg/agent/services/DecisionService': { decisionService: { list: jest.fn<() => Promise<any>>().mockResolvedValue([]) } },
+  '@pkg/agent/services/DecisionService': { decisionService: { list: jest.fn<() => Promise<any>>().mockResolvedValue([]), resolve: decisionResolve } },
   '@pkg/agent/database/models/WorkItemsModel': { WorkItemsModel: { getProject, listTasks, listProjects: jest.fn(), listRecentActivity: jest.fn<() => Promise<any>>().mockResolvedValue([]) } },
   '@pkg/agent/database/models/WorkLaneDefinitionModel': { WorkLaneDefinitionModel: { resolveEffective: jest.fn<() => Promise<any>>().mockResolvedValue([{ lane_key: 'custom' }]) } },
   '@pkg/agent/database/models/SullaSettingsModel': { SullaSettingsModel: { set, get: jest.fn<() => Promise<any>>().mockResolvedValue(false) } },
@@ -50,4 +51,15 @@ test('single-select cards reject multiple answers', async() => {
   registerMobileCard('c1', 'tool_question', { toolQuestion: { questionId: 'q3', questions: [{ question: 'Choose?', options: [] }] } });
   await expect(request('chat.answer', { id: 'q3', conversationId: 'c1', answers: [{ selected: ['A','B'] }] })).rejects.toThrow('Choose one');
   expect(resolveQuestion).not.toHaveBeenCalled();
+});
+
+test('remote Decide forwards the exact originating conversation, never dispatches a new chat', async() => {
+  const response = { id: 'decision', conversationId: 'original', action: 'approved' };
+  await expect(request('decisions.resolve', response)).resolves.toMatchObject({ settled: true, conversationId: 'original' });
+  expect(decisionResolve).toHaveBeenCalledWith(response);
+  expect(set).not.toHaveBeenCalled();
+});
+test('remote callers cannot alter tool approval policies', async() => {
+  await expect(request('decisions.set-policy', { name: 'git_push', required: false })).rejects.toThrow('Unsupported');
+  expect(set).not.toHaveBeenCalled();
 });

@@ -1136,8 +1136,14 @@ export class ChatCompletionsServer {
           return res.json({ success: true, result });
         }
 
-        const result = await tool.call(params);
-        return res.json({ success: true, result });
+        const disconnected = new AbortController();
+        const onDisconnect = () => { if (!res.writableEnded) disconnected.abort(); };
+        res.once('close', onDisconnect);
+        tool.approvalSignal = disconnected.signal;
+        try {
+          const result = await tool.call(params);
+          return res.json({ success: true, result });
+        } finally { res.off('close', onDisconnect); }
       }
 
       // Route MCP calls to the MCPBridge instead of ConfigApiClient

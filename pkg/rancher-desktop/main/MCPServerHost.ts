@@ -432,7 +432,7 @@ export class MCPServerHost {
           kind: 'question', title: normalized[0].question, questions: normalized,
           conversationId: session.state.metadata.threadId,
           channel: session.state.metadata.wsChannel || 'sulla-desktop',
-        }, clamped);
+        }, clamped, session.state.metadata.options?.abort?.signal);
         const questionId = record.id;
 
         const emitted = await emitQuestionCardViaWs(
