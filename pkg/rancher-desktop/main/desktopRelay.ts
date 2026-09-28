@@ -764,6 +764,24 @@ export class DesktopRelayClient {
     const streamedByThread = new Map<string, string>();
     const finalTextByThread = new Map<string, string>();
     const lastActivityByThread = new Map<string, string>();
+    // Id of the most recent committed assistant turn, so `done` can reuse it
+    // instead of making mobile persist the same text under a second id.
+    const lastCommittedIdByThread = new Map<string, string>();
+
+    // Commit one finished text segment as its own assistant turn. Scribe
+    // before the WS send: committed turns must survive even if the phone is
+    // asleep and the frame is never delivered. The id is derived here (not
+    // awaited from the scribe) so mobile persists under this SAME id and the
+    // two copies dedup to one row after sync.
+    const commitAssistantText = async(threadId: string, text: string) => {
+      finalTextByThread.set(threadId, text);
+      streamedByThread.delete(threadId);
+      const ts = new Date().toISOString();
+      const id = deriveMessageId(threadId, 'assistant', text, ts);
+      lastCommittedIdByThread.set(threadId, id);
+      await this.scribeTurn(threadId, 'assistant', text, { id, ts });
+      this.sendChatFrame(threadId, { type: 'message', content: text, id });
+    };
 
     wsService.onMessage(MOBILE_RELAY_CHANNEL, async(msg: WebSocketMessage) => {
       if (msg.type === 'progress') {
@@ -800,6 +818,16 @@ export class DesktopRelayClient {
           const id = deriveMessageId(threadId, 'tool', content, ts);
           await this.scribeTurn(threadId, 'tool', content, { id, ts });
           this.sendChatFrame(threadId, { type: 'card', content, id });
+          return;
+        }
+        if (kind === 'streaming_complete') {
+          // Segment boundary: the agent closed a streaming bubble (a tool call
+          // or thinking block follows). Commit the segment now. Streaming-only
+          // providers (Claude Code, Codex) never send a `progress` for these,
+          // so without this the next segment's snapshot overwrote this one
+          // and only the run's last segment ever reached mobile's thread.
+          const segment = threadId ? streamedByThread.get(threadId) : undefined;
+          if (threadId && segment) await commitAssistantText(threadId, segment);
           return;
         }
         const raw = typeof data.content === 'string' ? data.content : '';
@@ -845,17 +873,13 @@ export class DesktopRelayClient {
           // to the thread and speak it without waiting for the full graph to
           // finish. Reset the streaming buffer so the next iteration starts
           // a fresh streaming bubble rather than accumulating onto this one.
-          finalTextByThread.set(threadId, stripped);
-          streamedByThread.delete(threadId);
-          // Scribe before the WS send — committed turns must survive even
-          // if the phone is asleep and the frame is never delivered. The id
-          // is derived here (not awaited from the scribe) so the frame ships
-          // without waiting on the DB write; mobile persists under this SAME
-          // id, so its copy and ours dedup to one row after sync.
-          const ts = new Date().toISOString();
-          const id = deriveMessageId(threadId, 'assistant', stripped, ts);
-          await this.scribeTurn(threadId, 'assistant', stripped, { id, ts });
-          this.sendChatFrame(threadId, { type: 'message', content: stripped, id });
+          // Skip it when the same text was already committed at its
+          // streaming_complete boundary.
+          if (stripped.trim() === finalTextByThread.get(threadId)?.trim()) {
+            streamedByThread.delete(threadId);
+            return;
+          }
+          await commitAssistantText(threadId, stripped);
           return;
         }
 
@@ -879,11 +903,17 @@ export class DesktopRelayClient {
           console.warn('[DesktopRelay] Dropping done frame without thread_id/conversationId');
           return;
         }
+        // A trailing segment that never saw its streaming_complete boundary
+        // is still a separate turn when earlier ones were committed; commit
+        // it rather than letting `done` fall back to an older segment.
+        const trailing = streamedByThread.get(threadId);
+        if (trailing && finalTextByThread.has(threadId)) await commitAssistantText(threadId, trailing);
         const committed = finalTextByThread.get(threadId);
         const finalText = committed ?? streamedByThread.get(threadId) ?? '';
         // Streaming-only runs never hit the `progress` branch, so their text
-        // was never scribed. Committed (progress) text was already written.
-        let doneId: string | undefined;
+        // was never scribed. Committed (progress) text was already written,
+        // and `done` reuses its id so mobile dedups instead of duplicating.
+        let doneId = committed ? lastCommittedIdByThread.get(threadId) : undefined;
         if (!committed && finalText) {
           const ts = new Date().toISOString();
           doneId = deriveMessageId(threadId, 'assistant', finalText, ts);
@@ -892,6 +922,7 @@ export class DesktopRelayClient {
         streamedByThread.delete(threadId);
         finalTextByThread.delete(threadId);
         lastActivityByThread.delete(threadId);
+        lastCommittedIdByThread.delete(threadId);
         // Stop the keepalive — run is complete.
         const t = this.keepaliveTimers.get(threadId);
         if (t) { clearInterval(t); this.keepaliveTimers.delete(threadId); }
