@@ -27,6 +27,13 @@ export function registerMobileCard(conversationId: string, kind: string, data: a
   timer.unref?.();
 }
 
+async function companionTask(taskId: unknown) {
+  if (typeof taskId !== 'string' || !taskId || taskId.length > 200) throw new Error('Task required');
+  const task = await WorkItemsModel.getTask(taskId);
+  if (!task || task.archived) throw new Error('Task not found');
+  return task;
+}
+
 // A narrow, authenticated owner surface. Never dispatch arbitrary tool names.
 export async function mobileCompanionRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
   switch (method) {
@@ -74,6 +81,25 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
       WorkLaneDefinitionModel.resolveEffective(project.id),
     ]);
     return { project, tasks, lanes, truncated: tasks.length >= 5000 };
+  }
+  // One ticket with its thread, opened from the phone's dashboard or board.
+  case 'projects.task': {
+    const task = await companionTask(params.taskId);
+    const [project, lanes, comments] = await Promise.all([
+      WorkItemsModel.getProject(task.project_id),
+      WorkLaneDefinitionModel.resolveEffective(task.project_id),
+      WorkItemsModel.listComments(task.id),
+    ]);
+    return { task, project, lanes, comments };
+  }
+  // Only ever a human comment: the phone owner typed it and pressed Post.
+  case 'projects.comment': {
+    const body = typeof params.body === 'string' ? params.body.trim() : '';
+    if (!body || body.length > 20000) throw new Error('Write a comment first (20,000 characters max)');
+    const task = await companionTask(params.taskId);
+    const { getProjectsApplicationService } = await import('@pkg/agent/projects/application/ProjectsApplicationService');
+    const comment = await getProjectsApplicationService().addComment({ task_id: task.id, body, author: 'human' }, { actor: 'human', source: 'ipc' });
+    return { comment };
   }
   // Read-only history for the cloud dashboard. Served live from this
   // desktop, so it works even when conversation sync to the cloud is off.

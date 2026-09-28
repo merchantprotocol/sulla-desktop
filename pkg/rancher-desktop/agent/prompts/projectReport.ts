@@ -121,6 +121,22 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
     .filter(Boolean).join(', ');
   lines.push(`# Project report — last ${ hours }h${ scope ? ` (${ scope })` : '' }`);
 
+  // Human comments outrank every queue below and ignore lane scope: the human
+  // asked for a look, whatever state the ticket is in.
+  if (opts.lifecycleAware) {
+    const { listHumanCommentTriage } = await import('../services/HumanCommentTriage');
+    const awaiting = await listHumanCommentTriage();
+    if (awaiting.length) {
+      lines.push('');
+      lines.push(`## 💬 Human comments awaiting your reply (${ awaiting.length })`);
+      lines.push('_Handle these first, oldest first, regardless of lane, lifecycle owner, parked/blocked/done state or dependencies. Open the ticket, read the comment in context, then either change the ticket as asked, move it to its execution lane so the dispatcher picks it up, or answer the question. Finish every one with add_task_comment author="heartbeat" saying what you decided and did — that reply clears it from this list. Tickets with a live worker claim are held back until the claim ends._');
+      for (const row of awaiting) {
+        const excerpt = row.body.replace(/\s+/g, ' ').trim();
+        lines.push(`- **${ row.task.title }** — ${ context(row.task) } · ${ row.task.status } · commented ${ fmt(row.created_at) }: "${ excerpt.length > 280 ? `${ excerpt.slice(0, 279) }…` : excerpt }" (id ${ row.task.id })`);
+      }
+    }
+  }
+
   lines.push('');
   lines.push(`## ✅ Completed (${ completed.length })`);
   if (!completed.length) {

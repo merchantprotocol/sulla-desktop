@@ -48,10 +48,13 @@
               'tab-active-native': tab.isActive && tab.native,
               'tab-inactive': !tab.isActive,
               'tab-pointer-dragging': dragState !== null && dragState.originIndex === index,
+              'tab-preview': tab.preview,
             },
           ]"
           @pointerdown="onPointerDown($event, index)"
           @dragstart.prevent
+          :title="tab.preview ? `${ tab.label } — preview (double-click to keep open)` : undefined"
+          @dblclick="tab.browserId && promoteTab(tab.browserId)"
           @auxclick.prevent="onAuxClick($event, tab)"
           @contextmenu.prevent="onTabContextMenu($event, tab, index)"
         >
@@ -432,7 +435,7 @@ interface HistoryRecord {
 
 const extensionService = getExtensionService();
 const router = useRouter();
-const { tabs: browserTabs, closedTabs, tabOrder, createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab, reorderTabs } = useBrowserTabs();
+const { tabs: browserTabs, closedTabs, tabOrder, previewTabId, createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab, reorderTabs, promoteTab } = useBrowserTabs();
 
 defineProps<{
   isDark:         boolean;
@@ -704,6 +707,8 @@ interface HeaderTab {
   mode?:      BrowserTabMode;
   closeable?: boolean;
   browserId?: string;
+  /** Bookmark preview tab — replaced by the next bookmark until interacted with. */
+  preview?:   boolean;
 }
 
 /**
@@ -759,6 +764,7 @@ const allTabsById = computed(() => {
       closeable: true,
       browserId: bt.id,
       native:    isPill,
+      preview:   previewTabId.value === bt.id,
     });
   }
 
@@ -1227,6 +1233,12 @@ function handleTabContextMenuAction(
   white-space: nowrap;
   min-width: 0;
   letter-spacing: 0.01em;
+}
+
+/* Bookmark preview tab (VS Code-style): italic until the user interacts */
+.tab-preview .tab-label {
+  font-style: italic;
+  opacity: 0.85;
 }
 
 /* Icon well — consistent size across favicons (raster) and inline SVG fallbacks */

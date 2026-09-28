@@ -40,6 +40,16 @@ Heartbeat is the supervisor: it verifies `in_review` artifacts, investigates fai
 
 **Blocked tasks — recovery planning** remains the reasoning exception. Heartbeat moves a blocked task to `planning`, launches independent high-reasoning planners, cross-checks their proposals, chooses the strongest reversible path itself, and returns executable work to `todo` for mechanical dispatch. Human escalation is reserved for a genuine irreversible or high-blast boundary after reversible work is staged.
 
+## Human comments on tickets
+
+When the human comments on a Projects ticket (desktop Projects UI or Sulla Mobile, both stamp author `human`), Heartbeat owes that ticket a look, whatever its lane, lifecycle owner, parked/blocked/done state or dependencies.
+
+- The comment wakes Heartbeat at the next minute check instead of waiting out `heartbeatDelayMinutes` (the enabled switch and `heartbeatWindow` still apply).
+- The Heartbeat project report opens with **💬 Human comments awaiting your reply** (last 14 days, oldest first), and the oldest one becomes the hydrated `<selected_project_item>` ahead of normal lane work.
+- Heartbeat reads the comment, then changes the ticket, moves it to its execution lane (`transition_task_to_execution`) so the dispatcher picks it up, or answers. It always finishes with `add_task_comment author="heartbeat"`; that reply clears the ticket from the queue.
+- Tickets with a live worker claim are held back until the claim ends.
+- Agents cannot post comments as `human` (`add_task_comment` refuses `human`/`user`/`owner`/`me`), so only the real human can trigger this.
+
 ## Channel & messaging
 
 The heartbeat owns the `heartbeat` channel. Other agents can message it via inter-agent XML tags:

@@ -5,6 +5,7 @@ import { KnowledgeGraphModel } from '../../database/models/KnowledgeGraphModel';
 import { LifecycleCapabilityModel } from '../../database/models/LifecycleCapabilityModel';
 import { WorkConveyorMetricsModel } from '../../database/models/WorkConveyorMetricsModel';
 import { WorkItemKnowledgeModel } from '../../database/models/WorkItemKnowledgeModel';
+import { isHumanCommentAuthor } from '../../database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
 import { WorkLaneWorkflowBindingModel } from '../../database/models/WorkLaneWorkflowBindingModel';
 import { CORE_PROJECT_PIPELINE_TEMPLATE_ID, WorkProjectPipelineTemplateModel } from '../../database/models/WorkProjectPipelineTemplateModel';
@@ -510,8 +511,16 @@ export class ProjectsApplicationService {
     return this.repository.archive(kind, itemId(id));
   }
 
-  addComment(input: AddCommentInput, _context: ProjectsCommandContext = DEFAULT_CONTEXT) {
-    return this.repository.addComment(input);
+  async addComment(input: AddCommentInput, _context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    const comment = await this.repository.addComment(input);
+    // A human comment is a request for Heartbeat's attention (HumanCommentTriage);
+    // don't make the human wait out the full Heartbeat interval.
+    if (isHumanCommentAuthor(comment.author)) {
+      void import('../../services/HeartbeatService')
+        .then(({ getHeartbeatService }) => getHeartbeatService().requestWake(`human commented on task ${ comment.task_id }`))
+        .catch(() => { /* Heartbeat not running in this process */ });
+    }
+    return comment;
   }
 
   setTaskDependency(taskId: string, dependsOnTaskId: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {

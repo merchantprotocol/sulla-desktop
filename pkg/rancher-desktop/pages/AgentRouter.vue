@@ -17,8 +17,21 @@
         :active="activeTabMode"
         :active-sub-tab="activeSubTab"
         :file-tree-open="fileTreeOpen"
+        :bookmarks-open="bookmarksOpen"
         @set-mode="onModeRailSelect"
         @toggle-file-tree="onToggleFileTree"
+        @toggle-bookmarks="toggleBookmarks()"
+      />
+
+      <!--
+        Bookmarks pane — window-level (not per tab) so it stays open while
+        the bookmarks it opens swap through the preview tab beside it.
+      -->
+      <BookmarksPane
+        v-if="bookmarksOpen && loggedIn"
+        :active-tab="activeTabInfo"
+        :reveal-id="bookmarkRevealId"
+        @close="toggleBookmarks(false)"
       />
 
       <div class="agent-router-content flex flex-col">
@@ -120,7 +133,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch, onMounted, onUnmounted } from 'vue';
+import { computed, nextTick, reactive, ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import BrowserTab from './BrowserTab.vue';
@@ -128,6 +141,7 @@ import ModeRail from './chat/components/chrome/ModeRail.vue';
 import StartupOverlay from './agent/StartupOverlay.vue';
 import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
+import BookmarksPane from './bookmarks/BookmarksPane.vue';
 
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import { useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
@@ -180,6 +194,46 @@ function onRoutinesSubTabChange(event: Event) {
   const customEvent = event as CustomEvent;
   if (customEvent.detail?.subTab) {
     activeSubTab.value = customEvent.detail.subTab;
+  }
+}
+
+// ── Bookmarks pane ──
+const BOOKMARKS_OPEN_KEY = 'sulla:bookmarks-pane-open';
+const bookmarksOpen = ref(localStorage.getItem(BOOKMARKS_OPEN_KEY) === '1');
+const bookmarkRevealId = ref<string | null>(null);
+
+watch(bookmarksOpen, (open) => {
+  try {
+    localStorage.setItem(BOOKMARKS_OPEN_KEY, open ? '1' : '0');
+  } catch { /* best-effort */ }
+});
+
+const activeTabInfo = computed(() => {
+  const match = /^\/Browser\/(.+)$/.exec(route.path);
+  const tab = match ? browserTabs.find(t => t.id === match[1]) : undefined;
+
+  return tab ? { id: tab.id, url: tab.url, title: tab.title, mode: tab.mode } : undefined;
+});
+
+function toggleBookmarks(open = !bookmarksOpen.value) {
+  bookmarksOpen.value = open;
+}
+
+// The browser toolbar star opens the pane on the bookmark it just saved.
+function onRevealBookmark(event: Event) {
+  const id = (event as CustomEvent<{ id: string }>).detail?.id;
+  if (!id) return;
+  bookmarkRevealId.value = null;
+  bookmarksOpen.value = true;
+  nextTick(() => {
+    bookmarkRevealId.value = id;
+  });
+}
+
+function onBookmarksShortcut(event: KeyboardEvent) {
+  if ((event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === 'b' || event.key === 'B')) {
+    event.preventDefault();
+    toggleBookmarks();
   }
 }
 
@@ -472,6 +526,8 @@ onMounted(async() => {
   window.addEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
   window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.addEventListener('sulla:file-tree-state-changed', onFileTreeStateChanged as EventListener);
+  window.addEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
+  window.addEventListener('keydown', onBookmarksShortcut);
 
   // Ensure at least one tab exists, then navigate to the last-active tab from
   // the previous session if it's still in the restored list, falling back to
@@ -526,6 +582,8 @@ onUnmounted(() => {
   window.removeEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
   window.removeEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.removeEventListener('sulla:file-tree-state-changed', onFileTreeStateChanged as EventListener);
+  window.removeEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
+  window.removeEventListener('keydown', onBookmarksShortcut);
   ipcRenderer.removeListener('route' as any, onRoute);
   ipcRenderer.removeListener('agent-command' as any, onAgentCommand);
   ipcRenderer.removeListener('k8s-check-state' as any, onK8sCheckState);

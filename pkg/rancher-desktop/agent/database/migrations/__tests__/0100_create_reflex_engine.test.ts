@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { down, up } from '../0099_create_reflex_engine';
+import { down, up } from '../0100_create_reflex_engine';
 
-describe('0099_create_reflex_engine', () => {
+describe('0100_create_reflex_engine', () => {
   it('creates examples with active-row dedup and decision receipts', () => {
     expect(up).toContain('CREATE TABLE IF NOT EXISTS reflex_examples');
     expect(up).toContain('CREATE UNIQUE INDEX IF NOT EXISTS reflex_examples_active_unique');
