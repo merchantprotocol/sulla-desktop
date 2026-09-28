@@ -3,20 +3,24 @@ import { jest } from '@jest/globals';
 import mockModules from '@pkg/utils/testUtils/mockModules';
 const getProject = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ id: 'p1', archived: false });
 const listTasks = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue([]);
+const getTask = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ id: 't1', project_id: 'p1', archived: false });
+const listComments = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue([{ id: 'c1', body: 'hi' }]);
+const addComment = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ id: 'c2', body: 'from phone', author: 'human' });
 const set = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue(undefined);
 const resolveQuestion = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
 const resolve = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
 const decisionResolve = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ settled: true, conversationId: 'original' });
 mockModules({
   '@pkg/agent/services/DecisionService': { decisionService: { list: jest.fn<() => Promise<any>>().mockResolvedValue([]), resolve: decisionResolve } },
-  '@pkg/agent/database/models/WorkItemsModel': { WorkItemsModel: { getProject, listTasks, listProjects: jest.fn(), listRecentActivity: jest.fn<() => Promise<any>>().mockResolvedValue([]) } },
+  '@pkg/agent/database/models/WorkItemsModel': { WorkItemsModel: { getProject, listTasks, getTask, listComments, listProjects: jest.fn(), listRecentActivity: jest.fn<() => Promise<any>>().mockResolvedValue([]) } },
   '@pkg/agent/database/models/WorkLaneDefinitionModel': { WorkLaneDefinitionModel: { resolveEffective: jest.fn<() => Promise<any>>().mockResolvedValue([{ lane_key: 'custom' }]) } },
   '@pkg/agent/database/models/SullaSettingsModel': { SullaSettingsModel: { set, get: jest.fn<() => Promise<any>>().mockResolvedValue(false) } },
   '@pkg/agent/services/HeartbeatService': { getHeartbeatService: () => ({ getStatus: () => ({ isExecuting: false }), getHistory: () => [] }) },
+  '@pkg/agent/projects/application/ProjectsApplicationService': { getProjectsApplicationService: () => ({ addComment }) },
   '@pkg/agent/services/ApprovalService': { ApprovalService: { getInstance: () => ({ resolveQuestion, resolve }) } },
 });
 const { mobileCompanionRequest: request, registerMobileCard } = await import('@pkg/main/mobileCompanion');
-beforeEach(() => { jest.clearAllMocks(); resolveQuestion.mockReturnValue(true); });
+beforeEach(() => { jest.clearAllMocks(); resolveQuestion.mockReturnValue(true); getTask.mockResolvedValue({ id: 't1', project_id: 'p1', archived: false }); });
 test('rejects arbitrary remote commands', async() => {
   await expect(request('exec', { command: 'anything' })).rejects.toThrow('Unsupported');
   expect(set).not.toHaveBeenCalled();
@@ -62,4 +66,24 @@ test('remote Decide forwards the exact originating conversation, never dispatche
 test('remote callers cannot alter tool approval policies', async() => {
   await expect(request('decisions.set-policy', { name: 'git_push', required: false })).rejects.toThrow('Unsupported');
   expect(set).not.toHaveBeenCalled();
+});
+
+test('opens one ticket with its project, lanes and comment thread', async() => {
+  await expect(request('projects.task', { taskId: 't1' })).resolves.toMatchObject({ task: { id: 't1' }, project: { id: 'p1' }, lanes: [{ lane_key: 'custom' }], comments: [{ id: 'c1' }] });
+  expect(listComments).toHaveBeenCalledWith('t1');
+});
+test('archived or unknown tickets are not served', async() => {
+  getTask.mockResolvedValueOnce({ id: 't1', project_id: 'p1', archived: true });
+  await expect(request('projects.task', { taskId: 't1' })).rejects.toThrow('not found');
+  await expect(request('projects.task', { taskId: 42 })).rejects.toThrow('Task required');
+});
+test('phone comments are always posted as the human, trimmed', async() => {
+  await expect(request('projects.comment', { taskId: 't1', body: '  from phone  ', author: 'heartbeat' })).resolves.toMatchObject({ comment: { id: 'c2' } });
+  expect(addComment).toHaveBeenCalledWith({ task_id: 't1', body: 'from phone', author: 'human' }, { actor: 'human', source: 'ipc' });
+});
+test('empty or oversized comments are rejected before touching the task', async() => {
+  await expect(request('projects.comment', { taskId: 't1', body: '   ' })).rejects.toThrow('Write a comment');
+  await expect(request('projects.comment', { taskId: 't1', body: 'x'.repeat(20001) })).rejects.toThrow('Write a comment');
+  expect(getTask).not.toHaveBeenCalled();
+  expect(addComment).not.toHaveBeenCalled();
 });
