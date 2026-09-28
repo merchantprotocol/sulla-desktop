@@ -1,6 +1,7 @@
 // Barrel: re-exports types + registry, auto-registers all providers.
 
 // Auto-register concrete providers on import
+import './providers/CloudflareOAuth';
 import './providers/CodexOAuth';
 import './providers/GoogleOAuth';
 import './providers/GrokOAuth';

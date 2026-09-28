@@ -1304,6 +1304,15 @@ export class ChatCompletionsServer {
             }
           } catch { /* no oauth configured */ }
 
+          // Cloudflare's credentials form stores a pasted token as `api_token`
+          // and the API expects it as a Bearer header, not a `key` param.
+          if (!headers.Authorization && slug === 'cloudflare') {
+            const apiToken = await svc.getIntegrationValue(slug, 'api_token', accountId);
+            if (apiToken?.value) {
+              headers.Authorization = `Bearer ${ apiToken.value }`;
+            }
+          }
+
           // Try API key (stored as api_key, injected as query param "key")
           if (!headers.Authorization) {
             const apiKeyValue = await svc.getIntegrationValue(slug, 'api_key', accountId);
