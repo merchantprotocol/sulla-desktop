@@ -182,7 +182,7 @@ describe('DesktopRelayClient mobile bridge: multi-segment turns', () => {
     const say = (kind: string, content = '') => handler({ type: 'assistant_message', data: { thread_id: 't1', kind, content } });
     const complete = () => handler({ type: 'transfer_data', data: { thread_id: 't1', content: 'graph_execution_complete' } });
 
-    return { frames, say, complete };
+    return { frames, say, complete, handler, client };
   }
 
   it('commits every streamed text segment as its own message, in order', async() => {
@@ -237,5 +237,36 @@ describe('DesktopRelayClient mobile bridge: multi-segment turns', () => {
 
     expect(frames.filter(f => f.type === 'message')).toEqual([]);
     expect(frames.find(f => f.type === 'done')).toMatchObject({ content: 'Just this.', id: 'assistant:Just this.' });
+  });
+});
+
+describe('mobile bridge concurrent conversations', () => {
+  it('keeps a slow conversation ordered while another conversation completes', async() => {
+    const client = new DesktopRelayClient() as any;
+    const frames: any[] = [];
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    client.scribeTurn = async(id: string, role: string) => {
+      if (id === 'slow' && role === 'assistant') await blocked;
+    };
+    client.sendChatFrame = (id: string, payload: any) => frames.push({ conversationId: id, ...payload });
+    mockWsService.onMessage.mockClear();
+    client.ensureMobileChannelBridge();
+    const handler = mockWsService.onMessage.mock.calls[0][1] as (msg: any) => Promise<void>;
+    const say = (id: string, kind: string, content = '') => handler({ type: 'assistant_message', data: { thread_id: id, kind, content } });
+    const done = (id: string) => handler({ type: 'transfer_data', data: { thread_id: id, content: 'graph_execution_complete' } });
+    await say('slow', 'streaming', 'Slow first');
+    const commit = say('slow', 'streaming_complete');
+    const activity = say('slow', 'thinking', 'Tool after first');
+    const finish = done('slow');
+    await say('fast', 'streaming', 'Fast answer');
+    await done('fast');
+    expect(frames.filter(f => f.conversationId === 'slow').map(f => f.type)).toEqual(['chunk']);
+    expect(frames.find(f => f.conversationId === 'fast' && f.type === 'done')?.content).toBe('Fast answer');
+    release();
+    await Promise.all([commit, activity, finish]);
+    expect(frames.filter(f => f.conversationId === 'slow').map(f => f.type)).toEqual(['chunk', 'message', 'activity', 'done']);
   });
 });

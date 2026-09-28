@@ -774,6 +774,7 @@ export class DesktopRelayClient {
     // awaited from the scribe) so mobile persists under this SAME id and the
     // two copies dedup to one row after sync.
     const commitAssistantText = async(threadId: string, text: string) => {
+      lastActivityByThread.delete(threadId);
       finalTextByThread.set(threadId, text);
       streamedByThread.delete(threadId);
       const ts = new Date().toISOString();
@@ -783,7 +784,7 @@ export class DesktopRelayClient {
       this.sendChatFrame(threadId, { type: 'message', content: text, id });
     };
 
-    wsService.onMessage(MOBILE_RELAY_CHANNEL, async(msg: WebSocketMessage) => {
+    const handleMessage = async(msg: WebSocketMessage) => {
       if (msg.type === 'progress') {
         const data = (msg.data || {}) as any;
         const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
@@ -936,6 +937,18 @@ export class DesktopRelayClient {
         // its own conversationId scheme; we don't need to plumb this back.
         return;
       }
+    };
+    // A slow scribe must not let done overtake a segment, or stall other chats.
+    const queues = new Map<string, Promise<void>>();
+    wsService.onMessage(MOBILE_RELAY_CHANNEL, (msg: WebSocketMessage) => {
+      const threadId = typeof (msg.data as any)?.thread_id === 'string' ? (msg.data as any).thread_id : '';
+      const next = (queues.get(threadId) ?? Promise.resolve()).then(() => handleMessage(msg));
+      const settled = next.catch((error) => {
+        console.warn('[DesktopRelay] Mobile bridge frame failed:', error);
+      });
+      queues.set(threadId, settled);
+      settled.then(() => { if (queues.get(threadId) === settled) queues.delete(threadId); });
+      return settled;
     });
   }
 
