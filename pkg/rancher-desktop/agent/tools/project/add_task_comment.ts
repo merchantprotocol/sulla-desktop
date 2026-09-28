@@ -1,3 +1,4 @@
+import { isHumanCommentAuthor } from '../../database/models/WorkItemsModel';
 import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -13,6 +14,11 @@ export class AddTaskCommentWorker extends BaseTool {
     const body = typeof input.body === 'string' ? input.body.trim() : '';
     if (!taskId) return { successBoolean: false, responseString: 'task_id is required.' };
     if (!body) return { successBoolean: false, responseString: 'body is required.' };
+    // Human comments make Heartbeat act on a ticket (HumanCommentTriage), so an
+    // agent must never be able to speak as the human.
+    if (isHumanCommentAuthor(input.author) || isHumanCommentAuthor(input.actor)) {
+      return { successBoolean: false, responseString: 'Agents cannot post as the human. Use your own agent id (e.g. "heartbeat" or "sulla").' };
+    }
 
     try {
       const projects = getProjectsApplicationService();
@@ -22,7 +28,8 @@ export class AddTaskCommentWorker extends BaseTool {
         task_id: taskId,
         body,
         // Direct Sulla chat is the default author for tool-driven comments;
-        // Heartbeat should pass author="heartbeat"; the desktop UI stamps "human".
+        // Heartbeat should pass author="heartbeat"; only the desktop UI and
+        // Sulla Mobile stamp "human".
         author:  input.author || input.actor || 'sulla',
       }, { actor, source: 'tool' });
       return {

@@ -499,13 +499,13 @@ export const projectToolManifests: ToolManifest[] = [
   // ── comments ─────────────────────────────────────────────────────────
   {
     name:        'add_task_comment',
-    description: 'Add a note/comment on a task (GitHub-issue style). Append-only history — never edited or hard-deleted. Use for progress notes, blockers, and decisions; use update_task to change status/priority/due date. Author defaults to "sulla"; pass author="human" for the operator.',
+    description: 'Add a note/comment on a task (GitHub-issue style). Append-only history — never edited or hard-deleted. Use for progress notes, blockers, and decisions; use update_task to change status/priority/due date. Author defaults to "sulla". Agents can never post as "human": human comments are typed by the operator in the Projects UI or Sulla Mobile and make Heartbeat triage the ticket.',
     category:    'project',
     schemaDef:   {
       task_id: { type: 'string', description: 'Task id to comment on.' },
       body:    { type: 'string', description: 'Comment markdown/text.' },
-      author:  { type: 'string', optional: true, description: 'Acting source/agent for attribution: "heartbeat" (autonomous), "sulla" (chat), "workbench", or "human". Defaults to "sulla".' },
-      actor:   { type: 'string', optional: true, description: 'Alias for author. Acting source/agent for attribution: "heartbeat" (autonomous), "sulla" (chat), "workbench", or "human". Defaults to "sulla".' },
+      author:  { type: 'string', optional: true, description: 'Acting source/agent for attribution: "heartbeat" (autonomous), "sulla" (chat), "workbench", or your agent id. Never "human". Defaults to "sulla".' },
+      actor:   { type: 'string', optional: true, description: 'Alias for author. Acting source/agent for attribution: "heartbeat" (autonomous), "sulla" (chat), "workbench", or your agent id. Never "human". Defaults to "sulla".' },
     },
     operationTypes: ['create'],
     loader:         () => import('./add_task_comment'),

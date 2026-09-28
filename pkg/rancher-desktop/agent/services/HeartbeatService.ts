@@ -73,6 +73,7 @@ export class HeartbeatService {
   private alignTimerId: ReturnType<typeof setTimeout> | null = null;
   private isExecuting = false;
   private lastTriggerMs = 0; // simple in-memory last-run tracker
+  private wakeRequested: string | null = null; // reason for an early run at the next minute check
 
   // ── Circular event history buffer ──
   private eventBuffer: (HeartbeatEvent | null)[] = new Array(MAX_EVENT_HISTORY).fill(null);
@@ -238,9 +239,12 @@ export class HeartbeatService {
       const delayMin = Math.max(1, await SullaSettingsModel.get('heartbeatDelayMinutes', 15));
       const delayMs = delayMin * 60_000;
 
-      if (Date.now() - this.lastTriggerMs >= delayMs) {
-        console.log(`[HeartbeatService] ⏰ Heartbeat due (${ delayMin } min) — triggering`);
-        this.recordEvent('scheduler_check', `Heartbeat due (${ delayMin }min interval) — triggering`);
+      const wake = this.isExecuting ? null : this.wakeRequested;
+      if (wake || Date.now() - this.lastTriggerMs >= delayMs) {
+        // An early wake survives a busy run and fires at the first idle minute.
+        if (wake) this.wakeRequested = null;
+        console.log(`[HeartbeatService] ⏰ Heartbeat ${ wake ? `woken (${ wake })` : `due (${ delayMin } min)` } — triggering`);
+        this.recordEvent('scheduler_check', wake ? `Heartbeat woken early: ${ wake } — triggering` : `Heartbeat due (${ delayMin }min interval) — triggering`);
         await this.triggerHeartbeat();
         this.lastTriggerMs = Date.now();
         void SullaSettingsModel.set('heartbeatLastTriggerMs', this.lastTriggerMs, 'number');
@@ -477,6 +481,17 @@ Timezone: ${ tz }
 This is your time to think, invent, and try. Read the north star and the idea lab, set aside anything waiting on your Human, brainstorm at least five fresh ideas that could move an active goal, and run a real reversible experiment on the best one. Record the idea, evidence, and verdict in the idea lab, then run the next one while time remains. Do not end on "nothing changed"; when one lane is waiting, switch to a new idea.${ base ? `\n\n${ base }` : '' }`;
 
     return directive;
+  }
+
+  /**
+   * Run at the next minute check instead of waiting out the interval (e.g. the
+   * human just commented on a ticket). Still honours the enabled switch and the
+   * time window; a request made during a run fires once that run ends.
+   */
+  requestWake(reason: string): void {
+    if (!this.initialized) return;
+    this.wakeRequested = reason;
+    this.recordEvent('scheduler_check', `Early wake requested: ${ reason }`);
   }
 
   /** Call from UI after settings change to force immediate check */

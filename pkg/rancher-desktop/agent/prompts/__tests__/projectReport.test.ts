@@ -40,8 +40,14 @@ jest.unstable_mockModule('../../database/models/WorkTaskDependencyModel', () => 
   WorkTaskDependencyModel: { listUnresolvedForTasks: dependencyHoldsMock },
 }));
 
+const listHumanCommentTriageMock: any = jest.fn(() => Promise.resolve([]));
+jest.unstable_mockModule('../../services/HumanCommentTriage', () => ({
+  listHumanCommentTriage: listHumanCommentTriageMock,
+}));
+
 describe('buildProjectReport activity rotation queues', () => {
   beforeEach(() => {
+    listHumanCommentTriageMock.mockReset().mockResolvedValue([]);
     activeWaitIdsMock.mockReset().mockResolvedValue(new Set());
     listWaitsMock.mockReset().mockResolvedValue([]);
     settingsGetMock.mockReset().mockImplementation((_key: string, fallback: boolean) => Promise.resolve(fallback));
@@ -200,5 +206,45 @@ describe('buildProjectReport activity rotation queues', () => {
     expect(report).toContain('Explicit Heartbeat fallback (0 of 0)');
     expect(report).toContain('blocked by upstream (todo)');
     expect(report).toContain('owner dispatcher');
+  });
+});
+
+describe('buildProjectReport human comments', () => {
+  beforeEach(() => {
+    activeWaitIdsMock.mockReset().mockResolvedValue(new Set());
+    listWaitsMock.mockReset().mockResolvedValue([]);
+    settingsGetMock.mockReset().mockImplementation((_key: string, fallback: boolean) => Promise.resolve(fallback));
+    dependencyHoldsMock.mockReset().mockResolvedValue([]);
+    ensureTablesMock.mockReset().mockResolvedValue(undefined);
+    listProjectsMock.mockReset().mockResolvedValue([{ id: 'project-1', title: 'Operator Platform' }]);
+    listEpicsMock.mockReset().mockResolvedValue([]);
+    listTasksMock.mockReset().mockResolvedValue([]);
+    listHumanCommentTriageMock.mockReset().mockResolvedValue([{
+      task:       { id: 'done-1', project_id: 'project-1', epic_id: null, title: 'Shipped too early', status: 'done' },
+      comment_id: 'hc1',
+      body:       'This is not actually done:\n the export still 500s.',
+      created_at: '2026-09-28T20:00:00.000Z',
+    }]);
+  });
+
+  it('puts unanswered human comments first in the Heartbeat report, whatever the ticket state', async() => {
+    const { buildProjectReport } = await import('../projectReport');
+    const report = await buildProjectReport({ assignee: 'heartbeat', lifecycleAware: true });
+
+    const section = report.indexOf('## 💬 Human comments awaiting your reply (1)');
+    expect(section).toBeGreaterThan(-1);
+    expect(section).toBeLessThan(report.indexOf('## ✅ Completed'));
+    expect(report).toContain('**Shipped too early**');
+    expect(report).toContain('· done ·');
+    expect(report).toContain('"This is not actually done: the export still 500s." (id done-1)');
+    expect(report).toContain('add_task_comment author="heartbeat"');
+  });
+
+  it('leaves the chat report unchanged', async() => {
+    const { buildProjectReport } = await import('../projectReport');
+    const report = await buildProjectReport({});
+
+    expect(report).not.toContain('Human comments awaiting');
+    expect(listHumanCommentTriageMock).not.toHaveBeenCalled();
   });
 });

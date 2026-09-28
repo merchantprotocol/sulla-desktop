@@ -271,6 +271,18 @@ export interface AddCommentInput {
   actor?:  string;
 }
 
+/** Authors the Projects UI and Sulla Mobile stamp on comments typed by the human. */
+export const HUMAN_COMMENT_AUTHORS = ['human', 'user', 'owner', 'me'] as const;
+export const isHumanCommentAuthor = (author: string | null | undefined): boolean =>
+  (HUMAN_COMMENT_AUTHORS as readonly string[]).includes(String(author ?? '').trim().toLowerCase());
+
+export interface HumanCommentAwaitingReply {
+  task:       WorkTaskRecord;
+  comment_id: string;
+  body:       string;
+  created_at: string;
+}
+
 export interface ListOpts {
   status?:      string;
   priority?:    string;
@@ -1189,6 +1201,41 @@ export class WorkItemsModel {
       if (row.latest_comment_at) out.set(row.task_id, row.latest_comment_at);
     }
     return out;
+  }
+
+  /**
+   * Tasks whose latest human comment (within `sinceDays`) has no later comment
+   * from `responder`. Any lane, any status (a comment on a parked, blocked or
+   * done ticket is exactly when the human wants a second look); archived tasks
+   * and archived projects are excluded. Oldest comment first so none starve.
+   * The responder's reply comment is what clears a task from this list.
+   */
+  static async listTasksAwaitingHumanReply(opts: { responder: string; sinceDays?: number; limit?: number }): Promise<HumanCommentAwaitingReply[]> {
+    const rows = await postgresClient.query<WorkTaskRecord & { human_comment_id: string; human_comment_body: string; human_comment_at: string }>(
+      `WITH latest_human AS (
+         SELECT DISTINCT ON (c.task_id) c.task_id, c.id, c.body, c.created_at
+           FROM ${ WorkItemsModel.COMMENTS } c
+          WHERE c.archived = false
+            AND lower(trim(c.author)) = ANY($1::text[])
+            AND c.created_at > now() - make_interval(days => $2::int)
+          ORDER BY c.task_id, c.created_at DESC
+       )
+       SELECT t.*, h.id AS human_comment_id, h.body AS human_comment_body, h.created_at AS human_comment_at
+         FROM latest_human h
+         JOIN ${ WorkItemsModel.TASKS } t ON t.id = h.task_id AND t.archived = false
+         JOIN ${ WorkItemsModel.PROJECTS } p ON p.id = t.project_id AND p.archived = false
+        WHERE NOT EXISTS (
+          SELECT 1 FROM ${ WorkItemsModel.COMMENTS } r
+           WHERE r.task_id = h.task_id AND r.archived = false
+             AND r.author = $3 AND r.created_at > h.created_at
+        )
+        ORDER BY h.created_at ASC
+        LIMIT $4`,
+      [[...HUMAN_COMMENT_AUTHORS], Math.max(1, opts.sinceDays ?? 14), opts.responder, Math.max(1, Math.min(opts.limit ?? 20, 100))],
+    );
+    return rows.map(({ human_comment_id, human_comment_body, human_comment_at, ...task }) => ({
+      task: task as WorkTaskRecord, comment_id: human_comment_id, body: human_comment_body, created_at: human_comment_at,
+    }));
   }
 
   /**
