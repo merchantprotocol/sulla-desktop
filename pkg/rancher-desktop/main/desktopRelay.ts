@@ -137,6 +137,9 @@ export class DesktopRelayClient {
   private lastInboundAt = 0;
   // Guards against a stuck `new WebSocket()` that never resolves to `open`.
   private connectTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  // Bumped per openSocket() call so a slower concurrent call can't open a
+  // second socket after the token/device-id awaits.
+  private openGeneration = 0;
 
   // ── Mobile keepalive + send queue ──────────────────────────
   // During long tool-execution phases (e.g. ClaudeCode running) there may
@@ -292,12 +295,20 @@ export class DesktopRelayClient {
 
   private async openSocket() {
     if (!this.currentRoom || this.suspended) return;
+    // Never run two sockets at once. Both would join the relay room under the
+    // same deviceId, the DO evicts the older one, and its close handler used
+    // to schedule yet another socket — an endless eviction loop that dropped
+    // chunks, activity and companion responses bound for mobile.
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
     const room = this.currentRoom;
+    // Concurrent callers (connect() + a backoff timer) both await below; only
+    // the latest may create a socket.
+    const gen = ++this.openGeneration;
 
     const token = await getCurrentAccessToken();
     // The machine may have gone to sleep (or the user unpaired) while we
     // were awaiting the token read — don't open a socket nobody wants.
-    if (this.suspended || this.intentionallyClosed) return;
+    if (this.suspended || this.intentionallyClosed || gen !== this.openGeneration) return;
     if (!token) {
       this.lastError = 'Not signed in — relay cannot authenticate';
       console.warn('[DesktopRelay] No access token — skipping connect. Sign in first.');
@@ -308,6 +319,7 @@ export class DesktopRelayClient {
     }
 
     this.deviceId = await getDesktopDeviceId();
+    if (this.suspended || this.intentionallyClosed || gen !== this.openGeneration) return;
     const url = `${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop&deviceId=${ encodeURIComponent(this.deviceId) }&token=${ encodeURIComponent(token) }`;
 
     // Log without the token to avoid leaking into local log files.
@@ -328,6 +340,11 @@ export class DesktopRelayClient {
     }, CONNECT_TIMEOUT_MS);
 
     ws.addEventListener('open', () => {
+      // A superseded socket must not become a second live peer.
+      if (this.ws !== ws) {
+        try { ws.close(); } catch { /* ignore */ }
+        return;
+      }
       if (this.connectTimeoutTimer) { clearTimeout(this.connectTimeoutTimer); this.connectTimeoutTimer = null; }
       this.connected = true;
       this.lastError = '';
@@ -351,6 +368,10 @@ export class DesktopRelayClient {
 
       // Start heartbeat: send a ping every PING_INTERVAL_MS. The DO
       // auto-replies without waking, so this is cheap on the server.
+      // Clear any previous timers first — overwriting the handles leaked
+      // intervals that later force-closed the healthy socket in bursts.
+      if (this.pingTimer) clearInterval(this.pingTimer);
+      if (this.watchdogTimer) clearInterval(this.watchdogTimer);
       this.pingTimer = setInterval(() => {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         try { this.ws.send(JSON.stringify({ type: 'ping' })); } catch { /* socket in bad state; watchdog will handle */ }
@@ -367,11 +388,16 @@ export class DesktopRelayClient {
     });
 
     ws.addEventListener('message', (event) => {
+      if (this.ws !== ws) return;
       this.lastInboundAt = Date.now();
       this.handleMessage(event.data as string);
     });
 
     ws.addEventListener('close', () => {
+      // A replaced socket's late close must not tear down the live one's
+      // liveness timers or schedule another socket.
+      if (this.ws !== ws) return;
+      this.ws = null;
       this.connected = false;
       this.teardownLiveness();
       if (this.failedAttempts <= 1) {
@@ -382,6 +408,7 @@ export class DesktopRelayClient {
     });
 
     ws.addEventListener('error', (e: any) => {
+      if (this.ws !== ws) return;
       this.lastError = e?.message || 'WebSocket error';
       if (this.failedAttempts <= 1 || this.failedAttempts % 20 === 0) {
         console.warn('[DesktopRelay] Error:', this.lastError);
