@@ -837,7 +837,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
   /**
    * Remove previously injected subconscious context blocks
-   * (<human_identity_context>, <observational_memory>, <observation_context>, <user_observations>, <conversation_context>,
+   * (<human_identity_context>, <observational_memory>, <observation_context>, <intent_decision>, <user_observations>, <conversation_context>,
    * <routine_digest>, <lane_health>) from all
    * assistant messages, so the per-turn merge below replaces rather than
    * accumulates. Two accumulation paths existed without this:
@@ -848,8 +848,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|routine_digest|lane_health)>/;
+    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|intent_decision|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|intent_decision|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|routine_digest|lane_health)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;
@@ -890,6 +890,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['human_identity_context', 'humanIdentityContext'],
       ['observational_memory', 'observationalMemoryContext'],
       ['observation_context', 'observationContext'],
+      ['intent_decision', 'intentDecisionContext'],
       ['user_observations', 'userObservationContext'],
       ['self_observations', 'selfObservationContext'],
       ['business_observations', 'businessObservationContext'],

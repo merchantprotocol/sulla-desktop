@@ -26,6 +26,7 @@ import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
 import { sanitizeConversationContext } from '../utils/conversationContext';
 import { formatDateOnly } from '../utils/formatDateOnly';
 import { extractRecallTerms } from '../utils/recallTerms';
+import { formatIntentDecision, intentDecisionEngine } from '../services/IntentDecisionEngine';
 
 import Logging from '@pkg/utils/logging';
 
@@ -215,6 +216,17 @@ export async function runSubconsciousMiddleware(
   // inform the reply, so they run before it. Recalls run in parallel (awaited
   // together below), so adding domains costs ~max(), not sum().
 
+  // R0. Local intent decision engine — no LLM, no tools, no side effects. It
+  // gives the primary agent a first read while keeping execution in the main
+  // agent and learning only from tools that actually ran.
+  if (analyzable) {
+    launched.push('intent-decision-engine');
+    const decisionPromise = intentDecisionEngine.decide(extractLatestUserText(state));
+    awaitedTasks.push(timed('intent-decision-engine', 'Reading request intent', decisionPromise.then(decision => {
+      (state.metadata as any).intentDecisionContext = formatIntentDecision(decision);
+    })));
+  }
+
   // R1. Observation Recall — awaited: surfaces relevant observations from the DB
   //     table into state.metadata.observationContext.
   if (options.includeObservations && analyzable) {
@@ -372,8 +384,16 @@ export function runSubconsciousObservationWriters(
   launch('projects-observer', () => runIdentityObserver(state, 'projects'));
   launch('skills-observer', () => runIdentityObserver(state, 'skills'));
   launch('conversation-writer', () => runConversationWriter(state));
+  launch('intent-decision-trainer', () => intentDecisionEngine.learn(state.messages));
 
-  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects/skills/conversation-keywords) | messages: ${ state.messages.length }`);
+  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + identity + conversation-keywords + intent-training) | messages: ${ state.messages.length }`);
+}
+
+function extractLatestUserText(state: BaseThreadState): string {
+  const message = [...state.messages].reverse().find((candidate: any) => candidate?.role === 'user');
+  if (typeof message?.content === 'string') return message.content;
+  if (Array.isArray(message?.content)) return message.content.filter((block: any) => block?.type === 'text').map((block: any) => block.text).join('\n');
+  return '';
 }
 
 // ============================================================================
