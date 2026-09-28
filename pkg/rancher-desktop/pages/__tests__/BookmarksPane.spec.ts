@@ -14,7 +14,7 @@ const mockRows = [
   { id: 'f', parent_id: null, kind: 'folder', title: 'Work', url: null, favicon: null, position: 3, created_at: '', updated_at: '' },
   { id: 'c', parent_id: 'f', kind: 'bookmark', title: 'Charlie', url: 'https://charlie.test/', favicon: null, position: 1, created_at: '', updated_at: '' },
 ];
-const mockInvoke = jest.fn(async(channel: string) => (channel === 'bookmarks:list' ? mockRows : undefined));
+const mockInvoke = jest.fn(async(channel: string): Promise<any> => (channel === 'bookmarks:list' ? mockRows : undefined));
 const invoke = mockInvoke;
 const push = jest.fn(async() => undefined);
 
@@ -39,11 +39,12 @@ beforeAll(async() => {
   const module = { exports: {} as any };
   const dependencies: Record<string, any> = {
     vue,
-    'vue-router':                    { useRouter: () => ({ push }) },
-    '@pkg/composables/useBookmarks':  useBookmarks,
+    'vue-router':                      { useRouter: () => ({ push }) },
+    '@pkg/composables/useBookmarks':   useBookmarks,
     '@pkg/composables/useBrowserTabs': useBrowserTabs,
     '@pkg/utils/ipcRenderer':          { ipcRenderer: { invoke: (...args: [string]) => mockInvoke(...args), on: () => undefined, send: () => undefined, removeListener: () => undefined } },
   };
+  // eslint-disable-next-line no-new-func, @typescript-eslint/no-implied-eval -- evaluates the SFC compiled above
   new Function('require', 'module', 'exports', js)((name: string) => {
     if (!(name in dependencies)) throw new Error(`Unexpected dependency ${ name }`);
 

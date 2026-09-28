@@ -48,7 +48,7 @@ export function parsePublishedPorts(ports: string): PublishedPort[] {
 
   for (const raw of (ports || '').split(',')) {
     const m = /^\s*(\[[^\]]*\]|[^:\s]*):(\d+)(?:-(\d+))?->(\d+)(?:-(\d+))?\/(tcp|udp|sctp)\s*$/.exec(raw);
-    if (!m || m[6] !== 'tcp') continue;
+    if (m?.[6] !== 'tcp') continue;
     const [, hostIp, hStart, hEnd, cStart] = m;
     const first = Number(hStart);
     const last = Math.min(Number(hEnd || hStart), first + MAX_RANGE - 1);
@@ -84,7 +84,7 @@ export function dockerLinksFromPs(stdout: string): DockerLink[] {
       continue;
     }
     const container = String(row.Names || '').split(',')[0];
-    if (!container || INTERNAL_PREFIX.test(container)) continue;
+    if (!container || container.startsWith('sulla_')) continue;
     if (row.State && row.State !== 'running') continue;
 
     const ports = parsePublishedPorts(String(row.Ports || ''))
