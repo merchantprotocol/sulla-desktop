@@ -10,6 +10,14 @@ const set = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue(undefi
 const resolveQuestion = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
 const resolve = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
 const decisionResolve = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ settled: true, conversationId: 'original' });
+const listBookmarks = jest.fn<() => Promise<any>>().mockResolvedValue([
+  { id: 'b1', parent_id: null, kind: 'bookmark', title: 'Admin', url: 'http://localhost:6152/admin', favicon: `data:image/png;base64,${ 'A'.repeat(20_000) }`, position: 0 },
+  { id: 'b2', parent_id: null, kind: 'bookmark', title: 'Docs', url: 'https://docs.example.com/', favicon: 'data:image/png;base64,AA', position: 1 },
+]);
+const listDockerLinks = jest.fn<() => Promise<any>>().mockResolvedValue({ available: true, links: [{ id: 'docker:web:8080', url: 'http://localhost:8080/' }] });
+const openPreview = jest.fn<(url: string) => Promise<any>>().mockResolvedValue({ url: 'https://abc.trycloudflare.com/__sulla_preview/enter?t=x', expiresAt: 'soon' });
+const closePreview = jest.fn<(origin: string) => Promise<void>>().mockResolvedValue(undefined);
+const realLoopback = (url: string) => /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(url);
 mockModules({
   '@pkg/agent/services/DecisionService': { decisionService: { list: jest.fn<() => Promise<any>>().mockResolvedValue([]), resolve: decisionResolve } },
   '@pkg/agent/database/models/WorkItemsModel': { WorkItemsModel: { getProject, listTasks, getTask, listComments, listProjects: jest.fn(), listRecentActivity: jest.fn<() => Promise<any>>().mockResolvedValue([]) } },
@@ -19,6 +27,9 @@ mockModules({
   '@pkg/agent/services/HeartbeatService': { getHeartbeatService: () => ({ getStatus: () => ({ isExecuting: false }), getHistory: () => [] }) },
   '@pkg/agent/projects/application/ProjectsApplicationService': { getProjectsApplicationService: () => ({ addComment }) },
   '@pkg/agent/services/ApprovalService': { ApprovalService: { getInstance: () => ({ resolveQuestion, resolve }) } },
+  '@pkg/agent/database/models/BrowserBookmarkModel': { BrowserBookmarkModel: { list: listBookmarks } },
+  '@pkg/main/dockerLinks': { listDockerLinks },
+  '@pkg/main/previewShare': { isLoopbackUrl: realLoopback, previewShares: { open: openPreview, close: closePreview } },
 });
 const { mobileCompanionRequest: request, registerMobileCard } = await import('@pkg/main/mobileCompanion');
 beforeEach(() => { jest.clearAllMocks(); resolveQuestion.mockReturnValue(true); getTask.mockResolvedValue({ id: 't1', project_id: 'p1', archived: false }); });
@@ -105,4 +116,32 @@ test('desktop settings reject unknown keys and non-boolean values', async() => {
 });
 test('desktop settings read reports both switches', async() => {
   await expect(request('desktop.settings.read', {})).resolves.toEqual({ heartbeat: false, projectAutomation: false });
+});
+describe('bookmarks', () => {
+  test('lists bookmarks with local flags, trims heavy favicons, and includes Docker links', async() => {
+    const result = await request('bookmarks.list', {}) as any;
+    expect(result.bookmarks).toEqual([
+      expect.objectContaining({ id: 'b1', local: true, favicon: null }),
+      expect.objectContaining({ id: 'b2', local: false, favicon: 'data:image/png;base64,AA' }),
+    ]);
+    expect(result.docker.links).toHaveLength(1);
+  });
+  test('public bookmarks open directly without a tunnel', async() => {
+    await expect(request('bookmarks.open', { url: 'https://docs.example.com/' })).resolves.toEqual({ url: 'https://docs.example.com/', proxied: false });
+    expect(openPreview).not.toHaveBeenCalled();
+  });
+  test('bookmarked and Docker local links open through a preview tunnel', async() => {
+    await expect(request('bookmarks.open', { url: 'http://localhost:6152/admin/users' })).resolves.toMatchObject({ proxied: true, url: expect.stringContaining('trycloudflare.com') });
+    await request('bookmarks.open', { url: 'http://localhost:8080/' });
+    expect(openPreview).toHaveBeenCalledTimes(2);
+  });
+  test('refuses to tunnel an arbitrary local port', async() => {
+    await expect(request('bookmarks.open', { url: 'http://localhost:5432/' })).rejects.toThrow('not a bookmark');
+    expect(openPreview).not.toHaveBeenCalled();
+  });
+  test('close only accepts local URLs', async() => {
+    await expect(request('bookmarks.close', { url: 'https://docs.example.com/' })).rejects.toThrow('Local URL');
+    await request('bookmarks.close', { url: 'http://localhost:6152/admin' });
+    expect(closePreview).toHaveBeenCalledWith('http://localhost:6152');
+  });
 });
