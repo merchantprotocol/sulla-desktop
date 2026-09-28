@@ -17,6 +17,20 @@ const listBookmarks = jest.fn<() => Promise<any>>().mockResolvedValue([
 const listDockerLinks = jest.fn<() => Promise<any>>().mockResolvedValue({ available: true, links: [{ id: 'docker:web:8080', url: 'http://localhost:8080/' }] });
 const openPreview = jest.fn<(url: string) => Promise<any>>().mockResolvedValue({ url: 'https://abc.trycloudflare.com/__sulla_preview/enter?t=x', expiresAt: 'soon' });
 const closePreview = jest.fn<(origin: string) => Promise<void>>().mockResolvedValue(undefined);
+const selectModel = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue(undefined);
+const getModelsForProvider = jest.fn<(id: string) => Promise<any>>().mockImplementation(async id => (id === 'claude-code'
+  ? [{ id: 'claude-code', name: 'Auto' }, { id: 'claude-opus-5-5', name: 'Opus 5.5' }]
+  : [{ id: 'grok-4.6', name: 'Grok 4.6' }]));
+const modelProviders = {
+  getState:              () => ({ primaryProvider: 'claude-code', activeModelId: 'claude-opus-5-5' }),
+  getAvailableProviders: jest.fn<() => Promise<any>>().mockResolvedValue([
+    { id: 'claude-code', name: 'Claude Code', connected: true },
+    { id: 'grok', name: 'Grok', connected: true },
+    { id: 'openai', name: 'OpenAI', connected: false },
+  ]),
+  getModelsForProvider,
+  selectModel,
+};
 const realLoopback = (url: string) => /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(url);
 mockModules({
   '@pkg/agent/services/DecisionService': { decisionService: { list: jest.fn<() => Promise<any>>().mockResolvedValue([]), resolve: decisionResolve } },
@@ -24,6 +38,7 @@ mockModules({
   '@pkg/agent/database/models/WorkLaneDefinitionModel': { WorkLaneDefinitionModel: { resolveEffective: jest.fn<() => Promise<any>>().mockResolvedValue([{ lane_key: 'custom' }]) } },
   '@pkg/agent/database/models/SullaSettingsModel': { SullaSettingsModel: { set, get: jest.fn<() => Promise<any>>().mockResolvedValue(false) } },
   '@pkg/agent/services/RoutineConcurrencyPolicy': { MASTER_ENABLED_KEY: 'automatedProjectManagementEnabled' },
+  '@pkg/agent/services/ModelProviderService': { getModelProviderService: () => modelProviders },
   '@pkg/agent/services/HeartbeatService': { getHeartbeatService: () => ({ getStatus: () => ({ isExecuting: false }), getHistory: () => [] }) },
   '@pkg/agent/projects/application/ProjectsApplicationService': { getProjectsApplicationService: () => ({ addComment }) },
   '@pkg/agent/services/ApprovalService': { ApprovalService: { getInstance: () => ({ resolveQuestion, resolve }) } },
@@ -144,4 +159,27 @@ describe('bookmarks', () => {
     await request('bookmarks.close', { url: 'http://localhost:6152/admin' });
     expect(closePreview).toHaveBeenCalledWith('http://localhost:6152');
   });
+});
+
+test('models read lists only connected providers and the current primary model', async() => {
+  await expect(request('models.read', {})).resolves.toEqual({
+    primaryProvider: 'claude-code',
+    activeModelId:   'claude-opus-5-5',
+    providers:       [{ id: 'claude-code', name: 'Claude Code', connected: true }, { id: 'grok', name: 'Grok', connected: true }],
+  });
+});
+test('models list refuses providers this desktop is not connected to', async() => {
+  await expect(request('models.list', { providerId: 'grok' })).resolves.toEqual({ providerId: 'grok', models: [{ id: 'grok-4.6', name: 'Grok 4.6' }] });
+  await expect(request('models.list', { providerId: 'openai' })).rejects.toThrow('not connected');
+  await expect(request('models.list', { providerId: 'toString' })).rejects.toThrow('not connected');
+  await expect(request('models.list', {})).rejects.toThrow('Provider required');
+});
+test('models select switches the primary model only to a listed model', async() => {
+  await request('models.select', { providerId: 'grok', modelId: 'grok-4.6' });
+  expect(selectModel).toHaveBeenCalledWith('grok', 'grok-4.6');
+  selectModel.mockClear();
+  await expect(request('models.select', { providerId: 'grok', modelId: 'made-up-model' })).rejects.toThrow('not available');
+  await expect(request('models.select', { providerId: 'grok', modelId: 42 })).rejects.toThrow('not available');
+  await expect(request('models.select', { providerId: 'openai', modelId: 'gpt-5' })).rejects.toThrow('not connected');
+  expect(selectModel).not.toHaveBeenCalled();
 });
