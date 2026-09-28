@@ -15,6 +15,7 @@ import { initOpenAIOAuthEvents } from './openaiOAuth';
 import { initIntegrationOAuthEvents } from './integrationOAuth';
 import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
+import { initBookmarksIpc } from './bookmarksIpc';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
 import { initChatMessagesIpc } from './chatMessagesIpc';
 import { initMessageBusIpc } from './messageBusIpc';
@@ -73,6 +74,7 @@ export function initSullaEvents(): void {
   initTabsIpc();
   initAgentsIpc();
   initConversationHistoryIpc();
+  initBookmarksIpc();
   initChatMessagesIpc();
   initClaudeOAuthEvents();
   initOpenAIOAuthEvents();

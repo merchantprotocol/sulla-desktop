@@ -17,7 +17,7 @@
           type="button"
           aria-label="Go back"
           :disabled="!canGoBack"
-          @click="goBack"
+          @click="promote(); goBack()"
         >
           <svg
             viewBox="0 0 24 24"
@@ -35,7 +35,7 @@
           type="button"
           aria-label="Go forward"
           :disabled="!canGoForward"
-          @click="goForward"
+          @click="promote(); goForward()"
         >
           <svg
             viewBox="0 0 24 24"
@@ -52,7 +52,7 @@
           class="browser-nav-btn"
           type="button"
           :aria-label="loading ? 'Stop loading' : 'Reload'"
-          @click="loading ? stop() : reload()"
+          @click="promote(); loading ? stop() : reload()"
         >
           <svg
             v-if="loading"
@@ -83,7 +83,7 @@
 
         <form
           class="flex-1 relative"
-          @submit.prevent="navigate"
+          @submit.prevent="promote(); navigate()"
         >
           <input
             ref="addressInput"
@@ -99,6 +99,27 @@
             v-if="loading"
             class="address-bar-progress"
           />
+          <button
+            v-if="tabMode === 'browser' && canBookmarkPage"
+            class="address-bar-star"
+            :class="{ starred: !!currentBookmark }"
+            type="button"
+            :aria-label="currentBookmark ? 'Show bookmark' : 'Bookmark this page'"
+            :title="currentBookmark ? 'Show bookmark' : 'Bookmark this page'"
+            @click="onStarClick"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              :fill="currentBookmark ? 'currentColor' : 'none'"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="h-4 w-4"
+            >
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+          </button>
         </form>
       </div>
     </template>
@@ -333,6 +354,7 @@ import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
+import { useBookmarks } from '@pkg/composables/useBookmarks';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
@@ -370,7 +392,8 @@ const canToggleMode = computed(() => {
   const schemeThemes = availableThemes.filter(t => t.scheme === currentScheme.value);
   return schemeThemes.some(t => t.mode === 'light') && schemeThemes.some(t => t.mode === 'dark');
 });
-const { updateTab, getTab, createTab } = useBrowserTabs();
+const { updateTab, getTab, createTab, promoteTab } = useBrowserTabs();
+const { findByUrl, addBookmark } = useBookmarks();
 const { showOverlay } = useStartupProgress();
 
 const tabMode = computed<BrowserTabMode>(() => getTab(props.tabId)?.mode || 'welcome');
@@ -821,6 +844,46 @@ function navigate() {
   }
 }
 
+// ── Preview tab + bookmarks ──
+
+/** Any deliberate interaction turns a bookmark preview tab into a normal tab. */
+function promote() {
+  promoteTab(props.tabId);
+}
+
+// The bookmarks pane re-points the preview tab at another bookmark.
+function onExternalNavigate(e: Event) {
+  const detail = (e as CustomEvent<{ tabId: string; url: string }>).detail;
+  if (detail?.tabId !== props.tabId || !detail.url) return;
+  addressBarUrl.value = detail.url;
+  navigate();
+}
+
+// Main reports real mouse/keyboard input inside this tab's page.
+function onUserInput(_event: unknown, payload: { tabId: string }) {
+  if (payload?.tabId === props.tabId) promote();
+}
+
+const pageUrl = computed(() => getTab(props.tabId)?.url || addressBarUrl.value);
+const canBookmarkPage = computed(() => /^(https?|file):/i.test(pageUrl.value || ''));
+const currentBookmark = computed(() => findByUrl(pageUrl.value));
+
+async function onStarClick() {
+  promote();
+  let id = currentBookmark.value?.id;
+  if (!id) {
+    try {
+      const created = await addBookmark({ url: pageUrl.value, title: getTab(props.tabId)?.title, tabId: props.tabId });
+      id = created.id;
+    } catch (err) {
+      console.error('[BrowserTab] Failed to bookmark page:', err);
+
+      return;
+    }
+  }
+  window.dispatchEvent(new CustomEvent('sulla:bookmarks-reveal', { detail: { id } }));
+}
+
 function goBack() {
   ipcRenderer.invoke('browser-tab-view:go-back', props.tabId);
 }
@@ -926,6 +989,8 @@ onMounted(() => {
   ipcRenderer.on('browser-context-menu:ai-action' as any, onContextMenuAIAction);
   ipcRenderer.on('side-panel:state-changed' as any, onSidePanelStateChanged);
   window.addEventListener('sulla:mode-rail-select', onModeRailSelect);
+  window.addEventListener('sulla:tab-navigate', onExternalNavigate);
+  ipcRenderer.on('browser-tab-view:user-input', onUserInput);
 
   // Read initial URL from the shared tab state
   const tab = getTab(props.tabId);
@@ -945,6 +1010,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('sulla:mode-rail-select', onModeRailSelect);
+  window.removeEventListener('sulla:tab-navigate', onExternalNavigate);
+  ipcRenderer.removeListener('browser-tab-view:user-input', onUserInput);
 
   ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);
   ipcRenderer.removeListener('browser-context-menu:ai-action' as any, onContextMenuAIAction);
@@ -976,7 +1043,7 @@ onUnmounted(() => {
 
 .address-bar {
   width: 100%;
-  padding: 0.375rem 0.75rem;
+  padding: 0.375rem 2.25rem 0.375rem 0.75rem;
   font-size: 0.8125rem;
   background-color: var(--bg-surface);
   color: var(--text-primary);
@@ -993,6 +1060,30 @@ onUnmounted(() => {
 
 .address-bar::placeholder {
   color: var(--text-muted);
+}
+
+.address-bar-star {
+  position: absolute;
+  top: 50%;
+  right: 0.5rem;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem;
+  border: none;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 150ms, background-color 150ms;
+}
+.address-bar-star:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-surface-hover);
+}
+.address-bar-star.starred {
+  color: var(--accent-primary);
 }
 
 /* Loading progress bar — Chrome-style sliding bar under the address bar */

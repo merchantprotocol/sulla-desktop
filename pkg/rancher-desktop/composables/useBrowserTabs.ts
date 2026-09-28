@@ -315,6 +315,14 @@ export function persistActiveTabId(id: string | null): void {
   } catch { /* best-effort */ }
 }
 
+// ── Preview tab (bookmark browsing) ──
+// At most one tab is a "preview": the tab the bookmarks pane opened. Clicking
+// further bookmarks re-navigates that same tab instead of piling up new ones.
+// The first real interaction with the tab (click/keypress in the page, address
+// bar, back/forward, double-click on the tab) promotes it to a normal tab.
+// Deliberately not persisted — after a restart every tab is a normal tab.
+const previewTabId = ref<string | null>(null);
+
 function generateId(): string {
   return `tab_${ Date.now().toString(36) }_${ Math.random().toString(36).slice(2, 8) }`;
 }
@@ -402,6 +410,36 @@ export function useBrowserTabs() {
    * Ensure at least one chat tab exists.
    * Returns the existing or newly created tab.
    */
+  /**
+   * Show `url` in the preview tab, creating it if there isn't a live one.
+   * Returns the tab so the caller can route to it.
+   */
+  function openInPreviewTab(url: string, title?: string): BrowserTab {
+    const existing = previewTabId.value ? tabs.find(t => t.id === previewTabId.value) : undefined;
+
+    if (existing) {
+      // Store the URL too: if the tab's BrowserTab hasn't mounted yet (two
+      // quick clicks), it reads tab.url on mount instead of the event below.
+      updateTab(existing.id, title ? { url, title } : { url });
+      try {
+        window.dispatchEvent(new CustomEvent('sulla:tab-navigate', { detail: { tabId: existing.id, url } }));
+      } catch { /* non-browser context */ }
+
+      return existing;
+    }
+
+    const tab = createTab(url, { mode: 'browser' });
+    if (title) updateTab(tab.id, { title });
+    previewTabId.value = tab.id;
+
+    return tab;
+  }
+
+  /** Make `id` a normal tab if it is currently the preview tab. */
+  function promoteTab(id: string): void {
+    if (previewTabId.value === id) previewTabId.value = null;
+  }
+
   function ensureOneTab(): BrowserTab {
     if (tabs.length > 0) {
       return tabs[0];
@@ -417,6 +455,7 @@ export function useBrowserTabs() {
       // Record closure in conversation history
       closeTabInHistory(id);
       const removed = tabs[idx];
+      if (previewTabId.value === id) previewTabId.value = null;
 
       // Save to closed-tab history (skip blank/welcome tabs)
       if (removed.url !== 'about:blank' || removed.mode === 'chat') {
@@ -532,10 +571,13 @@ export function useBrowserTabs() {
   }
 
   return {
-    tabs:       readonly(tabs),
-    closedTabs: readonly(closedTabs),
+    tabs:         readonly(tabs),
+    closedTabs:   readonly(closedTabs),
+    previewTabId: readonly(previewTabId),
     tabOrder,
     createTab,
+    openInPreviewTab,
+    promoteTab,
     closeTab,
     updateTab,
     getTab,
