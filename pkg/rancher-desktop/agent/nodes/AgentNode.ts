@@ -107,6 +107,26 @@ export class AgentNode extends BaseNode {
       void this.maybePrewarmPrimary(state);
     }
 
+    // Reflex: Sulla's native decision engine gets the first look at a fresh
+    // human message. When it is confident it has seen this request succeed
+    // before, it runs that one tool call immediately, and the model is told
+    // what already happened via <reflex_context>. Below threshold it does
+    // nothing and the post-turn Reflex Trainer learns from the model instead.
+    if (!isToolCallLoop) {
+      (state.metadata as any).reflexContext = '';
+      (state.metadata as any).reflexDecision = null;
+      (state.metadata as any).turnToolEvents = [];
+      if (!(state.metadata as any).isSubAgent && !_inWorkflow) {
+        const { runReflex, formatReflexContext, latestHumanText } = await import('../reflex/ReflexService');
+        const reflex = await runReflex(latestHumanText(state.messages), state);
+        if (reflex) {
+          (state.metadata as any).reflexContext = formatReflexContext(reflex);
+          (state.metadata as any).reflexDecision = reflex;
+          void this.wsChatMessage(state, `⚡ Reflex ${ reflex.success ? 'ran' : 'tried' } ${ reflex.toolName } (confidence ${ reflex.confidence })`, 'assistant', 'thinking');
+        }
+      }
+    }
+
     let subconsciousMs = 0;
     if (!isToolCallLoop) {
       const subStart = Date.now();

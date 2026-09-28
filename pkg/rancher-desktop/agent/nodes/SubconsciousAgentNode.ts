@@ -180,6 +180,8 @@ export class SubconsciousAgentNode extends BaseNode {
       // Conversation Reader / Conversation Writer
       'search_conversation_keywords', 'search_conversation_logs',
       'upsert_conversation_keywords',
+      // Reflex Trainer
+      'reflex_predict', 'reflex_teach', 'reflex_correct', 'reflex_list_examples', 'reflex_forget',
       'vault_list', 'vault_is_enabled', 'search_conversations',
       'recall_index_lookup', 'recall_index_store',
       'search_history', 'github_read_file', 'get_human_presence', 'list_tabs',
