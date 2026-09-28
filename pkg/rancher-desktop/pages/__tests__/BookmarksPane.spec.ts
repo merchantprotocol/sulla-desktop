@@ -42,6 +42,7 @@ beforeAll(async() => {
     'vue-router':                    { useRouter: () => ({ push }) },
     '@pkg/composables/useBookmarks':  useBookmarks,
     '@pkg/composables/useBrowserTabs': useBrowserTabs,
+    '@pkg/utils/ipcRenderer':          { ipcRenderer: { invoke: (...args: [string]) => mockInvoke(...args), on: () => undefined, send: () => undefined, removeListener: () => undefined } },
   };
   new Function('require', 'module', 'exports', js)((name: string) => {
     if (!(name in dependencies)) throw new Error(`Unexpected dependency ${ name }`);
@@ -106,4 +107,32 @@ test('bookmark-this-page is disabled for non-web tabs and saves the active page 
   await flushPromises();
   expect(invoke).toHaveBeenCalledWith('bookmarks:create', { kind: 'bookmark', url: 'https://delta.test/page', title: 'Delta', parentId: null, tabId: 't2' });
   page.unmount();
+});
+
+test('shows a live Docker section whose links preview like bookmarks but cannot be edited', async() => {
+  localStorage.removeItem('sulla:bookmarks-expanded');
+  const original = mockInvoke.getMockImplementation();
+  mockInvoke.mockImplementation(async(channel: string) => {
+    if (channel === 'bookmarks:docker-links') {
+      return { available: true, links: [{ id: 'docker:app:5199', container: 'app', title: 'app', url: 'http://localhost:5199/' }] };
+    }
+
+    return channel === 'bookmarks:list' ? mockRows : undefined;
+  });
+
+  const wrapper = mount(Component, { props: { activeTab: undefined } });
+  await flushPromises();
+
+  const labels = wrapper.findAll('.bm-row').map((r: any) => r.find('.bm-label').text());
+  expect(labels.slice(0, 2)).toEqual(['Docker (1)', 'app']);
+
+  const appRow = rowByTitle(wrapper, 'app');
+  expect(appRow.attributes('draggable')).toBe('false');
+  expect(appRow.find('button[aria-label="Delete"]').exists()).toBe(false);
+
+  await appRow.trigger('click');
+  expect(tabsApi.tabs.find((t: any) => t.id === tabsApi.previewTabId.value).url).toBe('http://localhost:5199/');
+
+  wrapper.unmount();
+  mockInvoke.mockImplementation(original!);
 });

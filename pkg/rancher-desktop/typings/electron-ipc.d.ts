@@ -277,6 +277,7 @@ export interface IpcMainInvokeEvents {
   'bookmarks:update': (id: string, input: { title?: string; url?: string }) => import('@pkg/agent/database/models/BrowserBookmarkModel').BookmarkRecord | null;
   'bookmarks:delete': (id: string) => boolean;
   'bookmarks:move':   (id: string, parentId: string | null, index: number) => void;
+  'bookmarks:docker-links': () => import('@pkg/main/dockerLinks').DockerLinksResult;
   // #endregion
   'browser-tab:exec-in-frame':      (code: string, targetUrl?: string) => unknown;
   'browser-tab:send-input-event':   (inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => boolean;

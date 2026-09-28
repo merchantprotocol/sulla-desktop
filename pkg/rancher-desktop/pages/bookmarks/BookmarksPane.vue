@@ -286,9 +286,10 @@
             'drop-before': dropHint?.id === row.record.id && dropHint.zone === 'before',
             'drop-after': dropHint?.id === row.record.id && dropHint.zone === 'after',
             'drop-inside': dropHint?.id === row.record.id && dropHint.zone === 'inside',
+            live: row.readonly,
           }"
           :style="{ paddingLeft: `${10 + row.depth * 14}px` }"
-          draggable="true"
+          :draggable="!row.readonly"
           @click="onRowClick($event, row, index)"
           @dblclick="onRowDblClick(row)"
           @auxclick="onRowAuxClick($event, row)"
@@ -319,7 +320,25 @@
           />
 
           <span
-            v-if="row.record.kind === 'folder'"
+            v-if="row.record.id === DOCKER_FOLDER_ID"
+            class="bm-icon bm-icon-folder"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
+          </span>
+          <span
+            v-else-if="row.record.kind === 'folder'"
             class="bm-icon bm-icon-folder"
           >
             <svg
@@ -355,6 +374,32 @@
           >{{ row.path }}</span>
 
           <span
+            v-if="row.record.id === DOCKER_FOLDER_ID"
+            class="bm-row-actions"
+            @click.stop
+            @dblclick.stop
+          >
+            <button
+              class="bm-row-btn"
+              type="button"
+              title="Refresh containers"
+              aria-label="Refresh containers"
+              @click="refreshDocker"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              ><path d="M21 12a9 9 0 1 1-3.2-6.8" /><polyline points="21 3.5 21 9 15.5 9" /></svg>
+            </button>
+          </span>
+          <span
+            v-else-if="!row.readonly"
             class="bm-row-actions"
             @click.stop
             @dblclick.stop
@@ -434,6 +479,7 @@ import { useRouter } from 'vue-router';
 
 import { useBookmarks, bookmarkUrlKey, type BookmarkNode, type BookmarkRecord } from '@pkg/composables/useBookmarks';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 interface ActiveTabInfo {
   id:    string;
@@ -448,6 +494,8 @@ interface Row {
   node:   BookmarkNode;
   /** Folder path shown next to search results. */
   path?:  string;
+  /** Live Docker rows — can't be edited, deleted, dragged, or dropped onto. */
+  readonly?: boolean;
 }
 
 const props = defineProps<{
@@ -474,7 +522,10 @@ const expanded = ref<Set<string>>(new Set(loadExpanded()));
 
 function loadExpanded(): string[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]');
+    const stored = localStorage.getItem(EXPANDED_KEY);
+    // First run: show the live Docker section open.
+    if (stored === null) return ['docker:root'];
+    const parsed = JSON.parse(stored);
 
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -496,12 +547,64 @@ function setExpanded(id: string, open: boolean): void {
   expanded.value = next;
 }
 
+// ── Live Docker section ──
+// Running containers with published ports, re-read from `docker ps` while the
+// pane is open. Shown as a read-only folder above the saved bookmarks.
+const DOCKER_FOLDER_ID = 'docker:root';
+const DOCKER_POLL_MS = 15_000;
+
+interface DockerLink { id: string; container: string; title: string; url: string }
+
+const dockerLinks = ref<DockerLink[]>([]);
+const dockerAvailable = ref(true);
+let dockerTimer: ReturnType<typeof setInterval> | null = null;
+let dockerInflight = false;
+
+async function refreshDocker(): Promise<void> {
+  if (dockerInflight) return;
+  dockerInflight = true;
+  try {
+    const result = await ipcRenderer.invoke('bookmarks:docker-links');
+    dockerAvailable.value = !!result?.available;
+    dockerLinks.value = result?.links ?? [];
+  } catch {
+    dockerAvailable.value = false;
+    dockerLinks.value = [];
+  } finally {
+    dockerInflight = false;
+  }
+}
+
+refreshDocker();
+dockerTimer = setInterval(refreshDocker, DOCKER_POLL_MS);
+
+function liveRecord(id: string, kind: 'bookmark' | 'folder', title: string, url: string | null, parentId: string | null, position: number): BookmarkRecord {
+  return { id, parent_id: parentId, kind, title, url, favicon: null, position, created_at: '', updated_at: '' };
+}
+
+const dockerNode = computed<BookmarkNode | null>(() => {
+  if (!dockerAvailable.value && dockerLinks.value.length === 0) return null;
+  const children = dockerLinks.value.map((link, i) => ({
+    record:   liveRecord(link.id, 'bookmark', link.title, link.url, DOCKER_FOLDER_ID, i),
+    children: [],
+  }));
+
+  return { record: liveRecord(DOCKER_FOLDER_ID, 'folder', `Docker (${ children.length })`, null, null, -1), children };
+});
+
 // ── Visible rows ──
 const rows = computed<Row[]>(() => {
   const q = query.value.trim().toLowerCase();
   const out: Row[] = [];
+  const docker = dockerNode.value;
 
   if (q) {
+    for (const node of docker?.children ?? []) {
+      const r = node.record;
+      if (r.title.toLowerCase().includes(q) || (r.url || '').toLowerCase().includes(q)) {
+        out.push({ record: r, depth: 0, node, path: 'Docker', readonly: true });
+      }
+    }
     const walk = (nodes: BookmarkNode[], path: string[]) => {
       for (const node of nodes) {
         const r = node.record;
@@ -515,6 +618,13 @@ const rows = computed<Row[]>(() => {
     walk(tree.value, []);
 
     return out;
+  }
+
+  if (docker) {
+    out.push({ record: docker.record, depth: 0, node: docker, readonly: true });
+    if (isExpanded(DOCKER_FOLDER_ID)) {
+      for (const node of docker.children) out.push({ record: node.record, depth: 1, node, readonly: true });
+    }
   }
 
   const walk = (nodes: BookmarkNode[], depth: number) => {
@@ -580,6 +690,7 @@ function previewSoon(record: BookmarkRecord): void {
 }
 
 onBeforeUnmount(() => {
+  if (dockerTimer) clearInterval(dockerTimer);
   if (previewTimer) clearTimeout(previewTimer);
   if (undoTimer) clearTimeout(undoTimer);
 });
@@ -682,14 +793,14 @@ function onListKeydown(event: KeyboardEvent): void {
     }
     break;
   case 'F2':
-    if (row) {
+    if (row && !row.readonly) {
       event.preventDefault();
       startEdit(row.record);
     }
     break;
   case 'Delete':
   case 'Backspace':
-    if (row) {
+    if (row && !row.readonly) {
       event.preventDefault();
       removeRow(row);
     }
@@ -863,6 +974,7 @@ function countDescendants(row: Row): number {
 }
 
 async function removeRow(row: Row, confirmed = false): Promise<void> {
+  if (row.readonly) return;
   const record = row.record;
   // Folders with contents need an explicit confirm — undo only restores a
   // single row, so it can't bring back a whole subtree.
@@ -921,7 +1033,7 @@ const dragId = ref<string | null>(null);
 const dropHint = ref<{ id: string | null; zone: DropZone } | null>(null);
 
 function onDragStart(event: DragEvent, row: Row): void {
-  if (editingId.value) {
+  if (editingId.value || row.readonly) {
     event.preventDefault();
 
     return;
@@ -950,6 +1062,11 @@ function isDescendant(candidateId: string, ancestorId: string): boolean {
 
 function onRowDragOver(event: DragEvent, row: Row): void {
   if (!dragId.value || query.value) return;
+  if (row.readonly) {
+    dropHint.value = null;
+
+    return;
+  }
   if (row.record.id === dragId.value || isDescendant(row.record.id, dragId.value)) {
     dropHint.value = null;
 

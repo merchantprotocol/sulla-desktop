@@ -5,6 +5,7 @@
 //   bookmarks:update  → rename / re-point a bookmark
 //   bookmarks:delete  → remove a bookmark or a folder and its contents
 //   bookmarks:move    → reparent / reorder
+//   bookmarks:docker-links → live links for running containers' open ports
 //
 // Every mutation broadcasts `bookmarks:changed` so all Sulla windows refresh.
 
@@ -12,6 +13,7 @@ import { BrowserWindow } from 'electron';
 
 import { BrowserBookmarkModel, MAX_FAVICON_BYTES, normalizeBookmarkUrl } from '@pkg/agent/database/models/BrowserBookmarkModel';
 import { getBrowserSession } from '@pkg/main/browserTabs/browserSession';
+import { listDockerLinks } from '@pkg/main/dockerLinks';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
@@ -138,6 +140,13 @@ export function initBookmarksIpc(): void {
     broadcastChanged();
 
     return removed;
+  });
+
+  // Live, read-only "Docker" section: running containers with open ports.
+  ipcMainProxy.handle('bookmarks:docker-links', async(event) => {
+    trusted(event);
+
+    return listDockerLinks();
   });
 
   ipcMainProxy.handle('bookmarks:move', async(event, id, parentId, index) => {
