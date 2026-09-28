@@ -12,6 +12,7 @@ mockModules({
   '@pkg/agent/database/models/WorkItemsModel': { WorkItemsModel: { getProject, listTasks, listProjects: jest.fn(), listRecentActivity: jest.fn<() => Promise<any>>().mockResolvedValue([]) } },
   '@pkg/agent/database/models/WorkLaneDefinitionModel': { WorkLaneDefinitionModel: { resolveEffective: jest.fn<() => Promise<any>>().mockResolvedValue([{ lane_key: 'custom' }]) } },
   '@pkg/agent/database/models/SullaSettingsModel': { SullaSettingsModel: { set, get: jest.fn<() => Promise<any>>().mockResolvedValue(false) } },
+  '@pkg/agent/services/RoutineConcurrencyPolicy': { MASTER_ENABLED_KEY: 'automatedProjectManagementEnabled' },
   '@pkg/agent/services/HeartbeatService': { getHeartbeatService: () => ({ getStatus: () => ({ isExecuting: false }), getHistory: () => [] }) },
   '@pkg/agent/services/ApprovalService': { ApprovalService: { getInstance: () => ({ resolveQuestion, resolve }) } },
 });
@@ -62,4 +63,23 @@ test('remote Decide forwards the exact originating conversation, never dispatche
 test('remote callers cannot alter tool approval policies', async() => {
   await expect(request('decisions.set-policy', { name: 'git_push', required: false })).rejects.toThrow('Unsupported');
   expect(set).not.toHaveBeenCalled();
+});
+
+test('desktop settings toggle Heartbeat and Projects automation independently', async() => {
+  await request('desktop.settings.update', { setting: 'projectAutomation', enabled: false });
+  expect(set).toHaveBeenCalledWith('automatedProjectManagementEnabled', false, 'boolean');
+  expect(set).toHaveBeenCalledTimes(1);
+  set.mockClear();
+  await request('desktop.settings.update', { setting: 'heartbeat', enabled: true });
+  expect(set).toHaveBeenCalledWith('heartbeatEnabled', true, 'boolean');
+  expect(set).toHaveBeenCalledTimes(1);
+});
+test('desktop settings reject unknown keys and non-boolean values', async() => {
+  await expect(request('desktop.settings.update', { setting: 'heartbeatEnabled', enabled: true })).rejects.toThrow('Invalid');
+  await expect(request('desktop.settings.update', { setting: 'toString', enabled: true })).rejects.toThrow('Invalid');
+  await expect(request('desktop.settings.update', { setting: 'projectAutomation', enabled: 'false' })).rejects.toThrow('Invalid');
+  expect(set).not.toHaveBeenCalled();
+});
+test('desktop settings read reports both switches', async() => {
+  await expect(request('desktop.settings.read', {})).resolves.toEqual({ heartbeat: false, projectAutomation: false });
 });
