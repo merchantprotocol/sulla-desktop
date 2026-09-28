@@ -349,7 +349,17 @@ export function runSubconsciousObservationWriters(
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     return; // inside a workflow — writers stay off, same as the recall pass
   }
-  if (!options.includeObservations || !hasAnalyzableUserMessage(state)) return;
+  if (!hasAnalyzableUserMessage(state)) return;
+
+  // Reflex Trainer learns from every human turn (independent of whether this
+  // agent opts into observation injection) — never from sub-agent prompts.
+  if (!meta.isSubAgent) {
+    Promise.resolve().then(() => runThroughWriterGate(() => runReflexTrainer(state))).catch((error) => {
+      console.error('[SubconsciousMiddleware] Post-turn reflex-trainer failed (fire-and-forget):', error instanceof Error ? error.message : error);
+    });
+  }
+
+  if (!options.includeObservations) return;
 
   // Every writer still runs to completion with a model in the loop — the
   // gate only bounds how many run concurrently PROCESS-WIDE (not just within
@@ -763,6 +773,19 @@ async function runIdentityObserver(state: BaseThreadState, domain: string): Prom
     console.log(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Completed in ${ Date.now() - startTime }ms | iterations: ${ iterations }, status: ${ agentMeta.status }`);
   } catch (error) {
     console.error(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/** Fire-and-forget post-turn Reflex Trainer (teaches the Reflex engine). */
+async function runReflexTrainer(state: BaseThreadState): Promise<void> {
+  const startTime = Date.now();
+  try {
+    const { graph, state: subState, threadId } = await GraphRegistry.createReflexTrainer(state);
+    console.log(`[SubconsciousMiddleware:ReflexTrainer] Started | threadId: ${ threadId }`);
+    await graph.execute(subState, 'subconscious', { maxIterations: 6 });
+    console.log(`[SubconsciousMiddleware:ReflexTrainer] Completed in ${ Date.now() - startTime }ms | iterations: ${ (subState.metadata as any).iterations || 0 }`);
+  } catch (error) {
+    console.error('[SubconsciousMiddleware:ReflexTrainer] Failed:', error instanceof Error ? error.message : error);
   }
 }
 

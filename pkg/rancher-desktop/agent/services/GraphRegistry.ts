@@ -15,6 +15,7 @@ import '../tools/manifests';
 import { toolRegistry } from '../tools/registry';
 import { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
 import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
+import { REFLEX_TRAINER_PROMPT, REFLEX_TRAINER_TOOLS } from '../reflex/reflexTrainerPolicy';
 import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
 import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
@@ -1378,6 +1379,44 @@ export const GraphRegistry = {
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /** Create the post-turn Reflex Trainer. Flat transcript + reflex_* tools
+   * only, so it can teach the Reflex engine but never act. */
+  createReflexTrainer: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const parentMeta = parentState.metadata as any;
+    const toolEvents = Array.isArray(parentMeta.turnToolEvents) ? parentMeta.turnToolEvents : [];
+    const reflex = parentMeta.reflexDecision;
+    const facts = [
+      toolEvents.length
+        ? `Tool calls this turn (run inside the model's CLI, in order):\n${ toolEvents.map((e: any, i: number) => `${ i + 1 }. ${ e.toolName } ${ e.input }${ e.isError ? ' [ERROR]' : '' }`).join('\n') }`
+        : 'Tool calls this turn: none recorded outside the transcript.',
+      reflex
+        ? `Reflex acted this turn BEFORE the assistant: decision_id ${ reflex.decisionId }, ran ${ reflex.toolName } ${ JSON.stringify(reflex.params) } (confidence ${ reflex.confidence }), ${ reflex.success ? 'succeeded' : 'failed' }.`
+        : 'Reflex did not act this turn.',
+    ].join('\n\n');
+
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:          REFLEX_TRAINER_PROMPT,
+      tools:                 REFLEX_TRAINER_TOOLS,
+      userMessage:           `${ facts }\n\nDecide whether the latest human request should become (or correct) a Reflex training example. Default is zero writes.`,
+      messages:              [...parentState.messages],
+      contextWindow:         8,
+      observeAsTranscript:   true,
+      parentAbortSignal:     parentMeta.options?.abort,
+      agentLabel:            'reflex-trainer',
+      silent:                true,
+      parentWsChannel:       String(parentMeta.wsChannel || ''),
+      parentConversationId:  parentMeta.threadId || parentMeta.conversationId,
+      workflowNodeId:        parentMeta.workflowNodeId,
+      workflowParentChannel: parentMeta.workflowParentChannel,
     });
     return { graph, state, threadId: state.metadata.threadId };
   },

@@ -349,6 +349,55 @@ export interface HistoryQuery {
 }
 
 // ---------------------------------------------------------------------------
+// chrome.bookmarks — mirrors https://developer.chrome.com/docs/extensions/reference/api/bookmarks
+// ---------------------------------------------------------------------------
+
+export interface BookmarkTreeNode {
+  id:                 string;
+  parentId?:          string;
+  index?:             number;
+  url?:               string;
+  title:              string;
+  dateAdded?:         number;
+  dateGroupModified?: number;
+  /** 'managed' marks read-only nodes (the live Docker section). */
+  unmodifiable?:      'managed';
+  children?:          BookmarkTreeNode[];
+}
+
+export interface BookmarkCreateArg {
+  parentId?: string;
+  index?:    number;
+  title?:    string;
+  url?:      string;
+}
+
+export interface BookmarkChanges {
+  title?: string;
+  url?:   string;
+}
+
+export interface BookmarkDestination {
+  parentId?: string;
+  index?:    number;
+}
+
+export type BookmarkSearchQuery = string | { query?: string; url?: string; title?: string };
+
+export interface BookmarkRemoveInfo {
+  parentId: string;
+  index:    number;
+  node:     BookmarkTreeNode;
+}
+
+export interface BookmarkMoveInfo {
+  parentId:    string;
+  index:       number;
+  oldParentId: string;
+  oldIndex:    number;
+}
+
+// ---------------------------------------------------------------------------
 // chrome.sidePanel (Tier 2)
 // ---------------------------------------------------------------------------
 
@@ -496,6 +545,24 @@ export interface ChromeApi {
     deleteUrl(details: { url: string }): Promise<void>;
     deleteAll(): Promise<void>;
     onVisited: ChromeEvent<[HistoryItem]>;
+  };
+
+  bookmarks: {
+    get(idOrIdList: string | string[]): Promise<BookmarkTreeNode[]>;
+    getChildren(id: string): Promise<BookmarkTreeNode[]>;
+    getRecent(numberOfItems: number): Promise<BookmarkTreeNode[]>;
+    getTree(): Promise<BookmarkTreeNode[]>;
+    getSubTree(id: string): Promise<BookmarkTreeNode[]>;
+    search(query: BookmarkSearchQuery): Promise<BookmarkTreeNode[]>;
+    create(bookmark: BookmarkCreateArg): Promise<BookmarkTreeNode>;
+    update(id: string, changes: BookmarkChanges): Promise<BookmarkTreeNode>;
+    move(id: string, destination: BookmarkDestination): Promise<BookmarkTreeNode>;
+    remove(id: string): Promise<void>;
+    removeTree(id: string): Promise<void>;
+    onCreated: ChromeEvent<[string, BookmarkTreeNode]>;
+    onChanged: ChromeEvent<[string, BookmarkChanges]>;
+    onMoved:   ChromeEvent<[string, BookmarkMoveInfo]>;
+    onRemoved: ChromeEvent<[string, BookmarkRemoveInfo]>;
   };
 
   sidePanel: {

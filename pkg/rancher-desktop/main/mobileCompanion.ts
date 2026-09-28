@@ -6,6 +6,16 @@ import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
+import { MASTER_ENABLED_KEY as PM_AUTOMATION_KEY } from '@pkg/agent/services/RoutineConcurrencyPolicy';
+
+// The only desktop switches the phone may flip. Heartbeat and Projects
+// automation are independent systems — each toggle writes exactly one key.
+const DESKTOP_TOGGLES = {
+  heartbeat:         { key: 'heartbeatEnabled', fallback: false },
+  projectAutomation: { key: PM_AUTOMATION_KEY, fallback: true },
+} as const;
+type DesktopToggle = keyof typeof DESKTOP_TOGGLES;
+
 import { BrowserBookmarkModel } from '@pkg/agent/database/models/BrowserBookmarkModel';
 import { listDockerLinks } from '@pkg/main/dockerLinks';
 import { isLoopbackUrl, previewShares } from '@pkg/main/previewShare';
@@ -21,6 +31,13 @@ export function registerMobileCard(conversationId: string, kind: string, data: a
   // The underlying approval service expires requests; this map only binds scope.
   const timer = setTimeout(() => cards.delete(id), 60 * 60 * 1000);
   timer.unref?.();
+}
+
+async function companionTask(taskId: unknown) {
+  if (typeof taskId !== 'string' || !taskId || taskId.length > 200) throw new Error('Task required');
+  const task = await WorkItemsModel.getTask(taskId);
+  if (!task || task.archived) throw new Error('Task not found');
+  return task;
 }
 
 // A narrow, authenticated owner surface. Never dispatch arbitrary tool names.
@@ -71,6 +88,25 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
     ]);
     return { project, tasks, lanes, truncated: tasks.length >= 5000 };
   }
+  // One ticket with its thread, opened from the phone's dashboard or board.
+  case 'projects.task': {
+    const task = await companionTask(params.taskId);
+    const [project, lanes, comments] = await Promise.all([
+      WorkItemsModel.getProject(task.project_id),
+      WorkLaneDefinitionModel.resolveEffective(task.project_id),
+      WorkItemsModel.listComments(task.id),
+    ]);
+    return { task, project, lanes, comments };
+  }
+  // Only ever a human comment: the phone owner typed it and pressed Post.
+  case 'projects.comment': {
+    const body = typeof params.body === 'string' ? params.body.trim() : '';
+    if (!body || body.length > 20000) throw new Error('Write a comment first (20,000 characters max)');
+    const task = await companionTask(params.taskId);
+    const { getProjectsApplicationService } = await import('@pkg/agent/projects/application/ProjectsApplicationService');
+    const comment = await getProjectsApplicationService().addComment({ task_id: task.id, body, author: 'human' }, { actor: 'human', source: 'ipc' });
+    return { comment };
+  }
   // Read-only history for the cloud dashboard. Served live from this
   // desktop, so it works even when conversation sync to the cloud is off.
   case 'conversations.list': {
@@ -116,6 +152,20 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
       throw new Error('Invalid Heartbeat update');
     }
     return mobileCompanionRequest('heartbeat.read', {});
+  }
+  case 'desktop.settings.read': {
+    const entries = await Promise.all(Object.entries(DESKTOP_TOGGLES).map(async([name, { key, fallback }]) =>
+      [name, Boolean(await SullaSettingsModel.get(key, fallback))] as const));
+    return Object.fromEntries(entries);
+  }
+  case 'desktop.settings.update': {
+    // Called only by an explicit human toggle in the phone's device settings.
+    const name = params.setting as DesktopToggle;
+    if (typeof name !== 'string' || !Object.hasOwn(DESKTOP_TOGGLES, name) || typeof params.enabled !== 'boolean') {
+      throw new Error('Invalid desktop setting update');
+    }
+    await SullaSettingsModel.set(DESKTOP_TOGGLES[name].key, params.enabled, 'boolean');
+    return mobileCompanionRequest('desktop.settings.read', {});
   }
   // Bookmarks for Sulla Mobile / Sulla Cloud. Local links (localhost,
   // running Docker containers) can't be opened from the phone directly, so
