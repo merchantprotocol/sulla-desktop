@@ -25,6 +25,20 @@
 
     <button
       type="button"
+      :class="['mode-btn', { active: bookmarksOpen }]"
+      data-tooltip="Bookmarks (⌘⇧B)"
+      aria-label="Bookmarks"
+      @click="$emit('toggle-bookmarks')"
+    >
+      <span class="icon">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+        </svg>
+      </span>
+    </button>
+
+    <button
+      type="button"
       :class="['mode-btn', { active: fileTreeOpen }]"
       data-tooltip="File Explorer"
       aria-label="File Explorer"
@@ -50,11 +64,13 @@ const props = defineProps<{
   /** When `active === 'routines'`, disambiguates My Work vs Library. */
   activeSubTab?: string;
   fileTreeOpen?: boolean;
+  bookmarksOpen?: boolean;
 }>();
 
 defineEmits<{
   (e: 'set-mode', mode: string, subTab?: string): void;
   (e: 'toggle-file-tree'): void;
+  (e: 'toggle-bookmarks'): void;
 }>();
 
 interface ModeItem {

@@ -70,38 +70,10 @@ import type {
   ChromeEvent,
   EventListener,
 } from './types';
+import { createChromeBookmarks } from './chromeBookmarks';
+import { ChromeEventImpl } from './chromeEvent';
 
 const console = Logging.sulla;
-// ---------------------------------------------------------------------------
-// ChromeEvent implementation
-// ---------------------------------------------------------------------------
-
-class ChromeEventImpl<T extends unknown[]> implements ChromeEvent<T> {
-  private listeners = new Set<EventListener<T>>();
-
-  addListener(callback: EventListener<T>): void {
-    this.listeners.add(callback);
-  }
-
-  removeListener(callback: EventListener<T>): void {
-    this.listeners.delete(callback);
-  }
-
-  hasListeners(): boolean {
-    return this.listeners.size > 0;
-  }
-
-  emit(...args: T): void {
-    for (const listener of this.listeners) {
-      try {
-        listener(...args);
-      } catch (err) {
-        console.error('[ChromeApi] Event listener error:', err);
-      }
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Storage implementation (backed by SullaSettingsModel)
 // ---------------------------------------------------------------------------
@@ -1115,6 +1087,12 @@ export class ChromeApiService implements ChromeApi {
     onCreated: this.downloadCreatedEvent as ChromeEvent<[DownloadItem]>,
     onChanged: this.downloadChangedEvent as ChromeEvent<[{ id: string; state?: { current: string } }]>,
   };
+
+  // ---------------------------------------------------------------------------
+  // chrome.bookmarks — backed by the browser_bookmarks table (see chromeBookmarks.ts)
+  // ---------------------------------------------------------------------------
+
+  bookmarks = createChromeBookmarks();
 
   // =========================================================================
   // chrome.history (Tier 2)

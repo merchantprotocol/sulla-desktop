@@ -6,6 +6,15 @@ import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
+import { MASTER_ENABLED_KEY as PM_AUTOMATION_KEY } from '@pkg/agent/services/RoutineConcurrencyPolicy';
+
+// The only desktop switches the phone may flip. Heartbeat and Projects
+// automation are independent systems — each toggle writes exactly one key.
+const DESKTOP_TOGGLES = {
+  heartbeat:         { key: 'heartbeatEnabled', fallback: false },
+  projectAutomation: { key: PM_AUTOMATION_KEY, fallback: true },
+} as const;
+type DesktopToggle = keyof typeof DESKTOP_TOGGLES;
 
 type PendingCard = { conversationId: string; kind: string; questions?: UserQuestion[] };
 const cards = new Map<string, PendingCard>();
@@ -137,6 +146,20 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
       throw new Error('Invalid Heartbeat update');
     }
     return mobileCompanionRequest('heartbeat.read', {});
+  }
+  case 'desktop.settings.read': {
+    const entries = await Promise.all(Object.entries(DESKTOP_TOGGLES).map(async([name, { key, fallback }]) =>
+      [name, Boolean(await SullaSettingsModel.get(key, fallback))] as const));
+    return Object.fromEntries(entries);
+  }
+  case 'desktop.settings.update': {
+    // Called only by an explicit human toggle in the phone's device settings.
+    const name = params.setting as DesktopToggle;
+    if (typeof name !== 'string' || !Object.hasOwn(DESKTOP_TOGGLES, name) || typeof params.enabled !== 'boolean') {
+      throw new Error('Invalid desktop setting update');
+    }
+    await SullaSettingsModel.set(DESKTOP_TOGGLES[name].key, params.enabled, 'boolean');
+    return mobileCompanionRequest('desktop.settings.read', {});
   }
   default: throw new Error('Unsupported companion request');
   }
