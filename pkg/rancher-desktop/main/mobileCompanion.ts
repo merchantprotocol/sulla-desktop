@@ -6,6 +6,11 @@ import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
+import { BrowserBookmarkModel } from '@pkg/agent/database/models/BrowserBookmarkModel';
+import { listDockerLinks } from '@pkg/main/dockerLinks';
+import { isLoopbackUrl, previewShares } from '@pkg/main/previewShare';
+
+const MAX_RELAY_FAVICON_CHARS = 12_000;
 
 type PendingCard = { conversationId: string; kind: string; questions?: UserQuestion[] };
 const cards = new Map<string, PendingCard>();
@@ -111,6 +116,45 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
       throw new Error('Invalid Heartbeat update');
     }
     return mobileCompanionRequest('heartbeat.read', {});
+  }
+  // Bookmarks for Sulla Mobile / Sulla Cloud. Local links (localhost,
+  // running Docker containers) can't be opened from the phone directly, so
+  // `bookmarks.open` returns a gated tunnel link instead of the raw URL.
+  case 'bookmarks.list': {
+    const [rows, docker] = await Promise.all([BrowserBookmarkModel.list(), listDockerLinks()]);
+    const bookmarks = rows.map(row => ({
+      id:        row.id,
+      parent_id: row.parent_id,
+      kind:      row.kind,
+      title:     row.title,
+      url:       row.url,
+      // Inline favicons can be 64KB each; keep the relay frame small.
+      favicon:   row.favicon && row.favicon.length <= MAX_RELAY_FAVICON_CHARS ? row.favicon : null,
+      position:  row.position,
+      local:     !!row.url && isLoopbackUrl(row.url),
+    }));
+
+    return { bookmarks, docker };
+  }
+  case 'bookmarks.open': {
+    if (typeof params.url !== 'string' || params.url.length > 4096) throw new Error('Bookmark URL required');
+    const url = params.url;
+    if (!isLoopbackUrl(url)) return { url, proxied: false };
+    // Only tunnel origins the owner has bookmarked or that Docker is serving
+    // right now — never an arbitrary local port.
+    const origin = new URL(url).origin;
+    const [rows, docker] = await Promise.all([BrowserBookmarkModel.list(), listDockerLinks()]);
+    const known = [...rows.map(r => r.url), ...docker.links.map(l => l.url)]
+      .some(u => !!u && isLoopbackUrl(u) && new URL(u).origin === origin);
+    if (!known) throw new Error('That link is not a bookmark or a running Docker container on this desktop');
+
+    return { ...await previewShares.open(url), proxied: true };
+  }
+  case 'bookmarks.close': {
+    if (typeof params.url !== 'string' || !isLoopbackUrl(params.url)) throw new Error('Local URL required');
+    await previewShares.close(new URL(params.url).origin);
+
+    return { closed: true };
   }
   default: throw new Error('Unsupported companion request');
   }

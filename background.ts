@@ -1133,6 +1133,16 @@ Electron.app.on('before-quit', async(event) => {
     console.error('[Shutdown] Audio driver shutdown error:', err);
   }
 
+  // Close any bookmark preview tunnels (cloudflared children) opened for
+  // Sulla Mobile / Sulla Cloud.
+  try {
+    const { previewShares } = await import('@pkg/main/previewShare');
+
+    await withTimeout('previewShares.closeAll', 3_000, previewShares.closeAll());
+  } catch (err) {
+    console.error('[Shutdown] Preview share shutdown error:', err);
+  }
+
   // Shut down threat-proxy host-side refresh timer. The in-VM mitmproxy service
   // lives with the VM and is stopped by Lima's own shutdown path.
   try {
