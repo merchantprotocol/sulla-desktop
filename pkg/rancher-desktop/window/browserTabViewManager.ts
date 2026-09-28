@@ -106,6 +106,7 @@ export class BrowserTabViewManager {
    */
   private lastActiveAt = new Map<string, number>();
   private sleepingTabs = new Set<string>();
+  private faviconUrls = new Map<string, string>(); // tabId → current page's favicon URL
   private viewHealth = new Map<string, ViewHealth>();
   private healthMonitor:   ReturnType<typeof setInterval> | null = null;
   private acceptedCertHosts = new Set<string>(); // hosts where user clicked "Proceed"
@@ -384,6 +385,7 @@ export class BrowserTabViewManager {
     this.failedUrls.delete(tabId);
     this.lastActiveAt.delete(tabId);
     this.sleepingTabs.delete(tabId);
+    this.faviconUrls.delete(tabId);
     this.clearPendingCredentials(tabId);
     if (this.focusedTabId === tabId) {
       this.focusedTabId = null;
@@ -834,6 +836,11 @@ export class BrowserTabViewManager {
   }
 
   /** Returns the SullaWebRequestFixer instance for the shared browser session. */
+  /** Favicon URL the tab's current page advertised, if any. */
+  getFaviconUrl(tabId: string): string | null {
+    return this.faviconUrls.get(tabId) ?? null;
+  }
+
   getWebRequestFixer(): SullaWebRequestFixer | null {
     return this.webRequestFixer;
   }
@@ -1368,11 +1375,31 @@ export class BrowserTabViewManager {
       });
     };
 
-    wc.on('did-navigate', sendState);
+    wc.on('did-navigate', () => {
+      this.faviconUrls.delete(tabId);
+      sendState();
+    });
     wc.on('did-navigate-in-page', sendState);
     wc.on('page-title-updated', sendState);
     wc.on('did-start-loading', sendState);
     wc.on('did-stop-loading', sendState);
+
+    wc.on('page-favicon-updated', (_event, favicons) => {
+      const icon = favicons.find(u => /^https?:/i.test(u));
+      if (icon) this.faviconUrls.set(tabId, icon);
+    });
+
+    // Tell the chrome when the human actually clicks or types inside the
+    // page. Bookmark preview tabs become permanent on the first real
+    // interaction; scrolling and hovering deliberately don't count.
+    let lastUserInputAt = 0;
+    wc.on('input-event', (_event, input) => {
+      if (input.type !== 'mouseDown' && input.type !== 'rawKeyDown' && input.type !== 'keyDown') return;
+      const now = Date.now();
+      if (now - lastUserInputAt < 1_000) return;
+      lastUserInputAt = now;
+      safeSend(mainWindow.webContents, 'browser-tab-view:user-input', { tabId });
+    });
 
     // Inject a Shadow DOM context menu directly into the web page.
     // This renders inside the native WebContentsView layer so it's

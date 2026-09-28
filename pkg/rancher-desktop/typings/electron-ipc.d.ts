@@ -270,6 +270,14 @@ export interface IpcMainInvokeEvents {
   'browser-tab-view:set-bounds':    (tabId: string, bounds: Electron.Rectangle) => void;
   'browser-tab-view:focus':         (tabId: string | null, clearOnlyIfFocusedTabId?: string) => void;
   'browser-tab-view:exec-js':       (tabId: string, code: string) => unknown;
+
+  // #region Bookmarks
+  'bookmarks:list':   () => import('@pkg/agent/database/models/BrowserBookmarkModel').BookmarkRecord[];
+  'bookmarks:create': (input: { kind: 'bookmark' | 'folder'; title?: string; url?: string; parentId?: string | null; tabId?: string }) => import('@pkg/agent/database/models/BrowserBookmarkModel').BookmarkRecord;
+  'bookmarks:update': (id: string, input: { title?: string; url?: string }) => import('@pkg/agent/database/models/BrowserBookmarkModel').BookmarkRecord | null;
+  'bookmarks:delete': (id: string) => boolean;
+  'bookmarks:move':   (id: string, parentId: string | null, index: number) => void;
+  // #endregion
   'browser-tab:exec-in-frame':      (code: string, targetUrl?: string) => unknown;
   'browser-tab:send-input-event':   (inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => boolean;
   'browser-tab:capture-screenshot': (options?: {
@@ -1009,6 +1017,8 @@ export interface IpcRendererEvents {
     lang?:  string;
     url?:   string;
   }) => void;
+  'browser-tab-view:user-input': (payload: { tabId: string }) => void;
+  'bookmarks:changed':           () => void;
   'browser-tab-view:state-update': (payload: {
     tabId:        string;
     url:          string;
