@@ -494,8 +494,10 @@ export class ChatController {
     const msg = this.thread.value.messages.find(m => m.id === id);
     if (!msg || msg.kind !== 'tool_approval') return;
     const approvalMsg = msg as ToolApprovalMessage;
-    this.updateMessage<ToolApprovalMessage>(id, { decision });
-    this.transitionRun({ type: 'approvalResolved' });
+    if (!approvalMsg.approvalId) {
+      this.updateMessage<ToolApprovalMessage>(id, { decision });
+      this.transitionRun({ type: 'approvalResolved' });
+    }
     if (approvalMsg.approvalId) {
       this.bus.emit({
         kind:       'toolApprovalResolved',
@@ -518,8 +520,10 @@ export class ChatController {
     if (!msg || msg.kind !== 'tool_question') return;
     const qMsg = msg as ToolQuestionMessage;
     if (qMsg.status !== 'pending') return;
-    this.updateMessage<ToolQuestionMessage>(id, { status: 'answered', answers });
-    this.transitionRun({ type: 'approvalResolved' });
+    if (!qMsg.questionId) {
+      this.updateMessage<ToolQuestionMessage>(id, { status: 'answered', answers });
+      this.transitionRun({ type: 'approvalResolved' });
+    }
     if (qMsg.questionId) {
       this.bus.emit({
         kind:       'toolQuestionAnswered',

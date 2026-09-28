@@ -218,7 +218,7 @@ export class ToolExecutor {
       }
 
       try {
-        const tool = await toolRegistry.getTool(toolName);
+        const tool = await toolRegistry.createTool(toolName);
 
         await this.emitToolCallEvent(state, toolRunId, toolName, args);
 
@@ -386,7 +386,7 @@ export class ToolExecutor {
 
       let tool: any;
       try {
-        tool = await toolRegistry.getTool(toolName);
+        tool = await toolRegistry.createTool(toolName);
       } catch {
         launched.push({ toolRunId, toolName, args, outcome: Promise.resolve({ error: `Unknown tool: ${ toolName }` }), started: Date.now() });
         continue;
@@ -516,7 +516,7 @@ export class ToolExecutor {
 
     let toolInstance: any;
     try {
-      toolInstance = await toolRegistry.getTool(toolName);
+      toolInstance = await toolRegistry.createTool(toolName);
     } catch {
       return null;
     }

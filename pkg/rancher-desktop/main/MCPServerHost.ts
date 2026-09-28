@@ -39,7 +39,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 
-import { ApprovalService } from '@pkg/agent/services/ApprovalService';
 import { toolRegistry } from '@pkg/agent/tools/registry';
 import { activateWorkflowOnState } from '@pkg/agent/tools/workflow/execute_workflow';
 import { registerGraphBrowserControllerMcp } from '@pkg/agent/utils/graphBrowserControllerMcp';
@@ -174,6 +173,14 @@ export class MCPServerHost {
     session.lastUsedAt = now;
     session.expiresAt = now + ttlMs;
     return true;
+  }
+
+  /** Bind CLI calls to the same live graph as their provider MCP session. */
+  getToolSessionState(id: string): BaseThreadState | null {
+    const session = this.sessions.get(id);
+    if (!session || session.expiresAt <= Date.now()) return null;
+    session.lastUsedAt = Date.now();
+    return session.state;
   }
 
   private resolveSession(req: Request): Session | null {
@@ -420,8 +427,13 @@ export class MCPServerHost {
         }
 
         const clamped = clampTimeout(timeoutMs);
-        const approvals = ApprovalService.getInstance();
-        const questionId = approvals.newQuestionId();
+        const { decisionService } = await import('@pkg/agent/services/DecisionService');
+        const { record, result } = await decisionService.request({
+          kind: 'question', title: normalized[0].question, questions: normalized,
+          conversationId: session.state.metadata.threadId,
+          channel: session.state.metadata.wsChannel || 'sulla-desktop',
+        }, clamped, session.state.metadata.options?.abort?.signal);
+        const questionId = record.id;
 
         const emitted = await emitQuestionCardViaWs(
           session.state.metadata.wsChannel,
@@ -430,13 +442,15 @@ export class MCPServerHost {
           normalized,
         );
         if (!emitted) {
+          await decisionService.expire(questionId);
           return {
             content: [{ type: 'text' as const, text: 'Failed to surface the question card to the user — chat channel not ready.' }],
             isError: true,
           };
         }
 
-        const resolution = await approvals.parkQuestion(questionId, clamped);
+        const outcome = await result;
+        const resolution = { status: outcome.status === 'answered' ? 'answered' as const : 'timed_out' as const, answers: outcome.answers };
         return {
           content: [{ type: 'text' as const, text: formatQuestionResolution(normalized, resolution, clamped) }],
         };
@@ -507,7 +521,7 @@ export class MCPServerHost {
             args: z.record(z.any()).optional().describe('JSON arguments for the tool, exactly as documented by browse_tools.'),
           },
         },
-        buildGraphToolHandler(graphToolSurface, name => toolRegistry.getTool(name)),
+        buildGraphToolHandler(graphToolSurface, name => toolRegistry.createTool(name)),
       );
     }
 

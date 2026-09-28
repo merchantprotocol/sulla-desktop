@@ -517,6 +517,10 @@ export interface IpcMainInvokeEvents {
 
   // Approval gate — renderer resolves a pending user-approval request
   // that a backend tool parked via ApprovalService.
+  'decisions:list': () => import('@pkg/shared/decisions').DecisionRecord[];
+  'decisions:resolve': (response: import('@pkg/shared/decisions').DecisionResponse) => { settled: boolean; conversationId?: string; reason?: string };
+  'decisions:policies': () => { name: string; category: string; description: string; required: boolean }[];
+  'decisions:set-policy': (name: string, required: boolean) => { saved: boolean };
   'approval:resolve': (payload: {
     approvalId: string;
     decision:   'approved' | 'denied';
@@ -990,6 +994,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'decisions:changed': (record: import('@pkg/shared/decisions').DecisionRecord) => void;
   'claude-oauth:progress':          (text: string) => void;
   'claude-oauth:url':               (url: string) => void;
   'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;

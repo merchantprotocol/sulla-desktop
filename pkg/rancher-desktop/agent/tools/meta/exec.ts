@@ -36,9 +36,20 @@ export class ExecWorker extends BaseTool {
     const stdin = input.stdin ? String(input.stdin) : undefined;
 
     // Prepend cd if a working directory was requested
-    const finalCommand = cwd ? `cd ${ cwd } && ${ command }` : command;
+    let finalCommand = cwd ? `cd ${ cwd } && ${ command }` : command;
 
+    let revoke: (() => void) | undefined;
     try {
+      if (this.state?.metadata?.threadId) {
+        const { getMCPServerHost } = await import('@pkg/main/MCPServerHost');
+        const host = getMCPServerHost();
+        if (host.running) {
+          const session = host.registerSession(this.state, timeoutMs + 60_000);
+          revoke = session.revoke;
+          const quoted = "'" + session.id.replace(/'/g, "'\\''") + "'";
+          finalCommand = `export SULLA_TOOL_SESSION=${ quoted }; ${ finalCommand }`;
+        }
+      }
       const res = await runCommand(finalCommand, [], {
         timeoutMs,
         maxOutputChars: 160_000,
@@ -62,6 +73,6 @@ export class ExecWorker extends BaseTool {
         successBoolean: false,
         responseString: `Error executing command: ${ (error as Error).message }`,
       };
-    }
+    } finally { revoke?.(); }
   }
 }

@@ -242,6 +242,8 @@
       </div>
     </template>
 
+    <template v-else-if="tabMode === 'decide'"><DecidePage class="flex-1 min-h-0" /></template>
+
     <!-- Projects: the issue-ledger project state (Postgres work_projects/epics/tasks) -->
     <template v-else-if="tabMode === 'projects'">
       <div class="flex-1 min-h-0 overflow-hidden">
@@ -323,6 +325,7 @@ import MyAccount from './MyAccount.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
 import PasswordGenerator from './PasswordGenerator.vue';
 import ProjectsHome from './ProjectsHome.vue';
+import DecidePage from './DecidePage.vue';
 import RoutinesHome from './RoutinesHome.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import TerminalTab from './TerminalTab.vue';
@@ -353,6 +356,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   terminal:      'Terminal',
   agents:        'Agents',
   projects:      'Projects',
+  decide:        'Decide',
 };
 
 const props = defineProps<{

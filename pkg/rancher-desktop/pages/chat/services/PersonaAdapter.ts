@@ -134,6 +134,23 @@ export class PersonaAdapter {
     // selector (ChatPage owns that wiring); until then, hold online.
     this.controller.setConnection('online');
 
+    const applyDecision = (_event: unknown, record: import('@pkg/shared/decisions').DecisionRecord) => {
+      if (['pending', 'deferred'].includes(record.status)) return;
+      for (const message of this.controller.thread.value.messages) {
+        if (message.kind === 'tool_approval' && message.approvalId === record.id) {
+          this.controller.updateMessage<ToolApprovalMessage>(message.id, {
+            decision: record.status === 'approved' ? 'approved' : record.status === 'denied' ? 'denied' : 'timed_out',
+            resolutionError: undefined,
+          });
+        } else if (message.kind === 'tool_question' && message.questionId === record.id) {
+          this.controller.updateMessage<ToolQuestionMessage>(message.id, { status: record.status === 'answered' ? 'answered' : 'timed_out', resolutionError: undefined });
+        }
+      }
+    };
+    ipcRenderer.on('decisions:changed', applyDecision);
+    this.stopWatchers.push(() => ipcRenderer.removeListener('decisions:changed', applyDecision));
+    void ipcRenderer.invoke('decisions:list').then(records => records.forEach(r => applyDecision(undefined, r))).catch(() => undefined);
+
     // Approval bridge — when the user clicks approve/deny on a
     // ToolApproval card, the controller fires a `toolApprovalResolved`
     // bus event. Forward it to main via the `approval:resolve` IPC so
@@ -144,7 +161,11 @@ export class PersonaAdapter {
         approvalId: ev.approvalId,
         decision:   ev.decision,
         note:       ev.note,
-      }).catch(err => console.warn('[PersonaAdapter] approval:resolve failed', err));
+      }).then(receipt => {
+        if (!receipt.settled) throw new Error(receipt.reason || 'Request expired.');
+        this.controller.updateMessage(ev.messageId, { decision: ev.decision, resolutionError: undefined } as any);
+        this.controller.transitionRun({ type: 'approvalResolved' });
+      }).catch(err => this.controller.updateMessage(ev.messageId, { resolutionError: String(err.message || err) } as any));
     });
     this.stopWatchers.push(unsubscribeApproval);
 
@@ -156,7 +177,11 @@ export class PersonaAdapter {
       void ipcRenderer.invoke('question:resolve', {
         questionId: ev.questionId,
         answers:    ev.answers,
-      }).catch(err => console.warn('[PersonaAdapter] question:resolve failed', err));
+      }).then(receipt => {
+        if (!receipt.settled) throw new Error(receipt.reason || 'Request expired.');
+        this.controller.updateMessage(ev.messageId, { status: 'answered', answers: ev.answers, resolutionError: undefined } as any);
+        this.controller.transitionRun({ type: 'approvalResolved' });
+      }).catch(err => this.controller.updateMessage(ev.messageId, { resolutionError: String(err.message || err) } as any));
     });
     this.stopWatchers.push(unsubscribeQuestion);
 

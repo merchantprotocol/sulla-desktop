@@ -166,22 +166,26 @@ else
     if [ -n "$SULLA_API_TOKEN" ]; then
       exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
         -H "Content-Type: application/json" \
+        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
         -H "Authorization: Bearer $SULLA_API_TOKEN" \
         -d "$BODY"
     else
       exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
         -H "Content-Type: application/json" \
+        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
         -d "$BODY"
     fi
   else
     if [ -n "$SULLA_API_TOKEN" ]; then
       exec curl -s -X POST "http://${SULLA_HOST}:3000${URL}" \
         -H "Content-Type: application/json" \
+        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
         -H "Authorization: Bearer $SULLA_API_TOKEN" \
         -d "$BODY"
     else
       exec curl -s -X POST "http://${SULLA_HOST}:3000${URL}" \
         -H "Content-Type: application/json" \
+        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
         -d "$BODY"
     fi
   fi

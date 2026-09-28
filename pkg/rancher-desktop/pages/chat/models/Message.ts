@@ -89,6 +89,7 @@ export interface ToolMessage extends MessageBase {
 
 // ─── Tool approval ────────────────────────────────────────────────
 export interface ToolApprovalMessage extends MessageBase {
+  resolutionError?: string;
   kind:        'tool_approval';
   reason:      string;         // what Sulla wants to do & why
   command:     string;         // the exact command/action
@@ -118,6 +119,7 @@ export interface ToolQuestionAnswerItem {
   selected: readonly string[];
 }
 export interface ToolQuestionMessage extends MessageBase {
+  resolutionError?: string;
   kind:        'tool_question';
   questions:   readonly ToolQuestionItem[];
   status:      'pending' | 'answered' | 'timed_out';

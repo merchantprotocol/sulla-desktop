@@ -29,6 +29,7 @@ const VALID_MODES = new Set([
   'welcome',
   'agents',
   'projects',
+  'decide',
 ]);
 
 export class UiOpenTabWorker extends BaseTool {

@@ -18,6 +18,7 @@
       @click="$emit('set-mode', item.mode, item.subTab)"
     >
       <span class="icon" v-html="item.icon" />
+      <span v-if="item.mode === 'decide' && pending.length" class="decision-badge" :aria-label="`${pending.length} decisions waiting`">{{ pending.length }}</span>
     </button>
 
     <div class="rail-spacer" />
@@ -41,6 +42,8 @@
 </template>
 
 <script setup lang="ts">
+import { useDecisions } from '@pkg/composables/useDecisions';
+const { pending } = useDecisions();
 const props = defineProps<{
   /** Currently active mode — we'll highlight it. */
   active?:       string;
@@ -77,6 +80,7 @@ function isActive(item: ModeItem, idx: number): boolean {
 }
 
 const items: readonly ModeItem[] = Object.freeze([
+  { mode: 'decide', label: 'Decide', icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 12l2 2 4-4"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg>' },
   {
     mode:  'chat',
     label: 'Chat',
@@ -168,6 +172,7 @@ const items: readonly ModeItem[] = Object.freeze([
 </script>
 
 <style scoped>
+.decision-badge { position: absolute; top: 0; right: 0; border-radius: 12px; padding: 1px 5px; background: var(--accent, #5096b3); color: white; font-size: 10px; box-shadow: 0 0 8px var(--accent, #5096b3); }
 .mode-rail {
   width: 52px; height: 100%;
   display: flex; flex-direction: column; align-items: stretch;
