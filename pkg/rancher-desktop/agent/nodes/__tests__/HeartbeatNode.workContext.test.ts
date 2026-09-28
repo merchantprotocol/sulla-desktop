@@ -58,6 +58,11 @@ jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () =>
   },
 }));
 
+const listHumanCommentTriageMock: any = jest.fn(() => Promise.resolve([]));
+jest.unstable_mockModule('../../services/HumanCommentTriage', () => ({
+  listHumanCommentTriage: listHumanCommentTriageMock,
+}));
+
 jest.unstable_mockModule('../../prompts/projectReport', () => ({
   buildProjectReport: buildProjectReportMock,
 }));
@@ -89,6 +94,7 @@ async function makeNode(): Promise<any> {
 
 describe('HeartbeatNode Projects context injection', () => {
   beforeEach(() => {
+    listHumanCommentTriageMock.mockReset().mockResolvedValue([]);
     listRecentActivityMock.mockReset().mockResolvedValue([]);
     getProjectBySlugMock.mockReset().mockResolvedValue(null);
     buildProjectReportMock.mockReset();
@@ -192,6 +198,44 @@ describe('HeartbeatNode Projects context injection', () => {
     });
     expect(state.messages[1].role).toBe('user');
     expect(buildProjectReportMock).toHaveBeenCalledWith(expect.objectContaining({ lifecycleAware: true }));
+  });
+
+  it('hydrates a ticket the human commented on first, even when it is parked outside the Heartbeat lane', async() => {
+    const parked = {
+      id: 'parked1', project_id: 'proj2', epic_id: null, parent_id: null, title: 'Parked by a protected owner',
+      description: 'Waiting on a decision.', status: 'parked', priority: 'high', assignee: 'dispatcher', labels: [], due_at: null, github_issue: null,
+    };
+    listHumanCommentTriageMock.mockResolvedValue([{ task: parked, comment_id: 'hc1', body: 'Scope changed: drop the export step, then dispatch it.', created_at: '2026-09-28T20:00:00.000Z' }]);
+    listTasksMock.mockReset().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    listCommentsMock.mockResolvedValue([{ id: 'hc1', task_id: 'parked1', body: 'Scope changed: drop the export step, then dispatch it.', author: 'human', created_at: '2026-09-28T20:00:00.000Z' }]);
+    const node = await makeNode();
+    const state: any = { messages: [{ role: 'user', content: 'Scheduled autonomous work time.' }], metadata: {} };
+
+    await node.injectHeartbeatProjectReport(state);
+
+    const content = state.messages[0].content;
+    expect(content).toContain('<selected_project_item source="heartbeat" id="parked1">');
+    expect(content).toContain('the human commented on it and Heartbeat has not replied yet');
+    expect(content).toContain('## Human comment awaiting your reply');
+    expect(content).toContain('Scope changed: drop the export step, then dispatch it.');
+    expect(content).toContain('transition_task_to_execution');
+    expect(content).toContain('add_task_comment task_id="parked1" author="heartbeat"');
+    expect(content).not.toContain('## Fallback Contract');
+    expect(filterHeartbeatEligibleMock).not.toHaveBeenCalled();
+    expect(state.metadata.heartbeatSelectedTaskId).toBe('parked1');
+    expect(state.metadata.heartbeatHumanCommentId).toBe('hc1');
+  });
+
+  it('falls back to the normal lane pick when no human comment awaits a reply', async() => {
+    const node = await makeNode();
+    const state: any = { messages: [{ role: 'user', content: 'Scheduled autonomous work time.' }], metadata: { heartbeatHumanCommentId: 'stale' } };
+
+    await node.injectHeartbeatProjectReport(state);
+
+    expect(state.messages[0].content).toContain('<selected_project_item source="heartbeat" id="task1">');
+    expect(state.messages[0].content).toContain('## Fallback Contract');
+    expect(state.messages[0].content).not.toContain('Human Comment Contract');
+    expect(state.metadata.heartbeatHumanCommentId).toBeUndefined();
   });
 
   it('skips blocked and planning tasks when actionable work exists', async() => {
