@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'ledger', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'pg', 'project', 'projects', 'rdctl', 'redis', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'ledger', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'pg', 'project', 'projects', 'rdctl', 'redis', 'reflex', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -81,6 +81,7 @@ export class ToolRegistry {
     vault:              'Credential vault — list saved credentials, check integration connection status, read secrets, and autofill login forms.',
     function:           'Custom function runner — list installed functions and invoke them by slug across python, shell, and node runtimes. Returns full execution trace in one call.',
     ledger:             'Outcome-ledger measurement — historical scoreboard of WORKING / OUTCOMES / AUDIT at ~/sulla/ledger/. Files are archive/readout only; Projects project-state is the structured agenda.',
+    reflex:             'Reflex decision engine — teach, test, correct, and export the examples Sulla uses to act on a message instantly, before the language model.',
     rules:              'User-created rules the Security Conscience enforces. Distinct from global markdown under ~/sulla/rules/global/.',
     project:            'Local Projects project-state — projects, epics, tasks, sub-tasks, and comments in Postgres. Accessed through the Sulla CLI catalog; distinct from filesystem PROJECT.md PRDs (projects category) and from Cloud CRM.',
     workflow:           'Workflow management — execute, validate, import, and manage Sulla workflow definitions.',
