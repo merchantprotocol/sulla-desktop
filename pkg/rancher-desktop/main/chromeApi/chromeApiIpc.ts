@@ -1,7 +1,7 @@
 /**
  * IPC handler registration for the chrome.* API.
  *
- * Exposes chrome.tabs, chrome.scripting, chrome.cookies, chrome.storage,
+ * Exposes chrome.tabs, chrome.scripting, chrome.cookies, chrome.storage, chrome.bookmarks,
  * chrome.windows, and chrome.runtime to renderer processes via IPC invoke.
  *
  * Channel naming convention: 'chrome-api:<namespace>:<method>'
@@ -229,6 +229,20 @@ export function initChromeApiIpc(): void {
   });
 
   // ── chrome.history ───────────────────────────────────────────────────────
+
+  // ── chrome.bookmarks ─────────────────────────────────────────────────────
+
+  ipcMain.handle('chrome-api:bookmarks:get', async(_event, idOrIdList: string | string[]) => chrome.bookmarks.get(idOrIdList));
+  ipcMain.handle('chrome-api:bookmarks:getChildren', async(_event, id: string) => chrome.bookmarks.getChildren(id));
+  ipcMain.handle('chrome-api:bookmarks:getRecent', async(_event, numberOfItems: number) => chrome.bookmarks.getRecent(numberOfItems));
+  ipcMain.handle('chrome-api:bookmarks:getTree', async() => chrome.bookmarks.getTree());
+  ipcMain.handle('chrome-api:bookmarks:getSubTree', async(_event, id: string) => chrome.bookmarks.getSubTree(id));
+  ipcMain.handle('chrome-api:bookmarks:search', async(_event, query: any) => chrome.bookmarks.search(query));
+  ipcMain.handle('chrome-api:bookmarks:create', async(_event, bookmark: any) => chrome.bookmarks.create(bookmark || {}));
+  ipcMain.handle('chrome-api:bookmarks:update', async(_event, id: string, changes: any) => chrome.bookmarks.update(id, changes || {}));
+  ipcMain.handle('chrome-api:bookmarks:move', async(_event, id: string, destination: any) => chrome.bookmarks.move(id, destination || {}));
+  ipcMain.handle('chrome-api:bookmarks:remove', async(_event, id: string) => chrome.bookmarks.remove(id));
+  ipcMain.handle('chrome-api:bookmarks:removeTree', async(_event, id: string) => chrome.bookmarks.removeTree(id));
 
   ipcMain.handle('chrome-api:history:search', async(_event, query: any) => {
     return chrome.history.search(query);
