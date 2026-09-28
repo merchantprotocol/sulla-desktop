@@ -547,9 +547,9 @@ export class DesktopRelayClient {
     try {
       const { mobileCompanionRequest } = await import('./mobileCompanion');
       const result = msg.method === 'chat.runs' ? { conversations: [...this.activeConversations] } : await mobileCompanionRequest(msg.method || '', msg.params || {});
-      if (msg.method === 'chat.answer') {
+      if (msg.method === 'chat.answer' || (msg.method === 'decisions.resolve' && (result as any)?.settled)) {
         const threadId = String(msg.params?.conversationId || '');
-        const content = JSON.stringify({ sullaCard: { version: 1, kind: 'decision_result', deviceId: this.deviceId, content: 'Your response was received.', answeredId: msg.params?.id, answers: msg.params?.answers, decision: msg.params?.decision } });
+        const content = JSON.stringify({ sullaCard: { version: 1, kind: 'decision_result', deviceId: this.deviceId, content: 'Your response was received.', answeredId: msg.params?.id, answers: msg.params?.answers, decision: msg.params?.decision || msg.params?.action } });
         const ts = new Date().toISOString();
         const id = deriveMessageId(threadId, 'tool', content, ts);
         await this.scribeTurn(threadId, 'tool', content, { id, ts });

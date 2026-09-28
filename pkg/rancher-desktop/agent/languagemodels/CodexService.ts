@@ -200,7 +200,7 @@ export class CodexService extends BaseLanguageModel {
     // between the SSH session and the CLI — best chance of signal
     // propagation when we kill limactl on the host side.
     const mcpTokenExport = p.mcpSession
-      ? ` ${ CODEX_MCP_TOKEN_ENV }=${ shq(p.mcpSession.id) }`
+      ? ` ${ CODEX_MCP_TOKEN_ENV }=${ shq(p.mcpSession.id) } SULLA_TOOL_SESSION=${ shq(p.mcpSession.id) }`
       : '';
     const innerCmd = `export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }${ mcpTokenExport }; exec ${ codexArgs.join(' ') }`;
     return ['shell', '0', '--', 'sh', '-c', innerCmd];

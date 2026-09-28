@@ -1036,9 +1036,9 @@ export class ChatCompletionsServer {
         // Try prefixed name first (e.g. github + create_issue → github_create_issue),
         // then fall back to endpoint as-is (e.g. github + git_status → git_status)
         const prefixed = `${ slug }_${ endpoint }`;
-        let tool = await toolRegistry.getTool(prefixed).catch(() => null);
+        let tool = await toolRegistry.createTool(prefixed).catch(() => null);
         if (!tool) {
-          tool = await toolRegistry.getTool(endpoint).catch(() => null);
+          tool = await toolRegistry.createTool(endpoint).catch(() => null);
         }
         if (!tool) {
           // Fuzzy-suggest the closest real tool names. Score both candidate
@@ -1079,11 +1079,21 @@ export class ChatCompletionsServer {
         // emitter that targets the active sulla-desktop chat.
         const interactiveNames = new Set(['ask_user_question']);
         const toolName = String((tool as any)?.name || endpoint || '').trim();
+        const sessionToken = req.header('X-Sulla-Tool-Session');
+        if (sessionToken) {
+          const { getMCPServerHost } = await import('./MCPServerHost');
+          const state = getMCPServerHost().getToolSessionState(sessionToken);
+          if (!state) return res.status(403).json({ success: false, error: 'Expired tool session' });
+          const allowed = (state.metadata as { allowedToolNames?: string[] }).allowedToolNames;
+          if (Array.isArray(allowed) && allowed.length && !allowed.includes(toolName)) return res.status(403).json({ success: false, error: 'Tool not allowed for this session' });
+          tool.setState?.(state);
+        }
         if (interactiveNames.has(toolName) && typeof (tool as any).sendChatMessage !== 'function') {
           try {
             const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
             const { getWebSocketClientService } = await import('@pkg/agent/services/WebSocketClientService');
-            const active = GraphRegistry.findActiveChat?.() ?? null;
+            const bound = (tool as any).state;
+            const active = bound ? { state: bound, threadId: bound.metadata.threadId, wsChannel: bound.metadata.wsChannel } : null;
             const channel = active?.wsChannel || 'sulla-desktop';
             const threadId = active?.threadId;
             const ws = getWebSocketClientService();

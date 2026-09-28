@@ -1,3 +1,4 @@
+import { decisionService } from '@pkg/agent/services/DecisionService';
 /**
  * Opt-in desktop → cloud copies of the vault and Projects.
  *
@@ -76,24 +77,37 @@ export async function buildProjectsBody(): Promise<{ body: string; dedupe: strin
   for (const p of projects) {
     try { lanes[(p as any).id] = await WorkLaneDefinitionModel.resolveEffective((p as any).id) } catch { /* lanes optional */ }
   }
-  const content = { projects, epics, tasks, lanes };
+  const content = { projects, epics, tasks, lanes, decisions: await decisionService.list() };
   const dedupe = crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex');
   return { body: JSON.stringify({ format: 'sulla-projects-snapshot', version: 1, createdAt: new Date().toISOString(), ...content }), dedupe };
 }
 
 class DesktopObjectSyncImpl {
+  private unsubscribeDecisions: (() => void) | undefined;
+  private decisionSyncTimer: ReturnType<typeof setTimeout> | undefined;
   private timer:  ReturnType<typeof setInterval> | null = null;
   private inFlight = new Map<ObjectKind, Promise<ObjectSyncStatus>>();
   private status: Record<ObjectKind, ObjectSyncStatus> = { vault: { kind: 'vault' }, projects: { kind: 'projects' } };
 
   start(): void {
     if (this.timer) return;
+    this.unsubscribeDecisions = decisionService.subscribe(() => {
+      clearTimeout(this.decisionSyncTimer);
+      this.decisionSyncTimer = setTimeout(async() => {
+        await this.inFlight.get('projects')?.catch(() => undefined);
+        await this.syncNow('projects');
+      }, 250);
+      this.decisionSyncTimer.unref?.();
+    });
     this.timer = setInterval(() => { this.syncEnabled().catch(() => undefined) }, INTERVAL_MS);
     this.timer.unref?.();
     this.syncEnabled().catch(() => undefined);
   }
 
   stop(): void {
+    this.unsubscribeDecisions?.();
+    this.unsubscribeDecisions = undefined;
+    clearTimeout(this.decisionSyncTimer);
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
   }

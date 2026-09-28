@@ -1,3 +1,5 @@
+import { decisionService } from '@pkg/agent/services/DecisionService';
+import type { DecisionResponse } from '@pkg/shared/decisions';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { ApprovalService, type UserQuestion } from '@pkg/agent/services/ApprovalService';
 import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
@@ -19,8 +21,18 @@ export function registerMobileCard(conversationId: string, kind: string, data: a
 // A narrow, authenticated owner surface. Never dispatch arbitrary tool names.
 export async function mobileCompanionRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
   switch (method) {
+  case 'decisions.list': return { decisions: await decisionService.list() };
+  case 'decisions.resolve': return decisionService.resolve(params as unknown as DecisionResponse);
   case 'chat.answer': {
     const id = typeof params.id === 'string' ? params.id : '';
+    const decision = (await decisionService.list()).find(r => r.id === id);
+    if (decision) {
+      const result = await decisionService.resolve({ id, conversationId: String(params.conversationId || ''),
+        action: decision.kind === 'question' ? 'answered' : params.decision as DecisionResponse['action'],
+        answers: params.answers as DecisionResponse['answers'] });
+      if (!result.settled) throw new Error(result.reason);
+      return { accepted: true };
+    }
     const card = cards.get(id);
     if (!card || card.conversationId !== params.conversationId) throw new Error('This request is no longer available.');
     let accepted = false;

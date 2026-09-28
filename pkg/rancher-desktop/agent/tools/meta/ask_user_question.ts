@@ -15,7 +15,7 @@
 
 import { BaseTool, type InputSchemaDef, type ToolResponse } from '../base';
 
-import { ApprovalService } from '@pkg/agent/services/ApprovalService';
+import { decisionService } from '@pkg/agent/services/DecisionService';
 import {
   clampTimeout,
   formatQuestionResolution,
@@ -66,8 +66,12 @@ export class AskUserQuestionWorker extends BaseTool {
     }
 
     const timeoutMs = clampTimeout(input?.timeoutMs);
-    const service = ApprovalService.getInstance();
-    const questionId = service.newQuestionId();
+    const { record, result } = await decisionService.request({
+      kind: 'question', title: questions[0].question, questions,
+      conversationId: this.state?.metadata?.threadId || '',
+      channel: this.state?.metadata?.wsChannel || '',
+    }, timeoutMs);
+    const questionId = record.id;
 
     // Emit the question card over the same WS pipeline chat messages use.
     // Content is intentionally empty — the structured payload rides on
@@ -78,13 +82,15 @@ export class AskUserQuestionWorker extends BaseTool {
     });
 
     if (!emitted) {
+      await decisionService.expire(questionId);
       return {
         successBoolean: false,
         responseString: 'Failed to emit question card — WebSocket channel not ready. Make sure the tool is invoked inside an active chat turn.',
       };
     }
 
-    const resolution = await service.parkQuestion(questionId, timeoutMs);
+    const outcome = await result;
+    const resolution = { status: outcome.status === 'answered' ? 'answered' as const : 'timed_out' as const, answers: outcome.answers };
 
     return {
       successBoolean: true,

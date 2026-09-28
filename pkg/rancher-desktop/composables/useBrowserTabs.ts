@@ -2,7 +2,7 @@ import { reactive, readonly, ref, watch } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'agents' | 'projects';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'agents' | 'projects' | 'decide';
 
 export interface BrowserTab {
   id:       string;
@@ -375,6 +375,7 @@ export function useBrowserTabs() {
     terminal:     'Terminal',
     agents:       'Agents',
     projects:     'Projects',
+    decide:       'Decide',
   };
 
   function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode }): BrowserTab {

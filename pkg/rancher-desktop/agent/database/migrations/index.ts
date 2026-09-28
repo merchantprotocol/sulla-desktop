@@ -1,3 +1,4 @@
+import { up as up_0098, down as down_0098 } from './0098_create_decisions';
 import { up as up_0001, down as down_0001 } from './0001_create_migrations_and_seeders_table';
 import { up as up_0002, down as down_0002 } from './0002_create_agent_awareness_table';
 import { up as up_0008, down as down_0008 } from './0008_create_calendar_events_table';
@@ -169,4 +170,5 @@ export const migrationsRegistry = [
   { name: '0095_add_lane_human_approval',                              up: up_0095, down: down_0095 },
   { name: '0096_unique_github_pr_mirrors',                             up: up_0096, down: down_0096 },
   { name: '0097_add_trigram_index_to_identity_observations',          up: up_0097, down: down_0097 },
+  { name: '0098_create_decisions', up: up_0098, down: down_0098 },
 ] as const;

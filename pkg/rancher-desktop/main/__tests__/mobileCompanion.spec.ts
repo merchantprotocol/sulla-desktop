@@ -7,6 +7,7 @@ const set = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue(undefi
 const resolveQuestion = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
 const resolve = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
 mockModules({
+  '@pkg/agent/services/DecisionService': { decisionService: { list: jest.fn<() => Promise<any>>().mockResolvedValue([]) } },
   '@pkg/agent/database/models/WorkItemsModel': { WorkItemsModel: { getProject, listTasks, listProjects: jest.fn(), listRecentActivity: jest.fn<() => Promise<any>>().mockResolvedValue([]) } },
   '@pkg/agent/database/models/WorkLaneDefinitionModel': { WorkLaneDefinitionModel: { resolveEffective: jest.fn<() => Promise<any>>().mockResolvedValue([{ lane_key: 'custom' }]) } },
   '@pkg/agent/database/models/SullaSettingsModel': { SullaSettingsModel: { set, get: jest.fn<() => Promise<any>>().mockResolvedValue(false) } },

@@ -250,6 +250,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     apiKey:          string;
     existingSession?: string;
     mcpConfigPath:   string | null;
+    toolSessionId?: string;
     streamJsonInput: boolean;
     /**
      * Full --disallowedTools value for this spawn's role (disallowedToolsFor):
@@ -263,6 +264,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
     const envAssignments: string[] = [];
+    if (p.toolSessionId) envAssignments.push(`SULLA_TOOL_SESSION=${ shq(p.toolSessionId) }`);
     if (p.oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(p.oauthToken) }`);
     if (p.apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(p.apiKey) }`);
 
@@ -350,7 +352,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       } catch { /* continue without sulla-native tools */ }
 
       const disallowedTools = disallowedToolsFor(state.metadata as any);
-      const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, streamJsonInput: true, disallowedTools });
+      const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: true, disallowedTools });
       const proc = childProcess.spawn(paths.limactl, args, {
         env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
       });
@@ -1023,7 +1025,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // must keep Bash/Read to do their work. Those workers instead lose the
     // detached-work tools, since nothing they arm can reach them after return.
     const disallowedTools = disallowedToolsFor(options.state?.metadata as any);
-    const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, streamJsonInput: speculative, disallowedTools });
+    const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: speculative, disallowedTools });
 
     const cleanupMcp = () => {
       if (mcpSession) {

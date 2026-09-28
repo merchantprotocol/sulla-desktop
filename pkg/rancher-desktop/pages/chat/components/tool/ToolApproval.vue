@@ -4,6 +4,7 @@
 -->
 <template>
   <div :class="['approval', decisionClass]">
+    <p v-if="msg.resolutionError" role="alert">{{ msg.resolutionError }}</p>
     <div class="head">Approval required</div>
     <div class="what">{{ msg.reason }}</div>
     <div class="cmd">{{ msg.command }}</div>

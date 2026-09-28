@@ -218,8 +218,25 @@ export abstract class BaseTool<TState = any> {
   // ─────────────────────────────────────────────────────────────
 
   async call(rawInput: unknown): Promise<ToolResult> {
-    const validated = this.parseInput(rawInput);
+    const validated = structuredClone(this.parseInput(rawInput));
+    const metadata = (this.state as any)?.metadata;
+    const emit = this.sendChatMessage;
     try {
+      const { decisionService } = await import('../services/DecisionService');
+      if (this.name !== 'ask_user_question' && await decisionService.requiresApproval(this.name)) {
+        const { record, result } = await decisionService.request({
+          kind: 'approval', title: `Allow ${ this.metadata.category } / ${ this.name }?`,
+          toolName: this.name, conversationId: metadata?.threadId || '', channel: metadata?.wsChannel || '',
+        });
+        // Arguments stay in this invocation, never serialized into a cloud decision.
+        try {
+          await emit?.('Review the tool call in this conversation before approving.', 'tool_approval', {
+            toolApproval: { approvalId: record.id, toolName: this.name, reason: record.title, command: this.name },
+          });
+        } catch { /* The durable Decide inbox remains available. */ }
+        const answer = await result;
+        if (answer.status !== 'approved') return { toolName: this.name, success: false, error: `Action ${ answer.status }; nothing was executed.` };
+      }
       const response = await this._validatedCall(validated);
       const { successBoolean, responseString, ...extra } = response as any;
       return {
