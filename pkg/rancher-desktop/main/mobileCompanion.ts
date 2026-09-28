@@ -7,6 +7,7 @@ import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefi
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
 import { MASTER_ENABLED_KEY as PM_AUTOMATION_KEY } from '@pkg/agent/services/RoutineConcurrencyPolicy';
+import { getModelProviderService } from '@pkg/agent/services/ModelProviderService';
 
 // The only desktop switches the phone may flip. Heartbeat and Projects
 // automation are independent systems — each toggle writes exactly one key.
@@ -31,6 +32,15 @@ export function registerMobileCard(conversationId: string, kind: string, data: a
   // The underlying approval service expires requests; this map only binds scope.
   const timer = setTimeout(() => cards.delete(id), 60 * 60 * 1000);
   timer.unref?.();
+}
+
+// The phone may only pick a provider this desktop is already signed in to,
+// and only a model that provider actually lists — never free text.
+async function companionProvider(providerId: unknown) {
+  if (typeof providerId !== 'string' || !providerId || providerId.length > 100) throw new Error('Provider required');
+  const provider = (await getModelProviderService().getAvailableProviders()).find(p => p.id === providerId);
+  if (!provider?.connected) throw new Error('That provider is not connected on this desktop');
+  return provider;
 }
 
 async function companionTask(taskId: unknown) {
@@ -166,6 +176,28 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
     }
     await SullaSettingsModel.set(DESKTOP_TOGGLES[name].key, params.enabled, 'boolean');
     return mobileCompanionRequest('desktop.settings.read', {});
+  }
+  // Primary language model. Every conversation reads it at the start of its
+  // next turn, so switching here also moves active desktop conversations.
+  case 'models.read': {
+    const mps = getModelProviderService();
+    const { primaryProvider, activeModelId } = mps.getState();
+    const providers = (await mps.getAvailableProviders()).filter(p => p.connected);
+    return { primaryProvider, activeModelId, providers };
+  }
+  case 'models.list': {
+    const provider = await companionProvider(params.providerId);
+    return { providerId: provider.id, models: await getModelProviderService().getModelsForProvider(provider.id) };
+  }
+  case 'models.select': {
+    // Called only by an explicit human pick in the phone's device settings.
+    const provider = await companionProvider(params.providerId);
+    const models = await getModelProviderService().getModelsForProvider(provider.id);
+    if (typeof params.modelId !== 'string' || !models.some(m => m.id === params.modelId)) {
+      throw new Error('That model is not available for this provider');
+    }
+    await getModelProviderService().selectModel(provider.id, params.modelId);
+    return mobileCompanionRequest('models.read', {});
   }
   // Bookmarks for Sulla Mobile / Sulla Cloud. Local links (localhost,
   // running Docker containers) can't be opened from the phone directly, so
