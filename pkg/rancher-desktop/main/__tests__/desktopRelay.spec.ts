@@ -48,6 +48,7 @@ mockModules({
 
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
+  static CONNECTING = 0;
   static OPEN = 1;
   static CLOSED = 3;
 
@@ -165,6 +166,48 @@ describe('DesktopRelayClient durability', () => {
     await jest.advanceTimersByTimeAsync(0);
 
     expect(MockWebSocket.instances.length).toBe(0);
+  });
+
+  it('opens one socket when connect and a backoff retry race', async() => {
+    const client = new DesktopRelayClient() as any;
+    await client.setPairedUserId('user-1');
+    // A backoff timer firing while the first open is still awaiting auth.
+    const second = client.openSocket();
+    await second;
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(MockWebSocket.instances.length).toBe(1);
+    MockWebSocket.instances[0].open();
+    await client.openSocket();
+    expect(MockWebSocket.instances.length).toBe(1);
+  });
+
+  it('ignores a superseded socket so two sockets never evict each other in a loop', async() => {
+    const client = new DesktopRelayClient() as any;
+    await client.setPairedUserId('user-1');
+    await jest.advanceTimersByTimeAsync(0);
+    const stale = MockWebSocket.instances[0];
+    stale.open();
+
+    // Simulate the pre-fix state: a second socket replaced this.ws without
+    // closing the first. The relay DO then evicts the older socket.
+    client.ws = null;
+    await client.openSocket();
+    const live = MockWebSocket.instances[1];
+    live.open();
+    stale.close();
+
+    // The stale close must not mark us disconnected or spawn a third socket.
+    expect(client.getStatus().connected).toBe(true);
+    // (Stay under the 45s stale-socket watchdog — the mock sends no pongs.)
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(MockWebSocket.instances.length).toBe(2);
+    expect(live.closed).toBe(false);
+
+    // A real drop of the live socket reconnects exactly once.
+    live.close();
+    await jest.advanceTimersByTimeAsync(1_500);
+    expect(MockWebSocket.instances.length).toBe(3);
   });
 });
 
