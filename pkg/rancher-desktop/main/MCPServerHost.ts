@@ -29,7 +29,6 @@
  * Lima ↔ host network path before we wire in session binding.
  */
 
-import { randomBytes } from 'crypto';
 import type { Server as HttpServer } from 'http';
 import type { AddressInfo } from 'net';
 
@@ -49,6 +48,7 @@ import {
   normalizeQuestions,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
 import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
+import { DEFAULT_SESSION_TTL_MS, ToolSessionRegistry, type ToolSession } from './mcpToolSessions';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 
@@ -58,29 +58,11 @@ const LOG = '[MCPServerHost]';
 // this to the VM's /etc/hosts automatically.
 const LIMA_HOST_DNS = 'host.lima.internal';
 
-// Default session lifetime. Claude Code calls are short (usually <60s), but
-// workflow orchestration can take longer — 10 min leaves room.
-const DEFAULT_SESSION_TTL_MS = 10 * 60 * 1000;
-
 // Sweep frequency for expired sessions. Fast enough that crashes don't leak
 // sessions for long, slow enough that it's negligible overhead.
 const SESSION_SWEEP_INTERVAL_MS = 60 * 1000;
 
 // ── Session registry types ─────────────────────────────────────
-
-/**
- * A live Claude Code invocation bound to a specific graph instance. Tools
- * called over MCP during the invocation operate on `state` — they can
- * read/mutate the calling graph's metadata directly, which is the whole
- * point of the in-process bridge.
- */
-interface Session {
-  id:         string;
-  state:      BaseThreadState;
-  createdAt:  number;
-  lastUsedAt: number;
-  expiresAt:  number;
-}
 
 /** Returned from registerSession; the caller gives `url` to Claude Code and
  *  calls revoke when the invocation finishes. */
@@ -104,7 +86,7 @@ export class MCPServerHost {
   private port = 0;
   private starting: Promise<void> | null = null;
 
-  private readonly sessions = new Map<string, Session>();
+  private readonly sessions = new ToolSessionRegistry();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   get running(): boolean {
@@ -136,16 +118,8 @@ export class MCPServerHost {
    */
   registerSession(state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS): RegisteredSession {
     if (!this.port) throw new Error(`${ LOG } cannot register session: server not started`);
-    const id = randomBytes(24).toString('base64url');
-    const now = Date.now();
-    const session: Session = {
-      id,
-      state,
-      createdAt:  now,
-      lastUsedAt: now,
-      expiresAt:  now + ttlMs,
-    };
-    this.sessions.set(id, session);
+    const id = this.sessions.register(state, ttlMs);
+
     return {
       id,
       url:    this.getVmReachableUrl(),
@@ -155,56 +129,35 @@ export class MCPServerHost {
   }
 
   revokeSession(id: string): void {
-    this.sessions.delete(id);
+    this.sessions.revoke(id);
   }
 
   /**
-   * Re-point an existing session token at a new graph state and refresh its
-   * TTL. Used by the warm Claude Code pool: one long-lived process keeps a
-   * stable token, and each turn re-binds it to that turn's live state so
-   * sulla-native tools mutate the correct (current) graph. Returns false if the
-   * token is unknown (e.g. already reaped) so the caller can mint a fresh one.
+   * Re-point a session token at a new graph state and refresh its TTL. Used by
+   * the warm pools: one long-lived process keeps a stable token (baked into its
+   * env and MCP config at spawn), and each turn re-binds it to that turn's live
+   * state so sulla-native tools mutate the correct (current) graph.
+   *
+   * A token that was reaped while its process sat idle is revived under the
+   * same id — the process cannot pick up a replacement, so minting a new one
+   * would leave every CLI/MCP call in the turn on "Expired tool session".
+   * Keeps the session's own TTL unless one is passed.
    */
-  rebindSession(id: string, state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS): boolean {
-    const session = this.sessions.get(id);
-    if (!session) return false;
-    const now = Date.now();
-    session.state = state;
-    session.lastUsedAt = now;
-    session.expiresAt = now + ttlMs;
-    return true;
+  rebindSession(id: string, state: BaseThreadState, ttlMs?: number): boolean {
+    return this.sessions.rebind(id, state, ttlMs);
   }
 
   /** Bind CLI calls to the same live graph as their provider MCP session. */
   getToolSessionState(id: string): BaseThreadState | null {
-    const session = this.sessions.get(id);
-    if (!session || session.expiresAt <= Date.now()) return null;
-    session.lastUsedAt = Date.now();
-    return session.state;
+    return this.sessions.get(id)?.state ?? null;
   }
 
-  private resolveSession(req: Request): Session | null {
+  private resolveSession(req: Request): ToolSession | null {
     const auth = req.get('authorization') ?? req.get('Authorization');
     if (!auth) return null;
     const match = /^Bearer\s+(.+)$/i.exec(auth.trim());
     if (!match) return null;
-    const id = match[1].trim();
-    const session = this.sessions.get(id);
-    if (!session) return null;
-    const now = Date.now();
-    if (session.expiresAt <= now) {
-      this.sessions.delete(id);
-      return null;
-    }
-    session.lastUsedAt = now;
-    return session;
-  }
-
-  private sweepExpiredSessions(): void {
-    const now = Date.now();
-    for (const [id, session] of this.sessions) {
-      if (session.expiresAt <= now) this.sessions.delete(id);
-    }
+    return this.sessions.get(match[1].trim());
   }
 
   async start(): Promise<void> {
@@ -237,7 +190,7 @@ export class MCPServerHost {
       // can reach straight into the calling graph's BaseThreadState.
       app.post('/mcp', requireSession, async (req: Request, res: Response) => {
         try {
-          const session = (req as any).sullaSession as Session;
+          const session = (req as any).sullaSession as ToolSession;
           const mcp = this.buildMcpServer(session);
           const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
           res.on('close', () => {
@@ -273,7 +226,7 @@ export class MCPServerHost {
         server.once('error', reject);
       });
 
-      this.sweepTimer = setInterval(() => this.sweepExpiredSessions(), SESSION_SWEEP_INTERVAL_MS);
+      this.sweepTimer = setInterval(() => this.sessions.sweepExpired(), SESSION_SWEEP_INTERVAL_MS);
     })();
 
     try {
@@ -308,7 +261,7 @@ export class MCPServerHost {
    * Phase 2: ping + sulla_session_info (probe tool). Real native tools
    * like execute_workflow land in Phase 3 following the same pattern.
    */
-  private buildMcpServer(session: Session): McpServer {
+  private buildMcpServer(session: ToolSession): McpServer {
     const server = new McpServer(
       { name: 'sulla-native', version: '1.0.0' },
       {
