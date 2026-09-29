@@ -117,8 +117,9 @@ export class AgentNode extends BaseNode {
     // Reflex: Sulla's native decision engine gets the first look at a fresh
     // human message. When it is confident it has seen this request succeed
     // before, it runs that one tool call immediately, and the model is told
-    // what already happened via <reflex_context>. Below threshold it does
-    // nothing and the post-turn Reflex Trainer learns from the model instead.
+    // what already happened via <reflex_context>. Below threshold it runs
+    // nothing; a close-enough guess becomes a <reflex_context> hint the model
+    // may act on, and the post-turn Reflex Trainer learns from the model.
     if (!isToolCallLoop) {
       (state.metadata as any).reflexContext = '';
       (state.metadata as any).reflexDecision = null;
@@ -128,8 +129,10 @@ export class AgentNode extends BaseNode {
         const reflex = await runReflex(latestHumanText(state.messages), state);
         if (reflex) {
           (state.metadata as any).reflexContext = formatReflexContext(reflex);
-          (state.metadata as any).reflexDecision = reflex;
-          void this.wsChatMessage(state, `⚡ Reflex ${ reflex.success ? 'ran' : 'tried' } ${ reflex.toolName } (confidence ${ reflex.confidence })`, 'assistant', 'thinking');
+          if (reflex.kind === 'acted') {
+            (state.metadata as any).reflexDecision = reflex;
+            void this.wsChatMessage(state, `⚡ Reflex ${ reflex.success ? 'ran' : 'tried' } ${ reflex.toolName } (confidence ${ reflex.confidence })`, 'assistant', 'thinking');
+          }
         }
       }
     }
