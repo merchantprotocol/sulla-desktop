@@ -404,6 +404,12 @@ export interface IpcMainInvokeEvents {
   'audio-driver-connect':                  () => { ok: boolean; alreadyConnected?: boolean; error?: string };
   'audio-driver-disconnect':               () => { ok: boolean; error?: string };
   'audio-driver-status':                   () => { connected: boolean; installed: boolean; socketExists: boolean };
+  'audio-driver:start-mic':                (serviceId?: string, formats?: string[]) => { ok: boolean; error?: string; micRunning: boolean; speakerRunning: boolean; running: boolean };
+  'audio-driver:stop-mic':                 (serviceId?: string) => { ok: boolean; micRunning: boolean; speakerRunning: boolean; running: boolean };
+  'audio-driver:start-speaker':            (serviceId?: string) => { ok: boolean; micRunning: boolean; speakerRunning: boolean; running: boolean };
+  'audio-driver:stop-speaker':             (serviceId?: string) => { ok: boolean; micRunning: boolean; speakerRunning: boolean; running: boolean };
+  'audio-driver:transcribe-start':         (opts: { mode: 'conversation' | 'secretary'; language?: string; model?: string; profileId?: string; sessionId?: string; manualTurn?: boolean }) => { ok: boolean; provider: 'whisper' | 'grok' };
+  'audio-driver:transcribe-stop':          () => { ok: boolean };
   // #endregion
 
   // #region Computer Use
@@ -1035,6 +1041,7 @@ export interface IpcRendererEvents {
     isLoading:    boolean;
   }) => void;
   'gateway-transcript':     (event: { event_type: string; text?: string; speaker?: string; session_id?: string; is_final?: boolean }) => void;
+  'audio-driver:mic-vad':   (data: { level?: number; [key: string]: unknown }) => void;
   'voice-kokoro-status-changed': (status: { phase: 'missing' | 'downloading' | 'extracting' | 'ready' | 'error'; progress: number; error?: string; bytes: number }) => void;
   'workflow-files-changed': () => void;
   'backend-locked':         (action?: string) => void;

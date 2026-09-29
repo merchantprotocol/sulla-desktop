@@ -18,6 +18,12 @@
           <p class="welcome-subtitle">
             Say <strong>"Hey Sulla"</strong> during a session to interact.
           </p>
+          <p
+            v-if="startError"
+            class="welcome-error"
+          >
+            {{ startError }}
+          </p>
 
           <!-- Terminal preview card (clickable) -->
           <div
@@ -324,6 +330,7 @@ const hasSessionEnded = ref(false);
 const transcript = ref<TranscriptEntry[]>([]);
 const isListening = ref(false);
 const listeningStatus = ref('Starting...');
+const startError = ref('');
 const wakeWordActive = ref(false);
 const audioLevel = ref(0);
 const sessionDuration = ref('0:00');
@@ -408,8 +415,30 @@ function ensureChatInterface(): ChatInterface {
   return chatInterface;
 }
 
-async function sendToChat(prompt: string, inputSource: string): Promise<string | null> {
+// Analysis, wake commands and private messages share one thread, and a reply
+// is matched by "newest assistant message once the graph is idle". Run them
+// one at a time so a reply can't be picked up by the wrong caller.
+let chatQueue: Promise<unknown> = Promise.resolve();
+
+function sendToChat(prompt: string, inputSource: string): Promise<string | null> {
+  const run = chatQueue.then(() => sendToChatNow(prompt, inputSource));
+  chatQueue = run.catch(() => null);
+
+  return run;
+}
+
+async function waitForGraphIdle(ci: ChatInterface, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (ci.graphRunning.value && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+}
+
+async function sendToChatNow(prompt: string, inputSource: string): Promise<string | null> {
   const ci = ensureChatInterface();
+  // A previous request that timed out may still be running — let it finish so
+  // its late reply isn't mistaken for this one.
+  await waitForGraphIdle(ci, 60_000);
   ci.query.value = prompt;
   const voiceMode = inputSource === 'secretary-analysis' ? 'secretary' : undefined;
   await ci.send({ inputSource, ...(voiceMode ? { voiceMode } : {}) });
@@ -533,6 +562,7 @@ async function startSession(): Promise<void> {
     isListening.value = true;
     hasSessionEnded.value = false;
     listeningStatus.value = 'Starting microphone...';
+    startError.value = '';
     actionItems.value = [];
     decisions.value = [];
     insights.value = [];
@@ -544,7 +574,9 @@ async function startSession(): Promise<void> {
   } catch (err) {
     console.error('[SecretaryMode] Failed to start session:', err);
     listeningStatus.value = 'Failed to start';
+    startError.value = (err as Error)?.message || 'Secretary Mode failed to start.';
     isListening.value = false;
+    updateTab(props.tabId, { title: 'Secretary' });
   }
 }
 
@@ -643,6 +675,12 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--text-dim, #6e7681);
   margin-bottom: 0.25rem;
+}
+
+.welcome-error {
+  margin-top: 0.75rem;
+  font-size: 12px;
+  color: var(--danger, #f85149);
 }
 
 .welcome-card {
