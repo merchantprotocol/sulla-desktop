@@ -21,7 +21,7 @@
         <div>
           <span class="frw-num">2</span>
           <b>Choose your AI</b>
-          <span>Sign in to Claude, OpenAI, Grok or another provider, or paste an API key.</span>
+          <span>Sign in with your Claude, ChatGPT or Grok subscription. No API keys.</span>
         </div>
         <div>
           <span class="frw-num">3</span>

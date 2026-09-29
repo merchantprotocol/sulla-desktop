@@ -299,6 +299,12 @@ firstRunCoordinator.addCondition('backendBooted');
 firstRunCoordinator.addCondition('credentialsSet');
 firstRunCoordinator.addCondition('deployCompleted');
 firstRunCoordinator.addCondition('wizardFinished');
+// The user signed in to their AI provider (Claude, ChatGPT or Grok — OAuth
+// only). Sign-in needs the VM and the database, so it runs on the wizard's
+// "Finishing" screen once deploy completes, and the wizard stays open until
+// it succeeds.
+firstRunCoordinator.addCondition('aiConnected');
+let firstRunAiSignInReady = false;
 
 firstRunCoordinator.registerStep(
   'deploy',
@@ -322,8 +328,30 @@ firstRunCoordinator.registerStep(
 );
 
 firstRunCoordinator.registerStep(
+  'aiSignInReady',
+  ['deployCompleted'],
+  async() => {
+    // OAuth handlers persist tokens through IntegrationService, which needs
+    // migrations to have run. initialize() is idempotent.
+    try {
+      const { getDatabaseManager } = await import('@pkg/agent/database/DatabaseManager');
+
+      await getDatabaseManager().initialize();
+    } catch (err) {
+      console.warn('[FirstRunCoordinator] Database not ready for AI sign-in:', err);
+    }
+    firstRunAiSignInReady = true;
+    const firstRunWindow = window.getWindow('first-run');
+
+    if (firstRunWindow && !firstRunWindow.isDestroyed()) {
+      firstRunWindow.webContents.send('first-run-ai:ready');
+    }
+  },
+);
+
+firstRunCoordinator.registerStep(
   'closeFirstRunWindow',
-  ['deployCompleted', 'wizardFinished'],
+  ['deployCompleted', 'wizardFinished', 'aiConnected'],
   () => {
     console.log('[FirstRunCoordinator] Closing first-run window and opening main');
     const firstRunWindow = window.getWindow('first-run');
@@ -781,6 +809,7 @@ async function doFirstRunDialog() {
     console.log('[FirstRunCoordinator] First-run wizard not needed — auto-satisfying wizard conditions');
     await firstRunCoordinator.setCondition('credentialsSet');
     await firstRunCoordinator.setCondition('wizardFinished');
+    await firstRunCoordinator.setCondition('aiConnected');
   }
   firstRunDialogComplete = true;
 }
@@ -1292,6 +1321,36 @@ ipcMainProxy.handle('start-backend' as any, () => {
     startBackend();
     backendStarted = true;
   }
+});
+
+// Finishing screen asks whether the VM + database are up so it can sign in.
+ipcMainProxy.handle('first-run-ai:status', () => ({ ready: firstRunAiSignInReady }));
+
+// Finishing screen signed the user in to their AI provider. Make that
+// sign-in the active account and the primary model, then let the wizard close.
+ipcMainProxy.handle('first-run-ai:connected', async(_event, providerId: string) => {
+  const { GROK_SUBSCRIPTION_DEFAULT_MODEL } = await import('@pkg/agent/languagemodels/GrokService');
+  const defaultModels: Record<string, string> = {
+    'claude-code': 'claude-code', // CLI default
+    codex:         'codex', // CLI default
+    grok:          GROK_SUBSCRIPTION_DEFAULT_MODEL,
+  };
+  const modelId = defaultModels[providerId];
+
+  if (!modelId) {
+    throw new Error(`Unknown first-run AI provider: ${ providerId }`);
+  }
+  console.log(`[FirstRunCoordinator] AI provider connected: ${ providerId }`);
+  try {
+    const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+    const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+
+    await getIntegrationService().setActiveAccount(providerId, 'oauth');
+    await getModelProviderService().selectModel(providerId, modelId);
+  } catch (err) {
+    console.warn('[FirstRunCoordinator] Could not make the new sign-in primary:', err);
+  }
+  await firstRunCoordinator.setCondition('aiConnected');
 });
 
 /// /////////////////////////////////////////////////////////////////////////////
