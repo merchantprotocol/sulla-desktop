@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
+import { buildRemoteKillCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { isObserverSpawn } from './claudeToolPolicy';
 import { removeFileOnExit, systemPromptFromMessages, writeSystemPromptFile } from './cliSystemPromptFile';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
@@ -41,6 +42,8 @@ const STEER_RESUME_NOTE = '[Steering message] The user sent the message below wh
 interface CodexPrewarmRecord {
   proc:            childProcess.ChildProcessWithoutNullStreams;
   mcpSession:      RegisteredSession | null;
+  /** VM-side pidfile of this process (see buildRemoteKillCommand). */
+  pidFile:         string;
   model:           string;
   existingSession: string | undefined;
   readOnly:        boolean;
@@ -183,6 +186,8 @@ export class CodexService extends BaseLanguageModel {
      * carries only the general Sulla prompt.
      */
     instructionsPath?: string | null;
+    /** VM-side pidfile the launched codex records its PID in. */
+    pidFile:          string;
   }): string[] {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
@@ -225,9 +230,10 @@ export class CodexService extends BaseLanguageModel {
     const mcpTokenExport = p.mcpSession
       ? ` ${ CODEX_MCP_TOKEN_ENV }=${ shq(p.mcpSession.id) } SULLA_TOOL_SESSION=${ shq(p.mcpSession.id) }`
       : '';
-    // The PID line (stderr, before exec — same PID after) lets a steer
-    // interrupt exactly this run instead of every codex in the VM.
-    const innerCmd = `export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
+    // The pidfile lets an abort kill exactly this run; the PID line (stderr,
+    // before exec — same PID after) lets a steer interrupt it. Neither
+    // touches any other codex in the VM.
+    const innerCmd = `echo $$ > ${ shq(p.pidFile) }; export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
@@ -267,7 +273,8 @@ export class CodexService extends BaseLanguageModel {
       const limactlPath = paths.limactl;
       const limaHome = paths.lima;
       const readOnly = !!(state.metadata as any)?.verifierReadOnly;
-      const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly });
+      const pidFile = newRemotePidFile('sulla-codex');
+      const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly, pidFile });
       const proc = childProcess.spawn(limactlPath, args, {
         env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
       });
@@ -275,6 +282,7 @@ export class CodexService extends BaseLanguageModel {
       const record: CodexPrewarmRecord = {
         proc,
         mcpSession,
+        pidFile,
         model:     this.model || 'codex',
         existingSession,
         readOnly,
@@ -743,7 +751,8 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const instructionsPath = !adopted && isObserverSpawn(options.state?.metadata as any)
       ? writeSystemPromptFile(systemPromptFromMessages(messages))
       : null;
-    const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly, instructionsPath });
+    const pidFile = adopted ? adopted.pidFile : newRemotePidFile('sulla-codex');
+    const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly, instructionsPath, pidFile });
 
     return await new Promise((resolve, reject) => {
       let mcpCleaned = false;
@@ -807,12 +816,14 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         //    `exec` in the inner shell the remote codex usually gets SIGHUP).
         try { proc.kill('SIGTERM') } catch { /* already dead */ }
 
-        // 2) Belt-and-suspenders: explicitly kill any lingering codex process
+        // 2) Belt-and-suspenders: explicitly kill THIS run's codex process
         //    inside the VM so an orphan doesn't keep burning plan quota.
+        //    Pidfile-targeted — a VM-wide `pkill -f 'codex exec'` also killed
+        //    every concurrent codex run.
         try {
           const killProc = childProcess.spawn(
             limactlPath,
-            ['shell', '0', '--', 'pkill', '-TERM', '-f', 'codex exec'],
+            ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, 'TERM')],
             {
               env:      { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
               stdio:    'ignore',
@@ -1129,6 +1140,16 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         // Steers taken but never delivered (the run ended first) go back to
         // the graph, which runs another turn for them.
         for (const m of steered) markSteerPending(m);
+
+        // Aborted by the caller (Stop, or a new/steering message superseding
+        // this run) — report an abort, not a provider failure that would
+        // trigger fallback and a user-facing error for a cancelled run.
+        if (options.signal?.aborted && !stalled) {
+          const abortErr = new Error('Codex run aborted');
+          abortErr.name = 'AbortError';
+          reject(abortErr);
+          return;
+        }
 
         // Stall-watchdog kill — surface a clear, retryable error instead of
         // falling through to the generic no-output message.

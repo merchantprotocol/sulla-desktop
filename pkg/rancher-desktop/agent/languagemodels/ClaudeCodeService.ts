@@ -11,7 +11,7 @@ import {
   wakeTargetFromState,
   type WakeTarget,
 } from './claudeBackgroundTasks';
-import { buildClaudeLaunchCommand } from './claudeLaunchCommand';
+import { buildClaudeLaunchCommand, buildRemoteKillCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { disallowedToolsFor } from './claudeToolPolicy';
 import { removeFileOnExit, systemPromptFromMessages, writeSystemPromptFile } from './cliSystemPromptFile';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
@@ -98,6 +98,8 @@ interface PrewarmRecord {
   proc:          childProcess.ChildProcessWithoutNullStreams;
   mcpSession:    RegisteredSession | null;
   mcpConfigPath: string | null;
+  /** VM-side pidfile of this process (see buildRemoteKillCommand). */
+  pidFile:       string;
   model:         string;
   createdAt:     number;
   closed:        boolean;
@@ -274,6 +276,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
      * never reads it — this flag is the only route Sulla's prompt has in.
      */
     systemPromptPath?: string | null;
+    /** VM-side pidfile the launched claude records its PID in. */
+    pidFile:         string;
   }): string[] {
     // POSIX single-quote escape. Single-quoted strings are literal in sh, so
     // no backtick/$VAR/! expansion can fire against untrusted text.
@@ -328,7 +332,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     // to the limactl/SSH pipe rather than a terminal. Prefer stdbuf when the
     // VM provides it, but never make Claude startup depend on that optional
     // binary: existing installations may not have coreutils installed.
-    const innerCmd = buildClaudeLaunchCommand(envAssignments, claudeArgs);
+    const innerCmd = buildClaudeLaunchCommand(envAssignments, claudeArgs, p.pidFile);
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
@@ -375,7 +379,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
       // pre-booted primary gets the full Sulla prompt (byte-stable by design).
       const systemPromptPath = writeSystemPromptFile(await this.fallbackSystemPrompt());
       const disallowedTools = disallowedToolsFor(state.metadata as any);
-      const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: true, disallowedTools, systemPromptPath });
+      const pidFile = newRemotePidFile();
+      const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: true, disallowedTools, systemPromptPath, pidFile });
       const proc = childProcess.spawn(paths.limactl, args, {
         env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
       });
@@ -385,6 +390,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
         proc,
         mcpSession,
         mcpConfigPath,
+        pidFile,
         model:     this.model || 'claude-code',
         createdAt: Date.now(),
         closed:    false,
@@ -1029,7 +1035,8 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const systemPromptPath = adopted
       ? null
       : writeSystemPromptFile(systemPromptFromMessages(messages) || await this.fallbackSystemPrompt());
-    const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: speculative, disallowedTools, systemPromptPath });
+    const pidFile = adopted ? adopted.pidFile : newRemotePidFile();
+    const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: speculative, disallowedTools, systemPromptPath, pidFile });
 
     const cleanupMcp = () => {
       if (mcpSession) {
@@ -1065,6 +1072,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           proc,
           mcpSession,
           mcpConfigPath,
+          pidFile,
           model:     this.model || 'claude-code',
           createdAt: Date.now(),
           closed:    false,
@@ -1198,16 +1206,17 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         } catch { /* ignore */ }
       };
 
-      // Kill any lingering claude process inside the VM. Without a TTY, SSH
-      // signal propagation isn't guaranteed — fire a follow-up pkill so an
+      // Kill THIS run's claude process inside the VM. Without a TTY, SSH
+      // signal propagation isn't guaranteed — fire a follow-up kill so an
       // orphaned claude doesn't keep burning tokens after the user hits stop.
-      // Safe because the VM only ever runs claude via this service
-      // (user-level claude lives on the host, not in the VM).
+      // Targeted by pidfile, never `pkill -f 'claude -p'`: that also killed
+      // every concurrent run (other agents, and the run a steering/queued
+      // message had just started), which died as "returned no output".
       const killRemoteClaude = (sig: 'TERM' | 'KILL') => {
         try {
           const killProc = childProcess.spawn(
             limactlPath,
-            ['shell', '0', '--', 'pkill', `-${ sig }`, '-f', 'claude -p'],
+            ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, sig)],
             {
               env:      { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
               stdio:    'ignore',
@@ -1224,7 +1233,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       //   1) SIGTERM the host-side limactl process — closes the SSH-style
       //      session; with `exec` in the inner shell (see above) the remote
       //      claude usually receives SIGHUP and dies.
-      //   2) pkill inside the VM (see killRemoteClaude).
+      //   2) targeted kill inside the VM (see killRemoteClaude).
       //   3) Escalate to SIGKILL after a grace period — a limactl wedged in
       //      the SSH mux can ignore SIGTERM entirely, which is exactly the
       //      state that strands a hung run.
@@ -1798,6 +1807,17 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
         if (settled) return;                                           // a buffered `result` may have settled it
         settled = true;
+
+        // Aborted by the caller (Stop, or a new/steering message superseding
+        // this run) — the kill caused the empty exit, so report an abort. A
+        // "no output" error here would trigger provider fallback and show the
+        // user a model failure for a run they cancelled.
+        if (options.signal?.aborted && !stalled) {
+          const abortErr = new Error('Claude Code run aborted');
+          abortErr.name = 'AbortError';
+          reject(abortErr);
+          return;
+        }
 
         // Stall-watchdog kill — surface a clear, retryable error instead of
         // falling through to the generic no-output message.

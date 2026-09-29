@@ -49,6 +49,7 @@ function makeRecord(proc = makeProc()) {
     proc,
     mcpSession:    null,
     mcpConfigPath: null,
+    pidFile:       '/tmp/sulla-claude-test.pid',
     model:         'claude-code',
     createdAt:     Date.now(),
     closed:        false,
