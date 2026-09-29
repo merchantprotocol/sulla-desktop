@@ -81,7 +81,10 @@ function contain(win: BrowserWindow, partition: string, logPrefix: string, onUrl
     if (onUrl?.(u)) event.preventDefault();
   };
   wc.on('will-navigate', block);
-  wc.on('will-redirect', block);
+  wc.on('will-redirect', (event, u) => {
+    console.log(`${ logPrefix } Sign-in window redirecting to ${ describeUrl(u) }`);
+    block(event, u);
+  });
   wc.on('did-navigate', (_event, u) => {
     console.log(`${ logPrefix } Sign-in window at ${ describeUrl(u) }`);
     onUrl?.(u);

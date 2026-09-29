@@ -188,6 +188,17 @@ async function persistTokenToVault(token: string): Promise<void> {
   }
 }
 
+// claude.ai's login session cookie.
+const CLAUDE_SESSION_COOKIE = 'sessionKey';
+// Pages only a logged-in user lands on.
+const LOGGED_IN_PATH = /^\/(new|chats?|recents|projects?)(\/|$)/;
+// Enough to recover from a dropped authorize step, never a reload loop.
+const MAX_AUTHORIZE_RETURNS = 3;
+
+function isClaudeHost(hostname: string): boolean {
+  return hostname === 'claude.ai' || hostname.endsWith('.claude.ai') || hostname === 'claude.com' || hostname.endsWith('.claude.com');
+}
+
 /**
  * Open the OAuth URL in an Electron BrowserWindow and intercept the
  * callback to extract the authorization code and state.
@@ -220,6 +231,19 @@ function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Prom
           return true;
         }
       }
+      // claude.ai drops the authorize step when it sends a logged-out user to
+      // log in, and leaves them on the Claude app after login. Once a
+      // logged-in page shows up, go back to the authorize URL.
+      if (isClaudeHost(parsed.hostname) && LOGGED_IN_PATH.test(parsed.pathname)) {
+        returnToAuthorize(`landed on ${ parsed.pathname }`);
+      } else if (isClaudeHost(parsed.hostname) && parsed.pathname === '/') {
+        // '/' is both the login page and the app home, so ask the cookie jar.
+        window.webContents.session.cookies.get({ name: CLAUDE_SESSION_COOKIE }).then((found) => {
+          const signedIn = found.some(c => isClaudeHost((c.domain ?? '').replace(/^\./, '')));
+          console.log(`[ClaudeOAuth] At claude.ai home — signed in: ${ signedIn ? 'yes' : 'no' }`);
+          if (signedIn) returnToAuthorize('already signed in at home page');
+        }).catch(() => { /* cookie jar unavailable */ });
+      }
     } catch { /* not a URL */ }
     return false;
   };
@@ -233,7 +257,29 @@ function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Prom
     logPrefix: '[ClaudeOAuth]',
     onUrl:     handleUrl,
   });
-  window.on('closed', () => doResolve(null));
+
+  let returns = 0;
+  function returnToAuthorize(reason: string) {
+    if (resolved || window.isDestroyed() || returns >= MAX_AUTHORIZE_RETURNS) return;
+    returns++;
+    console.log(`[ClaudeOAuth] Signed in (${ reason }) — returning to the authorize page (${ returns }/${ MAX_AUTHORIZE_RETURNS })`);
+    window.loadURL(url).catch((err) => console.warn('[ClaudeOAuth] Could not reload the authorize page:', err));
+  }
+
+  // Login sets claude.ai's session cookie, whichever page or popup it
+  // happened in. That's the reliable signal to resume the authorize step.
+  const cookies = window.webContents.session.cookies;
+  const onCookie = (_e: Electron.Event, cookie: Electron.Cookie, _cause: string, removed: boolean) => {
+    if (!removed && cookie.name === CLAUDE_SESSION_COOKIE && isClaudeHost((cookie.domain ?? '').replace(/^\./, ''))) {
+      returnToAuthorize('session cookie set');
+    }
+  };
+  cookies.on('changed', onCookie);
+
+  window.on('closed', () => {
+    cookies.removeListener('changed', onCookie);
+    doResolve(null);
+  });
 
   console.log(`[ClaudeOAuth] Opening auth window: ${ redactUrl(url) }`);
   window.loadURL(url);
