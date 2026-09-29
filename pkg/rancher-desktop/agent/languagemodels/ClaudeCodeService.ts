@@ -68,6 +68,15 @@ const PREWARM_IDLE_REAP_MS = 60_000;
 const WARM_IDLE_REAP_MS = 5 * 60_000;
 
 /**
+ * Bounds on how many idle (prewarmed or parked) `claude` processes are kept
+ * warm across all conversations. Idle reaps never take the pool below MIN;
+ * parking or prewarming past MAX retires the longest-idle one. Overridable
+ * via the claudeCodeWarmPoolMin / claudeCodeWarmPoolMax settings.
+ */
+const WARM_POOL_MIN_DEFAULT = 5;
+const WARM_POOL_MAX_DEFAULT = 5;
+
+/**
  * Ceiling on how long a parked process is kept alive past WARM_IDLE_REAP_MS
  * because it still owns background tasks (Bash run_in_background, Monitor)
  * or an undelivered completion. Reaping kills those tasks, so the normal idle
@@ -126,6 +135,9 @@ interface PrewarmRecord {
   parkedBuffer?:  string;
   /** When the idle reap was first deferred for live background work. */
   bgHoldSince?:   number;
+  /** Conversation this process is pooled under, and when it went idle. */
+  convId?:        string;
+  idleSince?:     number;
 }
 
 export class ClaudeCodeService extends BaseLanguageModel {
@@ -135,6 +147,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
   // conversationId → a speculatively-booted process warming up during the
   // pre-turn phase, claimed by the next runClaude. See prewarm().
   private prewarmed = new Map<string, PrewarmRecord>();
+
+  // Every idle process (prewarmed or parked), for the pool min/max bounds.
+  private idle = new Set<PrewarmRecord>();
+  private poolMin = WARM_POOL_MIN_DEFAULT;
+  private poolMax = WARM_POOL_MAX_DEFAULT;
 
   // Routes background-task completions from parked CLI processes back into
   // their graph threads. See claudeBackgroundTasks.ts.
@@ -244,6 +261,51 @@ export class ClaudeCodeService extends BaseLanguageModel {
     }
   }
 
+  /** Load the idle-pool bounds from settings (falls back to the defaults). */
+  private async refreshPoolLimits(): Promise<void> {
+    try {
+      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+      const min = parseInt(String(await SullaSettingsModel.get('claudeCodeWarmPoolMin', String(WARM_POOL_MIN_DEFAULT))), 10);
+      const max = parseInt(String(await SullaSettingsModel.get('claudeCodeWarmPoolMax', String(WARM_POOL_MAX_DEFAULT))), 10);
+      this.poolMin = Number.isFinite(min) && min >= 0 ? min : WARM_POOL_MIN_DEFAULT;
+      this.poolMax = Math.max(1, this.poolMin, Number.isFinite(max) ? max : WARM_POOL_MAX_DEFAULT);
+    } catch { /* keep current bounds */ }
+  }
+
+  /** Idle processes that are still alive. */
+  private liveIdleCount(): number {
+    let n = 0;
+    for (const rec of this.idle) if (!rec.closed) n++;
+    return n;
+  }
+
+  /**
+   * Add a process to the idle pool, then retire the longest-idle ones until
+   * the pool is back at poolMax. Processes still running background tasks
+   * are retired last, since killing them kills those tasks.
+   */
+  private markIdle(rec: PrewarmRecord, convId: string): void {
+    rec.convId = convId;
+    rec.idleSince = Date.now();
+    this.idle.add(rec);
+    for (const r of [...this.idle]) if (r.closed) this.retireIdle(r);
+    while (this.idle.size > this.poolMax) {
+      const holds = (r: PrewarmRecord) => !!r.bgTracker && (r.bgTracker.liveTaskCount > 0 || r.bgTracker.inAutonomousTurn || r.bgTracker.pendingCount > 0);
+      const victim = [...this.idle]
+        .filter(r => r !== rec)
+        .sort((a, b) => Number(holds(a)) - Number(holds(b)) || (a.idleSince ?? 0) - (b.idleSince ?? 0))[0];
+      if (!victim) break;
+      log.log(`[ClaudeCodeService] warm pool over max (${ this.poolMax }) — retiring idle proc for convId=${ victim.convId }`);
+      this.retireIdle(victim);
+    }
+  }
+
+  /** Kill an idle process and drop it from the pool map if it's the pooled one. */
+  private retireIdle(rec: PrewarmRecord): void {
+    if (rec.convId && this.prewarmed.get(rec.convId) === rec) this.prewarmed.delete(rec.convId);
+    this.killPrewarmRecord(rec);
+  }
+
   /** Remove a specific pool record (if still current) and tear it down. */
   private disposePrewarmRecord(rec: PrewarmRecord, convId: string): void {
     if (this.prewarmed.get(convId) === rec) this.prewarmed.delete(convId);
@@ -348,6 +410,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     try {
       if (process.platform === 'win32') return;         // no Lima on Windows
       if (!await this.speculativeBootEnabled()) return;
+      await this.refreshPoolLimits();
 
       const convId = typeof (state.metadata as any)?.threadId === 'string'
         ? (state.metadata as any).threadId
@@ -403,12 +466,18 @@ export class ClaudeCodeService extends BaseLanguageModel {
       proc.stdin.on('error', () => { /* EPIPE before adoption — non-fatal */ });
       proc.once('exit', () => { record.closed = true; });
       proc.once('error', () => { record.closed = true; });
-      record.reapTimer = setTimeout(() => {
-        if (this.prewarmed.get(convId) === record) this.disposePrewarm(convId);
-      }, PREWARM_IDLE_REAP_MS);
-      record.reapTimer.unref?.();
+      const armPrewarmReap = () => {
+        record.reapTimer = setTimeout(() => {
+          if (this.prewarmed.get(convId) !== record) return;
+          if (this.liveIdleCount() <= this.poolMin) { armPrewarmReap(); return; }   // keep the pool at min
+          this.disposePrewarm(convId);
+        }, PREWARM_IDLE_REAP_MS);
+        record.reapTimer.unref?.();
+      };
+      armPrewarmReap();
 
       this.prewarmed.set(convId, record);
+      this.markIdle(record, convId);
       log.log(`[ClaudeCodeService] prewarm: speculative boot for convId=${ convId } session=${ existingSession ?? '(new)' }`);
     } catch (err) {
       log.log(`[ClaudeCodeService] prewarm skipped: ${ (err as Error)?.message ?? err }`);
@@ -420,6 +489,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     const rec = this.prewarmed.get(convId);
     if (!rec) return null;
     this.prewarmed.delete(convId);
+    this.idle.delete(rec);
     if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
     if (rec.closed || rec.model !== model) {
       this.killPrewarmRecord(rec);                       // dead or model mismatch
@@ -546,6 +616,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
         }
         log.warn(`[ClaudeCodeService] Reaping parked proc for convId=${ convId } with ${ t?.liveTaskCount ?? 0 } background task(s) still live after ${ Math.round(BACKGROUND_TASK_MAX_PARK_MS / 60_000) }min`);
       }
+      if (this.liveIdleCount() <= this.poolMin) {   // keep the pool at min
+        this.armParkedReap(rec, convId);
+        return;
+      }
       this.disposePrewarm(convId);
     }, WARM_IDLE_REAP_MS);
     rec.reapTimer.unref?.();
@@ -574,8 +648,21 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   private killPrewarmRecord(rec: PrewarmRecord): void {
+    this.idle.delete(rec);
     if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
     try { rec.proc.kill('SIGTERM'); } catch { /* already dead */ }
+    // SIGTERM on the host-side limactl doesn't reliably reach claude in the VM
+    // (no TTY) — an evicted/reaped proc kept running its session headless,
+    // and the next --resume of that session collided with it. Kill by pidfile.
+    try {
+      const killProc = childProcess.spawn(
+        paths.limactl,
+        ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(rec.pidFile, 'TERM')],
+        { env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' }, stdio: 'ignore', detached: true },
+      );
+      killProc.on('error', () => { /* best effort */ });
+      killProc.unref();
+    } catch { /* best effort */ }
     if (rec.mcpSession) { try { rec.mcpSession.revoke(); } catch { /* ignore */ } }
     if (rec.mcpConfigPath) { try { fs.unlinkSync(rec.mcpConfigPath); } catch { /* ignore */ } }
   }
@@ -977,6 +1064,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // always null and the legacy text path runs byte-for-byte as before.
     const warm = await this.warmPoolEnabled();
     const speculative = warm || await this.speculativeBootEnabled();
+    if (warm) await this.refreshPoolLimits();
     if (speculative) await this.waitForAutonomousTurn(convId);
     const adopted = speculative ? this.claimPrewarm(convId, this.model || 'claude-code') : null;
 
@@ -1173,6 +1261,14 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       let errorMessage = '';
       let sessionInUse = false;
       let settled = false;   // guards resolve/reject across the result-vs-close paths
+      // stream-json input only: set once the replay echo of THIS turn's prompt
+      // arrives. A `result` before that belongs to a turn the CLI ran on its
+      // own — e.g. on --resume it injects "background command didn't finish
+      // before the previous session ended" for tasks the killed process left
+      // behind and answers it ("No response requested.") BEFORE reading our
+      // prompt. Settling on that result failed the turn as "claude produced
+      // no output" while the CLI went on to answer the real prompt unseen.
+      let promptConsumed = !speculative;
 
       // ── Perf: per-tool execution timing inside the claude CLI ──────────
       // The tool-use loop (Grep/Glob/Read/Bash/etc.) runs INSIDE the spawned
@@ -1487,6 +1583,10 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         if (parsed.type === 'user' && parsed.isReplay) {
           const echoed = typeof parsed.message?.content === 'string' ? parsed.message.content : '';
           const idx = steersInFlight.findIndex(s => s.content === echoed);
+          if (!promptConsumed && idx < 0 && !echoed.trimStart().startsWith('<task-notification>')) {
+            promptConsumed = true;
+            return;
+          }
           if (idx >= 0) {
             steersInFlight.splice(idx, 1);
             if (steerGraceTimer && !steersInFlight.length) { clearTimeout(steerGraceTimer); steerGraceTimer = null; }
@@ -1509,6 +1609,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         if (ev) {
           // Text chunks → stream to caller as content
           if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
+            if (!promptConsumed) return;   // a CLI-initiated turn's text, not ours
             stopHeartbeat();
             if (!firstTokenAt) firstTokenAt = Date.now();
             textCollected += ev.delta.text;
@@ -1599,6 +1700,12 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         }
 
         // Final result event — capture full text and record usage/cost.
+        if (parsed.type === 'result' && !promptConsumed && !parsed.is_error) {
+          log.log(`[ClaudeCodeService] ignoring result of a CLI-initiated turn that ran before this turn's prompt (convId=${ convId })`);
+          textCollected = '';
+          return;
+        }
+
         if (parsed.type === 'result') {
           lastUsage = parsed.usage;
           // Perf summary: split the run into tool-execution time vs the rest
@@ -1765,6 +1872,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           stdoutBuffer = '';
           this.armParkedReap(entry, convId);
           this.prewarmed.set(convId, entry);
+          this.markIdle(entry, convId);
           parked = true;
         }
         const liveBg = poolEntry?.bgTracker?.liveTaskCount ?? 0;
