@@ -120,13 +120,23 @@ export class AgentNode extends BaseNode {
     // what already happened via <reflex_context>. Below threshold it runs
     // nothing; a close-enough guess becomes a <reflex_context> hint the model
     // may act on, and the post-turn Reflex Trainer learns from the model.
+    // Reflex prewarm: its guesses (even far below threshold) warm the likely
+    // tools while subconscious recall and the model run. Never changes the
+    // tool set; abandoned when this turn's model call returns.
+    let reflexPrewarm: import('../reflex/reflexPrewarm').ReflexPrewarmHandle | null = null;
+    const reflexPrewarmAbort = new AbortController();
     if (!isToolCallLoop) {
       (state.metadata as any).reflexContext = '';
       (state.metadata as any).reflexDecision = null;
       (state.metadata as any).turnToolEvents = [];
       if (!(state.metadata as any).isSubAgent && !_inWorkflow) {
-        const { runReflex, formatReflexContext, latestHumanText } = await import('../reflex/ReflexService');
-        const reflex = await runReflex(latestHumanText(state.messages), state);
+        const { runReflex, formatReflexContext, latestHumanText, toolCategory } = await import('../reflex/ReflexService');
+        const { startReflexPrewarm } = await import('../reflex/reflexPrewarm');
+        const reflex = await runReflex(latestHumanText(state.messages), state, {
+          onPrediction: (prediction, settings) => {
+            reflexPrewarm = startReflexPrewarm(prediction, toolCategory, { signal: reflexPrewarmAbort.signal, enabled: settings.prewarm });
+          },
+        });
         if (reflex) {
           (state.metadata as any).reflexContext = formatReflexContext(reflex);
           if (reflex.kind === 'acted') {
@@ -194,12 +204,16 @@ export class AgentNode extends BaseNode {
     const executeStart = Date.now();
     const agentResult = await this.executeAgent(enrichedPrompt, state);
     const executeMs = Date.now() - executeStart;
+    reflexPrewarmAbort.abort();
 
     // Perf: split the user-visible turn into the blocking subconscious prelude
     // vs the main agent execution. Only log on fresh turns (not tool-call loop
     // iterations) so the numbers map to one user message.
+    // predicted/prewarm let perf.log compare turns per predicted category with
+    // prewarm on vs off (setting reflexPrewarmEnabled=false is the baseline).
     if (!isToolCallLoop) {
-      perf.log(`[TurnTiming] threadId=${ (state.metadata as any).threadId } subconsciousMs=${ subconsciousMs } executeMs=${ executeMs } totalMs=${ subconsciousMs + executeMs } msgs=${ state.messages.length }`);
+      const { formatPrewarmTiming } = await import('../reflex/reflexPrewarm');
+      perf.log(`[TurnTiming] threadId=${ (state.metadata as any).threadId } subconsciousMs=${ subconsciousMs } executeMs=${ executeMs } totalMs=${ subconsciousMs + executeMs } msgs=${ state.messages.length } ${ formatPrewarmTiming(reflexPrewarm) }`);
     }
 
     // If aborted while the LLM was responding, stop immediately —

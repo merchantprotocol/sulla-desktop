@@ -13,6 +13,9 @@
  * reflexHintThreshold (or policy blocked it), the model gets a <reflex_context>
  * hint naming the tool(s) similar past requests used, so it can consider them.
  * Either way the post-turn Reflex Trainer learns from what the model did.
+ *
+ * Independently of acting, every guess (even far below threshold) can start a
+ * read-only prewarm of what the model will probably need — see reflexPrewarm.
  */
 
 import { ReflexModel } from '../database/models/ReflexModel';
@@ -22,6 +25,7 @@ import { toolRegistry } from '../tools/registry';
 import { REFLEX_NONE, ReflexEngine, type ReflexCandidate, type ReflexPrediction } from './ReflexEngine';
 import { DEFAULT_REFLEX_THRESHOLD, parseCategories, reflexPolicyViolation } from './reflexPolicy';
 import { reflexActionLabel } from './reflexLabels';
+import { startReflexPrewarm } from './reflexPrewarm';
 
 export { DEFAULT_REFLEX_THRESHOLD } from './reflexPolicy';
 export { reflexActionLabel } from './reflexLabels';
@@ -55,17 +59,20 @@ export interface ReflexSettings {
   threshold:         number;
   hintThreshold:     number;
   allowedCategories: string[];
+  /** Warm likely tools from Reflex's guesses (never changes the model's tool set) */
+  prewarm:           boolean;
 }
 
 let engine: ReflexEngine | null = null;
 let engineVersion = -1;
 
 export async function getReflexSettings(): Promise<ReflexSettings> {
-  const [enabled, threshold, hintThreshold, categories] = await Promise.all([
+  const [enabled, threshold, hintThreshold, categories, prewarm] = await Promise.all([
     SullaSettingsModel.get('reflexEnabled', 'true'),
     SullaSettingsModel.get('reflexConfidenceThreshold', String(DEFAULT_REFLEX_THRESHOLD)),
     SullaSettingsModel.get('reflexHintThreshold', String(DEFAULT_REFLEX_HINT_THRESHOLD)),
     SullaSettingsModel.get('reflexAllowedCategories', ''),
+    SullaSettingsModel.get('reflexPrewarmEnabled', 'true'),
   ]);
   const unit = (raw: unknown, fallback: number) => {
     const parsed = Number(raw);
@@ -76,6 +83,7 @@ export async function getReflexSettings(): Promise<ReflexSettings> {
     threshold:         unit(threshold, DEFAULT_REFLEX_THRESHOLD),
     hintThreshold:     unit(hintThreshold, DEFAULT_REFLEX_HINT_THRESHOLD),
     allowedCategories: parseCategories(categories),
+    prewarm:           String(prewarm) !== 'false',
   };
 }
 
@@ -112,17 +120,27 @@ function hintFrom(prediction: ReflexPrediction, decisionId: string, minConfidenc
   return candidates.length ? { kind: 'hint', decisionId, candidates, blockedReason } : null;
 }
 
+export interface RunReflexHooks {
+  /** Called once with the raw prediction, before anything runs — used to start prewarm. */
+  onPrediction?: (prediction: ReflexPrediction, settings: ReflexSettings) => void;
+}
+
 /**
  * Decide and (maybe) act. Returns an 'acted' result when a tool ran, a
  * 'hint' when the model should consider a tool Reflex would not run itself,
  * or null. Never throws — reflex failures must never block the model turn.
  */
-export async function runReflex(message: string, state: any): Promise<ReflexOutcome | null> {
+export async function runReflex(message: string, state: any, hooks: RunReflexHooks = {}): Promise<ReflexOutcome | null> {
   try {
     const settings = await getReflexSettings();
     if (!settings.enabled || !message.trim()) return null;
 
     const prediction = await predictReflex(message);
+    try {
+      hooks.onPrediction?.(prediction, settings);
+    } catch (err) {
+      console.warn('[Reflex] onPrediction hook failed:', err instanceof Error ? err.message : err);
+    }
     if (prediction.toolName === REFLEX_NONE) return null;
 
     const threadId = state?.metadata?.threadId ?? null;
@@ -225,6 +243,9 @@ export async function previewReflex(message: string): Promise<ReflexPreview | nu
     if (!settings.enabled || !message.trim()) return null;
 
     const prediction = await predictReflex(message);
+    // The human is still typing: warm what this draft points at so the
+    // model's first tool call is already hot when they hit send.
+    startReflexPrewarm(prediction, toolCategory, { enabled: settings.prewarm });
     if (prediction.toolName === REFLEX_NONE || prediction.confidence < settings.threshold) return null;
 
     const violation = reflexPolicyViolation({
