@@ -7,9 +7,9 @@
 // billing. onTokenReceived also fires on every scheduled refresh, which keeps
 // the auth file current from the host side.
 
+import { linkCodexHomeIntoVm, removeCodexAuthFile, writeCodexAuthFile } from '../../../util/codexAuthFile';
 import { OAuthProvider, type OAuthProviderConfig, type OAuthTokenSet } from '../OAuthProvider';
 import { registerOAuthProvider } from '../registry';
-import { removeCodexAuthFile, writeCodexAuthFile } from '../../../util/codexAuthFile';
 
 class CodexOAuthProvider extends OAuthProvider {
   readonly config: OAuthProviderConfig = {
@@ -35,6 +35,8 @@ class CodexOAuthProvider extends OAuthProvider {
   override async onTokenReceived(tokens: OAuthTokenSet): Promise<void> {
     if (writeCodexAuthFile(tokens)) {
       console.log('[CodexOAuth] ~/.codex/auth.json updated');
+      // Every `codex` in the VM, not just CodexService, should see this login.
+      await linkCodexHomeIntoVm();
     }
 
     // Bust the LLM cache so the next agent call sees the new credentials

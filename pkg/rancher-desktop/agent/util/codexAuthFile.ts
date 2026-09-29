@@ -99,6 +99,41 @@ export function writeCodexAuthFile(tokens: OAuthTokenSet): boolean {
   }
 }
 
+/**
+ * Point the VM user's ~/.codex at the host's ~/.codex.
+ *
+ * `limactl shell` runs with HOME=/home/<user>.linux, so a plain `codex` in the
+ * VM (an agent's exec, a terminal) looked for its login there and reported
+ * "Not logged in" even though the host-path auth.json was fresh. Only
+ * CodexService, which forces CODEX_HOME, saw it. The symlink gives every
+ * `codex` in the VM the same login. Idempotent; a real directory already at
+ * the VM path is moved aside, never deleted.
+ */
+export async function linkCodexHomeIntoVm(): Promise<void> {
+  if (typeof process !== 'undefined' && process.type === 'renderer') return;
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return;
+  const target = codexHomeDir();
+  const script = [
+    't="$1"; d="$HOME/.codex"',
+    'if [ -L "$d" ]; then [ "$(readlink "$d")" = "$t" ] && exit 0; rm "$d";',
+    'elif [ -e "$d" ]; then mv "$d" "$d.vm-backup-$(date +%s)"; fi',
+    'ln -s "$t" "$d"',
+  ].join('\n');
+  try {
+    const { default: paths } = await import('@pkg/utils/paths');
+    const { execFile } = await import('child_process');
+    await new Promise<void>((resolve, reject) => {
+      execFile(paths.limactl, ['shell', '0', '--', 'sh', '-c', script, 'sh', target], {
+        env:     { ...process.env, LIMA_HOME: paths.lima },
+        timeout: 30_000,
+      }, err => (err ? reject(err) : resolve()));
+    });
+    console.log(`[codexAuthFile] VM ~/.codex linked to ${ target }`);
+  } catch (err) {
+    console.warn('[codexAuthFile] Could not link ~/.codex into the VM (VM not running?):', err);
+  }
+}
+
 /** Delete ~/.codex/auth.json — called when the codex integration is
  *  disconnected so the CLI stops authenticating with revoked credentials. */
 export function removeCodexAuthFile(): void {
