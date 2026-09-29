@@ -61,6 +61,24 @@ describe('ReflexEngine', () => {
     expect(engine.predict('open the dashboard').confidence).toBeLessThanOrEqual(0.5);
   });
 
+  it('ranks every decision the neighbourhood voted for as candidates', () => {
+    const engine = new ReflexEngine([
+      ex('open the dashboard', 'tab', { url: 'http://localhost:3000' }),
+      ex('open the dashboard', 'tab', { url: 'http://localhost:3000' }),
+      ex('open the dashboard', 'tab', { url: 'http://localhost:4000' }),
+    ]);
+    const p = engine.predict('open the dashboard');
+    expect(p.candidates.map(c => c.params)).toEqual([{ url: 'http://localhost:3000' }, { url: 'http://localhost:4000' }]);
+    expect(p.candidates[0].confidence).toBe(p.confidence);
+    expect(p.candidates[0].support).toBe(2);
+  });
+
+  it('offers no candidates when similar messages learned to do nothing', () => {
+    const p = new ReflexEngine(base).predict('what does the doctor container do');
+    expect(p.toolName).toBe(REFLEX_NONE);
+    expect(p.candidates).toEqual([]);
+  });
+
   it('refuses long conversational messages and empty input', () => {
     const engine = new ReflexEngine(base);
     expect(engine.predict('').toolName).toBe(REFLEX_NONE);
