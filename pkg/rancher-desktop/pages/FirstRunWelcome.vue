@@ -9,7 +9,7 @@
         Create your account
       </h2>
       <p class="mb-6 secondary-text">
-        This creates your Sulla Cloud account, so you can reach this computer from the web and your phone.
+        Your email identifies your Sulla account. You can connect Sulla Cloud later from My Account to reach this computer from the web and your phone.
         Your master password is separate: it locks Sulla and encrypts every login and API key you save, and it never leaves this computer.
       </p>
 
@@ -331,6 +331,15 @@ const props = defineProps<{
 }>();
 
 // Step tracking: 'account' → 'recovery' → 'verify' (Sulla Cloud) → 'sync'
+//
+// Email verification is disabled for now: neither Sulla Desktop nor Sulla
+// Cloud can deliver the code email yet, so requiring it would strand every
+// new install. With this off, first run never sends a code and goes straight
+// from the recovery key to finishing setup — whatever email was entered is
+// accepted as-is. The Sulla Cloud account can be linked later from My Account.
+// Flip back on once email delivery (or an open-your-inbox verify flow) exists.
+const REQUIRE_EMAIL_VERIFICATION = false;
+
 const step = ref<'account' | 'recovery' | 'verify' | 'sync'>('account');
 
 // Sulla Cloud verification state
@@ -470,21 +479,36 @@ const handleAccountSubmit = async() => {
 
     // Email the Sulla Cloud code now so it's waiting by the time the
     // recovery key has been written down.
-    sendCode().catch(() => undefined);
+    if (REQUIRE_EMAIL_VERIFICATION) {
+      sendCode().catch(() => undefined);
+    }
 
     // Show recovery key step
     step.value = 'recovery';
   } catch (err) {
     console.error('[FirstRunWelcome] Vault setup failed:', err);
-    // Continue to the Sulla Cloud account anyway — vault can be set up later.
-    sendCode().catch(() => undefined);
-    step.value = 'verify';
+    // Continue past the vault anyway — it can be set up later.
+    await continueAfterAccount();
   }
 };
 
-const handleRecoveryAcknowledged = () => {
-  step.value = 'verify';
+const handleRecoveryAcknowledged = async() => {
+  await continueAfterAccount();
 };
+
+// Next step after the local account exists: the Sulla Cloud email check when
+// it's required, otherwise finish setup directly (the sync step only makes
+// sense once a Sulla Cloud account is linked).
+async function continueAfterAccount() {
+  if (REQUIRE_EMAIL_VERIFICATION) {
+    if (step.value !== 'recovery') {
+      sendCode().catch(() => undefined);
+    }
+    step.value = 'verify';
+    return;
+  }
+  await finishSetup();
+}
 
 function startCooldown(seconds: number) {
   resendCooldown.value = seconds;
