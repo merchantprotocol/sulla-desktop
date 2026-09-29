@@ -343,6 +343,7 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud:logout':                () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
   'sulla-cloud:email-code-start':      (email: string) => { ok: boolean; error?: string };
   'sulla-cloud:email-code-verify':     (email: string, code: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:email-continue':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; accountExists?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   // Settings → Sulla Cloud (see main/cloud/cloudLifecycle.ts). Status shape: CloudConnectionStatus.
   'sulla-cloud-connection:get-status':        () => Record<string, any>;
   'sulla-cloud-connection:set-preferences':   (patch: { conversations?: boolean; vault?: boolean; projects?: boolean; remoteAccess?: boolean }) => Record<string, any>;
