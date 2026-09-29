@@ -323,7 +323,7 @@ export const projectToolManifests: ToolManifest[] = [
   },
   {
     name:        'create_project',
-    description: 'Create a NEW project (top of the operator agenda). Always inserts a new row (a unique slug is resolved automatically). Use update_project to change an existing one. Distinct from the filesystem PROJECT.md PRD tooling.',
+    description: 'Create a NEW project (top of the operator agenda). Use sparingly: only when the human asks for a new project, or for a durable multi-session goal that fits no existing project. Never create a project for work you can finish in the current conversation; search_project_items first and prefer a task under an existing project/epic. Always inserts a new row (a unique slug is resolved automatically). Use update_project to change an existing one. Distinct from the filesystem PROJECT.md PRD tooling.',
     category:    'project',
     schemaDef:   {
       title:          { type: 'string', description: 'Short project name.' },
