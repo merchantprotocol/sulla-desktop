@@ -10,7 +10,6 @@
  * Delegates to:
  *   model/audio-capture.js — mic capture, gain, mute
  *   model/vad.js           — voice activity detection
- *   model/speaker-vad.js   — speaker voice detection
  *   model/feedback-detection.js — audio feedback detection
  *   model/mic-socket.js    — Unix socket for mic audio chunks
  *   model/call-session.js  — call detection and state

@@ -7,7 +7,9 @@
  * code (SecretaryModeController, ChatInterface) works unchanged.
  *
  * The buffering / VAD-gated segmentation / 2s flush cadence is provider-
- * agnostic; only the per-segment engine differs:
+ * agnostic; only the per-segment engine differs. Mic PCM arrives already
+ * VAD-gated; speaker PCM is gated here by the speaker VAD and cut on speech
+ * turns (see model/speaker-turns). Engines:
  *   - `whisper` (default) — local whisper.cpp, fully offline.
  *   - `grok`             — xAI Grok STT (`POST https://api.x.ai/v1/stt`).
  * The provider (and Grok api key) are chosen per-session in start().
@@ -23,6 +25,8 @@ import os from 'os';
 import path from 'path';
 
 import { log } from '../model/logger';
+import { createSpeakerTurnSegmenter } from '../model/speaker-turns';
+import type { SpeakerLevel } from '../model/speaker-vad';
 import * as whisperModel from '../model/whisper';
 import { MeterableUsageModel } from '../../../agent/database/models/MeterableUsageModel';
 
@@ -79,11 +83,13 @@ let sessionStartedAt = 0;
 let provider: SttProvider = 'whisper';
 let grokApiKey: string | null = null;
 
-// Per-channel PCM accumulators (raw s16le, 16kHz, mono)
+// Mic PCM accumulator (raw s16le, 16kHz, mono)
 const micBuffer: Buffer[] = [];
-const speakerBuffer: Buffer[] = [];
 let micBytes = 0;
-let speakerBytes = 0;
+
+// Speaker PCM (secretary mode): gated by the speaker VAD and cut on speech turns,
+// so music / hold tones / silence never reach the STT engine.
+const speakerTurns = createSpeakerTurnSegmenter();
 
 let flushTimer: ReturnType<typeof setInterval> | null = null;
 let endOfTurnTimer: ReturnType<typeof setInterval> | null = null;
@@ -214,7 +220,8 @@ export function stop(): void {
   utterancePcm.length = 0;
   utterancePcmBytes = 0;
 
-  // Final flush
+  // Final flush — a speaker turn still in progress goes out as its own segment.
+  speakerTurns.closeTurn();
   flush();
 
   mode = null;
@@ -335,23 +342,51 @@ export function feedMic(chunk: Buffer): void {
 /**
  * Feed speaker PCM data (s16le, 16kHz, mono).
  * Called from the speaker capture onAudio callback.
- * Only consumed in secretary mode.
+ * Only consumed in secretary mode; routed by the speaker VAD (feedSpeakerLevel).
  */
 export function feedSpeaker(pcm: Buffer): void {
   if (mode !== 'secretary') return;
-  speakerBuffer.push(pcm);
-  speakerBytes += pcm.length;
+  speakerTurns.onPcm(pcm, Date.now());
+  drainSpeaker();
+}
 
-  if (speakerBytes >= MAX_BUFFER_BYTES) flush();
+/**
+ * Feed one speaker analysis frame from the capture helper (rms, peak, zcr,
+ * variance, pitch, centroid, …). Drives the speaker VAD that gates feedSpeaker.
+ * Backends that report a bare number are treated as rms-only.
+ */
+export function feedSpeakerLevel(level: SpeakerLevel | number): void {
+  if (mode !== 'secretary') return;
+  const frame = typeof level === 'number' ? { rms: level } : level;
+
+  if (!frame || typeof frame.rms !== 'number') return;
+  speakerTurns.onLevel(frame, Date.now());
+  drainSpeaker();
 }
 
 // ─── Internal ───────────────────────────────────────────────
 
 function resetBuffers(): void {
   micBuffer.length = 0;
-  speakerBuffer.length = 0;
   micBytes = 0;
-  speakerBytes = 0;
+  speakerTurns.reset();
+}
+
+/** Transcribe the next finished speaker turn, if any and the engine is free. */
+function drainSpeaker(): void {
+  if (transcribing || speakerTurns.pendingCount() === 0) return;
+  const pcm = speakerTurns.takeSegment();
+
+  if (!pcm) return;
+  // Turns can run to 15s; scale the timeout like the full-utterance pass does.
+  transcribeChunk(pcm, 1, 'Speaker', { timeoutMs: scaledTimeoutMs(pcm) });
+}
+
+/** whisper runs ~real-time; give longer segments length-scaled headroom. */
+function scaledTimeoutMs(pcm: Buffer): number {
+  const audioSec = pcm.length / (SAMPLE_RATE * BYTES_PER_SAMPLE);
+
+  return Math.min(60_000, Math.max(10_000, Math.ceil(audioSec) * 1500 + 5_000));
 }
 
 function flush(): void {
@@ -375,13 +410,11 @@ function flush(): void {
     }
   }
 
-  // Grab and clear speaker buffer (secretary mode only)
-  if (mode === 'secretary' && speakerBytes > 0) {
-    const pcm = Buffer.concat(speakerBuffer);
-
-    speakerBuffer.length = 0;
-    speakerBytes = 0;
-    transcribeChunk(pcm, 1, 'Speaker');
+  // Speaker turns (secretary mode only). tick() covers the no-level-data fallback;
+  // finished turns are normally drained as soon as they close.
+  if (mode === 'secretary') {
+    speakerTurns.tick(Date.now());
+    drainSpeaker();
   }
 }
 
@@ -436,11 +469,10 @@ function finalizeUtterance(): void {
   utterancePcm.length = 0;
   utterancePcmBytes = 0;
 
-  // whisper runs ~real-time; give the full pass generous, length-scaled headroom so a
-  // long utterance isn't truncated by the default 10s per-chunk timeout.
-  const audioSec = pcm.length / (SAMPLE_RATE * BYTES_PER_SAMPLE);
-  const timeoutMs = Math.min(60_000, Math.max(10_000, Math.ceil(audioSec) * 1500 + 5_000));
-  log.debug('WhisperTranscribe', 'finalize re-transcribe', { audioSec: Math.round(audioSec), timeoutMs });
+  // Generous, length-scaled headroom so a long utterance isn't truncated by the
+  // default 10s per-chunk timeout.
+  const timeoutMs = scaledTimeoutMs(pcm);
+  log.debug('WhisperTranscribe', 'finalize re-transcribe', { audioSec: Math.round(pcm.length / (SAMPLE_RATE * BYTES_PER_SAMPLE)), timeoutMs });
 
   transcribeChunk(pcm, 0, 'You', { partial: false, timeoutMs, onDone: emitEnd });
 }

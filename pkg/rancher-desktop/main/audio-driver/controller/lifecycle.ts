@@ -190,10 +190,13 @@ export async function activate({ onLevel, onRebuild }: { onLevel?: (data: any) =
   const whisperTranscribe = await import('../service/whisper-transcribe');
   speakerCapture.start((level: any) => {
     if (onSpeakerLevel) onSpeakerLevel(level);
+    // Drive the speaker VAD that gates secretary-mode transcription
+    whisperTranscribe.feedSpeakerLevel(level);
   }, {
     onAudio: (pcmData: Buffer) => {
       gateway.sendAudio(pcmData, 1);
-      // Feed speaker audio to local whisper transcription (secretary mode)
+      // Feed speaker audio to local transcription (secretary mode) — only
+      // speech turns confirmed by the speaker VAD are transcribed
       whisperTranscribe.feedSpeaker(pcmData);
       // Feed speaker audio to capture studio socket
       speakerSocket.writeChunk(pcmData);
