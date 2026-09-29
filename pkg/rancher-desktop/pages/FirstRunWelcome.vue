@@ -9,7 +9,7 @@
         Create your account
       </h2>
       <p class="mb-6 secondary-text">
-        Your email identifies your Sulla account. You can connect Sulla Cloud later from My Account to reach this computer from the web and your phone.
+        Your email is your Sulla Cloud account, so you can reach this computer from the web and your phone.
         Your master password is separate: it locks Sulla and encrypts every login and API key you save, and it never leaves this computer.
       </p>
 
@@ -165,46 +165,44 @@
       </div>
     </div>
 
-    <!-- Step 3: Verify email → Sulla Cloud account -->
+    <!-- Step 3: Sulla Cloud account — sign in if the email exists, else create it -->
     <form
-      v-if="step === 'verify'"
-      @submit.prevent="handleVerify"
+      v-if="step === 'cloud'"
+      @submit.prevent="handleCloudSubmit"
     >
       <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">
-        Confirm your email
+        {{ cloudAccountExists ? 'Sign in to Sulla Cloud' : 'Your Sulla Cloud account' }}
       </h2>
       <p class="mb-6 secondary-text">
-        We sent a 6-digit code to <strong>{{ sullaEmail }}</strong>. Entering it creates your Sulla Cloud account,
-        or signs you in if you already have one.
+        <template v-if="cloudAccountExists">
+          <strong>{{ sullaEmail }}</strong> already has a Sulla Cloud account. Enter its password to connect this computer.
+        </template>
+        <template v-else>
+          Enter a password for <strong>{{ sullaEmail }}</strong>. If you already have a Sulla Cloud account, use its password
+          and we'll sign you in. Otherwise we'll create your account with it. This is the password you'll use on the web and
+          your phone. It isn't your master password, which never leaves this computer.
+        </template>
       </p>
 
       <div class="mb-4">
         <label
-          for="emailCode"
+          for="cloudPassword"
           class="block text-sm font-medium mb-1 label-text"
-        >Verification code</label>
+        >Sulla Cloud password</label>
         <input
-          id="emailCode"
-          v-model="emailCode"
-          type="text"
-          inputmode="numeric"
-          autocomplete="one-time-code"
-          maxlength="7"
-          class="w-full p-2 border rounded-md form-input code-input"
-          :class="{ 'input-error': !!verifyError }"
-          placeholder="123456"
+          id="cloudPassword"
+          v-model="cloudPassword"
+          type="password"
+          autocomplete="current-password"
+          class="w-full p-2 border rounded-md form-input"
+          :class="{ 'input-error': !!cloudError }"
+          placeholder="At least 8 characters"
         >
         <p
-          v-if="verifyError"
+          v-if="cloudError"
           class="text-sm mt-1 error-text"
         >
-          {{ verifyError }}
-        </p>
-        <p
-          v-if="codeNotice"
-          class="text-sm mt-1 secondary-text"
-        >
-          {{ codeNotice }}
+          {{ cloudError }}
         </p>
       </div>
 
@@ -212,17 +210,17 @@
         <button
           type="button"
           class="link-btn"
-          :disabled="resendCooldown > 0 || sendingCode"
-          @click="sendCode"
+          @click="editingEmail = !editingEmail"
         >
-          {{ resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code' }}
+          Use a different email
         </button>
         <button
           type="button"
           class="link-btn"
-          @click="editingEmail = !editingEmail"
+          :disabled="cloudSubmitting"
+          @click="finishSetup"
         >
-          Use a different email
+          Skip for now
         </button>
       </div>
 
@@ -241,7 +239,7 @@
           class="px-4 py-1 rounded-md btn-back"
           @click="changeEmail"
         >
-          Send code to this email
+          Use this email
         </button>
       </div>
 
@@ -249,10 +247,10 @@
         <button
           type="submit"
           class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary"
-          :class="{ 'opacity-50 cursor-not-allowed': verifying }"
-          :disabled="verifying"
+          :class="{ 'opacity-50 cursor-not-allowed': cloudSubmitting }"
+          :disabled="cloudSubmitting"
         >
-          {{ verifying ? 'Verifying…' : 'Verify and continue' }}
+          {{ cloudSubmitting ? 'Connecting…' : (cloudAccountExists ? 'Sign in and continue' : 'Continue') }}
         </button>
       </div>
     </form>
@@ -330,27 +328,16 @@ const props = defineProps<{
   showBack?: boolean;
 }>();
 
-// Step tracking: 'account' → 'recovery' → 'verify' (Sulla Cloud) → 'sync'
-//
-// Email verification is disabled for now: neither Sulla Desktop nor Sulla
-// Cloud can deliver the code email yet, so requiring it would strand every
-// new install. With this off, first run never sends a code and goes straight
-// from the recovery key to finishing setup — whatever email was entered is
-// accepted as-is. The Sulla Cloud account can be linked later from My Account.
-// Flip back on once email delivery (or an open-your-inbox verify flow) exists.
-const REQUIRE_EMAIL_VERIFICATION = false;
+// Step tracking: 'account' → 'recovery' → 'cloud' (Sulla Cloud) → 'sync'
+const step = ref<'account' | 'recovery' | 'cloud' | 'sync'>('account');
 
-const step = ref<'account' | 'recovery' | 'verify' | 'sync'>('account');
-
-// Sulla Cloud verification state
-const emailCode = ref('');
-const verifyError = ref('');
-const codeNotice = ref('');
-const verifying = ref(false);
-const sendingCode = ref(false);
-const resendCooldown = ref(0);
+// Sulla Cloud account state. No email is sent: the cloud creates the account
+// for a new email, or checks the password when the email already has one.
+const cloudPassword = ref('');
+const cloudError = ref('');
+const cloudSubmitting = ref(false);
+const cloudAccountExists = ref(false);
 const editingEmail = ref(false);
-let cooldownTimer: ReturnType<typeof setInterval> | null = null;
 
 // Sync choices — all off unless the user opts in.
 const syncConversations = ref(false);
@@ -477,102 +464,51 @@ const handleAccountSubmit = async() => {
     recoveryKey.value = result.recoveryKey;
     console.log('[FirstRunWelcome] Vault setup complete');
 
-    // Email the Sulla Cloud code now so it's waiting by the time the
-    // recovery key has been written down.
-    if (REQUIRE_EMAIL_VERIFICATION) {
-      sendCode().catch(() => undefined);
-    }
-
     // Show recovery key step
     step.value = 'recovery';
   } catch (err) {
     console.error('[FirstRunWelcome] Vault setup failed:', err);
-    // Continue past the vault anyway — it can be set up later.
-    await continueAfterAccount();
+    // Continue to the Sulla Cloud account anyway — vault can be set up later.
+    step.value = 'cloud';
   }
 };
 
-const handleRecoveryAcknowledged = async() => {
-  await continueAfterAccount();
+const handleRecoveryAcknowledged = () => {
+  step.value = 'cloud';
 };
-
-// Next step after the local account exists: the Sulla Cloud email check when
-// it's required, otherwise finish setup directly (the sync step only makes
-// sense once a Sulla Cloud account is linked).
-async function continueAfterAccount() {
-  if (REQUIRE_EMAIL_VERIFICATION) {
-    if (step.value !== 'recovery') {
-      sendCode().catch(() => undefined);
-    }
-    step.value = 'verify';
-    return;
-  }
-  await finishSetup();
-}
-
-function startCooldown(seconds: number) {
-  resendCooldown.value = seconds;
-  if (cooldownTimer) clearInterval(cooldownTimer);
-  cooldownTimer = setInterval(() => {
-    resendCooldown.value = Math.max(0, resendCooldown.value - 1);
-    if (!resendCooldown.value && cooldownTimer) {
-      clearInterval(cooldownTimer);
-      cooldownTimer = null;
-    }
-  }, 1000);
-}
-
-async function sendCode() {
-  if (sendingCode.value) return;
-  sendingCode.value = true;
-  verifyError.value = '';
-  codeNotice.value = '';
-  try {
-    const res = await ipcRenderer.invoke('sulla-cloud:email-code-start', sullaEmail.value.trim());
-    if (res.ok) {
-      codeNotice.value = `Code sent to ${ sullaEmail.value.trim() }.`;
-      startCooldown(30);
-    } else {
-      verifyError.value = res.error || 'Could not send the code.';
-    }
-  } catch (err) {
-    verifyError.value = 'Could not reach Sulla Cloud. Check your connection and try again.';
-  } finally {
-    sendingCode.value = false;
-  }
-}
 
 async function changeEmail() {
   if (!validateEmail()) {
-    verifyError.value = emailError.value;
+    cloudError.value = emailError.value;
     return;
   }
   await SullaSettingsModel.set('sullaEmail', sullaEmail.value.trim(), 'string');
   editingEmail.value = false;
-  emailCode.value = '';
-  await sendCode();
+  cloudAccountExists.value = false;
+  cloudError.value = '';
 }
 
-async function handleVerify() {
-  const code = emailCode.value.replace(/\s+/g, '');
-  if (!/^\d{6}$/.test(code)) {
-    verifyError.value = 'Enter the 6-digit code from the email.';
+async function handleCloudSubmit() {
+  if (cloudPassword.value.length < 8) {
+    cloudError.value = 'Password must be at least 8 characters.';
     return;
   }
-  verifying.value = true;
-  verifyError.value = '';
+  cloudSubmitting.value = true;
+  cloudError.value = '';
   try {
-    const res = await ipcRenderer.invoke('sulla-cloud:email-code-verify', sullaEmail.value.trim(), code, primaryUserName.value.trim() || undefined);
+    const res = await ipcRenderer.invoke('sulla-cloud:email-continue', sullaEmail.value.trim(), cloudPassword.value, primaryUserName.value.trim() || undefined);
     if (!res.ok) {
-      verifyError.value = res.error || 'That code did not work.';
+      cloudAccountExists.value = !!res.accountExists;
+      cloudError.value = res.error || 'Could not connect to Sulla Cloud.';
       return;
     }
+    cloudPassword.value = '';
     await SullaSettingsModel.set('sullaCloudLinked', true, 'boolean');
     step.value = 'sync';
   } catch (err) {
-    verifyError.value = 'Could not reach Sulla Cloud. Check your connection and try again.';
+    cloudError.value = 'Could not reach Sulla Cloud. Check your connection and try again.';
   } finally {
-    verifying.value = false;
+    cloudSubmitting.value = false;
   }
 }
 
@@ -696,11 +632,6 @@ const finishSetup = async() => {
   &:hover {
     background-color: var(--accent-primary-hover);
   }
-}
-
-.code-input {
-  font-size: 1.25rem;
-  letter-spacing: 0.3em;
 }
 
 .link-btn {

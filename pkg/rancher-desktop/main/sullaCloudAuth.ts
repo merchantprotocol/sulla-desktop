@@ -248,7 +248,7 @@ async function emailLogin(email: string, password: string): Promise<{ ok: boolea
   return { ok: true, data };
 }
 
-async function emailRegister(email: string, password: string, name?: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse }> {
+async function emailRegister(email: string, password: string, name?: string): Promise<{ ok: boolean; error?: string; httpStatus?: number; data?: VerifyResponse }> {
   const res = await fetch(`${ API_BASE }/auth/email/register`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -256,7 +256,7 @@ async function emailRegister(email: string, password: string, name?: string): Pr
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as { error?: string };
-    return { ok: false, error: body.error || `HTTP ${ res.status }` };
+    return { ok: false, error: body.error || `HTTP ${ res.status }`, httpStatus: res.status };
   }
   const data = await res.json() as VerifyResponse;
   return { ok: true, data };
@@ -463,6 +463,23 @@ export function initSullaCloudAuthEvents(): void {
     return { ok: true, status: await buildStatus() };
   };
 
+  // On first run the VM's Postgres may still be booting, so saving the session
+  // can fail for a while. Keep trying for up to ~2 minutes before giving up.
+  const completeSignInWhenReady = async(data: VerifyResponse, notReadyError: string): Promise<AuthResult> => {
+    const deadline = Date.now() + 120_000;
+    for (let delay = 2_000; ; delay = Math.min(delay * 2, 15_000)) {
+      try {
+        return await completeSignIn(data);
+      } catch (err) {
+        if (Date.now() + delay > deadline) {
+          console.warn('[SullaCloudAuth] Could not save the Sulla Cloud session:', err);
+          return { ok: false, error: notReadyError, status: await buildStatus().catch(() => ({} as any)) };
+        }
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  };
+
   ipcMainProxy.handle('sulla-cloud:verify-otp', async(_event: unknown, phone: string, code: string): Promise<AuthResult> => {
     const normalizedPhone = phone.trim();
     const normalizedCode = code.trim();
@@ -520,20 +537,47 @@ export function initSullaCloudAuthEvents(): void {
     }
     // The code is spent and the tokens are in hand. On first run the VM's
     // Postgres may still be booting, so keep trying to persist the session
-    // (for up to ~2 minutes) instead of forcing the user to request a new code.
-    const deadline = Date.now() + 120_000;
-    for (let delay = 2_000; ; delay = Math.min(delay * 2, 15_000)) {
-      try {
-        const signedIn = await completeSignIn(result.data);
-        return { ...signedIn, isNewUser: !!result.data.isNewUser };
-      } catch (err) {
-        if (Date.now() + delay > deadline) {
-          console.warn('[SullaCloudAuth] Could not save the Sulla Cloud session:', err);
-          return { ok: false, error: 'Your email is verified, but Sulla is still starting up. Wait a minute, then send a new code.', status: await buildStatus().catch(() => ({} as any)) };
-        }
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
+    // instead of forcing the user to request a new code.
+    const signedIn = await completeSignInWhenReady(result.data, 'Your email is verified, but Sulla is still starting up. Wait a minute, then send a new code.');
+    return { ...signedIn, isNewUser: !!result.data.isNewUser };
+  });
+
+  /**
+   * First run: one email + password form that either creates the Sulla Cloud
+   * account or signs in to the existing one. Register answers 409 when the
+   * email already has an account; only then is the password checked against
+   * it. No email is sent, so this works before email delivery exists.
+   */
+  ipcMainProxy.handle('sulla-cloud:email-continue', async(_event: unknown, email: string, password: string, name?: string) => {
+    const e = String(email ?? '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+      return { ok: false, error: 'Enter a valid email address.', status: await buildStatus().catch(() => ({} as any)) };
     }
+    if (!password || password.length < 8) {
+      return { ok: false, error: 'Password must be at least 8 characters.', status: await buildStatus().catch(() => ({} as any)) };
+    }
+    let data: VerifyResponse;
+    let isNewUser: boolean;
+    try {
+      const created = await emailRegister(e, password, name?.trim() || undefined);
+      if (created.ok && created.data) {
+        data = created.data;
+        isNewUser = true;
+      } else if (created.httpStatus === 409) {
+        const login = await emailLogin(e, password);
+        if (!login.ok || !login.data) {
+          return { ok: false, accountExists: true, error: 'This email already has a Sulla Cloud account, and that password doesn\'t match it.', status: await buildStatus().catch(() => ({} as any)) };
+        }
+        data = login.data;
+        isNewUser = false;
+      } else {
+        return { ok: false, error: created.error || 'Could not create your Sulla Cloud account.', status: await buildStatus().catch(() => ({} as any)) };
+      }
+    } catch {
+      return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.', status: await buildStatus().catch(() => ({} as any)) };
+    }
+    const signedIn = await completeSignInWhenReady(data, 'Your Sulla Cloud account is ready, but Sulla is still starting up. Wait a minute, then try again.');
+    return { ...signedIn, isNewUser };
   });
 
   ipcMainProxy.handle('sulla-cloud:email-register', async(_event: unknown, email: string, password: string, name?: string): Promise<AuthResult> => {
