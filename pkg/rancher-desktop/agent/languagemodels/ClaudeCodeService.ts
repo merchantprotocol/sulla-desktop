@@ -576,6 +576,18 @@ export class ClaudeCodeService extends BaseLanguageModel {
   private killPrewarmRecord(rec: PrewarmRecord): void {
     if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
     try { rec.proc.kill('SIGTERM'); } catch { /* already dead */ }
+    // SIGTERM on the host-side limactl doesn't reliably reach claude in the VM
+    // (no TTY) — an evicted/reaped proc kept running its session headless,
+    // and the next --resume of that session collided with it. Kill by pidfile.
+    try {
+      const killProc = childProcess.spawn(
+        paths.limactl,
+        ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(rec.pidFile, 'TERM')],
+        { env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' }, stdio: 'ignore', detached: true },
+      );
+      killProc.on('error', () => { /* best effort */ });
+      killProc.unref();
+    } catch { /* best effort */ }
     if (rec.mcpSession) { try { rec.mcpSession.revoke(); } catch { /* ignore */ } }
     if (rec.mcpConfigPath) { try { fs.unlinkSync(rec.mcpConfigPath); } catch { /* ignore */ } }
   }
@@ -1173,6 +1185,14 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       let errorMessage = '';
       let sessionInUse = false;
       let settled = false;   // guards resolve/reject across the result-vs-close paths
+      // stream-json input only: set once the replay echo of THIS turn's prompt
+      // arrives. A `result` before that belongs to a turn the CLI ran on its
+      // own — e.g. on --resume it injects "background command didn't finish
+      // before the previous session ended" for tasks the killed process left
+      // behind and answers it ("No response requested.") BEFORE reading our
+      // prompt. Settling on that result failed the turn as "claude produced
+      // no output" while the CLI went on to answer the real prompt unseen.
+      let promptConsumed = !speculative;
 
       // ── Perf: per-tool execution timing inside the claude CLI ──────────
       // The tool-use loop (Grep/Glob/Read/Bash/etc.) runs INSIDE the spawned
@@ -1487,6 +1507,10 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         if (parsed.type === 'user' && parsed.isReplay) {
           const echoed = typeof parsed.message?.content === 'string' ? parsed.message.content : '';
           const idx = steersInFlight.findIndex(s => s.content === echoed);
+          if (!promptConsumed && idx < 0 && !echoed.trimStart().startsWith('<task-notification>')) {
+            promptConsumed = true;
+            return;
+          }
           if (idx >= 0) {
             steersInFlight.splice(idx, 1);
             if (steerGraceTimer && !steersInFlight.length) { clearTimeout(steerGraceTimer); steerGraceTimer = null; }
@@ -1509,6 +1533,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         if (ev) {
           // Text chunks → stream to caller as content
           if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
+            if (!promptConsumed) return;   // a CLI-initiated turn's text, not ours
             stopHeartbeat();
             if (!firstTokenAt) firstTokenAt = Date.now();
             textCollected += ev.delta.text;
@@ -1599,6 +1624,12 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         }
 
         // Final result event — capture full text and record usage/cost.
+        if (parsed.type === 'result' && !promptConsumed && !parsed.is_error) {
+          log.log(`[ClaudeCodeService] ignoring result of a CLI-initiated turn that ran before this turn's prompt (convId=${ convId })`);
+          textCollected = '';
+          return;
+        }
+
         if (parsed.type === 'result') {
           lastUsage = parsed.usage;
           // Perf summary: split the run into tool-execution time vs the rest
