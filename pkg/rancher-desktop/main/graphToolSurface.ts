@@ -28,6 +28,7 @@ export interface GraphToolCallResult {
 
 interface ToolWorker {
   call(args: Record<string, unknown>): Promise<{ success: boolean; result?: unknown; error?: unknown }>;
+  setState?(state: any): void;
 }
 
 export type ToolResolver = (name: string) => Promise<ToolWorker>;
@@ -48,9 +49,11 @@ export function resolveGraphToolSurface(metadata: unknown): string[] | null {
 /**
  * Build the sulla_tool handler: enforce the graph-stamped allowlist, then
  * dispatch in-process to the ToolRegistry worker and map its result to MCP
- * content.
+ * content. `getState` binds the worker to the session's live graph state —
+ * the same binding the CLI path gets from X-Sulla-Tool-Session — so tools
+ * know which conversation they run for (e.g. Reflex "Learned" notices).
  */
-export function buildGraphToolHandler(allowedTools: string[], getTool: ToolResolver) {
+export function buildGraphToolHandler(allowedTools: string[], getTool: ToolResolver, getState?: () => unknown) {
   return async ({ tool, args }: { tool: string; args?: Record<string, unknown> }): Promise<GraphToolCallResult> => {
     if (!allowedTools.includes(tool)) {
       return {
@@ -60,6 +63,8 @@ export function buildGraphToolHandler(allowedTools: string[], getTool: ToolResol
     }
     try {
       const worker = await getTool(tool);
+      const state = getState?.();
+      if (state) worker.setState?.(state);
       const result = await worker.call(args ?? {});
       return {
         content: [{ type: 'text', text: String(result.result ?? result.error ?? '') }],

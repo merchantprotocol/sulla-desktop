@@ -370,6 +370,34 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
+  // Visible learning: reflexLearnedNotice announced examples Reflex just
+  // learned from this conversation. Arrives as a subconscious_message (often
+  // after the turn ended), so it never touches run-state.
+  if (kindRaw === 'reflex_learned') {
+    const rl = data?.reflexLearned && typeof data.reflexLearned === 'object' ? data.reflexLearned as any : null;
+    const exampleIds = Array.isArray(rl?.exampleIds) ? rl.exampleIds.filter((id: unknown): id is string => typeof id === 'string' && !!id) : [];
+    const label = typeof rl?.label === 'string' ? rl.label.trim() : '';
+    const utterance = typeof rl?.utterance === 'string' ? rl.utterance.trim() : '';
+    if (!exampleIds.length || !label || !utterance) return;
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_reflex_learned_${ exampleIds[0] }`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'reflex_learned',
+      content,
+      reflexLearned: {
+        label,
+        utterance,
+        positive:       rl.positive !== false,
+        exampleIds,
+        extraPhrasings: Number.isFinite(rl.extraPhrasings) ? Number(rl.extraPhrasings) : 0,
+      },
+    });
+    return;
+  }
+
   // File patch: ClaudeCodeService → BaseNode.onFilePatch emitted a unified
   // diff after an Edit/Write tool_use inside Claude's inner agent loop.
   // Content is empty by design — payload is on `data.filePatch`. PersonaAdapter

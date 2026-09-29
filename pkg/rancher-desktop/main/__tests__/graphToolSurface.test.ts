@@ -77,6 +77,19 @@ describe('buildGraphToolHandler', () => {
     expect(result.content[0].text).toBe('PR not found');
   });
 
+  it('binds the worker to the session graph state before calling it', async () => {
+    const order: string[] = [];
+    const setState = jest.fn((_state: unknown) => { order.push('setState') });
+    const call = jest.fn(async () => { order.push('call'); return { success: true, result: 'ok' } });
+    const state = { metadata: { threadId: 'sub-1', parentConversationId: 'thread-A' } };
+    const handler = buildGraphToolHandler(['reflex_teach'], resolver(async () => ({ call, setState }) as any), () => state);
+
+    await handler({ tool: 'reflex_teach', args: { utterance: 'open projects', tool: 'open_tab' } });
+
+    expect(setState).toHaveBeenCalledWith(state);
+    expect(order).toEqual(['setState', 'call']);
+  });
+
   it('maps a thrown resolver/worker error to an MCP error result', async () => {
     const handler = buildGraphToolHandler(
       ['github_get_pr'],

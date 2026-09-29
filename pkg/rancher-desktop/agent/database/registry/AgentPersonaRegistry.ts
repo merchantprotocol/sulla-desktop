@@ -10,7 +10,7 @@ export interface ChatMessage {
   threadId?: string;
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
-  kind?:     'text' | 'tool' | 'tool_approval' | 'tool_question' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive';
+  kind?:     'text' | 'tool' | 'tool_approval' | 'tool_question' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive' | 'reflex_learned';
   image?: {
     dataUrl:      string;
     alt?:         string;
@@ -70,6 +70,16 @@ export interface ChatMessage {
   proactive?: {
     headline: string;
     body:     string;
+  };
+  /** Visible learning — Reflex gained training examples from this
+   *  conversation. Rendered as a ReflexLearnedNote with Undo, which
+   *  archives `exampleIds` via the `reflex:forget` IPC. */
+  reflexLearned?: {
+    label:          string;
+    utterance:      string;
+    positive:       boolean;
+    exampleIds:     string[];
+    extraPhrasings: number;
   };
   /** Source list surfaced as a CitationRow below the reply. Populated by the
    *  CitationExtractor when the model emits a `<citations>` block. */

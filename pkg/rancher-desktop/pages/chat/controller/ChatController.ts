@@ -21,7 +21,7 @@ import type {
   Attachment,
   Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage, ToolMessage,
   ToolApprovalMessage, ToolQuestionMessage, ToolQuestionAnswerItem, PatchMessage, PatchRevertMeta, ChannelMessage, SubAgentMessage,
-  CitationMessage, MemoryMessage, ProactiveMessage, HtmlMessage, ErrorMessage,
+  CitationMessage, MemoryMessage, ProactiveMessage, ReflexLearnedMessage, HtmlMessage, ErrorMessage,
   ModalState, ModelDescriptor, SidebarState, ConnectionState,
   PopoverState, SlashCommand, MentionTarget,
   QueuedMessage,
@@ -515,6 +515,24 @@ export class ChatController {
         note,
       });
     }
+  }
+
+  // ─── Reflex learned ─────────────────────────────────────────────
+  // Undo on a "⚡ Learned" note: mark it pending and fan out a bus event;
+  // the adapter archives the examples via the `reflex:forget` IPC and
+  // settles the note. Transport-free, like the approval round-trip.
+  undoReflexLearned(id: MessageId): void {
+    const msg = this.thread.value.messages.find(m => m.id === id);
+    if (!msg || msg.kind !== 'reflex_learned') return;
+    const learned = msg as ReflexLearnedMessage;
+    if (learned.undo?.state === 'pending' || learned.undo?.state === 'done') return;
+    this.updateMessage<ReflexLearnedMessage>(id, { undo: { state: 'pending' } });
+    this.bus.emit({
+      kind:       'reflexLearnedUndone',
+      threadId:   this.thread.value.id,
+      messageId:  id,
+      exampleIds: [...learned.exampleIds],
+    });
   }
 
   // ─── Tool question ──────────────────────────────────────────────

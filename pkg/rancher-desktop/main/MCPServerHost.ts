@@ -521,7 +521,7 @@ export class MCPServerHost {
             args: z.record(z.any()).optional().describe('JSON arguments for the tool, exactly as documented by browse_tools.'),
           },
         },
-        buildGraphToolHandler(graphToolSurface, name => toolRegistry.createTool(name)),
+        buildGraphToolHandler(graphToolSurface, name => toolRegistry.createTool(name), () => session.state),
       );
     }
 

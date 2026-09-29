@@ -10,6 +10,11 @@
  *     The human accepted the suggestion (Tab). Runs through runReflex, the
  *     same path a sent chat message takes, so policy, approval gating, and
  *     the reflex_decisions receipt are identical.
+ *
+ *   reflex:forget   (exampleIds) → { ok, forgotten } | { ok: false, error }
+ *     Undo on a "⚡ Learned" chat note. Soft-archives exactly the examples
+ *     that note announced (ReflexModel.forget), so they stop influencing
+ *     predictions but stay in training history.
  */
 
 import { ipcMain } from 'electron';
@@ -19,6 +24,7 @@ import Logging from '@pkg/utils/logging';
 const log = Logging.background;
 
 const MAX_PREVIEW_CHARS = 300;
+const MAX_FORGET_IDS = 10;
 
 export function initSullaReflexEvents(): void {
   ipcMain.handle('reflex:preview', async(_event, text: unknown) => {
@@ -38,5 +44,21 @@ export function initSullaReflexEvents(): void {
     return result.success
       ? { ok: true, label: reflexActionLabel(result.toolName, result.params), summary: result.summary }
       : { ok: false, error: result.summary || 'the action failed' };
+  });
+
+  ipcMain.handle('reflex:forget', async(_event, ids: unknown) => {
+    const exampleIds = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string' && !!id.trim()) : [];
+    if (!exampleIds.length || exampleIds.length > MAX_FORGET_IDS) return { ok: false, error: 'invalid example ids' };
+    try {
+      const { ReflexModel } = await import('@pkg/agent/database/models/ReflexModel');
+      let forgotten = 0;
+      for (const id of exampleIds) {
+        if (await ReflexModel.forget(id.trim())) forgotten++;
+      }
+      log.log(`[reflex:forget] undo archived ${ forgotten }/${ exampleIds.length } example(s)`);
+      return forgotten ? { ok: true, forgotten } : { ok: false, error: 'Nothing to undo — already forgotten.' };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 }

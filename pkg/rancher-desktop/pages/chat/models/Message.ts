@@ -21,6 +21,7 @@ export type MessageKind =
   | 'subagent'      // sub-agent activity
   | 'citation'      // grounding sources
   | 'memory'        // memory saved/removed/updated
+  | 'reflex_learned' // Reflex learned an action from this conversation
   | 'proactive'     // Sulla reaching out unprompted
   | 'tts'           // Sulla is currently speaking (transient)
   | 'interim'       // user voice transcript being drafted (transient)
@@ -190,6 +191,18 @@ export interface MemoryMessage extends MessageBase {
   summary?: string;
 }
 
+// ─── Reflex learned ───────────────────────────────────────────────
+export interface ReflexLearnedMessage extends MessageBase {
+  kind:           'reflex_learned';
+  utterance:      string;          // what the human said
+  label:          string;          // "Open Projects" | "won't run Open Projects"
+  positive:       boolean;
+  exampleIds:     readonly string[];  // archived together on Undo
+  extraPhrasings: number;
+  /** Set by the card once Undo archived the examples (or failed). */
+  undo?:          { state: 'pending' | 'done' | 'error'; error?: string };
+}
+
 // ─── Proactive ────────────────────────────────────────────────────
 export interface ProactiveMessage extends MessageBase {
   kind:     'proactive';
@@ -241,6 +254,7 @@ export type Message =
   | SubAgentMessage
   | CitationMessage
   | MemoryMessage
+  | ReflexLearnedMessage
   | ProactiveMessage
   | TtsMessage
   | InterimMessage

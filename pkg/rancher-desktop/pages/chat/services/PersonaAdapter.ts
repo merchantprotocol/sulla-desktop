@@ -24,7 +24,7 @@ import type {
 import type { Attachment } from '../models/Attachment';
 import type { Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
   ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
-  PatchMessage, PatchHunk, ProactiveMessage,
+  PatchMessage, PatchHunk, ProactiveMessage, ReflexLearnedMessage,
 } from '../models/Message';
 import { asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
 import { StreamUpdateScheduler } from './StreamUpdateScheduler';
@@ -184,6 +184,16 @@ export class PersonaAdapter {
       }).catch(err => this.controller.updateMessage(ev.messageId, { resolutionError: String(err.message || err) } as any));
     });
     this.stopWatchers.push(unsubscribeQuestion);
+
+    // Reflex undo bridge — Undo on a "⚡ Learned" note archives exactly the
+    // examples that note announced (soft-archive; training history stays).
+    const unsubscribeReflexUndo = this.controller.on('reflexLearnedUndone', (ev) => {
+      void (ipcRenderer.invoke('reflex:forget' as any, ev.exampleIds) as Promise<{ ok: boolean; forgotten: number; error?: string }>).then((receipt) => {
+        if (!receipt?.ok) throw new Error(receipt?.error || 'Nothing to undo — already forgotten.');
+        this.controller.updateMessage<ReflexLearnedMessage>(ev.messageId, { undo: { state: 'done' } });
+      }).catch(err => this.controller.updateMessage<ReflexLearnedMessage>(ev.messageId, { undo: { state: 'error', error: String(err?.message || err) } }));
+    });
+    this.stopWatchers.push(unsubscribeReflexUndo);
 
     // Speak bridge — the low-latency speak listener on the persona is the
     // canonical path for TTS. We forward every speak payload onto THIS tab's
@@ -347,7 +357,7 @@ export class PersonaAdapter {
    * workflowNode.status/output/error/nodeIndex/totalNodes. graphRunning is
    * included because thinking/streaming completion falls back to it.
    * Other kinds (patch, citation, tool_approval, tool_question, channel,
-   * proactive, html, workflow_document) are pushed once and never mutated,
+   * proactive, reflex_learned, html, workflow_document) are pushed once and never mutated,
    * so kind|role|contentLen already makes their signature stable.
    */
   private rawSignature(b: BackendMessage): string {
@@ -599,6 +609,20 @@ export class PersonaAdapter {
 
     // Proactive card — backend (workflow completion, async sub-agent
     // finish, heartbeat insight) is reaching out unprompted.
+    // Visible learning — Reflex learned an action from this conversation.
+    // The Undo state lives only on the controller message (set by the
+    // card), so it is deliberately absent here: re-syncs merge over it.
+    if (b.kind === 'reflex_learned' && b.reflexLearned) {
+      return {
+        id, kind: 'reflex_learned', createdAt,
+        utterance:      b.reflexLearned.utterance,
+        label:          b.reflexLearned.label,
+        positive:       b.reflexLearned.positive,
+        exampleIds:     b.reflexLearned.exampleIds,
+        extraPhrasings: b.reflexLearned.extraPhrasings,
+      } satisfies ReflexLearnedMessage;
+    }
+
     if (b.kind === 'proactive' && b.proactive) {
       return {
         id, kind: 'proactive', createdAt,
