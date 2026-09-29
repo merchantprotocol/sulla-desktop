@@ -28,6 +28,7 @@
           <!-- Terminal preview card (clickable) -->
           <div
             class="welcome-card"
+            :class="{ disabled: isEnding }"
             @click="startSession"
           >
             <div class="dt-header">
@@ -347,6 +348,7 @@ const isMac = navigator.platform.toUpperCase().includes('MAC');
 const hasSessionEnded = ref(false);
 const transcript = ref<TranscriptEntry[]>([]);
 const isListening = ref(false);
+const isEnding = ref(false);
 const listeningStatus = ref('Starting...');
 const startError = ref('');
 const wakeWordActive = ref(false);
@@ -621,9 +623,13 @@ async function saveNotes(): Promise<void> {
 let resaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 watch([() => actionItems.value.length, () => decisions.value.length, () => insights.value.length, () => agentMessages.value.length], () => {
-  if (!hasSessionEnded.value || isListening.value) return;
+  if (!hasSessionEnded.value || isListening.value || isEnding.value) return;
   if (resaveTimer) clearTimeout(resaveTimer);
   resaveTimer = setTimeout(() => { resaveTimer = null; void saveNotes() }, 1_000);
+});
+
+watch(() => transcript.value.length, () => {
+  if (hasSessionEnded.value && !isEnding.value) void saveNotes();
 });
 
 function revealNotes(): void {
@@ -633,6 +639,7 @@ function revealNotes(): void {
 // ── Session lifecycle (thin wrappers) ──────────────────────────
 
 async function startSession(): Promise<void> {
+  if (isEnding.value) return;
   try {
     isListening.value = true;
     hasSessionEnded.value = false;
@@ -667,12 +674,19 @@ watch(audioLevel, (level) => {
   }
 });
 
-function endSession(): void {
+async function endSession(): Promise<void> {
+  if (isEnding.value) return;
   isListening.value = false;
   hasSessionEnded.value = true;
-  controller.endSession();
-  updateTab(props.tabId, { title: `Secretary - ${ sessionDuration.value }` });
-  void saveNotes();
+  isEnding.value = true;
+  listeningStatus.value = 'Finishing transcript…';
+  try {
+    await controller.endSession();
+    updateTab(props.tabId, { title: `Secretary - ${ sessionDuration.value }` });
+    await saveNotes();
+  } finally {
+    isEnding.value = false;
+  }
 }
 
 async function sendChatMessage(): Promise<void> {
@@ -696,7 +710,7 @@ function onRemoteStart(e: Event) {
   void startSession();
 }
 function onRemoteStop() {
-  if (isListening.value) endSession();
+  if (isListening.value) void endSession();
 }
 
 // Mirror isListening into the main-process cache so agent tools

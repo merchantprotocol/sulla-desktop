@@ -12,7 +12,10 @@ const ipcOverrides: Record<string, unknown> = {};
 jest.mock('@pkg/utils/ipcRenderer', () => ({
   ipcRenderer: {
     invoke: jest.fn(async(channel: string) => {
-      if (channel in ipcOverrides) return ipcOverrides[channel];
+      if (channel in ipcOverrides) {
+        const value: any = ipcOverrides[channel];
+        return typeof value === 'function' ? value() : value;
+      }
       if (channel === 'sulla-settings-get') return 'en-US';
       if (channel === 'audio-driver:transcribe-start') return { ok: true };
       if (channel === 'desktop-session-start') return { sessionId: 'session-1' };
@@ -104,6 +107,21 @@ const MODEL_REPLY = new SecretaryExtractor(() => {}).processComplete({
 } as any, {} as any);
 
 describe('SecretaryModeController', () => {
+  it('keeps the transcript listener through the final drain and analyzes the tail', async() => {
+    const { view, controller } = makeController(async() => null);
+    await controller.startSession();
+    ipcOverrides['audio-driver:transcribe-finish'] = async() => {
+      hear('The final caller sentence contains the key decision.');
+      return { ok: true };
+    };
+
+    await controller.endSession();
+
+    expect(view.transcript.map(entry => entry.text)).toContain('The final caller sentence contains the key decision.');
+    expect(listeners['gateway-transcript']).toHaveLength(0);
+    expect(view.sent.some(({ prompt }) => prompt.includes('final caller sentence'))).toBe(true);
+  });
+
   beforeEach(() => {
     jest.useFakeTimers();
     for (const key of Object.keys(listeners)) delete listeners[key];
@@ -125,7 +143,7 @@ describe('SecretaryModeController', () => {
     expect(view.actions).toEqual(['Dana sends the revised quote to Acme by Friday']);
     expect(view.decisions).toEqual(['Go with the annual plan']);
     expect(view.insights.map(i => i.text)).toEqual(['Order #4471 ships Oct 3', 'Pricing approval is the blocker']);
-    controller.endSession();
+    await controller.endSession();
   });
 
   it('does not add the same item twice across analyses', async() => {
@@ -141,7 +159,7 @@ describe('SecretaryModeController', () => {
     expect(view.sent[1].prompt).toContain('Already captured');
     expect(view.actions).toHaveLength(1);
     expect(view.decisions).toHaveLength(1);
-    controller.endSession();
+    await controller.endSession();
   });
 
   it('runs one analysis at a time and catches up after a slow reply', async() => {
@@ -162,7 +180,7 @@ describe('SecretaryModeController', () => {
     expect(maxInFlight).toBe(1);
     expect(view.sent).toHaveLength(2);
     expect(view.sent[1].prompt).toContain('hiring plans');
-    controller.endSession();
+    await controller.endSession();
   });
 
   it('answers a wake command spoken in the same breath, across chunks', async() => {
@@ -183,7 +201,7 @@ describe('SecretaryModeController', () => {
     hear('Anyway, back to the budget numbers.');
     await jest.advanceTimersByTimeAsync(3_000);
     expect(view.sent.filter(s => s.inputSource === 'secretary-wake')).toHaveLength(1);
-    controller.endSession();
+    await controller.endSession();
   });
 
   it('waits for the command after a bare wake word', async() => {
@@ -197,7 +215,7 @@ describe('SecretaryModeController', () => {
     hear('Add milk to the list.');
     await jest.advanceTimersByTimeAsync(3_000);
     expect(view.sent.filter(s => s.inputSource === 'secretary-wake').map(s => s.prompt)).toEqual(['Add milk to the list.']);
-    controller.endSession();
+    await controller.endSession();
   });
 
   it('sends private messages without touching the transcript or speaking', async() => {
@@ -210,7 +228,7 @@ describe('SecretaryModeController', () => {
     expect(view.transcript).toHaveLength(0);
     expect(view.agent.map(m => m.text)).toEqual(['You: who is Dana?', 'Noted.']);
     expect(view.spoken).toEqual([]);
-    controller.endSession();
+    await controller.endSession();
   });
 
   it('fails to start with a clear reason when the mic permission is denied', async() => {
@@ -240,7 +258,7 @@ describe('SecretaryModeController', () => {
     expect(view.sent.filter(s => s.inputSource === 'secretary-wake').map(s => s.prompt)).toEqual(['what time is it?']);
     expect(view.agent.map(m => m.text)).toEqual(['It is 3pm.']);
     expect(view.spoken).toEqual([]);
-    controller.endSession();
+    await controller.endSession();
   });
 
   it('ignores "hey Sulla" from other participants', async() => {
@@ -252,7 +270,7 @@ describe('SecretaryModeController', () => {
 
     expect(view.wake).toBe(false);
     expect(view.sent.filter(s => s.inputSource === 'secretary-wake')).toHaveLength(0);
-    controller.endSession();
+    await controller.endSession();
   });
 
   it('labels speakers in the analysis prompt so owners can be attributed', async() => {
@@ -265,7 +283,7 @@ describe('SecretaryModeController', () => {
 
     expect(view.sent[0].prompt).toContain('You: I will send the contract tomorrow morning.');
     expect(view.sent[0].prompt).toContain('Caller: Great, I will review it on Thursday afternoon.');
-    controller.endSession();
+    await controller.endSession();
   });
 
   it('caps the earlier-transcript context in long meetings', async() => {
@@ -282,7 +300,7 @@ describe('SecretaryModeController', () => {
     expect(context).toContain('earlier transcript omitted');
     expect(context).not.toContain('Line 0 of');
     expect(context).toContain('Line 399 of');
-    controller.endSession();
+    await controller.endSession();
   });
 
   it('warns when system audio capture fails', async() => {
@@ -295,7 +313,7 @@ describe('SecretaryModeController', () => {
 
     await controller.startSession();
     expect(view.warning).toContain('only your microphone');
-    controller.endSession();
+    await controller.endSession();
   });
 
   it('renders saved meeting notes as markdown', () => {
@@ -334,6 +352,6 @@ describe('SecretaryModeController', () => {
       'Caller: Doing well thanks.',
       'You: Great.',
     ]);
-    controller.endSession();
+    await controller.endSession();
   });
 });
