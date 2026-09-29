@@ -1425,6 +1425,9 @@ const handleOAuthConnect = async() => {
     await refreshAccounts();
     integration.value.connected = await integrationService.isAnyAccountConnected(integration.value.id);
     mergedIntegrations.value[integration.value.id].connected = integration.value.connected;
+    // Say so: the connect form stays on screen, so without this a successful
+    // sign-in looked like nothing happened.
+    oauthSuccess.value = `Connected to ${ integration.value.name }.`;
   } catch (error: any) {
     console.error('OAuth connection failed:', error);
     oauthError.value = error?.message || 'OAuth authorization failed. Please try again.';
