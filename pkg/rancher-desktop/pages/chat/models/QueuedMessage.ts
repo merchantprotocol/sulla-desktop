@@ -7,4 +7,6 @@ export interface QueuedMessage {
   text:        string;
   attachments: readonly Attachment[];
   queuedAt:    number;
+  /** 'voice' when the message was spoken — keeps the reply in voice mode once it drains. */
+  inputSource?: 'voice';
 }

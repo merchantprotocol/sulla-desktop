@@ -370,6 +370,39 @@
             </div>
           </div>
 
+          <!-- Kokoro on-device model (one-time download) -->
+          <div
+            v-if="ttsProvider === 'kokoro' && kokoroStatus.phase !== 'ready'"
+            class="setting-section"
+          >
+            <h3>On-device voice model</h3>
+            <p class="description">
+              Kokoro runs entirely on this Mac — free, private, and offline. It needs a one-time
+              {{ Math.round(kokoroStatus.bytes / 1_000_000) }} MB download; until then Sulla speaks with the system voice.
+            </p>
+            <div
+              v-if="kokoroStatus.phase === 'downloading' || kokoroStatus.phase === 'extracting'"
+              class="status-banner banner-info"
+            >
+              <span>{{ kokoroStatus.phase === 'downloading'
+                ? `Downloading… ${ Math.round(kokoroStatus.progress * 100) }%`
+                : 'Unpacking…' }}</span>
+            </div>
+            <div
+              v-else-if="kokoroStatus.phase === 'error'"
+              class="status-banner banner-error"
+            >
+              <span class="banner-text">Download failed: {{ kokoroStatus.error }}</span>
+            </div>
+            <button
+              v-if="kokoroStatus.phase === 'missing' || kokoroStatus.phase === 'error'"
+              class="action-btn"
+              @click="downloadKokoro"
+            >
+              {{ kokoroStatus.phase === 'error' ? 'Retry download' : 'Download voice' }}
+            </button>
+          </div>
+
           <!-- Voice selection (only when provider is connected) -->
           <div
             v-if="hasAnyTtsProvider"
@@ -1079,6 +1112,9 @@ interface TtsProviderInfo {
 }
 
 const ttsProviders = ref<TtsProviderInfo[]>([
+  // On-device Kokoro-82M (same engine as Sulla Mobile's on-device voice) — free, private,
+  // offline, no key. The default; Bella is the default voice.
+  { id: 'kokoro', name: 'On-device · Kokoro (free, private)', connected: true },
   // Native macOS voices via the OS speech engine — always available, no API key. Mirrors Sulla Mobile's default.
   { id: 'system', name: 'System Default (macOS)', connected: true },
   { id: 'elevenlabs', name: 'ElevenLabs', connected: false, vaultKey: { integrationId: 'elevenlabs', property: 'api_key' } },
@@ -1086,7 +1122,28 @@ const ttsProviders = ref<TtsProviderInfo[]>([
   { id: 'grok', name: 'Grok Voice', connected: false, vaultKey: { integrationId: 'grok', property: 'api_key' } },
 ]);
 
-const ttsProvider = ref('system');
+const ttsProvider = ref('kokoro');
+
+// ─── Kokoro model status ────────────────────────────────────────
+
+type KokoroStatus = { phase: 'missing' | 'downloading' | 'extracting' | 'ready' | 'error'; progress: number; error?: string; bytes: number };
+const kokoroStatus = ref<KokoroStatus>({ phase: 'missing', progress: 0, bytes: 349_906_910 });
+
+ipc.on('voice-kokoro-status-changed', (_event: any, status: KokoroStatus) => {
+  kokoroStatus.value = status;
+});
+
+async function refreshKokoroStatus(): Promise<void> {
+  try {
+    kokoroStatus.value = await ipcRenderer.invoke('voice-kokoro-status');
+  } catch { /* leave as-is */ }
+}
+
+async function downloadKokoro(): Promise<void> {
+  ttsPreviewError.value = null;
+  await ipcRenderer.invoke('voice-kokoro-download').catch(() => false);
+  await refreshKokoroStatus();
+}
 const ttsVoice = ref('');
 const ttsVoiceName = ref('');
 const voices = ref<{ value: string; label: string; description?: string }[]>([]);
@@ -1096,7 +1153,8 @@ const ttsPreviewError = ref<string | null>(null);
 
 const hasAnyTtsProvider = computed(() => ttsProviders.value.some(p => p.connected));
 // The system voice speaks with the OS default even when no specific voice is picked, so it counts as configured.
-const ttsFullyConfigured = computed(() => hasAnyTtsProvider.value && (ttsProvider.value === 'system' || !!ttsVoice.value));
+// Keyless local voices (system, Kokoro → Bella) speak with a default even when no voice is picked.
+const ttsFullyConfigured = computed(() => hasAnyTtsProvider.value && (ttsProvider.value === 'system' || ttsProvider.value === 'kokoro' || !!ttsVoice.value));
 
 function selectTtsProvider(id: string) {
   ttsProvider.value = id;
@@ -1882,7 +1940,7 @@ async function checkGrokSttConnection(): Promise<void> {
 
 async function loadSettings(): Promise<void> {
   try {
-    ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'system');
+    ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'kokoro');
     ttsVoice.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoice', '');
     ttsVoiceName.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoiceName', '');
     transcriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
@@ -1950,7 +2008,9 @@ async function fetchVoices(): Promise<void> {
   loadingVoices.value = true;
 
   try {
-    if (ttsProvider.value === 'system') {
+    if (ttsProvider.value === 'kokoro') {
+      await fetchKokoroVoices();
+    } else if (ttsProvider.value === 'system') {
       await fetchSystemVoices();
     } else if (ttsProvider.value === 'elevenlabs') {
       await fetchElevenLabsVoices();
@@ -1960,6 +2020,27 @@ async function fetchVoices(): Promise<void> {
   } finally {
     loadingVoices.value = false;
   }
+}
+
+// Kokoro's English voices (bundled table — no network). Bella is the default.
+async function fetchKokoroVoices(): Promise<void> {
+  try {
+    const list: { key: string; name: string; accent: string; gender: string }[] = await ipcRenderer.invoke('voice-kokoro-voices');
+
+    voices.value = list.map(v => ({
+      value:       v.key,
+      label:       v.key === 'af_bella' ? `${ v.name } (recommended)` : v.name,
+      description: `${ v.accent } ${ v.gender.toLowerCase() }`,
+    }));
+  } catch {
+    voices.value = [{ value: 'af_bella', label: 'Bella (recommended)', description: 'American female' }];
+  }
+  if (!voices.value.some(v => v.value === ttsVoice.value)) {
+    ttsVoice.value = 'af_bella';
+    ttsVoiceName.value = 'Bella';
+    await saveSettings();
+  }
+  await refreshKokoroStatus();
 }
 
 // Fetch Grok's built-in voices from GET /v1/tts/voices, falling back to the known
@@ -2138,6 +2219,11 @@ async function previewVoice(): Promise<void> {
     // System provider speaks natively in the renderer — no ElevenLabs round-trip.
     if (ttsProvider.value === 'system') {
       await previewSystemVoice('Hello, this is how I sound.');
+      return;
+    }
+    if (ttsProvider.value === 'kokoro' && kokoroStatus.value.phase !== 'ready') {
+      void downloadKokoro();
+      ttsPreviewError.value = 'The on-device voice is still downloading — try again when it finishes.';
       return;
     }
     const result = await ipcRenderer.invoke('audio-speak', { text: 'Hello, this is how I sound.' });

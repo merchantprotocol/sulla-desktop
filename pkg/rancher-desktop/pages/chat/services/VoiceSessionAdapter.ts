@@ -1,36 +1,34 @@
 /*
-  VoiceSessionAdapter — bridges the existing mic + whisper + TTS pipeline
-  (same IPC surface that `useVoiceSession` talks to) into the new
-  ChatController world.
+  VoiceSessionAdapter — bridges the mic + whisper + TTS pipeline into the
+  ChatController world for ONE chat tab.
 
-  The old composable owned both the audio plumbing and the message model
-  (it pushes/pops `voice_interim` messages into an ad-hoc messages ref).
-  The new chat is controller-first, so this adapter speaks the controller
-  vocabulary instead — InterimMessage / TtsMessage / setVoice / send.
+  Two ways to talk, same pipeline:
 
-  Flow:
-    1. toggle() → starts mic (pcm-s16le) + whisper transcribe-start.
-    2. As transcript events stream in, an InterimMessage is appended to
-       the transcript and kept in sync; level meter updates voice.level.
-    3. Silence for SILENCE_SEND_DELAY → final transcript is committed via
-       controller.send(). PersonaAdapter then handles the backend round-trip.
-    4. User toggles off early → current transcript is committed if present,
-       otherwise voice state is cleared and the interim removed.
-    5. Sulla speaks → whoever has the text (PersonaAdapter's speak listener,
-       for example) calls adapter.speak(text) → TTSPlayerService drains its
-       queue; playbackStart appends a TtsMessage + sets voice.phase='playing',
-       queueEmpty resets.
+    • Hands-free (mic button / ⌘/) — the audio driver's VAD decides when you
+      stopped talking; whisper's `utterance_end` commits each utterance.
+    • Hold-to-talk (hold Space) — works like Sulla Mobile's PTT: hold to talk,
+      release to send. Pauses never end the turn, the whole hold is one message,
+      and starting to talk cuts Sulla off. Driven by usePushToTalk via
+      controller.voiceCommand('ptt-*'):
+        ptt-arm      key down  → mic + whisper start silently (hides mic spin-up)
+        ptt-activate held past threshold → stop TTS, show the recording UI
+        ptt-end      key up    → transcribe the whole hold, send it as one message
+        ptt-cancel   tap / Esc / window blur → discard
 
-  This adapter DOES NOT pull in ChatInterface — it talks directly to the
-  audio-driver IPC surface the same way `useVoiceSession` does. Keeping
-  our own copy of that tiny plumbing is cheaper than smuggling a
-  ChatInterface shim through useVoiceSession just to steal its semantics.
+  Ending a turn is graceful: `audio-driver:transcribe-finish` transcribes
+  everything captured and emits the final transcript + utterance_end before
+  stopping, so the last words are never dropped.
 
-  TTS flow end-to-end:
-    PersonaAdapter subscribes to ci.onSpeakDispatch, dispatches
-    `chat:speak` window events with the text. This adapter listens for
-    those events and pushes into the TTS queue. playbackStart appends a
-    TtsMessage + sets voice.phase='playing', queueEmpty clears.
+  Everything arrives on this tab's controller bus (voiceCommand /
+  speakRequested) — never window events: all chat tabs stay mounted, so a
+  window event made every tab start its mic or speak the same reply.
+
+  Only one voice session is live at a time across tabs (whisper and the mic
+  are app-wide singletons); starting one ends any other.
+
+  TTS: PersonaAdapter forwards backend `speak` payloads via
+  controller.requestSpeak → speak() → TTSPlayerService. playbackStart appends a
+  TtsMessage + sets voice.phase='playing', queueEmpty clears it.
 */
 
 import { newMessageId, type MessageId } from '../types/chat';
@@ -44,6 +42,7 @@ import { logBargeIn } from '@pkg/composables/voice/VoiceLogger';
 import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { ChatController } from '../controller/ChatController';
+import type { VoiceCommand } from '../controller/events';
 import type { InterimMessage, TtsMessage } from '../models/Message';
 
 const ipcRenderer = _ipcRenderer as any;
@@ -56,10 +55,8 @@ declare global {
 }
 
 export interface VoiceSessionAdapterOptions {
-  /** Channel this adapter reports speak events against. */
-  channelId?: string;
   /** Surfaces recoverable errors (missing whisper model, mic permission, …). */
-  onError?:   (message: string) => void;
+  onError?: (message: string) => void;
 }
 
 // Fallback commit delay (ms). PRIMARY end-of-turn trigger is the main-process
@@ -67,6 +64,19 @@ export interface VoiceSessionAdapterOptions {
 // for when that signal never arrives. Long on purpose — the old 2000ms collided with
 // whisper's 2000ms chunk cadence and split utterances into separate agent turns.
 const UTTERANCE_FALLBACK_MS = 8000;
+
+// Hold-to-talk shorter than this after activation is a slip, not a message
+// (Sulla Mobile's MIN_RECORDING_MS).
+export const PTT_MIN_HOLD_MS = 500;
+
+// After release, keep the mic open this long so the last syllable (still in the
+// capture/processing pipeline) makes it into the transcript.
+const PTT_RELEASE_TAIL_MS = 180;
+
+type Mode = 'handsfree' | 'ptt';
+
+// The one adapter whose mic/whisper session is live (whisper + mic are singletons).
+let liveAdapter: VoiceSessionAdapter | null = null;
 
 export class VoiceSessionAdapter {
   private readonly controller: ChatController;
@@ -76,8 +86,18 @@ export class VoiceSessionAdapter {
 
   private unsubs: (() => void)[] = [];
 
-  // Recording state — tracked locally, mirrored into controller.voice.
-  private recording = false;
+  // Session state — tracked locally, mirrored into controller.voice.
+  private mode: Mode | null = null;
+  /** Mic + whisper are running (armed or live). */
+  private capturing = false;
+  /** The session is visible (recording UI) — false while a PTT press is only armed. */
+  private active = false;
+  /** Released; waiting for the final transcript before sending. */
+  private finishing = false;
+  private startPromise: Promise<boolean> | null = null;
+  /** Bumped on every teardown so a late async start can tell it was abandoned. */
+  private generation = 0;
+
   private interimId: MessageId | null = null;
   private recordingStartedAt = 0;
   private lastLevel = 0;
@@ -97,43 +117,31 @@ export class VoiceSessionAdapter {
   // TTS transcript bubble — one active at a time.
   private activeTtsMessageId: MessageId | null = null;
 
-  // Bound IPC listeners so we can unregister on dispose().
-
-  private readonly onTranscript = (_event: any, msg: any) => this.handleTranscript(msg);
+  // Bound IPC listeners so we can unregister on teardown.
+  private readonly onTranscript = (_event: any, msg: any) => {
+    if (!this.capturing && !this.finishing) return;
+    this.turn.handleEvent(msg);
+  };
 
   private readonly onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
-    if (!this.recording) return;
+    if (!this.capturing) return;
     this.lastLevel = Math.max(0, Math.min(1, data.level));
     this.lastSpeaking = !!data.speaking;
 
-    if (this.bargeIn.update(this.lastSpeaking, this.tts.isPlaying)) {
+    // Hands-free barge-in: sustained speech while Sulla talks stops her.
+    // (Hold-to-talk stops TTS outright on activation.)
+    if (this.mode === 'handsfree' && this.bargeIn.update(this.lastSpeaking, this.tts.isPlaying)) {
       logBargeIn();
       this.tts.stop();
     }
 
     const v = this.controller.voice.value;
-    if (v.phase !== 'recording') return;
+    if (v.phase !== 'recording' || v.finishing) return;
     this.controller.setVoice({
       ...v,
       level:    this.lastLevel,
       speaking: this.lastSpeaking,
     });
-  };
-
-  // Window-level ⌘/ shortcut bridge.
-  private readonly onWindowVoiceToggle = () => {
-    this.toggle().catch((err) => {
-      console.error('[VoiceSessionAdapter] toggle failed', err);
-      this.onError?.('Voice capture failed to start.');
-    });
-  };
-
-  // Speak bridge — PersonaAdapter listens for backend `speak` events
-  // and re-dispatches them as this window event. We pick them up and
-  // push the text into the TTS queue.
-  private readonly onWindowSpeak = (ev: Event) => {
-    const text = (ev as CustomEvent<string>).detail;
-    if (typeof text === 'string' && text.trim()) this.speak(text);
   };
 
   constructor(controller: ChatController, opts: VoiceSessionAdapterOptions = {}) {
@@ -147,85 +155,211 @@ export class VoiceSessionAdapter {
     this.unsubs.push(
       this.tts.on('playbackStart', () => this.handleTtsStart()),
       this.tts.on('queueEmpty', () => this.handleTtsEnd()),
+      controller.on('voiceCommand', e => this.handleCommand(e.command)),
+      controller.on('speakRequested', e => this.speak(e.text)),
+      // The transcript's "stop" button (TtsIndicator) and Esc only flip controller
+      // state — actually silence the audio.
+      controller.on('ttsStopped', () => {
+        if (this.tts.isPlaying || this.tts.queueLength > 0) this.tts.stop();
+      }),
     );
-
-    window.addEventListener('chat:voice-toggle', this.onWindowVoiceToggle);
-    window.addEventListener('chat:speak', this.onWindowSpeak as EventListener);
   }
 
-  // ─── Public API ───────────────────────────────────────────────────
+  // ─── Commands ─────────────────────────────────────────────────────
+
+  private handleCommand(command: VoiceCommand): void {
+    const run = (p: Promise<void>) => p.catch((err) => {
+      console.error(`[VoiceSessionAdapter] ${ command } failed`, err);
+      this.onError?.('Voice capture failed.');
+    });
+
+    switch (command) {
+    case 'toggle':       void run(this.toggle()); break;
+    case 'ptt-arm':      void run(this.pttArm()); break;
+    case 'ptt-activate': this.pttActivate(); break;
+    case 'ptt-end':      void run(this.pttEnd()); break;
+    case 'ptt-cancel':   this.pttCancel(); break;
+    }
+  }
+
+  // ─── Hands-free ───────────────────────────────────────────────────
 
   async toggle(): Promise<void> {
-    if (this.recording) this.stop(true);
+    if (this.finishing) return;
+    if (this.capturing) await this.stop(true);
     else await this.start();
   }
 
   async start(): Promise<void> {
-    if (this.recording) return;
-    this.recording = true;
+    if (this.capturing || this.finishing) return;
+    this.mode = 'handsfree';
+    this.activate();
+    await this.beginCapture(false);
+  }
+
+  /**
+   * Stop listening.
+   * @param commit  when true, transcribe and send what was said so far;
+   *                when false, drop it.
+   */
+  async stop(commit = true): Promise<void> {
+    if (!this.capturing || this.finishing) return;
+    if (commit && this.active) await this.finishTurn();
+    else this.teardown();
+  }
+
+  // ─── Hold-to-talk ─────────────────────────────────────────────────
+
+  /** Key down: start mic + whisper silently so they're live by the time the hold registers. */
+  private async pttArm(): Promise<void> {
+    // Hands-free already listening, or a previous turn still transcribing — leave it be.
+    if (this.capturing || this.finishing) return;
+    this.mode = 'ptt';
+    await this.beginCapture(true);
+  }
+
+  /** Held past the tap threshold: this is a real turn. */
+  private pttActivate(): void {
+    if (this.mode !== 'ptt' || !this.capturing || this.active) return;
+    // Talking over Sulla cuts her off, like Sulla Mobile.
+    this.tts.stop();
+    this.activate();
+  }
+
+  /** Key up: send the whole hold as one message (or drop a slip). */
+  private async pttEnd(): Promise<void> {
+    if (this.mode !== 'ptt' || !this.capturing || this.finishing) return;
+    if (!this.active || Date.now() - this.recordingStartedAt < PTT_MIN_HOLD_MS) {
+      this.teardown();
+      return;
+    }
+    await this.finishTurn();
+  }
+
+  private pttCancel(): void {
+    if (this.mode !== 'ptt' || !this.capturing || this.finishing) return;
+    this.teardown();
+  }
+
+  // ─── Session plumbing ─────────────────────────────────────────────
+
+  /** Show the recording UI (interim bubble + controller voice state). */
+  private activate(): void {
+    this.active = true;
+    this.recordingStartedAt = Date.now();
+    this.spawnInterim();
+  }
+
+  /** Start mic + whisper. `ptt` = raw mic, and the turn ends only on finish. */
+  private beginCapture(ptt: boolean): Promise<boolean> {
+    if (liveAdapter && liveAdapter !== this) liveAdapter.teardown();
+    liveAdapter = this;
+
+    this.capturing = true;
     this.turn.reset();
     this.bargeIn.reset();
     this.lastLevel = 0;
     this.lastSpeaking = false;
 
-    // Drop in an interim message the transcript can render while we listen.
-    this.spawnInterim();
-
-    try {
-      await ipcRenderer.invoke('audio-driver:start-mic', 'voice-chat', ['pcm-s16le']);
-      const whisperResult = await ipcRenderer.invoke('audio-driver:transcribe-start', {
-        mode: 'conversation',
-      });
-      if (!whisperResult?.ok) {
-        this.onError?.('Failed to start transcription. Check that whisper is installed with a model downloaded.');
-        this.stop(false);
-        return;
-      }
-    } catch (err) {
-      console.error('[VoiceSessionAdapter] start failed', err);
-      this.onError?.('Voice capture failed to start.');
-      this.stop(false);
-      return;
-    }
-
     ipcRenderer.on('gateway-transcript', this.onTranscript);
     ipcRenderer.on('audio-driver:mic-vad', this.onMicVad);
+    // A reply is coming — have the voice warm by the time it arrives.
+    this.tts.prepare();
+
+    const gen = this.generation;
+
+    this.startPromise = (async() => {
+      try {
+        await ipcRenderer.invoke('audio-driver:start-mic', 'voice-chat', ['pcm-s16le']);
+        if (gen !== this.generation) return false;
+        const whisperResult = await ipcRenderer.invoke('audio-driver:transcribe-start', {
+          mode:       'conversation',
+          manualTurn: ptt,
+        });
+        if (gen !== this.generation) return false;
+        if (!whisperResult?.ok) {
+          this.onError?.('Failed to start transcription. Check that whisper is installed with a model downloaded.');
+          this.teardown();
+          return false;
+        }
+        return true;
+      } catch (err) {
+        console.error('[VoiceSessionAdapter] start failed', err);
+        if (gen === this.generation) {
+          this.onError?.('Voice capture failed to start.');
+          this.teardown();
+        }
+        return false;
+      }
+    })();
+
+    return this.startPromise;
   }
 
   /**
-   * Stop recording.
-   * @param commit  when true, send whatever transcript has accumulated;
-   *                when false, drop it.
+   * Graceful end of turn: let the tail of speech land, have whisper transcribe
+   * everything captured (final transcript_turn + utterance_end → commitTurn →
+   * send), then release the mic.
    */
-  stop(commit = true): void {
-    if (!this.recording) return;
-    this.recording = false;
+  private async finishTurn(): Promise<void> {
+    const gen = this.generation;
+    const started = await this.startPromise;
+
+    if (gen !== this.generation) return;
+    if (!started) {
+      this.teardown();
+      return;
+    }
+
+    this.finishing = true;
+    const v = this.controller.voice.value;
+    if (v.phase === 'recording') this.controller.setVoice({ ...v, finishing: true, speaking: false });
+
+    await new Promise(r => setTimeout(r, PTT_RELEASE_TAIL_MS));
+    this.capturing = false;
+    try {
+      await ipcRenderer.invoke('audio-driver:transcribe-finish');
+    } catch (err) {
+      console.warn('[VoiceSessionAdapter] transcribe-finish failed', err);
+    }
+    if (gen !== this.generation) return;
+    // utterance_end normally committed already; this sends anything left if it never came.
+    this.turn.commitNow();
+    this.teardown();
+  }
+
+  /** Stop everything and discard whatever wasn't committed. Safe to call repeatedly. */
+  private teardown(): void {
+    const wasCapturing = this.capturing || this.finishing;
+
+    this.generation++;
+    this.capturing = false;
+    this.finishing = false;
+    this.active = false;
+    this.startPromise = null;
     this.bargeIn.reset();
+    this.turn.reset();
 
     ipcRenderer.removeListener('gateway-transcript', this.onTranscript);
     ipcRenderer.removeListener('audio-driver:mic-vad', this.onMicVad);
 
-    // recording is already false, so commitTurn() below won't re-spawn an interim.
-    if (commit) {
-      // Commit any accumulated turn as one message (also removes interim + stopVoice).
-      this.turn.commitNow();
-    } else {
-      this.turn.reset();
-      if (this.interimId) {
-        this.controller.removeMessage(this.interimId);
-        this.interimId = null;
-      }
-      this.controller.stopVoice(false);
+    if (this.interimId) {
+      this.controller.removeMessage(this.interimId);
+      this.interimId = null;
     }
+    if (this.controller.voice.value.phase === 'recording') this.controller.stopVoice(false);
 
-    // Release the mic / whisper — fire-and-forget.
-    ipcRenderer.invoke('audio-driver:transcribe-stop').catch(() => { /* noop */ });
-    ipcRenderer.invoke('audio-driver:stop-mic', 'voice-chat').catch(() => { /* noop */ });
+    if (wasCapturing) {
+      // Release the mic / whisper — fire-and-forget (both are no-ops when already stopped).
+      ipcRenderer.invoke('audio-driver:transcribe-stop').catch(() => { /* noop */ });
+      ipcRenderer.invoke('audio-driver:stop-mic', 'voice-chat').catch(() => { /* noop */ });
+    }
+    if (liveAdapter === this) liveAdapter = null;
+    this.mode = null;
   }
 
   /** Create a fresh interim bubble and mark the voice UI as recording. */
   private spawnInterim(): void {
-    this.recordingStartedAt = Date.now();
     const interim: InterimMessage = {
       id:        newMessageId(),
       kind:      'interim',
@@ -241,13 +375,12 @@ export class VoiceSessionAdapter {
       interimMessageId: interim.id,
       level:            0,
       speaking:         false,
+      ptt:              this.mode === 'ptt',
     });
   }
 
   dispose(): void {
-    this.stop(false);
-    window.removeEventListener('chat:voice-toggle', this.onWindowVoiceToggle);
-    window.removeEventListener('chat:speak', this.onWindowSpeak as EventListener);
+    this.teardown();
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
     this.tts.dispose();
@@ -259,18 +392,16 @@ export class VoiceSessionAdapter {
 
   // ─── Whisper transcript ───────────────────────────────────────────
 
-  private handleTranscript(msg: any): void {
-    if (!this.recording) return;
-    this.turn.handleEvent(msg);
-  }
-
   private updateInterim(text: string): void {
     if (!this.interimId) return;
     this.controller.updateMessage<InterimMessage>(this.interimId, { text });
   }
 
-  /** Commit one finished turn (from utterance_end or stop). `text` may be empty. */
+  /** Commit one finished turn (from utterance_end or finish). `text` may be empty. */
   private commitTurn(text: string): void {
+    // A PTT press that never activated (a tap) sends nothing.
+    if (!this.active) return;
+
     // Remove the interim bubble; controller.send() will append the real user message.
     if (this.interimId) {
       this.controller.removeMessage(this.interimId);
@@ -280,10 +411,14 @@ export class VoiceSessionAdapter {
     // Mark voice idle — a fresh interim will spawn if the user keeps talking.
     this.controller.stopVoice(true);
 
-    if (text) this.controller.send(text);
+    // Tagged as voice so the reply comes back in voice mode (<speak> → TTS).
+    if (text) this.controller.send(text, [], { inputSource: 'voice' });
 
-    // Still holding the mic? Spin up a fresh interim bubble for the next utterance.
-    if (this.recording) this.spawnInterim();
+    // Hands-free and still listening? Spin up a fresh interim bubble for the next utterance.
+    if (this.capturing && this.mode === 'handsfree') {
+      this.recordingStartedAt = Date.now();
+      this.spawnInterim();
+    }
   }
 
   // ─── TTS ──────────────────────────────────────────────────────────
@@ -292,6 +427,8 @@ export class VoiceSessionAdapter {
   speak(text: string, messageId?: string): void {
     if (window.__sullaTTSDisabled) return;
     if (!text?.trim()) return;
+    // Holding Space means "I'm talking" — don't talk over the user.
+    if (this.mode === 'ptt' && this.active && !this.finishing) return;
     this.tts.enqueue(text.trim(), messageId ?? `speak_${ Date.now() }`);
   }
 
@@ -315,6 +452,8 @@ export class VoiceSessionAdapter {
       this.controller.appendMessage(msg);
     }
 
+    // Don't hide a live recording UI behind the playing state.
+    if (this.controller.voice.value.phase === 'recording') return;
     this.controller.setVoice({
       phase:     'playing',
       refId:     this.activeTtsMessageId,
@@ -330,13 +469,14 @@ export class VoiceSessionAdapter {
     if (this.controller.voice.value.phase === 'playing') {
       this.controller.stopTTS(id ?? undefined);
     }
-    if (this.recording && this.interimId) {
+    if (this.capturing && this.active && this.interimId && this.controller.voice.value.phase !== 'recording') {
       this.controller.setVoice({
         phase:            'recording',
         startedAt:        this.recordingStartedAt,
         interimMessageId: this.interimId,
         level:            this.lastLevel,
         speaking:         this.lastSpeaking,
+        ptt:              this.mode === 'ptt',
       });
     }
   }

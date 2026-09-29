@@ -1193,7 +1193,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const voiceMode = (state.metadata as any).voiceMode ?? '';
       const controller = this.getChatController();
       let chatMode: ChatMode = 'text';
-      if (inputSource === 'microphone') {
+      // 'voice' is what the chat surfaces send for spoken turns; 'microphone' is the
+      // sensory/relay spelling. Both mean the user is talking — answer in voice mode.
+      if (inputSource === 'microphone' || inputSource === 'voice') {
         chatMode = (voiceMode === 'secretary' || voiceMode === 'intake') ? voiceMode as ChatMode : 'voice';
       } else if (inputSource.startsWith('secretary-') || voiceMode === 'secretary') {
         chatMode = 'secretary';

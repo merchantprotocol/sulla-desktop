@@ -436,6 +436,51 @@ export function initSullaEvents(): void {
     };
   });
 
+  // Drop queued on-device synthesis when playback stops (barge-in, stop button).
+  ipcMainProxy.handle('audio-speak-cancel', async() => {
+    const { cancelKokoro } = await import('@pkg/main/voice/kokoroTts');
+
+    cancelKokoro();
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Kokoro on-device voice — model status / one-time download / warm-up
+  // ─────────────────────────────────────────────────────────────
+
+  void import('@pkg/main/voice/kokoroTts').then(({ onKokoroStatus }) => {
+    onKokoroStatus((status) => {
+      const { BrowserWindow } = require('electron') as typeof import('electron');
+
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send('voice-kokoro-status-changed', status);
+      }
+    });
+  });
+
+  ipcMainProxy.handle('voice-kokoro-status', async() => {
+    const { getKokoroStatus } = await import('@pkg/main/voice/kokoroTts');
+
+    return getKokoroStatus();
+  });
+
+  ipcMainProxy.handle('voice-kokoro-download', async() => {
+    const { ensureKokoroModel } = await import('@pkg/main/voice/kokoroTts');
+
+    return ensureKokoroModel();
+  });
+
+  ipcMainProxy.handle('voice-kokoro-warm', async() => {
+    const { warmKokoro } = await import('@pkg/main/voice/kokoroTts');
+
+    warmKokoro();
+  });
+
+  ipcMainProxy.handle('voice-kokoro-voices', async() => {
+    const { KOKORO_VOICES } = await import('@pkg/main/voice/kokoroTts');
+
+    return KOKORO_VOICES.map(({ key, name, accent, gender }) => ({ key, name, accent, gender }));
+  });
+
   // ─────────────────────────────────────────────────────────────
   // Desktop gateway session lifecycle (secretary mode → GhostAgent)
   // ─────────────────────────────────────────────────────────────

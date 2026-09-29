@@ -63,6 +63,7 @@ export function useKeyboardShortcuts(opts: KeyboardShortcutOptions = {}): void {
       if (c.modals.value.which)  { e.preventDefault(); c.closeModal(); return; }
       if (c.popover.value.open)  { e.preventDefault(); c.hidePopover(); return; }
       if (c.voice.value.phase === 'recording') { e.preventDefault(); opts.onVoiceToggle?.(); return; }
+      if (c.voice.value.phase === 'playing')   { e.preventDefault(); c.stopTTS(); return; }
       if (c.isRunning.value)     { e.preventDefault(); c.stop(); return; }
     }
     // ? — shortcuts overlay, only when not typing somewhere

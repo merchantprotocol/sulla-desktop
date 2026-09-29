@@ -41,7 +41,6 @@ export class SpeakExtractor implements Extractor {
   // Streaming state
   private contentBuffer = '';
   private insideSpeakTag = false;
-  private speakBuffer = '';
   private sentenceBuffer = '';
   private readonly spokenSentences: string[] = [];
 
@@ -59,60 +58,70 @@ export class SpeakExtractor implements Extractor {
   // ─── Chunk Processing (real-time during streaming) ──────────
 
   processChunk(chunk: string, ctx: StreamContext): string {
+    // `contentBuffer` holds only text not yet consumed — everything before it has
+    // been passed through, buffered for speech, or dispatched. Consuming as we go
+    // is what keeps a closed <speak> block from being found (and spoken) again on
+    // the next token.
     this.contentBuffer += chunk;
+    let output = '';
 
-    // Detect <speak> tag opening
-    if (!this.insideSpeakTag) {
-      const openIdx = this.contentBuffer.indexOf('<speak>');
+    for (;;) {
+      if (!this.insideSpeakTag) {
+        const openIdx = this.contentBuffer.indexOf('<speak>');
 
-      if (openIdx !== -1) {
+        if (openIdx === -1) {
+          // Hold back a possible partial "<speak" so a tag split across tokens is still seen.
+          const keep = partialTagSuffix(this.contentBuffer, '<speak>');
+
+          output += this.contentBuffer.slice(0, this.contentBuffer.length - keep);
+          this.contentBuffer = this.contentBuffer.slice(this.contentBuffer.length - keep);
+
+          return output;
+        }
+
+        output += this.contentBuffer.slice(0, openIdx);
+        this.contentBuffer = this.contentBuffer.slice(openIdx + '<speak>'.length);
         this.insideSpeakTag = true;
-        const afterTag = this.contentBuffer.slice(openIdx + 7);
-
+        this.sentenceBuffer = '';
         this.voiceLog(ctx.state, 'SPEAK', 'OPEN');
-
-        this.speakBuffer = afterTag;
-        this.sentenceBuffer = afterTag;
-        // Fall through to check for </speak> in same pass
-      } else {
-        return chunk; // No speak tag yet — pass through
       }
-    } else {
-      // Inside <speak> tag — accumulate
-      this.speakBuffer += chunk;
-      this.sentenceBuffer += chunk;
-    }
 
-    // Check for closing </speak> tag
-    const closeIdx = this.speakBuffer.indexOf('</speak>');
+      const closeIdx = this.contentBuffer.indexOf('</speak>');
 
-    if (closeIdx !== -1) {
-      const speakContent = this.speakBuffer.slice(0, closeIdx).trim();
+      if (closeIdx === -1) {
+        const keep = partialTagSuffix(this.contentBuffer, '</speak>');
 
-      if (speakContent.length > 0) {
-        this.voiceLog(ctx.state, 'SPEAK', 'CLOSE', { text: speakContent.slice(0, 200) });
-        this.dispatchSpeak(ctx, speakContent);
-        this.spokenSentences.push(speakContent);
+        this.sentenceBuffer += this.contentBuffer.slice(0, this.contentBuffer.length - keep);
+        this.contentBuffer = this.contentBuffer.slice(this.contentBuffer.length - keep);
+        // Sentence boundary detection — dispatch complete sentences during streaming
+        this.tryDispatchSentence(ctx);
+
+        return output; // Inside speak tag — don't output to chat
+      }
+
+      // Block closed: speak only what hasn't been dispatched sentence-by-sentence yet.
+      this.sentenceBuffer += this.contentBuffer.slice(0, closeIdx);
+      this.contentBuffer = this.contentBuffer.slice(closeIdx + '</speak>'.length);
+      const remaining = this.sentenceBuffer.trim();
+
+      if (remaining.length > 0) {
+        this.voiceLog(ctx.state, 'SPEAK', 'CLOSE', { text: remaining.slice(0, 200) });
+        this.dispatchSpeak(ctx, remaining);
+        this.spokenSentences.push(remaining);
       }
       this.insideSpeakTag = false;
-      this.speakBuffer = '';
       this.sentenceBuffer = '';
-
-      return ''; // Speak content stripped from chat output
+      // Loop: the rest of the buffer may hold more text or another <speak> block.
     }
-
-    // Sentence boundary detection — dispatch complete sentences during streaming
-    this.tryDispatchSentence(ctx);
-
-    return ''; // Inside speak tag — don't output to chat
   }
 
   // ─── Complete Processing (after streaming ends) ─────────────
 
   processComplete(reply: NormalizedResponse, ctx: StreamContext): string {
-    // Flush any remaining buffered sentence content
+    // Flush any remaining buffered sentence content (stream ended inside an unclosed <speak>)
+    // (contentBuffer can only hold a partial "</speak" here — never speak it.)
     if (this.insideSpeakTag && this.sentenceBuffer.trim()) {
-      const remaining = this.sentenceBuffer.replace('</speak>', '').trim();
+      const remaining = this.sentenceBuffer.trim();
 
       if (remaining.length > 0) {
         this.voiceLog(ctx.state, 'SPEAK', 'FLUSH', { text: remaining.slice(0, 200) });
@@ -134,7 +143,6 @@ export class SpeakExtractor implements Extractor {
   reset(): void {
     this.contentBuffer = '';
     this.insideSpeakTag = false;
-    this.speakBuffer = '';
     this.sentenceBuffer = '';
     this.spokenSentences.length = 0;
   }
@@ -222,4 +230,13 @@ export class SpeakExtractor implements Extractor {
       this.sentenceBuffer = buffer.slice(lastSplit);
     }
   }
+}
+
+/** Length of the longest suffix of `text` that is a proper prefix of `tag` (a tag split across tokens). */
+function partialTagSuffix(text: string, tag: string): number {
+  for (let n = Math.min(tag.length - 1, text.length); n > 0; n--) {
+    if (text.endsWith(tag.slice(0, n))) return n;
+  }
+
+  return 0;
 }

@@ -89,7 +89,7 @@ export class PersonaAdapter {
     this.hasSentMessage = this.ci.hasMessages;
 
     // Tell the controller to delegate send/stop/continue to us.
-    this.controller.setSendHandler((text, attachments) => this.send(text, attachments));
+    this.controller.setSendHandler((text, attachments, opts) => this.send(text, attachments, opts?.inputSource));
     this.controller.setInjectHandler((text, attachments) => this.inject(text, attachments));
     this.controller.setRunHandlers({
       onStop:     () => this.ci.stop(),
@@ -186,13 +186,13 @@ export class PersonaAdapter {
     this.stopWatchers.push(unsubscribeQuestion);
 
     // Speak bridge — the low-latency speak listener on the persona is the
-    // canonical path for TTS. We forward every speak payload to a window
-    // event that VoiceSessionAdapter listens for and plays. This keeps
-    // the two adapters decoupled (persona doesn't know about TTS, voice
-    // doesn't know about persona).
+    // canonical path for TTS. We forward every speak payload onto THIS tab's
+    // controller bus, where its VoiceSessionAdapter plays it. (It used to be a
+    // window event — every mounted chat tab heard it and spoke it, so two open
+    // tabs meant two overlapping voices.)
     const unsubscribeSpeak = this.ci.onSpeakDispatch((text, _threadId, _seq) => {
       if (!text?.trim()) return;
-      window.dispatchEvent(new CustomEvent('chat:speak', { detail: text }));
+      this.controller.requestSpeak(text);
     });
     this.stopWatchers.push(unsubscribeSpeak);
 
@@ -232,14 +232,15 @@ export class PersonaAdapter {
   }
 
   // ─── Intents dispatched by the controller ──────────────────────────
-  async send(text: string, attachments: Attachment[]): Promise<void> {
+  async send(text: string, attachments: Attachment[], inputSource?: 'voice'): Promise<void> {
     this.ci.query.value = text;
     const mapped = attachments
       .map(a => a.file ? fileToAttachmentInput(a.file) : null)
       .filter(Boolean) as Promise<{ mediaType: string; base64: string }>[];
 
     const resolved = await Promise.all(mapped);
-    await this.ci.send(undefined, resolved.length ? resolved : undefined);
+    // Spoken turns are tagged so the backend answers in voice mode (<speak> → TTS).
+    await this.ci.send(inputSource ? { inputSource } : undefined, resolved.length ? resolved : undefined);
   }
 
   /**

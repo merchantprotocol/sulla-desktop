@@ -33,6 +33,10 @@ asarUnpack:
   - 'node_modules/puppeteer-extra-plugin/**'
   - 'node_modules/clone-deep/**'
   - 'node_modules/puppeteer/**'
+  # Kokoro on-device voice sidecar (main/voice/kokoroTts.ts) — a utilityProcess
+  # that loads sherpa-onnx-node via createRequire. The platform package's .node
+  # links its dylibs through @loader_path, so they must sit beside it on disk.
+  - 'node_modules/sherpa-onnx-*/**'
 electronLanguages: [ en-US ]
 extraResources:
   - resources/
@@ -47,6 +51,8 @@ extraResources:
 files:
   - dist/app/**/*
   - '!**/node_modules/*/prebuilds/!(${platform}*)/*.node'
+  # `yarn install --ignore-platform` pulls every sherpa-onnx platform package
+  # (~30-60 MB each); ship only the one for the target OS (see per-OS files).
 # Register the sulla:// custom URL scheme so the OS hands off deep
 # links (e.g. the "Open in Sulla Desktop" CTA on sulladesktop.com)
 # to this app. electron-builder writes CFBundleURLTypes into the
@@ -57,6 +63,8 @@ protocols:
   - name: Sulla Desktop
     schemes: [ sulla ]
 mac:
+  files:
+    - '!**/node_modules/sherpa-onnx-@(linux|win)-*{,/**}'
   darkModeSupport: true
   hardenedRuntime: true
   gatekeeperAssess: false
@@ -90,6 +98,8 @@ mac:
   # subcomponent: Contents/electron-builder.yml". Inline signing doesn't
   # need those files, so they're gone from the app bundle entirely.
 win:
+  files:
+    - '!**/node_modules/sherpa-onnx-@(darwin|linux)-*{,/**}'
   icon: ./pkg/rancher-desktop/pages/assets/sulla-icon.ico
   target: [ zip ]
   artifactName: Sulla-Desktop-${version}-win.${ext}
@@ -103,6 +113,8 @@ win:
     - { from: dist/wix-custom-action.dll, to: wix-custom-action.dll }
     - { from: dist/electron-builder.yaml, to: electron-builder.yml }
 linux:
+  files:
+    - '!**/node_modules/sherpa-onnx-@(darwin|win)-*{,/**}'
   category: Utility
   executableName: sulla-desktop
   artifactName: ${name}-${version}-linux.zip

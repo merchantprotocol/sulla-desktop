@@ -108,6 +108,7 @@ import { PersonaAdapter }        from './services/PersonaAdapter';
 
 import { useDragDrop }           from './composables/useDragDrop';
 import { useKeyboardShortcuts }  from './composables/useKeyboardShortcuts';
+import { usePushToTalk }         from './composables/usePushToTalk';
 import { useResizeSync }         from './composables/useResizeSync';
 
 import { ipcRenderer }           from '@pkg/utils/ipcRenderer';
@@ -486,10 +487,22 @@ useKeyboardShortcuts({
   controller,
   isActive: toRef(props, 'isActive'),
   onVoiceToggle: () => {
-    // The Composer owns voice lifecycle; we just emit a window event
-    // it listens for, so we don't have to thread a ref through.
-    window.dispatchEvent(new CustomEvent('chat:voice-toggle'));
+    // The Composer's VoiceSessionAdapter owns the voice lifecycle; the command
+    // rides this tab's controller bus so only this tab reacts.
+    controller.voiceCommand('toggle');
   },
+});
+
+// Hold Space to talk, release to send — Desktop's Sulla Mobile PTT.
+usePushToTalk({
+  isActive:  toRef(props, 'isActive'),
+  isBlocked: () => {
+    const v = controller.voice.value;
+    // Modals/popovers own the keyboard; hands-free listening already has the mic.
+    return !!controller.modals.value.which || controller.popover.value.open ||
+      (v.phase === 'recording' && !v.ptt);
+  },
+  command: c => controller.voiceCommand(c),
 });
 
 // Composer resize sync — keep Transcript padding in lockstep with composer height.
