@@ -25,10 +25,27 @@ const console = Logging.background;
 
 const lockedPartitions = new Set<string>();
 
+/**
+ * Electron's default user agent carries "Electron/x" and the app name. Sign-in
+ * pages react to that: claude.ai bounced a signed-in user from its authorize
+ * page straight to the app home (it's Electron, like the Claude desktop app),
+ * and Google refuses embedded Electron sign-in outright. Present plain Chrome.
+ */
+export function plainChromeUserAgent(ua: string): string {
+  return ua
+    .replace(/\sElectron\/\S+/g, '')
+    .replace(/\s[^\s/()]+(?:\s[^\s/()]+)*\/\d[\w.-]*(?=\sChrome\/)/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function lockDownSession(partition: string, logPrefix: string): Electron.Session {
   const sess = electronSession.fromPartition(partition);
   if (!lockedPartitions.has(partition)) {
     lockedPartitions.add(partition);
+    const ua = plainChromeUserAgent(sess.getUserAgent());
+    sess.setUserAgent(ua);
+    console.log(`${ logPrefix } Sign-in user agent: ${ ua }`);
     sess.setPermissionRequestHandler((_wc, permission, callback) => {
       console.log(`${ logPrefix } Denied permission request: ${ permission }`);
       callback(false);
