@@ -18,54 +18,47 @@ const LOG_PREFIX = '[OpenAIOAuth]';
  * Open the OAuth URL in an Electron BrowserWindow and intercept the callback.
  */
 function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Promise<{ code: string; state: string } | null> } {
+  let resolveCode!: (result: { code: string; state: string } | null) => void;
+  let resolved = false;
+  const codePromise = new Promise<{ code: string; state: string } | null>((resolve) => {
+    resolveCode = resolve;
+  });
+  const doResolve = (result: { code: string; state: string } | null) => {
+    if (resolved) return;
+    resolved = true;
+    resolveCode(result);
+  };
+
+  // Returns true when targetUrl is the OAuth callback. Checked in the window
+  // and every popup; the containment then stops the callback from loading, so
+  // anything else on host localhost:1455 (e.g. the Codex CLI's own login
+  // server) can't take the code instead of Sulla.
+  const handleUrl = (targetUrl: string): boolean => {
+    try {
+      const parsed = new URL(targetUrl);
+      // OpenAI redirects to: http://localhost:1455/auth/callback?code=...&state=...
+      if (parsed.pathname === '/auth/callback') {
+        const code = parsed.searchParams.get('code');
+        const state = parsed.searchParams.get('state');
+        if (code && state) {
+          console.log(`${ LOG_PREFIX } Intercepted callback, code received`);
+          doResolve({ code, state });
+          return true;
+        }
+      }
+    } catch { /* not a URL */ }
+    return false;
+  };
+
   const window = createContainedAuthWindow({
     width:     800,
     height:    600,
     title:     'Sign in with OpenAI',
     partition: 'persist:openai-oauth',
     logPrefix: LOG_PREFIX,
+    onUrl:     handleUrl,
   });
-
-  const codePromise = new Promise<{ code: string; state: string } | null>((resolve) => {
-    let resolved = false;
-    const doResolve = (result: { code: string; state: string } | null) => {
-      if (resolved) return;
-      resolved = true;
-      resolve(result);
-    };
-
-    // Returns true when targetUrl is the OAuth callback.
-    const handleUrl = (targetUrl: string): boolean => {
-      try {
-        const parsed = new URL(targetUrl);
-        // OpenAI redirects to: http://localhost:1455/auth/callback?code=...&state=...
-        if (parsed.pathname === '/auth/callback') {
-          const code = parsed.searchParams.get('code');
-          const state = parsed.searchParams.get('state');
-          if (code && state) {
-            console.log(`${ LOG_PREFIX } Intercepted callback, code received`);
-            doResolve({ code, state });
-            return true;
-          }
-        }
-      } catch { /* not a URL */ }
-      return false;
-    };
-
-    // Watch all navigation events to catch the OAuth callback. Stop the
-    // callback from actually loading: anything else listening on host
-    // localhost:1455 (e.g. the Codex CLI's own login server) would otherwise
-    // receive the code instead of Sulla.
-    const intercept = (event: Electron.Event, u: string) => {
-      if (handleUrl(u)) event.preventDefault();
-    };
-    window.webContents.on('will-redirect', intercept);
-    window.webContents.on('will-navigate', intercept);
-    window.webContents.on('did-navigate', (_event, u) => handleUrl(u));
-    window.webContents.on('did-navigate-in-page', (_event, u) => handleUrl(u));
-
-    window.on('closed', () => doResolve(null));
-  });
+  window.on('closed', () => doResolve(null));
 
   console.log(`${ LOG_PREFIX } Opening auth window for OpenAI OAuth`);
   window.loadURL(url);

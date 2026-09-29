@@ -51,16 +51,44 @@ function scheme(u: string): string {
   return `${ u.split(':')[0] }:`;
 }
 
-function contain(win: BrowserWindow, partition: string, logPrefix: string): void {
+/** Origin + path only: query strings carry codes and state, never log them. */
+function describeUrl(u: string): string {
+  try {
+    const { origin, pathname } = new URL(u);
+    return `${ origin }${ pathname }`;
+  } catch {
+    return scheme(u);
+  }
+}
+
+/**
+ * Returns true when the URL is the provider's OAuth callback. Runs for the
+ * sign-in window and every popup it opens: providers often finish sign-in in
+ * a popup (Google SSO), and a parent-only listener never sees that callback.
+ */
+export type AuthCallbackHandler = (url: string) => boolean;
+
+function contain(win: BrowserWindow, partition: string, logPrefix: string, onUrl?: AuthCallbackHandler): void {
   const wc = win.webContents;
   const block = (event: Electron.Event, u: string) => {
     if (!isWebUrl(u)) {
       event.preventDefault();
       console.log(`${ logPrefix } Blocked hand-off to another app: ${ scheme(u) }`);
+      return;
     }
+    // Callback caught: stop it from loading. Anything else listening on that
+    // URL (a localhost login server on the host) must not see the code.
+    if (onUrl?.(u)) event.preventDefault();
   };
   wc.on('will-navigate', block);
   wc.on('will-redirect', block);
+  wc.on('did-navigate', (_event, u) => {
+    console.log(`${ logPrefix } Sign-in window at ${ describeUrl(u) }`);
+    onUrl?.(u);
+  });
+  wc.on('did-navigate-in-page', (_event, u) => {
+    onUrl?.(u);
+  });
   wc.on('will-frame-navigate', (details) => {
     if (!isWebUrl(details.url)) {
       details.preventDefault();
@@ -72,6 +100,8 @@ function contain(win: BrowserWindow, partition: string, logPrefix: string): void
       console.log(`${ logPrefix } Blocked popup to another app: ${ scheme(url) }`);
       return { action: 'deny' };
     }
+    console.log(`${ logPrefix } Sign-in popup opened: ${ describeUrl(url) }`);
+    if (onUrl?.(url)) return { action: 'deny' };
     return {
       action:                       'allow',
       overrideBrowserWindowOptions: {
@@ -88,7 +118,7 @@ function contain(win: BrowserWindow, partition: string, logPrefix: string): void
       },
     };
   });
-  wc.on('did-create-window', child => contain(child, partition, logPrefix));
+  wc.on('did-create-window', child => contain(child, partition, logPrefix, onUrl));
 }
 
 export interface ContainedAuthWindowOptions {
@@ -100,6 +130,8 @@ export interface ContainedAuthWindowOptions {
   logPrefix:        string;
   resizable?:       boolean;
   autoHideMenuBar?: boolean;
+  /** Spots the OAuth callback in this window or any popup. Return true when handled. */
+  onUrl?:           AuthCallbackHandler;
 }
 
 export function createContainedAuthWindow(opts: ContainedAuthWindowOptions): BrowserWindow {
@@ -116,6 +148,6 @@ export function createContainedAuthWindow(opts: ContainedAuthWindowOptions): Bro
       session:          lockDownSession(opts.partition, opts.logPrefix),
     },
   });
-  contain(win, opts.partition, opts.logPrefix);
+  contain(win, opts.partition, opts.logPrefix, opts.onUrl);
   return win;
 }
