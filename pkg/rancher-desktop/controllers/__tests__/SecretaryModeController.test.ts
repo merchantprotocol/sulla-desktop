@@ -48,6 +48,7 @@ function makeController(reply: Reply) {
     sent:       [] as { prompt: string, inputSource: string }[],
     spoken:     [] as string[],
     warning:    null as string | null,
+    muted:      false,
   };
   const controller = new SecretaryModeController({
     addEntry: (text, type = 'transcript', speaker) => {
@@ -61,7 +62,7 @@ function makeController(reply: Reply) {
     setIsListening:     (v) => { view.listening = v },
     getIsListening:     () => view.listening,
     setIsAnalyzing:     () => {},
-    getIsMuted:         () => false,
+    getIsMuted:         () => view.muted,
     getTranscript:      () => view.transcript,
     addActionItem:      (item) => { view.actions.push(item) },
     getActionItems:     () => view.actions,
@@ -226,6 +227,20 @@ describe('SecretaryModeController', () => {
 
     await expect(controller.startSession()).rejects.toThrow('Transcription could not start');
     expect(ipcRenderer.invoke).toHaveBeenCalledWith('audio-driver:stop-mic', 'secretary-mode');
+  });
+
+  it('still takes mic commands while muted, answering in text only', async() => {
+    const { view, controller } = makeController(async() => 'It is 3pm.');
+
+    view.muted = true;
+    await controller.startSession();
+    hear('Hey Sulla, what time is it?');
+    await jest.advanceTimersByTimeAsync(3_000);
+
+    expect(view.sent.filter(s => s.inputSource === 'secretary-wake').map(s => s.prompt)).toEqual(['what time is it?']);
+    expect(view.agent.map(m => m.text)).toEqual(['It is 3pm.']);
+    expect(view.spoken).toEqual([]);
+    controller.endSession();
   });
 
   it('ignores "hey Sulla" from other participants', async() => {

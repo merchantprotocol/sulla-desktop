@@ -7,14 +7,14 @@ A live meeting transcription + note-taking assistant. Listens to **both sides** 
 ## What it does
 
 1. Captures **mic audio** (channel 0) and **system/speaker audio** (channel 1) via the Audio Driver
-2. Transcribes both with the local whisper.cpp pipeline (or Grok STT if the user selected it in Audio settings), in ~2 second chunks. Speakers are labeled by channel: **You** (mic) vs **Caller** (system audio) — there is no per-person diarization
+2. Transcribes both with the local whisper.cpp pipeline (or Grok STT if the user selected it in Audio settings), in ~2 second chunks. Speakers are labeled by channel, by design: the **mic is the person driving Sulla ("You")** and **system audio is the other side of the call ("Caller")**. No diarization is needed or used
 3. Renders a **live transcript** in the left pane (You / Caller bubbles); consecutive speech from the same side is merged
 4. First analysis ~15s in, then every 30 seconds: sends the new transcript segment (with speaker labels, plus up to ~12k chars of earlier context) to the agent with `inputSource: 'secretary-analysis'`
 5. Agent returns a `<secretary_analysis>` block with `<actions>`, `<decisions>`, `<facts>`, `<conclusions>` lists
 6. The right pane shows **Action Items** (actions), **Decisions** (decisions), **Insights** (facts + conclusions), and **Commentary** (Sulla's answers). Duplicates across analyses are dropped
 7. The user can:
    - Type into the chat box to ask Sulla privately — kept out of the meeting transcript and never spoken aloud
-   - Say **"Hey Sulla, …"** into their own mic — the command is collected until a ~2.5s pause, answered normally, shown in Commentary and spoken via TTS (unless muted). Only the user's mic can trigger it; a remote participant saying "hey Sulla" is ignored
+   - Say **"Hey Sulla, …"** into their own mic — the command is collected until a ~2.5s pause, answered normally, shown in Commentary and spoken via TTS. Only the mic can give commands — the other side saying "hey Sulla" is ignored. **Mute** only silences Sulla's voice: mic commands still work and the answer shows as text
    - **Barge-in:** TTS is cut as soon as the user speaks again
 8. On **END**, the notes are saved to `~/sulla/meetings/YYYY-MM-DD-HHMM-meeting.md` (action items, decisions, insights, Sulla's answers, full transcript). The file is re-saved once the final analysis lands. **OPEN NOTES** reveals it in Finder
 
@@ -52,10 +52,9 @@ If the microphone permission is denied or transcription can't start (no whisper 
 - **"Where are my meeting notes?"** → `~/sulla/meetings/` — one markdown file per session.
 - **"Does it work when my laptop is closed?"** → Not yet (Cloud-routed Phase 2).
 - **"Can you record the audio too?"** → No — transcription only. Use Capture Studio for audio recording.
-- **"Can it tell the other participants apart?"** → Not yet — it separates you (mic) from everyone else (system audio).
+- **"Who is 'Caller'?"** → Everything coming through system audio — the other side of the call. Your mic is "You".
 
 ## Known limits
 
-- No per-person diarization on the system-audio side
 - The last ~2 seconds of speech before END may not be transcribed
 - The agent has no tool to search past meeting notes yet — read the files in `~/sulla/meetings/`

@@ -210,9 +210,9 @@ export class SecretaryModeController {
 
   // ─── Wake word detection ──────────────────────────────────────
 
+  // Muting only silences Sulla's voice — the person driving Sulla can still
+  // give commands from the mic; answers then show as text only.
   checkAndHandleWakeWord(text: string): void {
-    if (this.cb.getIsMuted()) return;
-
     if (this.cb.getWakeWordActive()) {
       this.queueWakeCommandText(text);
       return;
