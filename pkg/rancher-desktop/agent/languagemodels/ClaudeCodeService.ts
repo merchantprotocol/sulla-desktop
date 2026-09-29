@@ -92,6 +92,14 @@ const BACKGROUND_TASK_MAX_PARK_MS = 4 * 60 * 60_000;
 const AUTONOMOUS_TURN_WAIT_MS = 15 * 60_000;
 
 /**
+ * MCP/CLI token lifetime for a `claude` process. The token is baked into the
+ * process at spawn and revoked when the process is killed, so it must outlive
+ * the longest the process can sit parked (background tasks still call `sulla`
+ * while parked); the default 10-min TTL expired tokens under idle warm procs.
+ */
+const PROC_MCP_SESSION_TTL_MS = BACKGROUND_TASK_MAX_PARK_MS + WARM_IDLE_REAP_MS;
+
+/**
  * How long a turn stays open after `result` waiting for Claude to start the
  * follow-up turn for a steer it hasn't consumed yet (observed: immediate).
  * Past this the steer is handed back to the graph instead.
@@ -433,7 +441,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       try {
         const host = getMCPServerHost();
         if (host.running) {
-          mcpSession = host.registerSession(state);
+          mcpSession = host.registerSession(state, PROC_MCP_SESSION_TTL_MS);
           mcpConfigPath = this.writeMcpConfig(mcpSession);
         }
       } catch { /* continue without sulla-native tools */ }
@@ -1080,13 +1088,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       // Re-point the stable MCP token at THIS turn's live state — required when
       // the process is reused across turns; a no-op on first adoption.
       if (mcpSession && options.state) {
-        try { getMCPServerHost().rebindSession(mcpSession.id, options.state as BaseThreadState); } catch { /* ignore */ }
+        try { getMCPServerHost().rebindSession(mcpSession.id, options.state as BaseThreadState, PROC_MCP_SESSION_TTL_MS); } catch { /* ignore */ }
       }
     } else if (options.state) {
       try {
         const host = getMCPServerHost();
         if (host.running) {
-          mcpSession = host.registerSession(options.state as BaseThreadState);
+          mcpSession = host.registerSession(options.state as BaseThreadState, PROC_MCP_SESSION_TTL_MS);
           mcpConfigPath = this.writeMcpConfig(mcpSession);
           log.log(`[ClaudeCodeService] MCP session minted — config=${ mcpConfigPath } url=${ mcpSession.url }`);
         }
