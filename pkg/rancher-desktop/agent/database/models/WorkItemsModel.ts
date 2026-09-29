@@ -1455,6 +1455,39 @@ export class WorkItemsModel {
     return false;
   }
 
+  /**
+   * Soft-archive done/cancelled tasks whose completion is older than the
+   * cutoff, so finished work leaves the board on its own. Skips tasks that
+   * still have open subtasks (task archive cascades to children) and
+   * GitHub PR mirror rows, whose lifecycle the mirror reconciler owns.
+   * Returns the archived task ids.
+   */
+  static async archiveCompletedTasks(olderThanHours: number): Promise<string[]> {
+    if (!Number.isFinite(olderThanHours) || olderThanHours <= 0) return [];
+    const rows = await postgresClient.query<{ id: string }>(
+      `UPDATE ${ WorkItemsModel.TASKS } t SET archived = true, updated_at = now()
+        WHERE t.archived = false
+          AND t.status IN ('done', 'cancelled')
+          AND COALESCE(t.completed_at, t.last_moved_at, t.updated_at) < now() - make_interval(hours => $1::int)
+          AND COALESCE(t.source, '') <> 'github-pr-mirror'
+          AND NOT EXISTS (
+            SELECT 1 FROM ${ WorkItemsModel.TASKS } c
+             WHERE c.parent_id = t.id AND c.archived = false
+               AND c.status NOT IN ('done', 'cancelled'))
+        RETURNING t.id`,
+      [Math.floor(olderThanHours)],
+    );
+    const ids = rows.map(row => row.id);
+    if (ids.length) {
+      await postgresClient.query(
+        `UPDATE ${ WorkItemsModel.COMMENTS } SET archived = true, updated_at = now()
+          WHERE archived = false AND task_id = ANY($1::text[])`,
+        [ids],
+      );
+    }
+    return ids;
+  }
+
   // ──────────────────────────────────────────────
   // Search
   // ──────────────────────────────────────────────
