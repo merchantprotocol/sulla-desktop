@@ -89,6 +89,7 @@ let flushTimer: ReturnType<typeof setInterval> | null = null;
 let endOfTurnTimer: ReturnType<typeof setInterval> | null = null;
 let inflight = 0;
 const isTranscribing = () => inflight > 0;
+let finishing = false;
 
 // End-of-turn tracking (conversation mode). `lastMicFedAt` is the wall-clock of the
 // most recent VAD-gated mic chunk — since PCM is only delivered while speaking, the
@@ -162,6 +163,7 @@ export function start(opts: {
   // Use requested model if available, otherwise first available model (whisper only)
   modelName = models.includes(requestedModel) ? requestedModel : (models[0] || modelName);
   mode = opts.mode;
+  finishing = false;
   onTranscript = opts.onTranscript;
   language = opts.language || 'en';
 
@@ -170,6 +172,7 @@ export function start(opts: {
 
   // Clear buffers
   resetBuffers();
+  finishing = false;
 
   // Start periodic flush
   flushTimer = setInterval(() => flush(), SEGMENT_MS);
@@ -224,6 +227,7 @@ export function stop(): void {
   provider = 'whisper';
   grokApiKey = null;
   resetBuffers();
+  finishing = false;
   log.info('WhisperTranscribe', 'Stopped');
 }
 
@@ -238,6 +242,7 @@ export function stop(): void {
  */
 export async function finish(timeoutMs = 20_000): Promise<void> {
   if (mode === null) return;
+  finishing = true;
   if (mode !== 'conversation') {
     if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
     const deadline = Date.now() + timeoutMs;
@@ -337,7 +342,7 @@ export function getStats(): { active: boolean; mode: TranscribeMode | null; tran
  * whisper.cpp periodically.
  */
 export function feedMic(chunk: Buffer): void {
-  if (!mode) return;
+  if (!mode || finishing) return;
   micBuffer.push(chunk);
   micBytes += chunk.length;
 
@@ -357,7 +362,7 @@ export function feedMic(chunk: Buffer): void {
  * Only consumed in secretary mode.
  */
 export function feedSpeaker(pcm: Buffer): void {
-  if (mode !== 'secretary') return;
+  if (mode !== 'secretary' || finishing) return;
   speakerBuffer.push(pcm);
   speakerBytes += pcm.length;
 
