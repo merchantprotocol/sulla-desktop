@@ -258,6 +258,13 @@ export class ClaudeCodeService extends BaseLanguageModel {
      * worker sub-agents lose detached-work tools (Monitor/ScheduleWakeup/…).
      */
     disallowedTools: string;
+    /**
+     * Host path of this spawn's system prompt file (writeSystemPromptFile).
+     * Passed as --append-system-prompt-file: ~/.claude/CLAUDE.md is written
+     * on the host, but the CLI runs in the VM under a different $HOME and
+     * never reads it — this flag is the only route Sulla's prompt has in.
+     */
+    systemPromptPath?: string | null;
   }): string[] {
     // POSIX single-quote escape. Single-quoted strings are literal in sh, so
     // no backtick/$VAR/! expansion can fire against untrusted text.
@@ -303,6 +310,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (this.model && this.model !== 'claude-code') claudeArgs.push('--model', shq(this.model));
     if (p.existingSession) claudeArgs.push('--resume', shq(p.existingSession));
     if (p.mcpConfigPath) claudeArgs.push('--mcp-config', shq(p.mcpConfigPath));
+    if (p.systemPromptPath) claudeArgs.push('--append-system-prompt-file', shq(p.systemPromptPath));
 
     // Claude Code emits newline-delimited JSON, but its stdout is connected
     // to the limactl/SSH pipe rather than a terminal. Prefer stdbuf when the
@@ -351,11 +359,15 @@ export class ClaudeCodeService extends BaseLanguageModel {
         }
       } catch { /* continue without sulla-native tools */ }
 
+      // The turn's own system message doesn't exist yet at prewarm time, so a
+      // pre-booted primary gets the full Sulla prompt (byte-stable by design).
+      const systemPromptPath = this.writeSystemPromptFile(await this.fallbackSystemPrompt());
       const disallowedTools = disallowedToolsFor(state.metadata as any);
-      const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: true, disallowedTools });
+      const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: true, disallowedTools, systemPromptPath });
       const proc = childProcess.spawn(paths.limactl, args, {
         env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
       });
+      this.removeOnExit(proc, systemPromptPath);
 
       const record: PrewarmRecord = {
         proc,
@@ -718,7 +730,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
    * only when seeding a fresh Claude session (no existing session id).
    * tool_use / tool_result blocks render inline so Claude can follow prior
    * tool traces. System-role messages are INTENTIONALLY excluded — they
-   * are the caller-built system prompt and go to --append-system-prompt
+   * are the caller-built system prompt and go to --append-system-prompt-file
    * instead, so Claude doesn't receive them twice.
    */
   private serializeFullTranscript(messages: ChatMessage[]): string {
@@ -755,7 +767,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
     const lines: string[] = [];
     for (const m of messages) {
-      if (m.role === 'system') continue; // handled via --append-system-prompt
+      if (m.role === 'system') continue; // handled via --append-system-prompt-file
       const text = msgToText(m).trim();
       if (!text) continue;
       lines.push(`${ labelFor(m.role) }: ${ text }`);
@@ -1003,9 +1015,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       }
     }
 
-    // Refresh ~/.claude/CLAUDE.md with the full system prompt before spawning.
-    // CLAUDE.md is the sole source of system context for Claude Code — no
-    // --append-system-prompt is used.
+    // Refresh ~/.claude/CLAUDE.md on the host (kept for host-side Claude Code
+    // use). The VM-side CLI never sees it — Sulla's prompt reaches it through
+    // --append-system-prompt-file (see writeSystemPromptFile).
     import('../prompts/generateClaudeCodeMemoryFile').then(({ generateClaudeCodeMemoryFile }) => {
       generateClaudeCodeMemoryFile().catch(() => {});
     }).catch(() => {});
@@ -1025,7 +1037,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // must keep Bash/Read to do their work. Those workers instead lose the
     // detached-work tools, since nothing they arm can reach them after return.
     const disallowedTools = disallowedToolsFor(options.state?.metadata as any);
-    const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: speculative, disallowedTools });
+    // An adopted process already booted with its prompt file; a fresh spawn
+    // gets the caller-built system prompt (primary chat, observer, trainer…),
+    // falling back to the full Sulla prompt for callers that bypass BaseNode.
+    const systemPromptPath = adopted
+      ? null
+      : this.writeSystemPromptFile(this.extractSystemPromptFromMessages(messages) || await this.fallbackSystemPrompt());
+    const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: speculative, disallowedTools, systemPromptPath });
 
     const cleanupMcp = () => {
       if (mcpSession) {
@@ -1053,6 +1071,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       proc = childProcess.spawn(limactlPath, args, {
         env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
       });
+      this.removeOnExit(proc, systemPromptPath);
       // Warm mode with no prewarm available: still track this fresh process so
       // it can be parked for reuse after the turn.
       if (warm) {
@@ -1760,6 +1779,42 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       // A parked warm process keeps its MCP session for the next turn; only
       // clean up when we are not reusing it.
       if (!parked) cleanupMcp();
+    }
+  }
+
+  /**
+   * Write one spawn's system prompt where the VM can read it (sullaConfig is
+   * mounted at the same path, exactly like the MCP config). Returns null when
+   * there is nothing to write or the write fails — the spawn still proceeds.
+   */
+  private writeSystemPromptFile(text: string): string | null {
+    if (!text.trim()) return null;
+    try {
+      const dir = path.join(paths.sullaConfig, 'system-prompts');
+      fs.mkdirSync(dir, { recursive: true });
+      const filePath = path.join(dir, `${ crypto.randomUUID() }.md`);
+      fs.writeFileSync(filePath, text, { mode: 0o600 });
+      return filePath;
+    } catch (err) {
+      log.log(`[ClaudeCodeService] system prompt file write failed, spawning without it: ${ (err as Error)?.message ?? err }`);
+      return null;
+    }
+  }
+
+  /** The CLI reads the prompt file at boot; a pooled process keeps running, so delete only on exit. */
+  private removeOnExit(proc: childProcess.ChildProcess, filePath: string | null): void {
+    if (!filePath) return;
+    proc.once('exit', () => {
+      try { fs.unlinkSync(filePath); } catch { /* already gone */ }
+    });
+  }
+
+  private async fallbackSystemPrompt(): Promise<string> {
+    try {
+      const { buildFullSystemPrompt } = await import('../prompts/buildFullSystemPrompt');
+      return (await buildFullSystemPrompt({ provider: 'anthropic' })) || '';
+    } catch {
+      return '';
     }
   }
 
