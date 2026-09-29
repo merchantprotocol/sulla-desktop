@@ -9,6 +9,7 @@ import { getSchedulerService } from '@pkg/agent/services/SchedulerService';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
 import { getTaskDispatcherService } from '@pkg/agent/services/TaskDispatcherService';
 import { getExternalWaitMonitorService } from '@pkg/agent/services/ExternalWaitMonitorService';
+import { getProjectsAutoArchiveService } from '@pkg/agent/services/ProjectsAutoArchiveService';
 import { getWorkflowSchedulerService } from '@pkg/agent/services/WorkflowSchedulerService';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getBackendGraphWebSocketService } from '@pkg/agent/services/BackendGraphWebSocketService';
@@ -244,6 +245,17 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => {
       getExternalWaitMonitorService().destroy();
       console.log('[Background] ExternalWaitMonitorService destroyed');
+    },
+  );
+
+  lifecycle.register('projects-auto-archive', ['database-manager'],
+    async() => {
+      await getProjectsAutoArchiveService().initialize();
+      console.log('[Background] ProjectsAutoArchiveService initialized');
+    },
+    async() => {
+      getProjectsAutoArchiveService().destroy();
+      console.log('[Background] ProjectsAutoArchiveService destroyed');
     },
   );
 
