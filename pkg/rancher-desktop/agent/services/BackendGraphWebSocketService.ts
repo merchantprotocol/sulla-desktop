@@ -3,6 +3,7 @@
 // and heartbeat channels to the default agent via GraphRegistry.
 import { AbortService } from './AbortService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
+import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
@@ -232,23 +233,25 @@ export class BackendGraphWebSocketService {
       const threadId = data?.threadId as string | undefined;
       if (!content || !threadId) return;
 
-      const existing = GraphRegistry.get(threadId);
+      // Only a thread with a run in flight can absorb a steer. A registered
+      // but idle graph would just hold the message with nobody to read it.
+      const existing = this.activeAborts.has(this.abortKey(channelId, threadId)) ? GraphRegistry.get(threadId) : undefined;
       if (existing) {
-        // Graph state exists — inject directly without executing
+        // Run in flight — steer it without starting a new execution
         const attachments = data?.metadata?.attachments as any[] | undefined;
         const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
         const messageContent: any = hasAttachments
           ? [{ type: 'text', text: content }, ...attachments.filter((a: any) => a?.type === 'image' && a?.source?.type === 'base64')]
           : content;
 
-        existing.state.messages.push({
+        injectSteer(existing.state, {
           id:        nextMessageId(),
           role:      'user',
           content:   messageContent,
           timestamp: Date.now(),
           metadata:  { source: 'inject', inputSource: data?.metadata?.inputSource || 'keyboard' },
         } as any);
-        console.log(`[BackendGraphWS] Injected message into running state for thread ${ threadId }: ${ content.slice(0, 50) }...`);
+        console.log(`[BackendGraphWS] Steered running thread ${ threadId }: ${ content.slice(0, 50) }...`);
         return;
       }
 
@@ -406,6 +409,17 @@ export class BackendGraphWebSocketService {
     } finally {
       if (isCurrentRun()) {
         this.activeAborts.delete(abortKey);
+
+        // A steer that landed after the agent's last look at the transcript
+        // would otherwise sit unread in an idle thread. Run it as a new turn.
+        // Skipped when the run was stopped by the user — stop means stop.
+        const leftovers = state && !runAbort?.signal.aborted ? takePendingSteers(state as any) : [];
+        if (leftovers.length) {
+          const text = leftovers.map(steerText).filter(Boolean).join('\n\n');
+          const images = leftovers.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'image') : []);
+          console.log(`[BackendGraphWS] ${ leftovers.length } steer(s) arrived as thread ${ threadId } finished — running them as a follow-up turn`);
+          void this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, images.length ? { attachments: images } : undefined);
+        }
       }
     }
   }

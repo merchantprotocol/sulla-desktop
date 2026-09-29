@@ -20,6 +20,7 @@ import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 
 export interface SecretaryAnalysis {
   actions:     string[];
+  decisions:   string[];
   facts:       string[];
   conclusions: string[];
 }
@@ -52,18 +53,10 @@ export class SecretaryExtractor implements Extractor {
   // ─── Complete Processing ────────────────────────────────────
 
   processComplete(reply: NormalizedResponse, _ctx: StreamContext): string {
-    // Extract secretary analysis blocks
-    const analysisRegex = /<secretary_analysis>([\s\S]*?)<\/secretary_analysis>/i;
-    const match = analysisRegex.exec(reply.content);
+    const analysis = parseSecretaryAnalysis(reply.content);
 
-    if (match) {
-      const block = match[1];
-
-      this.onResult({
-        actions:     extractListItems(block, 'actions'),
-        facts:       extractListItems(block, 'facts'),
-        conclusions: extractListItems(block, 'conclusions'),
-      });
+    if (analysis) {
+      this.onResult(analysis);
     }
 
     // Safety: strip any accidental <speak> tags (secretary mode should not produce them)
@@ -80,6 +73,25 @@ export class SecretaryExtractor implements Extractor {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
+
+/**
+ * Parse the first <secretary_analysis> block in a reply. Returns null when
+ * the reply has no block (e.g. the model answered "LISTENING").
+ */
+export function parseSecretaryAnalysis(content: string): SecretaryAnalysis | null {
+  const match = /<secretary_analysis>([\s\S]*?)<\/secretary_analysis>/i.exec(content);
+
+  if (!match) return null;
+
+  const block = match[1];
+
+  return {
+    actions:     extractListItems(block, 'actions'),
+    decisions:   extractListItems(block, 'decisions'),
+    facts:       extractListItems(block, 'facts'),
+    conclusions: extractListItems(block, 'conclusions'),
+  };
+}
 
 function extractListItems(block: string, tag: string): string[] {
   const match = new RegExp(`<${ tag }>([\\s\\S]*?)<\\/${ tag }>`, 'i').exec(block);

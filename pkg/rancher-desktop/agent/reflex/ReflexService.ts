@@ -9,20 +9,28 @@
  *   3. record a receipt in reflex_decisions and hand the language model a
  *      <reflex_context> block describing what already happened
  *
- * Below threshold nothing runs — the model handles the message as usual and
- * the post-turn Reflex Trainer learns from what the model did.
+ * Below threshold nothing runs. When the best guess still clears
+ * reflexHintThreshold (or policy blocked it), the model gets a <reflex_context>
+ * hint naming the tool(s) similar past requests used, so it can consider them.
+ * Either way the post-turn Reflex Trainer learns from what the model did.
  */
 
 import { ReflexModel } from '../database/models/ReflexModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { toolRegistry } from '../tools/registry';
 
-import { REFLEX_NONE, ReflexEngine, type ReflexPrediction } from './ReflexEngine';
+import { REFLEX_NONE, ReflexEngine, type ReflexCandidate, type ReflexPrediction } from './ReflexEngine';
 import { DEFAULT_REFLEX_THRESHOLD, parseCategories, reflexPolicyViolation } from './reflexPolicy';
+import { reflexActionLabel } from './reflexLabels';
 
 export { DEFAULT_REFLEX_THRESHOLD } from './reflexPolicy';
+export { reflexActionLabel } from './reflexLabels';
+
+/** Below the act threshold but at/above this, the model is told what Reflex would have picked. */
+export const DEFAULT_REFLEX_HINT_THRESHOLD = 0.3;
 
 export interface ReflexTurnResult {
+  kind:       'acted';
   decisionId: string;
   toolName:   string;
   params:     Record<string, unknown>;
@@ -31,9 +39,21 @@ export interface ReflexTurnResult {
   summary:    string;
 }
 
+/** Not executed — tools the model might consider, ranked. */
+export interface ReflexHint {
+  kind:       'hint';
+  decisionId: string;
+  candidates: (ReflexCandidate & { command: string })[];
+  /** Set when the top candidate cleared the threshold but policy/approval stopped it */
+  blockedReason?: string;
+}
+
+export type ReflexOutcome = ReflexTurnResult | ReflexHint;
+
 export interface ReflexSettings {
   enabled:           boolean;
   threshold:         number;
+  hintThreshold:     number;
   allowedCategories: string[];
 }
 
@@ -41,15 +61,20 @@ let engine: ReflexEngine | null = null;
 let engineVersion = -1;
 
 export async function getReflexSettings(): Promise<ReflexSettings> {
-  const [enabled, threshold, categories] = await Promise.all([
+  const [enabled, threshold, hintThreshold, categories] = await Promise.all([
     SullaSettingsModel.get('reflexEnabled', 'true'),
     SullaSettingsModel.get('reflexConfidenceThreshold', String(DEFAULT_REFLEX_THRESHOLD)),
+    SullaSettingsModel.get('reflexHintThreshold', String(DEFAULT_REFLEX_HINT_THRESHOLD)),
     SullaSettingsModel.get('reflexAllowedCategories', ''),
   ]);
-  const parsed = Number(threshold);
+  const unit = (raw: unknown, fallback: number) => {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : fallback;
+  };
   return {
     enabled:           String(enabled) !== 'false',
-    threshold:         Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : DEFAULT_REFLEX_THRESHOLD,
+    threshold:         unit(threshold, DEFAULT_REFLEX_THRESHOLD),
+    hintThreshold:     unit(hintThreshold, DEFAULT_REFLEX_HINT_THRESHOLD),
     allowedCategories: parseCategories(categories),
   };
 }
@@ -76,11 +101,23 @@ export async function predictReflex(message: string): Promise<ReflexPrediction> 
   return (await getReflexEngine()).predict(message);
 }
 
+/** CLI form the model can run, e.g. `sulla ui/open_tab '{"mode":"projects"}'`. */
+export function candidateCommand(c: { toolName: string; params: Record<string, unknown> }): string {
+  const category = toolCategory(c.toolName);
+  return `sulla ${ category ? `${ category }/` : '' }${ c.toolName } '${ JSON.stringify(c.params ?? {}) }'`;
+}
+
+function hintFrom(prediction: ReflexPrediction, decisionId: string, minConfidence: number, blockedReason?: string): ReflexHint | null {
+  const candidates = prediction.candidates.filter(c => c.confidence >= minConfidence).map(c => ({ ...c, command: candidateCommand(c) }));
+  return candidates.length ? { kind: 'hint', decisionId, candidates, blockedReason } : null;
+}
+
 /**
- * Decide and (maybe) act. Never throws — reflex failures must never block
- * the model turn.
+ * Decide and (maybe) act. Returns an 'acted' result when a tool ran, a
+ * 'hint' when the model should consider a tool Reflex would not run itself,
+ * or null. Never throws — reflex failures must never block the model turn.
  */
-export async function runReflex(message: string, state: any): Promise<ReflexTurnResult | null> {
+export async function runReflex(message: string, state: any): Promise<ReflexOutcome | null> {
   try {
     const settings = await getReflexSettings();
     if (!settings.enabled || !message.trim()) return null;
@@ -98,8 +135,8 @@ export async function runReflex(message: string, state: any): Promise<ReflexTurn
     };
 
     if (prediction.confidence < settings.threshold) {
-      await ReflexModel.recordDecision({ ...base, status: 'below_threshold', result: prediction.reason });
-      return null;
+      const decisionId = await ReflexModel.recordDecision({ ...base, status: 'below_threshold', result: prediction.reason });
+      return prediction.confidence >= settings.hintThreshold ? hintFrom(prediction, decisionId, settings.hintThreshold) : null;
     }
 
     const violation = reflexPolicyViolation({
@@ -111,8 +148,8 @@ export async function runReflex(message: string, state: any): Promise<ReflexTurn
     const { decisionService } = await import('../services/DecisionService');
     const blockedReason = violation ?? (await decisionService.requiresApproval(prediction.toolName) ? 'tool requires human approval' : null);
     if (blockedReason) {
-      await ReflexModel.recordDecision({ ...base, status: 'blocked', result: blockedReason });
-      return null;
+      const decisionId = await ReflexModel.recordDecision({ ...base, status: 'blocked', result: blockedReason });
+      return hintFrom(prediction, decisionId, settings.hintThreshold, blockedReason);
     }
 
     const tool = await toolRegistry.createTool(prediction.toolName);
@@ -122,7 +159,7 @@ export async function runReflex(message: string, state: any): Promise<ReflexTurn
     const summary = detail.slice(0, 600);
     const decisionId = await ReflexModel.recordDecision({ ...base, status: success ? 'acted' : 'failed', result: summary });
 
-    return { decisionId, toolName: prediction.toolName, params: prediction.params, confidence: prediction.confidence, success, summary };
+    return { kind: 'acted', decisionId, toolName: prediction.toolName, params: prediction.params, confidence: prediction.confidence, success, summary };
   } catch (err) {
     console.warn('[Reflex] decision failed; handing the turn to the model untouched:', err instanceof Error ? err.message : err);
     return null;
@@ -133,7 +170,8 @@ export async function runReflex(message: string, state: any): Promise<ReflexTurn
  * Body of the <reflex_context> block the language model sees (BaseNode adds
  * the tags) so it does not repeat — or can correct — the reflex action.
  */
-export function formatReflexContext(r: ReflexTurnResult): string {
+export function formatReflexContext(r: ReflexOutcome): string {
+  if (r.kind === 'hint') return formatReflexHint(r);
   const outcome = r.success ? 'succeeded' : 'FAILED';
   return [
     `Before you saw this message, Sulla's Reflex engine already ran ${ r.toolName } ${ JSON.stringify(r.params) } (confidence ${ r.confidence }) and it ${ outcome }.`,
@@ -141,6 +179,17 @@ export function formatReflexContext(r: ReflexTurnResult): string {
     r.success
       ? 'Do not repeat this action. If it was the wrong action for the message, fix it yourself and call reflex_correct with decision_id ' + r.decisionId + ' (plus the correct tool/params if you know them).'
       : 'The action failed; handle the request yourself. If the reflex picked the wrong action, call reflex_correct with decision_id ' + r.decisionId + '.',
+  ].join('\n');
+}
+
+function formatReflexHint(h: ReflexHint): string {
+  const lines = h.candidates.map(c => `- ${ c.command }  (confidence ${ c.confidence }, ${ c.support } similar example${ c.support === 1 ? '' : 's' })`);
+  return [
+    h.blockedReason
+      ? `Sulla's Reflex engine matched this message to a tool but did NOT run it (${ h.blockedReason }):`
+      : `Sulla's Reflex engine did NOT act, but similar past requests were handled with:`,
+    ...lines,
+    'Nothing has run. Treat these as suggestions: use one if it fits what the human asked, otherwise ignore them.',
   ].join('\n');
 }
 
@@ -154,4 +203,47 @@ export function latestHumanText(messages: any[]): string {
       ? last.content.filter((b: any) => b?.type === 'text' && typeof b.text === 'string').map((b: any) => b.text).join('\n')
       : '';
   return text.replace(/<turn_context>[\s\S]*?<\/turn_context>/g, '').trim();
+}
+
+/** What the composer shows while the human types: an action Reflex would run right now. */
+export interface ReflexPreview {
+  toolName:   string;
+  params:     Record<string, unknown>;
+  confidence: number;
+  label:      string;
+}
+
+/**
+ * Live intent for the composer: the action Reflex would run for this draft
+ * if it were sent now — only when it would actually act (confident, allowed
+ * by policy, no human approval). Read-only: records nothing, runs nothing,
+ * so it is safe to call on every keystroke. Never throws.
+ */
+export async function previewReflex(message: string): Promise<ReflexPreview | null> {
+  try {
+    const settings = await getReflexSettings();
+    if (!settings.enabled || !message.trim()) return null;
+
+    const prediction = await predictReflex(message);
+    if (prediction.toolName === REFLEX_NONE || prediction.confidence < settings.threshold) return null;
+
+    const violation = reflexPolicyViolation({
+      toolName:          prediction.toolName,
+      category:          toolCategory(prediction.toolName),
+      params:            prediction.params,
+      allowedCategories: settings.allowedCategories,
+    });
+    if (violation) return null;
+    const { decisionService } = await import('../services/DecisionService');
+    if (await decisionService.requiresApproval(prediction.toolName)) return null;
+
+    return {
+      toolName:   prediction.toolName,
+      params:     prediction.params,
+      confidence: prediction.confidence,
+      label:      reflexActionLabel(prediction.toolName, prediction.params),
+    };
+  } catch {
+    return null;
+  }
 }

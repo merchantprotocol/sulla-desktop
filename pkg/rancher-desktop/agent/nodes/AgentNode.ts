@@ -5,6 +5,7 @@ import { isTerminalAgentTurn } from './agentTurnEnd';
 import { throwIfAborted } from '../services/AbortService';
 import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { requeuePendingSteers } from '../utils/steerChannel';
 import Logging from '@pkg/utils/logging';
 
 import type { NodeRunPolicy } from './BaseNode';
@@ -79,7 +80,10 @@ export class AgentNode extends BaseNode {
     // sensory/relay spelling. Both mean the user is talking — answer in voice mode.
     if (inputSource === 'microphone' || inputSource === 'voice') {
       chatMode = (voiceMode === 'secretary' || voiceMode === 'intake') ? voiceMode : 'voice';
-    } else if (inputSource.startsWith('secretary-') || voiceMode === 'secretary') {
+    } else if (inputSource === 'secretary-analysis' || voiceMode === 'secretary') {
+      // Only the periodic transcript analysis is an extraction turn. Wake-word
+      // commands and private messages from the Secretary tab ('secretary-wake',
+      // 'secretary-chat') are questions for Sulla and get a normal reply.
       chatMode = 'secretary';
     }
     controller.setMode(chatMode);
@@ -113,8 +117,9 @@ export class AgentNode extends BaseNode {
     // Reflex: Sulla's native decision engine gets the first look at a fresh
     // human message. When it is confident it has seen this request succeed
     // before, it runs that one tool call immediately, and the model is told
-    // what already happened via <reflex_context>. Below threshold it does
-    // nothing and the post-turn Reflex Trainer learns from the model instead.
+    // what already happened via <reflex_context>. Below threshold it runs
+    // nothing; a close-enough guess becomes a <reflex_context> hint the model
+    // may act on, and the post-turn Reflex Trainer learns from the model.
     if (!isToolCallLoop) {
       (state.metadata as any).reflexContext = '';
       (state.metadata as any).reflexDecision = null;
@@ -124,8 +129,10 @@ export class AgentNode extends BaseNode {
         const reflex = await runReflex(latestHumanText(state.messages), state);
         if (reflex) {
           (state.metadata as any).reflexContext = formatReflexContext(reflex);
-          (state.metadata as any).reflexDecision = reflex;
-          void this.wsChatMessage(state, `⚡ Reflex ${ reflex.success ? 'ran' : 'tried' } ${ reflex.toolName } (confidence ${ reflex.confidence })`, 'assistant', 'thinking');
+          if (reflex.kind === 'acted') {
+            (state.metadata as any).reflexDecision = reflex;
+            void this.wsChatMessage(state, `⚡ Reflex ${ reflex.success ? 'ran' : 'tried' } ${ reflex.toolName } (confidence ${ reflex.confidence })`, 'assistant', 'thinking');
+          }
         }
       }
     }
@@ -287,6 +294,19 @@ export class AgentNode extends BaseNode {
         this.bumpStateVersion(state);
       }
       // Text already dispatched to UI in executeAgent() before tool execution
+    }
+
+    // A "Send now" steer the model never saw (it raced the final answer, or
+    // the provider can't take input mid-turn) must not die here. Put it after
+    // the reply and go around again so the next turn answers it.
+    const unseenSteers = requeuePendingSteers(state as any);
+    if (unseenSteers > 0) {
+      console.log(`[AgentNode] ${ unseenSteers } steer message(s) not yet seen by the model — continuing the run`);
+      agentOutcome.status = 'continue';
+      (state.metadata as any).agent.status = 'continue';
+      state.metadata.cycleComplete = false;
+      state.metadata.waitingForUser = false;
+      this.bumpStateVersion(state);
     }
 
     // ----------------------------------------------------------------

@@ -38,6 +38,14 @@ export interface ReflexNeighbour {
   similarity: number;
 }
 
+/** One (tool, params) decision the neighbourhood voted for. */
+export interface ReflexCandidate {
+  toolName:   string;
+  params:     Record<string, unknown>;
+  confidence: number;
+  support:    number;
+}
+
 export interface ReflexPrediction {
   /** 'none' when the engine should not act */
   toolName:   string;
@@ -48,6 +56,8 @@ export interface ReflexPrediction {
   /** Positive examples backing the winning decision */
   support:    number;
   neighbours: ReflexNeighbour[];
+  /** Positive, non-'none' decisions ranked by vote — the winner first when it is an action */
+  candidates: ReflexCandidate[];
   reason:     string;
 }
 
@@ -60,6 +70,7 @@ const STOPWORDS = new Set([
 /** Minimum cosine similarity for an example to count as a neighbour at all. */
 const NEIGHBOUR_FLOOR = 0.25;
 const MAX_NEIGHBOURS = 7;
+const MAX_CANDIDATES = 3;
 /** Messages longer than this are treated as conversation, not commands. */
 export const MAX_COMMAND_TOKENS = 40;
 
@@ -150,7 +161,7 @@ export class ReflexEngine {
 
   predict(message: string): ReflexPrediction {
     const empty = (reason: string, neighbours: ReflexNeighbour[] = []): ReflexPrediction => ({
-      toolName: REFLEX_NONE, params: {}, confidence: 0, similarity: 0, support: 0, neighbours, reason,
+      toolName: REFLEX_NONE, params: {}, confidence: 0, similarity: 0, support: 0, neighbours, candidates: [], reason,
     });
 
     const feats = features(message);
@@ -188,10 +199,15 @@ export class ReflexEngine {
       votes.set(e.key, slot);
     }
 
-    const best = [...votes.values()].sort((a, b) => b.vote - a.vote)[0];
+    const ranked = [...votes.values()].sort((a, b) => b.vote - a.vote);
+    const best = ranked[0];
     if (!best || best.vote <= 0) return empty('similar examples say not to act', neighbours);
 
     const confidence = round(best.top * (best.vote / total));
+    const candidates = ranked
+      .filter(v => v.vote > 0 && v.toolName !== REFLEX_NONE)
+      .slice(0, MAX_CANDIDATES)
+      .map(v => ({ toolName: v.toolName, params: v.params, confidence: round(v.top * (v.vote / total)), support: v.support }));
     if (best.toolName === REFLEX_NONE) {
       return { ...empty('learned that similar messages need no action', neighbours), confidence, similarity: round(best.top), support: best.support };
     }
@@ -202,6 +218,7 @@ export class ReflexEngine {
       similarity: round(best.top),
       support:    best.support,
       neighbours,
+      candidates,
       reason:     `${ best.support } matching example(s), closest similarity ${ round(best.top) }`,
     };
   }
