@@ -6,11 +6,18 @@ import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 
 import { SullaSettingsModel } from './models/SullaSettingsModel';
 
+// Node's AsyncLocalStorage is unsafe in an Electron renderer: there the async
+// context slot is shared with Blink, so getStore() can read a Blink object and
+// V8 aborts the whole renderer (it took down the password vault on its first
+// query). Statement timeouts are only set from the main process, so renderers
+// skip AsyncLocalStorage entirely.
+const IN_RENDERER = typeof process !== 'undefined' && process.type === 'renderer';
+
 export class PostgresClient {
   private pool: Pool | null = null;
   private connected = false;
   private shuttingDown = false;
-  private statementTimeout = new AsyncLocalStorage<number>();
+  private statementTimeout: AsyncLocalStorage<number> | null = IN_RENDERER ? null : new AsyncLocalStorage<number>();
 
   get isShuttingDown(): boolean {
     return this.shuttingDown;
@@ -82,11 +89,13 @@ export class PostgresClient {
   async withStatementTimeout<T>(timeoutMs: number, callback: () => Promise<T>): Promise<T> {
     const boundedTimeoutMs = Math.max(1, Math.floor(timeoutMs));
 
+    if (!this.statementTimeout) return callback();
+
     return this.statementTimeout.run(boundedTimeoutMs, callback);
   }
 
   private async applyStatementTimeout(client: PoolClient, local: boolean): Promise<boolean> {
-    const timeoutMs = this.statementTimeout.getStore();
+    const timeoutMs = this.statementTimeout?.getStore();
     if (!timeoutMs) return false;
     await client.query("SELECT set_config('statement_timeout', $1, $2)", [`${ timeoutMs }ms`, local]);
     return true;
