@@ -17,6 +17,8 @@
  * decision — the engine never invents arguments.
  */
 
+import { canonicalize } from './reflexSynonyms';
+
 export const REFLEX_NONE = 'none';
 
 export interface ReflexExample {
@@ -80,8 +82,8 @@ function stem(token: string): string {
 }
 
 export function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
+  // Thesaurus first (reflexSynonyms), so every synonym lands on one feature.
+  return canonicalize(text)
     .replace(/https?:\/\/\S+/g, (url) => ` ${ url.replace(/[^a-z0-9]+/g, ' ') } `)
     .replace(/[^a-z0-9\s]+/g, ' ')
     .split(/\s+/)

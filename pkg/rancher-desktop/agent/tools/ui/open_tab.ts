@@ -1,6 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 
-import { getWindow } from '@pkg/window';
+import { getWindow, openAudioSettings, openLanguageModelSettings } from '@pkg/window';
 import { openPreferences } from '@pkg/window/preferences';
 
 /**
@@ -40,6 +40,20 @@ export class UiOpenTabWorker extends BaseTool {
     const url = typeof input.url === 'string' ? input.url.trim() : '';
     const mode = typeof input.mode === 'string' ? input.mode.trim().toLowerCase() : '';
 
+    // `models` and `audio` are their own settings windows, not tabs.
+    const WINDOW_MODES: Record<string, { open: () => void; label: string }> = {
+      models: { open: openLanguageModelSettings, label: 'Language Model Settings' },
+      audio:  { open: openAudioSettings, label: 'Audio Settings' },
+    };
+    if (WINDOW_MODES[mode]) {
+      try {
+        WINDOW_MODES[mode].open();
+        return { successBoolean: true, responseString: `Opened the ${ WINDOW_MODES[mode].label } window.` };
+      } catch (err) {
+        return { successBoolean: false, responseString: `Failed to open ${ WINDOW_MODES[mode].label }: ${ (err as Error).message }` };
+      }
+    }
+
     // `settings` is a separate Electron window, not a tab — handle it up front.
     if (mode === 'settings') {
       try {
@@ -74,14 +88,14 @@ export class UiOpenTabWorker extends BaseTool {
     if (!mode) {
       return {
         successBoolean: false,
-        responseString: `Missing required field: mode. Valid modes: ${ Array.from(VALID_MODES).join(', ') }, settings. (Or pass a "url" to open a raw browser tab.)`,
+        responseString: `Missing required field: mode. Valid modes: ${ Array.from(VALID_MODES).join(', ') }, settings, models, audio. (Or pass a "url" to open a raw browser tab.)`,
       };
     }
 
     if (!VALID_MODES.has(mode)) {
       return {
         successBoolean: false,
-        responseString: `Unknown tab mode "${ mode }". Valid modes: ${ Array.from(VALID_MODES).join(', ') }, settings.`,
+        responseString: `Unknown tab mode "${ mode }". Valid modes: ${ Array.from(VALID_MODES).join(', ') }, settings, models, audio.`,
       };
     }
 

@@ -20,12 +20,12 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { toolRegistry } from '../tools/registry';
 
 import { REFLEX_NONE, ReflexEngine, type ReflexCandidate, type ReflexPrediction } from './ReflexEngine';
-import { parseCategories, reflexPolicyViolation } from './reflexPolicy';
+import { DEFAULT_REFLEX_THRESHOLD, parseCategories, reflexPolicyViolation } from './reflexPolicy';
 import { reflexActionLabel } from './reflexLabels';
 
+export { DEFAULT_REFLEX_THRESHOLD } from './reflexPolicy';
 export { reflexActionLabel } from './reflexLabels';
 
-export const DEFAULT_REFLEX_THRESHOLD = 0.85;
 /** Below the act threshold but at/above this, the model is told what Reflex would have picked. */
 export const DEFAULT_REFLEX_HINT_THRESHOLD = 0.3;
 

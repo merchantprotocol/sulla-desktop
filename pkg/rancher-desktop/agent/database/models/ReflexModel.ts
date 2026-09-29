@@ -86,6 +86,38 @@ export class ReflexModel {
     return { row, created: inserted };
   }
 
+  /**
+   * Bulk-load shipped seed examples. Skips any example that already exists —
+   * active OR archived — so a seed row the user forgot is never resurrected.
+   * Returns how many rows were inserted.
+   */
+  static async seedExamples(examples: { utterance: string; tool: string; params?: Record<string, unknown>; positive?: boolean }[], source = 'seed'): Promise<number> {
+    let inserted = 0;
+    for (let i = 0; i < examples.length; i += 500) {
+      const batch = examples.slice(i, i + 500).map(e => ({
+        id:        generateId(),
+        utterance: e.utterance.trim(),
+        tool_name: e.tool,
+        params:    e.params ?? {},
+        positive:  e.positive !== false,
+      }));
+      const result = await postgresClient.queryWithResult(
+        `INSERT INTO reflex_examples (id, utterance, tool_name, params, positive, source)
+         SELECT x.id, x.utterance, x.tool_name, x.params, x.positive, $2
+           FROM jsonb_to_recordset($1::jsonb) AS x(id text, utterance text, tool_name text, params jsonb, positive boolean)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM reflex_examples r
+             WHERE lower(r.utterance) = lower(x.utterance) AND r.tool_name = x.tool_name
+               AND md5(r.params::text) = md5(x.params::text) AND r.positive = x.positive)
+         ON CONFLICT (lower(utterance), tool_name, md5(params::text), positive) WHERE NOT archived DO NOTHING`,
+        [JSON.stringify(batch), source],
+      );
+      inserted += result.rowCount ?? 0;
+    }
+    if (inserted) examplesVersion++;
+    return inserted;
+  }
+
   static async forget(id: string): Promise<boolean> {
     const result = await postgresClient.queryWithResult(
       'UPDATE reflex_examples SET archived = TRUE, updated_at = NOW() WHERE id = $1 AND NOT archived',
