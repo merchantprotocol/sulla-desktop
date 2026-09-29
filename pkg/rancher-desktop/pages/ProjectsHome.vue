@@ -2395,7 +2395,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-dropzone { border: 1px dashed var(--pborder); border-radius: 9px; text-align: center; padding: 12px; }
 
 /* board */
-.ph-cols { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+/* Every lane stays on one row; the board scrolls horizontally instead of wrapping. */
+.ph-cols { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(260px, 1fr); gap: 16px; overflow-x: auto; padding-bottom: 8px; }
 .ph-col { border: 1px solid transparent; border-radius: 12px; padding: 6px; min-height: 120px; transition: background 0.12s ease, border-color 0.12s ease; }
 .ph-col.drop-col { border-color: var(--pacc-line); background: var(--pacc-soft); }
 .ph-card[draggable="true"] { cursor: grab; }
