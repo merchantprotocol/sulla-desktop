@@ -250,6 +250,8 @@ export interface IpcMainInvokeEvents {
   // #region Sulla
   'start-sulla-custom-env': () => void;
   'first-run-wizard-step':  (step: number) => void;
+  'first-run-ai:status':    () => { ready: boolean };
+  'first-run-ai:connected': (providerId: string) => void;
   'app-quit':               () => void;
 
   // Onboarding presence — BrowserTabChat + ChatPage call these on mount to
@@ -1019,6 +1021,8 @@ export interface IpcMainInvokeEvents {
 export interface IpcRendererEvents {
   'decisions:changed': (record: import('@pkg/shared/decisions').DecisionRecord) => void;
   'claude-oauth:progress':          (text: string) => void;
+  /** First-run: VM + database are up, AI sign-in can start. */
+  'first-run-ai:ready':             () => void;
   'claude-oauth:url':               (url: string) => void;
   'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;
   'sulla-cloud-connection:status-changed': (status: Record<string, any>) => void;
