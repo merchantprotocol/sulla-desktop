@@ -18,6 +18,12 @@
           <p class="welcome-subtitle">
             Say <strong>"Hey Sulla"</strong> during a session to interact.
           </p>
+          <p
+            v-if="startError"
+            class="welcome-error"
+          >
+            {{ startError }}
+          </p>
 
           <!-- Terminal preview card (clickable) -->
           <div
@@ -136,6 +142,14 @@
             END
           </button>
           <button
+            v-if="!isListening && hasSessionEnded && savedNotesPath"
+            class="dt-btn dt-btn-new"
+            :title="savedNotesPath"
+            @click="revealNotes"
+          >
+            OPEN NOTES
+          </button>
+          <button
             v-if="!isListening && hasSessionEnded"
             class="dt-btn dt-btn-new"
             @click="resetAndChoose"
@@ -143,6 +157,14 @@
             NEW
           </button>
         </div>
+      </div>
+
+      <div
+        v-if="captureWarning || notesStatus"
+        class="dt-notice"
+        :class="{ 'dt-notice-warn': captureWarning || notesSaveFailed }"
+      >
+        {{ captureWarning || notesStatus }}
       </div>
 
       <!-- Terminal body: transcript left, notes right -->
@@ -305,6 +327,8 @@ import { ChatInterface } from './agent/ChatInterface';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import {
   SecretaryModeController,
+  buildMeetingNotesMarkdown,
+  meetingNotesFileName,
   type TranscriptEntry,
   type InsightEntry,
   type AgentMessage,
@@ -324,6 +348,7 @@ const hasSessionEnded = ref(false);
 const transcript = ref<TranscriptEntry[]>([]);
 const isListening = ref(false);
 const listeningStatus = ref('Starting...');
+const startError = ref('');
 const wakeWordActive = ref(false);
 const audioLevel = ref(0);
 const sessionDuration = ref('0:00');
@@ -338,6 +363,12 @@ const actionItems = ref<string[]>([]);
 const decisions = ref<string[]>([]);
 const insights = ref<InsightEntry[]>([]);
 const agentMessages = ref<AgentMessage[]>([]);
+
+const captureWarning = ref<string | null>(null);
+const sessionStartedAt = ref<Date>(new Date());
+const savedNotesPath = ref<string | null>(null);
+const notesStatus = ref('');
+const notesSaveFailed = ref(false);
 
 // ── TTS state (view-owned, browser APIs) ────────────────────────
 
@@ -408,8 +439,30 @@ function ensureChatInterface(): ChatInterface {
   return chatInterface;
 }
 
-async function sendToChat(prompt: string, inputSource: string): Promise<string | null> {
+// Analysis, wake commands and private messages share one thread, and a reply
+// is matched by "newest assistant message once the graph is idle". Run them
+// one at a time so a reply can't be picked up by the wrong caller.
+let chatQueue: Promise<unknown> = Promise.resolve();
+
+function sendToChat(prompt: string, inputSource: string): Promise<string | null> {
+  const run = chatQueue.then(() => sendToChatNow(prompt, inputSource));
+  chatQueue = run.catch(() => null);
+
+  return run;
+}
+
+async function waitForGraphIdle(ci: ChatInterface, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (ci.graphRunning.value && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+}
+
+async function sendToChatNow(prompt: string, inputSource: string): Promise<string | null> {
   const ci = ensureChatInterface();
+  // A previous request that timed out may still be running — let it finish so
+  // its late reply isn't mistaken for this one.
+  await waitForGraphIdle(ci, 60_000);
   ci.query.value = prompt;
   const voiceMode = inputSource === 'secretary-analysis' ? 'secretary' : undefined;
   await ci.send({ inputSource, ...(voiceMode ? { voiceMode } : {}) });
@@ -475,6 +528,10 @@ function scrollAnalysis(): void {
 
 function resetAndChoose(): void {
   hasSessionEnded.value = false;
+  savedNotesPath.value = null;
+  notesStatus.value = '';
+  notesSaveFailed.value = false;
+  captureWarning.value = null;
   transcript.value = [];
   actionItems.value = [];
   decisions.value = [];
@@ -524,7 +581,54 @@ const controller = new SecretaryModeController({
   playTTS,
   stopTTS,
   sendToChat,
+  setWarning: (message) => { captureWarning.value = message },
 });
+
+// ── Meeting notes (saved to <sulla home>/meetings/ when a session ends) ──
+
+async function saveNotes(): Promise<void> {
+  if (transcript.value.length === 0 && actionItems.value.length === 0 && agentMessages.value.length === 0) return;
+
+  const markdown = buildMeetingNotesMarkdown({
+    startedAt:     sessionStartedAt.value,
+    duration:      sessionDuration.value,
+    transcript:    transcript.value,
+    actionItems:   actionItems.value,
+    decisions:     decisions.value,
+    insights:      insights.value,
+    agentMessages: agentMessages.value,
+  });
+
+  try {
+    const result = await ipcRenderer.invoke('secretary-mode:save-notes', {
+      fileName: meetingNotesFileName(sessionStartedAt.value),
+      markdown,
+      path:     savedNotesPath.value,
+    });
+
+    if (!result?.ok) throw new Error(result?.error || 'unknown error');
+    savedNotesPath.value = result.path ?? null;
+    notesSaveFailed.value = false;
+    notesStatus.value = `Notes saved to ${ result.path }`;
+  } catch (err) {
+    notesSaveFailed.value = true;
+    notesStatus.value = `Couldn't save meeting notes: ${ (err as Error).message }`;
+  }
+}
+
+// The final analysis finishes after END is pressed — re-save so the file
+// includes it (same path, overwritten).
+let resaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+watch([() => actionItems.value.length, () => decisions.value.length, () => insights.value.length, () => agentMessages.value.length], () => {
+  if (!hasSessionEnded.value || isListening.value) return;
+  if (resaveTimer) clearTimeout(resaveTimer);
+  resaveTimer = setTimeout(() => { resaveTimer = null; void saveNotes() }, 1_000);
+});
+
+function revealNotes(): void {
+  if (savedNotesPath.value) void ipcRenderer.invoke('secretary-mode:reveal-notes', savedNotesPath.value);
+}
 
 // ── Session lifecycle (thin wrappers) ──────────────────────────
 
@@ -533,6 +637,11 @@ async function startSession(): Promise<void> {
     isListening.value = true;
     hasSessionEnded.value = false;
     listeningStatus.value = 'Starting microphone...';
+    startError.value = '';
+    sessionStartedAt.value = new Date();
+    savedNotesPath.value = null;
+    notesStatus.value = '';
+    notesSaveFailed.value = false;
     actionItems.value = [];
     decisions.value = [];
     insights.value = [];
@@ -544,7 +653,9 @@ async function startSession(): Promise<void> {
   } catch (err) {
     console.error('[SecretaryMode] Failed to start session:', err);
     listeningStatus.value = 'Failed to start';
+    startError.value = (err as Error)?.message || 'Secretary Mode failed to start.';
     isListening.value = false;
+    updateTab(props.tabId, { title: 'Secretary' });
   }
 }
 
@@ -561,6 +672,7 @@ function endSession(): void {
   hasSessionEnded.value = true;
   controller.endSession();
   updateTab(props.tabId, { title: `Secretary - ${ sessionDuration.value }` });
+  void saveNotes();
 }
 
 async function sendChatMessage(): Promise<void> {
@@ -643,6 +755,12 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--text-dim, #6e7681);
   margin-bottom: 0.25rem;
+}
+
+.welcome-error {
+  margin-top: 0.75rem;
+  font-size: 12px;
+  color: var(--danger, #f85149);
 }
 
 .welcome-card {
@@ -808,6 +926,19 @@ onUnmounted(() => {
 .dt-btn-new:hover {
   background: rgba(80, 150, 179, 0.2);
   box-shadow: 0 0 8px rgba(80, 150, 179, 0.2);
+}
+
+.dt-notice {
+  padding: 0.375rem 1rem;
+  font-size: 11px;
+  color: var(--text-dim, #6e7681);
+  background: var(--surface-2, #1c2128);
+  border-bottom: 1px solid var(--border-muted, #21262d);
+  flex-shrink: 0;
+}
+
+.dt-notice-warn {
+  color: var(--warning, #d29922);
 }
 
 .dt-btn-unmuted {

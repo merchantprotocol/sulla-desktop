@@ -52,8 +52,11 @@ const VOICE_TURN_DIRECTIVE = 'voice mode: user is speaking via microphone. Wrap 
 const SECRETARY_TURN_DIRECTIVE = `secretary mode: silently observe the meeting — never respond conversationally, never emit <speak>. Extract from the transcript and return exactly:
 <secretary_analysis>
 <actions>
-- [decision/task/commitment + owner]
+- [task/commitment + owner]
 </actions>
+<decisions>
+- [agreement reached]
+</decisions>
 <facts>
 - [names, numbers, dates, IDs, technical details]
 </facts>
@@ -61,7 +64,7 @@ const SECRETARY_TURN_DIRECTIVE = `secretary mode: silently observe the meeting �
 - [your inferences and follow-ups]
 </conclusions>
 </secretary_analysis>
-Spawn a sub-agent (spawn_agent) for actionable lookups; do not wait for results.`;
+Only include NEW items from the latest segment; leave empty sections empty. Spawn a sub-agent (spawn_agent) for actionable lookups; do not wait for results.`;
 
 const INTAKE_TURN_DIRECTIVE = 'intake mode: continuous voice intake — never emit <speak>, respond in ONE line, fast. If the chunk has actionable items (order/tracking numbers, scheduling, questions, tasks) spawn a sub-agent immediately via spawn_agent; otherwise acknowledge receipt. You are a dispatcher, not an executor.';
 

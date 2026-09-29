@@ -1206,7 +1206,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // sensory/relay spelling. Both mean the user is talking — answer in voice mode.
       if (inputSource === 'microphone' || inputSource === 'voice') {
         chatMode = (voiceMode === 'secretary' || voiceMode === 'intake') ? voiceMode as ChatMode : 'voice';
-      } else if (inputSource.startsWith('secretary-') || voiceMode === 'secretary') {
+      } else if (inputSource === 'secretary-analysis' || voiceMode === 'secretary') {
+        // Only the periodic transcript analysis is an extraction turn. Wake-word
+        // commands and private messages from the Secretary tab ('secretary-wake',
+        // 'secretary-chat') are questions for Sulla and get a normal reply.
         chatMode = 'secretary';
       }
       controller.setMode(chatMode);
