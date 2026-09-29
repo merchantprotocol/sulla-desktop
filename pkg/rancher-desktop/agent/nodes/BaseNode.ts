@@ -19,6 +19,7 @@ import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { sanitizeConversationContext } from '../utils/conversationContext';
 import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
+import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
 import { prepareProviderMessages } from './contextBudget';
 
@@ -1040,6 +1041,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           reusedAssistantMessage: true,
         },
       };
+    }
+
+    // Steers already in this prompt snapshot are delivered by this call. Any
+    // that arrive after it stay pending for the live CLI turn or the next
+    // iteration (see utils/steerChannel).
+    const promptMeta = new Set(messages.map(m => (m as any).metadata).filter(Boolean));
+    for (const steer of pendingSteers(state)) {
+      if (promptMeta.has((steer as any).metadata)) markSteerDelivered(steer);
     }
 
     // Curate the exact provider input after the system prompt/context is in

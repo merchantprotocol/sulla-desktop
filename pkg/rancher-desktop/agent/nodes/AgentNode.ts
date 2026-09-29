@@ -5,6 +5,7 @@ import { isTerminalAgentTurn } from './agentTurnEnd';
 import { throwIfAborted } from '../services/AbortService';
 import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { requeuePendingSteers } from '../utils/steerChannel';
 import Logging from '@pkg/utils/logging';
 
 import type { NodeRunPolicy } from './BaseNode';
@@ -287,6 +288,19 @@ export class AgentNode extends BaseNode {
         this.bumpStateVersion(state);
       }
       // Text already dispatched to UI in executeAgent() before tool execution
+    }
+
+    // A "Send now" steer the model never saw (it raced the final answer, or
+    // the provider can't take input mid-turn) must not die here. Put it after
+    // the reply and go around again so the next turn answers it.
+    const unseenSteers = requeuePendingSteers(state as any);
+    if (unseenSteers > 0) {
+      console.log(`[AgentNode] ${ unseenSteers } steer message(s) not yet seen by the model — continuing the run`);
+      agentOutcome.status = 'continue';
+      (state.metadata as any).agent.status = 'continue';
+      state.metadata.cycleComplete = false;
+      state.metadata.waitingForUser = false;
+      this.bumpStateVersion(state);
     }
 
     // ----------------------------------------------------------------
