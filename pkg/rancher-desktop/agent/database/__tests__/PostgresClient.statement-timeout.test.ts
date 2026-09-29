@@ -42,4 +42,36 @@ describe('PostgresClient statement timeout scope', () => {
     ]);
     expect(poolClient.release).toHaveBeenCalledTimes(1);
   });
+
+  it('skips AsyncLocalStorage in an Electron renderer and queries without a timeout', async() => {
+    // In a renderer, AsyncLocalStorage.getStore() can abort V8 outright, so
+    // the client must never touch it there.
+    const original = Object.getOwnPropertyDescriptor(process, 'type');
+    Object.defineProperty(process, 'type', { value: 'renderer', configurable: true });
+    try {
+      let RendererPostgresClient!: typeof PostgresClient;
+      jest.isolateModules(() => {
+        RendererPostgresClient = require('../PostgresClient').PostgresClient;
+      });
+      const poolClient = {
+        query:   jest.fn(() => Promise.resolve({ rows: [{ ok: true }] })),
+        release: jest.fn(),
+      };
+      const postgres = new RendererPostgresClient();
+
+      expect((postgres as any).statementTimeout).toBeNull();
+      jest.spyOn(postgres, 'getClient').mockResolvedValue(poolClient as any);
+      const rows = await postgres.withStatementTimeout(30_000, () => postgres.query('SELECT 1'));
+
+      expect(rows).toEqual([{ ok: true }]);
+      expect(poolClient.query.mock.calls).toEqual([['SELECT 1', []]]);
+      expect(poolClient.release).toHaveBeenCalledTimes(1);
+    } finally {
+      if (original) {
+        Object.defineProperty(process, 'type', original);
+      } else {
+        delete (process as any).type;
+      }
+    }
+  });
 });
