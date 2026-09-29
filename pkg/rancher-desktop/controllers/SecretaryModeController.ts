@@ -68,6 +68,8 @@ export interface SecretaryCallbacks {
   playTTS:            (text: string) => Promise<void>;
   stopTTS:            () => void;
   sendToChat:         (prompt: string, inputSource: string) => Promise<string | null>;
+  /** Non-fatal problem the user should know about (e.g. only the mic is captured). */
+  setWarning?:        (message: string | null) => void;
 }
 
 // ─── Constants ──────────────────────────────────────────────────
@@ -78,6 +80,9 @@ const BARGE_IN_THRESHOLD = 25;
 // Whisper delivers ~2s chunks, so a spoken command after the wake word usually
 // spans several transcripts. Collect them until the speaker pauses this long.
 const WAKE_COMMAND_SETTLE_MS = 2_500;
+// Transcript context sent with each analysis. The new segment is always sent in
+// full; this caps the "so far" part so long meetings don't grow without bound.
+const ANALYSIS_CONTEXT_CHARS = 12_000;
 
 // ─── Controller ─────────────────────────────────────────────────
 
@@ -133,10 +138,12 @@ export class SecretaryModeController {
     }
 
     // Start speaker capture for system audio monitoring
+    this.cb.setWarning?.(null);
     try {
       await ipcRenderer.invoke('audio-driver:start-speaker', 'secretary-mode');
     } catch (err) {
       console.warn('[SecretaryMode] Speaker capture failed:', (err as Error).message);
+      this.cb.setWarning?.('System audio capture failed — only your microphone is being transcribed. Other participants may be missing.');
     }
 
     this.lastAnalyzedIndex = 0;
@@ -391,7 +398,9 @@ export class SecretaryModeController {
       if (msg.event_type !== 'transcript_partial') {
         const speaker = msg.speaker === 'Speaker' ? 'Caller' : 'You';
         this.appendOrCreateEntry(text, speaker);
-        this.checkAndHandleWakeWord(text);
+        // Only the user's own mic can address Sulla — a remote participant
+        // saying "hey Sulla" must not be able to command the agent.
+        if (speaker === 'You') this.checkAndHandleWakeWord(text);
       }
     };
     ipcRenderer.on('gateway-transcript', this.whisperTranscriptHandler);
@@ -499,12 +508,12 @@ export class SecretaryModeController {
     const newEntries = transcript.slice(this.lastAnalyzedIndex);
     this.lastAnalyzedIndex = transcript.length;
 
-    const newText = newEntries.map(e => e.text).join('\n');
-    if (!newText.trim() || newText.trim().length < 20) return;
+    const newText = newEntries.map(formatTranscriptLine).join('\n');
+    if (newEntries.map(e => e.text).join(' ').trim().length < 20) return;
 
     this.analysisMessageCount++;
     const analysisId = this.analysisMessageCount;
-    const fullTranscript = transcript.map(e => e.text).join('\n');
+    const fullTranscript = tail(transcript.map(formatTranscriptLine).join('\n'), ANALYSIS_CONTEXT_CHARS);
 
     this.analysisInFlight = true;
     this.cb.setIsAnalyzing(true);
@@ -554,4 +563,66 @@ export class SecretaryModeController {
   setTTSActive(active: boolean): void {
     this.hasTTSActive = active;
   }
+}
+
+// ─── Helpers ────────────────────────────────────────────────────
+
+function formatTranscriptLine(entry: TranscriptEntry): string {
+  return `${ entry.speaker || 'Speaker' }: ${ entry.text }`;
+}
+
+function tail(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const cut = text.slice(text.length - maxChars);
+  const lineStart = cut.indexOf('\n');
+
+  return `[…earlier transcript omitted…]\n${ lineStart >= 0 ? cut.slice(lineStart + 1) : cut }`;
+}
+
+export interface MeetingNotes {
+  startedAt:     Date;
+  duration:      string;
+  transcript:    TranscriptEntry[];
+  actionItems:   string[];
+  decisions:     string[];
+  insights:      InsightEntry[];
+  agentMessages: AgentMessage[];
+}
+
+/** File name for a session's notes, e.g. "2026-09-28-2105-meeting.md" (local time). */
+export function meetingNotesFileName(startedAt: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  return `${ startedAt.getFullYear() }-${ pad(startedAt.getMonth() + 1) }-${ pad(startedAt.getDate()) }-${ pad(startedAt.getHours()) }${ pad(startedAt.getMinutes()) }-meeting.md`;
+}
+
+/** Render a session as markdown for the saved meeting notes file. */
+export function buildMeetingNotesMarkdown(notes: MeetingNotes): string {
+  const list = (items: string[]) => (items.length ? items.map(i => `- ${ i }`).join('\n') : '_None captured._');
+  const time = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const lines = [
+    `# Meeting notes — ${ notes.startedAt.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) }`,
+    '',
+    `Duration: ${ notes.duration }`,
+    '',
+    '## Action items',
+    list(notes.actionItems),
+    '',
+    '## Decisions',
+    list(notes.decisions),
+    '',
+    '## Insights',
+    list(notes.insights.map(i => i.text)),
+  ];
+
+  if (notes.agentMessages.length) {
+    lines.push('', '## Sulla', notes.agentMessages.map(m => `- ${ m.time } — ${ m.text }`).join('\n'));
+  }
+
+  lines.push('', '## Transcript');
+  lines.push(notes.transcript.length
+    ? notes.transcript.map(e => `**${ e.speaker || 'Speaker' }** (${ time(e.timestamp) }): ${ e.text }`).join('\n\n')
+    : '_No speech transcribed._');
+
+  return `${ lines.join('\n') }\n`;
 }

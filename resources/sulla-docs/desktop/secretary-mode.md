@@ -1,107 +1,61 @@
 # Secretary Mode
 
-A live meeting transcription + note-taking assistant. Listens to **both sides** of a conversation (mic + system audio), transcribes in real time with speaker diarization, extracts action items / decisions / insights every 30 seconds, and lets the user interject with "Hey Sulla" to ask the agent questions mid-meeting.
+A live meeting transcription + note-taking assistant. Listens to **both sides** of a conversation (mic + system audio), transcribes locally, extracts action items / decisions / insights about every 30 seconds, lets the user ask Sulla questions mid-meeting ("Hey Sulla, …" or the private chat box), and saves the notes as markdown when the session ends.
 
-**Status: SHIPPED.** Triggered by `Cmd+Shift+S` (macOS) / `Ctrl+Shift+S` (Windows) or the tray menu. Local feature today; Cloud routing for offline/idle agents is the aspirational Phase 2.
+**Status: SHIPPED.** Local feature. Cloud routing for offline/idle agents is the aspirational Phase 2.
 
 ## What it does
 
-1. Captures **mic audio** (channel 0, WebM/Opus) and **speaker audio** (channel 1, PCM s16le) via the Audio Driver
-2. Streams both to the gateway transcription service (with speaker diarization — who said what)
-3. Renders a **live transcript** in the left pane (Speaker / You bubbles, like an iMessage thread)
-4. Every 30 seconds, sends the new transcript segments to the agent with the `SECRETARY_SYSTEM_PROMPT`
-5. Agent returns a `<secretary_analysis>` block with structured `<actions>`, `<facts>`, `<conclusions>` lists
-6. The right pane shows: **Action Items**, **Decisions**, **Insights**, **Commentary** — auto-updating
-7. User can:
-   - Type into the chat input to ask Sulla privately during the session
-   - Say **"Hey Sulla, ..."** to trigger an agent response by voice (wake word detection)
-   - Sulla responds via TTS — and **bargein logic** cuts the TTS as soon as the user speaks again
+1. Captures **mic audio** (channel 0) and **system/speaker audio** (channel 1) via the Audio Driver
+2. Transcribes both with the local whisper.cpp pipeline (or Grok STT if the user selected it in Audio settings), in ~2 second chunks. Speakers are labeled by channel: **You** (mic) vs **Caller** (system audio) — there is no per-person diarization
+3. Renders a **live transcript** in the left pane (You / Caller bubbles); consecutive speech from the same side is merged
+4. First analysis ~15s in, then every 30 seconds: sends the new transcript segment (with speaker labels, plus up to ~12k chars of earlier context) to the agent with `inputSource: 'secretary-analysis'`
+5. Agent returns a `<secretary_analysis>` block with `<actions>`, `<decisions>`, `<facts>`, `<conclusions>` lists
+6. The right pane shows **Action Items** (actions), **Decisions** (decisions), **Insights** (facts + conclusions), and **Commentary** (Sulla's answers). Duplicates across analyses are dropped
+7. The user can:
+   - Type into the chat box to ask Sulla privately — kept out of the meeting transcript and never spoken aloud
+   - Say **"Hey Sulla, …"** into their own mic — the command is collected until a ~2.5s pause, answered normally, shown in Commentary and spoken via TTS (unless muted). Only the user's mic can trigger it; a remote participant saying "hey Sulla" is ignored
+   - **Barge-in:** TTS is cut as soon as the user speaks again
+8. On **END**, the notes are saved to `~/sulla/meetings/YYYY-MM-DD-HHMM-meeting.md` (action items, decisions, insights, Sulla's answers, full transcript). The file is re-saved once the final analysis lands. **OPEN NOTES** reveals it in Finder
+
+If the microphone permission is denied or transcription can't start (no whisper model), the session does not start and the welcome screen shows why. If system-audio capture fails, the session runs mic-only and shows a warning bar.
 
 ## How it activates
 
-Three paths:
-
 1. **Keyboard shortcut:** `Cmd+Shift+S` (macOS) / `Ctrl+Shift+S` (Windows)
-2. **Tray menu:** "Secretary Mode" item — defined at `pkg/rancher-desktop/main/tray.ts:65-82`
-3. **Tab IPC:** `agent-command { command: 'open-tab', mode: 'secretary' }` — but the agent has no tool to send this IPC today (UI navigation gap)
+2. **Tray menu:** "Secretary Mode"
+3. **Agent tools:** `sulla secretary/start` (opens/focuses the tab and starts listening), `sulla secretary/stop`, `sulla secretary/status` (`{ listening, tabId }`)
+4. **Tab:** `sulla ui/open_tab` with mode `secretary` opens the tab without starting a session
 
 ## Architecture
 
 | Layer | File | Role |
 |-------|------|------|
-| UI | `pkg/rancher-desktop/pages/SecretaryMode.vue` | Terminal-themed view: live transcript, notes panel, mute/unmute, audio level bars, session timer, chat input |
-| Controller | `pkg/rancher-desktop/controllers/SecretaryModeController.ts` | Session lifecycle, wake-word detection, barge-in, audio level monitoring, 30s analysis loop, turn-taking transcript merge (consecutive same-speaker utterances merged with pause detection) |
-| Agent extractor | `pkg/rancher-desktop/agent/controllers/SecretaryExtractor.ts` | Parses `<secretary_analysis>` blocks from agent responses; strips accidental `<speak>` tags so the agent doesn't TTS the meeting notes |
-| Audio | Audio Driver (`pkg/rancher-desktop/main/audio-driver/`) | Mic + speaker capture, VAD, RNNoise; same subsystem Capture Studio uses |
-| Gateway | `pkg/rancher-desktop/main/audio-driver/service/gateway.ts` | WebSocket to transcription service; lobby connection + per-session audio/listener channels |
-
-The 30-second analysis is tagged with `inputSource: 'secretary-analysis'` (or `'secretary-wake'` for wake-word triggers) and `voiceMode: 'secretary'`. The agent's system prompt is enriched by `SecretaryExtractor.enrichPrompt()` with meeting-specific instructions.
-
-## Cloud / Relay relationship
-
-Secretary Mode creates a **gateway session** on start (`SecretaryModeController.ts:143-145` via `desktop-session-start` IPC). Today this just connects to the local transcription gateway. The same infrastructure is used by `desktopRelay.ts` (the WebSocket client to `wss://sulla-workers.merchantprotocol.workers.dev`), which means the wiring exists for **Phase 2:** route an idle session to a Cloud-hosted agent so meetings keep being transcribed/analyzed even when the user closes the laptop.
-
-That's the "secretary mode handles incoming conversations regardless of whether the user's machine is on" vision. Today: **local only**, but the path is paved.
-
-## Wake word — "Hey Sulla"
-
-Pattern matching in the controller catches "hey sulla" / "ok sulla" / "hi sulla" prefixes in the live transcript. When detected:
-1. Session enters command-input mode briefly
-2. The text after the wake word is sent to the agent as a chat message with `inputSource: 'secretary-wake'`
-3. Agent responds; if `voiceMode: 'secretary'`, the response is TTS'd back to the user
-4. **Barge-in:** if the user speaks while Sulla is talking, TTS is cut immediately
-
-## Output: meeting notes
-
-The agent's analysis returns:
-
-```xml
-<secretary_analysis>
-  <actions>
-    - Send Sarah the Q3 forecast by Friday
-    - Schedule follow-up with the design team next week
-  </actions>
-  <facts>
-    - Budget for Q4 is locked at $200k
-    - Launch date moved to Nov 15
-  </facts>
-  <conclusions>
-    - The team is going with the simpler architecture
-  </conclusions>
-</secretary_analysis>
-```
-
-The extractor splits these into **Action Items** (todos), **Decisions** (facts), **Insights** (conclusions), and **Commentary** (free-form). The right pane updates in real time as new analysis arrives.
+| UI | `pkg/rancher-desktop/pages/SecretaryMode.vue` | Transcript + notes panes, mute, level bars, timer, chat box, notes saving; serializes all agent requests on the tab's chat thread |
+| Controller | `pkg/rancher-desktop/controllers/SecretaryModeController.ts` | Session lifecycle, wake word, barge-in, audio levels, analysis loop (one request at a time), transcript merge, notes markdown |
+| Agent extractor | `pkg/rancher-desktop/agent/controllers/SecretaryExtractor.ts` | `parseSecretaryAnalysis()`; strips accidental `<speak>` tags on analysis turns |
+| Mode routing | `agent/nodes/BaseNode.ts`, `AgentNode.ts` | Only `secretary-analysis` turns run in secretary (extraction) mode; `secretary-wake` / `secretary-chat` get normal replies |
+| Transcription | `pkg/rancher-desktop/main/audio-driver/service/whisper-transcribe.ts` | Mic + speaker chunks → `gateway-transcript` events |
+| State + notes | `pkg/rancher-desktop/main/secretaryModeState.ts` | Listening cache for the agent tools; `secretary-mode:save-notes` / `reveal-notes` (writes only inside `~/sulla/meetings`) |
 
 ## Privacy posture
 
-- All audio capture is local on the user's machine
-- Transcription goes to the gateway (currently a Cloudflare Workers endpoint via WebSocket); diarization happens server-side
-- Meeting analysis prompts go through whichever LLM the user's account is connected to (Anthropic, etc.)
-- Nothing is stored long-term outside the user's chat history unless they explicitly save / export
+- Audio capture and whisper transcription are local (Grok STT, if selected, sends audio to xAI)
+- Meeting analysis prompts go through whichever LLM the user's account is connected to
+- Notes are saved locally in `~/sulla/meetings/`; the analysis turns also live in the Secretary tab's chat history
 
 ## When users ask about Secretary Mode
 
-- **"What is Secretary Mode?"** → Live meeting transcription + auto-extracted action items / decisions. `Cmd+Shift+S` to start.
-- **"Can you take notes for this meeting?"** → "Yes — open Secretary Mode (`Cmd+Shift+S`). I'll transcribe both sides and extract action items every 30 seconds."
-- **"Can I ask you questions during the meeting?"** → "Yes — say 'Hey Sulla, ...' or type into the chat panel. I'll respond by voice (or you can read the answer)."
-- **"Does it work when my laptop is closed?"** → "Not yet — that's the Cloud-routed Phase 2. Today it needs the laptop open."
-- **"Can you record the audio too?"** → "No — Secretary Mode is transcription-only. For audio recording, use Capture Studio (separate feature)."
-- **"Where are my meeting notes?"** → "In your chat history with Sulla — there's no dedicated notes archive yet (gap)."
+- **"What is Secretary Mode?"** → Live meeting transcription + auto-extracted action items / decisions. `Cmd+Shift+S` to start, or ask Sulla to start it.
+- **"Can you take notes for this meeting?"** → Run `sulla secretary/start`. It transcribes both sides and extracts action items about every 30 seconds.
+- **"Can I ask you questions during the meeting?"** → Yes — say "Hey Sulla, …" or type in the chat box.
+- **"Where are my meeting notes?"** → `~/sulla/meetings/` — one markdown file per session.
+- **"Does it work when my laptop is closed?"** → Not yet (Cloud-routed Phase 2).
+- **"Can you record the audio too?"** → No — transcription only. Use Capture Studio for audio recording.
+- **"Can it tell the other participants apart?"** → Not yet — it separates you (mic) from everyone else (system audio).
 
-## Agent control — partial
+## Known limits
 
-The agent **cannot start or stop Secretary Mode** today (UI gap). But once it's running:
-- The agent is the LLM analyzing the transcript every 30s — that's its primary role
-- The agent can be invoked mid-session via wake word or chat
-- The agent has no structured query tool to retrieve past meeting analyses
-
-## Reference
-
-- UI: `pkg/rancher-desktop/pages/SecretaryMode.vue`
-- Controller: `pkg/rancher-desktop/controllers/SecretaryModeController.ts`
-- Extractor: `pkg/rancher-desktop/agent/controllers/SecretaryExtractor.ts`
-- Tray entry: `pkg/rancher-desktop/main/tray.ts:65-82`
-- Gateway: `pkg/rancher-desktop/main/audio-driver/service/gateway.ts`
-- Desktop relay (Cloud bridge): `pkg/rancher-desktop/main/desktopRelay.ts`
-- Audio driver: `pkg/rancher-desktop/main/audio-driver/`
+- No per-person diarization on the system-audio side
+- The last ~2 seconds of speech before END may not be transcribed
+- The agent has no tool to search past meeting notes yet — read the files in `~/sulla/meetings/`

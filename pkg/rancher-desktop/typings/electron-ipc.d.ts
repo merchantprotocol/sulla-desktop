@@ -410,6 +410,8 @@ export interface IpcMainInvokeEvents {
   'audio-driver:stop-speaker':             (serviceId?: string) => { ok: boolean; micRunning: boolean; speakerRunning: boolean; running: boolean };
   'audio-driver:transcribe-start':         (opts: { mode: 'conversation' | 'secretary'; language?: string; model?: string; profileId?: string; sessionId?: string; manualTurn?: boolean }) => { ok: boolean; provider: 'whisper' | 'grok' };
   'audio-driver:transcribe-stop':          () => { ok: boolean };
+  'secretary-mode:save-notes':             (payload: { fileName: string; markdown: string; path?: string | null }) => { ok: boolean; path?: string; error?: string };
+  'secretary-mode:reveal-notes':           (notesPath: string) => { ok: boolean };
   // #endregion
 
   // #region Computer Use
