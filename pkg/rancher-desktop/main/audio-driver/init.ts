@@ -93,7 +93,7 @@ export function initialize(): void {
   // PCM chunks are VAD-gated and noise-processed.
   // Audio is at native rate (48kHz). Whisper needs 16kHz — downsample here.
   const mic = MicrophoneDriverController.getInstance();
-  mic.onPcmData((pcm: Buffer) => {
+  const feedWhisper = (pcm: Buffer) => {
     const ratio = Math.round(mic.pcmSampleRate / 16000);
     if (ratio <= 1) {
       whisperTranscribe.feedMic(pcm);
@@ -107,6 +107,15 @@ export function initialize(): void {
       }
       whisperTranscribe.feedMic(out);
     }
+  };
+  // Hands-free: VAD-gated audio (the VAD decides when the user is talking).
+  // Push-to-talk: the held key already says so — take the raw mic for the whole
+  // hold, so the VAD's attack time can't clip the first word.
+  mic.onPcmData((pcm: Buffer) => {
+    if (!whisperTranscribe.wantsRawMic()) feedWhisper(pcm);
+  });
+  mic.onPcmRawData((pcm: Buffer) => {
+    if (whisperTranscribe.wantsRawMic()) feedWhisper(pcm);
   });
 
   // Mic PCM output socket — broadcasts raw PCM to capture studio for recording.
@@ -506,6 +515,8 @@ function registerIpcHandlers(): void {
     model?:    string;
     profileId?: string;
     sessionId?: string;
+    /** Push-to-talk: the turn ends on transcribe-finish, never on silence. */
+    manualTurn?: boolean;
   }) => {
     log.info('IPC', 'transcribe-start', opts);
 
@@ -553,6 +564,7 @@ function registerIpcHandlers(): void {
       grokApiKey,
       profileId,
       sessionId:    opts.sessionId?.trim() || `transcription:${ crypto.randomUUID() }`,
+      manualTurn:   !!opts.manualTurn,
       onTranscript: (event) => {
         broadcast('gateway-transcript', event);
         // Feed the main-process teleprompter tracker (no-ops if not tracking)
@@ -566,6 +578,14 @@ function registerIpcHandlers(): void {
   ipcMain.handle('audio-driver:transcribe-stop', () => {
     log.info('IPC', 'transcribe-stop');
     whisperTranscribe.stop();
+    return { ok: true };
+  });
+
+  // Graceful end: transcribe everything captured so far (final transcript_turn +
+  // utterance_end are broadcast), then stop. Resolves once utterance_end is out.
+  ipcMain.handle('audio-driver:transcribe-finish', async() => {
+    log.info('IPC', 'transcribe-finish');
+    await whisperTranscribe.finish();
     return { ok: true };
   });
 

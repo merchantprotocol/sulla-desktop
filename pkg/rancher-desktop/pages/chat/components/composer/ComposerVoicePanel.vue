@@ -9,7 +9,7 @@
 -->
 <template>
   <div class="voice-ui">
-    <span class="label">{{ speaking ? 'Hearing you' : 'Listening' }}</span>
+    <span class="label">{{ label }}</span>
     <span class="timer">{{ timerLabel }}</span>
     <span
       class="waveform"
@@ -22,7 +22,8 @@
         :style="{ height: bar + '%' }"
       />
     </span>
-    <button class="stop-rec" type="button" @click="$emit('stop')">Stop · ⏎</button>
+    <span v-if="ptt" class="ptt-hint">{{ finishing ? 'Sending…' : 'Release ␣ to send · Esc cancels' }}</span>
+    <button v-else class="stop-rec" type="button" @click="$emit('stop')">Stop · ⏎</button>
   </div>
 </template>
 
@@ -35,7 +36,17 @@ const props = defineProps<{
   level?:    number;
   /** VAD classification — true only when user is actually speaking. */
   speaking?: boolean;
+  /** Hold-to-talk (Space) session — release sends, no stop button. */
+  ptt?:       boolean;
+  /** Released; the final transcription is running. */
+  finishing?: boolean;
 }>();
+
+const label = computed(() => {
+  if (props.finishing) return 'Transcribing';
+  if (props.ptt) return props.speaking ? 'Hearing you' : 'Talk';
+  return props.speaking ? 'Hearing you' : 'Listening';
+});
 defineEmits<{ (e: 'stop'): void }>();
 
 const now = ref(Date.now());
@@ -121,6 +132,11 @@ const speaking = computed(() => props.speaking === true);
   padding: 6px 12px; border-radius: 100px;
   background: transparent; border: 1px solid var(--steel-400);
   cursor: pointer; flex-shrink: 0; transition: all 0.15s ease;
+}
+.ptt-hint {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--steel-300, var(--steel-100));
+  flex-shrink: 0; white-space: nowrap;
 }
 .stop-rec:hover {
   background: var(--steel-500); color: white;

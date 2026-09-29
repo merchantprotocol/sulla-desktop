@@ -383,6 +383,11 @@ export interface IpcMainInvokeEvents {
   'capture-studio:check-permissions':      () => Record<string, string>;
   'audio-transcribe':                      (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => { text: string; words?: { text: string; speaker_id?: string; start?: number; end?: number }[] };
   'audio-speak':                           (payload: { text: string; voiceId?: string }) => { audio: ArrayBuffer; mimeType: string };
+  'audio-speak-cancel':                    () => void;
+  'voice-kokoro-status':                   () => { phase: 'missing' | 'downloading' | 'extracting' | 'ready' | 'error'; progress: number; error?: string; bytes: number };
+  'voice-kokoro-download':                 () => boolean;
+  'voice-kokoro-warm':                     () => void;
+  'voice-kokoro-voices':                   () => { key: string; name: string; accent: string; gender: string }[];
   'integration-get-value':                 (integrationId: string, property: string) => { value: string } | null;
   'integration-accounts':                  (slug: string) => { integration_id: string; account_id: string; label: string; active: boolean; connected: boolean; connected_at?: Date }[];
   'desktop-session-start':                 (payload?: { callerName?: string }) => { sessionId: string | null; callId?: string; error?: string };
@@ -1029,6 +1034,7 @@ export interface IpcRendererEvents {
     isLoading:    boolean;
   }) => void;
   'gateway-transcript':     (event: { event_type: string; text?: string; speaker?: string; session_id?: string; is_final?: boolean }) => void;
+  'voice-kokoro-status-changed': (status: { phase: 'missing' | 'downloading' | 'extracting' | 'ready' | 'error'; progress: number; error?: string; bytes: number }) => void;
   'workflow-files-changed': () => void;
   'backend-locked':         (action?: string) => void;
   'backend-unlocked':       () => void;

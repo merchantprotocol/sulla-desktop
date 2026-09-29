@@ -13,6 +13,7 @@
  * stack trace to VoiceLogger for debugging.
  */
 
+import { splitForSynthesis } from './speechText';
 import { TypedEventEmitter } from './TypedEventEmitter';
 import { logTTSEnqueue, logTTSPlayStart, logTTSPlayEnd, logTTSStop, logTTSDedup, logTTSFallback, timingFirstAudio } from './VoiceLogger';
 
@@ -67,6 +68,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
   // Cached provider selection. Loaded lazily from settings and cleared on stop() so a
   // provider/voice change in Audio Settings takes effect on the next spoken turn.
   private ttsConfig: { provider: string; voiceURI: string; rate: number } | null = null;
+  private kokoroWarmed = false;
 
   constructor(config: TTSPlayerConfig) {
     super();
@@ -82,6 +84,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
    */
   enqueue(text: string, messageId?: string): void {
     if (!text.trim()) return;
+    void this.getTtsConfig(); // start loading provider config (and warming Kokoro) now
 
     // ID-based dedup
     if (messageId) {
@@ -100,8 +103,13 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
 
     const callerStack = new Error().stack?.split('\n').slice(1, 5).map(l => l.trim()).join(' < ') || '';
     logTTSEnqueue(text, callerStack);
-    this.queue.push(text);
+    // Short units: the first renders fast so audio starts sooner, and each later
+    // unit synthesizes while the one before it plays.
+    this.queue.push(...splitForSynthesis(text));
     this.queueLength = this.queue.length;
+    if (this.playing) {
+      void this.prefetch(); // current unit is busy — get the next one rendering now
+    }
     this.playNext();
   }
 
@@ -130,6 +138,11 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     this.prefetchedAudio = null;
     this.prefetchingText = null;
 
+    // Drop any queued on-device synthesis so the sidecar is free for the next turn
+    if (this.ttsConfig?.provider === 'kokoro') {
+      this.ipcInvoke('audio-speak-cancel').catch(() => { /* best-effort */ });
+    }
+
     // Re-read provider/voice config next turn (may have changed in Audio Settings)
     this.ttsConfig = null;
 
@@ -141,6 +154,15 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     this.playing = false;
     this.isPlaying = false;
     this.emit('queueEmpty', undefined as any);
+  }
+
+  /**
+   * Get ready to speak soon (e.g. the user started talking): loads the provider
+   * config and, for Kokoro, boots the sidecar + model so the reply's first
+   * sentence doesn't pay the ~1s model load.
+   */
+  prepare(): void {
+    void this.getTtsConfig();
   }
 
   dispose(): void {
@@ -196,10 +218,11 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
         this.prefetchedAudio = null;
         source = 'prefetched';
       } else if (this.prefetchingText === text) {
-        // Wait for in-flight prefetch (max 5s)
+        // Wait for the in-flight prefetch rather than asking twice — a duplicate
+        // request would queue behind it in the on-device engine anyway.
         console.log('[TTSPlayer] Waiting for in-flight prefetch...');
         const waitStart = Date.now();
-        while (this.prefetchingText === text && Date.now() - waitStart < 5000) {
+        while (this.prefetchingText === text && seq === this.sequence && Date.now() - waitStart < 30_000) {
           await new Promise(r => setTimeout(r, 50));
         }
         if (this.prefetchedAudio?.text === text) {
@@ -213,7 +236,12 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
         }
       } else {
         this.prefetchedAudio = null;
-        result = await this.ipcInvoke('audio-speak', { text });
+        const current = this.ipcInvoke('audio-speak', { text });
+
+        // Queue the next unit right behind this one instead of waiting for this
+        // one to finish — synthesis stays ahead of playback.
+        void this.prefetch();
+        result = await current;
         source = 'fresh';
       }
 
@@ -291,11 +319,13 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
    * Non-fatal failures are logged but don't break playback.
    */
   private async prefetch(): Promise<void> {
-    if (this.queue.length === 0 || this.prefetchedAudio) return;
+    // One look-ahead at a time: synthesis is faster than playback, so staying one
+    // unit ahead is enough, and overlapping requests would only compete for CPU.
+    if (this.queue.length === 0 || this.prefetchedAudio || this.prefetchingText !== null) return;
     // Native OS voice is synthesized locally on demand — nothing to prefetch over IPC.
-    if ((await this.getTtsConfig()).provider === 'system') return;
+    if ((this.ttsConfig ?? await this.getTtsConfig()).provider === 'system') return;
+    if (this.queue.length === 0 || this.prefetchedAudio || this.prefetchingText !== null) return;
     const nextText = this.queue[0]; // peek, don't shift
-    if (this.prefetchingText === nextText) return;
 
     this.prefetchingText = nextText;
     const seq = this.sequence;
@@ -318,7 +348,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
       console.log('[TTSPlayer:prefetch] Failed (non-fatal):', err);
     } finally {
       this.prefetchAbort = null;
-      this.prefetchingText = null;
+      if (this.prefetchingText === nextText) this.prefetchingText = null;
     }
   }
 
@@ -326,24 +356,31 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
 
   /**
    * Reads the selected TTS provider, voice, and rate from settings (cached until
-   * stop() clears it). Defaults to the keyless native OS voice so speech works
-   * out of the box without an ElevenLabs key.
+   * stop() clears it). Defaults to on-device Kokoro (Bella) — free and keyless; while
+   * its model downloads, sentences fall back to the native OS voice.
    */
   private async getTtsConfig(): Promise<{ provider: string; voiceURI: string; rate: number }> {
     if (this.ttsConfig) return this.ttsConfig;
     try {
       const [provider, voiceURI, rateKey] = await Promise.all([
-        this.ipcInvoke('sulla-settings-get', 'audioTtsProvider', 'system'),
+        this.ipcInvoke('sulla-settings-get', 'audioTtsProvider', 'kokoro'),
         this.ipcInvoke('sulla-settings-get', 'audioTtsVoice', ''),
         this.ipcInvoke('sulla-settings-get', 'audioTtsRate', 'normal'),
       ]);
       this.ttsConfig = {
-        provider: provider || 'system',
+        provider: provider || 'kokoro',
         voiceURI: voiceURI || '',
         rate:     RATE_MAP[rateKey as string] ?? 1.0,
       };
     } catch {
-      this.ttsConfig = { provider: 'system', voiceURI: '', rate: 1.0 };
+      this.ttsConfig = { provider: 'kokoro', voiceURI: '', rate: 1.0 };
+    }
+
+    // Load the on-device model before the first sentence needs it (no-op when warm;
+    // starts the one-time download when the model is missing).
+    if (this.ttsConfig.provider === 'kokoro' && !this.kokoroWarmed) {
+      this.kokoroWarmed = true;
+      this.ipcInvoke('voice-kokoro-warm').catch(() => { /* best-effort */ });
     }
 
     return this.ttsConfig;

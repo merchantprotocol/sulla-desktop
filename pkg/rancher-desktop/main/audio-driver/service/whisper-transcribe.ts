@@ -94,6 +94,9 @@ let transcribing = false;
 // gap since then is real silence. `utteranceOpen` guards a single utterance_end per turn.
 let lastMicFedAt = 0;
 let utteranceOpen = false;
+// Push-to-talk: the user decides when the turn ends (key release), so silence
+// never ends it — pauses mid-thought stay in one message. finish() ends it.
+let manualTurn = false;
 
 // Full-utterance PCM (conversation mode). Each 2s segment is transcribed live as a
 // partial for feedback, but its PCM is ALSO kept here so the complete utterance can be
@@ -114,6 +117,8 @@ export function start(opts: {
   grokApiKey?:  string | null;
   profileId?:    string;
   sessionId?:    string;
+  /** Push-to-talk: no silence-based utterance_end — the turn ends only via finish(). */
+  manualTurn?:   boolean;
 }): boolean {
   const useGrok = opts.provider === 'grok';
 
@@ -143,6 +148,7 @@ export function start(opts: {
   if (mode !== null && flushTimer) {
     log.info('WhisperTranscribe', 'Already running — updating callback only', { mode: opts.mode });
     onTranscript = opts.onTranscript;
+    manualTurn = !!opts.manualTurn;
     return true;
   }
 
@@ -171,6 +177,7 @@ export function start(opts: {
   // commit). Secretary mode keeps its own renderer-side turn accumulator.
   lastMicFedAt = 0;
   utteranceOpen = false;
+  manualTurn = !!opts.manualTurn;
   if (mode === 'conversation') {
     endOfTurnTimer = setInterval(() => checkEndOfTurn(), END_OF_TURN_POLL_MS);
   }
@@ -203,6 +210,7 @@ export function stop(): void {
   }
   lastMicFedAt = 0;
   utteranceOpen = false;
+  manualTurn = false;
   utterancePcm.length = 0;
   utterancePcmBytes = 0;
 
@@ -215,6 +223,73 @@ export function stop(): void {
   grokApiKey = null;
   resetBuffers();
   log.info('WhisperTranscribe', 'Stopped');
+}
+
+/**
+ * End the current turn gracefully and stop (push-to-talk release, stop button).
+ *
+ * stop() discards: it clears the utterance buffer and nulls the callback before
+ * the final async transcription can report, so the last words were lost. This
+ * instead drains in-flight inference, re-transcribes the whole buffered
+ * utterance once, emits `transcript_turn` + `utterance_end`, and only then stops.
+ * Resolves after `utterance_end` has been delivered (or immediately when idle).
+ */
+export async function finish(timeoutMs = 20_000): Promise<void> {
+  if (mode === null) return;
+  if (mode !== 'conversation') {
+    stop();
+    return;
+  }
+
+  // Freeze the session: no more periodic slices or silence detection.
+  if (flushTimer) {
+    clearInterval(flushTimer);
+    flushTimer = null;
+  }
+  if (endOfTurnTimer) {
+    clearInterval(endOfTurnTimer);
+    endOfTurnTimer = null;
+  }
+
+  const deadline = Date.now() + timeoutMs;
+
+  // Let an in-flight partial finish so its PCM is not transcribed twice.
+  while (transcribing && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 25));
+  }
+
+  // Unsliced tail audio joins the utterance for the one authoritative pass.
+  if (micBytes > 0) {
+    const tail = Buffer.concat(micBuffer);
+
+    micBuffer.length = 0;
+    micBytes = 0;
+    utterancePcm.push(tail);
+    utterancePcmBytes += tail.length;
+  }
+
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+    const cb = onTranscript;
+
+    // Wrap the callback so we know when utterance_end has gone out.
+    onTranscript = (event) => {
+      cb?.(event);
+      if (event.event_type === 'utterance_end') {
+        clearTimeout(timer);
+        resolve();
+      }
+    };
+    utteranceOpen = false;
+    finalizeUtterance();
+  });
+
+  stop();
+}
+
+/** Push-to-talk sessions take the raw (ungated) mic — see init.ts. */
+export function wantsRawMic(): boolean {
+  return mode === 'conversation' && manualTurn;
 }
 
 export function isActive(): boolean {
@@ -327,6 +402,9 @@ function checkEndOfTurn(): void {
     flush();
     return;
   }
+
+  // Push-to-talk: pauses never end the turn — only finish() (key release) does.
+  if (manualTurn) return;
 
   // Pipeline drained (no pending audio, no in-flight inference) and silence has
   // held past the threshold → the utterance is over. Re-transcribe the whole thing

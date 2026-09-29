@@ -40,6 +40,8 @@
           :started-at="recStartedAt"
           :level="recLevel"
           :speaking="recSpeaking"
+          :ptt="recPtt"
+          :finishing="recFinishing"
           @stop="stopVoice(true)"
         />
 
@@ -55,6 +57,7 @@
 
         <span class="hints">
           <span><kbd>⏎</kbd> send</span>
+          <span><kbd>hold ␣</kbd> talk</span>
           <span><kbd>⌘/</kbd> voice</span>
           <span><kbd>?</kbd> help</span>
         </span>
@@ -64,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import ComposerInput      from './ComposerInput.vue';
 import ComposerMic        from './ComposerMic.vue';
@@ -119,6 +122,14 @@ const isRecording  = computed(() => controller.voice.value.phase === 'recording'
 const recStartedAt = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.startedAt : 0);
 const recLevel     = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.level    : 0);
 const recSpeaking  = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.speaking : false);
+const recPtt       = computed(() => controller.voice.value.phase === 'recording' && !!controller.voice.value.ptt);
+const recFinishing = computed(() => controller.voice.value.phase === 'recording' && !!controller.voice.value.finishing);
+
+// The textarea unmounts while recording; hand focus back when a spoken turn ends
+// so the next Space press or typed message works without a click.
+watch(isRecording, (recording, was) => {
+  if (was && !recording) void nextTick(() => inputRef.value?.focus());
+});
 
 // ─── Mention source: artifacts in Library + My Work ───────────────
 // The popover used to include hardcoded source files, memory ids, and
@@ -159,7 +170,7 @@ function tryRunSlashAction(cmd: SlashCommand): boolean {
       controller.openModal('shortcuts');
       return true;
     case 'voice':
-      window.dispatchEvent(new CustomEvent('chat:voice-toggle'));
+      controller.voiceCommand('toggle');
       return true;
     case 'pin': {
       controller.pinLastReply();
@@ -280,8 +291,8 @@ function onFilesSelected(ev: Event): void {
 }
 
 // ─── Voice ─────────────────────────────────────────────────────────
-// Real voice — mic + whisper + TTS via VoiceSessionAdapter, which
-// listens to `chat:voice-toggle` window events on its own.
+// Real voice — mic + whisper + TTS via VoiceSessionAdapter. It also takes
+// commands (⌘/ toggle, hold-Space PTT) from this tab's controller bus.
 const voiceAdapter = new VoiceSessionAdapter(controller, {
   onError: (msg) => {
     // Surface through a transient error bubble so it doesn't get lost.
@@ -294,7 +305,7 @@ function toggleVoice(): void {
 }
 
 function stopVoice(commit: boolean): void {
-  voiceAdapter.stop(commit);
+  void voiceAdapter.stop(commit);
 }
 
 onBeforeUnmount(() => {

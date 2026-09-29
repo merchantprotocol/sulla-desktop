@@ -1,8 +1,10 @@
 /**
  * TextToSpeechService – converts text to speech audio bytes (mp3).
  *
- * Provider-aware: routes to the cloud TTS provider selected in Audio Settings
+ * Provider-aware: routes to the TTS provider selected in Audio Settings
  * (`audioTtsProvider`). Supported providers:
+ *   - `kokoro`     — on-device Kokoro-82M (default; free, private, offline). Bella by
+ *                    default. Runs in a sidecar — see main/voice/kokoroTts.ts.
  *   - `elevenlabs` — ElevenLabs streaming endpoint, eleven_flash_v2_5 (lowest latency).
  *   - `grok`       — xAI Grok Text-to-Speech (`POST https://api.x.ai/v1/tts`).
  * (The keyless `system` / native-OS voice is handled entirely in the renderer by
@@ -47,6 +49,10 @@ export class TextToSpeechService {
    */
   async speak(text: string, voiceId?: string): Promise<{ audio: Buffer; mimeType: string }> {
     const provider = await this.getProvider();
+
+    if (provider === 'kokoro') {
+      return this.speakKokoro(text, voiceId);
+    }
 
     if (provider === 'grok') {
       return this.speakGrok(text, voiceId);
@@ -157,6 +163,31 @@ export class TextToSpeechService {
     }
   }
 
+  // ─── Kokoro (on-device) ───────────────────────────────────────
+
+  /**
+   * Local Kokoro synthesis. Throws KokoroNotReadyError while the one-time model
+   * download runs; the renderer's TTSPlayer then speaks with the system voice.
+   */
+  private async speakKokoro(text: string, voiceId?: string): Promise<{ audio: Buffer; mimeType: string }> {
+    const { synthesizeKokoro } = await import('@pkg/main/voice/kokoroTts');
+    const voice = voiceId || await this.getConfiguredVoiceRaw();
+    const audio = await synthesizeKokoro(text, voice, await this.getRate());
+
+    return { audio, mimeType: 'audio/wav' };
+  }
+
+  private async getRate(): Promise<number> {
+    try {
+      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+      const rate = await SullaSettingsModel.get('audioTtsRate', 'normal');
+
+      return ({ slow: 0.85, normal: 1.0, fast: 1.2 } as Record<string, number>)[rate as string] ?? 1.0;
+    } catch {
+      return 1.0;
+    }
+  }
+
   // ─── Grok TTS ─────────────────────────────────────────────────
 
   /**
@@ -247,9 +278,9 @@ export class TextToSpeechService {
     try {
       const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
 
-      return (await SullaSettingsModel.get('audioTtsProvider', 'elevenlabs')) || 'elevenlabs';
+      return (await SullaSettingsModel.get('audioTtsProvider', 'kokoro')) || 'kokoro';
     } catch {
-      return 'elevenlabs';
+      return 'kokoro';
     }
   }
 

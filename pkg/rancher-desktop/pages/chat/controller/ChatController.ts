@@ -41,7 +41,7 @@ import {
 } from '../types/chat';
 
 import { nextRunState, type RunEvent } from './runStateMachine';
-import { EventBus, type ChatEvent, type Unsubscribe } from './events';
+import { EventBus, type ChatEvent, type Unsubscribe, type VoiceCommand } from './events';
 
 // ─── Defaults ─────────────────────────────────────────────────────
 const DEFAULT_MODEL: ModelDescriptor = {
@@ -68,9 +68,15 @@ export interface ChatControllerOptions {
   sendHandler?: SendHandler;
 }
 
+export interface SendOptions {
+  /** 'voice' for spoken turns — the backend answers in voice mode (<speak> for TTS). */
+  inputSource?: 'voice';
+}
+
 export type SendHandler = (
   text: string,
   attachments: Attachment[],
+  opts?: SendOptions,
 ) => void | Promise<void>;
 
 /**
@@ -194,8 +200,8 @@ export class ChatController {
   }
 
   // ─── Send / queue ────────────────────────────────────────────────
-  send(text: string, attachments: Attachment[] = []): void {
-    if (isRunning(this.runState.value)) { this.queueMessage(text, attachments); return; }
+  send(text: string, attachments: Attachment[] = [], opts: SendOptions = {}): void {
+    if (isRunning(this.runState.value)) { this.queueMessage(text, attachments, opts); return; }
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
 
@@ -205,7 +211,7 @@ export class ChatController {
     if (this.sendHandler) {
       this.staged.value = [];
       this.autoTitleFromFirstUserMessage(trimmed);
-      void this.sendHandler(trimmed || '(attached)', attachments);
+      void this.sendHandler(trimmed || '(attached)', attachments, opts);
       return;
     }
 
@@ -240,7 +246,7 @@ export class ChatController {
     this.injectHandler = h;
   }
 
-  queueMessage(text: string, attachments: Attachment[] = []): void {
+  queueMessage(text: string, attachments: Attachment[] = [], opts: SendOptions = {}): void {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
     const q: QueuedMessage = {
@@ -248,6 +254,7 @@ export class ChatController {
       text: trimmed,
       attachments: [...attachments],
       queuedAt: Date.now(),
+      ...(opts.inputSource ? { inputSource: opts.inputSource } : {}),
     };
     this.queue.value = [...this.queue.value, q];
     this.persist();
@@ -271,7 +278,7 @@ export class ChatController {
       void this.injectHandler(q.text, [...q.attachments]);
       return;
     }
-    this.send(q.text, [...q.attachments]);
+    this.send(q.text, [...q.attachments], { inputSource: q.inputSource });
   }
 
   removeQueuedMessage(id: QueuedId): void {
@@ -313,7 +320,7 @@ export class ChatController {
     const [first, ...rest] = this.queue.value;
     if (!first) return;
     this.queue.value = rest;
-    this.send(first.text, [...first.attachments]);
+    this.send(first.text, [...first.attachments], { inputSource: first.inputSource });
   }
 
   // ─── Run control ────────────────────────────────────────────────
@@ -547,6 +554,16 @@ export class ChatController {
   }
 
   // ─── Voice ──────────────────────────────────────────────────────
+  /** Drive this tab's voice session (hands-free toggle, hold-to-talk). */
+  voiceCommand(command: VoiceCommand): void {
+    this.bus.emit({ kind: 'voiceCommand', threadId: this.thread.value.id, command });
+  }
+
+  /** Speak text aloud through this tab's voice session. */
+  requestSpeak(text: string): void {
+    this.bus.emit({ kind: 'speakRequested', threadId: this.thread.value.id, text });
+  }
+
   setVoice(v: VoiceState): void {
     this.voice.value = v;
     if (v.phase === 'recording')   this.bus.emit({ kind: 'voiceStarted', threadId: this.thread.value.id });

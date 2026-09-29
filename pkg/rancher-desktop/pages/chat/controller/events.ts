@@ -25,7 +25,14 @@ export type ChatEvent =
   | { kind: 'toolApprovalResolved'; threadId: ThreadId; messageId: MessageId; approvalId: string; decision: 'approved' | 'denied'; note?: string }
   | { kind: 'toolQuestionAnswered'; threadId: ThreadId; messageId: MessageId; questionId: string; answers: { question: string; selected: string[] }[] }
   | { kind: 'threadHydrated';     threadId: ThreadId }
+  // Voice commands + speech for THIS tab's VoiceSessionAdapter. Every chat tab stays
+  // mounted, so these must never go through window-level events (every tab would react).
+  | { kind: 'voiceCommand';       threadId: ThreadId; command: VoiceCommand }
+  | { kind: 'speakRequested';     threadId: ThreadId; text: string }
   | { kind: 'threadSerialized';   threadId: ThreadId };
+
+/** toggle = hands-free on/off; ptt-* = hold-to-talk (Space) lifecycle. */
+export type VoiceCommand = 'toggle' | 'ptt-arm' | 'ptt-activate' | 'ptt-end' | 'ptt-cancel';
 
 export type Unsubscribe = () => void;
 

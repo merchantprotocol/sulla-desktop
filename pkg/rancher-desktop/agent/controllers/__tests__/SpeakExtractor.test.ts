@@ -51,8 +51,9 @@ describe('SpeakExtractor', () => {
     const ctx = makeCtx();
     const r1 = ext.processChunk('before <speak>hello', ctx);
 
-    // Once inside speak tag, output is suppressed
-    expect(r1).toBe('');
+    // Text before the tag passes through; speak content is suppressed
+    expect(r1).toBe('before ');
+    expect(ext.processChunk(' world', ctx)).toBe('');
   });
 
   it('processChunk dispatches on </speak> close', () => {
@@ -94,6 +95,61 @@ describe('SpeakExtractor', () => {
     );
 
     expect(speakCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Regressions: every spoken sentence is dispatched exactly once ──
+
+  function spoken(): string[] {
+    return dispatch.mock.calls.filter((c: any) => c[1] === 'speak_dispatch').map((c: any) => c[2].text);
+  }
+
+  function stream(text: string, ctx: StreamContext, size = 3): string {
+    let out = '';
+
+    for (let i = 0; i < text.length; i += size) out += ext.processChunk(text.slice(i, i + size), ctx);
+
+    return out;
+  }
+
+  it('does not re-speak sentences already dispatched when </speak> closes', () => {
+    const ctx = makeCtx();
+
+    stream('<speak>This first sentence is long enough. And this is the second one.</speak>', ctx);
+
+    expect(spoken()).toEqual(['This first sentence is long enough.', 'And this is the second one.']);
+  });
+
+  it('does not re-open a closed block on later tokens', () => {
+    const ctx = makeCtx();
+    const out = stream('<speak>Short reply here.</speak> Then a long written explanation follows in the chat.', ctx);
+
+    expect(spoken()).toEqual(['Short reply here.']);
+    expect(out).toBe(' Then a long written explanation follows in the chat.');
+  });
+
+  it('speaks each of several speak blocks once, in order', () => {
+    const ctx = makeCtx();
+
+    stream('<speak>On it, checking now.</speak> details <speak>Found it in the logs.</speak>', ctx, 2);
+
+    expect(spoken()).toEqual(['On it, checking now.', 'Found it in the logs.']);
+  });
+
+  it('detects tags split across tokens', () => {
+    const ctx = makeCtx();
+
+    ['<sp', 'eak>Hello th', 'ere</spe', 'ak>'].forEach(c => ext.processChunk(c, ctx));
+
+    expect(spoken()).toEqual(['Hello there']);
+  });
+
+  it('flushes an unclosed block once at completion', () => {
+    const ctx = makeCtx();
+
+    stream('<speak>This first sentence is long enough. Trailing words', ctx);
+    ext.processComplete(makeReply('<speak>This first sentence is long enough. Trailing words'), ctx);
+
+    expect(spoken()).toEqual(['This first sentence is long enough.', 'Trailing words']);
   });
 
   // ── processComplete: strips speak tags from final content ──

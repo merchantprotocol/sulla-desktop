@@ -74,7 +74,9 @@ export class AgentNode extends BaseNode {
     const inputSource = (state.metadata as any).inputSource ?? '';
     const voiceMode = (state.metadata as any).voiceMode ?? '';
     let chatMode: 'text' | 'voice' | 'secretary' | 'intake' = 'text';
-    if (inputSource === 'microphone') {
+    // 'voice' is what the chat surfaces send for spoken turns; 'microphone' is the
+    // sensory/relay spelling. Both mean the user is talking — answer in voice mode.
+    if (inputSource === 'microphone' || inputSource === 'voice') {
       chatMode = (voiceMode === 'secretary' || voiceMode === 'intake') ? voiceMode : 'voice';
     } else if (inputSource.startsWith('secretary-') || voiceMode === 'secretary') {
       chatMode = 'secretary';
