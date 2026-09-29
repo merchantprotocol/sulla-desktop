@@ -5,7 +5,8 @@
     • Command popover (slash / mention autocomplete)
     • Run controls (stop / continue)
     • Either the textarea OR the voice panel, mutually exclusive
-    • Mic + paperclip buttons + keyboard hints
+    • Mic + paperclip buttons
+    • Keyboard hints row below the input underline
 
   Reads everything from the controller. The only "logic" here is:
     1. send() / queue()   on Enter
@@ -54,13 +55,13 @@
           @change="onFilesSelected"
         >
         <ComposerMic :live="isRecording" @toggle="toggleVoice" />
+      </div>
 
-        <span class="hints">
-          <span><kbd>⏎</kbd> send</span>
-          <span><kbd>hold ␣</kbd> talk</span>
-          <span><kbd>⌘/</kbd> voice</span>
-          <span><kbd>?</kbd> help</span>
-        </span>
+      <div class="hints">
+        <span><kbd>⏎</kbd> send</span>
+        <span><kbd>hold ␣</kbd> talk</span>
+        <span><kbd>⌘/</kbd> voice</span>
+        <span><kbd>?</kbd> help</span>
       </div>
     </div>
   </div>
@@ -364,7 +365,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 
 <style scoped>
 .composer-wrap {
-  position: absolute; bottom: 32px; left: 12%; right: 12%;
+  position: absolute; bottom: 12px; left: 12%; right: 12%;
   z-index: 15;
 }
 .chat-root.artifact-open .composer-wrap { left: 10%; right: 10%; }
@@ -393,10 +394,10 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 
 .hints {
-  display: flex; gap: 18px;
+  display: flex; justify-content: flex-end; gap: 18px;
+  margin-top: 8px;
   font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.3em;
   text-transform: uppercase; color: var(--read-4);
-  flex-shrink: 0; align-self: center;
 }
 .hints span::before {
   content: ""; display: inline-block; width: 1px; height: 9px;
