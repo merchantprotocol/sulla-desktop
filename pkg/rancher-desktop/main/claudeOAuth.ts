@@ -15,11 +15,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { BrowserWindow, session as electronSession } from 'electron';
+import { BrowserWindow } from 'electron';
 import * as pty from 'node-pty';
 
 import { withSuppressedConnectionStatus } from '@pkg/agent/integrations/integrationFlags';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -187,97 +188,19 @@ async function persistTokenToVault(token: string): Promise<void> {
   }
 }
 
-// The sign-in window gets its own session. The app's default session grants
-// every permission, including `openExternal`, which lets a page hand a URL to
-// macOS. claude.com uses that to pass sign-in to the Claude desktop app
-// (claude://), which signs in the host's Claude instead of returning the code
-// to `claude setup-token` in the VM. This session refuses every permission.
-const AUTH_PARTITION = 'persist:claude-oauth';
-let authSessionReady = false;
-
-function getAuthSession(): Electron.Session {
-  const sess = electronSession.fromPartition(AUTH_PARTITION);
-  if (!authSessionReady) {
-    authSessionReady = true;
-    sess.setPermissionRequestHandler((_wc, permission, callback) => {
-      console.log(`[ClaudeOAuth] Denied permission request: ${ permission }`);
-      callback(false);
-    });
-    sess.setPermissionCheckHandler(() => false);
-  }
-  return sess;
-}
-
-function isWebUrl(u: string): boolean {
-  try {
-    const { protocol } = new URL(u);
-    return protocol === 'https:' || protocol === 'http:';
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Keep a sign-in window (or one of its popups, e.g. Google SSO) inside
- * Electron: block navigation to non-web schemes so nothing reaches another
- * app, and open web popups as child windows in the same session.
- */
-function containAuthWebContents(win: BrowserWindow): void {
-  const wc = win.webContents;
-  const block = (event: Electron.Event, u: string) => {
-    if (!isWebUrl(u)) {
-      event.preventDefault();
-      console.log(`[ClaudeOAuth] Blocked hand-off to another app: ${ u.split(':')[0] }:`);
-    }
-  };
-  wc.on('will-navigate', block);
-  wc.on('will-redirect', block);
-  wc.on('will-frame-navigate', (details) => {
-    if (!isWebUrl(details.url)) {
-      details.preventDefault();
-      console.log(`[ClaudeOAuth] Blocked frame hand-off to another app: ${ details.url.split(':')[0] }:`);
-    }
-  });
-  wc.setWindowOpenHandler(({ url: popupUrl }) => {
-    if (!isWebUrl(popupUrl)) {
-      console.log(`[ClaudeOAuth] Blocked popup to another app: ${ popupUrl.split(':')[0] }:`);
-      return { action: 'deny' };
-    }
-    return {
-      action:                       'allow',
-      overrideBrowserWindowOptions: {
-        parent:         win,
-        width:          600,
-        height:         720,
-        webPreferences: {
-          nodeIntegration:  false,
-          contextIsolation: true,
-          sandbox:          true,
-          partition:        AUTH_PARTITION,
-        },
-      },
-    };
-  });
-  wc.on('did-create-window', (child) => containAuthWebContents(child));
-}
-
 /**
  * Open the OAuth URL in an Electron BrowserWindow and intercept the
  * callback to extract the authorization code and state.
  */
 function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Promise<string | null> } {
-  const window = new BrowserWindow({
-    width:          720,
-    height:         800,
-    title:          'Sign in with Claude',
-    webPreferences: {
-      nodeIntegration:  false,
-      contextIsolation: true,
-      sandbox:          true,
-      session:          getAuthSession(),
-    },
+  // Contained so claude.com can't hand sign-in to the host's Claude app.
+  const window = createContainedAuthWindow({
+    width:     720,
+    height:    800,
+    title:     'Sign in with Claude',
+    partition: 'persist:claude-oauth',
+    logPrefix: '[ClaudeOAuth]',
   });
-  containAuthWebContents(window);
 
   const codePromise = new Promise<string | null>((resolve) => {
     let resolved = false;

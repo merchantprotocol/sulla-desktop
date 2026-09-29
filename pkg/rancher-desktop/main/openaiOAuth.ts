@@ -6,6 +6,7 @@
 import { BrowserWindow } from 'electron';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
@@ -17,15 +18,12 @@ const LOG_PREFIX = '[OpenAIOAuth]';
  * Open the OAuth URL in an Electron BrowserWindow and intercept the callback.
  */
 function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Promise<{ code: string; state: string } | null> } {
-  const window = new BrowserWindow({
-    width:          800,
-    height:         600,
-    title:          'Sign in with OpenAI',
-    webPreferences: {
-      nodeIntegration:  false,
-      contextIsolation: true,
-      sandbox:          true,
-    },
+  const window = createContainedAuthWindow({
+    width:     800,
+    height:    600,
+    title:     'Sign in with OpenAI',
+    partition: 'persist:openai-oauth',
+    logPrefix: LOG_PREFIX,
   });
 
   const codePromise = new Promise<{ code: string; state: string } | null>((resolve) => {
@@ -36,7 +34,8 @@ function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Prom
       resolve(result);
     };
 
-    const handleUrl = (targetUrl: string) => {
+    // Returns true when targetUrl is the OAuth callback.
+    const handleUrl = (targetUrl: string): boolean => {
       try {
         const parsed = new URL(targetUrl);
         // OpenAI redirects to: http://localhost:1455/auth/callback?code=...&state=...
@@ -46,14 +45,22 @@ function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Prom
           if (code && state) {
             console.log(`${ LOG_PREFIX } Intercepted callback, code received`);
             doResolve({ code, state });
+            return true;
           }
         }
       } catch { /* not a URL */ }
+      return false;
     };
 
-    // Watch all navigation events to catch the OAuth callback
-    window.webContents.on('will-redirect', (_event, u) => handleUrl(u));
-    window.webContents.on('will-navigate', (_event, u) => handleUrl(u));
+    // Watch all navigation events to catch the OAuth callback. Stop the
+    // callback from actually loading: anything else listening on host
+    // localhost:1455 (e.g. the Codex CLI's own login server) would otherwise
+    // receive the code instead of Sulla.
+    const intercept = (event: Electron.Event, u: string) => {
+      if (handleUrl(u)) event.preventDefault();
+    };
+    window.webContents.on('will-redirect', intercept);
+    window.webContents.on('will-navigate', intercept);
     window.webContents.on('did-navigate', (_event, u) => handleUrl(u));
     window.webContents.on('did-navigate-in-page', (_event, u) => handleUrl(u));
 
@@ -77,7 +84,7 @@ export function initOpenAIOAuthEvents(): void {
 
       // Build the authorize URL (same as OAuthService does)
       const cfg = {
-        authorizeUrl: 'https://auth.openai.com/oauth/authorize',
+        authorizeUrl:   'https://auth.openai.com/oauth/authorize',
         scopeSeparator: ' ',
       };
       const scopes = ['openid', 'profile', 'email', 'offline_access'];
@@ -146,14 +153,14 @@ export function initOpenAIOAuthEvents(): void {
         throw new Error(`Token exchange failed: ${ tokenRes.status } ${ text }`);
       }
 
-      const tokens = await tokenRes.json() as any;
+      const tokens = await tokenRes.json();
       window.destroy();
 
       console.log(`${ LOG_PREFIX } First exchange complete, tokens received:`, {
-        has_access_token: !!tokens.access_token,
-        has_id_token:     !!tokens.id_token,
+        has_access_token:  !!tokens.access_token,
+        has_id_token:      !!tokens.id_token,
         has_refresh_token: !!tokens.refresh_token,
-        token_type:       tokens.token_type,
+        token_type:        tokens.token_type,
       });
 
       const accountId = 'oauth';
@@ -198,7 +205,7 @@ export function initOpenAIOAuthEvents(): void {
         throw new Error(`API key exchange failed: ${ keyRes.status } ${ keyResText.substring(0, 200) }`);
       }
 
-      const keyData = JSON.parse(keyResText) as any;
+      const keyData = JSON.parse(keyResText);
       console.log(`${ LOG_PREFIX } Key exchange response parsed:`, {
         has_access_token: !!keyData.access_token,
         has_api_key:      !!keyData.api_key,

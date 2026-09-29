@@ -11,6 +11,8 @@ import { startOAuthCallbackServer } from './OAuthCallbackServer';
 import { postgresClient } from '../database/PostgresClient';
 import { getOAuthProvider, type OAuthTokenSet } from '../integrations/oauth';
 
+import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
+
 import type { OAuthProviderConfig } from '../integrations/oauth/OAuthProvider';
 
 const LOG_PREFIX = '[OAuthService]';
@@ -233,16 +235,14 @@ export class OAuthService {
 
   /** Open the authorize URL in a Sulla-owned Electron window. */
   private openEmbeddedAuthWindow(url: string, providerName: string): BrowserWindow {
-    const win = new BrowserWindow({
-      width:           820,
-      height:          720,
-      title:           `Sign in — ${ providerName }`,
-      autoHideMenuBar: true,
-      webPreferences:  {
-        nodeIntegration:  false,
-        contextIsolation: true,
-        sandbox:          true,
-      },
+    // Contained: no hand-offs to other apps, popups stay in Sulla, and the
+    // code can only come back through our localhost callback server.
+    const win = createContainedAuthWindow({
+      width:     820,
+      height:    720,
+      title:     `Sign in — ${ providerName }`,
+      partition: 'persist:integration-oauth',
+      logPrefix: LOG_PREFIX,
     });
     win.loadURL(url).catch((err) => {
       console.warn(`${ LOG_PREFIX } Failed to load embedded auth window:`, err);
