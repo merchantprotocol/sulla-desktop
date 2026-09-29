@@ -87,7 +87,9 @@ let speakerBytes = 0;
 
 let flushTimer: ReturnType<typeof setInterval> | null = null;
 let endOfTurnTimer: ReturnType<typeof setInterval> | null = null;
-let transcribing = false;
+let inflight = 0;
+const isTranscribing = () => inflight > 0;
+let finishing = false;
 
 // End-of-turn tracking (conversation mode). `lastMicFedAt` is the wall-clock of the
 // most recent VAD-gated mic chunk — since PCM is only delivered while speaking, the
@@ -161,6 +163,7 @@ export function start(opts: {
   // Use requested model if available, otherwise first available model (whisper only)
   modelName = models.includes(requestedModel) ? requestedModel : (models[0] || modelName);
   mode = opts.mode;
+  finishing = false;
   onTranscript = opts.onTranscript;
   language = opts.language || 'en';
 
@@ -169,6 +172,7 @@ export function start(opts: {
 
   // Clear buffers
   resetBuffers();
+  finishing = false;
 
   // Start periodic flush
   flushTimer = setInterval(() => flush(), SEGMENT_MS);
@@ -187,6 +191,7 @@ export function start(opts: {
 }
 
 export function stop(): void {
+  if (isTranscribing()) log.debug('WhisperTranscribe', 'Stopping with inference in flight; use finish() to drain the final audio');
   const elapsedMinutes = sessionStartedAt > 0 ? (Date.now() - sessionStartedAt) / 60000 : 0;
   if (elapsedMinutes > 0 && sessionId) {
     void MeterableUsageModel.accrue({
@@ -222,6 +227,7 @@ export function stop(): void {
   provider = 'whisper';
   grokApiKey = null;
   resetBuffers();
+  finishing = false;
   log.info('WhisperTranscribe', 'Stopped');
 }
 
@@ -236,7 +242,23 @@ export function stop(): void {
  */
 export async function finish(timeoutMs = 20_000): Promise<void> {
   if (mode === null) return;
+  finishing = true;
   if (mode !== 'conversation') {
+    if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
+    const deadline = Date.now() + timeoutMs;
+    await waitIdle(deadline);
+    const mic = micBytes > 0 ? Buffer.concat(micBuffer) : null;
+    const speaker = speakerBytes > 0 ? Buffer.concat(speakerBuffer) : null;
+    micBuffer.length = 0; micBytes = 0;
+    speakerBuffer.length = 0; speakerBytes = 0;
+    const transcribeTail = (pcm: Buffer | null, channel: number, label: string) => {
+      if (!pcm?.length) return;
+      const seconds = pcm.length / (SAMPLE_RATE * BYTES_PER_SAMPLE);
+      transcribeChunk(pcm, channel, label, { timeoutMs: Math.max(10_000, Math.ceil(seconds * 2000)) });
+    };
+    transcribeTail(mic, 0, 'Mic');
+    transcribeTail(speaker, 1, 'Speaker');
+    await waitIdle(deadline);
     stop();
     return;
   }
@@ -254,9 +276,7 @@ export async function finish(timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
   // Let an in-flight partial finish so its PCM is not transcribed twice.
-  while (transcribing && Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 25));
-  }
+  await waitIdle(deadline);
 
   // Unsliced tail audio joins the utterance for the one authoritative pass.
   if (micBytes > 0) {
@@ -287,6 +307,10 @@ export async function finish(timeoutMs = 20_000): Promise<void> {
   stop();
 }
 
+async function waitIdle(deadline: number): Promise<void> {
+  while (isTranscribing() && Date.now() < deadline) await new Promise(r => setTimeout(r, 25));
+}
+
 /** Push-to-talk sessions take the raw (ungated) mic — see init.ts. */
 export function wantsRawMic(): boolean {
   return mode === 'conversation' && manualTurn;
@@ -305,7 +329,7 @@ export function getStats(): { active: boolean; mode: TranscribeMode | null; tran
   return {
     active:            mode !== null,
     mode,
-    transcribing,
+    transcribing: isTranscribing(),
     micBytesReceived:  micBytes,
     micChunksReceived: micBuffer.length,
   };
@@ -318,7 +342,7 @@ export function getStats(): { active: boolean; mode: TranscribeMode | null; tran
  * whisper.cpp periodically.
  */
 export function feedMic(chunk: Buffer): void {
-  if (!mode) return;
+  if (!mode || finishing) return;
   micBuffer.push(chunk);
   micBytes += chunk.length;
 
@@ -338,7 +362,7 @@ export function feedMic(chunk: Buffer): void {
  * Only consumed in secretary mode.
  */
 export function feedSpeaker(pcm: Buffer): void {
-  if (mode !== 'secretary') return;
+  if (mode !== 'secretary' || finishing) return;
   speakerBuffer.push(pcm);
   speakerBytes += pcm.length;
 
@@ -355,7 +379,7 @@ function resetBuffers(): void {
 }
 
 function flush(): void {
-  if (transcribing) return;
+  if (isTranscribing()) return;
 
   // Grab and clear mic buffer
   if (micBytes > 0) {
@@ -398,7 +422,7 @@ function checkEndOfTurn(): void {
 
   // Speech paused mid-buffer — transcribe the trailing partial now rather than
   // waiting up to SEGMENT_MS for the next tick.
-  if (micBytes > 0 && !transcribing && silentFor >= EARLY_FLUSH_SILENCE_MS) {
+  if (micBytes > 0 && !isTranscribing() && silentFor >= EARLY_FLUSH_SILENCE_MS) {
     flush();
     return;
   }
@@ -409,7 +433,7 @@ function checkEndOfTurn(): void {
   // Pipeline drained (no pending audio, no in-flight inference) and silence has
   // held past the threshold → the utterance is over. Re-transcribe the whole thing
   // once for an authoritative transcript, then signal end-of-turn.
-  if (micBytes === 0 && !transcribing && silentFor >= END_OF_TURN_MS) {
+  if (micBytes === 0 && !isTranscribing() && silentFor >= END_OF_TURN_MS) {
     utteranceOpen = false;
     log.debug('WhisperTranscribe', 'utterance_end', { silentFor });
     finalizeUtterance();
@@ -516,7 +540,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string, opt
     return;
   }
 
-  transcribing = true;
+  inflight++;
 
   // Use 2 threads max — whisper shares CPU with other services.
   // 4 threads caused whisper-cli to hang under contention.
@@ -539,7 +563,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string, opt
   // Timeout — if whisper hangs (CPU contention), release the mutex so the
   // next flush can try again with fresh audio.
   execFile(status.binaryPath, args, { timeout: timeoutMs }, (err, stdout, stderr) => {
-    transcribing = false;
+    inflight--;
     cleanupFile(wavPath);
 
     if (err) {
@@ -624,7 +648,7 @@ function transcribeChunkGrok(pcm: Buffer, channel: number, speakerLabel: string,
   const eventType: TranscriptEvent['event_type'] = opts.partial ? 'transcript_partial' : 'transcript_turn';
   const wav = buildWav(pcm);
 
-  transcribing = true;
+  inflight++;
 
   const form = new FormData();
 
@@ -672,7 +696,7 @@ function transcribeChunkGrok(pcm: Buffer, channel: number, speakerLabel: string,
     })
     .finally(() => {
       clearTimeout(timeout);
-      transcribing = false;
+      inflight--;
       opts.onDone?.();
     });
 }

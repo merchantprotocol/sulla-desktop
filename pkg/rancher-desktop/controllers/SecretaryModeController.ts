@@ -116,6 +116,8 @@ export class SecretaryModeController {
 
   // Barge-in tracking (set by the view when TTS is active)
   private hasTTSActive = false;
+  private draining = false;
+  private endSessionPromise: Promise<void> | null = null;
 
   constructor(callbacks: SecretaryCallbacks) {
     this.cb = callbacks;
@@ -167,25 +169,42 @@ export class SecretaryModeController {
     // Start whisper transcription via the controller pipeline. Without it the
     // session would sit on "Listening..." and never produce a transcript.
     if (!await this.startWhisperTranscription()) {
-      this.endSession();
+      void this.endSession();
       throw new Error('Transcription could not start — check that whisper and a speech model are installed in Audio settings.');
     }
   }
 
-  endSession(): void {
+  endSession(): Promise<void> {
+    if (this.endSessionPromise) return this.endSessionPromise;
+    this.endSessionPromise = this.drainAndEndSession().finally(() => { this.endSessionPromise = null; });
+    return this.endSessionPromise;
+  }
+
+  private async drainAndEndSession(): Promise<void> {
     this.clearWakeCommand();
     this.cb.setWakeWordActive(false);
     this.cb.stopTTS();
     this.stopSessionTimer();
     this.stopAudioLevelMonitor();
     this.stopAnalysisLoop();
-    this.analyzeNewTranscript();
 
     // Clean up agent audio playback
     this.stopAgentAudio();
 
-    // Stop whisper transcription
-    this.stopWhisperTranscription();
+    this.draining = true;
+    try {
+      await Promise.race([
+        ipcRenderer.invoke('audio-driver:transcribe-finish').catch((err) => {
+          console.warn('[SecretaryMode] transcription finish failed; stopping directly:', err);
+          return ipcRenderer.invoke('audio-driver:transcribe-stop');
+        }),
+        new Promise((resolve) => setTimeout(resolve, 25_000)),
+      ]);
+    } finally {
+      this.stopWhisperTranscription();
+      this.draining = false;
+    }
+    await this.analyzeNewTranscript();
 
     // Release mic and speaker via the controllers (ref-counted)
     ipcRenderer.invoke('audio-driver:stop-mic', 'secretary-mode').catch((err) => {
@@ -205,7 +224,7 @@ export class SecretaryModeController {
   }
 
   dispose(): void {
-    if (this.cb.getIsListening()) this.endSession();
+    if (this.cb.getIsListening()) void this.endSession();
   }
 
   // ─── Wake word detection ──────────────────────────────────────
@@ -392,7 +411,7 @@ export class SecretaryModeController {
 
     // Listen for transcript events from whisper — both mic and speaker channels
     this.whisperTranscriptHandler = (_event: any, msg: any) => {
-      if (!msg?.text || !this.cb.getIsListening()) return;
+      if (!msg?.text || (!this.cb.getIsListening() && !this.draining)) return;
       const text = msg.text.trim();
       if (!text) return;
       if (msg.event_type !== 'transcript_partial') {
@@ -400,7 +419,7 @@ export class SecretaryModeController {
         this.appendOrCreateEntry(text, speaker);
         // Only the user's own mic can address Sulla — a remote participant
         // saying "hey Sulla" must not be able to command the agent.
-        if (speaker === 'You') this.checkAndHandleWakeWord(text);
+        if (speaker === 'You' && this.cb.getIsListening()) this.checkAndHandleWakeWord(text);
       }
     };
     ipcRenderer.on('gateway-transcript', this.whisperTranscriptHandler);
@@ -414,7 +433,6 @@ export class SecretaryModeController {
       ipcRenderer.removeListener('gateway-transcript', this.whisperTranscriptHandler);
       this.whisperTranscriptHandler = null;
     }
-    ipcRenderer.invoke('audio-driver:transcribe-stop').catch(() => {});
   }
 
   // ─── Agent audio playback (PCM 16kHz via Web Audio API) ────────
