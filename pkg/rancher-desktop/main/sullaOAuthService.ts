@@ -15,8 +15,7 @@
  * the caller uses to complete the sign-in locally (vault save + relay pair).
  */
 
-import { BrowserWindow } from 'electron';
-
+import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -34,18 +33,18 @@ export interface OAuthSullaSession {
 }
 
 export interface OAuthRunResult {
-  provider:      string;
+  provider: string;
   claims:        {
-    sub:           string;
-    email?:        string;
+    sub:            string;
+    email?:         string;
     emailVerified?: boolean;
-    fullName?:     string;
+    fullName?:      string;
   };
   tokens: {
-    idToken?:     string;
-    accessToken?: string;
+    idToken?:      string;
+    accessToken?:  string;
     refreshToken?: string;
-    expiresAt?:   number;
+    expiresAt?:    number;
   };
   sullaSession?: OAuthSullaSession;
 }
@@ -56,11 +55,11 @@ interface StartResponse {
 }
 
 interface ResultResponse {
-  status:   'pending' | 'done' | 'error' | 'expired';
-  provider: string;
+  status:    'pending' | 'done' | 'error' | 'expired';
+  provider:  string;
   returnTo?: string;
-  result?:  OAuthRunResult;
-  error?:   string;
+  result?:   OAuthRunResult;
+  error?:    string;
 }
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -109,18 +108,12 @@ export async function runOAuthFlow(provider: string, returnTo?: string): Promise
 
   const signal = { cancelled: false };
 
-  const win = new BrowserWindow({
-    width:          500,
-    height:         720,
-    resizable:      true,
-    title:          'Sign in to Sulla Cloud',
-    autoHideMenuBar: true,
-    webPreferences: {
-      nodeIntegration:  false,
-      contextIsolation: true,
-      sandbox:          true,
-      partition:        'persist:sulla-cloud-oauth',
-    },
+  const win = createContainedAuthWindow({
+    width:     500,
+    height:    720,
+    title:     'Sign in to Sulla Cloud',
+    partition: 'persist:sulla-cloud-oauth',
+    logPrefix: '[SullaOAuth]',
   });
 
   win.on('closed', () => { signal.cancelled = true });
@@ -130,6 +123,6 @@ export async function runOAuthFlow(provider: string, returnTo?: string): Promise
     const result = await pollResult(state, signal);
     return result;
   } finally {
-    try { if (!win.isDestroyed()) win.close() } catch { /* ignore */ }
+    try { if (!win.isDestroyed()) win.close(); } catch { /* ignore */ }
   }
 }

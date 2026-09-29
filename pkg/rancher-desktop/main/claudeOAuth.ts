@@ -20,6 +20,7 @@ import * as pty from 'node-pty';
 
 import { withSuppressedConnectionStatus } from '@pkg/agent/integrations/integrationFlags';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -192,15 +193,13 @@ async function persistTokenToVault(token: string): Promise<void> {
  * callback to extract the authorization code and state.
  */
 function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Promise<string | null> } {
-  const window = new BrowserWindow({
-    width:          720,
-    height:         800,
-    title:          'Sign in with Claude',
-    webPreferences: {
-      nodeIntegration:  false,
-      contextIsolation: true,
-      sandbox:          true,
-    },
+  // Contained so claude.com can't hand sign-in to the host's Claude app.
+  const window = createContainedAuthWindow({
+    width:     720,
+    height:    800,
+    title:     'Sign in with Claude',
+    partition: 'persist:claude-oauth',
+    logPrefix: '[ClaudeOAuth]',
   });
 
   const codePromise = new Promise<string | null>((resolve) => {

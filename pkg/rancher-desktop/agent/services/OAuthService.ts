@@ -11,6 +11,8 @@ import { startOAuthCallbackServer } from './OAuthCallbackServer';
 import { postgresClient } from '../database/PostgresClient';
 import { getOAuthProvider, type OAuthTokenSet } from '../integrations/oauth';
 
+import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
+
 import type { OAuthProviderConfig } from '../integrations/oauth/OAuthProvider';
 
 const LOG_PREFIX = '[OAuthService]';
@@ -233,16 +235,14 @@ export class OAuthService {
 
   /** Open the authorize URL in a Sulla-owned Electron window. */
   private openEmbeddedAuthWindow(url: string, providerName: string): BrowserWindow {
-    const win = new BrowserWindow({
-      width:           820,
-      height:          720,
-      title:           `Sign in — ${ providerName }`,
-      autoHideMenuBar: true,
-      webPreferences:  {
-        nodeIntegration:  false,
-        contextIsolation: true,
-        sandbox:          true,
-      },
+    // Contained: no hand-offs to other apps, popups stay in Sulla, and the
+    // code can only come back through our localhost callback server.
+    const win = createContainedAuthWindow({
+      width:     820,
+      height:    720,
+      title:     `Sign in — ${ providerName }`,
+      partition: 'persist:integration-oauth',
+      logPrefix: LOG_PREFIX,
     });
     win.loadURL(url).catch((err) => {
       console.warn(`${ LOG_PREFIX } Failed to load embedded auth window:`, err);
@@ -482,6 +482,38 @@ export class OAuthService {
 
     console.log(`${ LOG_PREFIX } Token refreshed for ${ integrationId }/${ accountId }`);
     return json;
+  }
+
+  // ── Adopt tokens from another flow ────────────────────────────
+
+  /**
+   * Connect an integration with a token set that a different sign-in already
+   * obtained (the OpenAI sign-in hands its ChatGPT tokens to Codex this way).
+   * Runs the same tail as startFlow: provider post-processing, storage,
+   * connected status, and scheduled refresh.
+   */
+  async adoptTokens(
+    integrationId: string,
+    accountId: string,
+    providerId: string,
+    tokens: OAuthTokenSet,
+  ): Promise<void> {
+    const provider = getOAuthProvider(providerId);
+    if (!provider) {
+      throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
+    }
+    const clientId = provider.config.builtInClientId || '';
+    normalizeTokenExpiry(tokens);
+
+    await provider.onTokenReceived(tokens, { integrationId, accountId, providerId, clientId });
+    await this.storeTokens(integrationId, accountId, providerId, tokens);
+
+    const integrationService = getIntegrationService();
+    await integrationService.setConnectionStatus(integrationId, true, accountId);
+    await integrationService.setActiveAccount(integrationId, accountId);
+
+    this.scheduleRefresh(integrationId, accountId, providerId, clientId, '', tokens);
+    console.log(`${ LOG_PREFIX } Adopted tokens for ${ integrationId }/${ accountId }`);
   }
 
   // ── Schedule proactive refresh ────────────────────────────────
