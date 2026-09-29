@@ -193,6 +193,37 @@ async function persistTokenToVault(token: string): Promise<void> {
  * callback to extract the authorization code and state.
  */
 function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Promise<string | null> } {
+  let resolveCode!: (code: string | null) => void;
+  let resolved = false;
+  const codePromise = new Promise<string | null>((resolve) => {
+    resolveCode = resolve;
+  });
+  const doResolve = (code: string | null) => {
+    if (resolved) return;
+    resolved = true;
+    resolveCode(code);
+  };
+
+  // Returns true for the OAuth callback. Checked in the window and in every
+  // popup, since claude.com can finish sign-in in a popup (e.g. Google SSO).
+  const handleUrl = (targetUrl: string): boolean => {
+    try {
+      const parsed = new URL(targetUrl);
+      if (parsed.hostname.endsWith('claude.com') && parsed.pathname.includes('/oauth/code/callback')) {
+        const code = parsed.searchParams.get('code');
+        const state = parsed.searchParams.get('state');
+        // Claude CLI expects "code#state" format.
+        const combined = code && state ? `${ code }#${ state }` : code;
+        console.log(`[ClaudeOAuth] Intercepted callback, combined=${ combined ? `${ combined.length } chars` : '(missing)' }`);
+        if (combined) {
+          doResolve(combined);
+          return true;
+        }
+      }
+    } catch { /* not a URL */ }
+    return false;
+  };
+
   // Contained so claude.com can't hand sign-in to the host's Claude app.
   const window = createContainedAuthWindow({
     width:     720,
@@ -200,37 +231,9 @@ function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Prom
     title:     'Sign in with Claude',
     partition: 'persist:claude-oauth',
     logPrefix: '[ClaudeOAuth]',
+    onUrl:     handleUrl,
   });
-
-  const codePromise = new Promise<string | null>((resolve) => {
-    let resolved = false;
-    const doResolve = (code: string | null) => {
-      if (resolved) return;
-      resolved = true;
-      resolve(code);
-    };
-
-    const handleUrl = (targetUrl: string) => {
-      try {
-        const parsed = new URL(targetUrl);
-        if (parsed.hostname.endsWith('claude.com') && parsed.pathname.includes('/oauth/code/callback')) {
-          const code = parsed.searchParams.get('code');
-          const state = parsed.searchParams.get('state');
-          // Claude CLI expects "code#state" format.
-          const combined = code && state ? `${ code }#${ state }` : code;
-          console.log(`[ClaudeOAuth] Intercepted callback, combined=${ combined ? `${ combined.length } chars` : '(missing)' }`);
-          doResolve(combined);
-        }
-      } catch { /* not a URL */ }
-    };
-
-    window.webContents.on('will-redirect', (_event, u) => handleUrl(u));
-    window.webContents.on('will-navigate', (_event, u) => handleUrl(u));
-    window.webContents.on('did-navigate', (_event, u) => handleUrl(u));
-    window.webContents.on('did-navigate-in-page', (_event, u) => handleUrl(u));
-
-    window.on('closed', () => doResolve(null));
-  });
+  window.on('closed', () => doResolve(null));
 
   console.log(`[ClaudeOAuth] Opening auth window: ${ redactUrl(url) }`);
   window.loadURL(url);
@@ -331,7 +334,10 @@ export function initClaudeOAuthEvents(): void {
 
             codePromise.then((code) => {
               if (!code) {
+                // Don't leave `claude setup-token` waiting in the VM forever.
                 console.log('[ClaudeOAuth] Auth window closed without a code');
+                clearTimeout(timeout);
+                doResolve({ error: 'The sign-in window closed before Claude sent back a code. Try again.' });
                 return;
               }
               console.log(`[ClaudeOAuth] Writing ${ code.length } chars to PTY`);
