@@ -7,6 +7,14 @@
  * or arguments that delete, run arbitrary code, or type into pages.
  */
 
+/**
+ * Default act-threshold. Calibrated against the shipped seed on a held-out
+ * newcomer set and ~2.7k real chat messages: at 0.6 no wrong action and no
+ * false fire (see __tests__/reflexSeed.test.ts). Users can override it with
+ * the reflexConfidenceThreshold setting.
+ */
+export const DEFAULT_REFLEX_THRESHOLD = 0.6;
+
 export const DEFAULT_REFLEX_CATEGORIES = ['browser', 'ui', 'docker', 'project', 'capture', 'secretary', 'notify'];
 
 /** Tools inside allowed categories that must still never fire without the model. */

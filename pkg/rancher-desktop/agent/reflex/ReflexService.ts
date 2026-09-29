@@ -18,9 +18,9 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { toolRegistry } from '../tools/registry';
 
 import { REFLEX_NONE, ReflexEngine, type ReflexPrediction } from './ReflexEngine';
-import { parseCategories, reflexPolicyViolation } from './reflexPolicy';
+import { DEFAULT_REFLEX_THRESHOLD, parseCategories, reflexPolicyViolation } from './reflexPolicy';
 
-export const DEFAULT_REFLEX_THRESHOLD = 0.85;
+export { DEFAULT_REFLEX_THRESHOLD } from './reflexPolicy';
 
 export interface ReflexTurnResult {
   decisionId: string;
