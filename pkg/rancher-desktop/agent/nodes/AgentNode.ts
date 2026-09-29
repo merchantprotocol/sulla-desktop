@@ -1,6 +1,7 @@
 import { BaseNode } from './BaseNode';
 import { getAgentOverrideService, getPrimaryService } from '../languagemodels';
 import { runSubconsciousMiddleware, runSubconsciousObservationWriters } from '../middleware/SubconsciousMiddleware';
+import { isTerminalAgentTurn } from './agentTurnEnd';
 import { throwIfAborted } from '../services/AbortService';
 import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
@@ -294,9 +295,14 @@ export class AgentNode extends BaseNode {
     // state.messages now holds the whole turn (user message + this agent's
     // response + any tool results), so fire the domain writers here to observe
     // what actually happened — not the pre-turn state the middleware used to see.
-    // Only when the loop has truly ended (done/blocked), never on intermediate
-    // tool-call iterations; fire-and-forget, since the response is already out.
-    if (agentOutcome.status === 'done' || agentOutcome.status === 'blocked') {
+    // Only when the loop has truly ended, never on intermediate tool-call
+    // iterations; fire-and-forget, since the response is already out. "Ended"
+    // must match the graph's own exit rule: a reply with no wrapper and no
+    // in-graph tool calls also ends the turn (the edge defaults it to done).
+    // CLI providers (Claude Code, Codex) run their tools inside the CLI, so
+    // their turns routinely take that path — gating on the wrapper alone
+    // silently skipped every post-turn writer, the Reflex Trainer included.
+    if (isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls)) {
       try {
         const includeObservations = await this.shouldInjectObservationsForAgent(state);
         runSubconsciousObservationWriters(state, { includeObservations });
