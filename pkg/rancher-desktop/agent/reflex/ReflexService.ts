@@ -19,6 +19,9 @@ import { toolRegistry } from '../tools/registry';
 
 import { REFLEX_NONE, ReflexEngine, type ReflexPrediction } from './ReflexEngine';
 import { parseCategories, reflexPolicyViolation } from './reflexPolicy';
+import { reflexActionLabel } from './reflexLabels';
+
+export { reflexActionLabel } from './reflexLabels';
 
 export const DEFAULT_REFLEX_THRESHOLD = 0.85;
 
@@ -154,4 +157,47 @@ export function latestHumanText(messages: any[]): string {
       ? last.content.filter((b: any) => b?.type === 'text' && typeof b.text === 'string').map((b: any) => b.text).join('\n')
       : '';
   return text.replace(/<turn_context>[\s\S]*?<\/turn_context>/g, '').trim();
+}
+
+/** What the composer shows while the human types: an action Reflex would run right now. */
+export interface ReflexPreview {
+  toolName:   string;
+  params:     Record<string, unknown>;
+  confidence: number;
+  label:      string;
+}
+
+/**
+ * Live intent for the composer: the action Reflex would run for this draft
+ * if it were sent now — only when it would actually act (confident, allowed
+ * by policy, no human approval). Read-only: records nothing, runs nothing,
+ * so it is safe to call on every keystroke. Never throws.
+ */
+export async function previewReflex(message: string): Promise<ReflexPreview | null> {
+  try {
+    const settings = await getReflexSettings();
+    if (!settings.enabled || !message.trim()) return null;
+
+    const prediction = await predictReflex(message);
+    if (prediction.toolName === REFLEX_NONE || prediction.confidence < settings.threshold) return null;
+
+    const violation = reflexPolicyViolation({
+      toolName:          prediction.toolName,
+      category:          toolCategory(prediction.toolName),
+      params:            prediction.params,
+      allowedCategories: settings.allowedCategories,
+    });
+    if (violation) return null;
+    const { decisionService } = await import('../services/DecisionService');
+    if (await decisionService.requiresApproval(prediction.toolName)) return null;
+
+    return {
+      toolName:   prediction.toolName,
+      params:     prediction.params,
+      confidence: prediction.confidence,
+      label:      reflexActionLabel(prediction.toolName, prediction.params),
+    };
+  } catch {
+    return null;
+  }
 }
