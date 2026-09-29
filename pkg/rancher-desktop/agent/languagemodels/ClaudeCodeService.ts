@@ -13,6 +13,7 @@ import {
 } from './claudeBackgroundTasks';
 import { buildClaudeLaunchCommand } from './claudeLaunchCommand';
 import { disallowedToolsFor } from './claudeToolPolicy';
+import { removeFileOnExit, systemPromptFromMessages, writeSystemPromptFile } from './cliSystemPromptFile';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
@@ -259,7 +260,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
      */
     disallowedTools: string;
     /**
-     * Host path of this spawn's system prompt file (writeSystemPromptFile).
+     * Host path of this spawn's system prompt file (cliSystemPromptFile).
      * Passed as --append-system-prompt-file: ~/.claude/CLAUDE.md is written
      * on the host, but the CLI runs in the VM under a different $HOME and
      * never reads it — this flag is the only route Sulla's prompt has in.
@@ -361,13 +362,13 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
       // The turn's own system message doesn't exist yet at prewarm time, so a
       // pre-booted primary gets the full Sulla prompt (byte-stable by design).
-      const systemPromptPath = this.writeSystemPromptFile(await this.fallbackSystemPrompt());
+      const systemPromptPath = writeSystemPromptFile(await this.fallbackSystemPrompt());
       const disallowedTools = disallowedToolsFor(state.metadata as any);
       const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: true, disallowedTools, systemPromptPath });
       const proc = childProcess.spawn(paths.limactl, args, {
         env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
       });
-      this.removeOnExit(proc, systemPromptPath);
+      removeFileOnExit(proc, systemPromptPath);
 
       const record: PrewarmRecord = {
         proc,
@@ -776,40 +777,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   /**
-   * Collect any system-role messages in the array and return their
-   * concatenated text content. BaseNode.createNodeRunContext appends the
-   * caller-built system prompt as the last message with role='system', so
-   * this extracts exactly what the caller intended Claude to see.
-   *
-   * When the messages array has no system message (e.g. direct chatStream
-   * callers like DesktopRelay bypass BaseNode), returns empty string and
-   * the caller should fall back to buildFullSystemPrompt.
-   */
-  private extractSystemPromptFromMessages(messages: ChatMessage[]): string {
-    const blockToText = (b: any): string => {
-      if (typeof b === 'string') return b;
-      if (!b || typeof b !== 'object') return '';
-      if (b.type === 'text' && typeof b.text === 'string') return b.text;
-      return '';
-    };
-
-    const msgToText = (m: ChatMessage): string => {
-      const c: any = m.content;
-      if (typeof c === 'string') return c;
-      if (Array.isArray(c)) return c.map(blockToText).filter(Boolean).join('\n');
-      return '';
-    };
-
-    const parts: string[] = [];
-    for (const m of messages) {
-      if (m.role !== 'system') continue;
-      const text = msgToText(m).trim();
-      if (text) parts.push(text);
-    }
-    return parts.join('\n\n');
-  }
-
-  /**
    * Build a <sulla_context> prefix for the outgoing user message.
    *
    * Two tiers:
@@ -1017,7 +984,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
     // Refresh ~/.claude/CLAUDE.md on the host (kept for host-side Claude Code
     // use). The VM-side CLI never sees it — Sulla's prompt reaches it through
-    // --append-system-prompt-file (see writeSystemPromptFile).
+    // --append-system-prompt-file (see cliSystemPromptFile).
     import('../prompts/generateClaudeCodeMemoryFile').then(({ generateClaudeCodeMemoryFile }) => {
       generateClaudeCodeMemoryFile().catch(() => {});
     }).catch(() => {});
@@ -1042,7 +1009,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // falling back to the full Sulla prompt for callers that bypass BaseNode.
     const systemPromptPath = adopted
       ? null
-      : this.writeSystemPromptFile(this.extractSystemPromptFromMessages(messages) || await this.fallbackSystemPrompt());
+      : writeSystemPromptFile(systemPromptFromMessages(messages) || await this.fallbackSystemPrompt());
     const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: speculative, disallowedTools, systemPromptPath });
 
     const cleanupMcp = () => {
@@ -1071,7 +1038,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       proc = childProcess.spawn(limactlPath, args, {
         env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
       });
-      this.removeOnExit(proc, systemPromptPath);
+      removeFileOnExit(proc, systemPromptPath);
       // Warm mode with no prewarm available: still track this fresh process so
       // it can be parked for reuse after the turn.
       if (warm) {
@@ -1780,33 +1747,6 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       // clean up when we are not reusing it.
       if (!parked) cleanupMcp();
     }
-  }
-
-  /**
-   * Write one spawn's system prompt where the VM can read it (sullaConfig is
-   * mounted at the same path, exactly like the MCP config). Returns null when
-   * there is nothing to write or the write fails — the spawn still proceeds.
-   */
-  private writeSystemPromptFile(text: string): string | null {
-    if (!text.trim()) return null;
-    try {
-      const dir = path.join(paths.sullaConfig, 'system-prompts');
-      fs.mkdirSync(dir, { recursive: true });
-      const filePath = path.join(dir, `${ crypto.randomUUID() }.md`);
-      fs.writeFileSync(filePath, text, { mode: 0o600 });
-      return filePath;
-    } catch (err) {
-      log.log(`[ClaudeCodeService] system prompt file write failed, spawning without it: ${ (err as Error)?.message ?? err }`);
-      return null;
-    }
-  }
-
-  /** The CLI reads the prompt file at boot; a pooled process keeps running, so delete only on exit. */
-  private removeOnExit(proc: childProcess.ChildProcess, filePath: string | null): void {
-    if (!filePath) return;
-    proc.once('exit', () => {
-      try { fs.unlinkSync(filePath); } catch { /* already gone */ }
-    });
   }
 
   private async fallbackSystemPrompt(): Promise<string> {

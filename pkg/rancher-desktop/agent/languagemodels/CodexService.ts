@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
+import { isObserverSpawn } from './claudeToolPolicy';
+import { removeFileOnExit, systemPromptFromMessages, writeSystemPromptFile } from './cliSystemPromptFile';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { emitCodexToolEvent } from './codexToolEvents';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
@@ -163,6 +165,14 @@ export class CodexService extends BaseLanguageModel {
     existingSession?: string;
     mcpSession?: RegisteredSession | null;
     readOnly?: boolean;
+    /**
+     * Host path of a per-run instructions file (cliSystemPromptFile), passed
+     * as -c model_instructions_file. It REPLACES codex's base instructions,
+     * so it is only used for subconscious agents — their caller-built prompt
+     * (observer / Reflex Trainer role) is otherwise dropped, since AGENTS.md
+     * carries only the general Sulla prompt.
+     */
+    instructionsPath?: string | null;
   }): string[] {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
@@ -183,6 +193,9 @@ export class CodexService extends BaseLanguageModel {
       for (const override of buildCodexMcpOverrides(p.mcpSession)) {
         codexArgs.push('-c', shq(override));
       }
+    }
+    if (p.instructionsPath) {
+      codexArgs.push('-c', shq(`model_instructions_file=${ JSON.stringify(p.instructionsPath) }`));
     }
     if (this.model && this.model !== 'codex') {
       codexArgs.push('--model', shq(this.model));
@@ -705,7 +718,12 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         log.log(`[CodexService] MCP session setup failed, continuing without sulla-native tools: ${ (err as Error)?.message ?? err }`);
       }
     }
-    const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly });
+    // Subconscious agents get their own caller-built prompt as codex's model
+    // instructions; primaries keep codex's base prompt plus AGENTS.md.
+    const instructionsPath = !adopted && isObserverSpawn(options.state?.metadata as any)
+      ? writeSystemPromptFile(systemPromptFromMessages(messages))
+      : null;
+    const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly, instructionsPath });
 
     return await new Promise((resolve, reject) => {
       let mcpCleaned = false;
@@ -727,6 +745,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         proc = childProcess.spawn(limactlPath, args, {
           env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
         });
+        removeFileOnExit(proc, instructionsPath);
       }
 
       // Feed the prompt through stdin instead of the command line. Guard
