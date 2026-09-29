@@ -484,6 +484,38 @@ export class OAuthService {
     return json;
   }
 
+  // ── Adopt tokens from another flow ────────────────────────────
+
+  /**
+   * Connect an integration with a token set that a different sign-in already
+   * obtained (the OpenAI sign-in hands its ChatGPT tokens to Codex this way).
+   * Runs the same tail as startFlow: provider post-processing, storage,
+   * connected status, and scheduled refresh.
+   */
+  async adoptTokens(
+    integrationId: string,
+    accountId: string,
+    providerId: string,
+    tokens: OAuthTokenSet,
+  ): Promise<void> {
+    const provider = getOAuthProvider(providerId);
+    if (!provider) {
+      throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
+    }
+    const clientId = provider.config.builtInClientId || '';
+    normalizeTokenExpiry(tokens);
+
+    await provider.onTokenReceived(tokens, { integrationId, accountId, providerId, clientId });
+    await this.storeTokens(integrationId, accountId, providerId, tokens);
+
+    const integrationService = getIntegrationService();
+    await integrationService.setConnectionStatus(integrationId, true, accountId);
+    await integrationService.setActiveAccount(integrationId, accountId);
+
+    this.scheduleRefresh(integrationId, accountId, providerId, clientId, '', tokens);
+    console.log(`${ LOG_PREFIX } Adopted tokens for ${ integrationId }/${ accountId }`);
+  }
+
   // ── Schedule proactive refresh ────────────────────────────────
 
   private scheduleRefresh(

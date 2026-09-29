@@ -165,6 +165,19 @@ export function initOpenAIOAuthEvents(): void {
 
       const accountId = 'oauth';
 
+      // Codex gets the same sign-in. The ChatGPT token set goes to the Codex
+      // integration, which writes ~/.codex/auth.json (the VM sees it through
+      // the home mount) and keeps it refreshed, so the codex CLI runs on the
+      // ChatGPT plan. Done before the API-key exchange below, which fails for
+      // accounts without an API org — Codex should still connect then.
+      try {
+        const { getOAuthService } = await import('@pkg/agent/services/OAuthService');
+        await getOAuthService().adoptTokens('codex', accountId, 'codex', { ...tokens });
+        console.log(`${ LOG_PREFIX } Codex connected with the same sign-in`);
+      } catch (err) {
+        console.warn(`${ LOG_PREFIX } Could not connect Codex with this sign-in:`, err);
+      }
+
       // OpenAI requires a second token exchange (RFC 8693) to convert id_token → actual API key
       const idToken = tokens.id_token as string | undefined;
       if (!idToken) {
