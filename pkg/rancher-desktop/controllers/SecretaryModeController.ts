@@ -22,6 +22,7 @@
  *   - IPC handler registration (that's sullaEvents.ts)
  */
 
+import { parseSecretaryAnalysis } from '@pkg/agent/controllers/SecretaryExtractor';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -67,6 +68,8 @@ export interface SecretaryCallbacks {
   playTTS:            (text: string) => Promise<void>;
   stopTTS:            () => void;
   sendToChat:         (prompt: string, inputSource: string) => Promise<string | null>;
+  /** Non-fatal problem the user should know about (e.g. only the mic is captured). */
+  setWarning?:        (message: string | null) => void;
 }
 
 // ─── Constants ──────────────────────────────────────────────────
@@ -74,19 +77,12 @@ export interface SecretaryCallbacks {
 const WAKE_PATTERNS = [/\bhey\s+(?:sulla|sula|soula|sola)\b/i];
 const ANALYSIS_INTERVAL = 30_000;
 const BARGE_IN_THRESHOLD = 25;
-
-const SECRETARY_SYSTEM_PROMPT = `You are Sulla, acting as a meeting secretary. You are listening to a live meeting transcript.
-
-Your job:
-1. IDENTIFY ACTION ITEMS — any task, to-do, or commitment someone makes. Format each on its own line prefixed with "ACTION: "
-2. IDENTIFY DECISIONS — any agreement or conclusion reached. Format each on its own line prefixed with "DECISION: "
-3. PROVIDE KEY INSIGHTS — brief observations about what's being discussed, context that might be useful, or things the participants should be aware of. Format each on its own line prefixed with "INSIGHT: "
-
-Be concise. Don't repeat items you've already identified in previous analyses. Only surface NEW items from the latest transcript segment.
-
-If there's nothing noteworthy in this segment, just say "LISTENING" and nothing else.
-
-Do NOT respond conversationally. Do NOT summarize. Just extract the structured items.`;
+// Whisper delivers ~2s chunks, so a spoken command after the wake word usually
+// spans several transcripts. Collect them until the speaker pauses this long.
+const WAKE_COMMAND_SETTLE_MS = 2_500;
+// Transcript context sent with each analysis. The new segment is always sent in
+// full; this caps the "so far" part so long meetings don't grow without bound.
+const ANALYSIS_CONTEXT_CHARS = 12_000;
 
 // ─── Controller ─────────────────────────────────────────────────
 
@@ -110,6 +106,13 @@ export class SecretaryModeController {
   private analysisInterval: ReturnType<typeof setInterval> | null = null;
   private lastAnalyzedIndex = 0;
   private analysisMessageCount = 0;
+  private analysisInFlight = false;
+  private analysisPending = false;
+  private seenAnalysisItems = new Set<string>();
+
+  // Wake command being collected across transcript chunks
+  private wakeCommandParts: string[] = [];
+  private wakeCommandTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Barge-in tracking (set by the view when TTS is active)
   private hasTTSActive = false;
@@ -127,17 +130,27 @@ export class SecretaryModeController {
 
     // Start mic via the MicrophoneDriverController (ref-counted).
     // Request pcm-s16le so the tray panel starts PCM capture for whisper.
-    await ipcRenderer.invoke('audio-driver:start-mic', 'secretary-mode', ['webm-opus', 'pcm-s16le']);
+    const mic = await ipcRenderer.invoke('audio-driver:start-mic', 'secretary-mode', ['webm-opus', 'pcm-s16le']);
+    if (mic && !mic.ok) {
+      throw new Error(mic.error === 'microphone-permission-denied'
+        ? 'Microphone access denied — allow Sulla Desktop in System Settings → Privacy & Security → Microphone.'
+        : `Microphone failed to start${ mic.error ? `: ${ mic.error }` : '' }`);
+    }
 
     // Start speaker capture for system audio monitoring
+    this.cb.setWarning?.(null);
     try {
       await ipcRenderer.invoke('audio-driver:start-speaker', 'secretary-mode');
     } catch (err) {
       console.warn('[SecretaryMode] Speaker capture failed:', (err as Error).message);
+      this.cb.setWarning?.('System audio capture failed — only your microphone is being transcribed. Other participants may be missing.');
     }
 
     this.lastAnalyzedIndex = 0;
     this.analysisMessageCount = 0;
+    this.analysisPending = false;
+    this.seenAnalysisItems.clear();
+    this.clearWakeCommand();
 
     // Create a REST-only gateway session for GhostAgent monitoring
     try {
@@ -151,11 +164,16 @@ export class SecretaryModeController {
     this.startAudioLevelMonitor();
     this.startAnalysisLoop();
 
-    // Start whisper transcription via the controller pipeline
-    await this.startWhisperTranscription();
+    // Start whisper transcription via the controller pipeline. Without it the
+    // session would sit on "Listening..." and never produce a transcript.
+    if (!await this.startWhisperTranscription()) {
+      this.endSession();
+      throw new Error('Transcription could not start — check that whisper and a speech model are installed in Audio settings.');
+    }
   }
 
   endSession(): void {
+    this.clearWakeCommand();
     this.cb.setWakeWordActive(false);
     this.cb.stopTTS();
     this.stopSessionTimer();
@@ -192,36 +210,78 @@ export class SecretaryModeController {
 
   // ─── Wake word detection ──────────────────────────────────────
 
+  // Muting only silences Sulla's voice — the person driving Sulla can still
+  // give commands from the mic; answers then show as text only.
   checkAndHandleWakeWord(text: string): void {
-    if (this.cb.getIsMuted()) return;
-
     if (this.cb.getWakeWordActive()) {
-      const command = text.trim();
-      if (command) {
-        this.cb.setWakeWordActive(false);
-        this.cb.addEntry(command, 'wake-command', 'You');
-        this.sendWakeCommand(command);
-      }
+      this.queueWakeCommandText(text);
       return;
     }
 
     for (const pattern of WAKE_PATTERNS) {
-      if (pattern.test(text)) {
+      const match = pattern.exec(text);
+      if (match) {
         this.cb.setWakeWordActive(true);
+        // "Hey Sulla, what's on my calendar?" — the command can start in the
+        // same chunk as the wake word.
+        this.queueWakeCommandText(text.slice(match.index + match[0].length));
         break;
       }
     }
   }
 
+  private queueWakeCommandText(text: string): void {
+    const part = text.replace(/^[\s,.!?:;-]+/, '').trim();
+    if (!part) return;
+
+    this.wakeCommandParts.push(part);
+    if (this.wakeCommandTimer) clearTimeout(this.wakeCommandTimer);
+    this.wakeCommandTimer = setTimeout(() => this.flushWakeCommand(), WAKE_COMMAND_SETTLE_MS);
+  }
+
+  private flushWakeCommand(): void {
+    const command = this.wakeCommandParts.join(' ').trim();
+    this.clearWakeCommand();
+    this.cb.setWakeWordActive(false);
+    if (!command) return;
+
+    this.cb.addEntry(command, 'wake-command', 'You');
+    this.sendWakeCommand(command);
+  }
+
+  private clearWakeCommand(): void {
+    if (this.wakeCommandTimer) { clearTimeout(this.wakeCommandTimer); this.wakeCommandTimer = null }
+    this.wakeCommandParts = [];
+  }
+
+  /**
+   * Private message typed into the Secretary tab. Kept out of the meeting
+   * transcript (so it never feeds analysis) and never spoken aloud.
+   */
+  async sendChatMessage(text: string): Promise<void> {
+    const message = text.trim();
+    if (!message) return;
+
+    this.cb.addAgentMessage(this.makeAgentMessage(`You: ${ message }`));
+    this.cb.scrollAnalysis();
+
+    const response = await this.cb.sendToChat(message, 'secretary-chat');
+    this.cb.addAgentMessage(this.makeAgentMessage(response ?? 'No reply from Sulla (timed out).'));
+    this.cb.scrollAnalysis();
+  }
+
+  private makeAgentMessage(text: string): AgentMessage {
+    return {
+      id:   `agent-${ Date.now() }-${ Math.random().toString(36).slice(2, 6) }`,
+      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      text,
+    };
+  }
+
   private async sendWakeCommand(command: string): Promise<void> {
     const response = await this.cb.sendToChat(command, 'secretary-wake');
     if (response) {
-      const agentMsg: AgentMessage = {
-        id:   `agent-${ Date.now() }`,
-        time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-        text: response,
-      };
-      this.cb.addAgentMessage(agentMsg);
+      this.cb.addAgentMessage(this.makeAgentMessage(response));
       this.cb.addEntry(response, 'agent-response', 'Sulla');
       this.cb.scrollAnalysis();
 
@@ -316,7 +376,7 @@ export class SecretaryModeController {
 
   private whisperTranscriptHandler: ((_event: any, msg: any) => void) | null = null;
 
-  private async startWhisperTranscription(): Promise<void> {
+  private async startWhisperTranscription(): Promise<boolean> {
     // Start whisper in secretary mode so both mic (channel 0) and speaker
     // (channel 1) audio are transcribed. The speaker pipeline feeds
     // whisperTranscribe.feedSpeaker() from lifecycle.ts.
@@ -327,7 +387,7 @@ export class SecretaryModeController {
 
     if (!result?.ok) {
       console.error('[SecretaryMode] Whisper transcription failed to start');
-      return;
+      return false;
     }
 
     // Listen for transcript events from whisper — both mic and speaker channels
@@ -338,11 +398,15 @@ export class SecretaryModeController {
       if (msg.event_type !== 'transcript_partial') {
         const speaker = msg.speaker === 'Speaker' ? 'Caller' : 'You';
         this.appendOrCreateEntry(text, speaker);
-        this.checkAndHandleWakeWord(text);
+        // Only the user's own mic can address Sulla — a remote participant
+        // saying "hey Sulla" must not be able to command the agent.
+        if (speaker === 'You') this.checkAndHandleWakeWord(text);
       }
     };
     ipcRenderer.on('gateway-transcript', this.whisperTranscriptHandler);
     console.log('[SecretaryMode] Whisper transcription started (secretary mode — mic + speaker)');
+
+    return true;
   }
 
   private stopWhisperTranscription(): void {
@@ -431,37 +495,47 @@ export class SecretaryModeController {
   }
 
   private async analyzeNewTranscript(): Promise<void> {
+    // One analysis at a time. A slow model would otherwise stack requests on
+    // the same thread and each reply could be read by the wrong waiter.
+    if (this.analysisInFlight) {
+      this.analysisPending = true;
+      return;
+    }
+
     const transcript = this.cb.getTranscript();
     if (transcript.length <= this.lastAnalyzedIndex) return;
 
     const newEntries = transcript.slice(this.lastAnalyzedIndex);
     this.lastAnalyzedIndex = transcript.length;
 
-    const newText = newEntries.map(e => e.text).join('\n');
-    if (!newText.trim() || newText.trim().length < 20) return;
+    const newText = newEntries.map(formatTranscriptLine).join('\n');
+    if (newEntries.map(e => e.text).join(' ').trim().length < 20) return;
 
     this.analysisMessageCount++;
     const analysisId = this.analysisMessageCount;
-    const fullTranscript = transcript.map(e => e.text).join('\n');
+    const fullTranscript = tail(transcript.map(formatTranscriptLine).join('\n'), ANALYSIS_CONTEXT_CHARS);
 
+    this.analysisInFlight = true;
     this.cb.setIsAnalyzing(true);
 
-    const prompt = `Analysis #${ analysisId }\n\nFull transcript so far:\n---\n${ fullTranscript }\n---\n\nNew segment to analyze:\n---\n${ newText }\n---`;
+    const captured = [...this.cb.getActionItems(), ...this.cb.getDecisions()];
+    const capturedBlock = captured.length ? `\n\nAlready captured (do not repeat):\n${ captured.map(i => `- ${ i }`).join('\n') }` : '';
+    const prompt = `Analysis #${ analysisId }\n\nFull transcript so far:\n---\n${ fullTranscript }\n---\n\nNew segment to analyze:\n---\n${ newText }\n---${ capturedBlock }`;
 
     try {
       const response = await this.cb.sendToChat(prompt, 'secretary-analysis');
-      if (response) {
-        const lines = response.split('\n').map(l => l.trim()).filter(Boolean);
+      const analysis = response ? parseSecretaryAnalysis(response) : null;
+      if (analysis) {
         const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-        for (const line of lines) {
-          if (/^ACTION:\s*/i.test(line)) {
-            this.cb.addActionItem(line.replace(/^ACTION:\s*/i, ''));
-          } else if (/^DECISION:\s*/i.test(line)) {
-            this.cb.addDecision(line.replace(/^DECISION:\s*/i, ''));
-          } else if (/^INSIGHT:\s*/i.test(line)) {
-            this.cb.addInsight({ time, text: line.replace(/^INSIGHT:\s*/i, '') });
-          }
+        for (const item of analysis.actions) {
+          if (this.isNewItem('action', item)) this.cb.addActionItem(item);
+        }
+        for (const item of analysis.decisions) {
+          if (this.isNewItem('decision', item)) this.cb.addDecision(item);
+        }
+        for (const item of [...analysis.facts, ...analysis.conclusions]) {
+          if (this.isNewItem('insight', item)) this.cb.addInsight({ time, text: item });
         }
 
         this.cb.scrollAnalysis();
@@ -469,11 +543,86 @@ export class SecretaryModeController {
     } catch (err) {
       console.warn('[SecretaryMode] Analysis failed:', err);
     } finally {
+      this.analysisInFlight = false;
       this.cb.setIsAnalyzing(false);
+      if (this.analysisPending) {
+        this.analysisPending = false;
+        void this.analyzeNewTranscript();
+      }
     }
+  }
+
+  private isNewItem(kind: string, text: string): boolean {
+    const key = `${ kind }:${ text.toLowerCase().replace(/\s+/g, ' ').trim() }`;
+    if (this.seenAnalysisItems.has(key)) return false;
+    this.seenAnalysisItems.add(key);
+
+    return true;
   }
 
   setTTSActive(active: boolean): void {
     this.hasTTSActive = active;
   }
+}
+
+// ─── Helpers ────────────────────────────────────────────────────
+
+function formatTranscriptLine(entry: TranscriptEntry): string {
+  return `${ entry.speaker || 'Speaker' }: ${ entry.text }`;
+}
+
+function tail(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const cut = text.slice(text.length - maxChars);
+  const lineStart = cut.indexOf('\n');
+
+  return `[…earlier transcript omitted…]\n${ lineStart >= 0 ? cut.slice(lineStart + 1) : cut }`;
+}
+
+export interface MeetingNotes {
+  startedAt:     Date;
+  duration:      string;
+  transcript:    TranscriptEntry[];
+  actionItems:   string[];
+  decisions:     string[];
+  insights:      InsightEntry[];
+  agentMessages: AgentMessage[];
+}
+
+/** File name for a session's notes, e.g. "2026-09-28-2105-meeting.md" (local time). */
+export function meetingNotesFileName(startedAt: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  return `${ startedAt.getFullYear() }-${ pad(startedAt.getMonth() + 1) }-${ pad(startedAt.getDate()) }-${ pad(startedAt.getHours()) }${ pad(startedAt.getMinutes()) }-meeting.md`;
+}
+
+/** Render a session as markdown for the saved meeting notes file. */
+export function buildMeetingNotesMarkdown(notes: MeetingNotes): string {
+  const list = (items: string[]) => (items.length ? items.map(i => `- ${ i }`).join('\n') : '_None captured._');
+  const time = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const lines = [
+    `# Meeting notes — ${ notes.startedAt.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) }`,
+    '',
+    `Duration: ${ notes.duration }`,
+    '',
+    '## Action items',
+    list(notes.actionItems),
+    '',
+    '## Decisions',
+    list(notes.decisions),
+    '',
+    '## Insights',
+    list(notes.insights.map(i => i.text)),
+  ];
+
+  if (notes.agentMessages.length) {
+    lines.push('', '## Sulla', notes.agentMessages.map(m => `- ${ m.time } — ${ m.text }`).join('\n'));
+  }
+
+  lines.push('', '## Transcript');
+  lines.push(notes.transcript.length
+    ? notes.transcript.map(e => `**${ e.speaker || 'Speaker' }** (${ time(e.timestamp) }): ${ e.text }`).join('\n\n')
+    : '_No speech transcribed._');
+
+  return `${ lines.join('\n') }\n`;
 }

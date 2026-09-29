@@ -21,6 +21,26 @@
       <AttachmentTray />
       <CommandPopover @choose="choosePopoverItem" />
 
+      <!-- Live intent: what Reflex would run for this draft right now. -->
+      <div
+        v-if="reflexChip"
+        :class="['reflex-intent', reflexChip.kind]"
+        role="status"
+        aria-live="polite"
+      >
+        <button
+          v-if="reflexChip.kind === 'suggest'"
+          type="button"
+          class="reflex-intent-btn"
+          title="Run instantly with Reflex (Tab) — Esc to dismiss"
+          @mousedown.prevent
+          @click="acceptReflexIntent"
+        >
+          <span class="bolt">⚡</span>{{ reflexChip.text }}<kbd>⇥</kbd>
+        </button>
+        <span v-else><span class="bolt">{{ reflexChip.kind === 'done' ? '⚡' : '!' }}</span>{{ reflexChip.text }}</span>
+      </div>
+
       <div :class="['composer', { recording: isRecording }]">
         <span class="glyph">—</span>
 
@@ -83,6 +103,7 @@ import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
 import { useChatController } from '../../controller/useChatController';
 import { useCommandPopover } from '../../composables/useCommandPopover';
 import { useArtifactMentions } from '../../composables/useArtifactMentions';
+import { useReflexIntent } from '../../composables/useReflexIntent';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
 
@@ -144,6 +165,28 @@ const artifactMentions = useArtifactMentions();
 const mentionSource = { list: (q: string) => artifactMentions.list(q) };
 const taRef = computed(() => inputRef.value?.el ?? null);
 useCommandPopover(taRef, mentionSource);
+
+// ─── Live intent (Reflex) ──────────────────────────────────────────
+// While the human types, Reflex previews the action it would run for the
+// draft. Tab runs it instantly (no model turn); Enter still sends normally;
+// Esc hides the chip until the draft changes.
+const reflexIntentEnabled = computed(() => !isRecording.value && !controller.popover.value.open);
+const reflexIntent = useReflexIntent(draft, reflexIntentEnabled);
+const reflexChip = computed(() => {
+  if (reflexIntent.flash.value) {
+    return { kind: reflexIntent.flash.value.kind, text: reflexIntent.flash.value.kind === 'done' ? `Done — ${ reflexIntent.flash.value.text }` : reflexIntent.flash.value.text };
+  }
+  if (reflexIntent.preview.value && reflexIntentEnabled.value) return { kind: 'suggest' as const, text: reflexIntent.preview.value.label };
+  return null;
+});
+
+async function acceptReflexIntent(): Promise<void> {
+  if (await reflexIntent.accept()) {
+    draft.value = '';
+    controller.hidePopover();
+  }
+  inputRef.value?.focus();
+}
 
 // ─── Slash command actions ─────────────────────────────────────────
 // When the user picks a bare slash command from the popover — or types
@@ -262,6 +305,14 @@ function onSend(text: string): void {
 
 function onKeydown(e: KeyboardEvent): void {
   const p = controller.popover.value;
+  if (!p.open && reflexIntent.preview.value) {
+    if (e.key === 'Tab' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      void acceptReflexIntent();
+      return;
+    }
+    if (e.key === 'Escape') { e.preventDefault(); reflexIntent.dismiss(); return; }
+  }
   if (p.open) {
     if (e.key === 'ArrowDown') { e.preventDefault(); controller.movePopoverSelection(1); }
     if (e.key === 'ArrowUp')   { e.preventDefault(); controller.movePopoverSelection(-1); }
@@ -311,6 +362,7 @@ function stopVoice(commit: boolean): void {
 
 onBeforeUnmount(() => {
   voiceAdapter.dispose();
+  reflexIntent.dispose();
   window.removeEventListener('chat:quote', onQuoteFromTurn as EventListener);
 });
 
@@ -410,6 +462,36 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   background: rgba(168, 192, 220, 0.1);
   border: 1px solid rgba(168, 192, 220, 0.2);
   color: var(--steel-200); margin-right: 4px;
+}
+
+.reflex-intent {
+  position: absolute; bottom: 100%; left: 42px;
+  margin-bottom: 8px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+  color: var(--steel-200);
+  animation: reflex-intent-in 0.14s ease-out;
+}
+.reflex-intent-btn, .reflex-intent > span {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 4px 10px; border-radius: 999px;
+  background: rgba(106, 176, 204, 0.12);
+  border: 1px solid rgba(106, 176, 204, 0.35);
+  color: inherit; font: inherit; cursor: pointer;
+}
+.reflex-intent-btn:hover { background: rgba(106, 176, 204, 0.2); }
+.reflex-intent.done > span { border-color: rgba(120, 200, 150, 0.45); background: rgba(120, 200, 150, 0.12); cursor: default; }
+.reflex-intent.error > span { border-color: rgba(220, 140, 120, 0.45); background: rgba(220, 140, 120, 0.1); cursor: default; }
+.reflex-intent .bolt { color: var(--steel-400); }
+.reflex-intent kbd {
+  font-family: var(--mono); font-size: 9px;
+  padding: 1px 5px; border-radius: 3px;
+  background: rgba(168, 192, 220, 0.1);
+  border: 1px solid rgba(168, 192, 220, 0.2);
+  color: var(--steel-200);
+}
+@keyframes reflex-intent-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: none; }
 }
 
 .hidden-file-input {

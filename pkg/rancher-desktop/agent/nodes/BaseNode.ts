@@ -19,6 +19,7 @@ import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { sanitizeConversationContext } from '../utils/conversationContext';
 import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
+import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
 import { prepareProviderMessages } from './contextBudget';
 
@@ -1042,6 +1043,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       };
     }
 
+    // Steers already in this prompt snapshot are delivered by this call. Any
+    // that arrive after it stay pending for the live CLI turn or the next
+    // iteration (see utils/steerChannel).
+    const promptMeta = new Set(messages.map(m => (m as any).metadata).filter(Boolean));
+    for (const steer of pendingSteers(state)) {
+      if (promptMeta.has((steer as any).metadata)) markSteerDelivered(steer);
+    }
+
     // Curate the exact provider input after the system prompt/context is in
     // place. This compacts stale tool payloads before pair-safe eviction.
     const budget = prepareProviderMessages(messages, this.llm.getContextWindow());
@@ -1197,7 +1206,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // sensory/relay spelling. Both mean the user is talking — answer in voice mode.
       if (inputSource === 'microphone' || inputSource === 'voice') {
         chatMode = (voiceMode === 'secretary' || voiceMode === 'intake') ? voiceMode as ChatMode : 'voice';
-      } else if (inputSource.startsWith('secretary-') || voiceMode === 'secretary') {
+      } else if (inputSource === 'secretary-analysis' || voiceMode === 'secretary') {
+        // Only the periodic transcript analysis is an extraction turn. Wake-word
+        // commands and private messages from the Secretary tab ('secretary-wake',
+        // 'secretary-chat') are questions for Sulla and get a normal reply.
         chatMode = 'secretary';
       }
       controller.setMode(chatMode);

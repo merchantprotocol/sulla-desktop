@@ -17,6 +17,7 @@ import { removeFileOnExit, systemPromptFromMessages, writeSystemPromptFile } fro
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
+import { markSteerPending, onSteer } from '../utils/steerChannel';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
@@ -80,6 +81,13 @@ const BACKGROUND_TASK_MAX_PARK_MS = 4 * 60 * 60_000;
  * up on that process and cold-spawning instead.
  */
 const AUTONOMOUS_TURN_WAIT_MS = 15 * 60_000;
+
+/**
+ * How long a turn stays open after `result` waiting for Claude to start the
+ * follow-up turn for a steer it hasn't consumed yet (observed: immediate).
+ * Past this the steer is handed back to the graph instead.
+ */
+const STEER_FOLLOWUP_GRACE_MS = 30_000;
 
 /**
  * A `claude` process speculatively booted during the pre-turn (accumulator)
@@ -310,8 +318,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
       '--disallowedTools', p.disallowedTools,
     ];
     // stream-json input lets the process boot before the prompt exists (the
-    // prompt is fed as a JSON user message on stdin by the caller).
-    if (p.streamJsonInput) claudeArgs.push('--input-format', 'stream-json');
+    // prompt is fed as a JSON user message on stdin by the caller), and lets
+    // "Send now" messages be written into a running turn. Replay echoes each
+    // stdin message back at the moment Claude consumes it — that's how
+    // runClaude knows a steer has been seen.
+    if (p.streamJsonInput) claudeArgs.push('--input-format', 'stream-json', '--replay-user-messages');
     if (this.model && this.model !== 'claude-code') claudeArgs.push('--model', shq(this.model));
     if (p.existingSession) claudeArgs.push('--resume', shq(p.existingSession));
     if (p.mcpConfigPath) claudeArgs.push('--mcp-config', shq(p.mcpConfigPath));
@@ -711,14 +722,22 @@ export class ClaudeCodeService extends BaseLanguageModel {
       if (messages[i].role === 'user') {
         const text = msgToText(messages[i]).trim();
         if (text) {
-          const turn: string[] = [];
+          // Consecutive user messages (a "Send now" steer stacked on the
+          // message it followed) are all new to the session — send them all.
+          const userTexts = [text];
           let contextIdx = i - 1;
+          while (contextIdx >= 0 && messages[contextIdx].role === 'user') {
+            const earlier = msgToText(messages[contextIdx]).trim();
+            if (earlier) userTexts.unshift(earlier);
+            contextIdx--;
+          }
+          const turn: string[] = [];
           while (contextIdx >= 0 && messages[contextIdx].role === 'assistant' && (messages[contextIdx] as any).metadata?._synthetic) {
             const assistantText = msgToText(messages[contextIdx]).trim();
             if (assistantText) turn.unshift(`Assistant:\n${ assistantText }`);
             contextIdx--;
           }
-          turn.push(`User:\n${ text }`);
+          for (const userText of userTexts) turn.push(`User:\n${ userText }`);
           return turn.join('\n\n');
         }
       }
@@ -1100,9 +1119,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           } else {
             proc.stdin.write(prompt);
           }
-          // Warm mode keeps stdin open so the process survives for the next turn;
-          // otherwise close it so claude exits when this turn completes.
-          if (!warm) proc.stdin.end();
+          // Warm mode keeps stdin open so the process survives for the next turn.
+          // Other stream-json turns keep it open until the turn completes so
+          // steers can still be written (see completeTurn). Text mode closes
+          // it now so claude exits when this turn completes.
+          if (!speculative) proc.stdin.end();
         } catch { /* stdin already closed */ }
 
       // Heartbeat ticker — keeps the renderer (and routine canvas) informed
@@ -1252,6 +1273,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       const onAbort = () => {
         stopHeartbeat();
         stopStallWatchdog();
+        closeSteering();
         killSpawn();
       };
       if (options.signal) {
@@ -1409,6 +1431,40 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         try { callbacks.onFilePatch(info) } catch { /* ignore */ }
       };
 
+      // ── Live steering ("Send now" while the turn runs) ─────────────
+      // stdin stays open for the whole stream-json turn, so a message the user
+      // sends mid-run is written straight into the running CLI. Claude folds
+      // it into the current turn at its next tool boundary, or — if it lands
+      // while the final answer is being written — runs it as a follow-up turn
+      // right after. The replay echo marks the moment Claude consumed it; a
+      // `result` doesn't end this turn while any steer is still unconsumed.
+      const steersInFlight: { content: string; message: ChatMessage }[] = [];
+      let steeringOpen = speculative;
+      let steerGraceTimer: NodeJS.Timeout | null = null;
+      const unsubscribeSteer = onSteer(speculative ? options.state : null, (message) => {
+        if (!steeringOpen || settled || proc.stdin.writableEnded || proc.stdin.destroyed) return false;
+        const content = this.extractLatestUserMessage([message]);
+        if (!content.trim()) return false;
+        try {
+          proc.stdin.write(`${ JSON.stringify({ type: 'user', message: { role: 'user', content } }) }\n`);
+        } catch {
+          return false;
+        }
+        steersInFlight.push({ content, message });
+        lastStreamActivityAt = Date.now();
+        emitActivity('Steering Claude with your message…');
+        log.log(`[ClaudeCodeService] steer written to running turn convId=${ convId } chars=${ content.length }`);
+        return true;
+      });
+      // Stop taking steers. Any written but never consumed go back to the
+      // graph as pending so the next turn answers them instead of dropping them.
+      const closeSteering = () => {
+        steeringOpen = false;
+        unsubscribeSteer();
+        if (steerGraceTimer) { clearTimeout(steerGraceTimer); steerGraceTimer = null; }
+        for (const s of steersInFlight.splice(0)) markSteerPending(s.message);
+      };
+
       const processLine = (line: string) => {
         const trimmed = line.trim();
         if (!trimmed) return;
@@ -1426,6 +1482,18 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         // process's output any more, so completions must be delivered.
         bgTracker.observe(parsed, settled);
         if (settled) return;
+
+        // Replay echo of a stdin message — a steer Claude just consumed.
+        if (parsed.type === 'user' && parsed.isReplay) {
+          const echoed = typeof parsed.message?.content === 'string' ? parsed.message.content : '';
+          const idx = steersInFlight.findIndex(s => s.content === echoed);
+          if (idx >= 0) {
+            steersInFlight.splice(idx, 1);
+            if (steerGraceTimer && !steersInFlight.length) { clearTimeout(steerGraceTimer); steerGraceTimer = null; }
+            emitActivity('Claude picked up your message');
+          }
+          return;
+        }
 
         // System init — claude has booted, auth done, MCP tools loaded.
         // Update the heartbeat phase but keep ticking because the model
@@ -1561,11 +1629,40 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
             // Usage capture is best-effort — never block on failure.
             recordUsage(parsed).catch(() => { /* ignore */ });
           }
-          // Warm mode: the turn completes at `result`. Settle now and keep the
-          // process alive for the next turn. finishWarmTurn is defined below and
-          // only invoked here (at runtime, after all handlers exist).
-          if (warm) finishWarmTurn();
-          else if (!parsed.is_error && bgTracker.liveTaskCount > 0 && textCollected.trim()) settleForBackground();
+          // A steer written after Claude's last tool boundary hasn't been
+          // consumed yet — Claude runs it as a follow-up turn right after this
+          // result. Keep the turn open for it. The grace timer covers a CLI
+          // that never picks it up: the steer then goes back to the graph.
+          if (!parsed.is_error && steersInFlight.length > 0) {
+            if (textCollected.trim()) {
+              textCollected += '\n\n';
+              try { callbacks.onToken?.('\n\n') } catch { /* ignore */ }
+            }
+            if (!steerGraceTimer) {
+              steerGraceTimer = setTimeout(() => {
+                steerGraceTimer = null;
+                if (settled || !steersInFlight.length) return;
+                log.warn(`[ClaudeCodeService] ${ steersInFlight.length } steer(s) not picked up ${ STEER_FOLLOWUP_GRACE_MS }ms after result — returning them to the graph (convId=${ convId })`);
+                completeTurn(true);
+              }, STEER_FOLLOWUP_GRACE_MS);
+            }
+            return;
+          }
+          completeTurn(!parsed.is_error);
+        }
+      };
+
+      // The turn is over at `result`. Warm mode settles now and keeps the
+      // process alive for the next turn; cold mode with live background tasks
+      // settles now and keeps listening; otherwise closing stdin lets claude
+      // exit and onProcClose settles. Defined here, invoked only at runtime
+      // (after finishWarmTurn / settleForBackground below exist).
+      const completeTurn = (ok: boolean) => {
+        closeSteering();
+        if (warm) finishWarmTurn();
+        else if (ok && bgTracker.liveTaskCount > 0 && textCollected.trim()) settleForBackground();
+        else if (speculative) {
+          try { proc.stdin.end() } catch { /* already closed */ }
         }
       };
 
@@ -1615,6 +1712,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       const onProcError = (err: Error) => {
         stopHeartbeat();
         stopStallWatchdog();
+        closeSteering();
         options.signal?.removeEventListener('abort', onAbort);
         if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);
         if (!settled) { settled = true; reject(err); }
@@ -1694,6 +1792,8 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       const onProcClose = (code: number | null) => {
         stopHeartbeat();
         stopStallWatchdog();
+        if (!settled && stdoutBuffer.trim()) { processLine(stdoutBuffer); stdoutBuffer = ''; }
+        closeSteering();
         options.signal?.removeEventListener('abort', onAbort);
         if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);   // proc gone → drop from pool
         if (settled) {

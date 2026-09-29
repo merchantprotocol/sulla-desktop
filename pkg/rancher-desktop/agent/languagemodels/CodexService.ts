@@ -11,6 +11,7 @@ import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from
 import { emitCodexToolEvent } from './codexToolEvents';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { redisClient } from '../database/RedisClient';
+import { markSteerPending, onSteer } from '../utils/steerChannel';
 import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
 import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 
@@ -23,6 +24,15 @@ const log = Logging.background;
 
 /** Idle timeout for a speculatively-booted process that is never claimed. */
 const PREWARM_IDLE_REAP_MS = 60_000;
+
+/** stderr prefix carrying the in-VM PID of the codex process (see buildSpawnArgs). */
+const CODEX_PID_MARKER = 'SULLA_CODEX_PID=';
+
+/** After SIGINT for a steer, how long codex gets to save its thread and exit before SIGTERM. */
+const STEER_INTERRUPT_GRACE_MS = 10_000;
+
+/** Opening line of the resume prompt that delivers a steer to an interrupted codex turn. */
+const STEER_RESUME_NOTE = '[Steering message] The user sent the message below while you were working. Your turn was paused to deliver it. Take it into account and carry on with the task. Do not start over or repeat work that is already done.';
 
 /**
  * A `codex exec` process speculatively booted during the pre-turn
@@ -220,7 +230,10 @@ export class CodexService extends BaseLanguageModel {
     const mcpTokenExport = p.mcpSession
       ? ` ${ CODEX_MCP_TOKEN_ENV }=${ shq(p.mcpSession.id) } SULLA_TOOL_SESSION=${ shq(p.mcpSession.id) }`
       : '';
-    const innerCmd = `echo $$ > ${ shq(p.pidFile) }; export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }${ mcpTokenExport }; exec ${ codexArgs.join(' ') }`;
+    // The pidfile lets an abort kill exactly this run; the PID line (stderr,
+    // before exec — same PID after) lets a steer interrupt it. Neither
+    // touches any other codex in the VM.
+    const innerCmd = `echo $$ > ${ shq(p.pidFile) }; export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
@@ -477,14 +490,22 @@ export class CodexService extends BaseLanguageModel {
       if (messages[i].role === 'user') {
         const text = msgToText(messages[i]).trim();
         if (text) {
-          const turn: string[] = [];
+          // Consecutive user messages (a "Send now" steer stacked on the
+          // message it followed) are all new to the session — send them all.
+          const userTexts = [text];
           let contextIdx = i - 1;
+          while (contextIdx >= 0 && messages[contextIdx].role === 'user') {
+            const earlier = msgToText(messages[contextIdx]).trim();
+            if (earlier) userTexts.unshift(earlier);
+            contextIdx--;
+          }
+          const turn: string[] = [];
           while (contextIdx >= 0 && messages[contextIdx].role === 'assistant' && (messages[contextIdx] as any).metadata?._synthetic) {
             const assistantText = msgToText(messages[contextIdx]).trim();
             if (assistantText) turn.unshift(`Assistant:\n${ assistantText }`);
             contextIdx--;
           }
-          turn.push(`User:\n${ text }`);
+          for (const userText of userTexts) turn.push(`User:\n${ userText }`);
           return turn.join('\n\n');
         }
       }
@@ -782,6 +803,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       let textCollected = '';
       let sawDelta = false;
       let capturedSessionId: string | undefined = existingSession;
+      let codexPid: number | undefined;
       let errored = false;
       let errorMessage = '';
       let lastUsage: any = null;
@@ -847,8 +869,62 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       if (adoptedSpawned) startStallWatchdog();
       else proc.once('spawn', startStallWatchdog);
 
+      // ── Live steering ("Send now" while the turn runs) ─────────────
+      // `codex exec` reads exactly one prompt, so a steer can't be written
+      // into the running turn. Instead: SIGINT this codex (it records the
+      // interrupted turn in its thread and exits), then `exec resume` the
+      // same thread with the steer — codex carries on from where it was,
+      // now with the user's new direction. Needs the thread id and the
+      // in-VM PID; a steer that arrives before both waits for them.
+      const steers: ChatMessage[] = [];
+      let steeringOpen = true;
+      let interruptSent = false;
+      let interruptEscalation: NodeJS.Timeout | null = null;
+      const signalCodex = (sig: 'INT' | 'TERM') => {
+        if (!codexPid) return;
+        try {
+          const killProc = childProcess.spawn(
+            limactlPath,
+            ['shell', '0', '--', 'kill', `-${ sig }`, String(codexPid)],
+            { env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' }, stdio: 'ignore', detached: true },
+          );
+          killProc.unref();
+        } catch (err) {
+          log.log(`[CodexService] steer signal failed: ${ (err as Error)?.message ?? err }`);
+        }
+      };
+      const maybeInterruptForSteer = () => {
+        if (interruptSent || !steers.length || !capturedSessionId || !codexPid) return;
+        interruptSent = true;
+        log.log(`[CodexService] steering: interrupting codex pid=${ codexPid } thread=${ capturedSessionId } to deliver ${ steers.length } message(s) (convId=${ convId })`);
+        emitActivity('Steering Codex with your message…');
+        signalCodex('INT');
+        interruptEscalation = setTimeout(() => {
+          if (proc.exitCode === null) {
+            signalCodex('TERM');
+            try { proc.kill('SIGTERM') } catch { /* already dead */ }
+          }
+        }, STEER_INTERRUPT_GRACE_MS);
+        interruptEscalation.unref?.();
+      };
+      const unsubscribeSteer = onSteer(options.state, (message) => {
+        if (!steeringOpen) return false;
+        steers.push(message);
+        maybeInterruptForSteer();
+        return true;
+      });
+      // Stop taking steers. With `handBack`, any we took go back to the graph
+      // as pending so the next turn answers them instead of dropping them.
+      const closeSteering = (handBack: boolean) => {
+        steeringOpen = false;
+        unsubscribeSteer();
+        if (interruptEscalation) { clearTimeout(interruptEscalation); interruptEscalation = null; }
+        if (handBack) for (const m of steers.splice(0)) markSteerPending(m);
+      };
+
       const onAbort = () => {
         stopStallWatchdog();
+        closeSteering(true);
         killSpawn();
       };
       if (options.signal) {
@@ -912,6 +988,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           if (parsed.type === 'thread.started' && parsed.thread_id) {
             capturedSessionId = parsed.thread_id;
             emitActivity('Session started — calling model');
+            maybeInterruptForSteer();
             return;
           }
           if (parsed.type === 'item.started' || parsed.type === 'item.completed') {
@@ -959,6 +1036,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         case 'session_configured':
           if (msg.session_id) capturedSessionId = msg.session_id;
           emitActivity('Session started — calling model');
+          maybeInterruptForSteer();
           break;
         case 'agent_message_delta':
           if (typeof msg.delta === 'string') {
@@ -1009,7 +1087,15 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
       proc.stderr.on('data', (chunk) => {
         lastStreamActivityAt = Date.now();
-        const text = chunk.toString('utf-8');
+        let text = chunk.toString('utf-8');
+        if (!codexPid && text.includes(CODEX_PID_MARKER)) {
+          const m = new RegExp(`${ CODEX_PID_MARKER }(\\d+)\\s*`).exec(text);
+          if (m) {
+            codexPid = Number(m[1]);
+            text = text.replace(m[0], '');
+            maybeInterruptForSteer();
+          }
+        }
         stderrBuffer += text;
         const trimmed = text.trim();
         if (trimmed) {
@@ -1019,6 +1105,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
       proc.on('error', (err) => {
         stopStallWatchdog();
+        closeSteering(true);
         options.signal?.removeEventListener('abort', onAbort);
         cleanupMcp();
         reject(err);
@@ -1029,6 +1116,30 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         options.signal?.removeEventListener('abort', onAbort);
         cleanupMcp();
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
+
+        // Interrupted to deliver a steer — resume the same thread with it and
+        // return this turn's text plus the steered continuation as one reply.
+        const steered = steers.splice(0);
+        closeSteering(false);
+        if (steered.length && interruptSent && capturedSessionId && !options.signal?.aborted) {
+          this.setSession(convId, capturedSessionId).catch(() => {});
+          this.lastStableContextHash.set(convId, stableHash);
+          if (lastUsage) recordUsage(lastUsage, this.getModel()).catch(() => { /* ignore */ });
+          const lead = textCollected.trim() ? `${ textCollected }\n\n` : '';
+          if (lead) {
+            try { callbacks.onToken?.('\n\n') } catch { /* ignore */ }
+          }
+          log.log(`[CodexService] steering: resuming thread ${ capturedSessionId } with ${ steered.length } steer message(s) (convId=${ convId })`);
+          const steerTurn: ChatMessage[] = [{ role: 'user', content: STEER_RESUME_NOTE } as ChatMessage, ...steered];
+          this.runCodex(steerTurn, callbacks, options).then(
+            r => resolve({ text: `${ lead }${ r.text }`, usage: r.usage }),
+            reject,
+          );
+          return;
+        }
+        // Steers taken but never delivered (the run ended first) go back to
+        // the graph, which runs another turn for them.
+        for (const m of steered) markSteerPending(m);
 
         // Aborted by the caller (Stop, or a new/steering message superseding
         // this run) — report an abort, not a provider failure that would
