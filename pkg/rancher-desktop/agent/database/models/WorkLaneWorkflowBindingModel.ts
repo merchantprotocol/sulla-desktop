@@ -358,6 +358,7 @@ export class WorkLaneWorkflowBindingModel {
         JOIN work_tasks task ON task.id = lane.task_id
           AND task.archived = false AND task.status = lane.lane_key
         JOIN work_projects project ON project.id = task.project_id AND project.archived = false
+          AND (project.dispatch_enabled = true OR lane.status = 'running')
         JOIN work_epics epic ON epic.id = task.epic_id AND epic.archived = false
         LEFT JOIN workflow_executions execution ON execution.execution_id = lane.execution_id
        WHERE lane.workflow_id IS NOT NULL

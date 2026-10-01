@@ -355,12 +355,14 @@ export class WorkTaskDependencyModel {
       project_status: string | null;
       epic_archived: boolean | null;
       project_archived: boolean | null;
+      project_dispatch_enabled: boolean | null;
       has_active_child: boolean;
       has_running_dispatch: boolean;
     }>(`
       SELECT t.id, t.status, t.archived, t.assignee, t.labels,
              e.status AS epic_status, p.status AS project_status,
              e.archived AS epic_archived, p.archived AS project_archived,
+             p.dispatch_enabled AS project_dispatch_enabled,
              EXISTS (
                SELECT 1 FROM work_tasks child
                 WHERE child.parent_id = t.id AND child.archived = false
@@ -390,6 +392,7 @@ export class WorkTaskDependencyModel {
       else if (['done', 'cancelled', 'parked', 'blocked'].includes(task.project_status)) {
         exclusionReasons.push(`project is '${ task.project_status }'`);
       }
+      if (task.project_dispatch_enabled === false) exclusionReasons.push('project dispatch is paused');
       if (task.assignee && !['heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'].includes(task.assignee.toLowerCase())) {
         exclusionReasons.push(`assignee '${ task.assignee }' is outside autonomous ownership`);
       }

@@ -43,6 +43,8 @@ export interface WorkProjectRecord {
   last_moved_at:  string;
   archived:       boolean;
   pipeline_template_id: string | null;
+  /** False pauses every autonomous claimer (dispatcher, reviews, reclaim, lane automation, Heartbeat queue) for this project. */
+  dispatch_enabled: boolean;
 }
 
 export interface WorkEpicRecord {
@@ -186,6 +188,7 @@ export interface UpdateProjectInput {
   source?:         string | null;
   source_path?:    string | null;
   github_repo?:    string | null;
+  dispatch_enabled?: boolean;
 }
 
 export interface UpsertEpicInput {
@@ -523,6 +526,18 @@ export class WorkItemsModel {
     return rows[0] ?? null;
   }
 
+  /** Whether autonomous claimers may pick up work in the task's project. Missing rows count as enabled. */
+  static async isTaskDispatchEnabled(taskId: string): Promise<boolean> {
+    const rows = await postgresClient.query<{ dispatch_enabled: boolean }>(
+      `SELECT p.dispatch_enabled
+         FROM work_tasks t
+         JOIN ${ WorkItemsModel.PROJECTS } p ON p.id = t.project_id
+        WHERE t.id = $1 LIMIT 1`,
+      [taskId],
+    );
+    return rows[0]?.dispatch_enabled !== false;
+  }
+
   static async getProjectBySlug(slug: string): Promise<WorkProjectRecord | null> {
     const rows = await postgresClient.query<WorkProjectRecord>(
       `SELECT * FROM ${ WorkItemsModel.PROJECTS }
@@ -601,6 +616,7 @@ export class WorkItemsModel {
     if (changes.source !== undefined) assign('source', changes.source);
     if (changes.source_path !== undefined) assign('source_path', changes.source_path);
     if (changes.github_repo !== undefined) assign('github_repo', changes.github_repo);
+    if (changes.dispatch_enabled !== undefined) assign('dispatch_enabled', changes.dispatch_enabled === true);
 
     if (moved) setClauses.push('last_moved_at = now()');
     if (setClauses.length === 1) return existing;

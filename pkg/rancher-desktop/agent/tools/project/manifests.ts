@@ -342,7 +342,7 @@ export const projectToolManifests: ToolManifest[] = [
   },
   {
     name:        'update_project',
-    description: 'Update an existing project in place (by id). Only the fields you pass change. Status / priority / due_at changes stamp last_moved_at.',
+    description: 'Update an existing project in place (by id). Only the fields you pass change. Status / priority / due_at changes stamp last_moved_at. Pass dispatch_enabled=false to pause autonomous dispatch for just this project.',
     category:    'project',
     schemaDef:   {
       id:             { type: 'string', description: 'Project id to update.' },
@@ -355,6 +355,7 @@ export const projectToolManifests: ToolManifest[] = [
       owner:          { type: 'string', optional: true, description: 'New owner, or empty string to unassign.' },
       github_repo:    { type: 'string', optional: true, description: 'owner/repo mapping.' },
       due_at:         { type: 'string', optional: true, description: 'ISO due date, or empty string to clear.' },
+      dispatch_enabled: { type: 'boolean', optional: true, description: 'false pauses all autonomous work on this project (dispatcher execution + review claims, in_progress reclaim, lane-entry automation, Heartbeat actionable queue); true resumes it. Humans can still move cards.' },
     },
     operationTypes: ['update'],
     loader:         () => import('./update_project'),
