@@ -44,10 +44,14 @@ export class UpdateTaskWorker extends BaseTool {
         const destinationStatus = typeof input.status === 'string' ? input.status : current.status;
         const destinationLabels = labels ?? current.labels;
         if (destinationStatus !== current.status || destinationLabels !== current.labels) {
+          // The origin context lets the guard recognise the one legal review
+          // verdict repair route (#710): the acting in_review verifier (owner
+          // or active fallback) returning a rejected task to todo.
           await LifecycleCapabilityModel.assertActorCanManageTask(
             destinationStatus,
             destinationLabels,
             actor,
+            { status: current.status, labels: current.labels },
           );
         }
       }

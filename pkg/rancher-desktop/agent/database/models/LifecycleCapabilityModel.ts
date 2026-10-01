@@ -73,6 +73,12 @@ export interface HeartbeatLifecycleAccess {
   liveClaim:     LifecycleStageClaim | null;
 }
 
+/** Stage a task is leaving during a guarded move (destination-side context). */
+export interface LifecycleHandoffOrigin {
+  status:  string;
+  labels?: string[] | null;
+}
+
 const STATUS_CAPABILITY: Record<string, LifecycleCapabilityKey> = {
   blocked:     'planning-council',
   planning:    'planning-council',
@@ -248,6 +254,7 @@ export class LifecycleCapabilityModel {
     status: string,
     labels: string[] | null,
     actor: string,
+    origin?: LifecycleHandoffOrigin,
   ): Promise<void> {
     if (actor !== 'heartbeat') return;
     const key = LifecycleCapabilityModel.capabilityForStatus(status, labels ?? []);
@@ -261,8 +268,35 @@ export class LifecycleCapabilityModel {
     }
     const owner = effectiveOwner(capability);
     if (owner !== 'heartbeat') {
+      if (origin && await LifecycleCapabilityModel.isReviewVerdictRepairRoute(status, labels, actor, origin)) return;
       throw new Error(`Lifecycle handoff denied: ${ key } is ${ capability.health } and owned by ${ owner ?? 'manual hold' }.`);
     }
+  }
+
+  /**
+   * Review verdicts need a legal repair route (#710): the acting in_review
+   * verifier — the protected owner, or Heartbeat while it is the capability's
+   * active fallback — may hand a rejected task back to the execution lane
+   * (in_review -> todo) even though todo-execution is healthy and owned by
+   * another routine. Only that exact route is exempt; any other actor,
+   * origin, or destination keeps the standard single-owner denial, so
+   * arbitrary actors still cannot push work into a healthy owned lane.
+   */
+  private static async isReviewVerdictRepairRoute(
+    destinationStatus: string,
+    destinationLabels: string[] | null,
+    actor: string,
+    origin: LifecycleHandoffOrigin,
+  ): Promise<boolean> {
+    if (destinationStatus !== 'todo') return false;
+    if (LifecycleCapabilityModel.capabilityForStatus(destinationStatus, destinationLabels ?? []) !== 'todo-execution') return false;
+    if (LifecycleCapabilityModel.capabilityForStatus(origin.status, origin.labels ?? []) !== 'in-review-verification') return false;
+    const capability = await postgresClient.queryOne<LifecycleCapabilityRecord>(
+      'SELECT * FROM lifecycle_capabilities WHERE capability_key = $1',
+      ['in-review-verification'],
+    );
+    if (!capability) return false;
+    return effectiveOwner(capability) === actor;
   }
 
   /** Remove stages owned by healthy protected services from Heartbeat's queue. */
