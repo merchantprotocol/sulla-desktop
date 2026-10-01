@@ -506,6 +506,34 @@ describe('WorkTaskDispatchModel', () => {
     ]);
   });
 
+  it('excludes tasks in a dispatch-paused project from in_progress reclaim', () => {
+    const row = {
+      id:                   'task-paused',
+      archived:             false,
+      epic_open:            true,
+      autonomous_labels:    true,
+      has_live_dispatch:    false,
+      has_active_child:     false,
+      stale_activity:       true,
+      has_active_agent_job: false,
+      recovery_attempts:    '0',
+    } as any;
+    expect(classifyInProgressRow(row)).toEqual([]);
+    expect(classifyInProgressRow({ ...row, project_dispatch_enabled: true })).toEqual([]);
+    expect(classifyInProgressRow({ ...row, project_dispatch_enabled: false })).toEqual(['project_dispatch_paused']);
+  });
+
+  it('only claims execution and review work from projects with dispatch enabled', async() => {
+    const sql: string[] = [];
+    const client = { query: jest.fn(async(text: string) => { sql.push(text); return { rows: [] } }) };
+    (postgresClient as any).transaction = jest.fn(async(fn: any) => fn(client));
+    await WorkTaskDispatchModel.claimNext('agent', 'runtime');
+    await WorkTaskDispatchModel.claimNextReview('agent', [], 'runtime');
+    expect(sql[0]).toContain('dispatch_project.dispatch_enabled = true');
+    expect(sql[0]).toContain('downstream_project.dispatch_enabled = true');
+    expect(sql[1]).toContain('p.dispatch_enabled = true');
+  });
+
   it('Jonathon directive 1Nk7: a human- or agent-assigned idle task is eligible for reclaim regardless of assignee', () => {
     const base = {
       id:                   'task-human',
