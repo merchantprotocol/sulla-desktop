@@ -548,3 +548,41 @@ export async function bootstrapSullaHome(): Promise<void> {
   // never overwritten). Live project-state is Projects/Postgres.
   seedLedgerDefaults();
 }
+
+const SULLA_MODELS_DIR_ENV = 'SULLA_MODELS_DIR';
+
+/**
+ * Resolve a bundled on-device model directory, e.g. `potion-retrieval-32M`.
+ *
+ * Resolution order mirrors {@link resolveSullaDocsDir}:
+ * 1. `SULLA_MODELS_DIR` env override (`<dir>/<name>`).
+ * 2. Packaged app: `<resourcesPath>/resources/models/<name>` (fetched at build
+ *    time by scripts/dependencies/potion.ts, shipped via extraResources).
+ * 3. Dev: walk up from this module to `sulla-desktop/resources/models/<name>`.
+ *
+ * Returns null when not found so callers can fall back instead of failing a turn.
+ */
+export function resolveBundledModelDir(name: string): string | null {
+  const envPath = String(process.env[SULLA_MODELS_DIR_ENV] || '').trim();
+  if (envPath) {
+    const dir = path.join(path.isAbsolute(envPath) ? envPath : path.resolve(envPath), name);
+    return fs.existsSync(dir) ? dir : null;
+  }
+
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (typeof resourcesPath === 'string' && resourcesPath.length > 0) {
+    const bundled = path.join(resourcesPath, 'resources', 'models', name);
+    if (fs.existsSync(bundled)) return bundled;
+  }
+
+  let cursor = MODULE_DIR;
+  for (let depth = 0; depth < 8; depth += 1) {
+    const candidate = path.join(cursor, 'resources', 'models', name);
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+
+  return null;
+}

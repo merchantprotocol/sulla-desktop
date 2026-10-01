@@ -20,6 +20,7 @@ import { IdentityObservationsModel } from '../database/models/IdentityObservatio
 import { ConversationKeywordsModel } from '../database/models/ConversationKeywordsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '../memory/MemoryRecallService';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
 import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
@@ -215,9 +216,20 @@ export async function runSubconsciousMiddleware(
   // inform the reply, so they run before it. Recalls run in parallel (awaited
   // together below), so adding domains costs ~max(), not sum().
 
+  // R0. Ranked memory recall (default) — ONE ranking across every memory
+  //     domain fills all eight observation contexts below. Replaces R1–R8,
+  //     which still run when subconsciousRecallMode is 'sql' or 'agent', and
+  //     as the in-task fallback when the bundled model is unavailable.
+  const recallModeForTurn = options.includeObservations && analyzable ? await recallMode() : 'sql';
+  const legacyRecall = options.includeObservations && analyzable && recallModeForTurn !== 'ranked';
+  if (options.includeObservations && analyzable && recallModeForTurn === 'ranked') {
+    launched.push('ranked-memory-recall');
+    awaitedTasks.push(timed('ranked-memory-recall', 'Recalling memories', runRankedMemoryRecall(state)));
+  }
+
   // R1. Observation Recall — awaited: surfaces relevant observations from the DB
   //     table into state.metadata.observationContext.
-  if (options.includeObservations && analyzable) {
+  if (legacyRecall) {
     launched.push('observation-recall');
     const obsRecallPromise = runObservationRecall(state);
     awaitedTasks.push(timed('observation-recall', 'Checking observations', obsRecallPromise.then(ctx => { (state.metadata as any).observationContext = ctx })));
@@ -226,7 +238,7 @@ export async function runSubconsciousMiddleware(
   // R2. Identity Observation Recall (human) — awaited: read-only recall of
   //     relevant human-domain rows, injected as <user_observations>. Avoids a
   //     fixed "last N" dump; relevance is turn-dependent.
-  if (options.includeObservations && analyzable) {
+  if (legacyRecall) {
     launched.push('identity-observation-recall');
     const idRecallPromise = runIdentityObservationRecall(state, 'human');
     awaitedTasks.push(timed('identity-observation-recall', 'Recalling who you are', idRecallPromise.then(ctx => { (state.metadata as any).userObservationContext = ctx })));
@@ -234,7 +246,7 @@ export async function runSubconsciousMiddleware(
 
   // R3. Self Observation Recall (agent) — awaited: relevant `agent`-domain rows,
   //     injected as <self_observations>.
-  if (options.includeObservations && analyzable) {
+  if (legacyRecall) {
     launched.push('self-observation-recall');
     const selfRecallPromise = runIdentityObservationRecall(state, 'agent');
     awaitedTasks.push(timed('self-observation-recall', 'Recalling how we work', selfRecallPromise.then(ctx => { (state.metadata as any).selfObservationContext = ctx })));
@@ -242,7 +254,7 @@ export async function runSubconsciousMiddleware(
 
   // R4. Business Observation Recall (business) — awaited: relevant
   //     `business`-domain rows, injected as <business_observations>.
-  if (options.includeObservations && analyzable) {
+  if (legacyRecall) {
     launched.push('business-observation-recall');
     const bizRecallPromise = runIdentityObservationRecall(state, 'business');
     awaitedTasks.push(timed('business-observation-recall', 'Recalling the business', bizRecallPromise.then(ctx => { (state.metadata as any).businessObservationContext = ctx })));
@@ -250,7 +262,7 @@ export async function runSubconsciousMiddleware(
 
   // R5. Environment Observation Recall (environment) — awaited: relevant
   //     `environment`-domain rows, injected as <environment_observations>.
-  if (options.includeObservations && analyzable) {
+  if (legacyRecall) {
     launched.push('environment-observation-recall');
     const envRecallPromise = runIdentityObservationRecall(state, 'environment');
     awaitedTasks.push(timed('environment-observation-recall', 'Recalling this environment', envRecallPromise.then(ctx => { (state.metadata as any).environmentObservationContext = ctx })));
@@ -258,7 +270,7 @@ export async function runSubconsciousMiddleware(
 
   // R6. Projects Observation Recall (projects) — awaited: relevant
   //     `projects`-domain rows, injected as <projects_observations>.
-  if (options.includeObservations && analyzable) {
+  if (legacyRecall) {
     launched.push('projects-observation-recall');
     const projRecallPromise = runIdentityObservationRecall(state, 'projects');
     awaitedTasks.push(timed('projects-observation-recall', 'Recalling the projects', projRecallPromise.then(ctx => { (state.metadata as any).projectsObservationContext = ctx })));
@@ -269,7 +281,7 @@ export async function runSubconsciousMiddleware(
   //     context (external events touching the human / Sulla / the business) is
   //     important on every turn, so it recalls pre-turn like the other domains
   //     rather than being written-only.
-  if (options.includeObservations && analyzable) {
+  if (legacyRecall) {
     launched.push('world-observation-recall');
     const worldRecallPromise = runIdentityObservationRecall(state, 'world');
     awaitedTasks.push(timed('world-observation-recall', 'Recalling the world', worldRecallPromise.then(ctx => { (state.metadata as any).worldObservationContext = ctx })));
@@ -281,7 +293,7 @@ export async function runSubconsciousMiddleware(
   //     marketplace + local ~/sulla/skills/ install (read-only) so recall can
   //     surface a skill that fits the current turn even if it was never run
   //     before, not just skills already logged.
-  if (options.includeObservations && analyzable) {
+  if (legacyRecall) {
     launched.push('skills-observation-recall');
     const skillsRecallPromise = runIdentityObservationRecall(state, 'skills');
     awaitedTasks.push(timed('skills-observation-recall', 'Recalling what skills exist', skillsRecallPromise.then(ctx => { (state.metadata as any).skillsObservationContext = ctx })));
@@ -704,16 +716,90 @@ function turnRecallTerms(state: BaseThreadState): string[] {
 }
 
 /**
- * Pre-turn recall mode. 'sql' (default) ranks rows with indexed SQL in
- * ~0.1s. 'agent' restores the legacy one-LLM-agent-per-domain recall
- * (~45s p50 each, measured 2026-09-26) as a rollback switch.
+ * Pre-turn recall mode.
+ *  - 'ranked' (default): one ranking across every memory domain — BM25 + local
+ *    potion embeddings + a logistic-regression ranker, top 16 (agent/memory/).
+ *    Falls back to 'sql' automatically when the bundled model is unavailable.
+ *  - 'sql': per-domain indexed SQL keyword recall (~0.1s), the #856 fast path.
+ *  - 'agent': legacy one-LLM-agent-per-domain recall (~45s p50 each, measured
+ *    2026-09-26), kept as a rollback switch.
+ * Wherever the per-domain paths branch, anything other than 'agent' takes SQL.
  */
-async function recallMode(): Promise<'sql' | 'agent'> {
+async function recallMode(): Promise<'ranked' | 'sql' | 'agent'> {
   try {
-    return (await SullaSettingsModel.get('subconsciousRecallMode', 'sql')) === 'agent' ? 'agent' : 'sql';
+    const mode = await SullaSettingsModel.get('subconsciousRecallMode', 'ranked');
+
+    return mode === 'agent' || mode === 'sql' ? mode : 'ranked';
   } catch {
-    return 'sql';
+    return 'ranked';
   }
+}
+
+/** metadata key each memory domain is injected under (unchanged prompt tags). */
+const RECALL_CONTEXT_KEYS: Record<string, string> = {
+  [OBSERVATION_DOMAIN]: 'observationContext',
+  human:                'userObservationContext',
+  agent:                'selfObservationContext',
+  business:             'businessObservationContext',
+  environment:          'environmentObservationContext',
+  projects:             'projectsObservationContext',
+  world:                'worldObservationContext',
+  skills:               'skillsObservationContext',
+};
+
+/** Every recalled line carries a date; created_at is NOT NULL in both tables. */
+function formatRankedRecallLines(domain: string, hits: RecalledMemory[]): string {
+  if (domain === OBSERVATION_DOMAIN) {
+    return hits
+      .map(h => `[${ h.id }] ${ h.category ?? 'medium' } ${ h.date || 'undated' } — ${ h.content.replace(/\s+/g, ' ').trim() }`)
+      .join('\n');
+  }
+
+  return formatIdentityRecallLines(hits.map(h => ({
+    id: h.id, level: h.level ?? 1, category: h.category, content: h.content, basis: h.basis, created_at: h.date || 'undated',
+  })));
+}
+
+/**
+ * Ranked memory recall: one ranking over all domains, grouped back into the
+ * existing per-domain contexts. Falls back to the per-domain SQL recalls when
+ * ranked recall is unavailable, so a turn never loses its memory context.
+ */
+async function runRankedMemoryRecall(state: BaseThreadState): Promise<void> {
+  const startTime = Date.now();
+  const threadId = (state.metadata as any).threadId;
+  const meta = state.metadata as any;
+  const hits = await recallRankedMemories(recentUserTexts(state, 3));
+
+  if (!hits) {
+    const [obs, ...identity] = await Promise.all([
+      runObservationRecall(state),
+      ...['human', 'agent', 'business', 'environment', 'projects', 'world', 'skills'].map(d => runIdentityObservationRecall(state, d)),
+    ]);
+    meta.observationContext = obs;
+    ['human', 'agent', 'business', 'environment', 'projects', 'world', 'skills'].forEach((d, k) => { meta[RECALL_CONTEXT_KEYS[d]] = identity[k] });
+    perf.log(`[RankedRecall] threadId=${ threadId } path=sql-fallback ms=${ Date.now() - startTime }`);
+
+    return;
+  }
+
+  const byDomain = new Map<string, RecalledMemory[]>();
+
+  for (const h of hits) {
+    if (!RECALL_CONTEXT_KEYS[h.domain]) continue;
+    const list = byDomain.get(h.domain) ?? [];
+
+    list.push(h);
+    byDomain.set(h.domain, list);
+  }
+  for (const [domain, key] of Object.entries(RECALL_CONTEXT_KEYS)) {
+    const list = byDomain.get(domain);
+
+    meta[key] = list?.length ? formatRankedRecallLines(domain, list) || null : null;
+  }
+  const counts = [...byDomain.entries()].map(([d, l]) => `${ d }:${ l.length }`).join(',');
+
+  perf.log(`[RankedRecall] threadId=${ threadId } matched=${ hits.length } domains=${ counts } ids=${ hits.map(h => h.id).join(',') } ms=${ Date.now() - startTime } path=ranked`);
 }
 
 async function runObservationRecall(state: BaseThreadState): Promise<string | null> {
@@ -841,7 +927,7 @@ async function runIdentityObservationRecall(state: BaseThreadState, domain: stri
       return null;
     }
 
-    if (await recallMode() === 'sql') {
+    if (await recallMode() !== 'agent') {
       const terms = turnRecallTerms(state);
       const hits = terms.length > 0 ? await IdentityObservationsModel.recallRelevant(domain, terms) : [];
       const elapsed = Date.now() - startTime;
@@ -893,7 +979,7 @@ export async function runConversationReader(state: BaseThreadState): Promise<str
   const startTime = Date.now();
 
   try {
-    if (await recallMode() === 'sql') {
+    if (await recallMode() !== 'agent') {
       const parentThread = String((state.metadata as any).threadId || '');
       const hits = await ConversationKeywordsModel.recallThreads(turnRecallTerms(state), {
         excludeThreadIds: parentThread ? [parentThread] : [],

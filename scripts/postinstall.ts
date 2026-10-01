@@ -6,6 +6,7 @@ import path from 'path';
 import * as goUtils from 'scripts/dependencies/go-source';
 import { Lima, Qemu, SocketVMNet, AlpineLimaISO } from 'scripts/dependencies/lima';
 import { MobyOpenAPISpec } from 'scripts/dependencies/moby-openapi';
+import { PotionRetrievalModel } from 'scripts/dependencies/potion';
 import { SudoPrompt } from 'scripts/dependencies/sudo-prompt';
 import { ExtensionProxyImage, WSLDistroImage } from 'scripts/dependencies/tar-archives';
 import * as tools from 'scripts/dependencies/tools';
@@ -101,6 +102,7 @@ const hostDependencies = [
   new tools.Steve(),
   new tools.RancherDashboard(),
   new MobyOpenAPISpec(),
+  new PotionRetrievalModel(),
 ];
 
 async function downloadDependencies(items: DependencyWithContext[]): Promise<void> {
