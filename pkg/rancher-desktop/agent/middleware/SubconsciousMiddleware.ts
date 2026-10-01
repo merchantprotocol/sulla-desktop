@@ -216,8 +216,8 @@ export async function runSubconsciousMiddleware(
   // inform the reply, so they run before it. Recalls run in parallel (awaited
   // together below), so adding domains costs ~max(), not sum().
 
-  // R0. Ranked memory recall (default) — ONE ranking across every memory
-  //     domain fills all eight observation contexts below. Replaces R1–R8,
+  // R0. Ranked memory recall (default) — the top 16 of every memory domain
+  //     fills all eight observation contexts below. Replaces R1–R8,
   //     which still run when subconsciousRecallMode is 'sql' or 'agent', and
   //     as the in-task fallback when the bundled model is unavailable.
   const recallModeForTurn = options.includeObservations && analyzable ? await recallMode() : 'sql';
@@ -718,7 +718,7 @@ function turnRecallTerms(state: BaseThreadState): string[] {
 /**
  * Pre-turn recall mode.
  *  - 'ranked' (default): one ranking across every memory domain — BM25 + local
- *    potion embeddings + a logistic-regression ranker, top 16 (agent/memory/).
+ *    potion embeddings + a logistic-regression ranker, top 16 per domain (agent/memory/).
  *    Falls back to 'sql' automatically when the bundled model is unavailable.
  *  - 'sql': per-domain indexed SQL keyword recall (~0.1s), the #856 fast path.
  *  - 'agent': legacy one-LLM-agent-per-domain recall (~45s p50 each, measured
@@ -761,8 +761,8 @@ function formatRankedRecallLines(domain: string, hits: RecalledMemory[]): string
 }
 
 /**
- * Ranked memory recall: one ranking over all domains, grouped back into the
- * existing per-domain contexts. Falls back to the per-domain SQL recalls when
+ * Ranked memory recall: top 16 per memory domain, injected into the existing
+ * per-domain contexts. Falls back to the per-domain SQL recalls when
  * ranked recall is unavailable, so a turn never loses its memory context.
  */
 async function runRankedMemoryRecall(state: BaseThreadState): Promise<void> {

@@ -7,6 +7,8 @@
  *   2. Features: 13 retrieval/overlap/age/shape signals + domain one-hot.
  *   3. Score: logistic regression (weights in ranker_v1.json).
  *   4. Collapse near-duplicates (cosine ≥ 0.92) and return the top 16.
+ * searchPerDomain() runs the same pipeline inside each domain and keeps the
+ * top 16 of every domain, so busy domains can't crowd out quiet ones.
  * Lab result at top 16: ~83–86% of "needed" memories surfaced, vs 41% for the
  * per-domain SQL keyword recall it replaces. Single-judge labels — treat the
  * number as directional; shadow comparisons in perf.log are the real check.
@@ -155,7 +157,7 @@ export class RankedRecallIndex {
     return s;
   }
 
-  private bm25(context: string[]): [number, number][] {
+  private bm25(context: string[], domain?: string): [number, number][] {
     const sc = new Map<number, number>();
 
     context.forEach((text, ci) => {
@@ -167,6 +169,7 @@ export class RankedRecallIndex {
 
         if (idf === undefined) continue;
         for (const i of this.post.get(t) ?? []) {
+          if (domain !== undefined && this.rows[i].domain !== domain) continue;
           const f = this.tf[i].get(t) ?? 0;
           const norm = f + BM25_K1 * (1 - BM25_B + BM25_B * this.docLen[i] / this.avgLen);
 
@@ -202,17 +205,20 @@ export class RankedRecallIndex {
    * Rank every memory for this turn.
    * @param context  latest user message first, then up to 2 earlier ones.
    * @param today    YYYY-MM-DD used for the memory-age feature.
+   * @param domain   restrict candidates to one domain (used by searchPerDomain).
    */
-  search(context: string[], today: string, returnK = this.model.returnK): RankedHit[] {
+  search(context: string[], today: string, returnK = this.model.returnK, domain?: string): RankedHit[] {
     const m = this.model;
     const ctx = context.filter(t => t?.trim()).slice(0, m.contextWeights.length);
 
     if (ctx.length === 0 || this.rows.length === 0) return [];
 
     // 1. candidates
-    const b = this.bm25(ctx);
+    const b = this.bm25(ctx, domain);
     const qv = this.queryVector(ctx);
-    const dAll: [number, number][] = this.rows.map((_, i) => [i, this.dot(i, qv)]);
+    const dAll: [number, number][] = [];
+
+    this.rows.forEach((r, i) => { if (domain === undefined || r.domain === domain) dAll.push([i, this.dot(i, qv)]) });
     const d = dAll.sort((x, y) => y[1] - x[1]).slice(0, m.candidateK);
     const rrf = new Map<number, number>();
 
@@ -273,5 +279,12 @@ export class RankedRecallIndex {
     }
 
     return pick.map(({ row, score }) => ({ row, score }));
+  }
+
+  /** Top `perDomainK` memories from every domain, each domain ranked on its own. */
+  searchPerDomain(context: string[], today: string, perDomainK = this.model.returnK): RankedHit[] {
+    const domains = [...new Set(this.rows.map(r => r.domain))];
+
+    return domains.flatMap(domain => this.search(context, today, perDomainK, domain));
   }
 }
