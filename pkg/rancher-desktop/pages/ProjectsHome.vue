@@ -59,7 +59,11 @@
                 class="ph-st"
                 :class="dotClass(p)"
               />{{ shortName(p) }}</span>
-              <span class="ph-pc">{{ p.status === 'done' ? 'Closed' : `${p.openCount} open · ${p.doneCount} done` }}</span>
+              <span class="ph-pc">{{ p.status === 'done' ? 'Closed' : `${p.openCount} open · ${p.doneCount} done` }}<span
+                v-if="p.dispatch_enabled === false"
+                class="ph-paused"
+                title="Dispatcher paused for this project"
+              > · paused</span></span>
             </button>
           </template>
         </div>
@@ -233,6 +237,18 @@
                     <button
                       type="button"
                       class="ph-btn ghost sm"
+                      :class="{ paused: sel.dispatch_enabled === false }"
+                      :disabled="saving"
+                      :title="sel.dispatch_enabled === false
+                        ? 'Autonomous dispatch is paused for this project. Click to let the dispatcher and Heartbeat pick up its tasks again.'
+                        : 'Pause the dispatcher, reviews, lane automation and Heartbeat for this project only. You can still move cards by hand.'"
+                      @click="toggleProjectDispatch(sel)"
+                    >
+                      {{ sel.dispatch_enabled === false ? '▶ Resume dispatch' : '⏸ Pause dispatch' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="ph-btn ghost sm"
                       @click="openEditProject(sel)"
                     >
                       Edit
@@ -262,6 +278,10 @@
                     :class="{ hb: isHeartbeat(sel) }"
                   >{{ sel.status }}</span>
                   <span class="ph-pill">{{ sel.priority }}</span>
+                  <span
+                    v-if="sel.dispatch_enabled === false"
+                    class="ph-pill paused"
+                  >dispatch paused</span>
                   <span
                     v-if="sel.owner"
                     class="ph-pill"
@@ -2198,6 +2218,14 @@ async function saveProject(): Promise<void> {
     saving.value = false;
   }
 }
+async function toggleProjectDispatch(p: ProjectView): Promise<void> {
+  saving.value = true;
+  try {
+    await updateProject(p.id, { dispatch_enabled: p.dispatch_enabled === false });
+  } finally {
+    saving.value = false;
+  }
+}
 async function confirmArchiveProject(p: ProjectView): Promise<void> {
   if (!window.confirm(`Archive "${ shortName(p) }" and all its epics and issues? (soft-delete)`)) return;
   saving.value = true;
@@ -2363,6 +2391,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-lead-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .ph-pill { font-family: var(--pmono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ptext2); border: 1px solid var(--pborder); border-radius: 5px; padding: 2px 8px; }
 .ph-pill.hb { color: var(--pacc); border-color: var(--pacc-line); background: var(--pacc-soft); }
+.ph-pill.paused, .ph-paused, .ph-btn.paused { color: var(--pamber); }
+.ph-pill.paused, .ph-btn.paused { border-color: var(--pamber); }
 .ph-sec { margin-bottom: 30px; }
 .ph-sec-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
 .ph-sec-h h3 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; margin: 0; color: var(--ptext); }

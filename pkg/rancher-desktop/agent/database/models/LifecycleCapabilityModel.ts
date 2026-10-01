@@ -414,7 +414,8 @@ export class LifecycleCapabilityModel {
   static async heartbeatAccessByTask<T extends { id: string; status: string; labels?: string[] | null }>(tasks: T[]): Promise<Map<string, HeartbeatLifecycleAccess>> {
     const access = new Map<string, HeartbeatLifecycleAccess>();
     if (tasks.length === 0) return access;
-    const [capabilities, claims] = await Promise.all([
+    const taskIds = tasks.map(task => task.id);
+    const [capabilities, claims, paused] = await Promise.all([
       postgresClient.query<LifecycleCapabilityRecord>(`
         SELECT * FROM lifecycle_capabilities
          WHERE capability_key = ANY($1::text[])
@@ -423,12 +424,29 @@ export class LifecycleCapabilityModel {
         SELECT * FROM work_task_stage_claims
          WHERE task_id = ANY($1::text[])
            AND status = 'active'
-      `, [tasks.map(task => task.id)]),
+      `, [taskIds]),
+      postgresClient.query<{ id: string }>(`
+        SELECT t.id FROM work_tasks t
+          JOIN work_projects p ON p.id = t.project_id
+         WHERE t.id = ANY($1::text[])
+           AND p.dispatch_enabled = false
+      `, [taskIds]),
     ]);
     const byKey = new Map(capabilities.map(row => [row.capability_key, row]));
     const claimByTask = new Map(claims.map(claim => [claim.task_id, claim]));
+    const pausedIds = new Set((paused ?? []).map(row => row.id));
 
     for (const task of tasks) {
+      // Project dispatch paused by the human: Heartbeat holds hands-off.
+      if (pausedIds.has(task.id)) {
+        access.set(task.id, {
+          capabilityKey: LifecycleCapabilityModel.capabilityForStatus(task.status, task.labels ?? []),
+          mode:          'manual_hold',
+          owner:         null,
+          liveClaim:     claimByTask.get(task.id) ?? null,
+        });
+        continue;
+      }
       const key = LifecycleCapabilityModel.capabilityForStatus(task.status, task.labels ?? []);
       if (!key) {
         access.set(task.id, { capabilityKey: null, mode: 'unmanaged', owner: null, liveClaim: claimByTask.get(task.id) ?? null });

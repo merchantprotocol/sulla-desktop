@@ -24,6 +24,11 @@ export class LaneEntryAutomationService {
     if (!entry) throw new Error(`Lane entry not found: ${ entryId }`);
     if (entry.status !== 'pending' || !entry.workflow_id) return entry;
 
+    // Paused project: leave the entry pending. drainRecoverable picks it back
+    // up once the human re-enables dispatch on the project.
+    const { WorkItemsModel } = await import('../database/models/WorkItemsModel');
+    if (!(await WorkItemsModel.isTaskDispatchEnabled(entry.task_id))) return entry;
+
     const executionId = `lane-exec-${ entry.task_id }-${ entry.generation }`;
     const started = await WorkLaneWorkflowBindingModel.markStarted(entry.id, executionId);
     if (!started) return (await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id)) ?? entry;
@@ -37,7 +42,6 @@ export class LaneEntryAutomationService {
     if (owner && ['planning-council', 'task-dispatcher', 'task-dispatcher-review'].includes(owner)) {
       try {
         if (owner === 'planning-council') {
-          const { WorkItemsModel } = await import('../database/models/WorkItemsModel');
           const { PlanningCouncilService } = await import('./PlanningCouncilService');
           const task = await WorkItemsModel.getTask(entry.task_id);
           if (task) await PlanningCouncilService.handleTaskStatusTransition(

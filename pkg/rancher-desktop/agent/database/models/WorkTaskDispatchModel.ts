@@ -144,7 +144,8 @@ export type InProgressExclusionReason =
   | 'active_child'
   | 'recent_activity'
   | 'active_agent_job'
-  | 'linked_external_operation';
+  | 'linked_external_operation'
+  | 'project_dispatch_paused';
 
 export interface InProgressClassificationRow extends WorkTaskRecord {
   epic_open:            boolean;
@@ -154,6 +155,8 @@ export interface InProgressClassificationRow extends WorkTaskRecord {
   stale_activity:       boolean;
   has_active_agent_job: boolean;
   recovery_attempts:    string | number;
+  /** Absent in legacy fixtures; only an explicit false pauses reclaim. */
+  project_dispatch_enabled?: boolean;
 }
 
 export interface RecoverableInProgressCandidate {
@@ -237,6 +240,19 @@ function drainableReviewSql(alias: string): string {
 }
 
 /**
+ * Per-project autonomy switch (work_projects.dispatch_enabled). A paused
+ * project is invisible to every mechanical claimer and to the WIP/backpressure
+ * counts, so pausing one project never starves or throttles the others.
+ */
+export function projectDispatchEnabledSql(taskAlias: string): string {
+  return `AND EXISTS (
+             SELECT 1 FROM work_projects dispatch_project
+              WHERE dispatch_project.id = ${ taskAlias }.project_id
+                AND dispatch_project.dispatch_enabled = true
+           )`;
+}
+
+/**
  * Idle in_progress reclaim is ownership-neutral by design (Jonathon
  * directive 2026-08-25, Projects task 1Nk7): whoever is actively working a
  * task — human or agent — holds it as assignee exactly like any other
@@ -256,6 +272,7 @@ export function classifyInProgressRow(row: InProgressClassificationRow): InProgr
   if (row.has_active_child) reasons.push('active_child');
   if (!row.stale_activity) reasons.push('recent_activity');
   if (row.has_active_agent_job) reasons.push('active_agent_job');
+  if (row.project_dispatch_enabled === false) reasons.push('project_dispatch_paused');
   return reasons;
 }
 
@@ -319,6 +336,7 @@ export class WorkTaskDispatchModel {
            AND e.archived = false
            AND NOT (e.status = ANY($1::text[]))
            AND (t.assignee IS NULL OR LOWER(t.assignee) = ANY($2::text[]))
+           ${ projectDispatchEnabledSql('t') }
            AND NOT EXISTS (
              SELECT 1
                FROM unnest(COALESCE(t.labels, '{}')) AS label
@@ -341,6 +359,7 @@ export class WorkTaskDispatchModel {
                 AND downstream.status = 'in_review'
                 AND downstream_epic.archived = false
                 AND downstream_project.archived = false
+                AND downstream_project.dispatch_enabled = true
                 AND NOT (downstream_project.status = ANY($1::text[]))
                 AND NOT (downstream_epic.status = ANY($1::text[]))
                 AND (downstream.assignee IS NULL OR LOWER(downstream.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
@@ -467,6 +486,7 @@ export class WorkTaskDispatchModel {
            AND t.status = 'in_review'
            AND e.archived = false
            AND p.archived = false
+           AND p.dispatch_enabled = true
            AND NOT (p.status = ANY($1::text[]))
            AND NOT (e.status = ANY($1::text[]))
            AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
@@ -602,6 +622,7 @@ export class WorkTaskDispatchModel {
          AND t.status = 'in_review'
          AND e.archived = false
          AND p.archived = false
+         AND p.dispatch_enabled = true
          AND NOT (p.status = ANY($1::text[]))
          AND NOT (e.status = ANY($1::text[]))
          AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
@@ -676,6 +697,7 @@ export class WorkTaskDispatchModel {
        WHERE t.archived = false
          AND e.archived = false
          AND p.archived = false
+         AND p.dispatch_enabled = true
          AND NOT (p.status = ANY($1::text[]))
          AND NOT (e.status = ANY($1::text[]))
          AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
@@ -720,7 +742,8 @@ export class WorkTaskDispatchModel {
                 WHERE j.status = 'running'
                   AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
              ) AS has_active_agent_job,
-             (SELECT COUNT(*)::text FROM work_task_recovery_attempts a WHERE a.task_id = t.id) AS recovery_attempts
+             (SELECT COUNT(*)::text FROM work_task_recovery_attempts a WHERE a.task_id = t.id) AS recovery_attempts,
+             COALESCE((SELECT p.dispatch_enabled FROM work_projects p WHERE p.id = t.project_id), true) AS project_dispatch_enabled
         FROM work_tasks t
         LEFT JOIN work_epics e ON e.id = t.epic_id
        WHERE t.status = 'in_progress'
@@ -737,6 +760,7 @@ export class WorkTaskDispatchModel {
         stale_activity: _staleActivity,
         has_active_agent_job: _hasActiveAgentJob,
         recovery_attempts: recoveryAttempts,
+        project_dispatch_enabled: _projectDispatchEnabled,
         ...task
       } = row;
       return {
@@ -793,6 +817,7 @@ export class WorkTaskDispatchModel {
                   AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
              )
              AND t.last_activity_at = $4::timestamptz
+             ${ projectDispatchEnabledSql('t') }
            FOR UPDATE OF t SKIP LOCKED
         `, [candidate.task.id, CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS, candidate.fingerprint]);
 
