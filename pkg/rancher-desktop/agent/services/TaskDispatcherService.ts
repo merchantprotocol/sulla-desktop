@@ -726,7 +726,7 @@ export class TaskDispatcherService {
           ).catch(err => console.error(`[TaskDispatcher] Timeout settlement failed for ${ dispatch.id }:`, err));
         }
       }, timeoutMinutes * 60_000);
-      const finalState = await Promise.race([graph.execute(state), runtimeDeadline]);
+      let finalState = await Promise.race([graph.execute(state), runtimeDeadline]);
 
       // An abort signal is cooperative; an immortal provider promise may
       // ignore it forever. The deadline itself therefore wins the race and
@@ -758,7 +758,16 @@ export class TaskDispatcherService {
 
       if (executionTimedOut) return;
 
-      const outcome = extractAgentTurnOutcome(finalState);
+      let outcome = extractAgentTurnOutcome(finalState);
+      if (!isVerification && outcome.status === 'completed' && !/<WORK_RESULT>[\s\S]*?<\/WORK_RESULT>/.test(outcome.text)) {
+        state.messages.push({
+          role:    'user',
+          content: `Your last turn ended without the required <WORK_RESULT> block. Report the current state now and end with exactly one complete <WORK_RESULT>{\"summary\":\"...\"}</WORK_RESULT> block. If a background check or CI is still running, report it as pending in the summary; do not wait for it.`,
+        });
+        finalState = await Promise.race([graph.execute(state), runtimeDeadline]);
+        if (!finalState) return;
+        outcome = extractAgentTurnOutcome(finalState);
+      }
       const summary = outcome.text.slice(0, 8_000);
 
       if (isVerification) {
@@ -1147,6 +1156,8 @@ ${ JSON.stringify(history) }
 Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
 
 You have the same full access as the primary agent: exec and the whole Sulla catalog (projects, GitHub, browser, workflows, sub-agents, everything). Read and comment on any task, including ${ task.id }, and create follow-up tasks when useful. The one coordination rule: the dispatcher moves ${ task.id } between lanes, so don't change its status yourself; return your WORK_RESULT and it goes to independent review.
+
+If CI, tests, or another background check is still running, do not end your turn waiting for it. Report its state as pending in WORK_RESULT, then stop.
 
 Completed work MUST end with exactly one machine block containing at least a summary:
 <WORK_RESULT>{"summary":"concise receipt"}</WORK_RESULT>

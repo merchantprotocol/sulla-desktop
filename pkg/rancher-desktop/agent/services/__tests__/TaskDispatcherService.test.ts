@@ -506,10 +506,15 @@ describe('TaskDispatcherService', () => {
     claimNextMock
       .mockResolvedValueOnce(claim)
       .mockResolvedValue(null);
-    executeMock.mockResolvedValue({
-      metadata: { agent: { status: 'completed' }, finalSummary: `<WORK_RESULT>{"summary":"Draft PR opened and tests passed.","custody":{"workKind":"code","branch":"feat/test","commitSha":"${ 'a'.repeat(40) }","prUrl":"https://github.com/merchantprotocol/sulla-desktop/pull/123","prHeadSha":"${ 'a'.repeat(40) }","validation":{"tests":"pass"},"provenance":{"agentId":"sulla-desktop"}}}</WORK_RESULT>` },
-      messages: [],
-    });
+    executeMock
+      .mockResolvedValueOnce({
+        metadata: { agent: { status: 'completed' }, finalSummary: 'CI is still running; waiting for it.' },
+        messages: [],
+      })
+      .mockResolvedValueOnce({
+        metadata: { agent: { status: 'completed' }, finalSummary: `<WORK_RESULT>{"summary":"Draft PR opened; CI pending.","custody":{"workKind":"code","branch":"feat/test","commitSha":"${ 'a'.repeat(40) }","prUrl":"https://github.com/merchantprotocol/sulla-desktop/pull/123","prHeadSha":"${ 'a'.repeat(40) }","validation":{"tests":"pass"},"provenance":{"agentId":"sulla-desktop"}}}</WORK_RESULT>` },
+        messages: [],
+      });
 
     const { TaskDispatcherService } = await import('../TaskDispatcherService');
     const service = new TaskDispatcherService();
@@ -521,7 +526,7 @@ describe('TaskDispatcherService', () => {
     expect(claimNextMock).toHaveBeenCalledWith(
       'sulla-desktop', expect.stringContaining('task-dispatcher-'), expect.any(Object),
     );
-    expect(executeMock).toHaveBeenCalled();
+    expect(executeMock).toHaveBeenCalledTimes(2);
     const workerState = executeMock.mock.calls[0][0];
     // Workers get exactly the full agent tool set the primary chat gets.
     const fullSet = ['browse_tools', 'exec', 'read_file', 'write_file', 'ask_user_question', 'browser_controller'];
@@ -531,6 +536,7 @@ describe('TaskDispatcherService', () => {
     expect(workerState.messages[0].content).toContain('Spec: ~/Sites/handoff.txt');
     expect(workerState.messages[0].content).toContain('Prototype wins where it and the page disagree.');
     expect(workerState.messages[0].content).toContain('Draft PR #123 at head.');
+    expect(workerState.messages.some((message: any) => String(message.content).includes('If a background check or CI is still running, report it as pending'))).toBe(true);
     expect(appendOutcomeJournalMock).toHaveBeenCalledWith('dispatch-1', 'task-1', expect.objectContaining({
       dispatchStatus: 'completed', taskStatus: 'in_review', taskAssignee: 'heartbeat',
       evidence: expect.objectContaining({ custody: expect.objectContaining({ workKind: 'code' }) }),

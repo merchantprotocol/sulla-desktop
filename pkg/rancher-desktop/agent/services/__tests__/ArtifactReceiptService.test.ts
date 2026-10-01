@@ -1,25 +1,36 @@
-import {
-  ARTIFACT_RECEIPT_SCHEMA_VERSION,
-  RECEIPT_COMMENT_MAX_CHARS,
-  RECEIPT_MARKER_PREFIX,
-  buildReceipt,
-  computeReceiptFingerprint,
-  isLegacyComment,
-  recordReceipt,
-  redactSecrets,
-  renderReceiptComment,
-  type ArtifactReceiptInput,
-} from '../ArtifactReceiptService';
-import { ArtifactReceiptModel } from '../../database/models/ArtifactReceiptModel';
-import { postgresClient } from '../../database/PostgresClient';
+import { afterEach, beforeAll, beforeEach, expect, it, jest } from '@jest/globals';
+type ArtifactReceiptInput = import('../ArtifactReceiptService').ArtifactReceiptInput;
 
-jest.mock('../../database/models/ArtifactReceiptModel', () => ({
-  ArtifactReceiptModel: { insertIfAbsentWithClient: jest.fn(), attachCommentWithClient: jest.fn() },
+const insertIfAbsentMock: any = jest.fn();
+const attachCommentMock: any = jest.fn();
+jest.unstable_mockModule('../../database/models/ArtifactReceiptModel', () => ({
+  ArtifactReceiptModel: {
+    insertIfAbsentWithClient: insertIfAbsentMock,
+    attachCommentWithClient:  attachCommentMock,
+  },
 }));
 
-const insertIfAbsent = ArtifactReceiptModel.insertIfAbsentWithClient as jest.Mock;
-const attachComment = ArtifactReceiptModel.attachCommentWithClient as jest.Mock;
-const query = jest.fn();
+let ARTIFACT_RECEIPT_SCHEMA_VERSION: number;
+let RECEIPT_COMMENT_MAX_CHARS: number;
+let RECEIPT_MARKER_PREFIX: string;
+let buildReceipt: typeof import('../ArtifactReceiptService').buildReceipt;
+let computeReceiptFingerprint: typeof import('../ArtifactReceiptService').computeReceiptFingerprint;
+let isLegacyComment: typeof import('../ArtifactReceiptService').isLegacyComment;
+let recordReceipt: typeof import('../ArtifactReceiptService').recordReceipt;
+let redactSecrets: typeof import('../ArtifactReceiptService').redactSecrets;
+let renderReceiptComment: typeof import('../ArtifactReceiptService').renderReceiptComment;
+let postgresClient: typeof import('../../database/PostgresClient').postgresClient;
+let query: any;
+
+beforeAll(async() => {
+  const receipt = await import('../ArtifactReceiptService');
+  ({
+    ARTIFACT_RECEIPT_SCHEMA_VERSION, RECEIPT_COMMENT_MAX_CHARS, RECEIPT_MARKER_PREFIX,
+    buildReceipt, computeReceiptFingerprint, isLegacyComment, recordReceipt, redactSecrets, renderReceiptComment,
+  } = receipt);
+  ({ postgresClient } = await import('../../database/PostgresClient'));
+  query = jest.fn();
+});
 
 function baseInput(): ArtifactReceiptInput {
   return {
@@ -33,7 +44,7 @@ function baseInput(): ArtifactReceiptInput {
       { type: 'pull_request', canonicalRef: 'merchantprotocol/sulla-desktop#720', url: 'https://github.com/merchantprotocol/sulla-desktop/pull/720', hash: 'abc1234' },
       { type: 'projects_task', canonicalRef: 'g3ud' },
     ],
-    evidence:          { kind: 'dispatch', ref: 'dispatch-d9bb255d', url: 'https://example/dispatch' },
+    evidence: { kind: 'dispatch', ref: 'dispatch-d9bb255d', url: 'https://example/dispatch' },
   };
 }
 
@@ -42,7 +53,7 @@ beforeEach(() => {
   jest.spyOn(postgresClient, 'transaction').mockImplementation((callback: any) => callback({ query }));
   query.mockResolvedValue({ rows: [] });
 });
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => { jest.restoreAllMocks() });
 
 describe('fingerprint (dedupe + restart determinism)', () => {
   it('is stable across repeated builds of the same event', () => {
@@ -89,6 +100,14 @@ describe('renderReceiptComment', () => {
     expect(body).not.toMatch(/ghp_ABCDEF/);
     expect(body).toContain(RECEIPT_MARKER_PREFIX);
   });
+  it('keeps long repair findings intact in the task comment', () => {
+    const input = baseInput();
+    const finding = 'details '.repeat(100).trimEnd();
+    input.validationSummary = finding;
+    const body = renderReceiptComment(buildReceipt(input));
+    expect(body).toContain(finding);
+    expect(body.length).toBeLessThanOrEqual(RECEIPT_COMMENT_MAX_CHARS);
+  });
 });
 
 describe('isLegacyComment', () => {
@@ -100,8 +119,8 @@ describe('isLegacyComment', () => {
 });
 
 describe('recordReceipt (linkage + dedupe)', () => {
-  it('posts exactly one concise comment linked to full evidence on first sight', async () => {
-    insertIfAbsent.mockResolvedValue({ inserted: true, row: { id: 'r1', comment_id: null } });
+  it('posts exactly one concise comment linked to full evidence on first sight', async() => {
+    insertIfAbsentMock.mockResolvedValue({ inserted: true, row: { id: 'r1', comment_id: null } });
     const res = await recordReceipt(baseInput());
     expect(res.deduped).toBe(false);
     expect(res.commentId).toMatch(/^artifact-receipt-comment-/);
@@ -109,23 +128,23 @@ describe('recordReceipt (linkage + dedupe)', () => {
     const body = query.mock.calls[0][1][2] as string;
     expect(body).toContain('https://example/dispatch');
     expect(body).toContain(RECEIPT_MARKER_PREFIX);
-    expect(insertIfAbsent.mock.calls[0][1].contentHashes).toContain('abc1234');
-    expect(attachComment).toHaveBeenCalledTimes(1);
-    expect(attachComment.mock.calls[0][2]).toBe(res.commentId);
+    expect(insertIfAbsentMock.mock.calls[0][1].contentHashes).toContain('abc1234');
+    expect(attachCommentMock).toHaveBeenCalledTimes(1);
+    expect(attachCommentMock.mock.calls[0][2]).toBe(res.commentId);
   });
-  it('does not add a second comment when the same event replays', async () => {
-    insertIfAbsent.mockResolvedValue({ inserted: false, row: { id: 'r1', comment_id: 'c1' } });
+  it('does not add a second comment when the same event replays', async() => {
+    insertIfAbsentMock.mockResolvedValue({ inserted: false, row: { id: 'r1', comment_id: 'c1' } });
     const res = await recordReceipt(baseInput());
     expect(res.deduped).toBe(true);
     expect(res.commentId).toBe('c1');
     expect(query).not.toHaveBeenCalled();
-    expect(attachComment).not.toHaveBeenCalled();
+    expect(attachCommentMock).not.toHaveBeenCalled();
   });
-  it('keeps receipt insertion and comment creation in one rollback boundary', async () => {
-    insertIfAbsent.mockResolvedValue({ inserted: true, row: { id: 'r1', comment_id: null } });
+  it('keeps receipt insertion and comment creation in one rollback boundary', async() => {
+    insertIfAbsentMock.mockResolvedValue({ inserted: true, row: { id: 'r1', comment_id: null } });
     query.mockRejectedValueOnce(new Error('comment insert failed'));
     await expect(recordReceipt(baseInput())).rejects.toThrow('comment insert failed');
-    expect(attachComment).not.toHaveBeenCalled();
+    expect(attachCommentMock).not.toHaveBeenCalled();
     expect(postgresClient.transaction).toHaveBeenCalledTimes(1);
   });
 });
