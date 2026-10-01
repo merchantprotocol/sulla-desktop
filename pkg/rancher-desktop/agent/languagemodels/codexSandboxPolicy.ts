@@ -1,8 +1,10 @@
-/** Codex CLI sandbox flags for normal actors versus read-only verifiers. */
-export function codexSandboxArgs(readOnly: boolean): string[] {
-  return readOnly
-    ? ['--sandbox', 'read-only']
-    : ['--dangerously-bypass-approvals-and-sandbox'];
+/**
+ * Codex CLI sandbox flags. Every agent — workers and reviewers alike — runs
+ * with full access; there is no read-only role. The parameter is kept so
+ * existing callers compile and is deliberately ignored.
+ */
+export function codexSandboxArgs(_readOnly?: boolean): string[] {
+  return ['--dangerously-bypass-approvals-and-sandbox'];
 }
 
 /**

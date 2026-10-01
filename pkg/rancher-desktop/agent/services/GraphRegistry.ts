@@ -12,6 +12,7 @@ import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph,
 import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
 // Side-effect: ensure tool manifests are registered before any graph runs
 import '../tools/manifests';
+import { FULL_AGENT_TOOL_NAMES } from '../tools/fullAgentTools';
 import { toolRegistry } from '../tools/registry';
 import { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
 import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
@@ -744,22 +745,8 @@ Universal rejects above one more time — it is the single most common reason
 a domain regresses.`;
 }
 
-/**
- * Heartbeat native toolset — the slim primary set MINUS the interactive
- * `ask_user_question` tool. The heartbeat runs autonomously on the `heartbeat`
- * channel with no human watching, so a blocking question card would render
- * nowhere and deadlock the loop. Pinning this as the heartbeat's
- * `allowedToolNames` routes it through BaseNode's strict tool path (no dynamic
- * injection of ask_user_question). Full capability is retained — every other
- * tool is still reached via `browse_tools` + `exec`.
- */
-const HEARTBEAT_TOOLS: string[] = [
-  'browse_tools',
-  'exec',
-  'read_file',
-  'write_file',
-  'browser_controller',
-];
+/** Heartbeat gets the same full tool set as every other agent. */
+const HEARTBEAT_TOOLS: string[] = [...FULL_AGENT_TOOL_NAMES];
 
 const SUBCONSCIOUS_ENVIRONMENT_ANCHOR = `## Sulla Desktop environment
 

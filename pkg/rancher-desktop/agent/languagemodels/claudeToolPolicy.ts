@@ -41,39 +41,13 @@ export const BASE_DISALLOWED_TOOLS = 'AskUserQuestion TaskCreate TaskUpdate Task
 export const SUBCONSCIOUS_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit NotebookEdit Bash BashOutput KillShell KillBash Glob Grep WebFetch WebSearch Task SlashCommand';
 
 /**
- * Additional native tools disabled for WORKER sub-agent spawns (workflow
- * nodes, dispatcher workers, spawn_agent children) — sub-agents that keep
- * the actor tools but must not leave work running after they return.
- *
- * These tools arm work whose result arrives in a LATER turn: Monitor
- * callbacks, ScheduleWakeup, cron jobs, remote triggers, and native
- * multi-agent Workflow runs. A sub-agent's turn ends when it hands its
- * receipt to the parent, and background completions are deliberately never
- * routed back to sub-agents (wakeTargetFromState returns null — a wake would
- * start an orphan turn). So anything armed here is silently lost, and the
- * workflow node returns without the terminal result it promised (PR-conveyor
- * workers arming Monitor callbacks for CI instead of waiting in-process).
- * Workers must wait in-process, or return and let the parent own the wait.
- */
-export const WORKER_DETACHED_WORK_DENYLIST = 'Monitor ScheduleWakeup CronCreate CronDelete CronList RemoteTrigger Workflow';
-
-/**
- * Whether a spawn is a WORKER sub-agent: a sub-agent that does real work
- * (not an observer) and returns its result to a parent graph.
- */
-export function isWorkerSpawn(metadata: Record<string, unknown> | null | undefined): boolean {
-  return !!(metadata as any)?.isSubAgent && !isObserverSpawn(metadata);
-}
-
-/**
- * Full `--disallowedTools` value for a spawn, by role: primary chat gets the
- * base set, workers additionally lose detached-work tools, observers lose the
- * native actor tools.
+ * Full `--disallowedTools` value for a spawn. Every acting agent — primary
+ * chat, heartbeat, dispatcher workers, reviewers, workflow nodes, spawned
+ * sub-agents — gets the same base set. Only subconscious observers (memory
+ * curators, never a swimlane actor) additionally lose the native actor tools.
  */
 export function disallowedToolsFor(metadata: Record<string, unknown> | null | undefined): string {
   if (isObserverSpawn(metadata)) return `${ BASE_DISALLOWED_TOOLS } ${ SUBCONSCIOUS_NATIVE_TOOL_DENYLIST }`;
-  if (isWorkerSpawn(metadata)) return `${ BASE_DISALLOWED_TOOLS } ${ WORKER_DETACHED_WORK_DENYLIST }`;
-
   return BASE_DISALLOWED_TOOLS;
 }
 

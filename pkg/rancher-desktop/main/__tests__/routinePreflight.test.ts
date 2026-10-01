@@ -116,7 +116,7 @@ describe('browser capability uses the admitted routine', () => {
     const state = graphExecute.mock.calls[0][0];
     expect(state.metadata.graphNativeBrowserController).toBe(true);
     expect(state.metadata.allowedToolNames).toContain('browser_controller');
-    expect(state.llmTools).toHaveLength(5);
+    expect(state.llmTools).toHaveLength(6);
   });
   it('does not grant browser authority from trigger text', async() => {
     scan.mockResolvedValue({ successBoolean: true, outputs: { shouldRun: true } });

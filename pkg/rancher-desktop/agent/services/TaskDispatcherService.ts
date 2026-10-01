@@ -31,6 +31,7 @@ import {
   ARTIFACT_VERIFICATION_ADAPTERS,
 } from '../routines/core/reviewProjectArtifact';
 import { extractAgentTurnOutcome } from '../tools/agents/agentTurnOutcome';
+import { FULL_AGENT_TOOL_NAMES } from '../tools/fullAgentTools';
 import { toolRegistry } from '../tools/registry';
 import { createPlaybookState } from '../workflow/WorkflowPlaybook';
 
@@ -52,15 +53,18 @@ const LEGACY_VERIFIER_TOOLS = [
   'github_get_issue', 'github_get_pr', 'github_get_pr_files', 'github_check_runs',
 ] as const;
 /**
- * Mechanical workers run unattended, so they must not depend on the global
- * dynamic tool mode or an optional agent profile to discover their actor
- * surface. `exec` is the canonical bridge to the Sulla CLI (including git,
- * GitHub, and project tools); the native file tools cover direct inspection
- * and edits when that is the simpler path.
+ * Workers and reviewers get exactly the full agent tool set the primary chat
+ * gets (pinned so they never depend on the global dynamic tool mode). `exec`
+ * reaches the whole Sulla catalog. No lane is restricted.
  */
-const MECHANICAL_WORKER_TOOLS = [
-  'browse_tools', 'exec', 'read_file', 'write_file',
-] as const;
+const MECHANICAL_WORKER_TOOLS = FULL_AGENT_TOOL_NAMES;
+/**
+ * Agents get every comment in full. Only a runaway history beyond this many
+ * characters drops its OLDEST comments from the prompt (never truncates a
+ * body), and the prompt says how to read the rest.
+ */
+const HISTORY_PROMPT_BUDGET_CHARS = 200_000;
+
 const PROTECTED_REVIEW_TOOLS = [...new Set([
   ...Object.values(ARTIFACT_VERIFICATION_ADAPTERS).flatMap(adapter => [...adapter.tools]),
 ])] as string[];
@@ -604,7 +608,8 @@ export class TaskDispatcherService {
         }).catch(err => console.error(`[TaskDispatcher] Could not write start comment for ${ dispatch.id }:`, err));
       }
 
-      const comments = isVerification ? await WorkItemsModel.listComments(task.id) : [];
+      const comments = await WorkItemsModel.listComments(task.id);
+      const planContext = await this.loadPlanContext(task);
       let claimedArtifacts: ReviewArtifactComponent[] = [];
       let excludedAgentIds: string[] = [];
       let selectedReviewerAgentIds: string[] = [];
@@ -641,7 +646,7 @@ export class TaskDispatcherService {
 
       if (isVerification) {
         const reviewPrompt = verificationOwner === 'core-routine'
-          ? this.buildProtectedReviewPrompt(task, dispatch, comments, claimedArtifacts, generationHash, excludedAgentIds)
+          ? this.buildProtectedReviewPrompt(task, dispatch, comments, claimedArtifacts, generationHash, excludedAgentIds, planContext)
           : this.buildVerifierPrompt(task, dispatch.id, comments);
         state.messages.push({ role: 'user', content: reviewPrompt });
         // Reviewers get the same full authority as workers (exec = the whole
@@ -678,7 +683,7 @@ export class TaskDispatcherService {
           workerTools.map(name => toolRegistry.convertToolToLLM(name)),
         );
         state.metadata.allowedToolNames = workerTools;
-        state.messages.push({ role: 'user', content: this.buildWorkerPrompt(task, dispatch.id, dispatch.agent_id) });
+        state.messages.push({ role: 'user', content: this.buildWorkerPrompt(task, dispatch.id, dispatch.agent_id, comments, planContext) });
       }
       state.metadata.isSubAgent = true;
       // Dispatched workers and verifiers do real work; they must chat through
@@ -721,7 +726,7 @@ export class TaskDispatcherService {
           ).catch(err => console.error(`[TaskDispatcher] Timeout settlement failed for ${ dispatch.id }:`, err));
         }
       }, timeoutMinutes * 60_000);
-      const finalState = await Promise.race([graph.execute(state), runtimeDeadline]);
+      let finalState = await Promise.race([graph.execute(state), runtimeDeadline]);
 
       // An abort signal is cooperative; an immortal provider promise may
       // ignore it forever. The deadline itself therefore wins the race and
@@ -753,7 +758,16 @@ export class TaskDispatcherService {
 
       if (executionTimedOut) return;
 
-      const outcome = extractAgentTurnOutcome(finalState);
+      let outcome = extractAgentTurnOutcome(finalState);
+      if (!isVerification && outcome.status === 'completed' && !/<WORK_RESULT>[\s\S]*?<\/WORK_RESULT>/.test(outcome.text)) {
+        state.messages.push({
+          role:    'user',
+          content: `Your last turn ended without the required <WORK_RESULT> block. Report the current state now and end with exactly one complete <WORK_RESULT>{\"summary\":\"...\"}</WORK_RESULT> block. If a background check or CI is still running, report it as pending in the summary; do not wait for it.`,
+        });
+        finalState = await Promise.race([graph.execute(state), runtimeDeadline]);
+        if (!finalState) return;
+        outcome = extractAgentTurnOutcome(finalState);
+      }
       const summary = outcome.text.slice(0, 8_000);
 
       if (isVerification) {
@@ -1075,7 +1089,53 @@ export class TaskDispatcherService {
     }
   }
 
-  private buildWorkerPrompt(task: WorkTaskRecord, dispatchId: string, workerAgentId: string): string {
+  /**
+   * Project and epic descriptions hold the spec location, decided defaults and
+   * source-of-truth rules that task descriptions only cite ("Spec §4"). Without
+   * them the worker builds and the reviewer judges against different halves of
+   * the contract, and the task bounces.
+   */
+  /**
+   * Every comment, every body in full, oldest to newest. Only if the total
+   * exceeds HISTORY_PROMPT_BUDGET_CHARS are the oldest comments left out, with
+   * a pointer the agent can follow to read them.
+   */
+  private fullHistory(taskId: string, comments: { author: string | null; body: string }[]): { author: string; body: string }[] {
+    const all = comments.map(comment => ({ author: comment.author || 'unknown', body: comment.body }));
+    let total = 0;
+    let start = all.length;
+    while (start > 0 && total + all[start - 1].body.length <= HISTORY_PROMPT_BUDGET_CHARS) {
+      start -= 1;
+      total += all[start].body.length;
+    }
+    if (start === 0) return all;
+
+    return [
+      { author: 'dispatcher', body: `${ start } older comment(s) not inlined for size. Read them with: sulla project/list_task_comments '{"task_id":"${ taskId }"}'` },
+      ...all.slice(start),
+    ];
+  }
+
+  private async loadPlanContext(task: WorkTaskRecord): Promise<string> {
+    const parts: string[] = [];
+    try {
+      const project = task.project_id ? await WorkItemsModel.getProject(task.project_id) : null;
+      if (project?.description?.trim()) {
+        parts.push(`Project "${ project.title }" (${ project.id }):\n${ project.description.trim() }`);
+      }
+      const epic = task.epic_id ? await WorkItemsModel.getEpic(task.epic_id) : null;
+      if (epic?.description?.trim()) {
+        parts.push(`Epic "${ epic.title }" (${ epic.id }):\n${ epic.description.trim() }`);
+      }
+    } catch (err) {
+      console.warn(`[TaskDispatcher] Plan context unavailable for ${ task.id }:`, err);
+    }
+
+    return parts.length ? parts.join('\n\n') : '(no project or epic description)';
+  }
+
+  private buildWorkerPrompt(task: WorkTaskRecord, dispatchId: string, workerAgentId: string, comments: { author: string | null; body: string }[] = [], planContext = '(no project or epic description)'): string {
+    const history = this.fullHistory(task.id, comments);
     return `You are the execution worker for Projects task ${ task.id }.
 
 Title: ${ task.title }
@@ -1087,9 +1147,17 @@ Dispatch: ${ dispatchId }
 Description:
 ${ task.description || '(no description)' }
 
+Plan context (project and epic descriptions; specs, decided defaults and source-of-truth pointers the task cites live here, so open every file or URL they name before building):
+${ planContext }
+
+Task history, oldest to newest (on a repair round the latest review findings are here; fix every one and say how in your receipt):
+${ JSON.stringify(history) }
+
 Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
 
-The originating Projects task is controller-owned while this dispatch is active. Do not create, update, move, archive, assign, or comment on task ${ task.id }, and do not call any Projects mutation for it. Return evidence only. The dispatcher controller will atomically move successful work to independent review; a worker must never mark its own task done.
+You have the same full access as the primary agent: exec and the whole Sulla catalog (projects, GitHub, browser, workflows, sub-agents, everything). Read and comment on any task, including ${ task.id }, and create follow-up tasks when useful. The one coordination rule: the dispatcher moves ${ task.id } between lanes, so don't change its status yourself; return your WORK_RESULT and it goes to independent review.
+
+If CI, tests, or another background check is still running, do not end your turn waiting for it. Report its state as pending in WORK_RESULT, then stop.
 
 Completed work MUST end with exactly one machine block containing at least a summary:
 <WORK_RESULT>{"summary":"concise receipt"}</WORK_RESULT>
@@ -1154,11 +1222,8 @@ Any missing block, unknown verdict, abbreviated/non-hex SHA, or malformed JSON i
     }];
   }
 
-  private buildProtectedReviewPrompt(task: WorkTaskRecord, dispatch: ClaimedDispatch['dispatch'], comments: { author: string | null; body: string }[], artifacts: ReviewArtifactComponent[], generationHash: string, excludedAgentIds: string[]): string {
-    const history = comments.slice(-50).map(comment => ({
-      author: comment.author || 'unknown',
-      body:   comment.body.slice(0, 4_000),
-    }));
+  private buildProtectedReviewPrompt(task: WorkTaskRecord, dispatch: ClaimedDispatch['dispatch'], comments: { author: string | null; body: string }[], artifacts: ReviewArtifactComponent[], generationHash: string, excludedAgentIds: string[], planContext = '(no project or epic description)'): string {
+    const history = this.fullHistory(task.id, comments);
     return `Protected in_review generation for Projects task ${ task.id }.
 
 Title: ${ task.title }
@@ -1179,6 +1244,9 @@ Tool access: you have exec and the full Sulla catalog (git, github, project, …
 
 Acceptance contract:
 ${ task.description || '(no description)' }
+
+Plan context (project and epic descriptions; the specs, decided defaults and source-of-truth pointers the contract cites live here, so open every file or URL they name before judging a criterion unverifiable):
+${ planContext }
 
 Bounded task evidence, oldest to newest:
 ${ JSON.stringify(history) }

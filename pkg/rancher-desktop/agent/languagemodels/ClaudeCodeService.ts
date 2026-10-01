@@ -383,8 +383,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       //
       // Subconscious observers additionally lose the native actor tools
       // (Read/Write/Edit/Bash/…) — see SUBCONSCIOUS_NATIVE_TOOL_DENYLIST.
-      // Worker sub-agents additionally lose detached-work tools (Monitor,
-      // ScheduleWakeup, cron, …) — see WORKER_DETACHED_WORK_DENYLIST.
+      // Every acting agent (primary, workers, reviewers) gets the same set.
       '--disallowedTools', p.disallowedTools,
     ];
     // stream-json input lets the process boot before the prompt exists (the

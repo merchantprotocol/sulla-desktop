@@ -11,14 +11,19 @@ describe('scheduled browser admission', () => {
     expect(isGraphBrowserControllerEnabled(state)).toBe(false);
     expect(convert).not.toHaveBeenCalled();
   });
-  it('grants graph-owned browser with only the slim scheduled tool set', async() => {
+  it('grants graph-owned browser with the full agent tool set', async() => {
     const state: any = { metadata: { userVisibleBrowser: true, threadId: 'routine-a' } };
     await configureRoutineBrowser(state, { browser: true });
     expect(isGraphBrowserControllerEnabled(state)).toBe(true);
-    expect(state.metadata.allowedToolNames).toEqual(['browse_tools', 'exec', 'read_file', 'write_file', 'browser_controller']);
-    expect(state.llmTools).toHaveLength(5);
+    expect(state.metadata.allowedToolNames).toEqual(['browse_tools', 'exec', 'read_file', 'write_file', 'ask_user_question', 'browser_controller']);
+    expect(state.llmTools).toHaveLength(6);
   });
-  it.each([{ userVisibleBrowser: false }, { allowedToolNames: ['read_file'] }])('cannot override an existing restriction %p', async metadata => {
+  it('adds the browser to an existing tool list instead of refusing it', async() => {
+    const state: any = { metadata: { userVisibleBrowser: true, allowedToolNames: ['read_file'] } };
+    await configureRoutineBrowser(state, { browser: true });
+    expect(state.metadata.allowedToolNames).toEqual(['read_file', 'browser_controller']);
+  });
+  it.each([{ userVisibleBrowser: false }])('still needs a visible-browser-capable graph %p', async metadata => {
     const state: any = { metadata };
     await expect(configureRoutineBrowser(state, { browser: true })).rejects.toThrow();
     expect(isGraphBrowserControllerEnabled(state)).toBe(false);
