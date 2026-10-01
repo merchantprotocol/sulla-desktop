@@ -6,6 +6,7 @@ import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
 import { BrowserPermissionPolicy, SitePermissionStore, originOf } from '@pkg/main/browserTabs/browserPermissions';
 import { BROWSER_SESSION_PARTITION, getBrowserSession } from '@pkg/main/browserTabs/browserSession';
+import { isRecentSyntheticInput } from '@pkg/main/browserTabs/syntheticInput';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { safeSend } from '@pkg/utils/safeSend';
@@ -105,6 +106,8 @@ export class BrowserTabViewManager {
    * to sleep; see sleepIdleViews / wakeView.
    */
   private lastActiveAt = new Map<string, number>();
+  /** Last real human mouseDown/keyDown inside any tab page (ms epoch). */
+  private lastPageUserInputAt = 0;
   private sleepingTabs = new Set<string>();
   private faviconUrls = new Map<string, string>(); // tabId → current page's favicon URL
   private viewHealth = new Map<string, ViewHealth>();
@@ -482,6 +485,23 @@ export class BrowserTabViewManager {
 
   getFocusedTab(): string | null {
     return this.focusedTabId;
+  }
+
+  /**
+   * The chrome renderer lost keyboard focus from a text field the human was
+   * typing in, without the human doing anything in the chrome. Hand focus
+   * back to the chrome unless the human actually clicked/typed into a page
+   * (that's a legitimate move) or switched to another window or app.
+   * Returns true when the renderer may refocus its field.
+   */
+  reclaimChromeFocus(mainWebContents: Electron.WebContents, recentInputMs = 1_500): boolean {
+    const mainWindow = getWindow('main-agent');
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents !== mainWebContents) return false;
+    if (!mainWindow.isFocused()) return false;
+    if (Date.now() - this.lastPageUserInputAt < recentInputMs) return false;
+    if (!mainWebContents.isFocused()) mainWebContents.focus();
+
+    return true;
   }
 
   /**
@@ -1396,6 +1416,8 @@ export class BrowserTabViewManager {
     wc.on('input-event', (_event, input) => {
       if (input.type !== 'mouseDown' && input.type !== 'rawKeyDown' && input.type !== 'keyDown') return;
       const now = Date.now();
+      if (isRecentSyntheticInput(wc, now)) return;
+      this.lastPageUserInputAt = now;
       if (now - lastUserInputAt < 1_000) return;
       lastUserInputAt = now;
       safeSend(mainWindow.webContents, 'browser-tab-view:user-input', { tabId });

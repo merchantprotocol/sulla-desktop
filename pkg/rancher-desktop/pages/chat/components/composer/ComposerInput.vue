@@ -17,6 +17,8 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue';
 
+import { useFocusGuard } from '@pkg/composables/useFocusGuard';
+
 const props = defineProps<{
   modelValue: string;
   placeholder?: string;
@@ -28,6 +30,7 @@ const emit = defineEmits<{
 }>();
 
 const taRef = ref<HTMLTextAreaElement | null>(null);
+useFocusGuard(taRef);
 const model = ref(props.modelValue);
 
 // Defer autogrow to the next frame so the textarea has actually been

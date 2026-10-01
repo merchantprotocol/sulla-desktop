@@ -28,6 +28,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 
 import { submitErrorReport } from '@pkg/main/errorReporter';
+import { markSyntheticInput } from '@pkg/main/browserTabs/syntheticInput';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import { parseCSV } from '@pkg/agent/services/vaultImportParsers';
 import Logging from '@pkg/utils/logging';
@@ -551,6 +552,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
         params.unmodifiedText = mapped.text;
       }
 
+      markSyntheticInput(wc);
       await wc.debugger.sendCommand('Input.dispatchKeyEvent', params);
       return true;
     } catch (err) {
@@ -639,6 +641,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
         wc.debugger.attach('1.3');
       }
 
+      markSyntheticInput(wc);
       await wc.debugger.sendCommand('Input.dispatchMouseEvent', {
         type:       mouseEvent.type,
         x:          mouseEvent.x,
@@ -715,6 +718,12 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   // events from the previously visible tab cannot hide the newly active tab.
   ipcMainProxy.handle('browser-tab-view:focus', async(_event: Electron.IpcMainInvokeEvent, tabId: string | null, clearOnlyIfFocusedTabId?: string) => {
     tabViewManager.setFocusedTab(tabId, clearOnlyIfFocusedTabId);
+  });
+
+  // A chrome text field (chat composer, address bar) lost focus without any
+  // human action in the chrome — e.g. an agent opening/driving tabs.
+  ipcMainProxy.handle('browser-tab-view:reclaim-chrome-focus', async(event: Electron.IpcMainInvokeEvent) => {
+    return tabViewManager.reclaimChromeFocus(event.sender);
   });
 
   ipcMainProxy.handle('browser-tab-view:exec-js', async(_event: Electron.IpcMainInvokeEvent, tabId: string, code: string) => {

@@ -101,6 +101,63 @@ describe('BrowserTabViewManager', () => {
     expect(manager.getFocusedTab()).toBe('tab-b');
   });
 
+  describe('reclaimChromeFocus', () => {
+    function chrome(opts: { windowFocused?: boolean; wcFocused?: boolean } = {}) {
+      const wc = { isFocused: jest.fn(() => opts.wcFocused ?? false), focus: jest.fn() };
+      const win = {
+        ...mockMainWindow,
+        webContents: wc,
+        isDestroyed: jest.fn(() => false),
+        isFocused:   jest.fn(() => opts.windowFocused ?? true),
+      };
+
+      mockGetWindow.mockReturnValue(win as any);
+
+      return wc;
+    }
+
+    afterEach(() => {
+      mockGetWindow.mockReturnValue(mockMainWindow);
+    });
+
+    it('hands focus back to the chrome when a tab took it without the human', async() => {
+      const { BrowserTabViewManager } = await loadManager();
+      const wc = chrome();
+
+      expect(BrowserTabViewManager.getInstance().reclaimChromeFocus(wc as any)).toBe(true);
+      expect(wc.focus).toHaveBeenCalled();
+    });
+
+    it('leaves focus alone right after the human clicked into a page', async() => {
+      const { BrowserTabViewManager } = await loadManager();
+      const manager = BrowserTabViewManager.getInstance();
+      const wc = chrome();
+
+      (manager as any).lastPageUserInputAt = Date.now();
+
+      expect(manager.reclaimChromeFocus(wc as any)).toBe(false);
+      expect(wc.focus).not.toHaveBeenCalled();
+    });
+
+    it('leaves focus alone when the human switched to another window or app', async() => {
+      const { BrowserTabViewManager } = await loadManager();
+      const wc = chrome({ windowFocused: false });
+
+      expect(BrowserTabViewManager.getInstance().reclaimChromeFocus(wc as any)).toBe(false);
+      expect(wc.focus).not.toHaveBeenCalled();
+    });
+
+    it('refuses requests from anything but the main chrome renderer', async() => {
+      const { BrowserTabViewManager } = await loadManager();
+      const wc = chrome();
+      const other = { isFocused: jest.fn(() => false), focus: jest.fn() };
+
+      expect(BrowserTabViewManager.getInstance().reclaimChromeFocus(other as any)).toBe(false);
+      expect(wc.focus).not.toHaveBeenCalled();
+      expect(other.focus).not.toHaveBeenCalled();
+    });
+  });
+
   it('allows the focused tab to clear its own focus', async() => {
     const { BrowserTabViewManager } = await loadManager();
     const manager = BrowserTabViewManager.getInstance();
