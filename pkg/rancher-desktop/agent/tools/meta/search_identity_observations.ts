@@ -1,13 +1,15 @@
 import { formatIdentityObservationDate, IdentityObservationsModel, normalizeIdentityDomain } from '../../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../../database/models/ObservationsModel';
 import { BaseTool, ToolResponse } from '../base';
+import { rankedDomainSearch } from './rankedSearch';
 
 /**
  * Search Identity Observations Tool
  *
- * Word-level ILIKE search within one domain of the `identity_observations`
- * table. Ranked phrase-hit → word-match count → level (stated facts first)
- * → recency. Only active (non-archived) rows are searched by default.
+ * Ranked by meaning within one domain using the ranked recall engine (BM25 +
+ * potion embeddings + learned ranker), so paraphrases match. Falls back to the
+ * word-level ILIKE search (phrase-hit → word count → level → recency) when
+ * include_archived is set or the engine is unavailable.
  */
 export class SearchIdentityObservationsWorker extends BaseTool {
   name = '';
@@ -26,9 +28,15 @@ export class SearchIdentityObservationsWorker extends BaseTool {
 
     try {
       const domain = normalizeIdentityDomain(input.domain);
-      const rows = await IdentityObservationsModel.search(domain, query.trim(), Number(limit) || 20, includeArchived);
+      const ranked = includeArchived
+        ? null
+        : await rankedDomainSearch(query.trim(), domain, Number(limit) || 20, id => IdentityObservationsModel.getById(id));
+      const scores = new Map(ranked?.map(h => [h.row.id, h.score]) ?? []);
+      const rows = ranked
+        ? ranked.map(h => h.row)
+        : await IdentityObservationsModel.search(domain, query.trim(), Number(limit) || 20, includeArchived);
       const words = ObservationsModel.tokenizeQuery(query.trim());
-      const matchDesc = words.length > 1 ? `"${ query }" (any of: ${ words.join(', ') })` : `"${ query }"`;
+      const matchDesc = ranked ? `"${ query }" (ranked by meaning)` : words.length > 1 ? `"${ query }" (any of: ${ words.join(', ') })` : `"${ query }"`;
 
       if (rows.length === 0) {
         return {
@@ -45,7 +53,9 @@ export class SearchIdentityObservationsWorker extends BaseTool {
           r.kind ? `kind:${ r.kind }` : null,
           r.confidence !== null && r.confidence !== undefined ? `confidence:${ r.confidence }` : null,
         ].filter(Boolean).join('·');
-        return `[id:${ r.id }] ${ labels } ${ formatIdentityObservationDate(r.created_at) } — ${ r.content }${ r.evidence ? ` (evidence: ${ r.evidence })` : '' }${ r.basis ? ` (basis: ${ r.basis })` : '' }${ r.archived ? ' (archived)' : '' }`;
+        const score = scores.has(r.id) ? ` (score ${ scores.get(r.id)!.toFixed(2) })` : '';
+
+        return `[id:${ r.id }] ${ labels } ${ formatIdentityObservationDate(r.created_at) }${ score } — ${ r.content }${ r.evidence ? ` (evidence: ${ r.evidence })` : '' }${ r.basis ? ` (basis: ${ r.basis })` : '' }${ r.archived ? ' (archived)' : '' }`;
       });
 
       return {

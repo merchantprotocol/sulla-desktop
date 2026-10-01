@@ -1,10 +1,19 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { IdentityObservationsModel } from '../../../database/models/IdentityObservationsModel';
 import { AddIdentityObservationWorker } from '../add_identity_observation';
 import { ListIdentityObservationsWorker } from '../list_identity_observations';
 import { RemoveIdentityObservationWorker } from '../remove_identity_observation';
 import { SearchIdentityObservationsWorker } from '../search_identity_observations';
+
+const recallMock = jest.fn<(...args: any[]) => Promise<any>>();
+
+jest.mock('../../../memory/MemoryRecallService', () => ({
+  OBSERVATION_DOMAIN:   'observation',
+  recallRankedMemories: (...args: any[]) => recallMock(...args),
+}));
+// Default: engine unavailable, so the ILIKE fallback path is what most tests cover.
+beforeEach(() => { recallMock.mockReset(); recallMock.mockResolvedValue(null) });
 
 function withSchema<T extends { name: string; description: string; schemaDef: Record<string, any> }>(
   worker: T,

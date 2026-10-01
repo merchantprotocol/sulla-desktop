@@ -190,7 +190,7 @@ sulla observation/recall_memories '{
 }'
 ```
 
-Recall by meaning with the ranked recall engine, the same one that fills the pre-turn memory context. It searches observations and every identity domain together, so "invoice" also finds "billing", and every result is dated. Omit `domain` to rank across all domains. Use this for "what do we know about X". Use `search_observations` / `search_identity_observations` for exact-phrase dedup checks before writing.
+Recall by meaning with the ranked recall engine, the same one that fills the pre-turn memory context. It searches observations and every identity domain together, so "invoice" also finds "billing", and every result is dated. Omit `domain` to rank across all domains. Use this for "what do we know about X" across every domain. `search_observations` / `search_identity_observations` use the same engine on a single domain.
 
 ### `observation/search_observations`
 ```bash
@@ -201,7 +201,7 @@ sulla observation/search_observations '{
 }'
 ```
 
-Use this before every observation write. The search splits the query into meaningful words and matches rows containing any of them; phrase hits rank first, then word-match count, then recency.
+Use this before every observation write. It ranks active observations by meaning with the ranked recall engine, so a paraphrase of what you're about to save still surfaces. Each row shows a relevance score. `include_archived: true` falls back to any-word keyword matching, because the engine only indexes active rows.
 
 ### `observation/list_observations`
 ```bash
@@ -227,7 +227,7 @@ Certainty levels:
 - `2` = derived fact established from conversation/tool evidence
 - `1` = reasoned conclusion from L2/L3 facts
 
-Search before writing; pass an existing `id` to update/promote/archive instead of duplicating.
+Search before writing; pass an existing `id` to update/promote/archive instead of duplicating. The search ranks the domain by meaning (ranked recall engine), so paraphrased duplicates surface with a relevance score.
 
 ```bash
 sulla observation/search_identity_observations '{"domain":"human","query":"prefers concise updates","limit":10}'
