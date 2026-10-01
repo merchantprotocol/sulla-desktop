@@ -31,6 +31,15 @@ describe('GitHubPullRequestHeadService', () => {
     ])).toEqual({ owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 665 });
   });
 
+  it('ignores markdown around an owner/repo reference in an artifact receipt', () => {
+    const receipt = { body: '- code_pr `dataripple-org/ripple-receptionist-worker#2735` (`7cd5369`) — https://github.com/dataripple-org/ripple-receptionist-worker/pull/2735. Repair pushed to PR #2735.' };
+    const evidence = { body: 'Attached evidence (code_pr dataripple-org/ripple-receptionist-worker#2735 @ 585b6ffd).' };
+    const expected = { owner: 'dataripple-org', repo: 'ripple-receptionist-worker', pullNumber: 2735 };
+
+    expect(extractPullRequestReferences(null, [receipt, evidence])).toEqual([expected]);
+    expect(extractPullRequestReference(null, [{ body: 'code_pr `dataripple-org/ripple-receptionist-worker#2735`. Repaired on PR #2735.' }])).toEqual(expected);
+  });
+
   it('does not mistake the linked issue itself for a pull request', () => {
     expect(extractPullRequestReference('merchantprotocol/sulla-desktop#660', [])).toBeNull();
   });
