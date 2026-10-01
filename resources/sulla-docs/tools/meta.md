@@ -181,6 +181,17 @@ sulla observation/remove_observational_memory '{"id":"a3K2"}'
 The id comes from the system prompt's memory list (each entry shows `[id:XXXX]`).
 This is a soft archive: it sets `archived=true`; the row remains recoverable and can still be found with `include_archived:true`.
 
+### `observation/recall_memories`
+```bash
+sulla observation/recall_memories '{
+  "query": "how do we handle billing for Selkirk",
+  "domain": "projects",
+  "limit": 16
+}'
+```
+
+Recall by meaning with the ranked recall engine, the same one that fills the pre-turn memory context. It searches observations and every identity domain together, so "invoice" also finds "billing", and every result is dated. Omit `domain` to rank across all domains. Use this for "what do we know about X". Use `search_observations` / `search_identity_observations` for exact-phrase dedup checks before writing.
+
 ### `observation/search_observations`
 ```bash
 sulla observation/search_observations '{

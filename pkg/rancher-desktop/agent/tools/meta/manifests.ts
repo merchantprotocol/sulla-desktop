@@ -107,6 +107,18 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./search_observations'),
   },
   {
+    name:        'recall_memories',
+    description: 'Recall memories by meaning with the ranked recall engine (keyword + embedding search + learned ranker) — the same engine that fills the pre-turn memory context. Searches observations and every identity domain at once, so "invoice" also finds "billing". Every result is dated. Prefer this over search_observations for "what do we know about X"; use the ILIKE search tools for exact-phrase dedup checks.',
+    category:    'observation',
+    schemaDef:   {
+      query:  { type: 'string', description: 'What to recall — a topic, question, or sentence.' },
+      domain: { type: 'string', optional: true, description: 'Restrict to one domain: observation, human, agent, business, environment, projects, world, or skills. Omit to rank across all.' },
+      limit:  { type: 'number', optional: true, description: 'Max results (default 16, max 50).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./recall_memories'),
+  },
+  {
     name:        'list_observations',
     description: 'List active observational memories sorted by priority (critical/high first) then recency. Optionally filter by priority level.',
     category:    'observation',

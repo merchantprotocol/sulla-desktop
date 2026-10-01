@@ -117,7 +117,14 @@ async function getIndex(model: PotionEmbedder): Promise<IndexState | null> {
  * @param context latest user message first, then up to 2 earlier user messages.
  * @returns ranked memories (always dated), or null when ranked recall is unavailable.
  */
-export async function recallRankedMemories(context: string[], now = new Date()): Promise<RecalledMemory[] | null> {
+export interface RecallOptions {
+  /** rank one domain only and return its top `limit` (default: every domain). */
+  domain?: string;
+  /** with a domain, or without one: a single ranking of this many (default: top 16 per domain). */
+  limit?:  number;
+}
+
+export async function recallRankedMemories(context: string[], now = new Date(), opts: RecallOptions = {}): Promise<RecalledMemory[] | null> {
   const model = getEmbedder();
 
   if (!model) return null;
@@ -127,7 +134,11 @@ export async function recallRankedMemories(context: string[], now = new Date()):
     if (!state) return null;
     const today = now.toISOString().slice(0, 10);
 
-    return state.index.searchPerDomain(context, today).map(({ row, score }) => {
+    const hits = opts.domain || opts.limit
+      ? state.index.search(context, today, opts.limit || undefined, opts.domain || undefined)
+      : state.index.searchPerDomain(context, today);
+
+    return hits.map(({ row, score }) => {
       const src = state.meta.get(row.id);
 
       return { ...row, score, category: src?.category ?? null, basis: src?.basis ?? null };

@@ -42,6 +42,7 @@ sulla <category> --help          # what THIS install exposes right now
 ## observation — observational + identity memory (+ home write_file) (9 tools)
 - `sulla observation/add_observational_memory` — Store an operational observation into long-term memory (with priority).
 - `sulla observation/remove_observational_memory` — Archive (soft-delete) an observational memory by id.
+- `sulla observation/recall_memories` — Recall memories by meaning across all domains with the ranked engine (dated results; optional `domain`, `limit`).
 - `sulla observation/search_observations` — Search active observational memories by keyword/phrase (do this before adding, to dedupe).
 - `sulla observation/list_observations` — List active observations, critical/high first then recency.
 - `sulla observation/add_identity_observation` — Store/update a domain-keyed identity observation (human / business / world / agent / environment / projects) with certainty level 3/2/1.
