@@ -190,7 +190,7 @@ sulla observation/search_observations '{
 }'
 ```
 
-Use this before every observation write. The search splits the query into meaningful words and matches rows containing any of them; phrase hits rank first, then word-match count, then recency.
+Use this before every observation write. It ranks active observations by meaning with the ranked recall engine, so a paraphrase of what you're about to save still surfaces. Each row shows a relevance score. `include_archived: true` falls back to any-word keyword matching, because the engine only indexes active rows.
 
 ### `observation/list_observations`
 ```bash
@@ -216,7 +216,7 @@ Certainty levels:
 - `2` = derived fact established from conversation/tool evidence
 - `1` = reasoned conclusion from L2/L3 facts
 
-Search before writing; pass an existing `id` to update/promote/archive instead of duplicating.
+Search before writing; pass an existing `id` to update/promote/archive instead of duplicating. The search ranks the domain by meaning (ranked recall engine), so paraphrased duplicates surface with a relevance score.
 
 ```bash
 sulla observation/search_identity_observations '{"domain":"human","query":"prefers concise updates","limit":10}'

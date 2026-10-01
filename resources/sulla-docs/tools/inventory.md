@@ -42,11 +42,11 @@ sulla <category> --help          # what THIS install exposes right now
 ## observation — observational + identity memory (+ home write_file) (9 tools)
 - `sulla observation/add_observational_memory` — Store an operational observation into long-term memory (with priority).
 - `sulla observation/remove_observational_memory` — Archive (soft-delete) an observational memory by id.
-- `sulla observation/search_observations` — Search active observational memories by keyword/phrase (do this before adding, to dedupe).
+- `sulla observation/search_observations` — Search active observational memories by meaning (ranked recall engine; do this before adding, to dedupe).
 - `sulla observation/list_observations` — List active observations, critical/high first then recency.
 - `sulla observation/add_identity_observation` — Store/update a domain-keyed identity observation (human / business / world / agent / environment / projects) with certainty level 3/2/1.
 - `sulla observation/remove_identity_observation` — Archive (soft-delete) an identity observation by id.
-- `sulla observation/search_identity_observations` — Search identity observations within one domain (dedupe before adding).
+- `sulla observation/search_identity_observations` — Search identity observations within one domain by meaning (ranked recall engine; dedupe before adding).
 - `sulla observation/list_identity_observations` — List identity observations for one domain, most certain first (L3→L2→L1) then recency.
 - `sulla observation/write_file` — Write/overwrite a file. **Restricted to the home directory.** (Category is `observation`; `meta/write_file` resolves to the same tool.)
 

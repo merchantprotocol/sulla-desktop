@@ -102,6 +102,19 @@ describe('ranked recall index', () => {
     expect(ids.filter(id => id === 'a1' || id === 'a2')).toHaveLength(1);
   });
 
+  it('returns up to 16 per domain so a busy domain cannot crowd out the rest', () => {
+    // the filler rows embed identically, so disable dedup to test the cap alone
+    const index = new RankedRecallIndex(rows, emb, { ...DEFAULT_RANKER, dedupCosine: 1.01 });
+    const hits = index.searchPerDomain(['hello world merge the sulla PRs'], '2026-09-30');
+    const count = (d: string) => hits.filter(h => h.row.domain === d).length;
+
+    expect(count('human')).toBe(16);
+    expect(count('agent')).toBe(2);
+    expect(count('projects')).toBe(1);
+    expect(count('observation')).toBe(1);
+    expect(index.search(['hello world merge the sulla PRs'], '2026-09-30', 16, 'human').every(h => h.row.domain === 'human')).toBe(true);
+  });
+
   it('returns nothing for empty context', () => {
     expect(new RankedRecallIndex(rows, emb).search(['   '], '2026-09-30')).toEqual([]);
   });

@@ -96,10 +96,10 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'search_observations',
-    description: 'Search active observational memories by keyword or phrase. The query is split into words and any observation containing ANY meaningful word matches (stopwords ignored), ranked by phrase hit then word-match count. Returns compact rows (id, priority, timestamp, content). Use this before adding a new observation to check for existing similar ones.',
+    description: 'Search active observational memories by meaning with the ranked recall engine (keyword + embedding search + learned ranker), so paraphrases match. Returns compact rows (id, priority, timestamp, relevance score, content), best first. include_archived falls back to any-word keyword matching. Use this before adding a new observation to check for existing similar ones.',
     category:    'observation',
     schemaDef:   {
-      query:            { type: 'string', description: 'Search keyword or phrase — split into words, any-word ILIKE match against observation content.' },
+      query:            { type: 'string', description: 'What to search for — a topic, phrase, or the sentence you are about to save. Ranked by meaning.' },
       limit:            { type: 'number', optional: true, description: 'Max results to return (default 20).' },
       include_archived: { type: 'boolean', optional: true, description: 'When true, also searches archived (soft-deleted) observations (default false).' },
     },
@@ -151,10 +151,10 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'search_identity_observations',
-    description: 'Search active identity observations within one domain (human / business / world / agent / environment / projects / skills) by keyword or phrase. Any-word ILIKE match ranked by phrase hit, word-match count, then certainty level (stated facts first) and recency. Use this before adding a new identity observation to check for existing similar ones.',
+    description: 'Search active identity observations within one domain (human / business / world / agent / environment / projects / skills) by meaning with the ranked recall engine (keyword + embedding search + learned ranker), so paraphrases match. Rows include a relevance score, best first. include_archived falls back to any-word keyword matching. Use this before adding a new identity observation to check for existing similar ones.',
     category:    'observation',
     schemaDef:   {
-      query:            { type: 'string', description: 'Search keyword or phrase — split into words, any-word ILIKE match against observation content.' },
+      query:            { type: 'string', description: 'What to search for — a topic, phrase, or the sentence you are about to save. Ranked by meaning.' },
       domain:           { type: 'string', optional: true, description: 'Identity domain to search: human, business, world, agent, environment, projects, or skills (default human).' },
       limit:            { type: 'number', optional: true, description: 'Max results to return (default 20).' },
       include_archived: { type: 'boolean', optional: true, description: 'When true, also searches archived (soft-deleted) rows (default false).' },
