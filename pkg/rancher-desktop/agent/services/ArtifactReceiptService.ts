@@ -17,7 +17,7 @@ import { ArtifactReceiptModel, type InsertArtifactReceiptInput } from '../databa
 export const ARTIFACT_RECEIPT_SCHEMA_VERSION = 1;
 
 /** Hard cap on rendered receipt comment length — keeps Projects readable. */
-export const RECEIPT_COMMENT_MAX_CHARS = 1400;
+export const RECEIPT_COMMENT_MAX_CHARS = 10_000;
 
 /** Marker embedded in every receipt comment; a comment without it is legacy prose. */
 export const RECEIPT_MARKER_PREFIX = '<!-- artifact-receipt';
@@ -195,7 +195,7 @@ export function renderReceiptComment(receipt: ArtifactReceipt): string {
   }
   if (receipt.artifacts.length > 8) lines.push(`- …and ${ receipt.artifacts.length - 8 } more`);
 
-  if (receipt.validationSummary) lines.push(`Validation: ${ redactSecrets(truncate(receipt.validationSummary, 200)) }`);
+  if (receipt.validationSummary) lines.push(`Validation: ${ redactSecrets(truncate(receipt.validationSummary, 8_000)) }`);
   if (receipt.nextOwner)         lines.push(`Next: ${ truncate(receipt.nextOwner, 60) }`);
   if (receipt.evidence)          lines.push(`Evidence: ${ receipt.evidence.kind } \`${ truncate(receipt.evidence.ref, 80) }\`` +
     (receipt.evidence.url ? ` — ${ truncate(receipt.evidence.url, 200) }` : ''));

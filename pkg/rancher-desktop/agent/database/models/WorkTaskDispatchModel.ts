@@ -298,7 +298,7 @@ export class WorkTaskDispatchModel {
   }
 
   private static reviewReceipt(input: ArtifactReceiptInput): ArtifactReceipt {
-    return buildReceipt({ ...input, validationSummary: input.validationSummary?.slice(0, 500) });
+    return buildReceipt({ ...input, validationSummary: input.validationSummary?.slice(0, 8_000) });
   }
   static reviewGenerationHash(artifacts: ReviewArtifactComponent[]): string {
     const normalized = [...artifacts]
