@@ -118,9 +118,9 @@ async function getIndex(model: PotionEmbedder): Promise<IndexState | null> {
  * @returns ranked memories (always dated), or null when ranked recall is unavailable.
  */
 export interface RecallOptions {
-  /** rank one domain only and return its top `limit` (default: every domain). */
+  /** rank one domain only (default: the top 16 of every domain). */
   domain?: string;
-  /** with a domain, or without one: a single ranking of this many (default: top 16 per domain). */
+  /** with a domain: how many to return (default 16). */
   limit?:  number;
 }
 
@@ -134,8 +134,8 @@ export async function recallRankedMemories(context: string[], now = new Date(), 
     if (!state) return null;
     const today = now.toISOString().slice(0, 10);
 
-    const hits = opts.domain || opts.limit
-      ? state.index.search(context, today, opts.limit || undefined, opts.domain || undefined)
+    const hits = opts.domain
+      ? state.index.search(context, today, opts.limit || undefined, opts.domain)
       : state.index.searchPerDomain(context, today);
 
     return hits.map(({ row, score }) => {
