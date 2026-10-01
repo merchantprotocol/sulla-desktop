@@ -6,7 +6,7 @@
  *   - Look-ahead prefetch (fetch next sentence while current plays)
  *   - Sequence counter to prevent race conditions
  *   - Content deduplication (10s window)
- *   - Browser SpeechSynthesis fallback
+ *   - No fallback voice: a unit the selected engine can't render is skipped
  *
  * This service is the ONLY component that plays TTS audio. All TTS goes through
  * enqueue() -> playNext() -> IPC 'audio-speak'. The enqueue() method logs a caller
@@ -15,7 +15,7 @@
 
 import { splitForSynthesis } from './speechText';
 import { TypedEventEmitter } from './TypedEventEmitter';
-import { logTTSEnqueue, logTTSPlayStart, logTTSPlayEnd, logTTSStop, logTTSDedup, logTTSFallback, timingFirstAudio } from './VoiceLogger';
+import { logTTSEnqueue, logTTSPlayStart, logTTSPlayEnd, logTTSStop, logTTSDedup, logTTSSynthFailed, timingFirstAudio } from './VoiceLogger';
 
 // Speaking-rate multipliers for the native OS voice, mirroring Sulla Mobile's TtsService.
 const RATE_MAP: Record<string, number> = {
@@ -23,6 +23,11 @@ const RATE_MAP: Record<string, number> = {
   normal: 1.0,
   fast:   1.2,
 };
+
+// The one player allowed to make sound. Every chat tab (and the classic voice
+// session) owns its own player; without this, replies from several
+// conversations talk over each other. Newest speaker wins.
+const audible: { player: TTSPlayerService | null } = { player: null };
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -120,6 +125,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
    */
   stop(): void {
     logTTSStop();
+    if (audible.player === this) audible.player = null;
     this.sequence++; // invalidate in-flight operations
     this.queue.length = 0;
     this.queueLength = 0;
@@ -146,7 +152,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     // Re-read provider/voice config next turn (may have changed in Audio Settings)
     this.ttsConfig = null;
 
-    // Cancel browser speechSynthesis fallback if active
+    // Cancel native OS voice playback (system provider) if active
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
@@ -185,6 +191,10 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     this.playing = true;
     this.isPlaying = true;
     const seq = this.sequence;
+
+    // One voice app-wide: silence any other conversation before this one speaks.
+    if (audible.player && audible.player !== this) audible.player.stop();
+    audible.player = this;
 
     const text = this.queue.shift()!;
     this.queueLength = this.queue.length;
@@ -291,8 +301,11 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
         console.warn('[TTSPlayer] No audio data in result');
       }
     } catch (err) {
-      logTTSFallback(text);
-      await this.browserFallback(text);
+      // No fallback to the OS voice: a unit the selected engine (e.g. Kokoro
+      // while its model downloads) can't render is skipped, not read in a
+      // different voice.
+      logTTSSynthFailed(text);
+      console.warn('[TTSPlayer] Synthesis failed, skipping unit:', err);
       this.emit('playbackEnd', undefined as any);
     } finally {
       this.playing = false;
@@ -300,6 +313,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
         if (this.queue.length > 0) {
           this.playNext();
         } else {
+          if (audible.player === this) audible.player = null;
           this.isPlaying = false;
           this.queueLength = 0;
           this.emit('queueEmpty', undefined as any);
@@ -357,7 +371,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
   /**
    * Reads the selected TTS provider, voice, and rate from settings (cached until
    * stop() clears it). Defaults to on-device Kokoro (Bella) — free and keyless; while
-   * its model downloads, sentences fall back to the native OS voice.
+   * its model downloads, nothing is spoken (no native OS voice fallback).
    */
   private async getTtsConfig(): Promise<{ provider: string; voiceURI: string; rate: number }> {
     if (this.ttsConfig) return this.ttsConfig;
@@ -421,29 +435,6 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
       utterance.onend = () => resolve();
       utterance.onerror = () => resolve();
       synth.speak(utterance);
-    });
-  }
-
-  // ─── Browser Fallback ─────────────────────────────────────────
-
-  /**
-   * Fallback TTS using browser's SpeechSynthesis API when the IPC
-   * 'audio-speak' call fails.
-   */
-  private browserFallback(text: string): Promise<void> {
-    return new Promise<void>((resolve) => {
-      if (typeof window === 'undefined' || !window.speechSynthesis) {
-        console.warn('[TTSPlayer:fallback] speechSynthesis not available');
-        resolve();
-
-        return;
-      }
-      console.log('[TTSPlayer:fallback] Using browser speechSynthesis:', text.slice(0, 40));
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.onstart = () => timingFirstAudio();
-      utterance.onend = () => resolve();
-      utterance.onerror = () => resolve();
-      window.speechSynthesis.speak(utterance);
     });
   }
 }

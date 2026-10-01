@@ -223,6 +223,8 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
 
   async function startRecording() {
     console.log('[VoiceSession] startRecording — requesting mic + whisper');
+    // Opening the mic to talk cuts Sulla off now — don't wait for VAD barge-in.
+    ttsPlayer.stop();
     isRecording.value = true;
     pipelineState.value = 'LISTENING';
     turnAccumulator.reset();

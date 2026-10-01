@@ -263,6 +263,8 @@ watch(
 provide(ChatControllerKey, controller);
 provide(ThreadRegistryKey, registry);
 provide(ModelSelectorKey,  modelSelector);
+// Composer's voice reads this: only the tab on screen speaks.
+provide('chat:is-active', toRef(props, 'isActive'));
 
 // Provide a navigate-url callback so Composer can open the browser when the
 // user types a bare URL. Injected by Composer; no-op if ChatPage is standalone.
