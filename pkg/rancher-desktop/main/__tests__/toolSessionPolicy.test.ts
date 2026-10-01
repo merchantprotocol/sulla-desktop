@@ -28,3 +28,14 @@ describe('sessionAllowsTool', () => {
     expect(sessionAllowsTool([], 'git_push')).toBe(true);
   });
 });
+
+describe('sulla_tool (graph tool surface) uses the same rule', () => {
+  it('runs catalog tools for an exec session and refuses them for a verifier', async () => {
+    const { buildGraphToolHandler } = await import('../graphToolSurface');
+    const getTool = async () => ({ call: async () => ({ success: true, result: 'ok' }) });
+
+    expect((await buildGraphToolHandler(WORKER, getTool)({ tool: 'git_push' })).isError).toBe(false);
+    expect((await buildGraphToolHandler(WORKER, getTool)({ tool: 'ask_user_question' })).isError).toBe(true);
+    expect((await buildGraphToolHandler(VERIFIER, getTool)({ tool: 'git_push' })).isError).toBe(true);
+  });
+});

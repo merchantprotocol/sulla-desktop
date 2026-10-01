@@ -466,7 +466,9 @@ export class MCPServerHost {
             'This is the canonical way to invoke Sulla tools for this agent — use it instead of',
             'shelling out to the `sulla` CLI (sandboxed runs cannot reach the CLI bridge at all).',
             'Pass the bare tool name and its JSON arguments.',
-            `Allowed tools: ${ graphToolSurface.join(', ') }.`,
+            graphToolSurface.includes('exec')
+              ? 'You have the full Sulla tool catalog (git, github, project, …) — every tool browse_tools lists, except ask_user_question.'
+              : `Allowed tools: ${ graphToolSurface.join(', ') }.`,
             'Use browse_tools to discover each tool\'s parameter JSON, then invoke it here.',
           ].join(' '),
           inputSchema: {
