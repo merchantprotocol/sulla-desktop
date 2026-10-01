@@ -523,12 +523,10 @@ describe('TaskDispatcherService', () => {
     );
     expect(executeMock).toHaveBeenCalled();
     const workerState = executeMock.mock.calls[0][0];
-    expect(workerState.metadata.allowedToolNames).toEqual([
-      'browse_tools', 'exec', 'read_file', 'write_file',
-    ]);
-    expect(workerState.llmTools.map((tool: any) => tool.function.name)).toEqual([
-      'browse_tools', 'exec', 'read_file', 'write_file',
-    ]);
+    // Workers get exactly the full agent tool set the primary chat gets.
+    const fullSet = ['browse_tools', 'exec', 'read_file', 'write_file', 'ask_user_question', 'browser_controller'];
+    expect(workerState.metadata.allowedToolNames).toEqual(fullSet);
+    expect(workerState.llmTools.map((tool: any) => tool.function.name)).toEqual(fullSet);
     // Workers see the plan context the task cites and the task history (review findings on repair rounds).
     expect(workerState.messages[0].content).toContain('Spec: ~/Sites/handoff.txt');
     expect(workerState.messages[0].content).toContain('Prototype wins where it and the page disagree.');

@@ -1130,21 +1130,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           });
         }
 
-        // Block dangerous/recursive tools for sub-agents (workflow workers)
-        if ((state.metadata as any).isSubAgent) {
-          const subAgentBlockedTools = new Set([
-            'execute_workflow', 'restart_from_checkpoint',
-            'spawn_agent', 'check_agent_jobs',
-            'rdctl_reset', 'rdctl_shutdown', 'rdctl_set', 'rdctl_start',
-            'lima_create', 'lima_delete', 'lima_stop',
-            'docker_rm', 'docker_stop',
-            'kubectl_delete', 'kubectl_apply',
-            'install_extension', 'uninstall_extension',
-            'git_push', 'git_stash', 'git_checkout',
-          ]);
-          llmTools = llmTools.filter((t: any) => !subAgentBlockedTools.has(t?.function?.name));
-        }
-
         // Block browser/playwright tools when caller has no visible browser
         if ((state.metadata as any).userVisibleBrowser === false) {
           const browserTools = new Set([

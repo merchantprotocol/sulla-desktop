@@ -41,7 +41,7 @@ function plannerNode(
         orchestratorInstructions:
           `${ SAFETY }\n\nYou are one independent member of a planning council. ` +
           `Do not seek or infer another planner's answer. Your assigned lens is: ${ lens }\n\n` +
-          'Inspect the repository, bundled docs, linked GitHub artifact, and other read-only evidence when useful. ' +
+          'You have exec and the full Sulla catalog. Inspect the repository, bundled docs, linked GitHub artifact, specs and anything else you need. ' +
           'Return: root cause, evidence, smallest reversible execution plan, alternative considered, risks, verification, ' +
           'and the exact irreversible dependency if one truly exists.\n\n' +
           'Bounded task snapshot:\n{{trigger}}',

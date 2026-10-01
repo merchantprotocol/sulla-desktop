@@ -9,10 +9,12 @@ import { WorkflowExecutionModel } from '../database/models/WorkflowExecutionMode
 import { recordReceipt } from './ArtifactReceiptService';
 import { getProjectsApplicationService } from '../projects/application/ProjectsApplicationService';
 
-const MAX_DESCRIPTION_CHARS = 12_000;
-const MAX_CONTEXT_DESCRIPTION_CHARS = 4_000;
-const MAX_COMMENTS = 50;
-const MAX_COMMENT_CHARS = 4_000;
+// Planners get all the information: no description, comment-count or
+// comment-length caps (every lane is treated the same).
+const MAX_DESCRIPTION_CHARS = Number.POSITIVE_INFINITY;
+const MAX_CONTEXT_DESCRIPTION_CHARS = Number.POSITIVE_INFINITY;
+const MAX_COMMENTS = Number.POSITIVE_INFINITY;
+const MAX_COMMENT_CHARS = Number.POSITIVE_INFINITY;
 
 function bounded(value: string | null | undefined, max: number): string {
   return String(value ?? '').slice(0, max);

@@ -24,7 +24,7 @@ describe('locked core routine execution policy', () => {
     expect(lockedCoreBlockedError(false, 'Interactive Step', 'need user choice')).toBeNull();
   });
 
-  it('keeps protected reviewer children inside the parent read-only tool policy', () => {
+  it('passes the parent tool set to reviewer children and never makes them read-only', () => {
     const parent = {
       llmTools: [{ function: { name: 'read_file' } }],
       metadata: { allowedToolNames: ['read_file'], verifierReadOnly: true },
@@ -34,7 +34,7 @@ describe('locked core routine execution policy', () => {
     inheritSubAgentToolPolicy(parent, child, { inheritParentToolPolicy: true });
 
     expect(child.metadata.allowedToolNames).toEqual(['read_file']);
-    expect(child.metadata.verifierReadOnly).toBe(true);
+    expect(child.metadata.verifierReadOnly).toBeUndefined();
     expect(child.llmTools).toEqual(parent.llmTools);
   });
 

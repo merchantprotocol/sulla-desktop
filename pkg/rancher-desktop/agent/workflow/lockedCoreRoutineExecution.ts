@@ -46,7 +46,4 @@ export function inheritSubAgentToolPolicy(
   if (Array.isArray(parentState?.llmTools)) {
     subState.llmTools = [...parentState.llmTools];
   }
-  if (parentMeta.verifierReadOnly === true) {
-    subState.metadata.verifierReadOnly = true;
-  }
 }
