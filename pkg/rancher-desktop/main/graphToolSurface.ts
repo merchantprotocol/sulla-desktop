@@ -7,9 +7,8 @@
  * to sub-nodes. API-driven providers honor that surface because the graph
  * loop executes their tool calls. CLI-driven providers (Claude Code, Codex,
  * or any future CLI model) bring their own harness and would otherwise bypass
- * it — verifier runs additionally execute under a network-denying sandbox, so
- * even shelling to the `sulla` CLI fails (curl exit 7 before it reaches the
- * tools bridge).
+ * it. A surface that includes `exec` carries full Sulla catalog authority
+ * (toolSessionPolicy), which dispatched workers and reviewers both get.
  *
  * This module closes that gap provider-neutrally: any session whose graph
  * state carries an explicit allowedToolNames gets a `sulla_tool` MCP tool

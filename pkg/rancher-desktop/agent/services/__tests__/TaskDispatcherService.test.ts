@@ -658,12 +658,10 @@ describe('TaskDispatcherService', () => {
     );
     expect(resolvePullRequestHeadMock).toHaveBeenCalledTimes(3);
     const verifierState = executeMock.mock.calls[0][0];
+    // Reviewers have full authority: exec (the whole Sulla catalog) and no read-only sandbox.
     expect(verifierState.metadata.allowedToolNames).toContain('git_diff');
-    expect(verifierState.metadata.allowedToolNames).not.toContain('exec');
-    expect(verifierState.metadata.allowedToolNames).not.toContain('git_commit');
-    expect(verifierState.metadata.allowedToolNames).not.toContain('git_push');
-    expect(verifierState.metadata.allowedToolNames).not.toContain('github_merge_pr');
-    expect(verifierState.metadata.verifierReadOnly).toBe(true);
+    expect(verifierState.metadata.allowedToolNames).toContain('exec');
+    expect(verifierState.metadata.verifierReadOnly).toBeUndefined();
     expect(verifierState.messages[0].content).toContain('Re-check the remote head immediately before your verdict');
     expect(verifierState.messages[0].content).toContain('matching local worktree');
   });
@@ -805,7 +803,8 @@ describe('TaskDispatcherService', () => {
     expect(state.metadata.activeWorkflow.definition.nodes
       .filter((node: any) => node.data?.subtype === 'agent')
       .every((node: any) => node.data?.config?.agentId === 'sulla-desktop')).toBe(true);
-    expect(state.metadata.verifierReadOnly).toBe(true);
+    expect(state.metadata.verifierReadOnly).toBeUndefined();
+    expect(state.metadata.allowedToolNames).toContain('exec');
     expect(finalizeProtectedReviewMock).toHaveBeenCalledWith(
       'verify-core', 'PASS', expect.objectContaining({
         workflowExecutionId: 'wfp-review-1',
