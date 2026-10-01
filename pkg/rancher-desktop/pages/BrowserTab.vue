@@ -91,7 +91,9 @@
             type="text"
             class="address-bar"
             placeholder="Search or enter URL"
-            @focus="($event.target as HTMLInputElement).select()"
+            @focus="onAddressFocus"
+            @blur="onAddressBlur"
+            @keydown.esc="onAddressEscape"
             @keydown.meta.l.prevent="focusAddressBar"
           >
           <!-- Loading progress bar inside address bar -->
@@ -356,6 +358,7 @@ import { useStartupProgress } from './agent/useStartupProgress';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { useBookmarks } from '@pkg/composables/useBookmarks';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { useFocusGuard } from '@pkg/composables/useFocusGuard';
 import { useTheme } from '@pkg/composables/useTheme';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -684,7 +687,35 @@ function onSidePanelStateChanged(_event: unknown, state: { open: boolean; width:
 
 const viewContainerRef = ref<HTMLDivElement | null>(null);
 const addressInput = ref<HTMLInputElement | null>(null);
+useFocusGuard(addressInput);
 const addressBarUrl = ref('');
+// While the human is in the address bar, page events (load start/stop,
+// title changes, in-page navigation) must not overwrite what they're
+// typing — the latest page URL is parked here and restored on blur/Esc.
+const addressBarFocused = ref(false);
+let pageUrlWhileEditing = '';
+
+function onAddressFocus(e: FocusEvent) {
+  addressBarFocused.value = true;
+  pageUrlWhileEditing = addressBarUrl.value;
+  (e.target as HTMLInputElement).select();
+}
+
+function onAddressBlur() {
+  addressBarFocused.value = false;
+  if (pageUrlWhileEditing) addressBarUrl.value = pageUrlWhileEditing;
+}
+
+function onAddressEscape() {
+  addressBarUrl.value = pageUrlWhileEditing;
+  addressInput.value?.select();
+}
+
+/** Show `url` in the address bar unless the human is editing it. */
+function setPageUrl(url: string) {
+  pageUrlWhileEditing = url;
+  if (!addressBarFocused.value) addressBarUrl.value = url;
+}
 const loading = ref(false);
 const canGoBack = ref(false);
 const canGoForward = ref(false);
@@ -835,6 +866,8 @@ function navigate() {
   }
 
   addressBarUrl.value = url;
+  pageUrlWhileEditing = url;
+  addressInput.value?.blur();
   loading.value = true;
 
   if (!viewCreated.value) {
@@ -922,7 +955,7 @@ function onKeydown(e: KeyboardEvent) {
 // IPC state-update listener
 function onStateUpdate(_event: unknown, state: { tabId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; isLoading: boolean }) {
   if (state.tabId !== props.tabId) return;
-  addressBarUrl.value = state.url;
+  setPageUrl(state.url);
   canGoBack.value = state.canGoBack;
   canGoForward.value = state.canGoForward;
   loading.value = state.isLoading;

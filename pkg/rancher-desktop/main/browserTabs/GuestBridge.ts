@@ -15,6 +15,8 @@
 
 import type { WebContents, NativeImage } from 'electron';
 
+import { markSyntheticInput } from './syntheticInput';
+
 function jsArg(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -285,9 +287,15 @@ export class GuestBridge {
     }
   }
 
+  /** Agent input — stamped so the tab doesn't mistake it for the human. */
+  private sendInput(event: Parameters<WebContents['sendInputEvent']>[0]): void {
+    markSyntheticInput(this.wc);
+    this.wc.sendInputEvent(event);
+  }
+
   async moveMouse(x: number, y: number): Promise<boolean> {
     try {
-      this.wc.sendInputEvent({ type: 'mouseMove', x, y } as any);
+      this.sendInput({ type: 'mouseMove', x, y } as any);
       return true;
     } catch {
       return false;
@@ -298,8 +306,8 @@ export class GuestBridge {
     try {
       const button = options.button ?? 'left';
       const clickCount = options.clickCount ?? 1;
-      this.wc.sendInputEvent({ type: 'mouseDown', x, y, button, clickCount } as any);
-      this.wc.sendInputEvent({ type: 'mouseUp', x, y, button, clickCount } as any);
+      this.sendInput({ type: 'mouseDown', x, y, button, clickCount } as any);
+      this.sendInput({ type: 'mouseUp', x, y, button, clickCount } as any);
       return true;
     } catch {
       return false;
@@ -308,14 +316,14 @@ export class GuestBridge {
 
   async dragFromTo(fromX: number, fromY: number, toX: number, toY: number): Promise<boolean> {
     try {
-      this.wc.sendInputEvent({ type: 'mouseDown', x: fromX, y: fromY, button: 'left' } as any);
+      this.sendInput({ type: 'mouseDown', x: fromX, y: fromY, button: 'left' } as any);
       const steps = 10;
       for (let i = 1; i <= steps; i++) {
         const mx = fromX + (toX - fromX) * (i / steps);
         const my = fromY + (toY - fromY) * (i / steps);
-        this.wc.sendInputEvent({ type: 'mouseMove', x: mx, y: my, button: 'left' } as any);
+        this.sendInput({ type: 'mouseMove', x: mx, y: my, button: 'left' } as any);
       }
-      this.wc.sendInputEvent({ type: 'mouseUp', x: toX, y: toY, button: 'left' } as any);
+      this.sendInput({ type: 'mouseUp', x: toX, y: toY, button: 'left' } as any);
       return true;
     } catch {
       return false;
@@ -330,9 +338,9 @@ export class GuestBridge {
   async typeText(text: string): Promise<boolean> {
     try {
       for (const ch of text) {
-        this.wc.sendInputEvent({ type: 'keyDown', keyCode: ch } as any);
-        this.wc.sendInputEvent({ type: 'char', keyCode: ch } as any);
-        this.wc.sendInputEvent({ type: 'keyUp', keyCode: ch } as any);
+        this.sendInput({ type: 'keyDown', keyCode: ch } as any);
+        this.sendInput({ type: 'char', keyCode: ch } as any);
+        this.sendInput({ type: 'keyUp', keyCode: ch } as any);
       }
       return true;
     } catch {
@@ -345,11 +353,11 @@ export class GuestBridge {
       await this.call('focusElement', handle);
     }
     try {
-      this.wc.sendInputEvent({ type: 'keyDown', keyCode: key } as any);
+      this.sendInput({ type: 'keyDown', keyCode: key } as any);
       if (key.length === 1 || key === 'Enter' || key === 'Space' || key === 'Tab') {
-        this.wc.sendInputEvent({ type: 'char', keyCode: key } as any);
+        this.sendInput({ type: 'char', keyCode: key } as any);
       }
-      this.wc.sendInputEvent({ type: 'keyUp', keyCode: key } as any);
+      this.sendInput({ type: 'keyUp', keyCode: key } as any);
       return true;
     } catch {
       return !!(await this.call('pressKey', key, handle));
