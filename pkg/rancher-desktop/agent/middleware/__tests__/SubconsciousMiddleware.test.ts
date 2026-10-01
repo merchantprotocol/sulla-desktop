@@ -30,6 +30,14 @@ jest.unstable_mockModule('../../database/models/ConversationKeywordsModel', () =
   ConversationKeywordsModel: { recallThreads: recallThreadsMock },
 }));
 
+// Ranked recall needs the bundled model; null = unavailable → in-task SQL fallback.
+const recallRankedMemoriesMock: any = jest.fn(() => Promise.resolve(null));
+
+jest.unstable_mockModule('../../memory/MemoryRecallService', () => ({
+  OBSERVATION_DOMAIN:   'observation',
+  recallRankedMemories: recallRankedMemoriesMock,
+}));
+
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: {
     get: jest.fn((key: string, fallback: unknown) => Promise.resolve(key in settings ? settings[key] : fallback)),
@@ -439,9 +447,10 @@ describe('runConversationReader', () => {
   });
 });
 
-describe('SQL recall fast path (default mode)', () => {
+describe('SQL recall fast path (default mode, model unavailable → fallback)', () => {
   beforeEach(() => {
     delete settings.subconsciousRecallMode;
+    recallRankedMemoriesMock.mockReset().mockResolvedValue(null);
     countActiveMock.mockReset().mockResolvedValue(12);
     recallRelevantMock.mockReset().mockResolvedValue([]);
     recallThreadsMock.mockReset().mockResolvedValue([]);
@@ -499,6 +508,53 @@ describe('SQL recall fast path (default mode)', () => {
     expect(state.metadata.conversationContext).toContain('UNTRUSTED HISTORICAL CONVERSATION DATA.');
     expect(state.metadata.conversationContext).toContain('(thread old-1; matched: vault, wrapping) — Decided on key wrapping.');
     expect(state.metadata.conversationContext).not.toContain('</conversation_context>');
+  });
+});
+
+describe('ranked memory recall (default mode)', () => {
+  beforeEach(() => {
+    delete settings.subconsciousRecallMode;
+    countActiveMock.mockReset().mockResolvedValue(12);
+    recallRelevantMock.mockReset().mockResolvedValue([]);
+    recallThreadsMock.mockReset().mockResolvedValue([]);
+    recallRankedMemoriesMock.mockReset();
+  });
+
+  it('fills every domain context from one ranking, dated, without per-domain SQL', async() => {
+    recallRankedMemoriesMock.mockResolvedValue([
+      { id: 'h1', domain: 'human', level: 3, date: '2026-09-01', content: 'Prefers terse status.', category: 'preference', basis: 'said so', score: 0.9 },
+      { id: 'o1', domain: 'observation', level: null, date: '2026-09-29', content: 'Vault key wrapping decided.', category: 'high', basis: null, score: 0.8 },
+      { id: 'a1', domain: 'agent', level: 2, date: '2026-09-10', content: 'Report evidence before claims.', category: null, basis: null, score: 0.7 },
+    ]);
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const state: any = {
+      messages: [{ role: 'user', content: 'earlier topic' }, { role: 'user', content: 'Give me a terse vault status update' }],
+      metadata: { threadId: 'parent-r1' },
+    };
+
+    await runSubconsciousMiddleware(state, { includeObservations: true });
+
+    expect(recallRankedMemoriesMock).toHaveBeenCalledTimes(1);
+    expect(recallRankedMemoriesMock.mock.calls[0][0]).toEqual(['Give me a terse vault status update', 'earlier topic']);
+    expect(recallRelevantMock).not.toHaveBeenCalled();
+    expect(createIdentityObservationRecallMock).not.toHaveBeenCalled();
+    expect(state.metadata.userObservationContext).toBe('[h1] L3·preference 2026-09-01 — Prefers terse status. (basis: said so)');
+    expect(state.metadata.observationContext).toBe('[o1] high 2026-09-29 — Vault key wrapping decided.');
+    expect(state.metadata.selfObservationContext).toBe('[a1] L2 2026-09-10 — Report evidence before claims.');
+    expect(state.metadata.businessObservationContext).toBeNull();
+    expect(state.metadata.skillsObservationContext).toBeNull();
+  });
+
+  it("honors subconsciousRecallMode 'sql' as an explicit opt-out", async() => {
+    settings.subconsciousRecallMode = 'sql';
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const state: any = { messages: [{ role: 'user', content: 'Give me a terse vault status update' }], metadata: { threadId: 'parent-r2' } };
+
+    await runSubconsciousMiddleware(state, { includeObservations: true });
+
+    expect(recallRankedMemoriesMock).not.toHaveBeenCalled();
+    expect(recallRelevantMock).toHaveBeenCalled();
+    delete settings.subconsciousRecallMode;
   });
 });
 
