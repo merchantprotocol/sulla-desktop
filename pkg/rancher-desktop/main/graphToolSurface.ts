@@ -7,9 +7,8 @@
  * to sub-nodes. API-driven providers honor that surface because the graph
  * loop executes their tool calls. CLI-driven providers (Claude Code, Codex,
  * or any future CLI model) bring their own harness and would otherwise bypass
- * it — verifier runs additionally execute under a network-denying sandbox, so
- * even shelling to the `sulla` CLI fails (curl exit 7 before it reaches the
- * tools bridge).
+ * it. A surface that includes `exec` carries full Sulla catalog authority
+ * (toolSessionPolicy), which dispatched workers and reviewers both get.
  *
  * This module closes that gap provider-neutrally: any session whose graph
  * state carries an explicit allowedToolNames gets a `sulla_tool` MCP tool
@@ -18,6 +17,8 @@
  * tool surface — the graph does, the same way it does for subconscious
  * observer agents.
  */
+
+import { sessionAllowsTool } from './toolSessionPolicy';
 
 export interface GraphToolCallResult {
   // Index signature required for assignability to the MCP SDK's CallToolResult.
@@ -52,7 +53,10 @@ export function resolveGraphToolSurface(metadata: unknown): string[] | null {
  */
 export function buildGraphToolHandler(allowedTools: string[], getTool: ToolResolver) {
   return async ({ tool, args }: { tool: string; args?: Record<string, unknown> }): Promise<GraphToolCallResult> => {
-    if (!allowedTools.includes(tool)) {
+    // `exec` in the surface means full Sulla catalog authority (same rule as
+    // the CLI session gate), so dispatched workers can reach github/*,
+    // project/*, etc. here too — sandboxed CLI providers have no other path.
+    if (!sessionAllowsTool(allowedTools, tool)) {
       return {
         content: [{ type: 'text', text: `sulla_tool: "${ tool }" is not in this agent's graph-stamped tool surface. Allowed: ${ allowedTools.join(', ') }` }],
         isError: true,

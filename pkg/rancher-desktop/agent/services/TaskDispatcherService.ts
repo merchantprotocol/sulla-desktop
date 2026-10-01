@@ -644,11 +644,16 @@ export class TaskDispatcherService {
           ? this.buildProtectedReviewPrompt(task, dispatch, comments, claimedArtifacts, generationHash, excludedAgentIds)
           : this.buildVerifierPrompt(task, dispatch.id, comments);
         state.messages.push({ role: 'user', content: reviewPrompt });
-        const verifierTools = verificationOwner === 'core-routine' ? PROTECTED_REVIEW_TOOLS : [...LEGACY_VERIFIER_TOOLS];
+        // Reviewers get the same full authority as workers (exec = the whole
+        // Sulla catalog, no read-only sandbox), plus the adapter tools the
+        // review routine names explicitly.
+        const verifierTools = [...new Set([
+          ...MECHANICAL_WORKER_TOOLS,
+          ...(verificationOwner === 'core-routine' ? PROTECTED_REVIEW_TOOLS : LEGACY_VERIFIER_TOOLS),
+        ])];
         const llmTools = await Promise.all(verifierTools.map(name => toolRegistry.convertToolToLLM(name)));
         state.llmTools = llmTools;
         state.metadata.allowedToolNames = verifierTools;
-        state.metadata.verifierReadOnly = true;
         if (verificationOwner === 'core-routine') {
           const playbook = createPlaybookState(REVIEW_PROJECT_ARTIFACT_DEFINITION as any, reviewPrompt);
           state.metadata.activeWorkflow = playbook;
@@ -1111,7 +1116,7 @@ ${ history || '(no comments)' }
 
 Review independently. Resolve the actual draft PR/branch and matching local worktree from the task and history. Read the current remote head through the GitHub tools, record the FULL exact head SHA, inspect the diff plus callers/consumers, map every acceptance criterion to evidence, and run focused tests/typecheck safely against the matching worktree. Include tenant, security, and regression analysis when relevant. Re-check the remote head immediately before your verdict; if it changed, do not approve until the matching new head is available and reviewed.
 
-You are read-only with respect to the product and shared systems. Do not edit files, checkout/fetch, commit, push, merge, deploy, spend money, change Projects state, or send external communications. Read-only inspection and tests are allowed. The dispatcher alone applies the transition.
+You have exec and the full Sulla catalog: check out and fetch branches, build, and run any tests you need. Pushing to the branch under review changes its head, so put fixes in your findings rather than on that branch. The dispatcher applies the transition.
 
 Choose exactly one verdict:
 - APPROVE: the exact reviewed head satisfies the acceptance contract.
@@ -1169,8 +1174,8 @@ Artifact hint: ${ task.github_issue ?? '(resolve from custody evidence)' }
 Bound review generation: ${ generationHash }
 Structured artifact components: ${ JSON.stringify(artifacts) }
 Producer/custodian profile identities (audit only; reviewer independence is enforced by separate workflow node executions): ${ JSON.stringify(excludedAgentIds) }
-Read-only adapter catalog: ${ JSON.stringify(ARTIFACT_VERIFICATION_ADAPTERS) }
-Adapter access: your shell runs inside a network-denying read-only sandbox, so \`sulla\` CLI commands fail with no output. Invoke every catalog tool through the sulla-native MCP tool \`sulla_tool\` ({"tool":"<bare tool name>","args":{...}}) instead of the shell.
+Adapter catalog: ${ JSON.stringify(ARTIFACT_VERIFICATION_ADAPTERS) }
+Tool access: you have exec and the full Sulla catalog (git, github, project, …) through the \`sulla\` CLI or the sulla-native MCP tool \`sulla_tool\` ({"tool":"<bare tool name>","args":{...}}). Check out branches, build, and run whatever tests you need.
 
 Acceptance contract:
 ${ task.description || '(no description)' }
@@ -1178,6 +1183,6 @@ ${ task.description || '(no description)' }
 Bounded task evidence, oldest to newest:
 ${ JSON.stringify(history) }
 
-The dispatcher already owns the collision-safe lease. Inspect the canonical artifact and immutable generation directly. Worker summaries are leads, never proof. Do not mutate product files, source control, Projects, external systems, or shared infrastructure. The dispatcher alone records the verdict and transition.`;
+The dispatcher already owns the collision-safe lease. Inspect the canonical artifact and immutable generation directly. Worker summaries are leads, never proof. Pushing to the branch under review changes its head, so this generation can no longer be approved; put fixes in your findings. The dispatcher records the verdict and transition.`;
   }
 }
