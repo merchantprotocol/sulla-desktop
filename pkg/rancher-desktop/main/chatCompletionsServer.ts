@@ -10,6 +10,7 @@ import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { resolveSullaAgentsDir, resolveAllAgentsDirs } from '@pkg/agent/utils/sullaPaths';
 import paths from '@pkg/utils/paths';
+import { sessionAllowsTool } from './toolSessionPolicy';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 const API_TOKEN_FILE = 'chat-api-token.json';
@@ -1085,7 +1086,7 @@ export class ChatCompletionsServer {
           const state = getMCPServerHost().getToolSessionState(sessionToken);
           if (!state) return res.status(403).json({ success: false, error: 'Expired tool session' });
           const allowed = (state.metadata as { allowedToolNames?: string[] }).allowedToolNames;
-          if (Array.isArray(allowed) && allowed.length && !allowed.includes(toolName)) return res.status(403).json({ success: false, error: 'Tool not allowed for this session' });
+          if (!sessionAllowsTool(allowed, toolName)) return res.status(403).json({ success: false, error: 'Tool not allowed for this session' });
           tool.setState?.(state);
         }
         if (interactiveNames.has(toolName) && typeof (tool as any).sendChatMessage !== 'function') {
