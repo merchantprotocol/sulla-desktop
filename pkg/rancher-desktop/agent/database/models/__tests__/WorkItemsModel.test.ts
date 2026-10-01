@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals'
 
 import { postgresClient } from '../../PostgresClient';
 import { WorkItemsModel } from '../WorkItemsModel';
+import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 
 describe('WorkItemsModel', () => {
   let originalQuery: any;

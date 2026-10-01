@@ -999,6 +999,8 @@ export class WorkItemsModel {
       actor,
       semanticRole:         ownershipSemanticRole,
       executionEntryLaneKey,
+      enteringReview,
+      explicitAssignee:      changes.assignee !== undefined,
     });
 
     const assign = (col: string, val: any) => {
