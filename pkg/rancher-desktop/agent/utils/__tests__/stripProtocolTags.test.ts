@@ -35,4 +35,18 @@ describe('stripProtocolTags', () => {
   it('streaming variant truncates at a half-arrived opening wrapper', () => {
     expect(stripProtocolTagsStreaming('partial answer\n<AGENT_DONE>\nsummary not yet closed')).toBe('partial answer');
   });
+
+  it('holds back a half-arrived wrapper opener so the stream never shrinks', () => {
+    expect(stripProtocolTagsStreaming('Here is the answer. <')).toBe('Here is the answer.');
+    expect(stripProtocolTagsStreaming('Here is the answer. <AG')).toBe('Here is the answer.');
+    expect(stripProtocolTagsStreaming('Here is the answer. <AGENT_DO')).toBe('Here is the answer.');
+    expect(stripProtocolTagsStreaming('Here is the answer. <cita')).toBe('Here is the answer.');
+    expect(stripProtocolTagsStreaming('Here is the answer. <channel:heart')).toBe('Here is the answer.');
+  });
+
+  it('keeps ordinary angle brackets that cannot become a wrapper', () => {
+    expect(stripProtocolTagsStreaming('if a < b')).toBe('if a < b');
+    expect(stripProtocolTagsStreaming('use <div')).toBe('use <div');
+    expect(stripProtocolTagsStreaming('<b>bold</b> text')).toBe('<b>bold</b> text');
+  });
 });

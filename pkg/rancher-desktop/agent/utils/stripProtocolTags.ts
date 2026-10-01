@@ -80,6 +80,21 @@ export function stripProtocolTagsStreaming(text: string | null | undefined): str
   if (!text) return '';
   const cleaned = stripProtocolTags(text);
   const match = cleaned.match(PARTIAL_WRAPPER_START_RE);
-  if (!match) return cleaned;
-  return cleaned.slice(0, match.index).trim();
+  if (match) return cleaned.slice(0, match.index).trim();
+  return holdBackPartialOpener(cleaned);
+}
+
+const WRAPPER_OPENERS = ['<agent_done', '<agent_blocked', '<agent_continue', '<abort_workflow', '<speak', '<citations', '<channel:'];
+
+/** A flush can land mid-tag (`…answer. <AGE`). Emitting that and then the
+ *  truncated `…answer.` on the next flush shrinks the stream, and consumers
+ *  that only expect it to grow (mobile streaming TTS) restart the reply.
+ *  Hold back a trailing fragment that could still become a wrapper opener. */
+function holdBackPartialOpener(text: string): string {
+  const lt = text.lastIndexOf('<');
+  if (lt < 0) return text;
+  const tail = text.slice(lt).toLowerCase();
+  if (/\s/.test(tail)) return text;
+  const partial = WRAPPER_OPENERS.some(opener => opener.startsWith(tail) || (opener === '<channel:' && tail.startsWith(opener)));
+  return partial ? text.slice(0, lt).trim() : text;
 }
