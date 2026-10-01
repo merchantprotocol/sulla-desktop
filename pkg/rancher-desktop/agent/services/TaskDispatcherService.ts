@@ -61,6 +61,9 @@ const LEGACY_VERIFIER_TOOLS = [
 const MECHANICAL_WORKER_TOOLS = [
   'browse_tools', 'exec', 'read_file', 'write_file',
 ] as const;
+/** Per-description cap for project/epic plan context in worker and reviewer prompts. */
+const PLAN_CONTEXT_MAX_CHARS = 8_000;
+
 const PROTECTED_REVIEW_TOOLS = [...new Set([
   ...Object.values(ARTIFACT_VERIFICATION_ADAPTERS).flatMap(adapter => [...adapter.tools]),
 ])] as string[];
@@ -604,7 +607,8 @@ export class TaskDispatcherService {
         }).catch(err => console.error(`[TaskDispatcher] Could not write start comment for ${ dispatch.id }:`, err));
       }
 
-      const comments = isVerification ? await WorkItemsModel.listComments(task.id) : [];
+      const comments = await WorkItemsModel.listComments(task.id);
+      const planContext = await this.loadPlanContext(task);
       let claimedArtifacts: ReviewArtifactComponent[] = [];
       let excludedAgentIds: string[] = [];
       let selectedReviewerAgentIds: string[] = [];
@@ -641,7 +645,7 @@ export class TaskDispatcherService {
 
       if (isVerification) {
         const reviewPrompt = verificationOwner === 'core-routine'
-          ? this.buildProtectedReviewPrompt(task, dispatch, comments, claimedArtifacts, generationHash, excludedAgentIds)
+          ? this.buildProtectedReviewPrompt(task, dispatch, comments, claimedArtifacts, generationHash, excludedAgentIds, planContext)
           : this.buildVerifierPrompt(task, dispatch.id, comments);
         state.messages.push({ role: 'user', content: reviewPrompt });
         // Reviewers get the same full authority as workers (exec = the whole
@@ -678,7 +682,7 @@ export class TaskDispatcherService {
           workerTools.map(name => toolRegistry.convertToolToLLM(name)),
         );
         state.metadata.allowedToolNames = workerTools;
-        state.messages.push({ role: 'user', content: this.buildWorkerPrompt(task, dispatch.id, dispatch.agent_id) });
+        state.messages.push({ role: 'user', content: this.buildWorkerPrompt(task, dispatch.id, dispatch.agent_id, comments, planContext) });
       }
       state.metadata.isSubAgent = true;
       // Dispatched workers and verifiers do real work; they must chat through
@@ -1075,7 +1079,35 @@ export class TaskDispatcherService {
     }
   }
 
-  private buildWorkerPrompt(task: WorkTaskRecord, dispatchId: string, workerAgentId: string): string {
+  /**
+   * Project and epic descriptions hold the spec location, decided defaults and
+   * source-of-truth rules that task descriptions only cite ("Spec §4"). Without
+   * them the worker builds and the reviewer judges against different halves of
+   * the contract, and the task bounces.
+   */
+  private async loadPlanContext(task: WorkTaskRecord): Promise<string> {
+    const parts: string[] = [];
+    try {
+      const project = task.project_id ? await WorkItemsModel.getProject(task.project_id) : null;
+      if (project?.description?.trim()) {
+        parts.push(`Project "${ project.title }" (${ project.id }):\n${ project.description.trim().slice(0, PLAN_CONTEXT_MAX_CHARS) }`);
+      }
+      const epic = task.epic_id ? await WorkItemsModel.getEpic(task.epic_id) : null;
+      if (epic?.description?.trim()) {
+        parts.push(`Epic "${ epic.title }" (${ epic.id }):\n${ epic.description.trim().slice(0, PLAN_CONTEXT_MAX_CHARS) }`);
+      }
+    } catch (err) {
+      console.warn(`[TaskDispatcher] Plan context unavailable for ${ task.id }:`, err);
+    }
+
+    return parts.length ? parts.join('\n\n') : '(no project or epic description)';
+  }
+
+  private buildWorkerPrompt(task: WorkTaskRecord, dispatchId: string, workerAgentId: string, comments: { author: string | null; body: string }[] = [], planContext = '(no project or epic description)'): string {
+    const history = comments.slice(-30).map(comment => ({
+      author: comment.author || 'unknown',
+      body:   comment.body.slice(0, 4_000),
+    }));
     return `You are the execution worker for Projects task ${ task.id }.
 
 Title: ${ task.title }
@@ -1086,6 +1118,12 @@ Dispatch: ${ dispatchId }
 
 Description:
 ${ task.description || '(no description)' }
+
+Plan context (project and epic descriptions; specs, decided defaults and source-of-truth pointers the task cites live here, so open every file or URL they name before building):
+${ planContext }
+
+Task history, oldest to newest (on a repair round the latest review findings are here; fix every one and say how in your receipt):
+${ JSON.stringify(history) }
 
 Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
 
@@ -1154,7 +1192,7 @@ Any missing block, unknown verdict, abbreviated/non-hex SHA, or malformed JSON i
     }];
   }
 
-  private buildProtectedReviewPrompt(task: WorkTaskRecord, dispatch: ClaimedDispatch['dispatch'], comments: { author: string | null; body: string }[], artifacts: ReviewArtifactComponent[], generationHash: string, excludedAgentIds: string[]): string {
+  private buildProtectedReviewPrompt(task: WorkTaskRecord, dispatch: ClaimedDispatch['dispatch'], comments: { author: string | null; body: string }[], artifacts: ReviewArtifactComponent[], generationHash: string, excludedAgentIds: string[], planContext = '(no project or epic description)'): string {
     const history = comments.slice(-50).map(comment => ({
       author: comment.author || 'unknown',
       body:   comment.body.slice(0, 4_000),
@@ -1179,6 +1217,9 @@ Tool access: you have exec and the full Sulla catalog (git, github, project, …
 
 Acceptance contract:
 ${ task.description || '(no description)' }
+
+Plan context (project and epic descriptions; the specs, decided defaults and source-of-truth pointers the contract cites live here, so open every file or URL they name before judging a criterion unverifiable):
+${ planContext }
 
 Bounded task evidence, oldest to newest:
 ${ JSON.stringify(history) }

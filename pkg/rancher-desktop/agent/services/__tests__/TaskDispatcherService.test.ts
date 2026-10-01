@@ -110,6 +110,8 @@ jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
     updateTask:   updateTaskMock,
     getTask:      getTaskMock,
     listComments: jest.fn(() => Promise.resolve([{ author: 'worker', body: 'Draft PR #123 at head.' }])),
+    getProject:   jest.fn(() => Promise.resolve({ id: 'p', title: 'Ghost Agent', description: 'Spec: ~/Sites/handoff.txt (section numbers refer to it).' })),
+    getEpic:      jest.fn(() => Promise.resolve({ id: 'e', title: 'Sidecar', description: 'Prototype wins where it and the page disagree.' })),
   },
 }));
 jest.unstable_mockModule('../GraphRegistry', () => ({
@@ -527,6 +529,10 @@ describe('TaskDispatcherService', () => {
     expect(workerState.llmTools.map((tool: any) => tool.function.name)).toEqual([
       'browse_tools', 'exec', 'read_file', 'write_file',
     ]);
+    // Workers see the plan context the task cites and the task history (review findings on repair rounds).
+    expect(workerState.messages[0].content).toContain('Spec: ~/Sites/handoff.txt');
+    expect(workerState.messages[0].content).toContain('Prototype wins where it and the page disagree.');
+    expect(workerState.messages[0].content).toContain('Draft PR #123 at head.');
     expect(appendOutcomeJournalMock).toHaveBeenCalledWith('dispatch-1', 'task-1', expect.objectContaining({
       dispatchStatus: 'completed', taskStatus: 'in_review', taskAssignee: 'heartbeat',
       evidence: expect.objectContaining({ custody: expect.objectContaining({ workKind: 'code' }) }),
@@ -792,6 +798,12 @@ describe('TaskDispatcherService', () => {
     await new Promise(resolve => setTimeout(resolve, 10));
     service.destroy();
 
+    // The protected reviewer judges against the same plan context the worker built from.
+    expect(recordReviewLaunchWithExecutionMock).toHaveBeenCalledWith(
+      'verify-core', expect.objectContaining({
+        triggerInput: expect.stringContaining('Spec: ~/Sites/handoff.txt'),
+      }),
+    );
     expect(recordReviewLaunchWithExecutionMock).toHaveBeenCalledWith(
       'verify-core', expect.objectContaining({
         executionId: expect.stringMatching(/^wfp-/),
