@@ -56,7 +56,9 @@ declare global {
 
 export interface VoiceSessionAdapterOptions {
   /** Surfaces recoverable errors (missing whisper model, mic permission, …). */
-  onError?: (message: string) => void;
+  onError?:  (message: string) => void;
+  /** Is this adapter's tab the one on screen? Background tabs never speak. Default: yes. */
+  isActive?: () => boolean;
 }
 
 // Fallback commit delay (ms). PRIMARY end-of-turn trigger is the main-process
@@ -81,6 +83,7 @@ let liveAdapter: VoiceSessionAdapter | null = null;
 export class VoiceSessionAdapter {
   private readonly controller: ChatController;
   private readonly onError?:   (message: string) => void;
+  private readonly isActive:   () => boolean;
 
   private readonly tts: TTSPlayerService;
 
@@ -147,6 +150,7 @@ export class VoiceSessionAdapter {
   constructor(controller: ChatController, opts: VoiceSessionAdapterOptions = {}) {
     this.controller = controller;
     this.onError = opts.onError;
+    this.isActive = opts.isActive ?? (() => true);
 
     this.tts = new TTSPlayerService({
       ipcInvoke: ipcRenderer.invoke.bind(ipcRenderer),
@@ -192,6 +196,8 @@ export class VoiceSessionAdapter {
 
   async start(): Promise<void> {
     if (this.capturing || this.finishing) return;
+    // Opening the mic to talk cuts Sulla off now — don't wait for VAD barge-in.
+    this.tts.stop();
     this.mode = 'handsfree';
     this.activate();
     await this.beginCapture(false);
@@ -427,6 +433,9 @@ export class VoiceSessionAdapter {
   speak(text: string, messageId?: string): void {
     if (window.__sullaTTSDisabled) return;
     if (!text?.trim()) return;
+    // Only the conversation on screen — or the one you're talking to by voice —
+    // gets a voice. Background tabs stay silent.
+    if (!this.isActive() && liveAdapter !== this) return;
     // Holding Space means "I'm talking" — don't talk over the user.
     if (this.mode === 'ptt' && this.active && !this.finishing) return;
     this.tts.enqueue(text.trim(), messageId ?? `speak_${ Date.now() }`);
@@ -435,6 +444,12 @@ export class VoiceSessionAdapter {
   /** Stop any in-flight TTS playback. */
   stopTTS(): void {
     this.tts.stop();
+  }
+
+  /** The tab went to the background: silence it unless it owns the live voice session. */
+  handleDeactivated(): void {
+    if (liveAdapter === this) return;
+    if (this.tts.isPlaying || this.tts.queueLength > 0) this.tts.stop();
   }
 
   private handleTtsStart(): void {

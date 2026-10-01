@@ -241,9 +241,9 @@ export function logTTSDedup(text: string): void {
   vlog('TTS', 'DEDUP', { text: text.slice(0, 200) });
 }
 
-/** TTS fell back to browser SpeechSynthesis because IPC audio-speak failed. */
-export function logTTSFallback(text: string): void {
-  vlog('TTS', 'FALLBACK', { text: text.slice(0, 200) });
+/** IPC audio-speak failed for a unit; it was skipped (there is no fallback voice). */
+export function logTTSSynthFailed(text: string): void {
+  vlog('TTS', 'SYNTH_FAILED', { text: text.slice(0, 200) });
 }
 
 // ─── Round-Trip Timing (TIMING) ─────────────────────────────────

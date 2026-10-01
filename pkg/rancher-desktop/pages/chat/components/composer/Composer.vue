@@ -88,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 
 import ComposerInput      from './ComposerInput.vue';
 import ComposerMic        from './ComposerMic.vue';
@@ -116,6 +116,8 @@ const controller = useChatController();
 // Injected by ChatPage when nested inside a browser tab — lets us open the
 // browser directly when the user types a bare URL instead of a chat message.
 const navigateUrl = inject<((url: string) => void) | undefined>('chat:navigate-url', undefined);
+// Is this chat tab on screen? Undefined (no tab host) counts as active.
+const tabActive = inject<Ref<boolean | undefined> | undefined>('chat:is-active', undefined);
 
 function looksLikeUrl(input: string): boolean {
   if (/^https?:\/\//i.test(input)) return true;
@@ -350,6 +352,12 @@ const voiceAdapter = new VoiceSessionAdapter(controller, {
     // Surface through a transient error bubble so it doesn't get lost.
     console.warn('[Composer] voice error:', msg);
   },
+  isActive: () => tabActive?.value !== false,
+});
+
+// Switching away from a tab cuts its voice — only the conversation on screen talks.
+watch(() => tabActive?.value, (active) => {
+  if (active === false) voiceAdapter.handleDeactivated();
 });
 
 function toggleVoice(): void {

@@ -13,7 +13,7 @@
  * The model (~350 MB) is downloaded once on first use from the pinned
  * sherpa-onnx GitHub release, sha256-verified, and extracted under
  * ~/.sulla/cache/voice-models/. Until it is ready, callers get
- * KokoroNotReadyError and fall back to the system voice.
+ * KokoroNotReadyError and that text is not spoken (no system-voice fallback).
  */
 
 import { execFile } from 'child_process';
