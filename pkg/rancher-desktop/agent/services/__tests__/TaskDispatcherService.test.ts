@@ -546,6 +546,63 @@ describe('TaskDispatcherService', () => {
     expect(updateTaskMock).not.toHaveBeenCalled();
   });
 
+  it('keeps a WORK_RESULT that ends past the 8,000-character cap and routes it to review', async() => {
+    const claim = {
+      task: {
+        id:          'task-long',
+        title:       'Long narration',
+        description: '',
+        project_id:  'project-1',
+        epic_id:     'epic-1',
+        priority:    'high',
+      },
+      dispatch: {
+        id:        'dispatch-long',
+        task_id:   'task-long',
+        agent_id:  'sulla-desktop',
+        thread_id: 'thread-long',
+      },
+      stage_claim: { id: 'stage-claim-long' },
+    };
+    const narration = 'Checked the branch, ran the suites, pushed the fix. '.repeat(150); // ~7,800 chars
+    const block = `<WORK_RESULT>{"summary":"Both PRs ready; CI green.","custody":{"workKind":"code","branch":"feat/long","commitSha":"${ 'b'.repeat(40) }","prUrl":"https://github.com/merchantprotocol/sulla-desktop/pull/124","prHeadSha":"${ 'b'.repeat(40) }","validation":{"tests":"${ 'pass '.repeat(40) }"},"provenance":{"agentId":"sulla-desktop"}}}</WORK_RESULT>`;
+    expect(narration.length).toBeLessThan(8_000);
+    expect(narration.length + block.length).toBeGreaterThan(8_000);
+    claimNextMock.mockResolvedValueOnce(claim).mockResolvedValue(null);
+    executeMock.mockResolvedValueOnce({
+      metadata: { agent: { status: 'completed' }, finalSummary: `${ narration }\n${ block }` },
+      messages: [],
+    });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    service.destroy();
+
+    expect(executeMock).toHaveBeenCalledTimes(1);
+    expect(appendOutcomeJournalMock).toHaveBeenCalledWith('dispatch-long', 'task-long', expect.objectContaining({
+      dispatchStatus: 'completed',
+      taskStatus:     'in_review',
+      evidence:       expect.objectContaining({ custody: expect.objectContaining({ branch: 'feat/long' }) }),
+    }));
+    const stored = appendOutcomeJournalMock.mock.calls.find((call: any[]) => call[0] === 'dispatch-long')[2].result as string;
+    expect(stored.length).toBeLessThanOrEqual(8_000);
+    expect(stored.endsWith(block)).toBe(true);
+  });
+
+  it('caps stored outcome text without ever cutting a WORK_RESULT block', async() => {
+    const { boundedOutcomeText } = await import('../TaskDispatcherService');
+    const block = '<WORK_RESULT>{"summary":"ok"}</WORK_RESULT>';
+    expect(boundedOutcomeText('short', 100)).toBe('short');
+    expect(boundedOutcomeText('x'.repeat(200), 100)).toBe('x'.repeat(100));
+    expect(boundedOutcomeText(`${ 'x'.repeat(200) }${ block }`, 100)).toBe(`${ 'x'.repeat(100 - block.length - 1) }\n${ block }`);
+    const big = `<WORK_RESULT>{"summary":"${ 'y'.repeat(300) }"}</WORK_RESULT>`;
+    expect(boundedOutcomeText(`narration ${ big }`, 100)).toBe(big);
+    // Two blocks stay two, so the parser still rejects a duplicate.
+    expect(boundedOutcomeText(`${ 'x'.repeat(200) }${ block } and ${ block }`, 120).match(/<WORK_RESULT>/g)).toHaveLength(2);
+  });
+
   it('settles an immortal worker at max runtime and releases its WIP slot', async() => {
     jest.useFakeTimers();
     try {
