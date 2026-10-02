@@ -8,7 +8,7 @@
 import { beforeEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
-  SullaSettingsModel: { get: jest.fn(async(_key: string, fallback: string) => fallback) },
+  SullaSettingsModel: { get: jest.fn((_key: string, fallback: string) => Promise.resolve(fallback)) },
 }));
 
 let modelDiscoveryService: typeof import('../ModelDiscoveryService').modelDiscoveryService;
@@ -59,7 +59,7 @@ describe('ModelDiscoveryService', () => {
       mockFetch.mockResolvedValueOnce({
         ok:     true,
         status: 200,
-        json:   async() => mockResponse,
+        json:   () => Promise.resolve(mockResponse),
       } as unknown as Response);
 
       const models = await fetchModelsForProvider('openai', 'test-key');
@@ -99,7 +99,7 @@ describe('ModelDiscoveryService', () => {
     it('should parse the current Anthropic models response', async() => {
       mockFetch.mockResolvedValueOnce({
         ok:   true,
-        json: async() => ({
+        json: () => Promise.resolve({
           data: [
             { id: 'claude-3-5-sonnet-20241022', display_name: 'Claude 3.5 Sonnet' },
             { id: 'claude-3-opus-20240229', display_name: 'Claude 3 Opus' },
@@ -140,7 +140,7 @@ describe('ModelDiscoveryService', () => {
       mockFetch.mockResolvedValueOnce({
         ok:     true,
         status: 200,
-        json:   async() => mockResponse,
+        json:   () => Promise.resolve(mockResponse),
       } as Response);
 
       const models = await fetchModelsForProvider('google', 'test-key');
@@ -166,7 +166,7 @@ describe('ModelDiscoveryService', () => {
       mockFetch.mockResolvedValue({
         ok:     true,
         status: 200,
-        json:   async() => mockResponse,
+        json:   () => Promise.resolve(mockResponse),
       } as Response);
 
       // First call
@@ -201,7 +201,7 @@ describe('ModelDiscoveryService', () => {
       mockFetch.mockResolvedValueOnce({
         ok:     true,
         status: 200,
-        json:   async() => { throw new Error('Invalid JSON') },
+        json:   () => Promise.reject(new Error('Invalid JSON')),
       } as unknown as Response);
 
       const models = await fetchModelsForProvider('grok', 'test-key');
@@ -230,12 +230,12 @@ describe('ModelDiscoveryService', () => {
         .mockResolvedValueOnce({
           ok:     true,
           status: 200,
-          json:   async() => openaiResponse,
+          json:   () => Promise.resolve(openaiResponse),
         } as Response)
         .mockResolvedValueOnce({
           ok:     true,
           status: 200,
-          json:   async() => grokResponse,
+          json:   () => Promise.resolve(grokResponse),
         } as Response);
 
       // This would normally get API keys from settings, but we'll test the service directly
