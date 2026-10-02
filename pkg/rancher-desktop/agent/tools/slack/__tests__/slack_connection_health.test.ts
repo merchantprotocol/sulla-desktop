@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
+import { slackToolManifests } from '../manifests';
+jest.unstable_mockModule('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: jest.fn<() => Promise<boolean>>().mockResolvedValue(false) } }));
+const slackConnectionHealthRegistration = slackToolManifests.find(manifest => manifest.name === 'slack_connection_health');
+
 const mockGet: any = jest.fn();
 const mockInvalidate: any = jest.fn();
 const mockInitializeService: any = jest.fn();
@@ -53,7 +57,7 @@ describe('slack_connection_health tool', () => {
   });
 
   it('returns healthy when client is present and auth.test succeeds', async() => {
-    const { SlackConnectionHealthWorker, slackConnectionHealthRegistration } = await loadSlackConnectionHealthTool();
+    const { SlackConnectionHealthWorker } = await loadSlackConnectionHealthTool();
 
     mockInitializeService.mockResolvedValueOnce(undefined);
     mockGetConnectionStatus.mockResolvedValueOnce({ integration_id: 'slack', connected: true });
@@ -86,7 +90,7 @@ describe('slack_connection_health tool', () => {
   });
 
   it('reinitializes when registry client is null and succeeds after retry', async() => {
-    const { SlackConnectionHealthWorker, slackConnectionHealthRegistration } = await loadSlackConnectionHealthTool();
+    const { SlackConnectionHealthWorker } = await loadSlackConnectionHealthTool();
 
     mockInitializeService.mockResolvedValueOnce(undefined);
     mockGetConnectionStatus.mockResolvedValueOnce({ integration_id: 'slack', connected: true });
@@ -118,7 +122,7 @@ describe('slack_connection_health tool', () => {
   });
 
   it('returns failure when auth is bad and reinitialize disabled', async() => {
-    const { SlackConnectionHealthWorker, slackConnectionHealthRegistration } = await loadSlackConnectionHealthTool();
+    const { SlackConnectionHealthWorker } = await loadSlackConnectionHealthTool();
 
     mockInitializeService.mockResolvedValueOnce(undefined);
     mockGetConnectionStatus.mockResolvedValueOnce({ integration_id: 'slack', connected: true });

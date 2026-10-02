@@ -8,7 +8,7 @@ export class LinkProjectItemWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      const link = await WorkItemKnowledgeModel.link(associationInput(input));
+      const link = await WorkItemKnowledgeModel.link(associationInput({ ...input, actor: input.actor || 'sulla' }));
       return { successBoolean: true, responseString: formatJson(link) };
     } catch (err: any) {
       return { successBoolean: false, responseString: `Link project item failed: ${ err?.message ?? String(err) }` };

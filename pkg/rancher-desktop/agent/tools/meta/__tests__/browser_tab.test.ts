@@ -1,21 +1,27 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
-const mockPersona = {
-  registerIframeAsset:   jest.fn(),
-  registerDocumentAsset: jest.fn(),
-  removeAsset:           jest.fn(),
-};
+import { browserToolManifests } from '../../browser/manifests';
+const browserTabRegistration = browserToolManifests.find((manifest: any) => manifest.name === 'tab');
 
-const mockRegistry = {
-  getOrCreatePersonaService: jest.fn(() => mockPersona),
+const mockBridge = {
+  getPageTitle: jest.fn(async() => 'Sulla'),
+  getPageUrl:   jest.fn(async() => 'https://example.com'),
+  execInPage:   jest.fn(async() => null),
 };
+const mockTabRegistry = {
+  open:        jest.fn(),
+  close:       jest.fn<(id: string) => boolean>(() => true),
+  bridge:      jest.fn(() => mockBridge),
+  assertOwner: jest.fn(),
+};
+jest.unstable_mockModule('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: jest.fn<() => Promise<boolean>>().mockResolvedValue(false) } }));
 
-jest.unstable_mockModule('../../../database/registry/AgentPersonaRegistry', () => ({
-  getAgentPersonaRegistry: () => mockRegistry,
+jest.unstable_mockModule('@pkg/main/browserTabs/TabRegistry', () => ({
+  tabRegistry: mockTabRegistry,
 }));
 
 async function loadModule() {
-  return import('../../playwright/browser_tab');
+  return import('../../browser/tab');
 }
 
 function configureWorker(worker: any, registration: any) {
@@ -27,39 +33,36 @@ function configureWorker(worker: any, registration: any) {
 
 describe('browser_tab tool', () => {
   afterEach(() => {
-    mockPersona.registerIframeAsset.mockReset();
-    mockPersona.registerDocumentAsset.mockReset();
-    mockPersona.removeAsset.mockReset();
-    mockRegistry.getOrCreatePersonaService.mockClear();
+    mockTabRegistry.open.mockReset();
+    mockTabRegistry.close.mockClear();
+    mockTabRegistry.bridge.mockClear();
   });
 
-  it('upserts workflow iframe asset using stable id and mutable url', async() => {
-    const { BrowserTabWorker, browserTabRegistration } = await loadModule();
+  it('opens a browser tab using the supplied stable id and url', async() => {
+    const { BrowserTabWorker } = await loadModule();
     const worker = configureWorker(new BrowserTabWorker(), browserTabRegistration);
     worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });
 
     const result = await worker.invoke({
       action:    'upsert',
-      assetType: 'iframe',
+      assetType: 'browser',
       assetId:   'sulla_n8n',
-      skillSlug: 'workflow_automation',
-      url:       'http://127.0.0.1:30119/home/workflows/abc123',
+      url:       'https://example.com/workflows/abc123',
       title:     'Sulla n8n',
       active:    true,
       collapsed: true,
     });
 
     expect(result.success).toBe(true);
-    expect(mockRegistry.getOrCreatePersonaService as any).toHaveBeenCalledWith('sulla-desktop');
-    expect(mockPersona.registerIframeAsset).toHaveBeenCalledWith(expect.objectContaining({
-      id:        'sulla_n8n',
-      skillSlug: 'workflow_automation',
-      url:       'http://127.0.0.1:30119/home/workflows/abc123',
+    expect(mockTabRegistry.open).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: 'sulla_n8n',
+      url:     'https://example.com/workflows/abc123',
+      origin:  'agent',
     }));
   });
 
-  it('upserts document active asset content', async() => {
-    const { BrowserTabWorker, browserTabRegistration } = await loadModule();
+  it('rejects the removed document asset type', async() => {
+    const { BrowserTabWorker } = await loadModule();
     const worker = configureWorker(new BrowserTabWorker(), browserTabRegistration);
     worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });
 
@@ -73,21 +76,18 @@ describe('browser_tab tool', () => {
       collapsed: true,
     });
 
-    expect(result.success).toBe(true);
-    expect(mockPersona.registerDocumentAsset).toHaveBeenCalledWith(expect.objectContaining({
-      id:      'planning-prd',
-      content: '<h3>Plan</h3><p>Build workflow</p>',
-    }));
+    expect(result.success).toBe(false);
+    expect(result.result).toContain('Document rendering was removed');
   });
 
   it('removes existing active asset by id', async() => {
-    const { BrowserTabWorker, browserTabRegistration } = await loadModule();
+    const { BrowserTabWorker } = await loadModule();
     const worker = configureWorker(new BrowserTabWorker(), browserTabRegistration);
     worker.setState({ metadata: { wsChannel: 'sulla-desktop' } });
 
     const result = await worker.invoke({ action: 'remove', assetId: 'sulla_n8n' });
 
     expect(result.success).toBe(true);
-    expect(mockPersona.removeAsset).toHaveBeenCalledWith('sulla_n8n');
+    expect(mockTabRegistry.close).toHaveBeenCalledWith('sulla_n8n');
   });
 });

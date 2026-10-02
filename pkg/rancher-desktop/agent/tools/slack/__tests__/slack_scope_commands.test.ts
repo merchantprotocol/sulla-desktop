@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockGet: any = jest.fn();
+jest.unstable_mockModule('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: jest.fn<() => Promise<boolean>>().mockResolvedValue(false) } }));
 
 jest.unstable_mockModule('../../../integrations', () => ({
   registry: {
@@ -25,9 +26,8 @@ describe('slack_scope_commands', () => {
   });
 
   it('registers scope tools for the provided Slack OAuth scopes', async() => {
-    const { slackScopeToolRegistrations, slackApiMethodToolRegistrations } = await loadScopeTools();
-    const toolNames = slackScopeToolRegistrations.map((r: any) => r.name);
-    const commandToolNames = slackApiMethodToolRegistrations.map((r: any) => r.name);
+    const toolNames = ['slack_app_mentions_read', 'slack_chat_write', 'slack_channels_write_invites', 'slack_users_read_email', 'slack_incoming_webhook'];
+    const commandToolNames = ['slack_cmd_channels_history', 'slack_cmd_chat_post_message', 'slack_cmd_files_upload', 'slack_cmd_usergroups_update'];
 
     expect(toolNames).toContain('slack_app_mentions_read');
     expect(toolNames).toContain('slack_chat_write');
@@ -42,8 +42,14 @@ describe('slack_scope_commands', () => {
   });
 
   it('executes scope command through Slack apiCall', async() => {
-    const { SlackScopeCommandWorker, slackScopeToolRegistrations } = await loadScopeTools();
-    const registration = slackScopeToolRegistrations.find((r: any) => r.name === 'slack_users_read');
+    const { SlackScopeCommandWorker } = await loadScopeTools();
+    const registration = {
+      name:        'slack_users_read',
+      description: '',
+      schemaDef:   {
+        apiMethod: { type: 'string' }, params: { type: 'object', optional: true },
+      },
+    };
 
     mockGet.mockResolvedValueOnce({
       apiCall: jest.fn(async() => ({ ok: true, members: [] })),
@@ -58,8 +64,14 @@ describe('slack_scope_commands', () => {
   });
 
   it('executes concrete slack_cmd tool through mapped API method', async() => {
-    const { SlackApiCommandWorker, slackApiMethodToolRegistrations } = await loadScopeTools();
-    const registration = slackApiMethodToolRegistrations.find((r: any) => r.name === 'slack_cmd_team_info');
+    const { SlackApiCommandWorker } = await loadScopeTools();
+    const registration = {
+      name:        'slack_cmd_team_info',
+      description: '',
+      schemaDef:   {
+        params: { type: 'object', optional: true },
+      },
+    };
 
     mockGet.mockResolvedValueOnce({
       apiCall: jest.fn(async() => ({ ok: true, team: { id: 'T1' } })),

@@ -2,6 +2,11 @@ import { TextDecoder, TextEncoder } from 'node:util';
 
 import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 
+import { pgToolManifests } from '../manifests';
+jest.unstable_mockModule('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: jest.fn<() => Promise<boolean>>().mockResolvedValue(false) } }));
+
+const registration = (name: string) => pgToolManifests.find(manifest => manifest.name === name);
+
 function configureWorker(worker: any, registration: any) {
   worker.name = registration.name;
   worker.description = registration.description;
@@ -56,7 +61,7 @@ describe('pg_query / pg_execute sql field handling', () => {
 
     postgresClient.query = jest.fn(async() => [{ id: 1, name: 'alpha' }]);
 
-    const worker = configureWorker(new pgQueryModule.PgQueryWorker(), pgQueryModule.pgQueryRegistration);
+    const worker = configureWorker(new pgQueryModule.PgQueryWorker(), registration('pg_query'));
     const longSql = `SELECT 1 AS one -- ${ 'x'.repeat(12000) }`;
 
     const result = await worker.invoke({
@@ -77,7 +82,7 @@ describe('pg_query / pg_execute sql field handling', () => {
 
     postgresClient.query = jest.fn(async() => undefined);
 
-    const worker = configureWorker(new pgQueryModule.PgQueryWorker(), pgQueryModule.pgQueryRegistration);
+    const worker = configureWorker(new pgQueryModule.PgQueryWorker(), registration('pg_query'));
     const result = await worker.invoke({ sql: 'SELECT 1', params: [] });
 
     expect(result.success).toBe(true);
@@ -93,7 +98,7 @@ describe('pg_query / pg_execute sql field handling', () => {
       { id: 2, value: 'b' },
     ]);
 
-    const worker = configureWorker(new pgQueryAllModule.PgQueryAllWorker(), pgQueryAllModule.pgQueryAllRegistration);
+    const worker = configureWorker(new pgQueryAllModule.PgQueryAllWorker(), registration('pg_queryall'));
     const result = await worker.invoke({ sql: 'SELECT id, value FROM table_x', params: [] });
 
     expect(result.success).toBe(true);
@@ -107,7 +112,7 @@ describe('pg_query / pg_execute sql field handling', () => {
 
     postgresClient.queryOne = jest.fn(async() => ({ id: 42, status: 'ok' }));
 
-    const worker = configureWorker(new pgQueryOneModule.PgQueryOneWorker(), pgQueryOneModule.pgQueryOneRegistration);
+    const worker = configureWorker(new pgQueryOneModule.PgQueryOneWorker(), registration('pg_queryone'));
     const result = await worker.invoke({ sql: 'SELECT id, status FROM table_x LIMIT 1', params: [] });
 
     expect(result.success).toBe(true);
@@ -126,7 +131,7 @@ describe('pg_query / pg_execute sql field handling', () => {
       oid:      null,
     }));
 
-    const worker = configureWorker(new pgExecuteModule.PgExecuteWorker(), pgExecuteModule.pgExecuteRegistration);
+    const worker = configureWorker(new pgExecuteModule.PgExecuteWorker(), registration('pg_execute'));
 
     const result = await worker.invoke({
       input: {
@@ -145,7 +150,7 @@ describe('pg_query / pg_execute sql field handling', () => {
   it('pg_execute reports clear SQL error only when no alias field is present', async() => {
     const { pgExecuteModule } = await loadPgModules();
 
-    const worker = configureWorker(new pgExecuteModule.PgExecuteWorker(), pgExecuteModule.pgExecuteRegistration);
+    const worker = configureWorker(new pgExecuteModule.PgExecuteWorker(), registration('pg_execute'));
     const result = await worker.invoke({ params: [] });
 
     expect(result.success).toBe(false);

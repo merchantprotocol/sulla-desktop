@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import type { BaseThreadState } from '../../../nodes/Graph';
+jest.unstable_mockModule('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: jest.fn<() => Promise<boolean>>().mockResolvedValue(false) } }));
 
 const createTool = jest.fn<(name: string) => Promise<unknown>>();
 const claimOwner = jest.fn();

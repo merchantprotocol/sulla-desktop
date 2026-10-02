@@ -1,7 +1,8 @@
-import { describe, expect, it, afterEach } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { toolRegistry } from '../../registry';
 import { BrowseToolsWorker } from '../browse_tools';
+jest.unstable_mockModule('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: jest.fn<() => Promise<boolean>>().mockResolvedValue(false) } }));
 
 // Snapshot originals so we can restore after each test
 const originalGetCategories = toolRegistry.getCategories.bind(toolRegistry);

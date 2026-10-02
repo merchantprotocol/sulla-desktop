@@ -220,7 +220,14 @@ export abstract class BaseTool<TState = any> {
   public approvalSignal?: AbortSignal;
 
   async call(rawInput: unknown): Promise<ToolResult> {
-    const validated = structuredClone(this.parseInput(rawInput));
+    const parsed = this.parseInput(rawInput);
+    // Jest's native-ESM VM context does not expose Node's global structuredClone.
+    // Tool inputs are schema-validated plain data, so JSON cloning is a safe
+    // compatibility fallback for that runtime.
+    const clone = typeof globalThis.structuredClone === 'function'
+      ? globalThis.structuredClone.bind(globalThis)
+      : <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+    const validated = clone(parsed);
     const metadata = (this.state as any)?.metadata;
     const emit = this.sendChatMessage;
     const signals = [this.approvalSignal, metadata?.options?.abort?.signal].filter(Boolean) as AbortSignal[];
@@ -229,8 +236,11 @@ export abstract class BaseTool<TState = any> {
       const { decisionService } = await import('../services/DecisionService');
       if (this.name !== 'ask_user_question' && await decisionService.requiresApproval(this.name)) {
         const { record, result } = await decisionService.request({
-          kind: 'approval', title: `Allow ${ this.metadata.category } / ${ this.name }?`,
-          toolName: this.name, conversationId: metadata?.threadId || '', channel: metadata?.wsChannel || '',
+          kind:           'approval',
+          title:          `Allow ${ this.metadata.category } / ${ this.name }?`,
+          toolName:       this.name,
+          conversationId: metadata?.threadId || '',
+          channel:        metadata?.wsChannel || '',
         }, undefined, signal);
         // Arguments stay in this invocation, never serialized into a cloud decision.
         try {

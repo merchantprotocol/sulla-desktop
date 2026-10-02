@@ -1,14 +1,18 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 
 import { ObservationsModel } from '../../../database/models/ObservationsModel';
-import { SearchObservationsWorker } from '../search_observations';
 
 const recallMock = jest.fn<(...args: any[]) => Promise<any>>();
 
-jest.mock('../../../memory/MemoryRecallService', () => ({
+jest.unstable_mockModule('../../../memory/MemoryRecallService', () => ({
   OBSERVATION_DOMAIN:   'observation',
   recallRankedMemories: (...args: any[]) => recallMock(...args),
 }));
+
+let SearchObservationsWorker: typeof import('../search_observations').SearchObservationsWorker;
+beforeAll(async() => {
+  ({ SearchObservationsWorker } = await import('../search_observations'));
+});
 
 const obs = { id: 'o1', priority: 'high', created_at: '2026-09-30', content: 'Billing leak at Selkirk.', archived: false } as any;
 
