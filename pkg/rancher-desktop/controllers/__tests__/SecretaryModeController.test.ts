@@ -1,32 +1,37 @@
+/* eslint-disable @typescript-eslint/require-await -- async test doubles model promise-returning callbacks */
+import { jest } from '@jest/globals';
+
 import { SecretaryExtractor } from '@pkg/agent/controllers/SecretaryExtractor';
-import {
-  SecretaryModeController,
-  buildMeetingNotesMarkdown,
-  meetingNotesFileName,
-  type TranscriptEntry,
-} from '@pkg/controllers/SecretaryModeController';
+import type { TranscriptEntry } from '@pkg/controllers/SecretaryModeController';
 
 const listeners: Record<string, ((...args: any[]) => void)[]> = {};
 const ipcOverrides: Record<string, unknown> = {};
 
-jest.mock('@pkg/utils/ipcRenderer', () => ({
-  ipcRenderer: {
-    invoke: jest.fn(async(channel: string) => {
-      if (channel in ipcOverrides) return ipcOverrides[channel];
-      if (channel === 'sulla-settings-get') return 'en-US';
-      if (channel === 'audio-driver:transcribe-start') return { ok: true };
-      if (channel === 'desktop-session-start') return { sessionId: 'session-1' };
+const defaultInvoke = async(channel: string) => {
+  if (channel in ipcOverrides) return ipcOverrides[channel];
+  if (channel === 'sulla-settings-get') return 'en-US';
+  if (channel === 'audio-driver:transcribe-start') return { ok: true };
+  if (channel === 'desktop-session-start') return { sessionId: 'session-1' };
 
-      return undefined;
-    }),
-    on: (channel: string, fn: any) => {
-      (listeners[channel] ||= []).push(fn);
-    },
-    removeListener: (channel: string, fn: any) => {
-      listeners[channel] = (listeners[channel] || []).filter(f => f !== fn);
-    },
+  return undefined;
+};
+const mockIpcRenderer = {
+  invoke: jest.fn(defaultInvoke),
+  on:     (channel: string, fn: any) => {
+    (listeners[channel] ||= []).push(fn);
   },
-}));
+  removeListener: (channel: string, fn: any) => {
+    listeners[channel] = (listeners[channel] || []).filter(f => f !== fn);
+  },
+};
+
+jest.unstable_mockModule('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: mockIpcRenderer }));
+
+const {
+  SecretaryModeController,
+  buildMeetingNotesMarkdown,
+  meetingNotesFileName,
+} = await import('@pkg/controllers/SecretaryModeController');
 
 function hear(text: string, speaker = 'Mic') {
   for (const fn of listeners['gateway-transcript'] || []) {
@@ -106,6 +111,8 @@ const MODEL_REPLY = new SecretaryExtractor(() => {}).processComplete({
 describe('SecretaryModeController', () => {
   beforeEach(() => {
     jest.useFakeTimers();
+    mockIpcRenderer.invoke.mockReset();
+    mockIpcRenderer.invoke.mockImplementation(defaultInvoke);
     for (const key of Object.keys(listeners)) delete listeners[key];
     for (const key of Object.keys(ipcOverrides)) delete ipcOverrides[key];
   });
@@ -222,11 +229,10 @@ describe('SecretaryModeController', () => {
 
   it('fails to start and releases the mic when transcription cannot start', async() => {
     ipcOverrides['audio-driver:transcribe-start'] = { ok: false };
-    const { ipcRenderer } = jest.requireMock('@pkg/utils/ipcRenderer');
     const { controller } = makeController(async() => null);
 
     await expect(controller.startSession()).rejects.toThrow('Transcription could not start');
-    expect(ipcRenderer.invoke).toHaveBeenCalledWith('audio-driver:stop-mic', 'secretary-mode');
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('audio-driver:stop-mic', 'secretary-mode');
   });
 
   it('still takes mic commands while muted, answering in text only', async() => {
@@ -286,9 +292,7 @@ describe('SecretaryModeController', () => {
   });
 
   it('warns when system audio capture fails', async() => {
-    const { ipcRenderer } = jest.requireMock('@pkg/utils/ipcRenderer');
-
-    ipcRenderer.invoke.mockImplementationOnce(async() => 'en-US') // settings
+    mockIpcRenderer.invoke.mockImplementationOnce(async() => 'en-US') // settings
       .mockImplementationOnce(async() => ({ ok: true })) // start-mic
       .mockImplementationOnce(async() => { throw new Error('no ScreenCaptureKit permission') }); // start-speaker
     const { view, controller } = makeController(async() => null);

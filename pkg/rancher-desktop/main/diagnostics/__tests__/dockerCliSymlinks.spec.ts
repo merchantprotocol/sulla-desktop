@@ -61,10 +61,10 @@ describeUnix(CheckerDockerCLISymlink, () => {
     await rm(appDir, { recursive: true, force: true });
   });
 
-  it('should be applicable', async() => {
+  it('should not apply while Docker CLI integration is disabled', async() => {
     const subject = new CheckerDockerCLISymlink(executable);
 
-    await expect(subject.applicable()).resolves.toBeTruthy();
+    await expect(subject.applicable()).resolves.toBeFalsy();
   });
 
   it('should pass', async() => {

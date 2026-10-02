@@ -18,7 +18,7 @@ const mockInvoke = jest.fn(async(channel: string): Promise<any> => (channel === 
 const invoke = mockInvoke;
 const push = jest.fn(async() => undefined);
 
-jest.mock('@pkg/utils/ipcRenderer', () => ({
+jest.unstable_mockModule('@pkg/utils/ipcRenderer', () => ({
   ipcRenderer: { invoke: (...args: [string]) => mockInvoke(...args), on: () => undefined, send: () => undefined, removeListener: () => undefined },
 }));
 
