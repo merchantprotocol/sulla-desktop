@@ -95,6 +95,24 @@ export function getTaskDispatcherService(): TaskDispatcherService {
   return taskDispatcherServiceInstance;
 }
 
+const OUTCOME_TEXT_CAP = 8_000;
+
+/**
+ * The stored copy of a worker's last turn, capped. A plain slice cut the
+ * closing tag off a WORK_RESULT that started late in a long narration, and the
+ * receipt was rejected for a result the worker did return (zOpm). Keep every
+ * complete WORK_RESULT block whole, so the parser sees exactly what the worker
+ * sent, and trim only the narration in front of it.
+ */
+export function boundedOutcomeText(text: string, cap = OUTCOME_TEXT_CAP): string {
+  if (text.length <= cap) return text;
+  const blocks = text.match(/<WORK_RESULT>[\s\S]*?<\/WORK_RESULT>/g);
+  if (!blocks) return text.slice(0, cap);
+  const tail = blocks.join('\n');
+  const room = cap - tail.length - 1;
+  return room > 0 ? `${ text.slice(0, room) }\n${ tail }` : tail;
+}
+
 /**
  * Deterministic Projects dispatcher.
  *
@@ -768,7 +786,7 @@ export class TaskDispatcherService {
         if (!finalState) return;
         outcome = extractAgentTurnOutcome(finalState);
       }
-      const summary = outcome.text.slice(0, 8_000);
+      const summary = boundedOutcomeText(outcome.text, OUTCOME_TEXT_CAP);
 
       if (isVerification) {
         if (verifierTimedOut) {
