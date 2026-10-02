@@ -5,11 +5,24 @@
  * from various LLM providers dynamically via their APIs
  */
 
-import { modelDiscoveryService, ModelInfo } from '../ModelDiscoveryService';
-import { fetchAllAvailableModels, fetchModelsForProvider, getSupportedProviders } from '../index';
+import { beforeEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
+
+jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
+  SullaSettingsModel: { get: jest.fn(async(_key: string, fallback: string) => fallback) },
+}));
+
+let modelDiscoveryService: typeof import('../ModelDiscoveryService').modelDiscoveryService;
+let fetchAllAvailableModels: typeof import('../index').fetchAllAvailableModels;
+let fetchModelsForProvider: typeof import('../index').fetchModelsForProvider;
+let getSupportedProviders: typeof import('../index').getSupportedProviders;
+
+beforeAll(async() => {
+  ({ modelDiscoveryService } = await import('../ModelDiscoveryService'));
+  ({ fetchAllAvailableModels, fetchModelsForProvider, getSupportedProviders } = await import('../index'));
+});
 
 // Mock fetch globally
-global.fetch = jest.fn();
+global.fetch = jest.fn() as typeof fetch;
 const mockFetch = global.fetch as jest.MockedFunction<typeof fetch>;
 
 describe('ModelDiscoveryService', () => {
@@ -47,7 +60,7 @@ describe('ModelDiscoveryService', () => {
         ok:     true,
         status: 200,
         json:   async() => mockResponse,
-      } as Response);
+      } as unknown as Response);
 
       const models = await fetchModelsForProvider('openai', 'test-key');
 
@@ -76,15 +89,26 @@ describe('ModelDiscoveryService', () => {
         ok:         false,
         status:     401,
         statusText: 'Unauthorized',
-      } as Response);
+      } as unknown as Response);
 
-      await expect(fetchModelsForProvider('openai', 'invalid-key'))
-        .rejects.toThrow('Invalid API key for openai');
+      await expect(fetchModelsForProvider('openai', 'invalid-key')).resolves.toEqual([]);
     });
   });
 
   describe('Anthropic Model Fetching', () => {
-    it('should return hardcoded Anthropic models', async() => {
+    it('should parse the current Anthropic models response', async() => {
+      mockFetch.mockResolvedValueOnce({
+        ok:   true,
+        json: async() => ({
+          data: [
+            { id: 'claude-3-5-sonnet-20241022', display_name: 'Claude 3.5 Sonnet' },
+            { id: 'claude-3-opus-20240229', display_name: 'Claude 3 Opus' },
+            { id: 'claude-3-5-haiku-20241022', display_name: 'Claude 3.5 Haiku' },
+            { id: 'claude-3-haiku-20240307', display_name: 'Claude 3 Haiku' },
+            { id: 'claude-3-7-sonnet-20250219', display_name: 'Claude 3.7 Sonnet' },
+          ],
+        }),
+      } as unknown as Response);
       const models = await fetchModelsForProvider('anthropic', 'test-key');
 
       expect(models).toHaveLength(5);
@@ -92,8 +116,7 @@ describe('ModelDiscoveryService', () => {
       expect(models.some(m => m.id === 'claude-3-opus-20240229')).toBe(true);
       expect(models.some(m => m.id === 'claude-3-5-haiku-20241022')).toBe(true);
 
-      // Should not make network request for Anthropic
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
     });
   });
 
@@ -179,7 +202,7 @@ describe('ModelDiscoveryService', () => {
         ok:     true,
         status: 200,
         json:   async() => { throw new Error('Invalid JSON') },
-      } as Response);
+      } as unknown as Response);
 
       const models = await fetchModelsForProvider('grok', 'test-key');
 

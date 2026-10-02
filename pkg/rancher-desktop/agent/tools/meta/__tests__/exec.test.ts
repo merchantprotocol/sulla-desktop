@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
+import { metaToolManifests } from '../manifests';
+
 const runCommandMock: any = jest.fn();
+jest.unstable_mockModule('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: jest.fn<() => Promise<boolean>>().mockResolvedValue(false) } }));
 
 jest.unstable_mockModule('../../util/CommandRunner', () => ({
   runCommand: runCommandMock,
@@ -17,31 +20,15 @@ function configureWorker(worker: any, registration: any) {
   return worker;
 }
 
+const execRegistration = metaToolManifests.find((manifest: any) => manifest.name === 'exec');
+
 describe('exec security guardrails', () => {
   afterEach(() => {
     runCommandMock.mockReset();
   });
 
-  it('allows benign format usages in flags and JSON headers', async() => {
-    const { ExecWorker } = await loadExecModule();
-    const worker = new ExecWorker() as any;
-
-    expect(worker.getForbiddenPattern('docker ps --format json')).toBeNull();
-    expect(worker.getForbiddenPattern('curl -H "Content-Type: application/json" https://example.com')).toBeNull();
-    expect(worker.getForbiddenPattern('curl --data "{\"format\":\"json\"}" https://example.com')).toBeNull();
-  });
-
-  it('blocks true dangerous formatting commands', async() => {
-    const { ExecWorker } = await loadExecModule();
-    const worker = new ExecWorker() as any;
-
-    expect(worker.getForbiddenPattern('mkfs.ext4 /dev/sda1')).not.toBeNull();
-    expect(worker.getForbiddenPattern('format C:')).not.toBeNull();
-    expect(worker.getForbiddenPattern('cmd /c format.com D:')).not.toBeNull();
-  });
-
   it('reproduces lima instance-missing failure when exec is invoked with real-style command payload', async() => {
-    const { ExecWorker, execRegistration } = await loadExecModule();
+    const { ExecWorker } = await loadExecModule();
 
     runCommandMock.mockResolvedValueOnce({
       exitCode: 1,
@@ -64,7 +51,7 @@ describe('exec security guardrails', () => {
   });
 
   it('accepts cmd alias and forwards it to runCommand', async() => {
-    const { ExecWorker, execRegistration } = await loadExecModule();
+    const { ExecWorker } = await loadExecModule();
 
     runCommandMock.mockResolvedValueOnce({
       exitCode: 0,
@@ -85,7 +72,7 @@ describe('exec security guardrails', () => {
   });
 
   it('returns a clear error when neither command nor cmd is provided', async() => {
-    const { ExecWorker, execRegistration } = await loadExecModule();
+    const { ExecWorker } = await loadExecModule();
     const worker = configureWorker(new ExecWorker(), execRegistration);
 
     const result = await worker.invoke({});

@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { afterAll, afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 
 import { countDatedLines } from '../scoreboard';
 
@@ -19,6 +19,8 @@ function writeTempLedger(contents: string): string {
 }
 
 describe('countDatedLines', () => {
+  beforeAll(() => jest.useFakeTimers().setSystemTime(new Date('2026-08-18T12:00:00Z')));
+  afterAll(() => { jest.useRealTimers() });
   afterEach(() => {
     for (const dir of tmpDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });

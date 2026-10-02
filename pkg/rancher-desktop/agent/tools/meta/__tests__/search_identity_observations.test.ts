@@ -1,18 +1,32 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 
 import { IdentityObservationsModel } from '../../../database/models/IdentityObservationsModel';
-import { SearchIdentityObservationsWorker } from '../search_identity_observations';
 
 const recallMock = jest.fn<(...args: any[]) => Promise<any>>();
 
-jest.mock('../../../memory/MemoryRecallService', () => ({
+jest.unstable_mockModule('../../../memory/MemoryRecallService', () => ({
   OBSERVATION_DOMAIN:   'observation',
   recallRankedMemories: (...args: any[]) => recallMock(...args),
 }));
 
+let SearchIdentityObservationsWorker: typeof import('../search_identity_observations').SearchIdentityObservationsWorker;
+beforeAll(async() => {
+  ({ SearchIdentityObservationsWorker } = await import('../search_identity_observations'));
+});
+
 const hum = {
-  id: 'hum1', domain: 'human', level: 3, category: 'preference', content: 'Wants short status reports.', basis: null,
-  subject: null, kind: null, confidence: null, evidence: null, archived: false, created_at: '2026-09-30',
+  id:         'hum1',
+  domain:     'human',
+  level:      3,
+  category:   'preference',
+  content:    'Wants short status reports.',
+  basis:      null,
+  subject:    null,
+  kind:       null,
+  confidence: null,
+  evidence:   null,
+  archived:   false,
+  created_at: '2026-09-30',
 } as any;
 
 function run(input: Record<string, unknown>): Promise<any> {

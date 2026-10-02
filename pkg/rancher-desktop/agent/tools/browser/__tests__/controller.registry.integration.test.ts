@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
+jest.unstable_mockModule('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: jest.fn<() => Promise<boolean>>().mockResolvedValue(false) } }));
 
 const views = new Map<string, {
   executeJavaScript: jest.Mock<(code: string) => Promise<unknown>>;

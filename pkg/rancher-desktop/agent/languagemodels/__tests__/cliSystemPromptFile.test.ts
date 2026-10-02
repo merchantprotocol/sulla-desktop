@@ -2,15 +2,19 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { describe, expect, it, jest } from '@jest/globals';
+import { beforeAll, describe, expect, it, jest } from '@jest/globals';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-'));
 
-jest.mock('@pkg/utils/paths', () => ({ __esModule: true, default: { sullaConfig: tmp } }));
-jest.mock('@pkg/utils/logging', () => ({ __esModule: true, default: { background: { log: () => {} } } }));
+jest.unstable_mockModule('@pkg/utils/paths', () => ({ __esModule: true, default: { sullaConfig: tmp } }));
+jest.unstable_mockModule('@pkg/utils/logging', () => ({ __esModule: true, default: { background: { log: () => {} } } }));
 
-// eslint-disable-next-line import/first
-import { systemPromptFromMessages, writeSystemPromptFile } from '../cliSystemPromptFile';
+let systemPromptFromMessages: typeof import('../cliSystemPromptFile').systemPromptFromMessages;
+let writeSystemPromptFile: typeof import('../cliSystemPromptFile').writeSystemPromptFile;
+
+beforeAll(async() => {
+  ({ systemPromptFromMessages, writeSystemPromptFile } = await import('../cliSystemPromptFile'));
+});
 
 describe('cliSystemPromptFile', () => {
   it('joins only system-role text, in order', () => {

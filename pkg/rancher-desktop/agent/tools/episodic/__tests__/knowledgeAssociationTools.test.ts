@@ -12,7 +12,7 @@ describe('knowledge association tool adapters and policy', () => {
 
   it('routes writes from both namespaces through the same shared model', async() => {
     const link = jest.spyOn(WorkItemKnowledgeModel, 'link').mockResolvedValue({ id: 'same-link' } as any);
-    const input = { item_kind: 'task', item_id: 'task-1', knowledge_node_id: 'node-1' };
+    const input = { item_kind: 'task', item_id: 'task-1', knowledge_node_id: 'node-1', actor: 'sulla' };
     await (new LinkKnowledgeItemWorker() as any)._validatedCall(input);
     await (new LinkProjectItemWorker() as any)._validatedCall(input);
     expect(link).toHaveBeenCalledTimes(2);

@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
+import { slackToolManifests } from '../manifests';
+jest.unstable_mockModule('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: jest.fn<() => Promise<boolean>>().mockResolvedValue(false) } }));
+const slackSearchUsersRegistration = slackToolManifests.find(manifest => manifest.name === 'slack_search_users');
+
 const mockGet: any = jest.fn();
 
 jest.unstable_mockModule('../../../integrations', () => ({
@@ -25,7 +29,7 @@ describe('slack_search_users tool', () => {
   });
 
   it('returns success with matching users', async() => {
-    const { SlackSearchUsersWorker, slackSearchUsersRegistration } = await loadSlackSearchUsersTool();
+    const { SlackSearchUsersWorker } = await loadSlackSearchUsersTool();
 
     mockGet.mockResolvedValueOnce({
       searchUsers: jest.fn(async() => ([
@@ -42,7 +46,7 @@ describe('slack_search_users tool', () => {
   });
 
   it('returns failure when no users match', async() => {
-    const { SlackSearchUsersWorker, slackSearchUsersRegistration } = await loadSlackSearchUsersTool();
+    const { SlackSearchUsersWorker } = await loadSlackSearchUsersTool();
 
     mockGet.mockResolvedValueOnce({
       searchUsers: jest.fn(async() => []),

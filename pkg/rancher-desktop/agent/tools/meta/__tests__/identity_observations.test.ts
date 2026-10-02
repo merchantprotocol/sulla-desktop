@@ -1,17 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { IdentityObservationsModel } from '../../../database/models/IdentityObservationsModel';
-import { AddIdentityObservationWorker } from '../add_identity_observation';
-import { ListIdentityObservationsWorker } from '../list_identity_observations';
-import { RemoveIdentityObservationWorker } from '../remove_identity_observation';
-import { SearchIdentityObservationsWorker } from '../search_identity_observations';
 
 const recallMock = jest.fn<(...args: any[]) => Promise<any>>();
+jest.unstable_mockModule('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: jest.fn<() => Promise<boolean>>().mockResolvedValue(false) } }));
 
-jest.mock('../../../memory/MemoryRecallService', () => ({
+jest.unstable_mockModule('../../../memory/MemoryRecallService', () => ({
   OBSERVATION_DOMAIN:   'observation',
   recallRankedMemories: (...args: any[]) => recallMock(...args),
 }));
+let AddIdentityObservationWorker: typeof import('../add_identity_observation').AddIdentityObservationWorker;
+let ListIdentityObservationsWorker: typeof import('../list_identity_observations').ListIdentityObservationsWorker;
+let RemoveIdentityObservationWorker: typeof import('../remove_identity_observation').RemoveIdentityObservationWorker;
+let SearchIdentityObservationsWorker: typeof import('../search_identity_observations').SearchIdentityObservationsWorker;
+beforeAll(async() => {
+  ({ AddIdentityObservationWorker } = await import('../add_identity_observation'));
+  ({ ListIdentityObservationsWorker } = await import('../list_identity_observations'));
+  ({ RemoveIdentityObservationWorker } = await import('../remove_identity_observation'));
+  ({ SearchIdentityObservationsWorker } = await import('../search_identity_observations'));
+});
 // Default: engine unavailable, so the ILIKE fallback path is what most tests cover.
 beforeEach(() => { recallMock.mockReset(); recallMock.mockResolvedValue(null) });
 
