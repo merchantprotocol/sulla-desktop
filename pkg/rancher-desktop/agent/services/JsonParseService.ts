@@ -8,7 +8,9 @@ import { parse as dirtyJsonParse } from 'dirty-json';
 import { loads as jsonRepairLoads } from 'json-repair-js';
 import JSON5 from 'json5';
 import { jsonrepair } from 'jsonrepair';
-import { parse as relaxedJsonParse } from 'relaxed-json';
+import relaxedJson from 'relaxed-json';
+
+const relaxedJsonParse = relaxedJson.parse;
 
 /**
  * Extract JSON from text that may contain markdown fences, prose, thinking tags, etc.
@@ -147,6 +149,8 @@ function parseJsonLenient<T = unknown>(text: string): T | null {
   } catch { /* continue */ }
 
   // Strategy 5: Sanitize control chars and retry
+  // This is deliberately a control-character scrubber.
+  // eslint-disable-next-line no-control-regex
   const sanitized = src.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
   if (sanitized !== src) {
     try {

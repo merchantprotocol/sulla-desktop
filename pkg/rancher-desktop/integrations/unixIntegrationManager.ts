@@ -197,7 +197,8 @@ export default class UnixIntegrationManager implements IntegrationManager {
       return true;
     }
 
-    if (path.dirname(linkedTo).endsWith(path.join('resources', os.platform(), 'docker-cli-plugins'))) {
+    if (path.dirname(linkedTo) === this.dockerCLIPluginSource ||
+      path.dirname(linkedTo).endsWith(path.join('resources', os.platform(), 'docker-cli-plugins'))) {
       console.debug(`Symlink ${ filePath } links to ${ linkedTo }, will replace`);
 
       return true;

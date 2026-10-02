@@ -3,6 +3,8 @@
  * Single test to verify basic message processing works
  */
 
+import { jest } from '@jest/globals';
+
 import { InputHandlerNode } from '../InputHandlerNode';
 
 import type { ChatMessage } from '../../languagemodels/BaseLanguageModel';
@@ -178,6 +180,8 @@ describe('InputHandlerNode Simple Test', () => {
 
     // Message should be cleaned of control characters
     const cleanedContent = result.state.messages[0].content;
+    // The assertion intentionally includes control characters.
+    // eslint-disable-next-line no-control-regex
     expect(cleanedContent).not.toMatch(/[\u200B-\u200F\u2028-\u202F\uFEFF\u0000-\u0008]/g);
     expect(cleanedContent).toContain('Hello');
     expect(cleanedContent).toContain('world');

@@ -14,14 +14,14 @@ import { up as addWorkTaskActivity } from '../../migrations/0061_add_work_task_a
 import { up as createWorkTaskDispatches } from '../../migrations/0062_create_work_task_dispatches';
 import { up as addVerificationDispatches } from '../../migrations/0064_add_verification_dispatches';
 import { up as createWorkTaskWaits } from '../../migrations/0065_create_work_task_waits';
-import { up as createWorkTaskPlanningRuns } from '../../migrations/0067_create_work_task_planning_runs';
-import { up as extendDispatchCustody } from '../../migrations/0068_extend_work_task_dispatch_custody';
+import { up as addReviewDispositionEvidence } from '../../migrations/0067_add_review_disposition_evidence';
+import { up as createLifecycleCapabilities } from '../../migrations/0068_create_lifecycle_capabilities';
 import { up as createLaneDefinitions } from '../../migrations/0069_create_work_lane_definitions';
 import { up as createLaneWorkflowBindings } from '../../migrations/0070_create_lane_workflow_bindings';
 import { up as scopeLaneWorkflowExecutions } from '../../migrations/0071_scope_lane_workflow_executions';
-import { up as addReviewDispositionEvidence } from '../../migrations/0072_add_review_disposition_evidence';
-import { up as createLifecycleCapabilities } from '../../migrations/0073_create_lifecycle_capabilities';
+import { up as createWorkTaskPlanningRuns } from '../../migrations/0072_create_work_task_planning_runs';
 import { up as addSemanticLaneRuntimeHelpers } from '../../migrations/0074_semantic_lane_runtime_helpers';
+import { up as extendDispatchCustody } from '../../migrations/0076_extend_work_task_dispatch_custody';
 import { WorkItemsModel } from '../WorkItemsModel';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 import {
@@ -71,14 +71,14 @@ describeWithPostgres('semantic lane runtime migrated PostgreSQL transition', () 
       createWorkTaskDispatches,
       addVerificationDispatches,
       createWorkTaskWaits,
-      createWorkTaskPlanningRuns,
-      extendDispatchCustody,
+      addReviewDispositionEvidence,
+      createLifecycleCapabilities,
       createLaneDefinitions,
       createLaneWorkflowBindings,
       scopeLaneWorkflowExecutions,
-      addReviewDispositionEvidence,
-      createLifecycleCapabilities,
+      createWorkTaskPlanningRuns,
       addSemanticLaneRuntimeHelpers,
+      extendDispatchCustody,
     ]) await pool.query(migration);
 
     (postgresClient as any).query = async(text: string, params: unknown[] = []) =>
@@ -219,7 +219,7 @@ describeWithPostgres('semantic lane runtime migrated PostgreSQL transition', () 
     await expect(WorkItemsModel.updateTask('task-semantic-e2e', {
       status: 'qa-custom', assignee: 'heartbeat', actor: 'integration-test',
     })).resolves.toMatchObject({ status: 'qa-custom' });
-    const review = await WorkTaskDispatchModel.claimNextReview('reviewer-semantic');
+    const review = await WorkTaskDispatchModel.claimNextReview('reviewer-semantic', [], 'runtime-semantic');
     expect(review?.task).toMatchObject({ id: 'task-semantic-e2e', status: 'qa-custom' });
 
     await expect(WorkTaskDispatchModel.finalizeVerification(
@@ -246,7 +246,7 @@ describeWithPostgres('semantic lane runtime migrated PostgreSQL transition', () 
       { id: 'task-manual', role: 'manual' },
       { id: 'task-unknown', role: 'manual' },
     ]);
-    await expect(WorkTaskDispatchModel.claimNext('worker-semantic')).resolves.toBeNull();
+    await expect(WorkTaskDispatchModel.claimNext('worker-semantic', 'runtime-semantic')).resolves.toBeNull();
 
     await pool.query(`
       UPDATE work_lane_definitions
@@ -295,7 +295,7 @@ describeWithPostgres('semantic lane runtime migrated PostgreSQL transition', () 
     expect(degradedCustom.assignee).toBe('sulla');
     expect(degradedTodo).toMatchObject({ status: 'todo', assignee: 'dispatcher' });
 
-    const claim = await WorkTaskDispatchModel.claimNext('worker-degraded');
+    const claim = await WorkTaskDispatchModel.claimNext('worker-degraded', 'runtime-degraded');
     expect(claim?.task).toMatchObject({ id: 'task-degraded-todo', status: 'todo' });
     await expect(WorkItemsModel.getTask('task-degraded-todo')).resolves.toMatchObject({
       status: 'in_progress', assignee: 'dispatcher',

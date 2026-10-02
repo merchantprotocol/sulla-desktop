@@ -8,8 +8,9 @@ const INTEGRATION_DIR_NAME = 'integrationDir';
 const TMPDIR_PREFIX = 'rdtest-';
 
 const describeUnix = os.platform() === 'win32' ? describe.skip : describe;
-const binDir = path.join('resources', os.platform(), 'bin');
-const dockerCLIPluginSource = path.join('resources', os.platform(), 'docker-cli-plugins');
+const fixtureRoot = path.join(os.tmpdir(), `rdtest-resources-${ process.pid }`);
+const binDir = path.join(fixtureRoot, 'bin');
+const dockerCLIPluginSource = path.join(fixtureRoot, 'docker-cli-plugins');
 let testDir: string;
 
 // Creates integration directory and docker CLI plugin directory with
@@ -29,6 +30,17 @@ async function createTestSymlinks(integrationDirectory: string, dockerCLIPluginD
 
   await fs.promises.symlink(composeSrcPath, composeDstPath);
 }
+
+beforeAll(async() => {
+  await fs.promises.mkdir(binDir, { recursive: true, mode: 0o755 });
+  await fs.promises.writeFile(path.join(binDir, 'kubectl'), 'kubectl');
+  await fs.promises.mkdir(dockerCLIPluginSource, { recursive: true, mode: 0o755 });
+  await fs.promises.writeFile(path.join(dockerCLIPluginSource, 'docker-compose'), 'docker compose plugin');
+});
+
+afterAll(async() => {
+  await fs.promises.rm(fixtureRoot, { recursive: true, force: true });
+});
 
 beforeEach(async() => {
   testDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), TMPDIR_PREFIX));
