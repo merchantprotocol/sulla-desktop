@@ -2,11 +2,11 @@
 // Main-process agent dispatcher: routes messages on the sulla-desktop, workbench,
 // and heartbeat channels to the default agent via GraphRegistry.
 import { AbortService } from './AbortService';
+import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
-import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
-import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
+import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 
@@ -184,22 +184,6 @@ export class BackendGraphWebSocketService {
     _triggerType: 'sulla-desktop' | 'workbench' | 'heartbeat',
     msg: WebSocketMessage,
   ): Promise<void> {
-    const _msgData = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : { content: msg.data };
-    const _rawContent = typeof _msgData?.content === 'string' ? _msgData.content : JSON.stringify(_msgData?.content ?? '');
-    if (_triggerType !== 'heartbeat') {
-      console.log(`[BackendGraphWS] ← message on "${ channelId }"`, {
-        type:         msg.type,
-        id:           msg.id,
-        channel:      msg.channel,
-        timestamp:    msg.timestamp,
-        triggerType:  _triggerType,
-        threadId:     _msgData?.threadId,
-        metadata:     _msgData?.metadata,
-        contentChars: _rawContent.length,
-        content:      _rawContent.slice(0, 100),
-      });
-    }
-
     if (msg.type === 'stop_run') {
       const data = typeof msg.data === 'string' ? {} : (msg.data as any);
       const stopThreadId = typeof data?.threadId === 'string' ? data.threadId.trim() : '';
@@ -418,7 +402,8 @@ export class BackendGraphWebSocketService {
           const text = leftovers.map(steerText).filter(Boolean).join('\n\n');
           const images = leftovers.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'image') : []);
           console.log(`[BackendGraphWS] ${ leftovers.length } steer(s) arrived as thread ${ threadId } finished — running them as a follow-up turn`);
-          void this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, images.length ? { attachments: images } : undefined);
+          this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, images.length ? { attachments: images } : undefined)
+            .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up steer:', err));
         }
       }
     }

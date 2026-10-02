@@ -276,11 +276,21 @@ export function setLogLevel(level: LogLevel): void {
  *   console.log('works like before');
  */
 export class TopicLog {
-  private readonly filePath: string;
+  private readonly filePath:    string;
+  private readonly maxBytes:    number;
+  private readonly backupCount: number;
+  private currentBytes:         number;
   private sessionWritten = false;
 
-  constructor(topic: string, dir: string) {
+  constructor(topic: string, dir: string, options: { maxBytes?: number; backupCount?: number } = {}) {
     this.filePath = path.join(dir, `${ topic }.log`);
+    this.maxBytes = Math.max(1, Math.floor(options.maxBytes ?? 25 * 1024 * 1024));
+    this.backupCount = Math.max(0, Math.floor(options.backupCount ?? 2));
+    try {
+      this.currentBytes = fs.statSync(this.filePath).size;
+    } catch {
+      this.currentBytes = 0;
+    }
   }
 
   log(message: any, ...args: any[]): void {
@@ -307,20 +317,54 @@ export class TopicLog {
 
   private write(level: string, message: any, args: any[]): void {
     try {
-      if (!this.sessionWritten) {
-        this.sessionWritten = true;
-        const header = `\n${ '='.repeat(80) }\n=== SESSION START: ${ new Date().toISOString() } (PID ${ process.pid }) ===\n${ '='.repeat(80) }\n`;
-        fs.appendFileSync(this.filePath, header, 'utf-8');
-      }
-
       const ts = new Date().toISOString();
       const formatted = args.length > 0
         ? util.format(message, ...args)
         : (typeof message === 'string' ? message : util.inspect(message));
-      fs.appendFileSync(this.filePath, `${ ts } [${ level }] ${ formatted }\n`, 'utf-8');
+      const header = this.sessionWritten
+        ? ''
+        : `\n${ '='.repeat(80) }\n=== SESSION START: ${ ts } (PID ${ process.pid }) ===\n${ '='.repeat(80) }\n`;
+      let payload = Buffer.from(`${ header }${ ts } [${ level }] ${ formatted }\n`, 'utf-8');
+
+      if (payload.length > this.maxBytes) {
+        const suffix = Buffer.from('\n...[topic log entry truncated]\n', 'utf-8');
+        payload = suffix.length >= this.maxBytes
+          ? suffix.subarray(0, this.maxBytes)
+          : Buffer.concat([payload.subarray(0, this.maxBytes - suffix.length), suffix]);
+      }
+
+      if (this.currentBytes > 0 && this.currentBytes + payload.length > this.maxBytes) {
+        this.rotate();
+      }
+
+      fs.appendFileSync(this.filePath, payload);
+      this.currentBytes += payload.length;
+      this.sessionWritten = true;
     } catch {
       // Silently drop — don't let logging failures crash the app
     }
+  }
+
+  private rotate(): void {
+    if (this.backupCount === 0) {
+      fs.unlinkSync(this.filePath);
+      this.currentBytes = 0;
+      return;
+    }
+
+    for (let index = this.backupCount; index >= 1; index--) {
+      const destination = this.backupPath(index);
+      const source = index === 1 ? this.filePath : this.backupPath(index - 1);
+
+      if (fs.existsSync(destination)) fs.unlinkSync(destination);
+      if (fs.existsSync(source)) fs.renameSync(source, destination);
+    }
+    this.currentBytes = 0;
+  }
+
+  private backupPath(index: number): string {
+    const extension = path.extname(this.filePath);
+    return `${ this.filePath.slice(0, -extension.length) }.${ index }${ extension }`;
   }
 }
 

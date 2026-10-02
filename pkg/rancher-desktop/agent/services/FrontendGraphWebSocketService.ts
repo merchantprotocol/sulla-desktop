@@ -91,19 +91,6 @@ export class FrontendGraphWebSocketService {
   }
 
   private async handleWebSocketMessage(msg: WebSocketMessage): Promise<void> {
-    const _msgData = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : { content: msg.data };
-    const _rawContent = typeof _msgData?.content === 'string' ? _msgData.content : JSON.stringify(_msgData?.content ?? '');
-    console.log(`[FrontendGraphWS] ← message on "${ this.channelId }"`, {
-      type:         msg.type,
-      id:           msg.id,
-      channel:      msg.channel,
-      timestamp:    msg.timestamp,
-      threadId:     _msgData?.threadId,
-      metadata:     _msgData?.metadata,
-      contentChars: _rawContent.length,
-      content:      _rawContent.slice(0, 100),
-    });
-
     if (msg.type === 'stop_run') {
       const data = typeof msg.data === 'string' ? {} : (msg.data as any);
       const threadId = typeof data?.threadId === 'string' ? data.threadId.trim() : '';
