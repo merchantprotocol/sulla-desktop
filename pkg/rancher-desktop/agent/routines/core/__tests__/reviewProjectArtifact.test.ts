@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 
 import { validateWorkflowDefinition } from '../../../tools/workflow/validate_sulla_workflow';
-import { CORE_ROUTINES } from '../index';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../defaultCoreAgent';
+import { CORE_ROUTINES } from '../index';
 import {
   REVIEW_PROJECT_ARTIFACT_DEFINITION,
   REVIEW_PROJECT_ARTIFACT_ID,
@@ -31,7 +31,7 @@ describe('protected review core routine', () => {
     for (const disposition of ['PASS', 'REPAIRABLE', 'REPLAN', 'EXTERNAL_WAIT', 'BLOCKED']) {
       expect(serialized).toContain(disposition);
     }
-    expect(serialized).toContain('Never edit files or records');
+    expect(serialized).toContain('Pushing to the branch under review changes its head and voids this review generation');
     expect(serialized).toContain('Never treat unpublished outbound work as sent');
     expect(serialized).toContain('full head SHA');
   });

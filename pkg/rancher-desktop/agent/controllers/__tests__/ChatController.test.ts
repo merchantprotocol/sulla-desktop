@@ -7,8 +7,8 @@ import type { StreamContext } from '../Extractor';
 
 function makeConfig(): ChatControllerConfig {
   return {
-    dispatch:          jest.fn(async() => true) as any,
-    sendChatMessage:   jest.fn(async() => true) as any,
+    dispatch:          jest.fn(() => Promise.resolve(true)) as any,
+    sendChatMessage:   jest.fn(() => Promise.resolve(true)) as any,
     voiceLog:          jest.fn() as any,
     onSecretaryResult: jest.fn(),
   };
@@ -54,32 +54,32 @@ describe('ChatController', () => {
     expect(names).toContain('speak');
   });
 
-  it('text mode has only ThinkingExtractor', () => {
+  it('text mode includes the always-on infrastructure extractors', () => {
     ctrl.setMode('text');
     const names = ctrl.getExtractors().map(e => e.name);
 
-    expect(names).toEqual(['thinking']);
+    expect(names).toEqual(['thinking', 'citation', 'channel']);
   });
 
   it('voice mode has ThinkingExtractor and SpeakExtractor', () => {
     ctrl.setMode('voice');
     const names = ctrl.getExtractors().map(e => e.name);
 
-    expect(names).toEqual(['thinking', 'speak']);
+    expect(names).toEqual(['thinking', 'citation', 'channel', 'speak']);
   });
 
   it('secretary mode has ThinkingExtractor and SecretaryExtractor', () => {
     ctrl.setMode('secretary');
     const names = ctrl.getExtractors().map(e => e.name);
 
-    expect(names).toEqual(['thinking', 'secretary']);
+    expect(names).toEqual(['thinking', 'citation', 'channel', 'secretary']);
   });
 
   it('intake mode has ThinkingExtractor and IntakeExtractor', () => {
     ctrl.setMode('intake');
     const names = ctrl.getExtractors().map(e => e.name);
 
-    expect(names).toEqual(['thinking', 'intake']);
+    expect(names).toEqual(['thinking', 'citation', 'channel', 'intake']);
   });
 
   it('setMode is idempotent', () => {
@@ -94,11 +94,12 @@ describe('ChatController', () => {
 
   // ── enrichPrompt ──
 
-  it('enrichPrompt in text mode returns prompt unchanged (thinking is no-op)', () => {
+  it('enrichPrompt in text mode appends the always-on citation contract', () => {
     ctrl.setMode('text');
     const result = ctrl.enrichPrompt('base', makeCtx());
 
-    expect(result).toBe('base');
+    expect(result).toContain('base');
+    expect(result).toContain('<citations>');
   });
 
   it('enrichPrompt in voice mode appends voice prompt', () => {

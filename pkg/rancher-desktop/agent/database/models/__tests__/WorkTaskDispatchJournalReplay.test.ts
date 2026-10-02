@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { postgresClient } from '../../PostgresClient';
-import { WorkflowExecutionModel } from '../WorkflowExecutionModel';
+import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
+import { WorkflowExecutionModel } from '../WorkflowExecutionModel';
 
 const JOURNAL_ROW = {
   id:              'outcome-1',
@@ -55,8 +56,8 @@ describe('WorkTaskDispatchModel.finalizeOutcomeJournal idempotent replay', () =>
     // The worker's outcome comment still lands with a replay note.
     const commentCall = query.mock.calls.find((call: any[]) => String(call[0]).includes('INSERT INTO work_task_comments'));
     expect(commentCall).toBeDefined();
-    expect(String((commentCall as any)[1][2])).toContain('WORK_RESULT: shipped');
-    expect(String((commentCall as any)[1][2])).toContain('Outcome journal replay');
+    expect(String((commentCall)[1][2])).toContain('WORK_RESULT: shipped');
+    expect(String((commentCall)[1][2])).toContain('Outcome journal replay');
     // Stage claims release so the WIP slot is not stranded.
     expect(statements.some((sql: string) => sql.includes('UPDATE work_task_stage_claims') && sql.includes("status = 'released'"))).toBe(true);
     // The journal is consumed exactly once.
@@ -66,6 +67,10 @@ describe('WorkTaskDispatchModel.finalizeOutcomeJournal idempotent replay', () =>
   });
 
   it('still runs the strict finalization while the dispatcher owns the task', async() => {
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'claimLaneEntryInTransaction').mockResolvedValue({
+      created: true,
+      entry:   { id: 'lane-entry-1', generation: 1, status: 'unautomated' } as any,
+    });
     const query = jest.fn((sql: string) => {
       if (sql.includes('FROM work_task_outcome_journal WHERE id')) {
         return Promise.resolve({ rows: [{ ...JOURNAL_ROW, task_status: 'planning', task_assignee: 'dispatcher' }] });
@@ -79,6 +84,9 @@ describe('WorkTaskDispatchModel.finalizeOutcomeJournal idempotent replay', () =>
       if (sql.includes('UPDATE work_tasks') && sql.includes('RETURNING *')) {
         return Promise.resolve({ rows: [{ id: 'task-1', status: 'planning', assignee: 'dispatcher' }] });
       }
+      if (sql.includes('INSERT INTO work_project_domain_events')) {
+        return Promise.resolve({ rows: [{ id: 'projects-event-1' }], rowCount: 1 });
+      }
       return Promise.resolve({ rows: [], rowCount: 1 });
     }) as any;
     transactionWith(query);
@@ -88,8 +96,8 @@ describe('WorkTaskDispatchModel.finalizeOutcomeJournal idempotent replay', () =>
 
     const statements = query.mock.calls.map((call: any[]) => String(call[0]));
     // Strict path moves the task with the dispatcher-custody guard intact.
-    expect(statements.some((sql: string) => sql.includes('UPDATE work_tasks')
-      && sql.includes("status = 'in_progress' AND assignee = 'dispatcher'"))).toBe(true);
+    expect(statements.some((sql: string) => sql.includes('UPDATE work_tasks') &&
+      sql.includes("status = 'in_progress' AND assignee = 'dispatcher'"))).toBe(true);
   });
 
   it('redirects a worker self-approved terminal task into independent review', async() => {
@@ -122,12 +130,12 @@ describe('WorkTaskDispatchModel.recordReviewLaunchWithExecution scope pair', () 
   });
 
   const LAUNCH = {
-    executionId:  'exec-1',
-    workflowId:   'core-review',
-    workflowName: 'Review Project Artifact',
-    workflowSlug: 'core-review',
-    triggerInput: 'review it',
-    scopeTaskId:  'task-1',
+    executionId:      'exec-1',
+    workflowId:       'core-review',
+    workflowName:     'Review Project Artifact',
+    workflowSlug:     'core-review',
+    triggerInput:     'review it',
+    scopeTaskId:      'task-1',
     reviewerAgentIds: ['sulla-desktop'],
   };
 

@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals'
 import { postgresClient } from '../../database/PostgresClient';
 
 const planningTransitionMock: any = jest.fn(() => Promise.resolve());
+const recordTaskTransitionMock: any = jest.fn(() => Promise.resolve());
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: jest.fn() },
@@ -16,6 +17,9 @@ jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
 }));
 jest.unstable_mockModule('../PlanningCouncilService', () => ({
   PlanningCouncilService: { handleTaskStatusTransition: planningTransitionMock },
+}));
+jest.unstable_mockModule('../../database/models/TaskTransitionEffects', () => ({
+  recordTaskTransitionWithClient: recordTaskTransitionMock,
 }));
 jest.unstable_mockModule('../CanonicalArtifactCustodyService', () => ({
   CanonicalArtifactCustodyService: { verify: jest.fn() },
@@ -65,13 +69,16 @@ jest.unstable_mockModule('../../tools/agents/agentTurnOutcome', () => ({
 
 describe('TaskDispatcherService planning handoff', () => {
   let originalTransaction: any;
+  let originalQuery: any;
 
   beforeAll(() => {
     originalTransaction = postgresClient.transaction;
+    originalQuery = postgresClient.query;
   });
 
   afterEach(() => {
     (postgresClient as any).transaction = originalTransaction;
+    (postgresClient as any).query = originalQuery;
     jest.clearAllMocks();
   });
 
@@ -90,9 +97,35 @@ describe('TaskDispatcherService planning handoff', () => {
     } as any;
     let storedTask = { ...task };
     let storedDispatchStatus = 'running';
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([{ id: 'outcome-1' }]));
     const query = jest.fn((sql: string, params: any[] = []) => {
+      if (sql.includes('FROM work_task_outcome_journal WHERE id')) {
+        return Promise.resolve({
+          rows: [{
+            id:              'outcome-1',
+            dispatch_id:     'dispatch-1',
+            task_id:         'task-1',
+            dispatch_status: 'failed',
+            task_status:     'planning',
+            task_assignee:   'dispatcher',
+            comment:         'malformed result',
+            result:          null,
+            error:           'malformed result',
+            evidence:        null,
+            receipt:         null,
+            consumed_at:     null,
+          }],
+        });
+      }
       if (sql.includes('SELECT status FROM work_task_dispatches')) {
         return Promise.resolve({ rows: [{ status: storedDispatchStatus }] });
+      }
+      if (sql.includes('SELECT status, assignee, last_moved_by FROM work_tasks')) {
+        return Promise.resolve({
+          rows: [{
+            status: storedTask.status, assignee: storedTask.assignee, last_moved_by: 'dispatcher',
+          }],
+        });
       }
       if (sql.includes('UPDATE work_task_dispatches')) {
         storedDispatchStatus = params[2];
@@ -118,15 +151,15 @@ describe('TaskDispatcherService planning handoff', () => {
         events.push('task-row-returned');
         return Promise.resolve({ rows: [{ ...storedTask }] });
       }
-      throw new Error(`Unexpected finalizer query: ${ sql }`);
+      return Promise.resolve({ rows: [], rowCount: 1 });
     });
     (postgresClient as any).transaction = jest.fn(async(callback: any) => {
       const result = await callback({ query });
       events.push('transaction-committed');
       return result;
     });
-    planningTransitionMock.mockImplementationOnce(() => {
-      events.push('planning-claimed');
+    recordTaskTransitionMock.mockImplementationOnce(() => {
+      events.push('planning-transition-recorded');
       return Promise.resolve();
     });
 
@@ -142,23 +175,16 @@ describe('TaskDispatcherService planning handoff', () => {
         thread_id: 'thread-1',
         status:    'running',
       },
-    }, 'failed', 'worker transport failed', 'core-routine');
+    }, 'completed', 'worker returned no structured work result');
 
-    expect(planningTransitionMock).toHaveBeenCalledTimes(1);
-    expect(planningTransitionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id:         'task-1',
-        status:     'planning',
-        assignee:   'dispatcher',
-        project_id: 'project-1',
-      }),
-      'in_progress',
-      'dispatcher',
+    expect(recordTaskTransitionMock).toHaveBeenCalledTimes(1);
+    expect(recordTaskTransitionMock).toHaveBeenCalledWith(
+      expect.anything(), 'task-1', 'in_progress', 'planning', 'dispatcher', 'dispatch-outcome',
     );
     expect(events).toEqual([
       'task-row-returned',
+      'planning-transition-recorded',
       'transaction-committed',
-      'planning-claimed',
     ]);
   });
 });

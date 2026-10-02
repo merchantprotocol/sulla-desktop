@@ -852,11 +852,15 @@ export class WorkItemsModel {
     const epic = await WorkItemsModel.requireEpic(input.epic_id);
     const projectId = input.project_id || epic.project_id;
     const slug = input.slug ? input.slug.slice(0, 80) : null;
-    const status = input.status ?? 'todo';
-    const lane = await WorkLaneDefinitionModel.validateTaskStatus(projectId, status);
-    const executionEntryLaneKey = lane?.semantic_role === 'execution'
+    const requestedStatus = input.status ?? 'todo';
+    const requestedLane = await WorkLaneDefinitionModel.validateTaskStatus(projectId, requestedStatus);
+    const executionEntryLaneKey = requestedLane?.semantic_role === 'execution'
       ? await WorkLaneDefinitionModel.preferredLaneKey(projectId, 'execution', 'todo', 'first')
       : null;
+    const status = input.status ?? executionEntryLaneKey ?? requestedStatus;
+    const lane = executionEntryLaneKey && status === executionEntryLaneKey
+      ? { ...requestedLane, lane_key: executionEntryLaneKey }
+      : requestedLane;
     const id = input.id || await WorkItemsModel.uniqueId(WorkItemsModel.TASKS);
     const actor = input.actor ?? 'sulla';
     const labels = input.labels ?? [];
@@ -1251,9 +1255,12 @@ export class WorkItemsModel {
         LIMIT $4`,
       [[...HUMAN_COMMENT_AUTHORS], Math.max(1, opts.sinceDays ?? 14), opts.responder, Math.max(1, Math.min(opts.limit ?? 20, 100))],
     );
-    return rows.map(({ human_comment_id, human_comment_body, human_comment_at, ...task }) => ({
+    /* eslint-disable camelcase */
+    const mapped = rows.map(({ human_comment_id, human_comment_body, human_comment_at, ...task }) => ({
       task: task as WorkTaskRecord, comment_id: human_comment_id, body: human_comment_body, created_at: human_comment_at,
     }));
+    /* eslint-enable camelcase */
+    return mapped;
   }
 
   /**

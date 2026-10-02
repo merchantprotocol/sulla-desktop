@@ -1,10 +1,15 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+import { WorkItemsModel } from '../../database/models/WorkItemsModel';
 import { WorkLaneWorkflowBindingModel } from '../../database/models/WorkLaneWorkflowBindingModel';
 import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { LaneEntryAutomationService } from '../LaneEntryAutomationService';
 
 describe('LaneEntryAutomationService', () => {
+  beforeEach(() => {
+    jest.spyOn(WorkItemsModel, 'isTaskDispatchEnabled').mockResolvedValue(true);
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
   });
@@ -70,8 +75,14 @@ describe('LaneEntryAutomationService', () => {
 
   it('applies a structured next-stage outcome against the exact claimed generation', async() => {
     const entry: any = {
-      id: 'entry-next', task_id: 'task-1', workflow_id: 'wf-1', generation: 4,
-      lane_key: 'research', status: 'pending', binding_snapshot: {}, workflow_snapshot: { id: 'wf-1' },
+      id:                'entry-next',
+      task_id:           'task-1',
+      workflow_id:       'wf-1',
+      generation:        4,
+      lane_key:          'research',
+      status:            'pending',
+      binding_snapshot:  {},
+      workflow_snapshot: { id: 'wf-1' },
     };
     jest.spyOn(WorkLaneWorkflowBindingModel, 'getLaneEntry')
       .mockResolvedValueOnce(entry).mockResolvedValue({ ...entry, status: 'running', execution_id: 'lane-exec-task-1-4' });
@@ -136,7 +147,7 @@ describe('LaneEntryAutomationService', () => {
     let release!: () => void;
     const dispatch = jest.spyOn(LaneEntryAutomationService, 'dispatchEntry').mockImplementation(async(id) => {
       if (id === 'bad') throw new Error('isolated failure');
-      if (id === 'waiting') await new Promise<void>(resolve => { release = resolve; });
+      if (id === 'waiting') await new Promise<void>(resolve => { release = resolve });
       return { id, status: 'running' } as any;
     });
     const first = LaneEntryAutomationService.drainRecoverable();
@@ -149,8 +160,14 @@ describe('LaneEntryAutomationService', () => {
   });
 
   it('does not certify an old completed execution without its durable receipt', async() => {
-    const entry: any = { id: 'missing-receipt', task_id: 'task-1', status: 'running',
-      execution_id: 'old-execution', workflow_execution_status: 'completed', outcome: null };
+    const entry: any = {
+      id:                        'missing-receipt',
+      task_id:                   'task-1',
+      status:                    'running',
+      execution_id:              'old-execution',
+      workflow_execution_status: 'completed',
+      outcome:                   null,
+    };
     jest.spyOn(WorkLaneWorkflowBindingModel, 'listRecoverable').mockResolvedValue([entry]);
     jest.spyOn(WorkLaneWorkflowBindingModel, 'getLaneEntry').mockResolvedValue(entry);
     const settle = jest.spyOn(WorkLaneWorkflowBindingModel, 'markOutcome').mockResolvedValue(entry);
@@ -158,5 +175,4 @@ describe('LaneEntryAutomationService', () => {
     expect(settle).toHaveBeenCalledWith(entry.id, entry.execution_id, 'failed',
       expect.objectContaining({ message: expect.stringContaining('Missing durable terminal receipt') }));
   });
-
 });

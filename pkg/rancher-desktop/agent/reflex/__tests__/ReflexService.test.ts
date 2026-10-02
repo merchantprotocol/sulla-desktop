@@ -1,35 +1,35 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import type { ReflexExample } from '../ReflexEngine';
 
 const settings: Record<string, string> = {};
 const decisions: any[] = [];
 let examples: ReflexExample[] = [];
-const invoke = jest.fn(async() => ({ success: true, result: 'Opened "projects" tab in Sulla Desktop.' }));
+const invoke = jest.fn(() => Promise.resolve({ success: true, result: 'Opened "projects" tab in Sulla Desktop.' }));
 
-jest.mock('../../database/models/ReflexModel', () => ({
+jest.unstable_mockModule('../../database/models/ReflexModel', () => ({
   ReflexModel: {
     get version() { return examples.length },
-    activeExamples: async() => examples,
-    recordDecision: async(row: any) => { decisions.push(row); return `d${ decisions.length }` },
+    activeExamples: () => Promise.resolve(examples),
+    recordDecision: (row: any) => { decisions.push(row); return Promise.resolve(`d${ decisions.length }`) },
   },
 }));
-jest.mock('../../database/models/SullaSettingsModel', () => ({
-  SullaSettingsModel: { get: async(key: string, fallback: string) => settings[key] ?? fallback },
+jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
+  SullaSettingsModel: { get: (key: string, fallback: string) => Promise.resolve(settings[key] ?? fallback) },
 }));
-jest.mock('../../tools/registry', () => ({
+jest.unstable_mockModule('../../tools/registry', () => ({
   toolRegistry: {
     getCategories:            () => ['ui', 'docker'],
     getToolNamesForCategory:  (c: string) => (c === 'ui' ? ['open_tab'] : ['docker_rm']),
-    createTool:               async() => ({ invoke }),
+    createTool:               () => Promise.resolve({ invoke }),
   },
 }));
-jest.mock('../../services/DecisionService', () => ({
-  decisionService: { requiresApproval: async(tool: string) => tool === 'docker_rm' },
+jest.unstable_mockModule('../../services/DecisionService', () => ({
+  decisionService: { requiresApproval: (tool: string) => Promise.resolve(tool === 'docker_rm') },
 }));
 
-// eslint-disable-next-line import/first
-import { formatReflexContext, runReflex } from '../ReflexService';
+let formatReflexContext: typeof import('../ReflexService').formatReflexContext;
+let runReflex: typeof import('../ReflexService').runReflex;
 
 let n = 0;
 const ex = (utterance: string, toolName: string, params: Record<string, unknown>): ReflexExample => ({
@@ -37,6 +37,10 @@ const ex = (utterance: string, toolName: string, params: Record<string, unknown>
 });
 
 describe('ReflexService hints', () => {
+  beforeAll(async() => {
+    ({ formatReflexContext, runReflex } = await import('../ReflexService'));
+  });
+
   beforeEach(() => {
     for (const k of Object.keys(settings)) delete settings[k];
     decisions.length = 0;
