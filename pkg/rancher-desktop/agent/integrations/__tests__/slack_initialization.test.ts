@@ -4,6 +4,7 @@ import { TextDecoder, TextEncoder } from 'node:util';
 import { beforeAll, afterAll, describe, expect, it } from '@jest/globals';
 
 const SLACK_ID = 'slack';
+const productionEnabled = process.env.SLACK_PRODUCTION_TESTS === '1';
 
 interface IntegrationValueShape {
   value_id:       number;
@@ -19,6 +20,7 @@ let SullaIntegrations: any;
 let registry: any;
 
 beforeAll(async() => {
+  if (!productionEnabled) return;
   (globalThis as any).TextEncoder = TextEncoder;
   (globalThis as any).TextDecoder = TextDecoder;
 
@@ -56,10 +58,13 @@ beforeAll(async() => {
 }, 30000);
 
 afterAll(async() => {
+  if (!productionEnabled) return;
   await registry.invalidate(SLACK_ID);
 }, 30000);
 
-describe('Slack integration initialization (production path)', () => {
+const describeProduction = productionEnabled ? describe : describe.skip;
+
+describeProduction('Slack integration initialization (production path)', () => {
   it('initializes Slack integration through SullaIntegrations and registry', async() => {
     await SullaIntegrations();
     const slack = await registry.get(SLACK_ID);

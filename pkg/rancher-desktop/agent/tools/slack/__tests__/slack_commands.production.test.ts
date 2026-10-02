@@ -8,6 +8,7 @@ import { getIntegrationService } from '../../../services/IntegrationService';
 import { SlackApiCommandWorker, slackApiMethodToolRegistrations } from '../slack_scope_commands';
 
 const SLACK_ID = 'slack';
+const describeProduction = process.env.SLACK_PRODUCTION_TESTS === '1' ? describe : describe.skip;
 const service = getIntegrationService();
 
 async function invokeTool(name: string, input: Record<string, any>) {
@@ -23,7 +24,7 @@ async function invokeTool(name: string, input: Record<string, any>) {
   return tool.invoke(input);
 }
 
-describe('Slack command tools (production path)', () => {
+describeProduction('Slack command tools (production path)', () => {
   beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
