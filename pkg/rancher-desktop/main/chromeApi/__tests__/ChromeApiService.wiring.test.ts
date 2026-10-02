@@ -17,6 +17,7 @@ const mockRegistry = {
 };
 
 jest.unstable_mockModule('electron', () => ({
+  BrowserWindow:   { getAllWindows: jest.fn(() => []) },
   default:         {},
   WebContentsView: jest.fn(),
   session:         { fromPartition: jest.fn(() => mockSession) },
@@ -117,16 +118,16 @@ describe('ChromeApiService wiring', () => {
     const makeItem = (url: string) => {
       const item: any = new EventEmitter();
       Object.assign(item, {
-        getURL: () => url,
-getURLChain: () => [url],
-getTotalBytes: () => 10,
-getFilename: () => 'file.zip',
+        getURL:           () => url,
+        getURLChain:      () => [url],
+        getTotalBytes:    () => 10,
+        getFilename:      () => 'file.zip',
         getReceivedBytes: () => 10,
-setSavePath: jest.fn(),
-cancel: jest.fn(),
-pause: jest.fn(),
-resume: jest.fn(),
-canResume: () => true,
+        setSavePath:      jest.fn(),
+        cancel:           jest.fn(),
+        pause:            jest.fn(),
+        resume:           jest.fn(),
+        canResume:        () => true,
       });
       return item;
     };

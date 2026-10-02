@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- async cookie mocks model Electron's promise API */
 import { describe, expect, it, jest } from '@jest/globals';
 
 const mockCookieRecords: Electron.Cookie[] = [];
@@ -35,6 +36,7 @@ const mockCookies = {
 const mockBrowserSession = { cookies: mockCookies };
 
 jest.unstable_mockModule('electron', () => ({
+  BrowserWindow:   { getAllWindows: jest.fn(() => []) },
   default:         {},
   WebContentsView: jest.fn(),
   session:         { fromPartition: jest.fn(() => mockBrowserSession) },

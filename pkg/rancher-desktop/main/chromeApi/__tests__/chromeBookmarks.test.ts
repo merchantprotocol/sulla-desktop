@@ -9,7 +9,7 @@ const mockDb: any[] = [];
 let mockSeq = 0;
 let mockClock = 0;
 
-jest.mock('@pkg/agent/database/models/BrowserBookmarkModel', () => {
+jest.unstable_mockModule('@pkg/agent/database/models/BrowserBookmarkModel', () => {
   const now = () => new Date(Date.UTC(2026, 8, 28, 0, 0, ++mockClock)).toISOString();
   const siblings = (pid: string | null, exclude?: string) => mockDb
     .filter(r => r.parent_id === pid && r.id !== exclude)
@@ -81,14 +81,15 @@ jest.mock('@pkg/agent/database/models/BrowserBookmarkModel', () => {
     },
   };
 });
-jest.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }));
-jest.mock('@pkg/main/browserTabs/browserSession', () => ({ getBrowserSession: () => ({ fetch: async() => ({ ok: false }) }) }));
-jest.mock('@pkg/window/browserTabViewManager', () => ({ BrowserTabViewManager: { getInstance: () => ({ getFaviconUrl: () => null }) } }));
+jest.unstable_mockModule('electron', () => ({
+  BrowserWindow: { getAllWindows: () => [] },
+  default:       {},
+}));
+jest.unstable_mockModule('@pkg/main/browserTabs/browserSession', () => ({ getBrowserSession: () => ({ fetch: async() => ({ ok: false }) }) }));
+jest.unstable_mockModule('@pkg/window/browserTabViewManager', () => ({ BrowserTabViewManager: { getInstance: () => ({ getFaviconUrl: () => null }) } }));
 
-// eslint-disable-next-line import-x/first -- modules above must be mocked first
-import { bookmarkService } from '../../bookmarks/bookmarkService';
-// eslint-disable-next-line import-x/first
-import { createChromeBookmarks } from '../chromeBookmarks';
+const { bookmarkService } = await import('../../bookmarks/bookmarkService');
+const { createChromeBookmarks } = await import('../chromeBookmarks');
 
 const dockerLinks = [{ id: 'docker:app:5199', container: 'app', project: null, title: 'app', url: 'http://localhost:5199/', hostPort: 5199 }];
 

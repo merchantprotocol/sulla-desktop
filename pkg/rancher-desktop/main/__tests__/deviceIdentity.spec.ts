@@ -1,6 +1,8 @@
 /** @jest-environment node */
 
+import fs from 'fs';
 import os from 'os';
+import path from 'path';
 
 import { jest } from '@jest/globals';
 
@@ -14,9 +16,12 @@ const mockSullaSettingsModel = {
 };
 
 const mockVersion = { getProductionVersion: jest.fn<() => string | null>().mockReturnValue('1.2.3') };
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-device-identity-'));
+const deviceIdPath = path.join(tempDir, 'device-id');
 
 mockModules({
   '@pkg/agent/database/models/SullaSettingsModel': mockSullaSettingsModel,
+  '@pkg/utils/paths':                              { default: { sullaConfig: tempDir } },
   '@pkg/utils/version':                            mockVersion,
   '@pkg/utils/logging':                            undefined,
 });
@@ -25,15 +30,21 @@ const { getDesktopDeviceMetadata, getDesktopDeviceId } = await import('@pkg/main
 
 const { SullaSettingsModel } = mockSullaSettingsModel;
 
-describe('getDesktopDeviceId', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
+beforeEach(() => {
+  jest.clearAllMocks();
+  fs.rmSync(deviceIdPath, { force: true });
+});
 
-  it('returns an existing device id from the DB without writing', async() => {
+afterAll(() => {
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+describe('getDesktopDeviceId', () => {
+  it('migrates an existing legacy device id to the reinstall-safe file', async() => {
     SullaSettingsModel.get.mockResolvedValue('existing-id-123');
     const id = await getDesktopDeviceId();
     expect(id).toBe('existing-id-123');
+    expect(fs.readFileSync(deviceIdPath, 'utf8')).toBe('existing-id-123');
     expect(SullaSettingsModel.set).not.toHaveBeenCalled();
   });
 
@@ -42,6 +53,7 @@ describe('getDesktopDeviceId', () => {
     const id = await getDesktopDeviceId();
     // UUID v4 format
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(fs.readFileSync(deviceIdPath, 'utf8')).toBe(id);
     expect(SullaSettingsModel.set).toHaveBeenCalledWith('sullaCloudDeviceId', id, 'string');
   });
 
