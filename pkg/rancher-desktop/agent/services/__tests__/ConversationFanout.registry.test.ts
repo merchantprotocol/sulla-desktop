@@ -2,9 +2,11 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 const convertToolToLLM = jest.fn((name: string) => Promise.resolve({ name }));
 
-jest.unstable_mockModule('relaxed-json', () => ({
-  parse: jest.fn((value: string) => JSON.parse(value)),
-}));
+jest.unstable_mockModule('relaxed-json', () => {
+  const parse = jest.fn((value: string) => JSON.parse(value));
+
+  return { default: { parse }, parse };
+});
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: {

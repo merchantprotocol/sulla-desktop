@@ -11,7 +11,7 @@ import mockModules from '@pkg/utils/testUtils/mockModules';
 
 mockModules({
   electron:       undefined,
-  'relaxed-json': { parse: JSON.parse },
+  'relaxed-json': { default: { parse: JSON.parse }, parse: JSON.parse },
 });
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({

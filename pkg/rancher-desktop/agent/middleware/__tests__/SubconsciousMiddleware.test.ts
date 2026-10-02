@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-// relaxed-json is CommonJS and does not expose the named ESM export used by
-// JsonParseService under Jest's VM-module loader. Stub the package boundary so
-// this integration suite exercises the middleware instead of failing at link.
-jest.unstable_mockModule('relaxed-json', () => ({
-  parse: jest.fn((value: string) => JSON.parse(value)),
-}));
+// JsonParseService uses relaxed-json's default export for webpack CJS interop.
+// Native-ESM Jest resolves mock exports literally, so provide both module shapes.
+jest.unstable_mockModule('relaxed-json', () => {
+  const parse = jest.fn((value: string) => JSON.parse(value));
+
+  return { default: { parse }, parse };
+});
 
 jest.unstable_mockModule('../../database/models/ObservationsModel', () => ({
   ObservationsModel: {
