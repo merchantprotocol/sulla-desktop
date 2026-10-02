@@ -8,6 +8,7 @@ import { getIntegrationService } from '../../../services/IntegrationService';
 import { SlackConnectionHealthWorker, slackConnectionHealthRegistration } from '../slack_connection_health';
 
 const SLACK_ID = 'slack';
+const describeProduction = process.env.SLACK_PRODUCTION_TESTS === '1' ? describe : describe.skip;
 const service = getIntegrationService();
 interface HealthTestSlackClient { isConnected: () => boolean }
 
@@ -19,7 +20,7 @@ function makeHealthWorker() {
   return worker;
 }
 
-describe('slack_connection_health (production path)', () => {
+describeProduction('slack_connection_health (production path)', () => {
   beforeAll(async() => {
     (globalThis as any).TextEncoder = TextEncoder;
     (globalThis as any).TextDecoder = TextDecoder;
