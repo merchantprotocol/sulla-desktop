@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@j
 import { postgresClient } from '../../PostgresClient';
 import { WorkItemsModel } from '../WorkItemsModel';
 import { ArtifactReceiptModel } from '../ArtifactReceiptModel';
+import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
 import { classifyInProgressRow, WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
 describe('WorkTaskDispatchModel', () => {
@@ -403,6 +404,28 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[2][0]).toContain("'terminal:' || $2");
     expect(query.mock.calls[4][1][2]).toContain('<!-- artifact-receipt');
     expect(query.mock.calls[5][1]).toEqual(['task-fail', 'planning', 'dispatcher']);
+  });
+
+  it('starts the planning lane entry when verifier failures escalate to planning', async() => {
+    // Without RETURNING the UPDATE yields no row, the transition hook never
+    // runs, and the task sits in planning with no council (Rdm0, 2026-10-01).
+    const laneEntry = new Error('lane entry claimed');
+
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'claimLaneEntryInTransaction').mockRejectedValue(laneEntry);
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-fail', review_generation_hash: 'g1' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '3' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'older' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'task-fail', status: 'planning', assignee: 'dispatcher' }] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.failVerification('dispatch-fail', 'adapter_unavailable')).rejects.toBe(laneEntry);
+    expect(query.mock.calls[5][0]).toContain('RETURNING *');
+    expect(WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction).toHaveBeenCalledWith(
+      expect.anything(), 'task-fail', 'planning', 'verifier',
+    );
   });
 
   it('binds one immutable generation and durably excludes every worker and custodian', async() => {
