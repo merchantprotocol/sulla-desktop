@@ -169,7 +169,9 @@ describe('SettingsValidator', () => {
             newValue = defaultSettings[key] + 1;
             break;
           case 'string':
-            newValue = `${ defaultSettings[key] }!`;
+            newValue = keyPath.join('.') === 'experimental.modelMode'
+              ? (defaultSettings[key] === 'local' ? 'remote' : 'local')
+              : `${ defaultSettings[key] }!`;
             break;
           default:
             expect(['boolean', 'number', 'string']).toContain(typeof defaultSettings[key]);
@@ -198,7 +200,7 @@ describe('SettingsValidator', () => {
 
           expect({ needToUpdate, errors, isFatal }).toEqual({
             needToUpdate: false,
-            errors:       [`Invalid value for "${ prefix }${ key }": <${ JSON.stringify(invalidValue) }>`],
+            errors:       [`Invalid value for "${ prefix }${ key }": <${ JSON.stringify(invalidValue) }>${ keyPath.join('.') === 'experimental.modelMode' ? '; must be one of ["local","remote"]' : '' }`],
             isFatal:      false,
           });
         });

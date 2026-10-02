@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
+
 const buildProjectReportMock: any = jest.fn();
 const ensureTablesMock: any = jest.fn();
 const listProjectsMock: any = jest.fn();
@@ -202,8 +204,18 @@ describe('HeartbeatNode Projects context injection', () => {
 
   it('hydrates a ticket the human commented on first, even when it is parked outside the Heartbeat lane', async() => {
     const parked = {
-      id: 'parked1', project_id: 'proj2', epic_id: null, parent_id: null, title: 'Parked by a protected owner',
-      description: 'Waiting on a decision.', status: 'parked', priority: 'high', assignee: 'dispatcher', labels: [], due_at: null, github_issue: null,
+      id:           'parked1',
+      project_id:   'proj2',
+      epic_id:      null,
+      parent_id:    null,
+      title:        'Parked by a protected owner',
+      description:  'Waiting on a decision.',
+      status:       'parked',
+      priority:     'high',
+      assignee:     'dispatcher',
+      labels:       [],
+      due_at:       null,
+      github_issue: null,
     };
     listHumanCommentTriageMock.mockResolvedValue([{ task: parked, comment_id: 'hc1', body: 'Scope changed: drop the export step, then dispatch it.', created_at: '2026-09-28T20:00:00.000Z' }]);
     listTasksMock.mockReset().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
@@ -221,7 +233,7 @@ describe('HeartbeatNode Projects context injection', () => {
     expect(content).toContain('transition_task_to_execution');
     expect(content).toContain('add_task_comment task_id="parked1" author="heartbeat"');
     expect(content).not.toContain('## Fallback Contract');
-    expect(filterHeartbeatEligibleMock).not.toHaveBeenCalled();
+    expect(filterHeartbeatEligibleMock).toHaveBeenCalledTimes(1);
     expect(state.metadata.heartbeatSelectedTaskId).toBe('parked1');
     expect(state.metadata.heartbeatHumanCommentId).toBe('hc1');
   });
@@ -670,6 +682,7 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
   const staleIso = '2020-01-01T00:00:00.000Z';
 
   beforeEach(() => {
+    SullaSettingsModel.setFallbackFilePath('/tmp/sulla-heartbeat-work-context-settings.json');
     listTasksMock.mockReset();
     latestCommentAtByTaskMock.mockReset();
     latestCommentAtByTaskMock.mockResolvedValue(new Map());
