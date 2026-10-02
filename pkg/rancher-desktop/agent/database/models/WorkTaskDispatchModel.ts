@@ -1023,12 +1023,18 @@ export class WorkTaskDispatchModel {
         `, [id, `suppressed identical terminal generation ${ terminal.rows[0].id }`, generationHash,
           [...new Set(artifacts.map(value => value.type))], JSON.stringify(artifacts), [...excluded], priorDisposition,
           [...workers], [...custodians]]);
-        await client.query(`
+        const moved = await client.query<WorkTaskRecord>(`
           UPDATE work_tasks SET status = $2, assignee = $3, updated_at = now(),
             last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier',
             completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
           WHERE id = $1 AND status = 'in_review'
+          RETURNING *
         `, [taskId, transition.status, transition.assignee]);
+        if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
+          const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
+          await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
+            'verifier', 'protected-review-suppressed');
+        }
         return { generationHash, excludedAgentIds: [...excluded], suppressed: true };
       }
 
@@ -1644,6 +1650,7 @@ export class WorkTaskDispatchModel {
                last_moved_by = 'verifier',
                completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
          WHERE id = $1 AND status = 'in_review'
+        RETURNING *
         `, [taskId, transition.status, transition.assignee]);
         if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
           const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
@@ -1820,6 +1827,7 @@ export class WorkTaskDispatchModel {
                last_moved_by = 'verifier',
                completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
          WHERE id = $1 AND status = 'in_review'
+        RETURNING *
       `, [taskId, transition.status, transition.assignee]);
       if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
         const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
@@ -1881,6 +1889,7 @@ export class WorkTaskDispatchModel {
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier'
          WHERE id = $1 AND status = 'in_review'
+        RETURNING *
       `, [taskId, terminal ? 'planning' : 'in_review', terminal ? 'dispatcher' : 'heartbeat']);
       if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
         const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
