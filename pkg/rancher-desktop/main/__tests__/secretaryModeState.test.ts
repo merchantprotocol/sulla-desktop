@@ -1,9 +1,11 @@
 import path from 'path';
 
-import { resolveMeetingNotesPath } from '@pkg/main/secretaryModeState';
+import { jest } from '@jest/globals';
 
-jest.mock('electron', () => ({ ipcMain: { on: jest.fn(), handle: jest.fn() }, shell: { showItemInFolder: jest.fn() } }));
-jest.mock('@pkg/agent/utils/sullaPaths', () => ({ resolveSullaHomeDir: () => '/home/user/sulla' }));
+jest.unstable_mockModule('electron', () => ({ ipcMain: { on: jest.fn(), handle: jest.fn() }, shell: { showItemInFolder: jest.fn() } }));
+jest.unstable_mockModule('@pkg/agent/utils/sullaPaths', () => ({ resolveSullaHomeDir: () => '/home/user/sulla' }));
+
+const { resolveMeetingNotesPath } = await import('@pkg/main/secretaryModeState');
 
 const MEETINGS = path.join('/home/user/sulla', 'meetings');
 

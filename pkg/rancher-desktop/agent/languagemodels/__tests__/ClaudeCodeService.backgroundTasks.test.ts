@@ -6,24 +6,32 @@ import { PassThrough } from 'stream';
 
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import { ClaudeCodeService } from '../ClaudeCodeService';
-
 // Same lightweight stubs as ClaudeCodeService.claimPrewarm.test.ts — these
 // suites only exercise the in-memory warm pool, never a real spawn.
-jest.mock('@pkg/main/MCPServerHost', () => ({ getMCPServerHost: jest.fn() }));
-jest.mock('../../database/RedisClient', () => ({
+jest.unstable_mockModule('../BaseLanguageModel', () => ({
+  BaseLanguageModel: class {
+    protected model = '';
+  },
+  FinishReason:    { Stop: 'stop' },
+  usageTokenTotal: () => 0,
+}));
+jest.unstable_mockModule('@pkg/main/MCPServerHost', () => ({ getMCPServerHost: jest.fn() }));
+jest.unstable_mockModule('../../database/RedisClient', () => ({
   redisClient: { get: jest.fn(), set: jest.fn(async() => {}), del: jest.fn() },
 }));
-jest.mock('@pkg/utils/logging', () => {
+jest.unstable_mockModule('@pkg/utils/logging', () => {
   const noopLog = { log: () => {}, warn: () => {}, error: () => {}, info: () => {}, debug: () => {} };
 
   return { __esModule: true, default: new Proxy({}, { get: () => noopLog }) };
 });
-jest.mock('@pkg/utils/paths', () => ({
+jest.unstable_mockModule('@pkg/utils/paths', () => ({
   __esModule: true,
   default:    { limactl: '/dev/null', lima: '/dev/null', sullaHome: '/tmp', sullaConfig: '/tmp' },
 }));
-jest.mock('../../services/WebSocketClientService', () => ({ getWebSocketClientService: jest.fn() }));
+jest.unstable_mockModule('../../services/WebSocketClientService', () => ({ getWebSocketClientService: jest.fn() }));
+
+const { ClaudeCodeService } = await import('../ClaudeCodeService');
+type ClaudeCodeServiceInstance = InstanceType<typeof ClaudeCodeService>;
 
 /**
  * A parked warm process must keep reading its output: when a background task
@@ -67,7 +75,7 @@ const init = { type: 'system', subtype: 'init', session_id: 's1' };
 const followUp = { type: 'result', is_error: false, result: 'FINISHED' };
 
 describe('ClaudeCodeService — background tasks on parked processes', () => {
-  let service: ClaudeCodeService;
+  let service: ClaudeCodeServiceInstance;
   let deliver: jest.Mock;
 
   beforeEach(() => {
@@ -131,7 +139,12 @@ describe('ClaudeCodeService — background tasks on parked processes', () => {
   });
 
   describe('idle reap', () => {
-    beforeEach(() => { jest.useFakeTimers() });
+    beforeEach(() => {
+      jest.useFakeTimers();
+      // #898 intentionally keeps five idle processes warm. These tests isolate
+      // reap timing, so opt this fixture out of the pool floor.
+      (service as any).poolMin = -1;
+    });
     afterEach(() => { jest.useRealTimers() });
 
     it('defers the reap while background tasks are live, then reaps once they finish', () => {
