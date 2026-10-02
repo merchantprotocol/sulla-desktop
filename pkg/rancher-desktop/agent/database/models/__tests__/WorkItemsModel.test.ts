@@ -1,14 +1,25 @@
-import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+import { LaneEntryAutomationService } from '../../../services/LaneEntryAutomationService';
 import { postgresClient } from '../../PostgresClient';
 import { WorkItemsModel } from '../WorkItemsModel';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
+import { WorkTaskDependencyModel } from '../WorkTaskDependencyModel';
 
 describe('WorkItemsModel', () => {
   let originalQuery: any;
 
   beforeAll(() => {
     originalQuery = postgresClient.query;
+  });
+
+  beforeEach(() => {
+    jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
+      ready: false, catalogPresent: false, missingRoles: [], degradedReason: 'compatibility',
+    });
+    jest.spyOn(WorkLaneDefinitionModel, 'validateTaskStatus').mockResolvedValue(null);
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('todo');
+    jest.spyOn(LaneEntryAutomationService, 'handleTransition').mockResolvedValue({} as any);
   });
 
   afterEach(() => {
@@ -283,36 +294,27 @@ describe('WorkItemsModel', () => {
   });
 
   it('persists active same-project dependencies and rejects dependency cycles', async() => {
-    const successClient = {
-      query: (jest.fn() as any)
-        .mockResolvedValueOnce({
-          rows: [
-            { id: 'task-a', project_id: 'project-1' },
-            { id: 'task-b', project_id: 'project-1' },
-          ],
-        })
-        .mockResolvedValueOnce({ rows: [{ found: false }] })
-        .mockResolvedValueOnce({ rows: [{ task_id: 'task-a', depends_on_task_id: 'task-b' }] }),
-    };
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback(successClient));
+    const create = jest.spyOn(WorkTaskDependencyModel, 'create').mockResolvedValue({
+      id:                   'dependency-1',
+      dependent_task_id:    'task-a',
+      depends_on_task_id:   'task-b',
+      relation_type:        'requires',
+      acceptance_condition: null,
+      created_by:           'human',
+      created_at:           '2026-10-02T00:00:00.000Z',
+      updated_at:           null,
+      archived_at:          null,
+    });
     await expect(WorkItemsModel.setTaskDependency('task-a', 'task-b', 'human')).resolves.toMatchObject(
       {
         task_id: 'task-a', depends_on_task_id: 'task-b',
       },
     );
-    expect(successClient.query.mock.calls[1][0]).toContain('WITH RECURSIVE prerequisites');
+    expect(create).toHaveBeenCalledWith({
+      dependentTaskId: 'task-a', dependsOnTaskId: 'task-b', relationType: 'requires', actor: 'human',
+    });
 
-    const cycleClient = {
-      query: (jest.fn() as any)
-        .mockResolvedValueOnce({
-          rows: [
-            { id: 'task-a', project_id: 'project-1' },
-            { id: 'task-b', project_id: 'project-1' },
-          ],
-        })
-        .mockResolvedValueOnce({ rows: [{ found: true }] }),
-    };
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback(cycleClient));
+    create.mockRejectedValueOnce(new Error('Dependency rejected: would create a cycle'));
     await expect(
       WorkItemsModel.setTaskDependency('task-a', 'task-b', 'human'),
     )

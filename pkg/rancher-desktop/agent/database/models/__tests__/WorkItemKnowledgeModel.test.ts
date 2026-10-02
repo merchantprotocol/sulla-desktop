@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { postgresClient } from '../../PostgresClient';
 import { migrationsRegistry } from '../../migrations';
-import { up } from '../../migrations/0063_create_work_item_knowledge_links';
+import { up } from '../../migrations/0077_create_work_item_knowledge_links';
 import { KnowledgeGraphModel } from '../KnowledgeGraphModel';
 import { WorkItemKnowledgeModel } from '../WorkItemKnowledgeModel';
 
@@ -10,7 +10,7 @@ describe('work item knowledge associations', () => {
   afterEach(() => { jest.restoreAllMocks() });
 
   it('ships FK integrity, exactly-one-target, soft archive, and per-target active uniqueness', () => {
-    expect(migrationsRegistry.at(-1)?.name).toBe('0063_create_work_item_knowledge_links');
+    expect(migrationsRegistry.some(migration => migration.name === '0077_create_work_item_knowledge_links')).toBe(true);
     expect(up).toContain('knowledge_node_id TEXT        NOT NULL REFERENCES knowledge_nodes(id)');
     expect(up).toContain('project_id        TEXT        REFERENCES work_projects(id)');
     expect(up).toContain('epic_id           TEXT        REFERENCES work_epics(id)');

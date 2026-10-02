@@ -5,7 +5,7 @@ import { Pool } from 'pg';
 import { postgresClient } from '../../PostgresClient';
 import { up as knowledgeGraphMigration } from '../../migrations/0029_create_knowledge_graph';
 import { up as workItemsMigration } from '../../migrations/0044_create_work_items_tables';
-import { up as associationMigration } from '../../migrations/0063_create_work_item_knowledge_links';
+import { up as associationMigration } from '../../migrations/0077_create_work_item_knowledge_links';
 import { WorkItemKnowledgeModel } from '../WorkItemKnowledgeModel';
 
 import mockModules from '@pkg/utils/testUtils/mockModules';

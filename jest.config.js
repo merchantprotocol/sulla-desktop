@@ -44,6 +44,7 @@ export default {
   testPathIgnorePatterns: [
     '<rootDir>/node_modules/',
     '<rootDir>/.claude/',
+    '<rootDir>/.*/__tests__/fixtures/',
     '<rootDir>/pkg/rancher-desktop/sudo-prompt/',
   ],
 };

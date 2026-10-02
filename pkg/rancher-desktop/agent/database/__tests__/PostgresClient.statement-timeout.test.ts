@@ -50,8 +50,8 @@ describe('PostgresClient statement timeout scope', () => {
     Object.defineProperty(process, 'type', { value: 'renderer', configurable: true });
     try {
       let RendererPostgresClient!: typeof PostgresClient;
-      jest.isolateModules(() => {
-        RendererPostgresClient = require('../PostgresClient').PostgresClient;
+      await jest.isolateModulesAsync(async() => {
+        RendererPostgresClient = (await import('../PostgresClient')).PostgresClient;
       });
       const poolClient = {
         query:   jest.fn(() => Promise.resolve({ rows: [{ ok: true }] })),
