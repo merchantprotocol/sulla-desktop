@@ -1,9 +1,8 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-jest.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: jest.fn() } }));
+jest.unstable_mockModule('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: jest.fn() } }));
 
-// eslint-disable-next-line import/first
-import { isPreviewableDraft } from '../useReflexIntent';
+const { isPreviewableDraft } = await import('../useReflexIntent');
 
 describe('isPreviewableDraft', () => {
   it('previews short single-line requests', () => {

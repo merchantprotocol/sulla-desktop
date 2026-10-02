@@ -1,8 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { plainChromeUserAgent } from '../containedAuthWindow';
+const electron = { BrowserWindow: jest.fn(), session: { fromPartition: jest.fn() } };
 
-jest.mock('electron', () => ({ BrowserWindow: jest.fn(), session: { fromPartition: jest.fn() } }));
+jest.unstable_mockModule('electron', () => ({ __esModule: true, default: electron, ...electron }));
+
+const { plainChromeUserAgent } = await import('../containedAuthWindow');
 
 describe('plainChromeUserAgent', () => {
   it('strips the app name and Electron token so sign-in pages see plain Chrome', () => {

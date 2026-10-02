@@ -6,28 +6,31 @@ import { PassThrough } from 'stream';
 
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import { ClaudeCodeService } from '../ClaudeCodeService';
-
-jest.mock('child_process', () => {
-  const actual = jest.requireActual('child_process') as any;
-
-  return { ...actual, spawn: jest.fn(() => ({ unref: () => {}, on: () => {}, once: () => {} })) };
-});
-jest.mock('@pkg/main/MCPServerHost', () => ({ getMCPServerHost: jest.fn() }));
-jest.mock('../../database/RedisClient', () => ({
+jest.unstable_mockModule('../BaseLanguageModel', () => ({
+  BaseLanguageModel: class {
+    protected model = '';
+  },
+  FinishReason:    { Stop: 'stop' },
+  usageTokenTotal: () => 0,
+}));
+jest.unstable_mockModule('@pkg/main/MCPServerHost', () => ({ getMCPServerHost: jest.fn() }));
+jest.unstable_mockModule('../../database/RedisClient', () => ({
   redisClient: { get: jest.fn(), set: jest.fn(async() => {}), del: jest.fn() },
 }));
-jest.mock('@pkg/utils/logging', () => {
+jest.unstable_mockModule('@pkg/utils/logging', () => {
   const noopLog = { log: () => {}, warn: () => {}, error: () => {}, info: () => {}, debug: () => {} };
 
   return { __esModule: true, default: new Proxy({}, { get: () => noopLog }) };
 });
-jest.mock('@pkg/utils/paths', () => ({
+jest.unstable_mockModule('@pkg/utils/paths', () => ({
   __esModule: true,
   default:    { limactl: '/dev/null', lima: '/dev/null', sullaHome: '/tmp', sullaConfig: '/tmp' },
 }));
-jest.mock('../../services/WebSocketClientService', () => ({ getWebSocketClientService: jest.fn() }));
-jest.mock('../../prompts/generateClaudeCodeMemoryFile', () => ({ generateClaudeCodeMemoryFile: async() => {} }));
+jest.unstable_mockModule('../../services/WebSocketClientService', () => ({ getWebSocketClientService: jest.fn() }));
+jest.unstable_mockModule('../../prompts/generateClaudeCodeMemoryFile', () => ({ generateClaudeCodeMemoryFile: async() => {} }));
+
+const { ClaudeCodeService } = await import('../ClaudeCodeService');
+type ClaudeCodeServiceInstance = InstanceType<typeof ClaudeCodeService>;
 
 /**
  * On --resume, the CLI injects a "background command didn't finish before the
@@ -53,19 +56,19 @@ const line = (o: unknown) => `${ JSON.stringify(o) }\n`;
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 describe('ClaudeCodeService — turns the CLI runs before our prompt', () => {
-  let service: ClaudeCodeService;
+  let service: ClaudeCodeServiceInstance;
   let proc: any;
 
   beforeEach(() => {
     service = new ClaudeCodeService();
     proc = makeProc();
     const s = service as any;
-    s.resolveClaudeCreds = async() => ({ oauthToken: 'test', apiKey: undefined });
-    s.getSession = async() => 'sess-1';
-    s.setSession = async() => {};
-    s.buildUserMessageContextPrefix = async() => '';
-    s.warmPoolEnabled = async() => true;
-    s.speculativeBootEnabled = async() => true;
+    s.resolveClaudeCreds = () => Promise.resolve({ oauthToken: 'test', apiKey: undefined });
+    s.getSession = () => Promise.resolve('sess-1');
+    s.setSession = () => Promise.resolve();
+    s.buildUserMessageContextPrefix = () => Promise.resolve('');
+    s.warmPoolEnabled = () => Promise.resolve(true);
+    s.speculativeBootEnabled = () => Promise.resolve(true);
     s.bgDelivery = { deliver: jest.fn(), takePending: () => [] };
     s.prewarmed.set('conv', {
       proc,

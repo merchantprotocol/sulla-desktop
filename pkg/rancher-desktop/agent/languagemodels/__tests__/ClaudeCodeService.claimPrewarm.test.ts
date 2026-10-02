@@ -1,24 +1,33 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
+jest.unstable_mockModule('../BaseLanguageModel', () => ({
+  BaseLanguageModel: class {
+    protected model = '';
+  },
+  FinishReason:    { Stop: 'stop' },
+  usageTokenTotal: () => 0,
+}));
+
 // ClaudeCodeService's real imports drag in the Electron main-process world
 // (MCP host, redis, logging, paths), which this suite never exercises —
 // claimPrewarm only touches the in-memory pool. Stub them so the suite
 // stays lightweight enough for constrained environments.
-jest.mock('@pkg/main/MCPServerHost', () => ({ getMCPServerHost: jest.fn() }));
-jest.mock('../../database/RedisClient', () => ({
+jest.unstable_mockModule('@pkg/main/MCPServerHost', () => ({ getMCPServerHost: jest.fn() }));
+jest.unstable_mockModule('../../database/RedisClient', () => ({
   redisClient: { get: jest.fn(), set: jest.fn(), del: jest.fn() },
 }));
-jest.mock('@pkg/utils/logging', () => {
+jest.unstable_mockModule('@pkg/utils/logging', () => {
   const noopLog = { log: () => {}, warn: () => {}, error: () => {}, info: () => {}, debug: () => {} };
 
   return { __esModule: true, default: new Proxy({}, { get: () => noopLog }) };
 });
-jest.mock('@pkg/utils/paths', () => ({
+jest.unstable_mockModule('@pkg/utils/paths', () => ({
   __esModule: true,
   default:    { limactl: '/dev/null', lima: '/dev/null', sullaHome: '/tmp', sullaConfig: '/tmp' },
 }));
 
-import { ClaudeCodeService } from '../ClaudeCodeService';
+const { ClaudeCodeService } = await import('../ClaudeCodeService');
+type ClaudeCodeServiceInstance = InstanceType<typeof ClaudeCodeService>;
 
 /**
  * Regression tests for warm-pool adoption. A parked/prewarmed process can
@@ -50,7 +59,7 @@ function makeRecord(bufferedLines: string[]) {
   };
 }
 
-function claim(service: ClaudeCodeService, convId: string, record: ReturnType<typeof makeRecord>) {
+function claim(service: ClaudeCodeServiceInstance, convId: string, record: ReturnType<typeof makeRecord>) {
   (service as any).prewarmed.set(convId, record);
 
   return (service as any).claimPrewarm(convId, 'claude-code');
