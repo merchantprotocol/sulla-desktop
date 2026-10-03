@@ -110,19 +110,27 @@ export function dockerLinksFromPs(stdout: string): DockerLink[] {
 type Runner = typeof runCommand;
 
 /**
- * List links for running containers. Tries the host docker CLI first (it
- * talks to the VM's daemon through the forwarded socket), then the VM.
+ * List links for running containers from both the host docker CLI and the
+ * Lima VM's daemon. They can be different daemons (e.g. Docker Desktop on the
+ * host), so the lists are merged; a container both report appears once.
  */
 export async function listDockerLinks(run: Runner = runCommand): Promise<DockerLinksResult> {
   const args = ['ps', '--format', '{{json .}}'];
   const opts = { timeoutMs: 10_000, maxOutputChars: 500_000 };
-  let res = await run('docker', args, opts);
-  if (res.exitCode !== 0) {
-    res = await run('docker', args, { ...opts, runInLimaShell: true });
+  const results = await Promise.all([
+    run('docker', args, opts),
+    run('docker', args, { ...opts, runInLimaShell: true }),
+  ].map(p => p.catch((err: Error) => ({ exitCode: 1, stdout: '', stderr: err.message }))));
+  const ok = results.filter(r => r.exitCode === 0);
+  if (!ok.length) {
+    const failed = results[results.length - 1];
+
+    return { available: false, links: [], error: (failed.stderr || failed.stdout || 'docker ps failed').trim().slice(0, 300) };
   }
-  if (res.exitCode !== 0) {
-    return { available: false, links: [], error: (res.stderr || res.stdout || 'docker ps failed').trim().slice(0, 300) };
+  const byId = new Map<string, DockerLink>();
+  for (const link of ok.flatMap(r => dockerLinksFromPs(r.stdout))) {
+    if (!byId.has(link.id)) byId.set(link.id, link);
   }
 
-  return { available: true, links: dockerLinksFromPs(res.stdout) };
+  return { available: true, links: [...byId.values()].sort((a, b) => a.container.localeCompare(b.container) || a.hostPort - b.hostPort) };
 }

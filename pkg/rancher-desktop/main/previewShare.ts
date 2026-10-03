@@ -14,11 +14,12 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import fs from 'node:fs';
+import { Resolver } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 
+import { ensureCloudflared } from '@pkg/main/cloudflaredBinary';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -28,6 +29,12 @@ const ENTER_PATH = '/__sulla_preview/enter';
 const TICKET_TTL_MS = 5 * 60_000;
 const IDLE_TTL_MS = 30 * 60_000;
 const TUNNEL_START_TIMEOUT_MS = 45_000;
+// Sulla Mobile gives `bookmarks.open` 60s, so a first-run cloudflared
+// download gets this long before we tell the phone to come back shortly.
+const INSTALL_WAIT_MS = 20_000;
+const PUBLIC_DNS_TIMEOUT_MS = 20_000;
+const PUBLIC_RESOLVERS = ['1.1.1.1', '8.8.8.8'];
+export const SETTING_UP_MESSAGE = 'Setting up sharing… Sulla Desktop is installing its secure tunnel (one time only). Try again in a few seconds.';
 const TUNNEL_URL = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
@@ -229,10 +236,56 @@ export async function startGate(target: URL, now: () => number = Date.now): Prom
   };
 }
 
-const CLOUDFLARED_CANDIDATES = ['/opt/homebrew/bin/cloudflared', '/usr/local/bin/cloudflared', '/usr/bin/cloudflared'];
+/**
+ * cloudflared's path, installing Sulla's pinned copy when the Mac has none.
+ * A first-run download that outlasts `waitMs` keeps going in the background
+ * while the caller gets SETTING_UP_MESSAGE to retry.
+ */
+export async function cloudflaredReady(
+  waitMs = INSTALL_WAIT_MS,
+  ensure: () => Promise<string> = ensureCloudflared,
+): Promise<string> {
+  const install = ensure();
+  let timer: NodeJS.Timeout | undefined;
+  const slow = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(SETTING_UP_MESSAGE)), waitMs);
+    timer.unref?.();
+  });
+  install.catch(() => { /* surfaced below, or by the next attempt */ });
+  try {
+    return await Promise.race([install, slow]);
+  } catch (err) {
+    if ((err as Error).message === SETTING_UP_MESSAGE) throw err;
+    throw new Error(`Sulla couldn't set up sharing: ${ (err as Error).message }`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
-function cloudflaredBinary(): string {
-  return CLOUDFLARED_CANDIDATES.find(p => fs.existsSync(p)) || 'cloudflared';
+/**
+ * Wait until public DNS answers for `hostname`. A phone that asks before the
+ * record exists caches the NXDOMAIN (up to 30 minutes), so the link is only
+ * handed out once public resolvers see it.
+ */
+export async function waitForPublicDns(
+  hostname: string,
+  timeoutMs = PUBLIC_DNS_TIMEOUT_MS,
+  lookup: (host: string) => Promise<string[]> = (host) => {
+    const resolver = new Resolver({ timeout: 3_000, tries: 1 });
+    resolver.setServers(PUBLIC_RESOLVERS);
+
+    return resolver.resolve4(host);
+  },
+  sleep: (ms: number) => Promise<void> = ms => new Promise((resolve) => { setTimeout(resolve, ms) }),
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      if ((await lookup(hostname)).length) return;
+    } catch { /* not published yet */ }
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${ hostname } to appear in public DNS`);
+    await sleep(1_000);
+  }
 }
 
 async function freePort(): Promise<number> {
@@ -257,8 +310,9 @@ export interface Tunnel {
  * risks the phone caching a failed DNS lookup for up to 30 minutes.)
  */
 export async function startQuickTunnel(localPort: number): Promise<Tunnel> {
+  const binary = await cloudflaredReady();
   const metricsPort = await freePort();
-  const child: ChildProcess = spawn(cloudflaredBinary(), [
+  const child: ChildProcess = spawn(binary, [
     'tunnel', '--no-autoupdate',
     '--metrics', `127.0.0.1:${ metricsPort }`,
     '--url', `http://127.0.0.1:${ localPort }`,
@@ -282,7 +336,7 @@ export async function startQuickTunnel(localPort: number): Promise<Tunnel> {
       child.stdout?.on('data', onData);
       child.stderr?.on('data', onData);
       child.once('error', (err: NodeJS.ErrnoException) => reject(err.code === 'ENOENT'
-        ? new Error('cloudflared is not installed on this Mac. Install it with `brew install cloudflared`, then try again.')
+        ? new Error(`Sulla couldn't start its secure tunnel (${ binary } is missing). Try again to reinstall it.`)
         : err));
       child.once('exit', code => reject(new Error(`cloudflared exited (${ code }) before the tunnel came up: ${ output.trim().slice(-300) }`)));
       setTimeout(() => reject(new Error('Timed out starting the Cloudflare tunnel')), TUNNEL_START_TIMEOUT_MS).unref?.();
@@ -298,6 +352,7 @@ export async function startQuickTunnel(localPort: number): Promise<Tunnel> {
       if (Date.now() > deadline) throw new Error('Timed out waiting for the Cloudflare tunnel to register');
       await new Promise(r => setTimeout(r, 500));
     }
+    await waitForPublicDns(new URL(publicUrl).hostname);
     // Drain output so a full pipe can never stall cloudflared.
     child.stdout?.resume();
     child.stderr?.resume();
@@ -332,10 +387,15 @@ export class PreviewShareManager {
 
   constructor(private deps: PreviewShareDeps = { startGate, startTunnel: startQuickTunnel, now: Date.now }) {}
 
-  /** Returns a single-use public link that lands on `targetUrl`. */
-  async open(targetUrl: string): Promise<OpenedPreview> {
+  /**
+   * Returns a single-use public link that lands on `targetUrl`. `fresh`
+   * replaces the origin's tunnel with a new hostname — for a phone that has
+   * already cached a failed lookup of the old one.
+   */
+  async open(targetUrl: string, opts: { fresh?: boolean } = {}): Promise<OpenedPreview> {
     if (!isLoopbackUrl(targetUrl)) throw new Error('Only local links can be shared through a preview tunnel');
     const target = new URL(targetUrl);
+    if (opts.fresh) await this.close(target.origin);
     const share = await this.shareFor(target.origin);
     const ticket = share.gate.issueTicket();
     const next = `${ target.pathname }${ target.search }${ target.hash }`;

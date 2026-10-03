@@ -1,10 +1,13 @@
 /** @jest-environment node */
+/* eslint-disable @typescript-eslint/require-await -- async mocks stand in for downloads, tunnels and DNS */
 import http from 'node:http';
 import net from 'node:net';
 
 import { jest } from '@jest/globals';
 
-import { isLoopbackUrl, parseTunnelUrl, PreviewShareManager, startGate, type Gate } from '@pkg/main/previewShare';
+import {
+  cloudflaredReady, isLoopbackUrl, parseTunnelUrl, PreviewShareManager, SETTING_UP_MESSAGE, startGate, waitForPublicDns, type Gate,
+} from '@pkg/main/previewShare';
 
 let upstream: http.Server;
 let upstreamPort: number;
@@ -163,9 +166,13 @@ describe('PreviewShareManager', () => {
     const manager = new PreviewShareManager({ startGate, startTunnel, now: () => clock });
 
     return {
-      manager, startGate, startTunnel, gateClose, tunnelClose,
-      tick: (ms: number) => { clock += ms; },
-      touch: () => { last = clock; },
+      manager,
+      startGate,
+      startTunnel,
+      gateClose,
+      tunnelClose,
+      tick:  (ms: number) => { clock += ms },
+      touch: () => { last = clock },
     };
   }
 
@@ -207,5 +214,57 @@ describe('PreviewShareManager', () => {
     expect(f.tunnelClose).toHaveBeenCalledTimes(1);
     expect(f.gateClose).toHaveBeenCalledTimes(1);
     await f.manager.closeAll();
+  });
+});
+
+describe('cloudflared readiness', () => {
+  test('returns the binary once it is ready', async() => {
+    await expect(cloudflaredReady(1_000, async() => '/bin/cloudflared')).resolves.toBe('/bin/cloudflared');
+  });
+
+  test('a slow first-run install tells the phone sharing is being set up, without brew', async() => {
+    const err = await cloudflaredReady(10, () => new Promise(() => {})).catch((e: Error) => e);
+    expect((err as Error).message).toBe(SETTING_UP_MESSAGE);
+    expect(SETTING_UP_MESSAGE).toMatch(/^Setting up sharing…/);
+    expect(SETTING_UP_MESSAGE).not.toContain('brew');
+  });
+
+  test('a failed install is reported plainly', async() => {
+    await expect(cloudflaredReady(1_000, async() => { throw new Error('checksum mismatch') }))
+      .rejects.toThrow("Sulla couldn't set up sharing: checksum mismatch");
+  });
+});
+
+describe('waitForPublicDns', () => {
+  test('retries until public resolvers answer', async() => {
+    const lookup = jest.fn<(h: string) => Promise<string[]>>()
+      .mockRejectedValueOnce(Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' }))
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(['104.16.0.1']);
+    await waitForPublicDns('calm-river.trycloudflare.com', 5_000, lookup, async() => {});
+    expect(lookup).toHaveBeenCalledTimes(3);
+    expect(lookup).toHaveBeenCalledWith('calm-river.trycloudflare.com');
+  });
+
+  test('gives up after the deadline so the share is torn down instead of handed out', async() => {
+    const lookup = jest.fn(async() => { throw new Error('ENOTFOUND') });
+    await expect(waitForPublicDns('x.trycloudflare.com', 0, lookup, async() => {})).rejects.toThrow('public DNS');
+  });
+});
+
+describe('PreviewShareManager rotation', () => {
+  test('fresh replaces the tunnel so the phone gets a new hostname', async() => {
+    let n = 0;
+    const tunnelClose = jest.fn();
+    const manager = new PreviewShareManager({
+      startGate:   async(target: URL) => ({ port: 4000, target, issueTicket: () => 'tk', lastUsed: () => 0, close: async() => {} }),
+      startTunnel: async() => ({ publicUrl: `https://name-${ ++n }.trycloudflare.com`, close: tunnelClose }),
+      now:         () => 0,
+    });
+    expect((await manager.open('http://localhost:5180/')).url).toContain('name-1');
+    expect((await manager.open('http://localhost:5180/')).url).toContain('name-1');
+    expect((await manager.open('http://localhost:5180/', { fresh: true })).url).toContain('name-2');
+    expect(tunnelClose).toHaveBeenCalledTimes(1);
+    await manager.closeAll();
   });
 });

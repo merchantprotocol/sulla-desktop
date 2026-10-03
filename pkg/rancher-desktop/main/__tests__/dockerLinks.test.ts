@@ -57,6 +57,28 @@ describe('listDockerLinks', () => {
     expect(result).toEqual({ available: true, links: [expect.objectContaining({ title: 'app', url: 'http://localhost:3000/' })] });
   });
 
+  it('merges host and VM containers, listing a container both report once', async() => {
+    const run = jest.fn(async(_cmd: string, _args: string[], opts: any) => (opts.runInLimaShell
+      ? { exitCode: 0, stdout: [psLine('contractor-portal', '0.0.0.0:5180->5173/tcp'), psLine('shared', '0.0.0.0:8080->80/tcp')].join('\n'), stderr: '' }
+      : { exitCode: 0, stdout: [psLine('host-app', '0.0.0.0:3000->3000/tcp'), psLine('shared', '0.0.0.0:8080->80/tcp')].join('\n'), stderr: '' }));
+
+    const result = await listDockerLinks(run as any);
+
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(result.available).toBe(true);
+    expect(result.links.map(l => l.url)).toEqual(['http://localhost:5180/', 'http://localhost:3000/', 'http://localhost:8080/']);
+  });
+
+  it('keeps the host list when the VM query throws', async() => {
+    const run = jest.fn(async(_cmd: string, _args: string[], opts: any) => {
+      if (opts.runInLimaShell) throw new Error('lima down');
+
+      return { exitCode: 0, stdout: psLine('host-app', '0.0.0.0:3000->3000/tcp'), stderr: '' };
+    });
+
+    await expect(listDockerLinks(run as any)).resolves.toEqual({ available: true, links: [expect.objectContaining({ title: 'host-app' })] });
+  });
+
   it('reports docker as unavailable when both attempts fail', async() => {
     const run = jest.fn(async() => ({ exitCode: 1, stdout: '', stderr: 'Cannot connect to the Docker daemon' }));
 
