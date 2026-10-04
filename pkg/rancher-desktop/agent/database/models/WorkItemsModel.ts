@@ -13,6 +13,7 @@
  * DUAL-STORE NOTE: reads and writes ONLY Postgres — no Redis hash.
  */
 
+import { approvalSafeTargetSql } from './WorkAgentAdmission';
 import { postgresClient } from '../PostgresClient';
 import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
 import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
@@ -1059,6 +1060,14 @@ export class WorkItemsModel {
         const current = await client.query<WorkTaskRecord>(
           `SELECT * FROM ${ WorkItemsModel.TASKS } WHERE id = $1 AND archived = false FOR UPDATE`, [id]);
         if (!current.rows[0]) return null;
+        if (changes.status !== undefined && changes.status !== current.rows[0].status && actor !== 'human') {
+          const permitted = await client.query<{ target: string }>(
+            `SELECT ${ approvalSafeTargetSql('t', '$2') } AS target FROM work_tasks t WHERE id = $1`,
+            [id, changes.status]);
+          if (permitted.rows[0]?.target !== changes.status) {
+            throw new Error('human_approval_required: automatic transition cannot cross an approval boundary');
+          }
+        }
         const rows = await client.query<WorkTaskRecord>(updateSql, values);
         const committed = rows.rows[0] ?? null;
         if (committed && enteringReview && changes.custody) {

@@ -7,7 +7,7 @@ import {
   buildReceipt, receiptInsertInput, renderReceiptComment,
   type ArtifactReceipt, type ArtifactReceiptInput,
 } from '../../services/ArtifactReceiptService';
-import { agentAdmissionSql, taskLaneRoleSql, taskLaneTargetSql } from './WorkAgentAdmission';
+import { agentAdmissionSql, approvalSafeTargetSql, taskLaneRoleSql, taskLaneTargetSql } from './WorkAgentAdmission';
 import { ArtifactReceiptModel } from './ArtifactReceiptModel';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { WorkflowExecutionModel } from './WorkflowExecutionModel';
@@ -331,8 +331,8 @@ export class WorkTaskDispatchModel {
   ): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
-      const candidate = await client.query<WorkTaskRecord>(`
-        SELECT t.*
+      const candidate = await client.query<WorkTaskRecord & { admission_target?: string }>(`
+        SELECT t.*, ${ approvalSafeTargetSql('t', "CASE WHEN t.status = 'todo' THEN 'in_progress' ELSE t.status END") } AS admission_target
           FROM work_tasks t
           LEFT JOIN work_epics e ON e.id = t.epic_id
           JOIN work_projects p ON p.id = t.project_id
@@ -355,11 +355,12 @@ export class WorkTaskDispatchModel {
       const task = candidate.rows[0];
       if (!task) return null;
 
+      const claimStatus = task.admission_target ?? (task.status === 'todo' ? 'in_progress' : task.status);
       const stageClaim = await LifecycleCapabilityModel.claimStageWithClient(
         client,
         task.id,
         'todo-execution',
-        task.status === 'todo' ? 'in_progress' : task.status,
+        claimStatus,
         'dispatcher',
         runtimeInstanceId,
         true,
@@ -379,7 +380,7 @@ export class WorkTaskDispatchModel {
 
       const updated = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = CASE WHEN status = 'todo' THEN 'in_progress' ELSE status END,
+           SET status = $4,
                assignee = $2,
                updated_at = now(),
                last_moved_at = now(),
@@ -387,7 +388,7 @@ export class WorkTaskDispatchModel {
                last_moved_by = $2
          WHERE id = $1 AND status = $3
         RETURNING *
-      `, [task.id, TASK_ASSIGNEES.dispatcher, task.status]);
+      `, [task.id, TASK_ASSIGNEES.dispatcher, task.status, claimStatus]);
       if (!updated.rows[0]) {
         throw new Error(`Atomic dispatch lost task ${ task.id } before execution handoff`);
       }
@@ -929,7 +930,7 @@ export class WorkTaskDispatchModel {
         const moved = await client.query<WorkTaskRecord>(`
           UPDATE work_tasks SET status = ${ taskLaneTargetSql('work_tasks', '$2') }, assignee = $3, updated_at = now(),
             last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier',
-            completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
+            completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskLaneTargetSql('work_tasks', '$2') } NOT IN (SELECT lane_key FROM work_lane_definitions WHERE requires_human_approval = true) THEN now() ELSE completed_at END
           WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
           RETURNING *
         `, [taskId, transition.status, transition.assignee]);
@@ -1398,7 +1399,7 @@ export class WorkTaskDispatchModel {
            SET status = CASE WHEN $2 = 'in_review' THEN status ELSE ${ taskLaneTargetSql('work_tasks', '$2') } END, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
-               completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
+               completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskLaneTargetSql('work_tasks', '$2') } NOT IN (SELECT lane_key FROM work_lane_definitions WHERE requires_human_approval = true) THEN now() ELSE completed_at END
          WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
         `, [taskId, transition.status, transition.assignee]);
@@ -1563,7 +1564,7 @@ export class WorkTaskDispatchModel {
            SET status = CASE WHEN $2 = 'in_review' THEN status ELSE ${ taskLaneTargetSql('work_tasks', '$2') } END, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
-               completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
+               completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskLaneTargetSql('work_tasks', '$2') } NOT IN (SELECT lane_key FROM work_lane_definitions WHERE requires_human_approval = true) THEN now() ELSE completed_at END
          WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
       `, [taskId, transition.status, transition.assignee]);

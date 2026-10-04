@@ -187,7 +187,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   }
 
   static async findStaleExecutions(now = new Date()): Promise<WorkflowExecutionModel[]> {
-    const rows = await postgresClient.queryAll<any>(`SELECT * FROM workflow_executions WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND scope_task_id IS NULL AND lease_expires_at IS NOT NULL AND lease_expires_at <= $1 ORDER BY lease_expires_at ASC`, [now]);
+    const rows = await postgresClient.queryAll<any>(`SELECT * FROM workflow_executions WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND NOT EXISTS (SELECT 1 FROM work_task_planning_runs planning WHERE planning.execution_id = workflow_executions.execution_id) AND lease_expires_at IS NOT NULL AND lease_expires_at <= $1 ORDER BY lease_expires_at ASC`, [now]);
     return rows.map(WorkflowExecutionModel.hydrate);
   }
 
@@ -209,6 +209,8 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
           WHERE execution.scope_task_id IS NOT NULL
             AND execution.status IN ('running', 'suspended')
             AND execution.auto_restart = TRUE
+            AND execution.workflow_id <> 'core-routine-plan-project-task'
+            AND NOT EXISTS (SELECT 1 FROM work_task_planning_runs planning WHERE planning.execution_id = execution.execution_id)
             AND (dispatch.id IS NULL OR dispatch.status <> 'running')
             AND NOT EXISTS (
               SELECT 1 FROM work_lane_entry_automations lane
@@ -262,7 +264,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
                updated_at = NOW()
          WHERE status IN ('running', 'suspended')
            AND auto_restart = TRUE
-           AND scope_task_id IS NULL
+           AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND NOT EXISTS (SELECT 1 FROM work_task_planning_runs planning WHERE planning.execution_id = workflow_executions.execution_id)
            AND owner_id IS NULL
            AND lease_token IS NULL
            AND lease_expires_at IS NULL
@@ -293,7 +295,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     const row = await postgresClient.queryOne<{ next_expiry: Date | null }>(`
       SELECT MIN(lease_expires_at) AS next_expiry
       FROM workflow_executions
-      WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND scope_task_id IS NULL AND lease_expires_at IS NOT NULL`);
+      WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND NOT EXISTS (SELECT 1 FROM work_task_planning_runs planning WHERE planning.execution_id = workflow_executions.execution_id) AND lease_expires_at IS NOT NULL`);
     return row?.next_expiry ? new Date(row.next_expiry) : null;
   }
 
@@ -322,13 +324,13 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
       const token = `${ ownerId }:${ executionId }`;
       const row = (await client.query(`UPDATE workflow_executions
         SET owner_id = $2, lease_token = $3, leased_at = NOW(), heartbeat_at = NOW(), lease_expires_at = NOW() + ($4 * INTERVAL '1 millisecond'), attempt_count = attempt_count + 1, updated_at = NOW()
-        WHERE execution_id = $1 AND scope_task_id IS NULL AND status IN ('running', 'suspended') AND auto_restart = TRUE AND lease_expires_at <= NOW() AND attempt_count < max_attempts RETURNING *`, [executionId, ownerId, token, ttlMs])).rows[0];
+        WHERE execution_id = $1 AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND NOT EXISTS (SELECT 1 FROM work_task_planning_runs planning WHERE planning.execution_id = workflow_executions.execution_id) AND status IN ('running', 'suspended') AND auto_restart = TRUE AND lease_expires_at <= NOW() AND attempt_count < max_attempts RETURNING *`, [executionId, ownerId, token, ttlMs])).rows[0];
       if (!row) {
         await client.query(`WITH exhausted AS (
           UPDATE workflow_executions SET status = 'failed', completed_at = NOW(), terminal_at = NOW(),
             terminal_reason = 'recovery_attempt_ceiling', error = 'recovery attempt ceiling exceeded',
             owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
-          WHERE execution_id = $1 AND scope_task_id IS NULL AND status IN ('running', 'suspended')
+          WHERE execution_id = $1 AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND NOT EXISTS (SELECT 1 FROM work_task_planning_runs planning WHERE planning.execution_id = workflow_executions.execution_id) AND status IN ('running', 'suspended')
             AND auto_restart = TRUE AND lease_expires_at <= NOW() AND attempt_count >= max_attempts
           RETURNING execution_id
         ) UPDATE work_lane_entry_automations SET status = 'failed',
@@ -376,7 +378,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   static async findSuspended(): Promise<WorkflowExecutionModel[]> {
     const rows = await postgresClient.queryAll(
       `SELECT * FROM workflow_executions
-       WHERE status = 'suspended' AND scope_task_id IS NULL
+       WHERE status = 'suspended' AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND NOT EXISTS (SELECT 1 FROM work_task_planning_runs planning WHERE planning.execution_id = workflow_executions.execution_id)
          AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
        ORDER BY started_at DESC`,
       [],

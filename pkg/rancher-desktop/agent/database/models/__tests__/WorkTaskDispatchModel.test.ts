@@ -130,9 +130,9 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[1][0]).toContain('lifecycle_capabilities');
     expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_stage_claims');
     expect(query.mock.calls[4][0]).toContain('INSERT INTO work_task_dispatches');
-    expect(query.mock.calls[5][0]).toContain("THEN 'in_progress' ELSE status END");
+    expect(query.mock.calls[5][0]).toContain('SET status = $4');
     expect(query.mock.calls[5][0]).toContain('assignee = $2');
-    expect(query.mock.calls[5][1]).toEqual(['task-1', 'dispatcher', 'todo']);
+    expect(query.mock.calls[5][1]).toEqual(['task-1', 'dispatcher', 'todo', 'in_progress']);
     expect(query.mock.calls[5][0]).toContain('RETURNING *');
   });
 

@@ -77,7 +77,7 @@ export function taskLaneRoleSql(alias: string): string {
 
 /** Translate a lifecycle outcome into the project's configured destination. */
 export function taskLaneTargetSql(alias: string, value: string): string {
-  return `COALESCE((SELECT lane.lane_key FROM work_lane_definitions lane
+  const destination = `COALESCE((SELECT lane.lane_key FROM work_lane_definitions lane
     WHERE lane.reset_at IS NULL AND lane.archived = false AND lane.enabled = true
       AND lane.semantic_role = CASE ${ value } WHEN 'in_review' THEN 'review'
         WHEN 'done' THEN 'terminal' WHEN 'blocked' THEN 'blocked' ELSE NULL END
@@ -88,4 +88,25 @@ export function taskLaneTargetSql(alias: string, value: string): string {
       AND (${ value } <> 'done' OR lane.lane_key NOT IN ('cancelled', 'parked'))
     ORDER BY CASE WHEN lane.lane_key = ${ value } THEN 0 ELSE 1 END,
       CASE WHEN lane.scope = 'project' THEN 0 ELSE 1 END, lane.position, lane.lane_key LIMIT 1), ${ value })`;
+  return approvalSafeTargetSql(alias, destination);
+}
+
+/** Keep consideration broad; stop automatic movement at the actual approval boundary. */
+export function approvalSafeTargetSql(alias: string, destination: string): string {
+  return `(WITH effective AS (
+    SELECT DISTINCT ON (lane.lane_key) lane.* FROM work_lane_definitions lane
+    WHERE lane.reset_at IS NULL
+      AND (lane.scope = 'global_default' OR (lane.scope = 'project' AND lane.project_id = ${ alias }.project_id))
+    ORDER BY lane.lane_key, CASE WHEN lane.scope = 'project' THEN 0 ELSE 1 END
+  ), active AS (SELECT * FROM effective WHERE enabled = true AND archived = false)
+  SELECT CASE
+    WHEN EXISTS (SELECT 1 FROM work_task_waits w WHERE w.task_id = ${ alias }.id
+      AND w.status = 'active' AND w.wait_kind = 'human_gate')
+      OR EXISTS (SELECT 1 FROM active WHERE lane_key = ${ alias }.status AND requires_human_approval)
+    THEN ${ alias }.status
+    ELSE COALESCE((SELECT gate.lane_key FROM active gate
+      WHERE gate.requires_human_approval
+        AND gate.position > (SELECT position FROM active WHERE lane_key = ${ alias }.status)
+        AND gate.position < (SELECT position FROM active WHERE lane_key = ${ destination })
+      ORDER BY gate.position, gate.lane_key LIMIT 1), ${ destination }) END)`;
 }

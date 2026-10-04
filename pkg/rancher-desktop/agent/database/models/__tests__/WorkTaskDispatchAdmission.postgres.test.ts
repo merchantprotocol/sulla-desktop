@@ -25,7 +25,7 @@ const postgresSuite = connectionString ? describe : describe.skip;
 
 postgresSuite('dispatcher broad admission against PostgreSQL', () => {
   const schema = `admission_${ randomUUID().replaceAll('-', '') }`;
-  const original = { query: postgresClient.query, queryOne: postgresClient.queryOne, transaction: postgresClient.transaction };
+  const original = { queryAll: postgresClient.queryAll, query: postgresClient.query, queryOne: postgresClient.queryOne, transaction: postgresClient.transaction };
   let bootstrap: Pool;
   let pool: Pool;
 
@@ -66,7 +66,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         capability_key text PRIMARY KEY, enabled boolean, health text, active_owner text,
         fallback_mode text, fallback_active boolean
       );
-      CREATE TABLE work_task_waits (task_id text, status text);
+      CREATE TABLE work_task_waits (task_id text, status text, wait_kind text);
       CREATE TABLE work_task_dependencies (dependent_task_id text, depends_on_task_id text, archived_at timestamptz);
       CREATE TABLE work_lane_entry_automations (
         id text PRIMARY KEY, task_id text, generation int, previous_lane_key text, lane_key text,
@@ -75,7 +75,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         execution_id text, started_at timestamptz, completed_at timestamptz, outcome jsonb, UNIQUE(task_id, generation)
       );
       CREATE TABLE work_task_artifact_custody (id text, task_id text, custody jsonb, transition text, work_kind text, created_by text, created_at timestamptz DEFAULT now());
-      CREATE TABLE work_lane_definitions (position int DEFAULT 0, lane_key text, semantic_role text, system_required boolean,
+      CREATE TABLE work_lane_definitions (requires_human_approval boolean DEFAULT false, position int DEFAULT 0, lane_key text, semantic_role text, system_required boolean,
         reset_at timestamptz, archived boolean DEFAULT false, enabled boolean DEFAULT true, scope text, project_id text);
       INSERT INTO work_lane_definitions (lane_key, semantic_role, system_required, scope)
         VALUES ('in_progress', 'execution', true, 'global_default'),
@@ -87,7 +87,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       CREATE TABLE work_task_planning_runs (id text PRIMARY KEY, task_id text, status text DEFAULT 'active',
         workflow_id text, execution_id text, trigger_status text, trigger_actor text, attempt int, error text,
         heartbeat_at timestamptz DEFAULT now(), finished_at timestamptz);
-      CREATE TABLE workflow_executions (execution_id text PRIMARY KEY, status text, error text,
+      CREATE TABLE workflow_executions (workflow_id text DEFAULT 'plain', execution_id text PRIMARY KEY, status text, error text,
         lease_expires_at timestamptz, heartbeat_at timestamptz, completed_at timestamptz, updated_at timestamptz,
         scope_task_id text, auto_restart boolean DEFAULT true, owner_id text, lease_token text, leased_at timestamptz,
         attempt_count int DEFAULT 0, max_attempts int DEFAULT 3, terminal_at timestamptz, terminal_reason text,
@@ -99,6 +99,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         ('todo-execution', true, 'healthy', 'dispatcher', 'manual_hold', false),
         ('in-review-verification', true, 'healthy', 'dispatcher', 'manual_hold', false);
     `);
+    (postgresClient as any).queryAll = async(sql: string, params?: unknown[]) => (await pool.query(sql, params)).rows;
     (postgresClient as any).queryOne = async(sql: string, params?: unknown[]) => (await pool.query(sql, params)).rows[0] ?? null;
     (postgresClient as any).query = async(sql: string, params?: unknown[]) => (await pool.query(sql, params)).rows;
     (postgresClient as any).transaction = async(callback: any) => {
@@ -125,6 +126,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       ready: false, catalogPresent: false, missingRoles: ['planning'], degradedReason: 'fixture',
     });
     jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('planning');
+    await pool.query('UPDATE work_lane_definitions SET requires_human_approval=false, position=0');
     await pool.query("DELETE FROM work_lane_definitions WHERE lane_key NOT IN ('in_progress', 'qa', 'shipped')");
     await pool.query('TRUNCATE work_task_outcome_journal, workflow_executions, work_tasks, work_task_dispatches, work_task_stage_claims, work_task_waits, work_task_dependencies, work_lane_entry_automations, work_task_planning_runs, work_task_artifact_custody, work_project_domain_events');
   });
@@ -150,7 +152,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
   it('claims waiting human-owned custom-lane work in place and rejects a duplicate claim', async() => {
     await pool.query(`INSERT INTO work_tasks (id, project_id, status, assignee, labels)
       VALUES ('custom', 'enabled', 'custom_lane', 'human', ARRAY['gated']), ('dependency', 'paused', 'todo', null, '{}');
-      INSERT INTO work_task_waits VALUES ('custom', 'active');
+      INSERT INTO work_task_waits (task_id, status) VALUES ('custom', 'active');
       INSERT INTO work_task_dependencies VALUES ('custom', 'dependency', null)`);
     const claims = await Promise.all([1, 2].map(n => WorkTaskDispatchModel.claimNext('sulla-desktop', `runtime-${ n }`, undefined, 'custom')));
     expect(claims.filter(Boolean)).toHaveLength(1);
@@ -488,6 +490,70 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     const claim = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime', 'pass');
     await WorkTaskDispatchModel.finalizeVerification(claim!.dispatch.id, 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'Passed');
     expect((await pool.query("SELECT status FROM work_tasks WHERE id='pass'")).rows[0].status).toBe('done');
+  });
+
+  it.each(['lane', 'wait', 'intermediate'].flatMap(kind => ['legacy', 'protected', 'suppressed'].map(mode => [kind, mode])))('retains human approval at %s boundaries after %s PASS', async(kind, mode) => {
+    await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES ('approval', 'enabled', 'qa');
+      UPDATE work_lane_definitions SET position=30 WHERE lane_key='shipped'`);
+    if (kind === 'lane') await pool.query("UPDATE work_lane_definitions SET requires_human_approval=true WHERE lane_key='qa'");
+    if (kind === 'wait') await pool.query("INSERT INTO work_task_waits VALUES ('approval', 'active', 'human_gate')");
+    if (kind === 'intermediate') await pool.query(`INSERT INTO work_lane_definitions
+      (lane_key, semantic_role, scope, position, requires_human_approval)
+      VALUES ('signoff', 'manual', 'global_default', 20, true)`);
+    const claim = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime', 'approval');
+    expect(claim).not.toBeNull();
+    if (mode === 'legacy') {
+      await WorkTaskDispatchModel.finalizeVerification(claim!.dispatch.id, 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'Passed');
+    } else {
+      const artifacts: any[] = [{ type: 'projects_evidence', canonicalRef: 'task:approval', hash: 'a'.repeat(64) }];
+      const generationHash = WorkTaskDispatchModel.reviewGenerationHash(artifacts);
+      if (mode === 'suppressed') {
+        await pool.query(`INSERT INTO work_task_dispatches (id, task_id, kind, status, disposition, review_generation_hash)
+          VALUES ('prior-pass', 'approval', 'verification', 'completed', 'PASS', $1)`, [generationHash]);
+        await expect(WorkTaskDispatchModel.bindReviewGeneration(claim!.dispatch.id, artifacts)).resolves.toMatchObject({ suppressed: true });
+      } else {
+        await pool.query('UPDATE work_task_dispatches SET review_generation_hash=$2 WHERE id=$1', [claim!.dispatch.id, generationHash]);
+        await WorkTaskDispatchModel.finalizeProtectedReview(claim!.dispatch.id, 'PASS', {
+          workflowExecutionId: 'review-approval', reviewerAgentIds: [], excludedAgentIds: [], generationHash,
+          artifactTypes: ['projects_evidence'], artifacts, artifactType: 'projects_evidence', artifactRef: 'task:approval',
+          artifactHash: 'a'.repeat(64), summary: 'Passed', checks: [], findings: [],
+        }, artifacts);
+      }
+    }
+    const task = (await pool.query("SELECT status, completed_at FROM work_tasks WHERE id='approval'")).rows[0];
+    expect(task.status).toBe(kind === 'intermediate' ? 'signoff' : 'qa');
+    expect(task.completed_at).toBeNull();
+  });
+
+  it.each(['attached', 'before-attachment'])('never resumes an unscoped planning writer: %s', async(kind) => {
+    await taskWithLane('a', 'owner/repo#1');
+    await taskWithLane('b', 'owner/repo#1');
+    await expect(admit('planning', 'a')).resolves.not.toBeNull();
+    await pool.query(`INSERT INTO workflow_executions
+      (execution_id, workflow_id, status, lease_expires_at, attempt_count, max_attempts)
+      VALUES ('unscoped-plan', 'core-routine-plan-project-task', 'suspended', now()-interval '1 hour', 0, 3)`);
+    if (kind === 'attached') await pool.query("UPDATE work_task_planning_runs SET execution_id='unscoped-plan' WHERE task_id='a'");
+    await expect(WorkflowExecutionModel.findStaleExecutions()).resolves.toEqual([]);
+    await expect(WorkflowExecutionModel.findSuspended()).resolves.toEqual([]);
+    await expect(WorkflowExecutionModel.nextLeaseExpiry()).resolves.toBeNull();
+    await expect(WorkflowExecutionModel.recover('unscoped-plan', 'restarted-runtime')).resolves.toBeNull();
+    await pool.query("UPDATE workflow_executions SET attempt_count=3 WHERE execution_id='unscoped-plan'");
+    await expect(WorkflowExecutionModel.recover('unscoped-plan', 'restarted-runtime')).resolves.toBeNull();
+    await pool.query("UPDATE workflow_executions SET lease_expires_at=null, started_at=now()-interval '8 hours' WHERE execution_id='unscoped-plan'");
+    await expect(WorkflowExecutionModel.reapStaleLeaselessExecutions()).resolves.toEqual([]);
+    expect((await pool.query("SELECT status FROM workflow_executions WHERE execution_id='unscoped-plan'")).rows[0].status).toBe('suspended');
+    await expect(admit('dispatch', 'a')).resolves.toBeNull();
+    await expect(admit('planning', 'b')).resolves.toBeNull();
+    await WorkTaskPlanningRunModel.settleForTask('a', 'completed');
+    await expect(admit('dispatch', 'a')).resolves.not.toBeNull();
+  });
+
+  it('claims a human-gated todo task without moving it past its gate', async() => {
+    await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES ('gated-todo', 'enabled', 'todo');
+      INSERT INTO work_task_waits VALUES ('gated-todo', 'active', 'human_gate')`);
+    const claim = await WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime', undefined, 'gated-todo');
+    expect(claim?.task.status).toBe('todo');
+    expect(claim?.stage_claim.stage).toBe('todo');
   });
 
 });
