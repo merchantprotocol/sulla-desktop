@@ -34,7 +34,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     await bootstrap.query(`CREATE SCHEMA "${ schema }"`);
     pool = new Pool({ connectionString, max: 8, options: `-c search_path=${ schema }` });
     await pool.query(`
-      CREATE TABLE work_projects (id text PRIMARY KEY, status text, dispatch_enabled boolean);
+      CREATE TABLE work_projects (id text PRIMARY KEY, status text, dispatch_enabled boolean, archived boolean DEFAULT false);
       CREATE TABLE work_epics (id text PRIMARY KEY, project_id text, status text);
       CREATE TABLE work_tasks (
         id text PRIMARY KEY, project_id text, epic_id text, status text, archived boolean DEFAULT false,
@@ -80,11 +80,16 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       CREATE TABLE work_project_domain_events (id text, task_id text, generation int, generation_hash text,
         event_type text, idempotency_key text UNIQUE, payload jsonb, occurred_at timestamptz);
       CREATE TABLE work_task_planning_runs (id text PRIMARY KEY, task_id text, status text DEFAULT 'active',
-        workflow_id text, trigger_status text, trigger_actor text, attempt int, error text,
+        workflow_id text, execution_id text, trigger_status text, trigger_actor text, attempt int, error text,
         heartbeat_at timestamptz DEFAULT now(), finished_at timestamptz);
+      CREATE TABLE workflow_executions (execution_id text PRIMARY KEY, status text, error text,
+        lease_expires_at timestamptz, heartbeat_at timestamptz, completed_at timestamptz, updated_at timestamptz,
+        scope_task_id text, auto_restart boolean DEFAULT true, owner_id text, lease_token text, leased_at timestamptz,
+        attempt_count int DEFAULT 0, max_attempts int DEFAULT 3, terminal_at timestamptz, terminal_reason text,
+        started_at timestamptz DEFAULT now());
       CREATE TABLE work_task_comments (id text, task_id text, body text, author text);
       CREATE TABLE agent_jobs (job_id text, status text, results jsonb);
-      INSERT INTO work_projects VALUES ('enabled', 'working', true), ('paused', 'blocked', false);
+      INSERT INTO work_projects (id, status, dispatch_enabled) VALUES ('enabled', 'working', true), ('paused', 'blocked', false);
       INSERT INTO lifecycle_capabilities VALUES
         ('todo-execution', true, 'healthy', 'dispatcher', 'manual_hold', false),
         ('in-review-verification', true, 'healthy', 'dispatcher', 'manual_hold', false);
@@ -116,7 +121,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     });
     jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('planning');
     await pool.query("DELETE FROM work_lane_definitions WHERE lane_key NOT IN ('in_progress', 'qa', 'shipped')");
-    await pool.query('TRUNCATE work_tasks, work_task_dispatches, work_task_stage_claims, work_task_waits, work_task_dependencies, work_lane_entry_automations, work_task_planning_runs, work_task_artifact_custody, work_project_domain_events');
+    await pool.query('TRUNCATE workflow_executions, work_tasks, work_task_dispatches, work_task_stage_claims, work_task_waits, work_task_dependencies, work_lane_entry_automations, work_task_planning_runs, work_task_artifact_custody, work_project_domain_events');
   });
 
   afterAll(async() => {
@@ -230,10 +235,30 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         if (kind === 'planning') await WorkTaskPlanningRunModel.settleForTask('a', 'failed', 'Parent aborted');
         else await WorkLaneWorkflowBindingModel.markOutcome('entry-a', executionId, 'failed', {});
       };
-      const controller: any = new PlaybookController({ execute: async() => state, getEntryPoint: () => 'agent', getNode: () => null });
+      const execute = jest.fn(async() => state);
+      const controller: any = new PlaybookController({ execute, getEntryPoint: () => 'agent', getNode: () => null });
       let finish!: () => void;
       controller.executeSubAgentUntracked = () => new Promise<void>(resolve => { finish = resolve; });
       const child = controller.executeSubAgent(state, 'writer', 'agent', 'repair', {});
+      await pool.query(`INSERT INTO workflow_executions (execution_id, status, lease_expires_at, heartbeat_at)
+        VALUES ($1, 'running', now() - interval '1 hour', now() - interval '1 hour')`, [executionId]);
+      await pool.query("UPDATE workflow_executions SET scope_task_id='a' WHERE execution_id=$1", [executionId]);
+      await expect(WorkflowExecutionModel.recover(executionId, 'replacement-runtime')).resolves.toBeNull();
+      await pool.query("UPDATE workflow_executions SET attempt_count=max_attempts WHERE execution_id=$1", [executionId]);
+      await expect(WorkflowExecutionModel.recover(executionId, 'replacement-runtime')).resolves.toBeNull();
+      expect((await pool.query('SELECT status FROM workflow_executions WHERE execution_id=$1', [executionId])).rows[0].status).toBe('running');
+      if (kind === 'planning') {
+        await pool.query("UPDATE work_task_planning_runs SET execution_id=$1, heartbeat_at=now()-interval '1 hour' WHERE task_id='a'", [executionId]);
+        await expect(WorkTaskPlanningRunModel.recoverStaleForTask('a', 1)).resolves.toBe(false);
+        await expect(WorkTaskPlanningRunModel.recoverStale(1)).resolves.toEqual([]);
+      } else {
+        await pool.query("UPDATE work_lane_entry_automations SET workflow_id='custom-reservation-test' WHERE id='entry-a'");
+        expect(await WorkLaneWorkflowBindingModel.listRecoverable(50, true)).toEqual([expect.objectContaining({ id: 'entry-a' })]);
+        await expect(WorkLaneWorkflowBindingModel.resetInterruptedExecution('entry-a', executionId)).resolves.toBeNull();
+        const { LaneEntryAutomationService } = await import('../../../services/LaneEntryAutomationService');
+        await expect(LaneEntryAutomationService.drainRecoverable(50, true)).resolves.toEqual([]);
+      }
+
       // Exercise the public path while the child is still unresolved, before
       // the runtime terminal callback has any opportunity to release custody.
       if (kind === 'planning') {
@@ -265,6 +290,8 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       await child;
       await release;
       expect(controller.hasUnconfirmedWorkers()).toBe(false);
+      // No tool-capable parent continuation exists after reservations release.
+      expect(execute).not.toHaveBeenCalled();
       await expect(admit('dispatch', nextTask)).resolves.not.toBeNull();
     });
 
@@ -306,15 +333,23 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     expect(results.filter(Boolean)).toHaveLength(3);
   });
 
-  it('coordinates direct lifecycle leases with lane and dispatcher writers', async() => {
+  it('keeps public caller leases reserved through dispatcher runtime recovery until release', async() => {
+    const { ProjectsApplicationService } = await import('../../../projects/application/ProjectsApplicationService');
     await taskWithLane('a', 'owner/repo#925');
     await taskWithLane('b', 'https://github.com/owner/repo/pull/925');
-    const direct = await LifecycleCapabilityModel.claimStage('a', 'todo-execution', 'planning', 'dispatcher', 'direct');
+    await pool.query("UPDATE work_tasks SET status='in_progress' WHERE id='a'");
+    const projects = new ProjectsApplicationService({
+      getTask: async() => (await pool.query("SELECT * FROM work_tasks WHERE id='a'")).rows[0],
+    } as any);
+    const direct = await projects.claimTaskLease({ taskId: 'a', owner: 'dispatcher', runtimeInstanceId: 'public-caller' });
     expect(direct.claimed).toBe(true);
-    await expect(admit('lane', 'a')).resolves.toBeNull();
-    await expect(admit('dispatch', 'b')).resolves.toBeNull();
-    await expect(LifecycleCapabilityModel.claimStage('a', 'todo-execution', 'planning', 'dispatcher', 'direct'))
-      .resolves.toMatchObject({ claimed: true, claim: { id: direct.claim?.id } });
+    for (const runtime of ['task-dispatcher-new', 'task-dispatcher-next']) {
+      await expect(LifecycleCapabilityModel.recoverPreviousRuntime('todo-execution', runtime)).resolves.toEqual([]);
+      await expect(admit('dispatch', 'a')).resolves.toBeNull();
+      await expect(admit('dispatch', 'b')).resolves.toBeNull();
+    }
+    await projects.releaseTaskLease({ claimId: direct.claim!.id });
+    await expect(admit('dispatch', 'b')).resolves.not.toBeNull();
   });
 
   it('routes custom review and terminal lanes by role without executing them as ordinary work', async() => {

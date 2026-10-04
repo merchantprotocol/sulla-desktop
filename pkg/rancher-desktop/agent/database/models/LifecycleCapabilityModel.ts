@@ -178,23 +178,11 @@ export class LifecycleCapabilityModel {
     return row;
   }
 
-  /**
-   * Atomically recover claims owned by a previous process instance. There is
-   * intentionally no age predicate: restart identity, not elapsed time, proves
-   * the old owner is gone.
-   */
-  static async recoverPreviousRuntime(key: LifecycleCapabilityKey, runtimeInstanceId: string): Promise<string[]> {
-    return postgresClient.transaction(async(client) => {
-      const recovered = await client.query<{ task_id: string }>(`
-        UPDATE work_task_stage_claims
-           SET status = 'recovered', released_at = now()
-         WHERE capability_key = $1
-           AND status = 'active'
-           AND runtime_instance_id <> $2
-        RETURNING task_id
-      `, [key, runtimeInstanceId]);
-      return recovered.rows.map(row => row.task_id);
-    });
+  /** Runtime identity and heartbeat age are not proof a caller's writers stopped. */
+  static async recoverPreviousRuntime(_key: LifecycleCapabilityKey, _runtimeInstanceId: string): Promise<string[]> {
+    // Only the owning terminal path may release a claim. Public callers supply
+    // their own runtime IDs, and children can survive a dispatcher restart.
+    return [];
   }
 
   static async claimStage(

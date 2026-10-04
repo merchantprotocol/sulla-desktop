@@ -122,17 +122,12 @@ describe('LifecycleCapabilityModel', () => {
     )).resolves.toMatchObject({ claimed: false, reason: 'stale-recovery is owned by recovery-service' });
   });
 
-  it('recovers only claims from a previous runtime, never by age', async() => {
-    const query: any = jest.fn(() => Promise.resolve({ rows: [{ task_id: 'task-1' }] }));
+  it('does not infer caller termination from a different runtime identity', async() => {
+    const query: any = jest.fn();
     (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
-
     await expect(LifecycleCapabilityModel.recoverPreviousRuntime('todo-execution', 'runtime-new'))
-      .resolves.toEqual(['task-1']);
-    expect(query).toHaveBeenCalledWith(
-      expect.stringContaining('runtime_instance_id <> $2'),
-      ['todo-execution', 'runtime-new'],
-    );
-    expect((query).mock.calls[0][0]).not.toContain('interval');
+      .resolves.toEqual([]);
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('renders compact truthful state for all lifecycle capabilities', async() => {

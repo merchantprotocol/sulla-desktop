@@ -141,30 +141,9 @@ export class LaneEntryAutomationService {
     await Promise.allSettled(recoverable.filter(entry => !this.recovering.has(entry.id)).map(async(entry) => {
       this.recovering.add(entry.id);
       try {
-        if (entry.status === 'running' && entry.execution_id) {
-          if (entry.workflow_execution_status === 'completed' || entry.workflow_execution_status === 'failed') {
-            if (entry.workflow_execution_status === 'completed' && (entry.outcome as any)?.disposition !== 'completion_pending') {
-              await this.settleEntry(entry, { executionId: entry.execution_id, status: 'failed',
-                error: 'Missing durable terminal receipt; manual reconciliation required.' });
-            } else if (entry.workflow_execution_status === 'completed') {
-              await this.settleEntry(entry, {
-                executionId: entry.execution_id, status: 'completed',
-                outcome: (entry.outcome as any)?.workflowOutcome,
-              });
-            } else {
-              await this.settleEntry(entry, {
-                executionId: entry.execution_id, status: 'failed', error: entry.workflow_execution_error ?? 'Unknown workflow failure',
-              });
-            }
-            const settled = await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id);
-            if (settled) results.push(settled);
-            return;
-          }
-          const reset = entry.workflow_execution_status === 'running' || entry.workflow_execution_status === 'suspended'
-            ? await WorkLaneWorkflowBindingModel.resetInterruptedExecution(entry.id, entry.execution_id)
-            : await WorkLaneWorkflowBindingModel.resetMissingExecution(entry.id, entry.execution_id);
-          if (!reset) return;
-        }
+        // Workflow status can be changed by lease recovery while a child is
+        // still alive. The runtime terminal callback alone settles live entries.
+        if (entry.status === 'running') return;
         if (entry.status === 'failed') {
           const reset = await WorkLaneWorkflowBindingModel.resetFailed(entry.id);
           if (!reset) return;

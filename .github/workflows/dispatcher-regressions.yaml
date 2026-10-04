@@ -80,6 +80,7 @@ jobs:
           pkg/rancher-desktop/agent/routines/core/__tests__/planProjectTask.test.ts \
           pkg/rancher-desktop/agent/workflow/__tests__/reviewProjectArtifactWorkflow.test.ts \
           pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService.readyTasksSettleGeneration.test.ts \
+          pkg/rancher-desktop/agent/services/__tests__/LaneEntryAutomationService.test.ts \
           pkg/rancher-desktop/agent/services/__tests__/PlanningCouncilService.test.ts \
           pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts \
           pkg/rancher-desktop/agent/controllers/__tests__/PlaybookController.leases.test.ts \

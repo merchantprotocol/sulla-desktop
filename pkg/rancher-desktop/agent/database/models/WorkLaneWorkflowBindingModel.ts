@@ -418,35 +418,14 @@ export class WorkLaneWorkflowBindingModel {
     return rows[0] ?? null;
   }
 
-  static async resetMissingExecution(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
-    const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
-      UPDATE work_lane_entry_automations
-         SET execution_id = NULL, status = 'pending', started_at = NULL
-       WHERE id = $1 AND execution_id = $2 AND status = 'running'
-         AND NOT EXISTS (SELECT 1 FROM workflow_executions WHERE execution_id = $2)
-       RETURNING *
-    `, [id, executionId]);
-    return rows[0] ?? null;
+  /** Absence of an execution row is not confirmation that its writer stopped. */
+  static async resetMissingExecution(_id: string, _executionId: string): Promise<LaneEntryAutomationRecord | null> {
+    return null;
   }
 
-  static async resetInterruptedExecution(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
-    return postgresClient.transaction(async(client) => {
-      const interrupted = await client.query(`
-        UPDATE workflow_executions
-           SET status = 'failed', completed_at = now(), updated_at = now(), error = 'interrupted_before_lane_recovery'
-         WHERE execution_id = $1 AND status IN ('running', 'suspended')
-           AND lease_expires_at IS NOT NULL AND lease_expires_at <= now()
-         RETURNING execution_id
-      `, [executionId]);
-      if (!interrupted.rows[0]) return null;
-      const reset = await client.query<LaneEntryAutomationRecord>(`
-        UPDATE work_lane_entry_automations
-           SET execution_id = NULL, status = 'pending', started_at = NULL, completed_at = NULL, outcome = NULL
-         WHERE id = $1 AND execution_id = $2 AND status = 'running'
-         RETURNING *
-      `, [id, executionId]);
-      return reset.rows[0] ?? null;
-    });
+  /** Lease loss requests abort; only the drained terminal callback releases ownership. */
+  static async resetInterruptedExecution(_id: string, _executionId: string): Promise<LaneEntryAutomationRecord | null> {
+    return null;
   }
 
   /** Public reports are evidence, not proof that the calling writer stopped. */

@@ -118,7 +118,7 @@ describe('LaneEntryAutomationService', () => {
     expect(dispatch).toHaveBeenCalledWith('entry-4');
   });
 
-  it('reclaims an interrupted scoped execution during boot recovery', async() => {
+  it('retains interrupted scoped execution ownership during boot recovery', async() => {
     const interrupted: any = {
       id:                        'entry-5',
       status:                    'running',
@@ -134,9 +134,9 @@ describe('LaneEntryAutomationService', () => {
       ...interrupted, status: 'running',
     });
 
-    await expect(LaneEntryAutomationService.drainRecoverable(50, true)).resolves.toHaveLength(1);
-    expect(reset).toHaveBeenCalledWith('entry-5', 'lane-exec-task-5-1');
-    expect(dispatch).toHaveBeenCalledWith('entry-5');
+    await expect(LaneEntryAutomationService.drainRecoverable(50, true)).resolves.toHaveLength(0);
+    expect(reset).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it('recovers other cards when one dispatch throws or waits, without overlapping recovery of the waiting entry', async() => {
@@ -172,7 +172,6 @@ describe('LaneEntryAutomationService', () => {
     jest.spyOn(WorkLaneWorkflowBindingModel, 'getLaneEntry').mockResolvedValue(entry);
     const settle = jest.spyOn(WorkLaneWorkflowBindingModel, 'markOutcome').mockResolvedValue(entry);
     await LaneEntryAutomationService.drainRecoverable();
-    expect(settle).toHaveBeenCalledWith(entry.id, entry.execution_id, 'failed',
-      expect.objectContaining({ message: expect.stringContaining('Missing durable terminal receipt') }));
+    expect(settle).not.toHaveBeenCalled();
   });
 });

@@ -262,6 +262,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
                updated_at = NOW()
          WHERE status IN ('running', 'suspended')
            AND auto_restart = TRUE
+           AND scope_task_id IS NULL
            AND owner_id IS NULL
            AND lease_token IS NULL
            AND lease_expires_at IS NULL
@@ -321,13 +322,13 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
       const token = `${ ownerId }:${ executionId }`;
       const row = (await client.query(`UPDATE workflow_executions
         SET owner_id = $2, lease_token = $3, leased_at = NOW(), heartbeat_at = NOW(), lease_expires_at = NOW() + ($4 * INTERVAL '1 millisecond'), attempt_count = attempt_count + 1, updated_at = NOW()
-        WHERE execution_id = $1 AND status IN ('running', 'suspended') AND auto_restart = TRUE AND lease_expires_at <= NOW() AND attempt_count < max_attempts RETURNING *`, [executionId, ownerId, token, ttlMs])).rows[0];
+        WHERE execution_id = $1 AND scope_task_id IS NULL AND status IN ('running', 'suspended') AND auto_restart = TRUE AND lease_expires_at <= NOW() AND attempt_count < max_attempts RETURNING *`, [executionId, ownerId, token, ttlMs])).rows[0];
       if (!row) {
         await client.query(`WITH exhausted AS (
           UPDATE workflow_executions SET status = 'failed', completed_at = NOW(), terminal_at = NOW(),
             terminal_reason = 'recovery_attempt_ceiling', error = 'recovery attempt ceiling exceeded',
             owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
-          WHERE execution_id = $1 AND status IN ('running', 'suspended')
+          WHERE execution_id = $1 AND scope_task_id IS NULL AND status IN ('running', 'suspended')
             AND auto_restart = TRUE AND lease_expires_at <= NOW() AND attempt_count >= max_attempts
           RETURNING execution_id
         ) UPDATE work_lane_entry_automations SET status = 'failed',

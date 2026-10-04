@@ -357,13 +357,13 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
       scopeTaskId:     'task-runtime',
       scopeGeneration: 2,
     });
-    // Recovery must leave a fresh run alone; only an expired lease is interrupted.
+    // Neither fresh nor expired leases prove writer termination.
     await WorkflowExecutionModel.acquireLease(execution2, 'interrupted-runtime', 60_000);
     expect(await WorkLaneWorkflowBindingModel.resetInterruptedExecution(generation2.id, execution2)).toBeNull();
     await pool.query(`UPDATE workflow_executions SET lease_expires_at = now() - interval '1 second'
       WHERE execution_id = $1`, [execution2]);
     await expect(WorkLaneWorkflowBindingModel.resetInterruptedExecution(generation2.id, execution2))
-      .resolves.toMatchObject({ status: 'pending', execution_id: null });
+      .resolves.toBeNull();
 
     await WorkLaneWorkflowBindingModel.markStarted(generation2.id, execution2);
     await WorkflowExecutionModel.markRunning({

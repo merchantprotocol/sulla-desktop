@@ -2319,7 +2319,7 @@ export class PlaybookController<TState = any> {
       .join('\n');
 
     const statusLabel = outcome === 'completed' ? 'completed successfully' : `failed: ${ error || 'unknown error' }`;
-    const summaryMsg = `[Workflow Complete] The workflow "${ playbook.definition.name }" has ${ statusLabel }.\n\nNode results:\n${ nodeLines }\n\nYou are now free from the workflow. Continue the conversation naturally — you have full context of what was accomplished above. Respond to the user as needed.`;
+    const summaryMsg = `[Workflow Complete] The workflow "${ playbook.definition.name }" has ${ statusLabel }.\n\nNode results:\n${ nodeLines }\n\nThe workflow has ended. Its terminal receipt is available above.`;
 
     this.injectWorkflowMessage(state, summaryMsg);
 
@@ -2346,8 +2346,8 @@ export class PlaybookController<TState = any> {
       console.warn('[PlaybookController] proactive emit failed:', e);
     }
 
-    state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-
+    // Terminal callbacks have released task/artifact ownership. Never start
+    // another tool-capable parent turn after that boundary.
     return state;
   }
 
