@@ -106,3 +106,33 @@ jobs:
           echo "::error title=Focused dispatcher Jest failed::${details}"
           exit "$rc"
         fi
+    - name: Typecheck routine settlement production module
+      if: ${{ !cancelled() }}
+      run: |
+        node --max-old-space-size=4096 <<'NODE'
+        const ts = require('typescript');
+        const path = require('path');
+        const target = path.resolve('pkg/rancher-desktop/main/sullaRoutineTemplateEvents.ts');
+        const config = ts.readConfigFile('tsconfig.json', ts.sys.readFile);
+        if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
+        const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd());
+        if (parsed.errors.length) throw new Error(ts.formatDiagnosticsWithColorAndContext(parsed.errors, {
+          getCanonicalFileName: f => f, getCurrentDirectory: ts.sys.getCurrentDirectory, getNewLine: () => '\n',
+        }));
+        // Resolve real imports and declarations, but gate this production module;
+        // this is not a claim that the repository-wide typecheck is clean.
+        const program = ts.createProgram([target, ...parsed.fileNames.filter(f => f.endsWith('.d.ts'))], {
+          ...parsed.options, noEmit: true, skipLibCheck: true,
+        });
+        const source = program.getSourceFile(target);
+        if (!source) throw new Error('Routine production module was not loaded');
+        const diagnostics = [...program.getSyntacticDiagnostics(source), ...program.getSemanticDiagnostics(source)];
+        for (const d of diagnostics) {
+          const location = d.file && d.start !== undefined ? d.file.getLineAndCharacterOfPosition(d.start) : null;
+          const message = `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, '\n')}`;
+          const escaped = message.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+          console.log(`::error file=${d.file?.fileName || target},line=${(location?.line || 0) + 1}::${escaped}`);
+        }
+        if (diagnostics.length) process.exit(1);
+        console.log('Routine settlement production module: syntax and semantic diagnostics passed.');
+        NODE

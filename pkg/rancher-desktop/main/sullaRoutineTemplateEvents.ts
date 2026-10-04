@@ -22,6 +22,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import yaml from 'yaml';
+import type { Graph } from '@pkg/agent/nodes/Graph';
 import { workflowTerminalResult } from '@pkg/agent/services/WorkflowTerminalResult';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -765,7 +766,7 @@ export async function executeRoutine(
     // must not be automatically replaced while execution ownership is uncertain.
     throw error;
   }
-  const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
+  const graph: Pick<Graph<any>, 'execute' | 'hasUnconfirmedWorkflowWorkers'> = graphResult.graph;
   const state = (graphResult as { state: Record<string, any> }).state;
   state.metadata = { ...state.metadata, ...admissionState.metadata };
   const { configureRoutineBrowser } = await import('@pkg/agent/workflow/routineBrowser');

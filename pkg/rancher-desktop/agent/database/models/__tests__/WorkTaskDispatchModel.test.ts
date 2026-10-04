@@ -344,61 +344,10 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[5][0]).toContain("assignee = 'verifier'");
   });
 
-  it('releases stale execution dispatch and stage ownership before making the task reclaimable', async() => {
-    const query = (jest.fn() as any)
-      .mockResolvedValueOnce({ rows: [] }) // reconciliation setting
-      .mockResolvedValueOnce({ rows: [{ exists: false }] }) // journal table probe
-      .mockResolvedValueOnce({ rows: [] }) // reconciliation rows
-      .mockResolvedValueOnce({ rows: [{ id: 'dispatch-1', task_id: 'task-1', kind: 'execution' }] })
-      .mockResolvedValueOnce({ rows: [] });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
-
-    await expect(WorkTaskDispatchModel.recoverStale(45)).resolves.toEqual(['task-1']);
-    const staleCall = query.mock.calls.find(([sql]: [string]) => sql.includes("status = 'stale'"));
-    const claimCall = query.mock.calls.find(([sql]: [string]) => sql.includes('UPDATE work_task_stage_claims'));
-    const taskCall = query.mock.calls.find(([sql]: [string]) => sql.includes('UPDATE work_tasks'));
-    expect(staleCall[0]).toContain("interval '1 minute'");
-    expect(claimCall[0]).toContain("status = 'recovered'");
-    expect(claimCall[0]).toContain("capability_key = 'todo-execution'");
-    expect(claimCall[0]).toContain("capability_key = 'todo-execution'");
-    expect(claimCall[0]).toContain("status = 'active'");
-    expect(claimCall[1]).toEqual([['task-1']]);
-    expect(taskCall[0]).not.toContain("SET status = 'todo'");
-    expect(taskCall[0]).toContain("assignee = 'dispatcher'");
-    expect(taskCall[1]).toEqual([['task-1']]);
-
-    const candidateSql = await captureCandidateSql();
-    expect(candidateSql).toContain("c.status = 'active'");
-    expect(candidateSql).toContain("c.status = 'active'");
-  });
-
-  it('excludes unconfirmed live writers from stale and evidence-based recovery', async() => {
-    const query = jest.fn(async() => ({ rows: [] })) as any;
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
-    await WorkTaskDispatchModel.recoverStale(45, ['unconfirmed-writer']);
-    const stale = query.mock.calls.find(([sql]: [string]) => sql.includes("SET status = 'stale'"));
-    expect(stale[0]).toContain('NOT (id = ANY($3::text[]))');
-    expect(stale[1]).toEqual([45, [], ['unconfirmed-writer']]);
-    const reconcile = query.mock.calls.find(([sql]: [string]) => sql.includes('we.status AS workflow_status'));
-    expect(reconcile[0]).toContain('NOT (d.id = ANY($1::text[]))');
-    expect(reconcile[1]).toEqual([['unconfirmed-writer']]);
-  });
-
-  it('returns stale verification leases to in_review instead of blocking them', async() => {
-    const query = (jest.fn() as any)
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ exists: false }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: 'dispatch-2', task_id: 'task-2', kind: 'verification' }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
-
-    await expect(WorkTaskDispatchModel.recoverStale(45)).resolves.toEqual(['task-2']);
-    const claimCall = query.mock.calls.find(([sql]: [string]) => sql.includes('UPDATE work_task_stage_claims'));
-    const taskCall = query.mock.calls.find(([sql]: [string]) => sql.includes('UPDATE work_tasks'));
-    expect(claimCall[0]).toContain("capability_key = 'in-review-verification'");
-    expect(taskCall[0]).toContain("assignee = 'verifier'");
+  it.each([[[]], [['unconfirmed-writer']]])('retains reservations during restart recovery with live ids %j', async(liveIds) => {
+    const transaction = jest.spyOn(postgresClient, 'transaction');
+    await expect(WorkTaskDispatchModel.recoverStale(0, liveIds as string[])).resolves.toEqual([]);
+    expect(transaction).not.toHaveBeenCalled();
   });
 
   it('reclaims only verification dispatches whose previous-runtime claims were recovered', async() => {

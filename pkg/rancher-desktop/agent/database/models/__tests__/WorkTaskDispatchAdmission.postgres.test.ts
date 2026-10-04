@@ -53,6 +53,11 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         disposition text, findings_fingerprint text, review_artifact_type text, review_artifact_types text[], review_artifacts jsonb,
         excluded_agent_ids text[], review_artifact_ref text, review_artifact_url text, review_artifact_hash text, review_checks jsonb, review_findings jsonb
       );
+      CREATE TABLE work_task_outcome_journal (
+        id text PRIMARY KEY, dispatch_id text UNIQUE, task_id text, dispatch_status text,
+        task_status text, task_assignee text, comment text, result text, error text,
+        evidence jsonb, receipt jsonb, created_at timestamptz DEFAULT now(), consumed_at timestamptz
+      );
       CREATE TABLE work_task_stage_claims (
         id text PRIMARY KEY, task_id text, capability_key text, stage text, owner text,
         runtime_instance_id text, status text DEFAULT 'active', released_at timestamptz, heartbeat_at timestamptz DEFAULT now()
@@ -121,7 +126,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     });
     jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('planning');
     await pool.query("DELETE FROM work_lane_definitions WHERE lane_key NOT IN ('in_progress', 'qa', 'shipped')");
-    await pool.query('TRUNCATE workflow_executions, work_tasks, work_task_dispatches, work_task_stage_claims, work_task_waits, work_task_dependencies, work_lane_entry_automations, work_task_planning_runs, work_task_artifact_custody, work_project_domain_events');
+    await pool.query('TRUNCATE work_task_outcome_journal, workflow_executions, work_tasks, work_task_dispatches, work_task_stage_claims, work_task_waits, work_task_dependencies, work_lane_entry_automations, work_task_planning_runs, work_task_artifact_custody, work_project_domain_events');
   });
 
   afterAll(async() => {
@@ -294,6 +299,40 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       expect(execute).not.toHaveBeenCalled();
       await expect(admit('dispatch', nextTask)).resolves.not.toBeNull();
     });
+
+  it.each(['a', 'b'])('retains restarted dispatch ownership until writer termination, then admits %s', async(nextTask) => {
+    await taskWithLane('a', 'owner/repo#925');
+    await taskWithLane('b', 'https://github.com/owner/repo/pull/925');
+    const claim = await WorkTaskDispatchModel.claimNext('sulla-desktop', 'old-runtime', undefined, 'a');
+    expect(claim).not.toBeNull();
+    let finish!: () => void;
+    const survivingWriter = new Promise<void>(resolve => { finish = resolve; });
+    await pool.query("UPDATE work_task_dispatches SET heartbeat_at=now()-interval '2 hours' WHERE id=$1", [claim!.dispatch.id]);
+    await pool.query("UPDATE work_task_stage_claims SET heartbeat_at=now()-interval '2 hours' WHERE task_id='a'");
+    if (nextTask === 'b') {
+      // A legacy parent may already look terminal while its external child survives.
+      await pool.query("INSERT INTO workflow_executions (execution_id, status) VALUES ('old-parent', 'completed')");
+      await pool.query("UPDATE work_task_dispatches SET workflow_execution_id='old-parent', artifact_url='https://github.com/owner/repo/pull/925' WHERE id=$1", [claim!.dispatch.id]);
+    }
+    // The restarted process has no active map entries for the surviving writer.
+    await expect(WorkTaskDispatchModel.recoverStale(0, [])).resolves.toEqual([]);
+    expect((await pool.query('SELECT status FROM work_task_dispatches WHERE id=$1', [claim!.dispatch.id])).rows[0].status).toBe('running');
+    expect((await pool.query("SELECT status FROM work_task_stage_claims WHERE task_id='a'")).rows[0].status).toBe('active');
+    await expect(admit('dispatch', 'a')).resolves.toBeNull();
+    await expect(admit('dispatch', 'b')).resolves.toBeNull();
+    await expect(admit('lane', 'b')).resolves.toBeNull();
+    await expect(admit('planning', 'b')).resolves.toBeNull();
+    finish();
+    await survivingWriter;
+    // The owning runtime journals only after writer drain. A new runtime can
+    // replay that durable confirmation without an in-memory active entry.
+    const journalId = await WorkTaskDispatchModel.appendOutcomeJournal(claim!.dispatch.id, 'a', {
+      dispatchStatus: 'completed', taskStatus: 'planning', taskAssignee: 'dispatcher',
+      comment: 'Writer termination confirmed; unfinished work remains in its lane.',
+    });
+    await expect(WorkTaskDispatchModel.recoverPendingOutcomeJournals()).resolves.toEqual([journalId]);
+    await expect(admit('dispatch', nextTask)).resolves.not.toBeNull();
+  });
 
   it('reserves custody-only artifact references across mixed writers', async() => {
     await taskWithLane('a');
