@@ -81,12 +81,12 @@ describe('ProjectsApplicationService.readyTasks', () => {
 describe('ProjectsApplicationService.settleStageGeneration', () => {
   afterEach(() => { jest.restoreAllMocks() });
 
-  it('settles the current generation when it matches and the lane entry is running', async() => {
+  it('records the requested outcome without releasing the running reservation', async() => {
     jest.spyOn(WorkLaneWorkflowBindingModel, 'listLaneEntries').mockResolvedValue([
       { id: 'entry-1', generation: 2, lane_key: 'in_review', execution_id: 'exec-1', status: 'running' },
     ] as any);
-    const markOutcome = jest.spyOn(WorkLaneWorkflowBindingModel, 'markOutcome').mockResolvedValue({
-      id: 'entry-1', generation: 2, status: 'completed',
+    const markOutcome = jest.spyOn(WorkLaneWorkflowBindingModel, 'recordRequestedOutcome').mockResolvedValue({
+      id: 'entry-1', generation: 2, status: 'running',
     } as any);
     const service = new ProjectsApplicationService(repository());
 
@@ -95,14 +95,14 @@ describe('ProjectsApplicationService.settleStageGeneration', () => {
     }, { actor: 'review-routine', source: 'routine' });
 
     expect(markOutcome).toHaveBeenCalledWith('entry-1', 'exec-1', 'completed', { checks: 'green', settledBy: 'review-routine' });
-    expect(result).toEqual({ id: 'entry-1', generation: 2, status: 'completed' });
+    expect(result).toEqual({ id: 'entry-1', generation: 2, status: 'running' });
   });
 
   it('rejects a stale expected_generation before touching the lane entry', async() => {
     jest.spyOn(WorkLaneWorkflowBindingModel, 'listLaneEntries').mockResolvedValue([
       { id: 'entry-1', generation: 5, lane_key: 'in_review', execution_id: 'exec-1', status: 'running' },
     ] as any);
-    const markOutcome = jest.spyOn(WorkLaneWorkflowBindingModel, 'markOutcome');
+    const markOutcome = jest.spyOn(WorkLaneWorkflowBindingModel, 'recordRequestedOutcome');
     const service = new ProjectsApplicationService(repository());
 
     await expect(service.settleStageGeneration({ taskId: 'task-1', expectedGeneration: 4, status: 'failed' }))
@@ -124,7 +124,7 @@ describe('ProjectsApplicationService.settleStageGeneration', () => {
     jest.spyOn(WorkLaneWorkflowBindingModel, 'listLaneEntries').mockResolvedValue([
       { id: 'entry-1', generation: 1, lane_key: 'todo', execution_id: 'exec-1', status: 'running' },
     ] as any);
-    jest.spyOn(WorkLaneWorkflowBindingModel, 'markOutcome').mockResolvedValue(null);
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'recordRequestedOutcome').mockResolvedValue(null);
     const service = new ProjectsApplicationService(repository());
 
     await expect(service.settleStageGeneration({ taskId: 'task-1', expectedGeneration: 1, status: 'completed' }))

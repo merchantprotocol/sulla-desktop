@@ -449,11 +449,23 @@ export class WorkLaneWorkflowBindingModel {
     });
   }
 
+  /** Public reports are evidence, not proof that the calling writer stopped. */
+  static async recordRequestedOutcome(id: string, executionId: string, status: 'completed' | 'failed', outcome: Record<string, unknown>):
+  Promise<LaneEntryAutomationRecord | null> {
+    const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
+      UPDATE work_lane_entry_automations
+         SET outcome = COALESCE(outcome, '{}'::jsonb) || $3::jsonb
+       WHERE id = $1 AND execution_id = $2 AND status = 'running'
+       RETURNING *
+    `, [id, executionId, JSON.stringify({ requestedSettlement: { status, outcome } })]);
+    return rows[0] ?? null;
+  }
+
   static async markOutcome(id: string, executionId: string, status: 'completed' | 'failed', outcome: Record<string, unknown>):
   Promise<LaneEntryAutomationRecord | null> {
     const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
       UPDATE work_lane_entry_automations
-         SET status = $3, outcome = $4::jsonb, completed_at = now()
+         SET status = $3, outcome = COALESCE(outcome, '{}'::jsonb) || $4::jsonb, completed_at = now()
        WHERE id = $1 AND execution_id = $2 AND status = 'running'
        RETURNING *
     `, [id, executionId, status, JSON.stringify(outcome)]);

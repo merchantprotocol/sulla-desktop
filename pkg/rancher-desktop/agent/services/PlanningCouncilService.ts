@@ -28,44 +28,10 @@ export class PlanningCouncilService {
     actor?: string,
   ): Promise<void> {
     const role = await WorkLaneDefinitionModel.semanticRoleForStatus(task.project_id, task.status);
-    if (!['blocked', 'planning'].includes(role)) {
-      const settled = await WorkTaskPlanningRunModel.settleForTask(
-        task.id,
-        'completed',
-      );
-      if (settled) {
-        await recordReceipt({
-          taskId: task.id, eventType: 'planning', actor: 'planning-council',
-          workflowExecutionId: settled.execution_id ?? undefined,
-          disposition: 'completed', nextOwner: task.assignee ?? 'complete',
-          validationSummary: `Task returned to ${ task.status }.`,
-          artifacts: [{ type: 'planning_run', canonicalRef: settled.id }],
-          evidence: settled.execution_id
-            ? { kind: 'workflow_execution', ref: settled.execution_id }
-            : { kind: 'other', ref: settled.id },
-        });
-      }
-      return;
-    }
-
-    // A council-authored blocked result is an explicit irreversible gate.
-    // Settle it; do not recursively create another council for the same result.
-    if (actor === 'planning-council' && role === 'blocked') {
-      const settled = await WorkTaskPlanningRunModel.settleForTask(task.id, 'blocked');
-      if (settled) {
-        await recordReceipt({
-          taskId: task.id, eventType: 'planning', actor: 'planning-council',
-          workflowExecutionId: settled.execution_id ?? undefined,
-          disposition: 'blocked', nextOwner: 'heartbeat',
-          validationSummary: 'Planning preserved a genuine gate.',
-          artifacts: [{ type: 'planning_run', canonicalRef: settled.id }],
-          evidence: settled.execution_id
-            ? { kind: 'workflow_execution', ref: settled.execution_id }
-            : { kind: 'other', ref: settled.id },
-        });
-      }
-      return;
-    }
+    // A status update can run inside the recordkeeper's tool call. Only
+    // the drained workflow terminal callback may release its reservation.
+    if (!['blocked', 'planning'].includes(role)) return;
+    if (actor === 'planning-council' && role === 'blocked') return;
 
     await PlanningCouncilService.claimAndLaunch(task.id, task.status, actor);
   }
@@ -98,6 +64,21 @@ export class PlanningCouncilService {
     const task = await WorkItemsModel.getTask(run.task_id);
     if (!task) {
       await WorkTaskPlanningRunModel.settleForTask(run.task_id, 'failed', 'Task no longer exists');
+      return;
+    }
+
+    const role = await WorkLaneDefinitionModel.semanticRoleForStatus(task.project_id, task.status);
+    if (outcome === 'completed' && role !== 'planning') {
+      const disposition = role === 'blocked' ? 'blocked' : 'completed';
+      await WorkTaskPlanningRunModel.settleForTask(task.id, disposition);
+      await recordReceipt({
+        taskId: task.id, eventType: 'planning', actor: 'planning-council',
+        workflowExecutionId: executionId, disposition,
+        nextOwner: task.assignee ?? 'complete',
+        validationSummary: `Planning writers stopped with task in ${ task.status }.`,
+        artifacts: [{ type: 'planning_run', canonicalRef: run.id }],
+        evidence: { kind: 'workflow_execution', ref: executionId },
+      });
       return;
     }
 

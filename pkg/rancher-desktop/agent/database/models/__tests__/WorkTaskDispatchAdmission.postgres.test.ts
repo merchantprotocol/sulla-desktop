@@ -234,6 +234,28 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       let finish!: () => void;
       controller.executeSubAgentUntracked = () => new Promise<void>(resolve => { finish = resolve; });
       const child = controller.executeSubAgent(state, 'writer', 'agent', 'repair', {});
+      // Exercise the public path while the child is still unresolved, before
+      // the runtime terminal callback has any opportunity to release custody.
+      if (kind === 'planning') {
+        const { PlanningCouncilService } = await import('../../../services/PlanningCouncilService');
+        await pool.query("UPDATE work_tasks SET status='in_progress' WHERE id='a'");
+        const task = (await pool.query("SELECT * FROM work_tasks WHERE id='a'")).rows[0];
+        await PlanningCouncilService.handleTaskStatusTransition(task, 'planning', 'planning-council');
+        expect((await pool.query("SELECT status FROM work_task_planning_runs WHERE task_id='a'")).rows[0].status).toBe('active');
+      } else {
+        const { ProjectsApplicationService } = await import('../../../projects/application/ProjectsApplicationService');
+        const projects = new ProjectsApplicationService({
+          getTask: async() => (await pool.query("SELECT * FROM work_tasks WHERE id='a'")).rows[0],
+        } as any);
+        const reported = await projects.settleStageGeneration({
+          taskId: 'a', expectedGeneration: 1, status: 'completed', outcome: { report: 'done' },
+        }, { actor: 'lane-writer', source: 'routine' });
+        expect(reported.status).toBe('running');
+        expect(reported.completed_at).toBeNull();
+        expect(reported.outcome).toMatchObject({ requestedSettlement: { status: 'completed' } });
+      }
+      await expect(admit('dispatch', 'a')).resolves.toBeNull();
+      await expect(admit('dispatch', 'b')).resolves.toBeNull();
       const release = controller.releaseWorkflow(state, state.metadata.activeWorkflow, 'failed', 'Parent aborted');
       await expect(admit('dispatch', 'a')).resolves.toBeNull();
       await expect(admit('dispatch', 'b')).resolves.toBeNull();

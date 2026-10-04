@@ -172,7 +172,7 @@ describe('PlanningCouncilService', () => {
     expect(executeRoutineMock).toHaveBeenCalled();
   });
 
-  it('settles the active council when the recordkeeper returns work to todo', async() => {
+  it('retains the active council until the recordkeeper and its children terminate', async() => {
     settleForTaskMock.mockResolvedValue(run);
     const PlanningCouncilService = await service();
     await PlanningCouncilService.handleTaskStatusTransition(
@@ -181,11 +181,28 @@ describe('PlanningCouncilService', () => {
       'planning-council',
     );
 
+    expect(settleForTaskMock).not.toHaveBeenCalled();
+    expect(recordReceiptMock).not.toHaveBeenCalled();
+    findActiveByExecutionMock.mockResolvedValue(run);
+    getTaskMock.mockResolvedValue({ ...task, status: 'todo', assignee: 'dispatcher' });
+    await PlanningCouncilService.handleWorkflowFinished('wfp-1', 'completed');
     expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'completed');
     expect(recordReceiptMock).toHaveBeenCalledWith(expect.objectContaining({
       disposition: 'completed', nextOwner: 'dispatcher',
     }));
     expect(executeRoutineMock).not.toHaveBeenCalled();
+  });
+
+  it('retains ownership when the recordkeeper reports a blocked custom lane', async() => {
+    const PlanningCouncilService = await service();
+    const blocked = { ...task, status: 'blocked-custom' };
+    await PlanningCouncilService.handleTaskStatusTransition(blocked, 'planning', 'planning-council');
+    expect(settleForTaskMock).not.toHaveBeenCalled();
+    expect(claimMock).not.toHaveBeenCalled();
+    findActiveByExecutionMock.mockResolvedValue(run);
+    getTaskMock.mockResolvedValue(blocked);
+    await PlanningCouncilService.handleWorkflowFinished('wfp-1', 'completed');
+    expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'blocked');
   });
 
   it('fails closed when a workflow ends without moving the task out of planning', async() => {

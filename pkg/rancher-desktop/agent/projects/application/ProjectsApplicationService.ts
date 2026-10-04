@@ -687,12 +687,9 @@ export class ProjectsApplicationService {
    * Complete or fail the EXACT stage-entry generation a workflow run was
    * invoked with. Generation-bound the same way transition_task_stage and
    * attachEvidence already are: expected_generation must match the task's
-   * current lane-entry generation, and the underlying compare-and-set only
-   * settles a lane entry that is still 'running' under its own recorded
-   * execution_id — so a stale or duplicate workflow run cannot clobber a
-   * settlement that already happened. Settling here records the workflow's
-   * own outcome on the lane-entry ledger; it does not move the task to a
-   * different stage (transition_task_stage/transition_task_relative do that).
+   * current lane-entry generation. This records the requested outcome while
+   * retaining the running reservation. Only the runtime terminal callback,
+   * after writer termination, releases ownership; a tool caller is still live.
    */
   async settleStageGeneration(
     input: SettleStageGenerationInput,
@@ -718,7 +715,7 @@ export class ProjectsApplicationService {
       throw new Error(`Lane entry ${ latest.id } has no active execution to settle.`);
     }
     const outcome = input.outcome && typeof input.outcome === 'object' ? input.outcome : {};
-    const settled = await WorkLaneWorkflowBindingModel.markOutcome(
+    const settled = await WorkLaneWorkflowBindingModel.recordRequestedOutcome(
       latest.id, latest.execution_id, input.status, { ...outcome, settledBy: context.actor },
     );
     if (!settled) {

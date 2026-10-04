@@ -3,7 +3,7 @@ import { BaseTool, ToolResponse } from '../base';
 
 const STATUSES = new Set(['completed', 'failed']);
 
-/** Complete or fail the exact stage-entry generation a workflow run was invoked with. Generation-bound; does not move the task. */
+/** Report an outcome for the exact stage-entry generation without releasing writer ownership. Generation-bound; does not move the task. */
 export class SettleStageGenerationWorker extends BaseTool {
   name = '';
   description = '';

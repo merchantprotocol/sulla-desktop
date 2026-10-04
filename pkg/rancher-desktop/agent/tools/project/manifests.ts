@@ -778,7 +778,7 @@ export const projectToolManifests: ToolManifest[] = [
   // ── stage-generation settlement ──────────────────────────────────────
   {
     name:        'settle_stage_generation',
-    description: 'Complete or fail the exact stage-entry generation a workflow run was invoked with. Generation-bound: expected_generation must match the task current lane-entry generation, and settlement only applies to a still-running execution, so a stale or duplicate workflow run cannot clobber a prior settlement. Records the workflow own outcome; does not move the task to a different stage.',
+    description: 'Report a completed or failed outcome for the current stage-entry generation. expected_generation must match a running lane entry. This records evidence only: the reservation stays running until the runtime confirms the workflow and its children have stopped. Does not move the task.',
     category:    'project',
     schemaDef:   {
       task_id:             { type: 'string', description: 'Task whose current stage-entry generation to settle.' },
