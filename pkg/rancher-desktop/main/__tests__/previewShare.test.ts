@@ -6,7 +6,7 @@ import net from 'node:net';
 import { jest } from '@jest/globals';
 
 import {
-  cloudflaredReady, isLoopbackUrl, parseTunnelUrl, PreviewShareManager, SETTING_UP_MESSAGE, startGate, waitForPublicDns, type Gate,
+  cloudflaredReady, isLoopbackUrl, lookupPublicOrSystem, parseTunnelUrl, PreviewShareManager, SETTING_UP_MESSAGE, startGate, waitForPublicDns, type Gate,
 } from '@pkg/main/previewShare';
 
 let upstream: http.Server;
@@ -241,28 +241,83 @@ describe('waitForPublicDns', () => {
       .mockRejectedValueOnce(Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' }))
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce(['104.16.0.1']);
-    await waitForPublicDns('calm-river.trycloudflare.com', 5_000, lookup, async() => {});
+    await expect(waitForPublicDns('calm-river.trycloudflare.com', 5_000, lookup, async() => {})).resolves.toBe(true);
     expect(lookup).toHaveBeenCalledTimes(3);
     expect(lookup).toHaveBeenCalledWith('calm-river.trycloudflare.com');
   });
 
-  test('gives up after the deadline so the share is torn down instead of handed out', async() => {
-    const lookup = jest.fn(async() => { throw new Error('ENOTFOUND') });
-    await expect(waitForPublicDns('x.trycloudflare.com', 0, lookup, async() => {})).rejects.toThrow('public DNS');
+  test('reports false after the deadline instead of throwing, so a working tunnel is still handed out', async() => {
+    const lookup = jest.fn(async() => { throw Object.assign(new Error('queryA ETIMEOUT'), { code: 'ETIMEOUT' }) });
+    await expect(waitForPublicDns('x.trycloudflare.com', 0, lookup, async() => {})).resolves.toBe(false);
+  });
+});
+
+describe('lookupPublicOrSystem', () => {
+  const err = (code: string) => Object.assign(new Error(code), { code });
+
+  test('uses the public answer when public DNS is reachable', async() => {
+    const system = jest.fn(async() => ['10.0.0.1']);
+    await expect(lookupPublicOrSystem('a.trycloudflare.com', async() => ['104.16.0.1'], system)).resolves.toEqual(['104.16.0.1']);
+    expect(system).not.toHaveBeenCalled();
+  });
+
+  test('NXDOMAIN from public DNS means not published yet, not a blocked network', async() => {
+    const system = jest.fn(async() => ['10.0.0.1']);
+    await expect(lookupPublicOrSystem('a.trycloudflare.com', async() => { throw err('ENOTFOUND') }, system)).rejects.toThrow('ENOTFOUND');
+    expect(system).not.toHaveBeenCalled();
+  });
+
+  test.each(['ETIMEOUT', 'ECONNREFUSED', 'EREFUSED'])('falls back to the system resolver when public DNS fails with %s', async(code) => {
+    const system = jest.fn(async() => ['104.16.0.1']);
+    await expect(lookupPublicOrSystem('a.trycloudflare.com', async() => { throw err(code) }, system)).resolves.toEqual(['104.16.0.1']);
+    expect(system).toHaveBeenCalledWith('a.trycloudflare.com');
+  });
+
+  test('a network that blocks public DNS still gets its link once the system resolver sees it', async() => {
+    const system = jest.fn<(h: string) => Promise<string[]>>()
+      .mockRejectedValueOnce(err('ENOTFOUND'))
+      .mockResolvedValueOnce(['104.16.0.1']);
+    const lookup = (h: string) => lookupPublicOrSystem(h, async() => { throw err('ETIMEOUT') }, system);
+    await expect(waitForPublicDns('a.trycloudflare.com', 5_000, lookup, async() => {})).resolves.toBe(true);
   });
 });
 
 describe('PreviewShareManager rotation', () => {
-  test('fresh replaces the tunnel so the phone gets a new hostname', async() => {
+  function rotationFixture() {
     let n = 0;
+    let clock = 0;
     const tunnelClose = jest.fn();
     const manager = new PreviewShareManager({
-      startGate:   async(target: URL) => ({ port: 4000, target, issueTicket: () => 'tk', lastUsed: () => 0, close: async() => {} }),
+      startGate:   async(target: URL) => ({ port: 4000, target, issueTicket: () => 'tk', lastUsed: () => clock, close: async() => {} }),
       startTunnel: async() => ({ publicUrl: `https://name-${ ++n }.trycloudflare.com`, close: tunnelClose }),
-      now:         () => 0,
+      now:         () => clock,
     });
+
+    return { manager, tunnelClose, tick: (ms: number) => { clock += ms } };
+  }
+
+  test('fresh replaces the tunnel so the phone gets a new hostname', async() => {
+    const { manager, tunnelClose, tick } = rotationFixture();
     expect((await manager.open('http://localhost:5180/')).url).toContain('name-1');
     expect((await manager.open('http://localhost:5180/')).url).toContain('name-1');
+    tick(60_000);
+    expect((await manager.open('http://localhost:5180/', { fresh: true })).url).toContain('name-2');
+    expect(tunnelClose).toHaveBeenCalledTimes(1);
+    await manager.closeAll();
+  });
+
+  test('simultaneous fresh requests share one new tunnel instead of killing each other', async() => {
+    const { manager, tunnelClose, tick } = rotationFixture();
+    await manager.open('http://localhost:5180/');
+    tick(60_000);
+    const [a, b] = await Promise.all([
+      manager.open('http://localhost:5180/', { fresh: true }),
+      manager.open('http://localhost:5180/', { fresh: true }),
+    ]);
+    expect(a.url).toContain('name-2');
+    expect(b.url).toContain('name-2');
+    expect(tunnelClose).toHaveBeenCalledTimes(1);
+    // A fresh request right after another one keeps the just-made hostname.
     expect((await manager.open('http://localhost:5180/', { fresh: true })).url).toContain('name-2');
     expect(tunnelClose).toHaveBeenCalledTimes(1);
     await manager.closeAll();

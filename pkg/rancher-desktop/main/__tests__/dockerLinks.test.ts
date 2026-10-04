@@ -79,6 +79,14 @@ describe('listDockerLinks', () => {
     await expect(listDockerLinks(run as any)).resolves.toEqual({ available: true, links: [expect.objectContaining({ title: 'host-app' })] });
   });
 
+  it('does not wait the full timeout for a stopped VM once the host has answered', async() => {
+    const run = jest.fn((_cmd: string, _args: string[], opts: any) => (opts.runInLimaShell
+      ? new Promise(() => {})
+      : Promise.resolve({ exitCode: 0, stdout: psLine('host-app', '0.0.0.0:3000->3000/tcp'), stderr: '' })));
+
+    await expect(listDockerLinks(run as any, 10)).resolves.toEqual({ available: true, links: [expect.objectContaining({ title: 'host-app' })] });
+  });
+
   it('reports docker as unavailable when both attempts fail', async() => {
     const run = jest.fn(async() => ({ exitCode: 1, stdout: '', stderr: 'Cannot connect to the Docker daemon' }));
 

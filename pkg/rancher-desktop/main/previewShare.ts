@@ -28,11 +28,16 @@ const COOKIE = '__sulla_preview';
 const ENTER_PATH = '/__sulla_preview/enter';
 const TICKET_TTL_MS = 5 * 60_000;
 const IDLE_TTL_MS = 30 * 60_000;
-const TUNNEL_START_TIMEOUT_MS = 45_000;
-// Sulla Mobile gives `bookmarks.open` 60s, so a first-run cloudflared
-// download gets this long before we tell the phone to come back shortly.
+// Sulla Mobile gives `bookmarks.open` 60s. Install, tunnel start and the DNS
+// wait all come out of this one budget so the phone gets an answer in time.
+const OPEN_BUDGET_MS = 50_000;
+// A first-run cloudflared download gets this long before we tell the phone
+// to come back shortly.
 const INSTALL_WAIT_MS = 20_000;
-const PUBLIC_DNS_TIMEOUT_MS = 20_000;
+const PUBLIC_DNS_TIMEOUT_MS = 15_000;
+// A `fresh` request won't rotate a share younger than this: it was just
+// handed out (to this phone or a concurrent request) after DNS resolved.
+const FRESH_MIN_AGE_MS = 10_000;
 const PUBLIC_RESOLVERS = ['1.1.1.1', '8.8.8.8'];
 export const SETTING_UP_MESSAGE = 'Setting up sharing… Sulla Desktop is installing its secure tunnel (one time only). Try again in a few seconds.';
 const TUNNEL_URL = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
@@ -262,28 +267,55 @@ export async function cloudflaredReady(
   }
 }
 
+// Answers that mean "this resolver works, the record just isn't there yet".
+const NOT_PUBLISHED = new Set(['ENOTFOUND', 'ENODATA']);
+
+export type DnsLookup = (host: string) => Promise<string[]>;
+
 /**
- * Wait until public DNS answers for `hostname`. A phone that asks before the
- * record exists caches the NXDOMAIN (up to 30 minutes), so the link is only
- * handed out once public resolvers see it.
+ * Ask 1.1.1.1/8.8.8.8 first (what a phone on cellular sees). On networks that
+ * block outbound public DNS, those fail with timeouts/refusals rather than
+ * NXDOMAIN, so fall back to the Mac's own resolvers instead of concluding the
+ * record doesn't exist.
+ */
+export async function lookupPublicOrSystem(
+  host: string,
+  publicLookup: DnsLookup = (h) => {
+    const resolver = new Resolver({ timeout: 2_000, tries: 1 });
+    resolver.setServers(PUBLIC_RESOLVERS);
+
+    return resolver.resolve4(h);
+  },
+  systemLookup: DnsLookup = h => new Resolver({ timeout: 2_000, tries: 1 }).resolve4(h),
+): Promise<string[]> {
+  try {
+    return await publicLookup(host);
+  } catch (err) {
+    if (NOT_PUBLISHED.has((err as NodeJS.ErrnoException).code ?? '')) throw err;
+  }
+
+  return systemLookup(host);
+}
+
+/**
+ * Best-effort wait until DNS answers for `hostname`. A phone that asks before
+ * the record exists caches the NXDOMAIN (up to 30 minutes), so the link is
+ * held back while the record propagates. Returns false if it never showed
+ * up in time; the tunnel itself is registered and working, so the caller
+ * hands the link out anyway rather than killing a good share.
  */
 export async function waitForPublicDns(
   hostname: string,
   timeoutMs = PUBLIC_DNS_TIMEOUT_MS,
-  lookup: (host: string) => Promise<string[]> = (host) => {
-    const resolver = new Resolver({ timeout: 3_000, tries: 1 });
-    resolver.setServers(PUBLIC_RESOLVERS);
-
-    return resolver.resolve4(host);
-  },
+  lookup: DnsLookup = lookupPublicOrSystem,
   sleep: (ms: number) => Promise<void> = ms => new Promise((resolve) => { setTimeout(resolve, ms) }),
-): Promise<void> {
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
-      if ((await lookup(hostname)).length) return;
-    } catch { /* not published yet */ }
-    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${ hostname } to appear in public DNS`);
+      if ((await lookup(hostname)).length) return true;
+    } catch { /* not published yet, or no resolver reachable */ }
+    if (Date.now() >= deadline) return false;
     await sleep(1_000);
   }
 }
@@ -309,8 +341,9 @@ export interface Tunnel {
  * reports a registered connection. (Handing out the hostname before that
  * risks the phone caching a failed DNS lookup for up to 30 minutes.)
  */
-export async function startQuickTunnel(localPort: number): Promise<Tunnel> {
-  const binary = await cloudflaredReady();
+export async function startQuickTunnel(localPort: number, budgetMs = OPEN_BUDGET_MS): Promise<Tunnel> {
+  const deadline = Date.now() + budgetMs;
+  const binary = await cloudflaredReady(Math.min(INSTALL_WAIT_MS, budgetMs));
   const metricsPort = await freePort();
   const child: ChildProcess = spawn(binary, [
     'tunnel', '--no-autoupdate',
@@ -339,10 +372,9 @@ export async function startQuickTunnel(localPort: number): Promise<Tunnel> {
         ? new Error(`Sulla couldn't start its secure tunnel (${ binary } is missing). Try again to reinstall it.`)
         : err));
       child.once('exit', code => reject(new Error(`cloudflared exited (${ code }) before the tunnel came up: ${ output.trim().slice(-300) }`)));
-      setTimeout(() => reject(new Error('Timed out starting the Cloudflare tunnel')), TUNNEL_START_TIMEOUT_MS).unref?.();
+      setTimeout(() => reject(new Error('Timed out starting the Cloudflare tunnel')), Math.max(0, deadline - Date.now())).unref?.();
     });
 
-    const deadline = Date.now() + TUNNEL_START_TIMEOUT_MS;
     for (;;) {
       if (child.exitCode !== null) throw new Error('cloudflared exited before the tunnel was ready');
       try {
@@ -352,7 +384,10 @@ export async function startQuickTunnel(localPort: number): Promise<Tunnel> {
       if (Date.now() > deadline) throw new Error('Timed out waiting for the Cloudflare tunnel to register');
       await new Promise(r => setTimeout(r, 500));
     }
-    await waitForPublicDns(new URL(publicUrl).hostname);
+    const hostname = new URL(publicUrl).hostname;
+    if (!await waitForPublicDns(hostname, Math.min(PUBLIC_DNS_TIMEOUT_MS, Math.max(0, deadline - Date.now())))) {
+      console.warn(`[previewShare] ${ hostname } isn't visible in DNS yet; handing it out anyway`);
+    }
     // Drain output so a full pipe can never stall cloudflared.
     child.stdout?.resume();
     child.stderr?.resume();
@@ -365,8 +400,9 @@ export async function startQuickTunnel(localPort: number): Promise<Tunnel> {
 }
 
 interface Share {
-  gate:   Gate;
-  tunnel: Tunnel;
+  gate:    Gate;
+  tunnel:  Tunnel;
+  readyAt: number;
 }
 
 export interface OpenedPreview {
@@ -383,6 +419,7 @@ export interface PreviewShareDeps {
 
 export class PreviewShareManager {
   private shares = new Map<string, Promise<Share>>();
+  private settled = new WeakSet<Promise<Share>>();
   private sweeper: NodeJS.Timeout | null = null;
 
   constructor(private deps: PreviewShareDeps = { startGate, startTunnel: startQuickTunnel, now: Date.now }) {}
@@ -390,12 +427,14 @@ export class PreviewShareManager {
   /**
    * Returns a single-use public link that lands on `targetUrl`. `fresh`
    * replaces the origin's tunnel with a new hostname — for a phone that has
-   * already cached a failed lookup of the old one.
+   * already cached a failed lookup of the old one. A share that is still
+   * starting, or only just started, is already a new hostname, so concurrent
+   * fresh requests join it instead of tearing it down under each other.
    */
   async open(targetUrl: string, opts: { fresh?: boolean } = {}): Promise<OpenedPreview> {
     if (!isLoopbackUrl(targetUrl)) throw new Error('Only local links can be shared through a preview tunnel');
     const target = new URL(targetUrl);
-    if (opts.fresh) await this.close(target.origin);
+    if (opts.fresh) await this.rotate(target.origin);
     const share = await this.shareFor(target.origin);
     const ticket = share.gate.issueTicket();
     const next = `${ target.pathname }${ target.search }${ target.hash }`;
@@ -415,18 +454,30 @@ export class PreviewShareManager {
           const tunnel = await this.deps.startTunnel(gate.port);
           console.log(`[previewShare] sharing ${ origin } at ${ tunnel.publicUrl }`);
 
-          return { gate, tunnel };
+          return { gate, tunnel, readyAt: this.deps.now() };
         } catch (err) {
           await gate.close();
           throw err;
         }
       })();
-      pending.catch(() => this.shares.delete(origin));
+      const created = pending;
+      created.then(() => this.settled.add(created), () => {
+        if (this.shares.get(origin) === created) this.shares.delete(origin);
+      });
       this.shares.set(origin, pending);
       this.ensureSweeper();
     }
 
     return pending;
+  }
+
+  private async rotate(origin: string): Promise<void> {
+    const pending = this.shares.get(origin);
+    if (!pending || !this.settled.has(pending)) return;
+    const share = await pending.catch(() => null);
+    if (share && this.deps.now() - share.readyAt < FRESH_MIN_AGE_MS) return;
+    // Another request may have rotated it while we looked.
+    if (this.shares.get(origin) === pending) await this.close(origin);
   }
 
   private ensureSweeper(): void {
