@@ -800,6 +800,12 @@ export async function executeRoutine(
   let settled = false;
   const settle = async(result: { executionId: string; status: 'completed' | 'failed'; error?: string; outcome?: unknown }) => {
     if (settled || result.executionId !== executionId) return;
+    // A rejected/yielded parent turn can still own asynchronous child writers.
+    // Do not release the lane reservation or routine slot from the catch path.
+    while (graph.hasUnconfirmedWorkflowWorkers()) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+    if (settled) return;
     settled = true;
     try {
       await options?.onSettled?.(result);

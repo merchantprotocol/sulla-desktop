@@ -2233,19 +2233,26 @@ export class PlaybookController<TState = any> {
     outcome: 'completed' | 'failed',
     error?: string,
   ): Promise<TState> {
-    if (playbook.definition.concurrencyPolicy === 'forbid' && outcome === 'completed' && this.pendingSubAgents.size > 0) {
-      outcome = 'failed';
-      error = 'Singleton cannot complete while a sub-agent may still be running.';
+    const meta = (state as any).metadata;
+    const mayHaveLiveWorkers = this.pendingSubAgents.size > 0
+      || (this.unconfirmedWorkers.get(playbook.executionId) ?? 0) > 0;
+    if (mayHaveLiveWorkers) {
+      if (outcome === 'completed') {
+        outcome = 'failed';
+        error = 'Workflow cannot complete while a sub-agent may still be running.';
+      }
+      // Fence callbacks/retries immediately, but keep heartbeats and every
+      // task/lane reservation until the actual children have stopped.
+      if (meta.activeWorkflow?.executionId === playbook.executionId) {
+        meta.activeWorkflow.status = 'failed';
+      }
+      while ((this.unconfirmedWorkers.get(playbook.executionId) ?? 0) > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
     }
     await this.workflowLease?.heartbeat.assertOwned();
     this.workflowLease?.heartbeat.stop();
     this.workflowLease = null;
-    const meta = (state as any).metadata;
-    // Captured before the pending sets are cleared below: only a failure that
-    // may have left a sub-agent running justifies holding singleton admission.
-    const mayHaveLiveWorkers = this.pendingSubAgents.size > 0
-      || (this.unconfirmedWorkers.get(playbook.executionId) ?? 0) > 0;
-    // Keep unconfirmed writers visible after workflow settlement; abort is not termination.
 
     const nodeSummaries = Object.values(playbook.nodeOutputs ?? {}).map((output: PlaybookNodeOutput) => ({
       nodeId:    output.nodeId,
@@ -2279,15 +2286,7 @@ export class PlaybookController<TState = any> {
     // Persist final execution status so boot recovery doesn't pick it up again.
     try {
       const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
-      if (playbook.definition.concurrencyPolicy === 'forbid' && outcome === 'failed' && mayHaveLiveWorkers) {
-        // A failed parent does not prove its external worker stopped. Retain
-        // admission until an operator verifies termination and settles the row.
-        // Only when a sub-agent may still be running: a plain failure (e.g. a
-        // provider error) used to suspend here too, silently blocking every
-        // future scheduled run of the routine ("already active") forever.
-        console.warn(`[PlaybookController] Singleton "${ playbook.definition.name }" failed with sub-agent(s) possibly still running — holding admission on ${ playbook.executionId } until settled. Future scheduled runs are blocked until then.`);
-        await WorkflowExecutionModel.markSuspended(playbook.executionId);
-      } else if (outcome === 'completed') {
+      if (outcome === 'completed') {
         const settled = await WorkflowExecutionModel.settle(playbook.executionId, 'completed', undefined, workflowTerminalResult(meta, playbook.executionId)?.outcome);
         if (!settled) throw new Error(`Workflow ${ playbook.executionId } lost terminal settlement ownership.`);
       } else {

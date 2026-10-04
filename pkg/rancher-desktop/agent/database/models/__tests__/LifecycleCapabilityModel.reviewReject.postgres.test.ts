@@ -16,6 +16,7 @@ import { up as createLifecycleCapabilities } from '../../migrations/0068_create_
 import { up as addProjectViewsAndScheduling } from '../../migrations/0075_add_project_views_and_scheduling';
 import { up as createArtifactReceipts } from '../../migrations/0082_create_artifact_receipts';
 import { up as createWorkTaskDependencies } from '../../migrations/0083_create_work_task_dependencies';
+import { up as addReceiptGeneration } from '../../migrations/0088_add_generation_to_artifact_receipts';
 import { LifecycleCapabilityModel } from '../LifecycleCapabilityModel';
 import { up as createLaneDefinitions } from '../../migrations/0069_create_work_lane_definitions';
 import { up as createLaneBindings } from '../../migrations/0070_create_lane_workflow_bindings';
@@ -76,7 +77,7 @@ describeWithPostgres('LifecycleCapabilityModel.settleReviewReject in-lane repair
     for (const migration of [
       createWorkflows, createWorkflowExecutions, createWorkItems, addWorkTaskActor,
       addWorkTaskActivity, createWorkTaskDispatches, addVerificationDispatches,
-      createLifecycleCapabilities, createLaneDefinitions, createLaneBindings, createArtifactReceipts,
+      createLifecycleCapabilities, createLaneDefinitions, createLaneBindings, createArtifactReceipts, addReceiptGeneration,
     ]) await pool.query(migration as any);
     await addProjectViewsAndScheduling(pool as any);
     await createWorkTaskDependencies(pool as any);

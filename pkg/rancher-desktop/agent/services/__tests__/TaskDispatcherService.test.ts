@@ -769,7 +769,9 @@ describe('TaskDispatcherService', () => {
     await new Promise(resolve => setTimeout(resolve, 10));
     service.destroy();
 
-    expect(claimNextReviewMock).toHaveBeenCalledTimes(3);
+    // Finished workers refill the pool; null claim probes do not launch workers.
+    expect(claimNextReviewMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect((await Promise.all(claimNextReviewMock.mock.results.map(result => result.value))).filter(Boolean)).toHaveLength(3);
     expect(claimNextReviewMock).toHaveBeenCalledWith('sulla-desktop', [], expect.stringContaining('task-dispatcher-'), expect.any(String));
     expect(executeMock).toHaveBeenCalledTimes(3);
     expect(finalizeVerificationMock).toHaveBeenCalledTimes(3);

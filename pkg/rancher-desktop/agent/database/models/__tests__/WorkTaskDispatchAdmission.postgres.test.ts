@@ -14,6 +14,12 @@ import { ArtifactReceiptModel } from '../ArtifactReceiptModel';
 import { taskLaneTargetSql } from '../WorkAgentAdmission';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
+jest.unstable_mockModule('../../../services/ConversationLogger', () => ({ getConversationLogger: jest.fn() }));
+jest.unstable_mockModule('../../../services/WebSocketClientService', () => ({ getWebSocketClientService: () => ({ send: jest.fn() }) }));
+jest.unstable_mockModule('../../../workflow/lockedCoreRoutineExecution', () => ({
+  inheritSubAgentToolPolicy: jest.fn(), lockedCoreBlockedError: jest.fn(), resolveAgentTaskForDispatch: jest.fn(),
+}));
+
 const connectionString = process.env.SULLA_INTEGRATION_POSTGRES_URL;
 const postgresSuite = connectionString ? describe : describe.skip;
 
@@ -61,7 +67,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         id text PRIMARY KEY, task_id text, generation int, previous_lane_key text, lane_key text,
         binding_id text, workflow_id text, resolution_source text, fallback_reason text,
         binding_snapshot jsonb, workflow_snapshot jsonb, status text, actor text,
-        execution_id text, started_at timestamptz, completed_at timestamptz, UNIQUE(task_id, generation)
+        execution_id text, started_at timestamptz, completed_at timestamptz, outcome jsonb, UNIQUE(task_id, generation)
       );
       CREATE TABLE work_task_artifact_custody (id text, task_id text, custody jsonb, transition text, work_kind text, created_by text, created_at timestamptz DEFAULT now());
       CREATE TABLE work_lane_definitions (position int DEFAULT 0, lane_key text, semantic_role text, system_required boolean,
@@ -74,7 +80,8 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       CREATE TABLE work_project_domain_events (id text, task_id text, generation int, generation_hash text,
         event_type text, idempotency_key text UNIQUE, payload jsonb, occurred_at timestamptz);
       CREATE TABLE work_task_planning_runs (id text PRIMARY KEY, task_id text, status text DEFAULT 'active',
-        workflow_id text, trigger_status text, trigger_actor text, attempt int);
+        workflow_id text, trigger_status text, trigger_actor text, attempt int, error text,
+        heartbeat_at timestamptz DEFAULT now(), finished_at timestamptz);
       CREATE TABLE work_task_comments (id text, task_id text, body text, author text);
       CREATE TABLE agent_jobs (job_id text, status text, results jsonb);
       INSERT INTO work_projects VALUES ('enabled', 'working', true), ('paused', 'blocked', false);
@@ -204,6 +211,39 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       const results = await Promise.all([admit(first, 'a'), admit(second, 'b')]);
       expect(results.filter(Boolean)).toHaveLength(1);
       expect(await WorkTaskDispatchModel.enumerateCandidates()).toHaveLength(2);
+    });
+
+  it.each([['planning', 'a'], ['planning', 'b'], ['lane', 'a'], ['lane', 'b']])(
+    'retains %s task and artifact reservations until termination, then admits %s', async(kind, nextTask) => {
+      const { PlaybookController } = await import('../../../controllers/PlaybookController');
+      await taskWithLane('a', 'owner/repo#925');
+      await taskWithLane('b', 'https://github.com/owner/repo/pull/925');
+      await expect(admit(kind, 'a')).resolves.not.toBeNull();
+      jest.spyOn(WorkflowExecutionModel, 'settle').mockReset().mockResolvedValue({} as any);
+      const executionId = 'exec-a';
+      const state: any = { messages: [], metadata: { activeWorkflow: {
+        executionId, workflowId: 'custom-reservation-test', status: 'running', nodeOutputs: {},
+        definition: { name: 'Writer', nodes: [], edges: [] },
+      } } };
+      // Use the real planning/lane ledger settlement called by terminal callbacks.
+      state.metadata.onRoutineTerminal = async() => {
+        if (kind === 'planning') await WorkTaskPlanningRunModel.settleForTask('a', 'failed', 'Parent aborted');
+        else await WorkLaneWorkflowBindingModel.markOutcome('entry-a', executionId, 'failed', {});
+      };
+      const controller: any = new PlaybookController({ execute: async() => state, getEntryPoint: () => 'agent', getNode: () => null });
+      let finish!: () => void;
+      controller.executeSubAgentUntracked = () => new Promise<void>(resolve => { finish = resolve; });
+      const child = controller.executeSubAgent(state, 'writer', 'agent', 'repair', {});
+      const release = controller.releaseWorkflow(state, state.metadata.activeWorkflow, 'failed', 'Parent aborted');
+      await expect(admit('dispatch', 'a')).resolves.toBeNull();
+      await expect(admit('dispatch', 'b')).resolves.toBeNull();
+      expect(controller.hasUnconfirmedWorkers()).toBe(true);
+      expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
+      finish();
+      await child;
+      await release;
+      expect(controller.hasUnconfirmedWorkers()).toBe(false);
+      await expect(admit('dispatch', nextTask)).resolves.not.toBeNull();
     });
 
   it('reserves custody-only artifact references across mixed writers', async() => {

@@ -155,7 +155,7 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
             'Choose one recommendation or combine only compatible strongest parts. Start with exactly `DISPOSITION: REVIEW` ' +
             'when reversible implementation is complete, or `DISPOSITION: BLOCKED` only for a named irreversible dependency. ' +
             'Implement remaining reversible work now, then report its artifact, exact head, GitHub validation, rollback, and rationale. ' +
-            'Do not call Projects tools.\n\nPlanner A: {{Planner A — Root Cause}}\nPlanner B: {{Planner B — Architecture & Failure Modes}}\nPlanner C: {{Planner C — Verification & Operational Risk}}\n\nOriginal bounded task snapshot:\n{{trigger}}',
+            'Do not call Projects tools.\n\nPlanner A: {{node-plan-a}}\nPlanner B: {{node-plan-b}}\nPlanner C: {{node-plan-c}}\n\nOriginal bounded task snapshot:\n{{trigger}}',
         },
       },
     },
@@ -184,7 +184,7 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
             'If and only if disposition is BLOCKED, set assignee `heartbeat` without changing status, then call ' +
             '`sulla project/transition_task_stage` with the configured exception stage key `blocked` and exact generation, ' +
             'and ensure the comment names the exact irreversible gate. Re-read the task with `sulla project/get_project_item` ' +
-            'and return a terse persistence receipt. Never merge or deploy.\n\nBounded task snapshot:\n{{trigger}}',
+            'and return a terse persistence receipt. Never merge or deploy.\n\nFinal synthesis:\n{{node-plan-synthesis}}\n\nBounded task snapshot:\n{{trigger}}',
         },
       },
     },

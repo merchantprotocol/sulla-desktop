@@ -70,6 +70,7 @@ describe('locked Projects planning routine', () => {
     expect(synthesis.prompt).toContain('plan A');
     expect(synthesis.prompt).toContain('plan B');
     expect(synthesis.prompt).toContain('plan C');
+    expect(synthesis.prompt).not.toMatch(/\{\{[^}]+\}\}/);
     expect(synthesis.prompt).toContain('DISPOSITION: REVIEW');
 
     playbook = completeSubAgent(synthesis.updatedPlaybook, 'node-plan-synthesis', 'DISPOSITION: REVIEW\n1. Implement safely.').updatedPlaybook;
@@ -77,10 +78,11 @@ describe('locked Projects planning routine', () => {
     expect(persistence.action).toBe('spawn_sub_agent');
     if (persistence.action !== 'spawn_sub_agent') throw new Error('expected persistence agent');
     expect(persistence.nodeId).toBe('node-plan-persist');
-    expect(persistence.prompt).toContain('DISPOSITION: REVIEW');
+    expect(persistence.prompt).toContain('DISPOSITION: REVIEW\n1. Implement safely.');
+    expect(persistence.prompt).not.toMatch(/\{\{[^}]+\}\}/);
     expect(persistence.prompt).toContain('sulla project/add_task_comment');
 
-    playbook = completeSubAgent(persistence.updatedPlaybook, 'node-plan-persist', 'Persisted plan; task is todo/dispatcher.').updatedPlaybook;
+    playbook = completeSubAgent(persistence.updatedPlaybook, 'node-plan-persist', 'Persisted receipt; task advanced to verification.').updatedPlaybook;
     const response = processNextStep(playbook);
     expect(response.action).toBe('prompt_agent');
   });

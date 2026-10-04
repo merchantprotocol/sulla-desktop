@@ -25,6 +25,9 @@ jest.unstable_mockModule('../../workflow/WorkflowPlaybook', () => ({
   completeSubAgent: jest.fn((playbook: any) => ({ action: 'continue', updatedPlaybook: playbook })),
 }));
 
+const planningFinished = jest.fn<(...args: any[]) => Promise<void>>().mockResolvedValue(undefined);
+jest.unstable_mockModule('../../services/PlanningCouncilService', () => ({ PlanningCouncilService: { handleWorkflowFinished: planningFinished } }));
+
 const { PlaybookController } = await import('../PlaybookController');
 const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
 const { WorkflowCheckpointModel } = await import('../../database/models/WorkflowCheckpointModel');
@@ -104,16 +107,40 @@ describe('singleton worker lifecycle', () => {
     return { state, controller, execute };
   }
 
-  it('holds admission after a failed parent when a worker timed out and may still be running', async() => {
-    const { state, controller } = setup();
-    // A worker was launched and its stop was never confirmed (it timed out).
-    controller.unconfirmedWorkers.set('singleton-run', 1);
-    await controller.releaseWorkflow(state, state.metadata.activeWorkflow, 'failed', 'Worker timeout');
-    expect(WorkflowExecutionModel.markSuspended).toHaveBeenCalledWith('singleton-run');
-    expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
-    expect(state.metadata.lastCompletedWorkflow.outcome).toBe('failed');
-    expect(controller.hasUnconfirmedWorkers()).toBe(true);
-  });
+  it.each(['singleton', 'core-routine-plan-project-task', 'custom-lane'])(
+    'retains reservations and heartbeats for %s until the child stops', async(workflowId) => {
+      jest.useFakeTimers();
+      const { state, controller } = setup();
+      const playbook = state.metadata.activeWorkflow;
+      playbook.workflowId = workflowId;
+      if (workflowId !== 'singleton') delete playbook.definition.concurrencyPolicy;
+      delete controller.executeSubAgent;
+      let finish!: () => void;
+      controller.executeSubAgentUntracked = jest.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+      const child = controller.executeSubAgent(state, 'worker', 'agent', 'prompt', {});
+      const heartbeat = { assertOwned: jest.fn(async() => undefined), stop: jest.fn() };
+      controller.workflowLease = { executionId: playbook.executionId, heartbeat };
+      const terminal = jest.fn(async() => undefined);
+      state.metadata.onRoutineTerminal = terminal;
+      const release = controller.releaseWorkflow(state, playbook, 'failed', 'Parent aborted');
+      await jest.advanceTimersByTimeAsync(3000);
+      expect(controller.hasUnconfirmedWorkers()).toBe(true);
+      expect(controller.isWorkflowLive(state, playbook.executionId)).toBe(false);
+      expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
+      expect(heartbeat.stop).not.toHaveBeenCalled();
+      expect(terminal).not.toHaveBeenCalled();
+      expect(planningFinished).not.toHaveBeenCalled();
+      expect(state.metadata.lastCompletedWorkflow).toBeUndefined();
+      finish();
+      await child;
+      await jest.advanceTimersByTimeAsync(1500);
+      await release;
+      expect(controller.hasUnconfirmedWorkers()).toBe(false);
+      expect(WorkflowExecutionModel.settle).toHaveBeenCalledWith(playbook.executionId, 'failed', 'Parent aborted');
+      expect(heartbeat.stop).toHaveBeenCalledTimes(1);
+      expect(terminal).toHaveBeenCalledTimes(1);
+      expect(planningFinished).toHaveBeenCalledTimes(workflowId === 'core-routine-plan-project-task' ? 1 : 0);
+    });
 
   it('settles a failed singleton that never left a worker running, so the next scheduled run is admitted', async() => {
     const { state, controller } = setup();
@@ -165,12 +192,12 @@ describe('singleton worker lifecycle', () => {
     expect(controller.hasUnconfirmedWorkers()).toBe(false);
   });
 
-  it('refuses successful release while a child is pending', async() => {
+  it('fails completed release for an unconsumed child result without retaining a stopped writer', async() => {
     const { state, controller } = setup();
     controller.pendingSubAgents.set('worker', { nodeId: 'worker' });
     await controller.releaseWorkflow(state, state.metadata.activeWorkflow, 'completed');
-    expect(WorkflowExecutionModel.markSuspended).toHaveBeenCalledWith('singleton-run');
-    expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
+    expect(WorkflowExecutionModel.markSuspended).not.toHaveBeenCalled();
+    expect(WorkflowExecutionModel.settle).toHaveBeenCalledWith('singleton-run', 'failed', expect.any(String));
     expect(state.metadata.lastCompletedWorkflow.error).toContain('sub-agent may still be running');
   });
 
