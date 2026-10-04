@@ -129,13 +129,41 @@ describe('PlanningCouncilService', () => {
     }));
   });
 
-  it('releases failed planning ownership without moving the task backward', async() => {
+  it('retains ownership when launch termination is uncertain', async() => {
     executeRoutineMock.mockRejectedValue(new Error('routine engine unavailable'));
     const PlanningCouncilService = await service();
     await PlanningCouncilService.handleTaskStatusTransition({ ...task, status: 'blocked' }, 'in_progress', 'worker');
 
-    expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'failed', expect.stringContaining('routine engine unavailable'));
+    expect(settleForTaskMock).not.toHaveBeenCalled();
     expect(applicationUpdateTaskMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['attachment', 'audit'])('retains a live writer after post-launch %s failure', async(failure) => {
+    let stopWriter!: () => void;
+    const writer = new Promise<void>(resolve => { stopWriter = resolve });
+    executeRoutineMock.mockImplementation(async() => ({ executionId: 'graph-1', playbookExecutionId: 'wfp-1' }));
+    if (failure === 'attachment') attachExecutionMock.mockRejectedValueOnce(new Error('database unavailable'));
+    else addCommentMock.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('audit unavailable'));
+    const PlanningCouncilService = await service();
+    await PlanningCouncilService.handleTaskStatusTransition(task, 'blocked', 'worker');
+    expect(settleForTaskMock).not.toHaveBeenCalled();
+    // After attachment is restored, only the drained terminal callback releases it.
+    findActiveByExecutionMock.mockResolvedValue(run);
+    getTaskMock.mockResolvedValue({ ...task, status: 'todo' });
+    const settlement = writer.then(() => PlanningCouncilService.handleWorkflowFinished('wfp-1', 'completed'));
+    await Promise.resolve();
+    expect(settleForTaskMock).not.toHaveBeenCalled();
+    stopWriter();
+    await settlement;
+    expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'completed');
+  });
+
+  it('releases ownership when snapshot construction fails before any launch', async() => {
+    getProjectMock.mockRejectedValueOnce(new Error('snapshot unavailable'));
+    const PlanningCouncilService = await service();
+    await PlanningCouncilService.handleTaskStatusTransition(task, 'blocked', 'worker');
+    expect(executeRoutineMock).not.toHaveBeenCalled();
+    expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'failed', 'snapshot unavailable');
   });
 
   it('does nothing when the human disabled the locked routine', async() => {

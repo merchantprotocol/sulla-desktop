@@ -7,7 +7,7 @@ import {
   buildReceipt, receiptInsertInput, renderReceiptComment,
   type ArtifactReceipt, type ArtifactReceiptInput,
 } from '../../services/ArtifactReceiptService';
-import { agentAdmissionSql, approvalSafeTargetSql, taskLaneRoleSql, taskLaneTargetSql } from './WorkAgentAdmission';
+import { agentAdmissionSql, approvalSafeTargetSql, taskLaneRoleSql, taskLaneTargetSql, taskTargetCompletedSql } from './WorkAgentAdmission';
 import { ArtifactReceiptModel } from './ArtifactReceiptModel';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { WorkflowExecutionModel } from './WorkflowExecutionModel';
@@ -930,7 +930,7 @@ export class WorkTaskDispatchModel {
         const moved = await client.query<WorkTaskRecord>(`
           UPDATE work_tasks SET status = ${ taskLaneTargetSql('work_tasks', '$2') }, assignee = $3, updated_at = now(),
             last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier',
-            completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskLaneTargetSql('work_tasks', '$2') } NOT IN (SELECT lane_key FROM work_lane_definitions WHERE requires_human_approval = true) THEN now() ELSE completed_at END
+            completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskTargetCompletedSql('work_tasks', taskLaneTargetSql('work_tasks', '$2')) } THEN now() ELSE completed_at END
           WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
           RETURNING *
         `, [taskId, transition.status, transition.assignee]);
@@ -1399,7 +1399,7 @@ export class WorkTaskDispatchModel {
            SET status = CASE WHEN $2 = 'in_review' THEN status ELSE ${ taskLaneTargetSql('work_tasks', '$2') } END, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
-               completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskLaneTargetSql('work_tasks', '$2') } NOT IN (SELECT lane_key FROM work_lane_definitions WHERE requires_human_approval = true) THEN now() ELSE completed_at END
+               completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskTargetCompletedSql('work_tasks', taskLaneTargetSql('work_tasks', '$2')) } THEN now() ELSE completed_at END
          WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
         `, [taskId, transition.status, transition.assignee]);
@@ -1564,7 +1564,7 @@ export class WorkTaskDispatchModel {
            SET status = CASE WHEN $2 = 'in_review' THEN status ELSE ${ taskLaneTargetSql('work_tasks', '$2') } END, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
-               completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskLaneTargetSql('work_tasks', '$2') } NOT IN (SELECT lane_key FROM work_lane_definitions WHERE requires_human_approval = true) THEN now() ELSE completed_at END
+               completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskTargetCompletedSql('work_tasks', taskLaneTargetSql('work_tasks', '$2')) } THEN now() ELSE completed_at END
          WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
       `, [taskId, transition.status, transition.assignee]);

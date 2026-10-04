@@ -89,7 +89,7 @@ export class WorkTaskWaitModel {
         UPDATE work_task_waits
            SET status = 'cancelled', completed_at = now(), updated_at = now(),
                last_error = 'superseded by newer target'
-         WHERE task_id = $1 AND wait_kind = $2 AND status = 'active' AND target_key <> $3
+         WHERE task_id = $1 AND wait_kind = $2 AND wait_kind <> 'human_gate' AND status = 'active' AND target_key <> $3
       `, [input.taskId, input.waitKind, input.targetKey]);
 
       const existing = await client.query<WorkTaskWaitRecord>(`
@@ -167,13 +167,18 @@ export class WorkTaskWaitModel {
     });
   }
 
-  static async observe(id: string, observation: WaitObservation): Promise<{ changed: boolean; wait: WorkTaskWaitRecord | null }> {
+  static async observe(id: string, observation: WaitObservation, humanApproved = false): Promise<{ changed: boolean; wait: WorkTaskWaitRecord | null }> {
     return postgresClient.transaction(async(client) => {
       const currentResult = await client.query<WorkTaskWaitRecord>(
         `SELECT * FROM work_task_waits WHERE id = $1 FOR UPDATE`, [id],
       );
       const current = currentResult.rows[0];
       if (current?.status !== 'active') return { changed: false, wait: current ?? null };
+
+      if (current.wait_kind === 'human_gate' && !humanApproved) {
+        if (observation.outcome !== 'pending') throw new Error('human_approval_required: explicit human approval is required');
+        return { changed: false, wait: current };
+      }
 
       const firstObservation = !current.last_observed_fingerprint;
       const changed = !firstObservation && current.last_observed_fingerprint !== observation.fingerprint;
@@ -199,18 +204,9 @@ export class WorkTaskWaitModel {
          RETURNING *
       `, [id, observation.fingerprint, nextStatus, observation.nextCheckAt, changed, terminal]);
       if (changed || terminal) {
-        const moved = await client.query<{ status: string }>(`
-          UPDATE work_tasks
-             SET status = $2, assignee = $3, updated_at = now(),
-                 last_moved_at = now(), last_activity_at = now(),
-                 last_moved_by = 'external-wait-monitor'
-           WHERE id = $1 AND status = 'blocked'
-        `, [current.task_id, nextStatus === 'failed' ? 'planning' : 'in_review', nextStatus === 'failed' ? 'dispatcher' : 'heartbeat']);
-        if (moved.rows[0]) {
-          const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-          await recordTaskTransitionWithClient(client, current.task_id, 'blocked', moved.rows[0].status,
-            'external-wait-monitor', 'external-wait');
-        }
+        // New evidence wakes consideration; the lane agent finishes in place.
+        await client.query(`UPDATE work_tasks SET last_activity_at = now(), updated_at = now()
+          WHERE id = $1`, [current.task_id]);
       }
       return { changed: changed || terminal, wait: updated.rows[0] ?? null };
     });
@@ -226,22 +222,13 @@ export class WorkTaskWaitModel {
              next_check_at = $3, updated_at = now(),
              status = CASE WHEN consecutive_failure_count + 1 >= $4 THEN 'failed' ELSE status END,
              completed_at = CASE WHEN consecutive_failure_count + 1 >= $4 THEN now() ELSE completed_at END
-       WHERE id = $1 AND status = 'active'
+       WHERE id = $1 AND status = 'active' AND wait_kind <> 'human_gate'
        RETURNING *
       `, [id, message.slice(0, 2000), nextCheckAt, terminalAfter]);
       const wait = result.rows[0] ?? null;
       if (wait?.status === 'failed') {
-        const moved = await client.query<{ status: string }>(`
-          UPDATE work_tasks SET status = 'planning', assignee = 'dispatcher',
-            updated_at = now(), last_moved_at = now(), last_activity_at = now(),
-            last_moved_by = 'external-wait-monitor'
-          WHERE id = $1 AND status = 'blocked'
-        `, [wait.task_id]);
-        if (moved.rows[0]) {
-          const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-          await recordTaskTransitionWithClient(client, wait.task_id, 'blocked', moved.rows[0].status,
-            'external-wait-monitor', 'external-wait-failure');
-        }
+        await client.query(`UPDATE work_tasks SET last_activity_at = now(), updated_at = now()
+          WHERE id = $1`, [wait.task_id]);
       }
       return { terminal: wait?.status === 'failed', wait };
     });
@@ -251,7 +238,7 @@ export class WorkTaskWaitModel {
     return postgresClient.queryOne<WorkTaskWaitRecord>(`
       UPDATE work_task_waits
          SET status = 'cancelled', last_error = $2, updated_at = now(), completed_at = now()
-       WHERE id = $1 AND status = 'active'
+       WHERE id = $1 AND status = 'active' AND wait_kind <> 'human_gate'
        RETURNING *
     `, [id, reason.slice(0, 1000)]);
   }

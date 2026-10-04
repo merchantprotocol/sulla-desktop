@@ -46,6 +46,15 @@ function repository() {
 describe('ProjectsApplicationService lifecycle boundary', () => {
   afterEach(() => { jest.restoreAllMocks() });
 
+  it.each(['tool', 'routine', 'dispatcher'] as const)('rejects forged human authority from %s', async(source) => {
+    const repo = repository();
+    const service = new ProjectsApplicationService(repo);
+    await expect(service.updateTask('task-1', { status: 'in_progress', actor: 'human' }, {
+      actor: 'human', source,
+    })).rejects.toThrow('human_approval_required');
+    expect(repo.updateTask).not.toHaveBeenCalled();
+  });
+
   it('fails closed before persistence when the source-stage owner rejects an adapter', async() => {
     const repo = repository();
     jest.spyOn(LifecycleCapabilityModel, 'assertActorCanManageTask')

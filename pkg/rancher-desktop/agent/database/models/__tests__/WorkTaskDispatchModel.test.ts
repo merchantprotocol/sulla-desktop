@@ -291,8 +291,8 @@ describe('WorkTaskDispatchModel', () => {
 
     expect(claim?.task).toMatchObject({ id: 'task-new', status: 'in_progress', assignee: 'dispatcher' });
     expect(claim?.stage_claim).toMatchObject({ id: 'stage-new', stage: 'in_progress' });
-    expect(clientQuery.mock.calls[5][0]).toContain("THEN 'in_progress' ELSE status END");
-    expect(clientQuery.mock.calls[5][1]).toEqual(['task-new', 'dispatcher', 'todo']);
+    expect(clientQuery.mock.calls[5][0]).toContain("SET status = $4");
+    expect(clientQuery.mock.calls[5][1]).toEqual(['task-new', 'dispatcher', 'todo', 'in_progress']);
   });
 
   it('claims review work under the same cross-kind lease even when the default profile executed the work', async() => {

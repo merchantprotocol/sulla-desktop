@@ -110,3 +110,13 @@ export function approvalSafeTargetSql(alias: string, destination: string): strin
         AND gate.position < (SELECT position FROM active WHERE lane_key = ${ destination })
       ORDER BY gate.position, gate.lane_key LIMIT 1), ${ destination }) END)`;
 }
+
+/** Completion metadata follows this project's effective destination definition. */
+export function taskTargetCompletedSql(alias: string, destination: string): string {
+  return `COALESCE((SELECT lane.semantic_role = 'terminal' AND NOT lane.requires_human_approval
+    AND lane.enabled = true AND lane.archived = false FROM work_lane_definitions lane
+    WHERE lane.lane_key = ${ destination } AND lane.reset_at IS NULL
+      AND (lane.scope = 'global_default' OR (lane.scope = 'project' AND lane.project_id = ${ alias }.project_id))
+    ORDER BY CASE WHEN lane.scope = 'project' THEN 0 ELSE 1 END LIMIT 1),
+    ${ destination } IN ('done', 'cancelled', 'parked'))`;
+}

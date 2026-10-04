@@ -11,6 +11,9 @@ import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 import { LifecycleCapabilityModel } from '../LifecycleCapabilityModel';
 import { WorkflowExecutionModel } from '../WorkflowExecutionModel';
 import { ArtifactReceiptModel } from '../ArtifactReceiptModel';
+import { WorkTaskWaitModel } from '../WorkTaskWaitModel';
+import { up as waitSchema } from '../../migrations/0065_create_work_task_waits';
+import { up as waitRepair } from '../../migrations/0102_keep_wait_evidence_in_lane';
 import { taskLaneTargetSql } from '../WorkAgentAdmission';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
@@ -45,7 +48,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       CREATE TABLE work_task_dispatches (
         id text PRIMARY KEY, task_id text, agent_id text, thread_id text, kind text, attempt int,
         status text DEFAULT 'running', started_at timestamptz DEFAULT now(), finished_at timestamptz,
-        origin_dispatch_id text, origin_agent_id text, origin_evidence jsonb, reviewer_agent_ids text[],
+        origin_dispatch_id text, origin_agent_id text, origin_evidence jsonb, reviewer_agent_ids text[], worker_agent_ids text[], custodian_agent_ids text[],
         artifact_url text, artifact_location text, workflow_execution_id text, heartbeat_at timestamptz DEFAULT now(),
         error text, failure_reason text, review_generation_hash text, result text, verdict text, artifact_sha text,
         classifier_decision jsonb, selected_agents jsonb, worker_child_ids text[], review_count int DEFAULT 0, repair_count int DEFAULT 0,
@@ -66,7 +69,11 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         capability_key text PRIMARY KEY, enabled boolean, health text, active_owner text,
         fallback_mode text, fallback_active boolean
       );
-      CREATE TABLE work_task_waits (task_id text, status text, wait_kind text);
+      CREATE TABLE work_task_waits (task_id text, status text DEFAULT 'active', wait_kind text,
+        id text PRIMARY KEY DEFAULT md5(random()::text), target_key text, target jsonb DEFAULT '{}', last_observed_fingerprint text,
+        next_check_at timestamptz DEFAULT now(), owner text, consecutive_unchanged_count int DEFAULT 0,
+        consecutive_failure_count int DEFAULT 0, first_checked_at timestamptz, last_checked_at timestamptz,
+        last_error text, due_at timestamptz, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), completed_at timestamptz);
       CREATE TABLE work_task_dependencies (dependent_task_id text, depends_on_task_id text, archived_at timestamptz);
       CREATE TABLE work_lane_entry_automations (
         id text PRIMARY KEY, task_id text, generation int, previous_lane_key text, lane_key text,
@@ -126,6 +133,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       ready: false, catalogPresent: false, missingRoles: ['planning'], degradedReason: 'fixture',
     });
     jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('planning');
+    await pool.query("DELETE FROM work_lane_definitions WHERE scope='project'");
     await pool.query('UPDATE work_lane_definitions SET requires_human_approval=false, position=0');
     await pool.query("DELETE FROM work_lane_definitions WHERE lane_key NOT IN ('in_progress', 'qa', 'shipped')");
     await pool.query('TRUNCATE work_task_outcome_journal, workflow_executions, work_tasks, work_task_dispatches, work_task_stage_claims, work_task_waits, work_task_dependencies, work_lane_entry_automations, work_task_planning_runs, work_task_artifact_custody, work_project_domain_events');
@@ -496,7 +504,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES ('approval', 'enabled', 'qa');
       UPDATE work_lane_definitions SET position=30 WHERE lane_key='shipped'`);
     if (kind === 'lane') await pool.query("UPDATE work_lane_definitions SET requires_human_approval=true WHERE lane_key='qa'");
-    if (kind === 'wait') await pool.query("INSERT INTO work_task_waits VALUES ('approval', 'active', 'human_gate')");
+    if (kind === 'wait') await pool.query("INSERT INTO work_task_waits (task_id, status, wait_kind) VALUES ('approval', 'active', 'human_gate')");
     if (kind === 'intermediate') await pool.query(`INSERT INTO work_lane_definitions
       (lane_key, semantic_role, scope, position, requires_human_approval)
       VALUES ('signoff', 'manual', 'global_default', 20, true)`);
@@ -525,6 +533,73 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     expect(task.completed_at).toBeNull();
   });
 
+  it.each(['other-project', 'archived', 'disabled', 'reset'])('records completion despite %s approval definitions', async(kind) => {
+    await pool.query(`INSERT INTO work_lane_definitions
+      (lane_key, semantic_role, scope, project_id, requires_human_approval, archived, enabled, reset_at)
+      VALUES ('unrelated', 'manual', 'project', 'enabled', false, false, true, null)`);
+    await pool.query(`INSERT INTO work_lane_definitions
+      (lane_key, semantic_role, scope, project_id, requires_human_approval, archived, enabled, reset_at)
+      VALUES ('shipped', 'terminal', 'project', $1, true, $2, $3, $4)`,
+    [kind === 'other-project' ? 'paused' : 'enabled', kind === 'archived', kind !== 'disabled', kind === 'reset' ? new Date() : null]);
+    // An archived/disabled override is not a destination; use another ordinary terminal lane.
+    if (kind === 'archived' || kind === 'disabled') await pool.query(`INSERT INTO work_lane_definitions
+      (lane_key, semantic_role, scope) VALUES ('done', 'terminal', 'global_default')`);
+    await pool.query("INSERT INTO work_tasks (id, project_id, status) VALUES ('completion', 'enabled', 'qa')");
+    const claim = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime', 'completion');
+    await WorkTaskDispatchModel.finalizeVerification(claim!.dispatch.id, 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'Passed');
+    const result = (await pool.query("SELECT status, completed_at FROM work_tasks WHERE id='completion'")).rows[0];
+    expect(result.status).toBe(kind === 'archived' || kind === 'disabled' ? 'done' : 'shipped');
+    expect(result.completed_at).not.toBeNull();
+  });
+
+  it.each(['satisfied', 'failed', 'monitor-failure'] as const)('keeps wait %s evidence in the approval lane', async(outcome) => {
+    const { ProjectsApplicationService } = await import('../../../projects/application/ProjectsApplicationService');
+    await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES ('waiting', 'enabled', 'qa');
+      UPDATE work_lane_definitions SET requires_human_approval=true WHERE lane_key='qa';
+      INSERT INTO work_task_waits (id, task_id, status, wait_kind) VALUES
+        ('human', 'waiting', 'active', 'human_gate'), ('ci', 'waiting', 'active', 'github_checks')`);
+    const projects = new ProjectsApplicationService({} as any);
+    if (outcome === 'monitor-failure') await WorkTaskWaitModel.recordFailure('ci', 'failed', new Date(), 1);
+    else await projects.settleWait({ id: 'ci', outcome, summary: 'CI evidence' }, { source: 'tool', actor: 'worker' });
+    expect((await pool.query("SELECT status FROM work_tasks WHERE id='waiting'")).rows[0].status).toBe('qa');
+    expect((await WorkTaskWaitModel.get('human'))?.status).toBe('active');
+    await expect(projects.settleWait({ id: 'human', outcome: 'satisfied', summary: 'claimed approval' },
+      { source: 'tool', actor: 'human' })).rejects.toThrow('human_approval_required');
+    await WorkTaskWaitModel.recordFailure('human', 'expired', new Date(), 1);
+    await WorkTaskWaitModel.cancel('human', 'expired');
+    expect((await WorkTaskWaitModel.get('human'))?.status).toBe('active');
+    await projects.settleWait({ id: 'human', outcome: 'satisfied', summary: 'Jonathon approved' },
+      { source: 'ipc', actor: 'human' });
+    expect((await WorkTaskWaitModel.get('human'))?.status).toBe('satisfied');
+    expect((await pool.query("SELECT status FROM work_tasks WHERE id='waiting'")).rows[0].status).toBe('qa');
+  });
+
+  it.each(['lane', 'wait'])('rejects public forged-human updates at a %s boundary', async(boundary) => {
+    const { ProjectsApplicationService } = await import('../../../projects/application/ProjectsApplicationService');
+    await pool.query("INSERT INTO work_tasks (id, project_id, status) VALUES ('forged', 'enabled', 'qa')");
+    if (boundary === 'lane') await pool.query("UPDATE work_lane_definitions SET requires_human_approval=true WHERE lane_key='qa'");
+    else await pool.query("INSERT INTO work_task_waits (task_id, status, wait_kind) VALUES ('forged', 'active', 'human_gate')");
+    const updateTask = jest.fn();
+    const projects = new ProjectsApplicationService({
+      getTask: async() => (await pool.query("SELECT * FROM work_tasks WHERE id='forged'")).rows[0], updateTask,
+    } as any);
+    await expect(projects.updateTask('forged', { status: 'in_progress', actor: 'human' },
+      { source: 'tool', actor: 'human' })).rejects.toThrow('human_approval_required');
+    expect(updateTask).not.toHaveBeenCalled();
+    expect((await pool.query("SELECT status FROM work_tasks WHERE id='forged'")).rows[0].status).toBe('qa');
+  });
+
+  it('removes legacy trigger approval from comments and unrelated human edits', async() => {
+    await pool.query(waitSchema);
+    await pool.query(waitRepair);
+    await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES ('comment', 'enabled', 'blocked');
+      INSERT INTO work_task_waits (id, task_id, status, wait_kind) VALUES ('human', 'comment', 'active', 'human_gate');
+      INSERT INTO work_task_comments (id, task_id, author, body) VALUES ('comment-1', 'comment', 'human', 'Just checking');
+      UPDATE work_tasks SET last_moved_by='human', updated_at=now() WHERE id='comment'`);
+    expect((await WorkTaskWaitModel.get('human'))?.status).toBe('active');
+    expect((await pool.query("SELECT status FROM work_tasks WHERE id='comment'")).rows[0].status).toBe('blocked');
+  });
+
   it.each(['attached', 'before-attachment'])('never resumes an unscoped planning writer: %s', async(kind) => {
     await taskWithLane('a', 'owner/repo#1');
     await taskWithLane('b', 'owner/repo#1');
@@ -550,7 +625,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
 
   it('claims a human-gated todo task without moving it past its gate', async() => {
     await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES ('gated-todo', 'enabled', 'todo');
-      INSERT INTO work_task_waits VALUES ('gated-todo', 'active', 'human_gate')`);
+      INSERT INTO work_task_waits (task_id, status, wait_kind) VALUES ('gated-todo', 'active', 'human_gate')`);
     const claim = await WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime', undefined, 'gated-todo');
     expect(claim?.task.status).toBe('todo');
     expect(claim?.stage_claim.stage).toBe('todo');

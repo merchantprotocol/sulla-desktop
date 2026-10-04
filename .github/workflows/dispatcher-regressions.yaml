@@ -5,6 +5,13 @@ on:
     paths:
     - '.github/workflows/dispatcher-regressions.yaml'
     - 'pkg/rancher-desktop/agent/database/models/WorkAgentAdmission.ts'
+    - 'pkg/rancher-desktop/agent/database/models/WorkTaskWaitModel.ts'
+    - 'pkg/rancher-desktop/agent/database/migrations/0102_keep_wait_evidence_in_lane.ts'
+    - 'pkg/rancher-desktop/agent/projects/application/ProjectsApplicationService.ts'
+    - 'pkg/rancher-desktop/agent/services/ExternalWaitMonitorService.ts'
+    - 'pkg/rancher-desktop/agent/services/__tests__/ExternalWaitMonitorService.test.ts'
+    - 'pkg/rancher-desktop/agent/services/__tests__/PlanningCouncilService.test.ts'
+    - 'pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService*.test.ts'
     - 'pkg/rancher-desktop/agent/database/models/LifecycleCapabilityModel.ts'
     - 'pkg/rancher-desktop/agent/controllers/PlaybookController.ts'
     - 'pkg/rancher-desktop/agent/database/PostgresClient.ts'
@@ -82,6 +89,10 @@ jobs:
           pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService.readyTasksSettleGeneration.test.ts \
           pkg/rancher-desktop/agent/services/__tests__/LaneEntryAutomationService.test.ts \
           pkg/rancher-desktop/agent/services/__tests__/PlanningCouncilService.test.ts \
+          pkg/rancher-desktop/agent/services/__tests__/ExternalWaitMonitorService.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskWaitModel.test.ts \
+          pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService.test.ts \
+          pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService.leaseEvidenceWait.test.ts \
           pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts \
           pkg/rancher-desktop/agent/controllers/__tests__/PlaybookController.leases.test.ts \
           2>&1 | tee "$log"

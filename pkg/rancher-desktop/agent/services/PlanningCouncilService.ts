@@ -117,15 +117,18 @@ export class PlanningCouncilService {
     const claim = await WorkTaskPlanningRunModel.claim(taskId, triggerStatus, actor);
     if (!claim) return;
 
-    await WorkItemsModel.addComment({
-      task_id: claim.task.id,
-      author:  'planning-council',
-      body:    `Planning council claimed (run ${ claim.run.id }, attempt ${ claim.run.attempt }, trigger ${ triggerStatus }, actor ${ actor || 'unknown' }).`,
-    });
-
+    let launchAttempted = false;
     try {
+      await WorkItemsModel.addComment({
+        task_id: claim.task.id,
+        author:  'planning-council',
+        body:    `Planning council claimed (run ${ claim.run.id }, attempt ${ claim.run.attempt }, trigger ${ triggerStatus }, actor ${ actor || 'unknown' }).`,
+      });
       const snapshot = await PlanningCouncilService.buildSnapshot(claim);
       const { executeRoutine } = await import('@pkg/main/sullaRoutineTemplateEvents');
+      // A launch error can occur after a child starts. Retain ownership until
+      // its terminal callback confirms termination, including bookkeeping errors.
+      launchAttempted = true;
       const execution = await executeRoutine(
         PROJECT_TASK_PLANNING_WORKFLOW_ID,
         JSON.stringify(snapshot),
@@ -139,12 +142,12 @@ export class PlanningCouncilService {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await WorkTaskPlanningRunModel.settleForTask(claim.task.id, 'failed', message);
+      if (!launchAttempted) await WorkTaskPlanningRunModel.settleForTask(claim.task.id, 'failed', message);
       await WorkItemsModel.addComment({
         task_id: claim.task.id,
         author:  'planning-council',
-        body:    `Planning council launch failed (run ${ claim.run.id }): ${ bounded(message, 1_000) }`,
-      });
+        body:    `Planning council launch/bookkeeping failed; ${ launchAttempted ? 'ownership retained pending termination' : 'no workflow started' } (run ${ claim.run.id }): ${ bounded(message, 1_000) }`,
+      }).catch(auditError => console.warn('[PlanningCouncil] Could not audit launch failure:', auditError));
     }
   }
 

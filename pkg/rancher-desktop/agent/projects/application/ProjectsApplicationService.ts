@@ -376,7 +376,11 @@ export class ProjectsApplicationService {
     const taskId = itemId(id);
     const current = await this.repository.getTask(taskId);
     if (!current) return null;
-    const actor = changes.actor ?? context.actor;
+    const trustedHuman = context.source === 'ipc' && context.actor === 'human';
+    if (!trustedHuman && (changes.actor === 'human' || context.actor === 'human')) {
+      throw new Error('human_approval_required: tool input cannot claim human authority');
+    }
+    const actor = trustedHuman ? 'human' : changes.actor ?? context.actor;
 
     if (changes.status !== undefined || changes.assignee !== undefined) {
       await LifecycleCapabilityModel.assertActorCanManageTask(current.status, current.labels, actor);
@@ -604,15 +608,7 @@ export class ProjectsApplicationService {
     return { receipt: row, created: inserted, stage: task.status, generation };
   }
 
-  /**
-   * Settle one durable external wait a workflow node holds evidence for,
-   * without waiting on the periodic external-wait-monitor poll. Reuses
-   * WorkTaskWaitModel.observe exactly as the monitor already calls it — same
-   * mechanics, same trust model, no new locking. Note: observe() still moves
-   * a task off the literal 'blocked' status onto literal 'planning'/'in_review'
-   * on its legacy compatibility path; that is pre-existing Phase 4-era
-   * behavior this node does not change (see dHAe/MBJx follow-up comment).
-   */
+  /** Record external evidence without moving work out of its current lane. */
   async settleWait(input: SettleTaskWaitInput, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
     const id = itemId(input.id, 'id');
     if (input.outcome !== 'satisfied' && input.outcome !== 'failed') {
@@ -626,7 +622,7 @@ export class ProjectsApplicationService {
     const nextCheckAt = input.nextCheckAt ? new Date(input.nextCheckAt) : new Date();
     if (Number.isNaN(nextCheckAt.getTime())) throw new Error('next_check_at must be a valid ISO date when provided.');
     const observation: WaitObservation = { fingerprint, outcome: input.outcome, summary, nextCheckAt };
-    const result = await WorkTaskWaitModel.observe(id, observation);
+    const result = await WorkTaskWaitModel.observe(id, observation, context.source === 'ipc' && context.actor === 'human');
     if (!result.wait) throw new Error(`No active task wait found with id ${ id }.`);
     return result;
   }
