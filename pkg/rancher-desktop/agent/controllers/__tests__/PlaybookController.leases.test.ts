@@ -124,20 +124,45 @@ describe('singleton worker lifecycle', () => {
     expect(WorkflowExecutionModel.markSuspended).not.toHaveBeenCalled();
   });
 
-  it('confirms a worker stopped when its turn returns or it throws, but not on a timeout', async() => {
+  it.each(['absolute cap', 'ignored bumps'])('retains the real watchdog worker through %s until termination', async(mode) => {
+    jest.useFakeTimers();
     const { state, controller } = setup();
-    controller.executeSubAgentUntracked = jest.fn()
-      .mockResolvedValueOnce({ output: 'ok', contractStatus: 'done' } as never)
-      .mockRejectedValueOnce(new Error('worker crashed') as never)
-      .mockRejectedValueOnce(new Error('Sub-agent timed out after 600s') as never);
-    delete controller.executeSubAgent; // use the real tracking wrapper
-    const run = () => (PlaybookController.prototype as any).executeSubAgent.call(controller, state, 'w', 'a', 'p', {});
+    delete controller.executeSubAgent;
+    delete controller.executeSubAgentWithRetry;
+    let finish!: () => void;
+    const child = { messages: [], metadata: {} } as any;
+    controller.executeSubAgentUntracked = jest.fn(() => controller.raceWithSubAgentWatchdog(
+      child, 'Production worker', () => new Promise<void>(resolve => { finish = resolve; }),
+    ));
+    // Exercise the real retry caller: it must not start attempt two while
+    // the first execution survives either production watchdog rejection.
+    controller.executeSubAgentWithRetry(state, 'worker', 'agent', 'prompt', {}, 'Worker', 2);
+    await jest.advanceTimersByTimeAsync(0);
+    let activity: ReturnType<typeof setInterval> | undefined;
+    if (mode === 'absolute cap') {
+      activity = setInterval(() => { child.metadata.lastActivityMs = Date.now(); }, 1000);
+    }
+    await jest.advanceTimersByTimeAsync(mode === 'absolute cap' ? 1800001 : 480001);
+    expect(controller.executeSubAgentUntracked).toHaveBeenCalledTimes(1);
+    expect(controller.hasUnconfirmedWorkers()).toBe(true);
+    expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
+    if (activity) clearInterval(activity);
+    // Fence late retry after proving the surviving execution keeps ownership.
+    state.metadata.activeWorkflow = undefined;
+    finish();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(controller.hasUnconfirmedWorkers()).toBe(false);
+    expect(controller.executeSubAgentUntracked).toHaveBeenCalledTimes(1);
+  });
 
-    await run();
-    await expect(run()).rejects.toThrow('crashed');
-    expect(controller.unconfirmedWorkers.get('singleton-run') ?? 0).toBe(0);
-    await expect(run()).rejects.toThrow('timed out');
-    expect(controller.unconfirmedWorkers.get('singleton-run')).toBe(1);
+  it.each(['worker crashed', 'worker aborted'])('releases after an actual execution rejection: %s', async(message) => {
+    const { state, controller } = setup();
+    delete controller.executeSubAgent;
+    controller.executeSubAgentUntracked = jest.fn(() => controller.raceWithSubAgentWatchdog(
+      { metadata: {} }, 'Worker', async() => { throw new Error(message); },
+    ));
+    await expect(controller.executeSubAgent(state, 'worker', 'agent', 'prompt', {})).rejects.toThrow(message);
+    expect(controller.hasUnconfirmedWorkers()).toBe(false);
   });
 
   it('refuses successful release while a child is pending', async() => {

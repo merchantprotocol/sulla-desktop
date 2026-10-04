@@ -699,6 +699,7 @@ export class TaskDispatcherService {
           content: `Your last turn ended without the required <WORK_RESULT> block. Report the current state now and end with exactly one complete <WORK_RESULT>{\"summary\":\"...\"}</WORK_RESULT> block. If a background check or CI is still running, report it as pending in the summary; do not wait for it.`,
         });
         finalState = await graph.execute(state);
+        await this.awaitWriterTermination(graph);
         if (executionTimedOut) {
           await WorkTaskDispatchModel.settle(dispatch.id, 'timed_out', undefined,
             `execution exceeded ${ timeoutMinutes } minute(s)`);

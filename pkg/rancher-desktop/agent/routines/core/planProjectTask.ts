@@ -102,7 +102,7 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
         label:    'Begin Serial Planning',
         category: 'flow-control',
         subtype:  'merge',
-        config:   {},
+        config:   { strategy: 'wait-all' },
       },
     },
     plannerNode(

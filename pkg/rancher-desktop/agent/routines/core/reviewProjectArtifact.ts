@@ -117,7 +117,7 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
         label:    'Begin Serial Review',
         category: 'flow-control',
         subtype:  'merge',
-        config:   {},
+        config:   { strategy: 'wait-all' },
       },
     },
     reviewerNode(

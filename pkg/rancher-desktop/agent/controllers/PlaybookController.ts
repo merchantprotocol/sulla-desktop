@@ -2397,6 +2397,7 @@ export class PlaybookController<TState = any> {
     subState.metadata.lastActivityMs = startedAt;
     let unansweredBumps = 0;
     let watchdogId: NodeJS.Timeout | null = null;
+    const execution = Promise.resolve().then(execute);
 
     try {
       const watchdogPromise = new Promise<never>((_, reject) => {
@@ -2442,9 +2443,12 @@ export class PlaybookController<TState = any> {
           console.warn(`[PlaybookController] Bumping idle sub-graph "${ label }" (bump ${ unansweredBumps }/${ SUB_AGENT_MAX_BUMPS }, idle ${ Math.round(sinceActivity / 1000) }s)`);
         }, SUB_AGENT_WATCHDOG_INTERVAL_MS);
       });
-      return await Promise.race([execute(), watchdogPromise]);
+      return await Promise.race([execution, watchdogPromise]);
     } finally {
       if (watchdogId !== null) clearInterval(watchdogId);
+      // A watchdog only stops waiting. Keep ownership and forbid retries
+      // until the underlying execution really stops, regardless of error text.
+      await execution.catch(() => undefined);
     }
   }
 
@@ -2475,15 +2479,10 @@ export class PlaybookController<TState = any> {
       else this.unconfirmedWorkers.delete(executionId);
     };
     try {
-      const result = await this.executeSubAgentUntracked(state, nodeId, agentId, prompt, config);
-      confirmStopped(); // the worker's turn returned — it is not running
-      return result;
-    } catch (error) {
-      // A thrown error from the worker itself proves it stopped; a timeout or
-      // abort only proves WE stopped waiting.
-      const message = error instanceof Error ? `${ error.name } ${ error.message }` : String(error);
-      if (!/time(d)?\s*-?out|abort/i.test(message)) confirmStopped();
-      throw error;
+      return await this.executeSubAgentUntracked(state, nodeId, agentId, prompt, config);
+    } finally {
+      // The watchdog drains its underlying promise before returning/throwing.
+      confirmStopped();
     }
   }
 
@@ -2548,7 +2547,16 @@ export class PlaybookController<TState = any> {
       finalState = await this.raceWithSubAgentWatchdog(
         subState,
         `Sub-agent "${ agentId || nodeId }"`,
-        () => graph.execute(subState),
+        async() => {
+          try {
+            return await graph.execute(subState);
+          } finally {
+            // Nested workflows can return before their own children stop.
+            while (graph.hasUnconfirmedWorkflowWorkers?.()) {
+              await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+          }
+        },
       );
 
     } finally {

@@ -660,6 +660,49 @@ describe('TaskDispatcherService', () => {
     }
   });
 
+  it.each([false, true])('drains background writers from WORK_RESULT recovery before settlement (timeout=%s)', async(timeout) => {
+    jest.useFakeTimers();
+    try {
+      let writerAlive = false;
+      const state = { messages: [], metadata: { agent: { status: 'completed' }, finalSummary: 'Missing result' } };
+      const execute = jest.fn<any>()
+        .mockResolvedValueOnce(state)
+        .mockImplementationOnce(async() => {
+          writerAlive = true;
+          state.metadata.finalSummary = '<WORK_RESULT>{"summary":"Repair complete"}</WORK_RESULT>';
+          return state;
+        });
+      graphGetMock.mockResolvedValueOnce({
+        graph: { execute, hasUnconfirmedWorkflowWorkers: () => writerAlive }, state,
+      });
+      settingsGetMock.mockImplementation((key: string, fallback: unknown) => Promise.resolve(
+        key === 'taskDispatcherExecutionTimeoutMinutes' ? (timeout ? 0.001 : 45) : fallback,
+      ));
+      const { TaskDispatcherService } = await import('../TaskDispatcherService');
+      const service = new TaskDispatcherService() as any;
+      const run = service.runClaim({
+        task: { id: 'recovery', status: 'in_progress', project_id: 'p', epic_id: 'e' },
+        dispatch: { id: 'recovery-dispatch', task_id: 'recovery', agent_id: 'sulla-desktop', thread_id: 'recovery', kind: 'execution' },
+        stage_claim: { id: 'recovery-stage' },
+      });
+      await jest.advanceTimersByTimeAsync(120001);
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(service.active.has('recovery-dispatch')).toBe(true);
+      expect(releaseStageMock).not.toHaveBeenCalled();
+      expect(appendOutcomeJournalMock).not.toHaveBeenCalled();
+      expect(settleMock).not.toHaveBeenCalled();
+      expect(graphDeleteMock).not.toHaveBeenCalled();
+      writerAlive = false;
+      await jest.advanceTimersByTimeAsync(1500);
+      await run;
+      expect(releaseStageMock).toHaveBeenCalledWith('recovery-stage');
+      if (timeout) expect(settleMock).toHaveBeenCalledWith('recovery-dispatch', 'timed_out', undefined, expect.any(String));
+      else expect(appendOutcomeJournalMock).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('turns user disablement into a visible manual hold without claiming work', async() => {
     automationEnabledMock.mockResolvedValue(false);
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
