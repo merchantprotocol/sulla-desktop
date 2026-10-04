@@ -30,8 +30,6 @@ const HTTPS_PORTS = new Set([443, 8443, 9443]);
 // the user's projects.
 const INTERNAL_PREFIX = /^sulla_/;
 const MAX_RANGE = 20;
-// How long the VM's `docker ps` may lag behind a successful host query.
-const VM_GRACE_MS = 3_000;
 
 interface PublishedPort {
   hostIp:        string;
@@ -116,20 +114,24 @@ type Runner = typeof runCommand;
  * Lima VM's daemon. They can be different daemons (e.g. Docker Desktop on the
  * host), so the lists are merged; a container both report appears once.
  */
-export async function listDockerLinks(run: Runner = runCommand, vmGraceMs = VM_GRACE_MS): Promise<DockerLinksResult> {
+export async function listDockerLinks(run: Runner = runCommand): Promise<DockerLinksResult> {
   const args = ['ps', '--format', '{{json .}}'];
   const opts = { timeoutMs: 10_000, maxOutputChars: 500_000 };
   const failed = (err: Error) => ({ exitCode: 1, stdout: '', stderr: err.message });
-  const vm = run('docker', args, { ...opts, runInLimaShell: true }).catch(failed);
-  const host = await run('docker', args, opts).catch(failed);
-  // With the host list in hand, a stopped or busy VM only gets a short grace
-  // period instead of holding the pane for the full timeout.
-  const vmResult = host.exitCode === 0
-    ? await Promise.race([vm, new Promise<ReturnType<typeof failed>>((resolve) => {
-      setTimeout(() => resolve(failed(new Error('VM docker ps timed out'))), vmGraceMs).unref?.();
-    })])
-    : await vm;
-  const results = [host, vmResult];
+  const query = async(runInLimaShell: boolean) => {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        run('docker', args, { ...opts, runInLimaShell }).catch(failed),
+        new Promise<ReturnType<typeof failed>>((resolve) => {
+          timer = setTimeout(() => resolve(failed(new Error('docker ps timed out'))), opts.timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const results = await Promise.all([query(false), query(true)]);
   const ok = results.filter(r => r.exitCode === 0);
   if (!ok.length) {
     const failed = results[results.length - 1];

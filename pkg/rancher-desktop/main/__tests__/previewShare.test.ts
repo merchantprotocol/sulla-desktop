@@ -246,6 +246,34 @@ describe('waitForPublicDns', () => {
     expect(lookup).toHaveBeenCalledWith('calm-river.trycloudflare.com');
   });
 
+  test('a stalled lookup cannot overrun the DNS budget', async() => {
+    jest.useFakeTimers();
+    try {
+      const lookup = jest.fn(() => new Promise<string[]>(() => {}));
+      const result = waitForPublicDns('x.trycloudflare.com', 150, lookup);
+      await jest.advanceTimersByTimeAsync(150);
+      await expect(result).resolves.toBe(false);
+      expect(lookup).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('retry sleep uses only the remaining budget', async() => {
+    jest.useFakeTimers();
+    try {
+      const lookup = jest.fn(async() => [] as string[]);
+      const result = waitForPublicDns('x.trycloudflare.com', 150, lookup);
+      await jest.advanceTimersByTimeAsync(150);
+      await expect(result).resolves.toBe(false);
+      expect(lookup).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('reports false after the deadline instead of throwing, so a working tunnel is still handed out', async() => {
     const lookup = jest.fn(async() => { throw Object.assign(new Error('queryA ETIMEOUT'), { code: 'ETIMEOUT' }) });
     await expect(waitForPublicDns('x.trycloudflare.com', 0, lookup, async() => {})).resolves.toBe(false);
@@ -296,20 +324,18 @@ describe('PreviewShareManager rotation', () => {
     return { manager, tunnelClose, tick: (ms: number) => { clock += ms } };
   }
 
-  test('fresh replaces the tunnel so the phone gets a new hostname', async() => {
-    const { manager, tunnelClose, tick } = rotationFixture();
+  test('immediate fresh retry replaces the failed hostname without waiting ten seconds', async() => {
+    const { manager, tunnelClose } = rotationFixture();
     expect((await manager.open('http://localhost:5180/')).url).toContain('name-1');
     expect((await manager.open('http://localhost:5180/')).url).toContain('name-1');
-    tick(60_000);
     expect((await manager.open('http://localhost:5180/', { fresh: true })).url).toContain('name-2');
     expect(tunnelClose).toHaveBeenCalledTimes(1);
     await manager.closeAll();
   });
 
   test('simultaneous fresh requests share one new tunnel instead of killing each other', async() => {
-    const { manager, tunnelClose, tick } = rotationFixture();
+    const { manager, tunnelClose } = rotationFixture();
     await manager.open('http://localhost:5180/');
-    tick(60_000);
     const [a, b] = await Promise.all([
       manager.open('http://localhost:5180/', { fresh: true }),
       manager.open('http://localhost:5180/', { fresh: true }),
@@ -317,9 +343,9 @@ describe('PreviewShareManager rotation', () => {
     expect(a.url).toContain('name-2');
     expect(b.url).toContain('name-2');
     expect(tunnelClose).toHaveBeenCalledTimes(1);
-    // A fresh request right after another one keeps the just-made hostname.
-    expect((await manager.open('http://localhost:5180/', { fresh: true })).url).toContain('name-2');
-    expect(tunnelClose).toHaveBeenCalledTimes(1);
+    // A subsequent failed lookup must be able to replace this hostname too.
+    expect((await manager.open('http://localhost:5180/', { fresh: true })).url).toContain('name-3');
+    expect(tunnelClose).toHaveBeenCalledTimes(2);
     await manager.closeAll();
   });
 });

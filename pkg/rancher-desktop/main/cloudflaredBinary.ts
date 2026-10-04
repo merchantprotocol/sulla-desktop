@@ -65,7 +65,9 @@ export function cloudflaredCandidates(env: Pick<CloudflaredEnv, 'home' | 'platfo
 
 /** An existing cloudflared (Homebrew, system, Sulla's own, or PATH), or null. */
 export function findCloudflared(env: CloudflaredEnv = defaultEnv()): string | null {
-  const onPath = env.pathEnv.split(path.delimiter).filter(Boolean).map(dir => path.join(dir, 'cloudflared'));
+  const paths = env.platform === 'win32' ? path.win32 : path.posix;
+  const binary = env.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared';
+  const onPath = env.pathEnv.split(paths.delimiter).filter(Boolean).map(dir => paths.join(dir.replace(/^"|"$/g, ''), binary));
 
   return [...cloudflaredCandidates(env), ...onPath].find(p => env.exists(p)) ?? null;
 }

@@ -31,6 +31,11 @@ describe('binary resolution', () => {
     expect(findCloudflared(env({ pathEnv: `/a${ path.delimiter }/opt/x/bin` }, ['/opt/x/bin/cloudflared']))).toBe('/opt/x/bin/cloudflared');
   });
 
+  test('finds cloudflared.exe on a semicolon-delimited Windows PATH', () => {
+    const binary = String.raw`C:\Program Files\Cloudflared\cloudflared.exe`;
+    expect(findCloudflared(env({ platform: 'win32', pathEnv: String.raw`C:\Windows;"C:\Program Files\Cloudflared"` }, [binary]))).toBe(binary);
+  });
+
   test('returns null on a Mac with no cloudflared anywhere', () => {
     expect(findCloudflared(env({ pathEnv: '/usr/bin:/bin' }))).toBeNull();
   });
