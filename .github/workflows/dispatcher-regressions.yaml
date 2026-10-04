@@ -1,0 +1,36 @@
+name: Dispatcher regressions
+
+on:
+  pull_request:
+    paths:
+    - '.github/workflows/dispatcher-regressions.yaml'
+    - 'pkg/rancher-desktop/agent/database/models/WorkTaskDispatchModel.ts'
+    - 'pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatch*.test.ts'
+    - 'pkg/rancher-desktop/agent/routines/core/reviewProjectArtifact.ts'
+    - 'pkg/rancher-desktop/agent/routines/core/__tests__/reviewProjectArtifact.test.ts'
+    - 'pkg/rancher-desktop/agent/services/TaskDispatcherService.ts'
+    - 'pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-jest:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: ./.github/actions/yarn-install
+      timeout-minutes: 20
+    - name: Run dispatcher regression suite
+      run: >-
+        yarn test:unit:jest --runInBand
+        pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchModel.test.ts
+        pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchBackpressure.test.ts
+        pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchCountByRole.test.ts
+        pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchJournalReplay.test.ts
+        pkg/rancher-desktop/agent/routines/core/__tests__/reviewProjectArtifact.test.ts
+        pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts
