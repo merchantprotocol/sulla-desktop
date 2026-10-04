@@ -359,7 +359,7 @@ export class WorkLaneWorkflowBindingModel {
           AND task.archived = false AND task.status = lane.lane_key
         JOIN work_projects project ON project.id = task.project_id AND project.archived = false
           AND (project.dispatch_enabled = true OR lane.status = 'running')
-        JOIN work_epics epic ON epic.id = task.epic_id AND epic.archived = false
+        LEFT JOIN work_epics epic ON epic.id = task.epic_id
         LEFT JOIN workflow_executions execution ON execution.execution_id = lane.execution_id
        WHERE lane.workflow_id IS NOT NULL
          AND NOT EXISTS (
@@ -380,18 +380,34 @@ export class WorkLaneWorkflowBindingModel {
                AND execution.lease_expires_at <= now())
          ))
        )
-       ORDER BY lane.created_at ASC LIMIT $1
+       ORDER BY GREATEST(task.last_activity_at, task.last_moved_at) DESC, task.id ASC LIMIT $1
     `, [limit]);
   }
 
   static async markStarted(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
-    const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
-      UPDATE work_lane_entry_automations
-         SET execution_id = $2, status = 'running', started_at = now()
-       WHERE id = $1 AND status = 'pending' AND execution_id IS NULL
-       RETURNING *
-    `, [id, executionId]);
-    return rows[0] ?? null;
+    return postgresClient.transaction(async(client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
+      const rows = await client.query<LaneEntryAutomationRecord>(`
+        UPDATE work_lane_entry_automations lane
+           SET execution_id = $2, status = 'running', started_at = now()
+         WHERE id = $1 AND status = 'pending' AND execution_id IS NULL
+           AND (SELECT COUNT(DISTINCT live.task_id) FROM (
+             SELECT task_id FROM work_task_dispatches WHERE status = 'running'
+             UNION ALL SELECT task_id FROM work_task_planning_runs WHERE status = 'active'
+             UNION ALL SELECT task_id FROM work_lane_entry_automations
+               WHERE status = 'running' AND COALESCE(workflow_snapshot->'laneContract'->>'owner', '')
+                 NOT IN ('task-dispatcher', 'task-dispatcher-review')
+           ) live WHERE live.task_id <> lane.task_id) < 3
+           AND NOT EXISTS (SELECT 1 FROM work_task_dispatches d
+             WHERE d.task_id = lane.task_id AND d.status = 'running')
+           AND NOT EXISTS (SELECT 1 FROM work_task_stage_claims c
+             WHERE c.task_id = lane.task_id AND c.status = 'active')
+           AND NOT EXISTS (SELECT 1 FROM work_task_planning_runs p
+             WHERE p.task_id = lane.task_id AND p.status = 'active')
+         RETURNING *
+      `, [id, executionId]);
+      return rows.rows[0] ?? null;
+    });
   }
 
   static async resetFailed(id: string): Promise<LaneEntryAutomationRecord | null> {

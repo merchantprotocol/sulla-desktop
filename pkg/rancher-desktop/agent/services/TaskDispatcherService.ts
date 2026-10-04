@@ -1,11 +1,8 @@
-import { Octokit } from '@octokit/rest';
-
 import { AbortService } from './AbortService';
 import { ArtifactCustodyPolicy } from './ArtifactCustodyPolicy';
 import { buildReceipt, renderReceiptComment } from './ArtifactReceiptService';
 import { resolvePullRequestHead, resolvePullRequestHeads } from './GitHubPullRequestHeadService';
 import { GraphRegistry } from './GraphRegistry';
-import { getIntegrationService } from './IntegrationService';
 import { resolveWipLimits, evaluateClaim, type WipLimits, type RoleCounts, type BackpressureDecision } from './ProjectAutomationWipLimits';
 import { RoutineConcurrencyPolicy } from './RoutineConcurrencyPolicy';
 import { postgresClient } from '../database/PostgresClient';
@@ -16,6 +13,7 @@ import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItem
 import {
   WorkTaskDispatchModel,
   type ClaimedDispatch,
+  type DispatchCandidate,
   type ProtectedReviewEvidence,
   type ReviewArtifactComponent,
   type ReviewArtifactType,
@@ -41,12 +39,8 @@ const DEFAULT_CONCURRENCY = 3;
 const RUNTIME_INSTANCE_ID = `task-dispatcher-${ process.pid }-${ Date.now() }`;
 const DEFAULT_VERIFIER_TIMEOUT_MINUTES = 45;
 const DEFAULT_EXECUTION_TIMEOUT_MINUTES = 90;
-const DEFAULT_IN_PROGRESS_STALE_MINUTES = 360;
-const DEFAULT_RECOVERY_BATCH_SIZE = 1;
-const DEFAULT_RECOVERY_RETRY_CEILING = 3;
 const DEFAULT_TICK_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_TICK_QUERY_TIMEOUT_MS = 30_000;
-const LINKED_PR_REQUEST_TIMEOUT_MS = 30_000;
 const LEGACY_VERIFIER_TOOLS = [
   'file_search', 'read_file',
   'git_status', 'git_diff', 'git_log', 'git_blame',
@@ -305,8 +299,6 @@ export class TaskDispatcherService {
         })),
       });
 
-      await this.checkInProgressRecovery();
-      await this.fillVerificationPool();
       // Preserve WIP telemetry, but do not turn portfolio context into an
       // admission deny-list. The hard execution bound is the configured worker
       // concurrency (three by default) plus collision-safe leases.
@@ -323,7 +315,7 @@ export class TaskDispatcherService {
       } catch (wipErr) {
         console.warn('[TaskDispatcher] WIP telemetry unavailable; lease concurrency remains enforced:', wipErr);
       }
-      const dispatched = await this.fillExecutionPool();
+      const dispatched = await this.fillCandidatePool(considered);
       outcome = dispatched > 0 ? 'actively-dispatching' : 'no-eligible-work';
       if (this.activeTickGeneration === generation) {
         await this.reportTickHealth('healthy');
@@ -368,76 +360,30 @@ export class TaskDispatcherService {
     });
   }
 
-  private async checkInProgressRecovery(): Promise<void> {
-    const enabledSetting = await SullaSettingsModel.get('taskDispatcherInProgressRecoveryEnabled', false);
-    const enabled = enabledSetting === true || enabledSetting === 'true';
-    const staleConfigured = Number(await SullaSettingsModel.get(
-      'taskDispatcherInProgressStaleMinutes', DEFAULT_IN_PROGRESS_STALE_MINUTES,
-    ));
-    const batchConfigured = Number(await SullaSettingsModel.get(
-      'taskDispatcherRecoveryBatchSize', DEFAULT_RECOVERY_BATCH_SIZE,
-    ));
-    const ceilingConfigured = Number(await SullaSettingsModel.get(
-      'taskDispatcherRecoveryRetryCeiling', DEFAULT_RECOVERY_RETRY_CEILING,
-    ));
-    const staleMinutes = Math.max(15, staleConfigured || DEFAULT_IN_PROGRESS_STALE_MINUTES);
-    const batchSize = Math.max(1, Math.min(25, batchConfigured || DEFAULT_RECOVERY_BATCH_SIZE));
-    const retryCeiling = Math.max(1, Math.min(10, ceilingConfigured || DEFAULT_RECOVERY_RETRY_CEILING));
-    const candidates = await WorkTaskDispatchModel.findRecoverableInProgress(staleMinutes, 100);
-
-    for (const candidate of candidates.filter(item => item.exclusionReasons.length === 0 && item.task.github_issue)) {
-      if (await this.hasActiveLinkedPullRequest(candidate.task.github_issue!)) {
-        candidate.exclusionReasons.push('linked_external_operation');
+  private async fillCandidatePool(candidates: DispatchCandidate[]): Promise<number> {
+    let dispatched = 0;
+    const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
+    const capacity = Math.min(DEFAULT_CONCURRENCY, Math.max(1, configured || DEFAULT_CONCURRENCY));
+    for (const candidate of candidates) {
+      // Consider every row, even when an explicit stop or live editor prevents action.
+      const hold = !candidate.project_dispatch_enabled ? 'project explicitly paused'
+        : ['done', 'cancelled', 'parked'].includes(candidate.status) ? 'terminal task'
+          : candidate.has_active_dispatch || candidate.has_active_stage_claim ? 'live owner' : null;
+      if (hold) {
+        console.log('[TaskDispatcher] Candidate held at action boundary', { taskId: candidate.id, hold });
+        continue;
+      }
+      if (await WorkTaskDispatchModel.countRunning() >= capacity) continue;
+      if (candidate.status === 'in_review') {
+        if (await this.fillVerificationPool(candidate.id)) dispatched += 1;
+      } else {
+        dispatched += await this.fillExecutionPool(candidate.id);
       }
     }
-
-    const eligible = candidates.filter(candidate => candidate.exclusionReasons.length === 0);
-    const excludedCounts = candidates.flatMap(candidate => candidate.exclusionReasons)
-      .reduce<Record<string, number>>((counts, reason) => {
-        counts[reason] = (counts[reason] || 0) + 1;
-        return counts;
-      }, {});
-    console.log('[TaskDispatcher] In-progress recovery report', {
-      mode:     enabled ? 'enabled' : 'report-only',
-      scanned:  candidates.length,
-      eligible: eligible.length,
-      excluded: excludedCounts,
-      staleMinutes,
-      batchSize,
-      retryCeiling,
-    });
-
-    if (!enabled || eligible.length === 0) return;
-    const recovered = await WorkTaskDispatchModel.recoverOrphanedInProgress(eligible, batchSize, retryCeiling);
-    const counts = recovered.reduce<Record<string, number>>((outcomes, result) => {
-      outcomes[result.outcome] = (outcomes[result.outcome] || 0) + 1;
-      return outcomes;
-    }, {});
-    console.warn('[TaskDispatcher] In-progress recovery outcomes', counts);
+    return dispatched;
   }
 
-  private async hasActiveLinkedPullRequest(reference: string): Promise<boolean> {
-    const match = /^(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/#\s]+?)(?:\/pull\/|#)(\d+)$/i.exec(reference.trim());
-    if (!match) return false;
-    try {
-      const token = await getIntegrationService().getIntegrationValue('github', 'token');
-      if (!token) return true;
-      const octokit = new Octokit({ auth: token.value });
-      const { data } = await octokit.pulls.get({
-        owner:   match[1],
-        repo:    match[2],
-        pull_number: Number(match[3]),
-        request: { timeout: LINKED_PR_REQUEST_TIMEOUT_MS },
-      });
-      return data.state === 'open';
-    } catch (err: any) {
-      if (err?.status === 404) return false;
-      console.warn(`[TaskDispatcher] Linked PR check failed for ${ reference }; excluding candidate`, err);
-      return true;
-    }
-  }
-
-  private async fillExecutionPool(): Promise<number> {
+  private async fillExecutionPool(taskId?: string): Promise<number> {
     const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
     const concurrency = await RoutineConcurrencyPolicy.resolveLimit('execution', configured || DEFAULT_CONCURRENCY);
     const enforceSlots = await RoutineConcurrencyPolicy.isEnabled();
@@ -453,7 +399,7 @@ export class TaskDispatcherService {
       fallbackMode:      'manual_hold',
     });
 
-    let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution'));
+    let freeSlots = Math.min(taskId ? 1 : concurrency, Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution')));
     let dispatched = 0;
     while (freeSlots > 0 && this.initialized) {
       let slot: string | null = null;
@@ -461,7 +407,7 @@ export class TaskDispatcherService {
         slot = await RoutineConcurrencyPolicy.acquire('execution', concurrency, { owner: RUNTIME_INSTANCE_ID });
         if (!slot) break;
       }
-      const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID);
+      const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID, undefined, taskId);
       if (!claim) {
         if (slot) await RoutineConcurrencyPolicy.release(slot);
         break;
@@ -480,7 +426,7 @@ export class TaskDispatcherService {
     return dispatched;
   }
 
-  private async fillVerificationPool(): Promise<boolean> {
+  private async fillVerificationPool(taskId?: string): Promise<boolean> {
     const enabled = await SullaSettingsModel.get('taskVerifierEnabled', true);
     if (!enabled) {
       await LifecycleCapabilityModel.report({
@@ -524,7 +470,8 @@ export class TaskDispatcherService {
       details:           { ...(await WorkTaskDispatchModel.verificationPoolStats()), reclaimed: this.reclaimedReviews },
     });
 
-    let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('verification'));
+    let freeSlots = Math.min(taskId ? 1 : concurrency, Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('verification')));
+    let dispatched = false;
     while (freeSlots > 0 && this.initialized) {
       let slot: string | null = null;
       if (enforceSlots) {
@@ -535,6 +482,7 @@ export class TaskDispatcherService {
         agentId,
         owner === 'core-routine' ? [DEFAULT_CORE_ROUTINE_AGENT_ID] : [],
         RUNTIME_INSTANCE_ID,
+        taskId,
       );
       if (!claim) {
         if (slot) await RoutineConcurrencyPolicy.release(slot);
@@ -549,6 +497,7 @@ export class TaskDispatcherService {
           if (heldSlot) void RoutineConcurrencyPolicy.release(heldSlot);
         });
       freeSlots -= 1;
+      dispatched = true;
     }
     await LifecycleCapabilityModel.report({
       key:               'in-review-verification',
@@ -559,7 +508,7 @@ export class TaskDispatcherService {
       fallbackMode:      'manual_hold',
       details:           { ...(await WorkTaskDispatchModel.verificationPoolStats()), reclaimed: this.reclaimedReviews },
     });
-    return true;
+    return dispatched;
   }
 
   /**
@@ -1020,7 +969,7 @@ export class TaskDispatcherService {
     const { dispatch, task } = claim;
     const parsed = status === 'completed' ? this.parseWorkResult(summary) : null;
     const malformed = status === 'completed' && !parsed;
-    const taskStatus = malformed ? 'planning' : status === 'completed' ? 'in_review' : 'blocked';
+    const taskStatus = malformed || status === 'failed' ? task.status : status === 'completed' ? 'in_review' : 'blocked';
     const dispatchStatus = malformed ? 'failed' : status;
     const concise = parsed?.summary ?? summary.slice(0, 1_500);
     const comment = malformed
@@ -1050,7 +999,7 @@ export class TaskDispatcherService {
       const journalId = await WorkTaskDispatchModel.appendOutcomeJournal(dispatch.id, task.id, {
         dispatchStatus,
         taskStatus,
-        taskAssignee: taskStatus === 'planning' ? 'dispatcher' : 'heartbeat',
+        taskAssignee: malformed || status === 'failed' ? 'dispatcher' : 'heartbeat',
         comment: renderReceiptComment(receipt),
         receipt,
         result: status === 'failed' ? undefined : summary,
@@ -1141,6 +1090,8 @@ Priority: ${ task.priority }
 Project: ${ task.project_id }
 Epic: ${ task.epic_id ?? '(none)' }
 Dispatch: ${ dispatchId }
+Current lane: ${ task.status }
+Context: ${ JSON.stringify({ assignee: task.assignee, labels: task.labels }) }
 
 Description:
 ${ task.description || '(no description)' }
@@ -1151,7 +1102,9 @@ ${ planContext }
 Task history, oldest to newest (on a repair round the latest review findings are here; fix every one and say how in your receipt):
 ${ JSON.stringify(history) }
 
-Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
+Read active waits and dependencies with Projects tools and reason about what can be advanced now. Labels, assignees, lane names and dependency links are context, not blanket exclusions. Preserve explicit human stops and approvals at the action they cover. Continue unfinished work in this lane yourself. Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
+
+Implement only inside the VM. Keep worktrees under /Users/jonathonbyrdziak/Sites/worktrees. Run tests, builds and typechecks only on GitHub.
 
 You have the same full access as the primary agent: exec and the whole Sulla catalog (projects, GitHub, browser, workflows, sub-agents, everything). Read and comment on any task, including ${ task.id }, and create follow-up tasks when useful. The one coordination rule: the dispatcher moves ${ task.id } between lanes, so don't change its status yourself; return your WORK_RESULT and it goes to independent review.
 
@@ -1180,7 +1133,7 @@ ${ task.description || '(no description)' }
 Dispatcher and task history:
 ${ history || '(no comments)' }
 
-Review independently. Resolve the actual draft PR/branch and matching local worktree from the task and history. Read the current remote head through the GitHub tools, record the FULL exact head SHA, inspect the diff plus callers/consumers, map every acceptance criterion to evidence, and run focused tests/typecheck safely against the matching worktree. Include tenant, security, and regression analysis when relevant. Re-check the remote head immediately before your verdict; if it changed, do not approve until the matching new head is available and reviewed.
+Review independently. Resolve the actual draft PR/branch and matching local worktree from the task and history. Read the current remote head through the GitHub tools, record the FULL exact head SHA, inspect the diff plus callers/consumers, map every acceptance criterion to evidence, and inspect GitHub CI tests/typecheck evidence for the matching head; never run tests locally. Include tenant, security, and regression analysis when relevant. Re-check the remote head immediately before your verdict; if it changed, do not approve until the matching new head is available and reviewed.
 
 You have exec and the full Sulla catalog: check out and fetch branches, implement missing work, push reversible fixes, and use GitHub CI for tests. Before editing, verify there is no live conflicting execution. If you change the branch head, report REWORK with the new full SHA so the dispatcher rebinds review in this lane. Do not bounce repairable work to planning. The dispatcher applies the transition.
 
@@ -1249,6 +1202,6 @@ ${ planContext }
 Bounded task evidence, oldest to newest:
 ${ JSON.stringify(history) }
 
-The dispatcher already owns the collision-safe lease. Inspect the canonical artifact and immutable generation directly. Worker summaries are leads, never proof. Finish missing work in this lane when the change is reversible and no live conflicting edit exists. Preserve actual human approval/stop boundaries. If you push a repair, re-resolve the exact head and return REPAIRABLE with that new generation so the dispatcher rebinds review here; do not route repairable work to planning. The dispatcher records the verdict and transition.`;
+The dispatcher already owns the collision-safe lease. Review workflow nodes execute serially; finish all writes before returning, never leave background repair writers. Implement in the VM, use /Users/jonathonbyrdziak/Sites/worktrees, and run tests only on GitHub. Inspect the canonical artifact and immutable generation directly. Worker summaries are leads, never proof. Finish missing work in this lane when the change is reversible and no live conflicting edit exists. Preserve actual human approval/stop boundaries. If you push a repair, re-resolve the exact head and return REPAIRABLE with that new generation so the dispatcher rebinds review here; do not route repairable work to planning. The dispatcher records the verdict and transition.`;
   }
 }

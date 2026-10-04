@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 
 import { postgresClient } from '../PostgresClient';
 import { LifecycleCapabilityModel } from './LifecycleCapabilityModel';
@@ -67,14 +66,24 @@ export class WorkTaskPlanningRunModel {
       preview.project_id, 'planning', 'planning',
     );
     return postgresClient.transaction(async(client: PoolClient) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
       const taskResult = await client.query<WorkTaskRecord>(`
         SELECT * FROM work_tasks
          WHERE id = $1 AND archived = false
+           AND (SELECT COUNT(DISTINCT live.task_id) FROM (
+             SELECT task_id FROM work_task_dispatches WHERE status = 'running'
+             UNION ALL SELECT task_id FROM work_task_planning_runs WHERE status = 'active'
+             UNION ALL SELECT task_id FROM work_lane_entry_automations
+               WHERE status = 'running' AND COALESCE(workflow_snapshot->'laneContract'->>'owner', '')
+                 NOT IN ('task-dispatcher', 'task-dispatcher-review')
+           ) live WHERE live.task_id <> $1) < 3
+           AND EXISTS (SELECT 1 FROM work_projects p WHERE p.id = work_tasks.project_id AND p.dispatch_enabled = true)
+           AND NOT EXISTS (SELECT 1 FROM work_task_dispatches d WHERE d.task_id = $1 AND d.status = 'running')
+           AND NOT EXISTS (SELECT 1 FROM work_task_stage_claims c WHERE c.task_id = $1 AND c.status = 'active')
          FOR UPDATE
       `, [taskId]);
       const task = taskResult.rows[0];
       if (!task || !planningKeys.includes(task.status)) return null;
-      if ((await WorkTaskDependencyModel.listUnresolvedDependencies(taskId, client)).length > 0) return null;
 
       const active = await client.query<{ id: string }>(`
         SELECT id FROM work_task_planning_runs

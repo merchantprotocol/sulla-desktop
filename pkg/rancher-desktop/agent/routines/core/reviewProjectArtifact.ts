@@ -29,6 +29,7 @@ export const ARTIFACT_VERIFICATION_ADAPTERS = {
 } as const;
 
 const IN_LANE_AUTHORITY = [
+  'Workflow nodes execute serially under one task lease. Finish all edits before returning; never leave background writers. Implement in the VM, keep worktrees under /Users/jonathonbyrdziak/Sites/worktrees, and run tests only on GitHub.',
   'You own the current review lane outcome. Inspect canonical evidence; summaries are only leads.',
   'You have exec and the full Sulla catalog (`sulla` CLI or the sulla-native MCP tool `sulla_tool`):',
   'check out branches, implement missing work, push reversible fixes, and use GitHub CI for tests.',
@@ -65,7 +66,7 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
   id:          REVIEW_PROJECT_ARTIFACT_ID,
   name:        'Review Projects Artifact',
   description: 'Locked core routine that owns in_review: generation-safe claims, independent artifact-aware review, one synthesized verdict, durable evidence, and deterministic disposition.',
-  version:     3,
+  version:     4,
   laneContract: {
     input:  'project.lane-entry.v1',
     output: 'project.lane-outcome.v1',
@@ -113,9 +114,9 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
       type:     'workflow',
       position: { x: 500, y: 245 },
       data:     {
-        label:    'Fan Out Independent Reviewers',
+        label:    'Begin Serial Review',
         category: 'flow-control',
-        subtype:  'parallel',
+        subtype:  'merge',
         config:   {},
       },
     },
@@ -183,10 +184,8 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
     { id: 'e-review-trigger-classify', source: 'node-review-trigger', target: 'node-review-classify', animated: true },
     { id: 'e-review-classify-fanout', source: 'node-review-classify', target: 'node-review-fanout', animated: true },
     { id: 'e-review-fanout-code', source: 'node-review-fanout', target: 'node-review-code', animated: true },
-    { id: 'e-review-fanout-deliverable', source: 'node-review-fanout', target: 'node-review-deliverable', animated: true },
-    { id: 'e-review-fanout-risk', source: 'node-review-fanout', target: 'node-review-risk', animated: true },
-    { id: 'e-review-code-merge', source: 'node-review-code', target: 'node-review-merge', animated: true },
-    { id: 'e-review-deliverable-merge', source: 'node-review-deliverable', target: 'node-review-merge', animated: true },
+    { id: 'e-review-fanout-deliverable', source: 'node-review-code', target: 'node-review-deliverable', animated: true },
+    { id: 'e-review-fanout-risk', source: 'node-review-deliverable', target: 'node-review-risk', animated: true },
     { id: 'e-review-risk-merge', source: 'node-review-risk', target: 'node-review-merge', animated: true },
     { id: 'e-review-merge-synthesize', source: 'node-review-merge', target: 'node-review-synthesize', animated: true },
     { id: 'e-review-synthesize-done', source: 'node-review-synthesize', target: 'node-review-done', animated: true },

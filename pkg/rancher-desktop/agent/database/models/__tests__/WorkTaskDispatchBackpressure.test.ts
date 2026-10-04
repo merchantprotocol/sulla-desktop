@@ -3,6 +3,11 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { postgresClient } from '../../PostgresClient';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
+function admissionClient(query: any): any {
+  return { query: (sql: string, ...args: any[]) => sql.includes('pg_advisory_xact_lock')
+    ? Promise.resolve({ rows: [] }) : query(sql, ...args) };
+}
+
 describe('WorkTaskDispatchModel broad portfolio visibility', () => {
   afterEach(() => {
     jest.restoreAllMocks();
@@ -23,7 +28,7 @@ describe('WorkTaskDispatchModel broad portfolio visibility', () => {
 
   it('does not let downstream review hide a newer todo claim', async() => {
     const query = jest.fn(() => Promise.resolve({ rows: [] })) as any;
-    jest.spyOn(postgresClient, 'transaction').mockImplementation((callback: any) => callback({ query }));
+    jest.spyOn(postgresClient, 'transaction').mockImplementation((callback: any) => callback(admissionClient(query)));
 
     await expect(WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime-1')).resolves.toBeNull();
 

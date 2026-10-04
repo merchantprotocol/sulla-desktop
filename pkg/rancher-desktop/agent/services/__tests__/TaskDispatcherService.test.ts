@@ -156,7 +156,10 @@ describe('TaskDispatcherService', () => {
     verificationPoolStatsMock.mockResolvedValue({ backlog: 0, active: 0, suppressedDuplicates: 0, failures: 0 });
     findRecoverableInProgressMock.mockResolvedValue([]);
     recoverOrphanedInProgressMock.mockResolvedValue([]);
-    enumerateCandidatesMock.mockResolvedValue([]);
+    enumerateCandidatesMock.mockResolvedValue([
+      { id: 'review-1', status: 'in_review', project_dispatch_enabled: true },
+      { id: 'task-1', status: 'todo', project_dispatch_enabled: true },
+    ]);
     countRunningMock.mockResolvedValue(0);
     countByRoleMock.mockResolvedValue({ execution: 0, verification: 0, planning: 0 });
     countReviewBacklogMock.mockResolvedValue(0);
@@ -185,6 +188,37 @@ describe('TaskDispatcherService', () => {
     acquireSlotMock.mockResolvedValue('slot');
     releaseSlotMock.mockResolvedValue(undefined);
     withStatementTimeoutMock.mockImplementation((_timeoutMs: number, callback: () => Promise<unknown>) => callback());
+  });
+
+  it('uses candidate order for actual mixed-lane selection and passes through waits and ownership', async() => {
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService() as any;
+    const selected: string[] = [];
+    service.fillExecutionPool = jest.fn(async(id: string) => { selected.push(id); return 1; });
+    service.fillVerificationPool = jest.fn(async(id: string) => { selected.push(id); return true; });
+    const base = { project_dispatch_enabled: true, has_active_dispatch: false, has_active_stage_claim: false };
+    await service.fillCandidatePool([
+      { ...base, id: 'paused', status: 'todo', project_dispatch_enabled: false },
+      { ...base, id: 'custom', status: 'client_followup', assignee: 'human', labels: ['gated'], has_active_wait: true, unresolved_dependencies: 2 },
+      { ...base, id: 'repair', status: 'in_review' },
+      { ...base, id: 'busy', status: 'planning', has_active_stage_claim: true },
+      { ...base, id: 'resume', status: 'in_progress' },
+    ]);
+    expect(selected).toEqual(['custom', 'repair', 'resume']);
+  });
+
+  it('does not start a fourth worker across review and execution lanes', async() => {
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService() as any;
+    countRunningMock.mockResolvedValue(3);
+    service.fillExecutionPool = jest.fn();
+    service.fillVerificationPool = jest.fn();
+    await service.fillCandidatePool([
+      { id: 'execution', status: 'blocked', project_dispatch_enabled: true },
+      { id: 'review', status: 'in_review', project_dispatch_enabled: true },
+    ]);
+    expect(service.fillExecutionPool).not.toHaveBeenCalled();
+    expect(service.fillVerificationPool).not.toHaveBeenCalled();
   });
 
   it('activates verification by default', async() => {
@@ -229,7 +263,7 @@ describe('TaskDispatcherService', () => {
     }
   });
 
-  it('releases the tick gate when hasActiveLinkedPullRequest never settles', async() => {
+  it('releases the tick gate when candidate enumeration never settles', async() => {
     jest.useFakeTimers();
     try {
       settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
@@ -243,7 +277,7 @@ describe('TaskDispatcherService', () => {
       }]);
       const { TaskDispatcherService } = await import('../TaskDispatcherService');
       const service = new TaskDispatcherService() as any;
-      service.hasActiveLinkedPullRequest = jest.fn(() => new Promise(() => {}));
+      enumerateCandidatesMock.mockImplementationOnce(() => new Promise(() => {}));
       const initialized = service.initialize();
 
       await jest.advanceTimersByTimeAsync(1_000);
@@ -251,7 +285,7 @@ describe('TaskDispatcherService', () => {
       findRecoverableInProgressMock.mockResolvedValue([]);
       await jest.advanceTimersByTimeAsync(59_000);
 
-      expect(service.hasActiveLinkedPullRequest).toHaveBeenCalledTimes(1);
+      expect(enumerateCandidatesMock).toHaveBeenCalledTimes(2);
       expect(countRunningMock).toHaveBeenCalled();
       expect(completeTickMock).toHaveBeenCalledWith(60_000, 'error');
       service.destroy();
@@ -449,11 +483,11 @@ describe('TaskDispatcherService', () => {
     await service.initialize();
     service.destroy();
 
-    expect(findRecoverableInProgressMock).toHaveBeenCalledWith(360, 100);
+    expect(findRecoverableInProgressMock).not.toHaveBeenCalled();
     expect(recoverOrphanedInProgressMock).not.toHaveBeenCalled();
   });
 
-  it('recovers before normal refill when explicitly enabled and honors the batch and retry caps', async() => {
+  it('uses broad in-lane admission even when legacy recovery is enabled', async() => {
     const candidate = { task: { id: 'task-1', github_issue: null }, exclusionReasons: [] };
     findRecoverableInProgressMock.mockResolvedValue([candidate]);
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
@@ -468,9 +502,8 @@ describe('TaskDispatcherService', () => {
     await service.initialize();
     service.destroy();
 
-    expect(recoverOrphanedInProgressMock).toHaveBeenCalledWith([candidate], 2, 4);
-    expect(recoverOrphanedInProgressMock.mock.invocationCallOrder[0])
-      .toBeLessThan(countRunningMock.mock.invocationCallOrder[0]);
+    expect(recoverOrphanedInProgressMock).not.toHaveBeenCalled();
+    expect(claimNextMock).toHaveBeenCalled();
   });
 
   it('ignores custom dispatcher profile settings and pins work to sulla-desktop', async() => {
@@ -486,7 +519,7 @@ describe('TaskDispatcherService', () => {
     service.destroy();
 
     expect(claimNextMock).toHaveBeenCalledWith(
-      'sulla-desktop', expect.stringContaining('task-dispatcher-'),
+      'sulla-desktop', expect.stringContaining('task-dispatcher-'), undefined, 'task-1',
     );
   });
 
@@ -526,7 +559,7 @@ describe('TaskDispatcherService', () => {
     service.destroy();
 
     expect(claimNextMock).toHaveBeenCalledWith(
-      'sulla-desktop', expect.stringContaining('task-dispatcher-'),
+      'sulla-desktop', expect.stringContaining('task-dispatcher-'), undefined, 'task-1',
     );
     expect(executeMock).toHaveBeenCalledTimes(2);
     const workerState = executeMock.mock.calls[0][0];
@@ -637,6 +670,7 @@ describe('TaskDispatcherService', () => {
       },
       stage_claim: { id: `review-stage-${ i }` },
     }));
+    enumerateCandidatesMock.mockResolvedValue(claims.map((claim: any) => ({ ...claim.task, status: 'in_review', project_dispatch_enabled: true })));
     claimNextReviewMock
       .mockResolvedValueOnce(claims[0])
       .mockResolvedValueOnce(claims[1])
@@ -662,7 +696,7 @@ describe('TaskDispatcherService', () => {
     service.destroy();
 
     expect(claimNextReviewMock).toHaveBeenCalledTimes(3);
-    expect(claimNextReviewMock).toHaveBeenCalledWith('sulla-desktop', [], expect.stringContaining('task-dispatcher-'));
+    expect(claimNextReviewMock).toHaveBeenCalledWith('sulla-desktop', [], expect.stringContaining('task-dispatcher-'), expect.any(String));
     expect(executeMock).toHaveBeenCalledTimes(3);
     expect(finalizeVerificationMock).toHaveBeenCalledTimes(3);
     expect(finalizeVerificationMock).toHaveBeenCalledWith(

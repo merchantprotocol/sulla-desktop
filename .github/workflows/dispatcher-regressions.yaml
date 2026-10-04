@@ -5,6 +5,9 @@ on:
     paths:
     - '.github/workflows/dispatcher-regressions.yaml'
     - 'pkg/rancher-desktop/agent/database/models/WorkTaskDispatchModel.ts'
+    - 'pkg/rancher-desktop/agent/database/models/WorkLaneWorkflowBindingModel.ts'
+    - 'pkg/rancher-desktop/agent/database/models/WorkTaskPlanningRunModel.ts'
+    - 'pkg/rancher-desktop/agent/routines/core/planProjectTask.ts'
     - 'pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatch*.test.ts'
     - 'pkg/rancher-desktop/agent/routines/core/reviewProjectArtifact.ts'
     - 'pkg/rancher-desktop/agent/routines/core/__tests__/reviewProjectArtifact.test.ts'
@@ -19,6 +22,20 @@ jobs:
   focused-jest:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dispatcher_ci
+          POSTGRES_PASSWORD: dispatcher_ci
+          POSTGRES_DB: dispatcher_ci
+        ports:
+        - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dispatcher_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SULLA_INTEGRATION_POSTGRES_URL: postgres://dispatcher_ci:dispatcher_ci@localhost:5432/dispatcher_ci
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
@@ -37,10 +54,13 @@ jobs:
         log="${RUNNER_TEMP}/dispatcher-regressions.log"
         yarn test:unit:jest --runInBand \
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchModel.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchAdmission.postgres.test.ts \
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchBackpressure.test.ts \
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchCountByRole.test.ts \
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchJournalReplay.test.ts \
           pkg/rancher-desktop/agent/routines/core/__tests__/reviewProjectArtifact.test.ts \
+          pkg/rancher-desktop/agent/routines/core/__tests__/planProjectTask.test.ts \
+          pkg/rancher-desktop/agent/workflow/__tests__/reviewProjectArtifactWorkflow.test.ts \
           pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts \
           2>&1 | tee "$log"
         rc=$?

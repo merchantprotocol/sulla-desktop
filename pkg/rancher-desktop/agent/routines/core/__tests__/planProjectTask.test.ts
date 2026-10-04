@@ -19,13 +19,13 @@ describe('locked Projects planning routine', () => {
     expect(issues.filter(issue => issue.severity === 'error')).toEqual([]);
   });
 
-  it('has the required independent fan-out, wait-all synthesis, persistence, and response graph', () => {
+  it('has the required serial planners, wait-all synthesis, persistence, and response graph', () => {
     expect(PLAN_PROJECT_TASK_ID).toBe('core-routine-plan-project-task');
     const nodes = new Map(definition.nodes.map(node => [node.id, node]));
     const planners = ['node-plan-a', 'node-plan-b', 'node-plan-c'];
 
     expect(nodes.get('node-plan-trigger')?.data.subtype).toBe('manual');
-    expect(nodes.get('node-plan-fanout')?.data.subtype).toBe('parallel');
+    expect(nodes.get('node-plan-fanout')?.data.subtype).toBe('merge');
     expect(nodes.get('node-plan-merge')?.data.config).toMatchObject({ strategy: 'wait-all' });
     expect(nodes.get('node-plan-synthesis')?.data.subtype).toBe('agent');
     expect(nodes.get('node-plan-persist')?.data.subtype).toBe('agent');
@@ -43,26 +43,21 @@ describe('locked Projects planning routine', () => {
     }
   });
 
-  it('spawns exactly three planners together and gives every result to a separate synthesizer', () => {
+  it('runs three planners serially and gives every result to a separate synthesizer', () => {
     let playbook = createPlaybookState(definition, JSON.stringify({ task: { id: 'task-1' } }));
 
     const fanout = processNextStep(playbook);
     expect(fanout.action).toBe('node_completed');
     playbook = fanout.updatedPlaybook;
 
-    const batch = processNextStep(playbook);
-    expect(batch.action).toBe('spawn_parallel_agents');
-    if (batch.action !== 'spawn_parallel_agents') throw new Error('expected parallel planner batch');
-    expect(batch.nodes.map(node => node.nodeId).sort()).toEqual([
-      'node-plan-a',
-      'node-plan-b',
-      'node-plan-c',
-    ]);
-    expect(batch.nodes.every(node => node.prompt.includes('"id":"task-1"'))).toBe(true);
-
-    playbook = completeSubAgent(playbook, 'node-plan-a', 'plan A').updatedPlaybook;
-    playbook = completeSubAgent(playbook, 'node-plan-b', 'plan B').updatedPlaybook;
-    playbook = completeSubAgent(playbook, 'node-plan-c', 'plan C').updatedPlaybook;
+    for (const [id, result] of [['node-plan-a', 'plan A'], ['node-plan-b', 'plan B'], ['node-plan-c', 'plan C']]) {
+      const step = processNextStep(playbook);
+      expect(step.action).toBe('spawn_sub_agent');
+      if (step.action !== 'spawn_sub_agent') throw new Error('expected exclusive planner');
+      expect(step.nodeId).toBe(id);
+      expect(step.prompt).toContain('"id":"task-1"');
+      playbook = completeSubAgent(step.updatedPlaybook, id, result).updatedPlaybook;
+    }
 
     const merge = processNextStep(playbook);
     expect(merge.action).toBe('node_completed');
@@ -75,14 +70,14 @@ describe('locked Projects planning routine', () => {
     expect(synthesis.prompt).toContain('plan A');
     expect(synthesis.prompt).toContain('plan B');
     expect(synthesis.prompt).toContain('plan C');
-    expect(synthesis.prompt).toContain('DISPOSITION: TODO');
+    expect(synthesis.prompt).toContain('DISPOSITION: REVIEW');
 
-    playbook = completeSubAgent(playbook, 'node-plan-synthesis', 'DISPOSITION: TODO\n1. Implement safely.').updatedPlaybook;
+    playbook = completeSubAgent(playbook, 'node-plan-synthesis', 'DISPOSITION: REVIEW\n1. Implement safely.').updatedPlaybook;
     const persistence = processNextStep(playbook);
     expect(persistence.action).toBe('spawn_sub_agent');
     if (persistence.action !== 'spawn_sub_agent') throw new Error('expected persistence agent');
     expect(persistence.nodeId).toBe('node-plan-persist');
-    expect(persistence.prompt).toContain('DISPOSITION: TODO');
+    expect(persistence.prompt).toContain('DISPOSITION: REVIEW');
     expect(persistence.prompt).toContain('sulla project/add_task_comment');
 
     playbook = completeSubAgent(playbook, 'node-plan-persist', 'Persisted plan; task is todo/dispatcher.').updatedPlaybook;
@@ -96,8 +91,8 @@ describe('locked Projects planning routine', () => {
 
     expect(prompt).toContain('sulla project/add_task_comment');
     expect(prompt).toContain('sulla project/update_task');
-    expect(prompt).toContain('transition_task_to_execution');
-    expect(prompt).toContain('never infer the target from relative ordering');
+    expect(prompt).toContain('configured verification lane');
+    expect(prompt).toContain('Never move unfinished work to todo or planning');
     expect(prompt).toContain('transition_task_stage');
     expect(prompt).toContain('exception stage key `blocked`');
     expect(prompt).toContain('Never merge or deploy');

@@ -192,7 +192,7 @@ export interface DispatchReconciliationResult {
 
 export interface WorkTaskDispatchFinalization {
   dispatchStatus: Exclude<WorkTaskDispatchStatus, 'running' | 'stale'>;
-  taskStatus:     'in_review' | 'planning' | 'blocked';
+  taskStatus:     string;
   taskAssignee:   'heartbeat' | 'dispatcher';
   comment:        string;
   result?:        string;
@@ -206,7 +206,7 @@ interface WorkTaskOutcomeJournalRow {
   dispatch_id: string;
   task_id: string;
   dispatch_status: Exclude<WorkTaskDispatchStatus, 'running' | 'stale'>;
-  task_status: 'in_review' | 'planning' | 'blocked';
+  task_status: string;
   task_assignee: 'heartbeat' | 'dispatcher';
   comment: string;
   result: string | null;
@@ -231,24 +231,11 @@ export function projectDispatchEnabledSql(taskAlias: string): string {
            )`;
 }
 
-/**
- * Idle in_progress reclaim is ownership-neutral by design (Jonathon
- * directive 2026-08-25, Projects task 1Nk7): whoever is actively working a
- * task — human or agent — holds it as assignee exactly like any other
- * sub-agent assignment. There is no "must already be assignee=dispatcher"
- * or "must be an autonomous owner" gate here. The only protections against
- * yanking real work out from under someone are activity-based
- * (stale_activity / has_live_dispatch / has_active_child /
- * has_active_agent_job) and the explicit opt-out labels in
- * NON_AUTONOMOUS_TASK_LABELS (e.g. "human", "gated", "no-auto-dispatch").
- */
+/** Compatibility recovery reports retain only liveness and explicit stop guards. */
 export function classifyInProgressRow(row: InProgressClassificationRow): InProgressExclusionReason[] {
   const reasons: InProgressExclusionReason[] = [];
   if (row.archived) reasons.push('archived');
-  if (!row.epic_open) reasons.push('epic_closed');
-  if (!row.autonomous_labels) reasons.push('non_autonomous_label');
   if (row.has_live_dispatch) reasons.push('live_dispatch');
-  if (row.has_active_child) reasons.push('active_child');
   if (!row.stale_activity) reasons.push('recent_activity');
   if (row.has_active_agent_job) reasons.push('active_agent_job');
   if (row.project_dispatch_enabled === false) reasons.push('project_dispatch_paused');
@@ -300,7 +287,7 @@ export class WorkTaskDispatchModel {
    * filters. Collision locks and explicit project pause remain action-time
    * guards in the lane-specific claim methods below.
    */
-  static async enumerateCandidates(limit = 500): Promise<DispatchCandidate[]> {
+  static async enumerateCandidates(limit?: number): Promise<DispatchCandidate[]> {
     return postgresClient.query<DispatchCandidate>(`
       SELECT t.*,
              p.status AS project_status,
@@ -326,44 +313,68 @@ export class WorkTaskDispatchModel {
                  AND prerequisite.status NOT IN ('done', 'cancelled', 'parked')) AS unresolved_dependencies,
              GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) AS consideration_at
         FROM work_tasks t
-        JOIN work_epics e ON e.id = t.epic_id
-        JOIN work_projects p ON p.id = e.project_id
+        LEFT JOIN work_epics e ON e.id = t.epic_id
+        JOIN work_projects p ON p.id = t.project_id
        WHERE t.archived = false
        ORDER BY consideration_at DESC, t.id ASC
        LIMIT $1
-    `, [Math.max(1, Math.min(limit, 5_000))]);
+    `, [limit === undefined ? null : Math.max(1, limit)]);
   }
 
   static async claimNext(
     agentId: string,
     runtimeInstanceId: string,
     _wipLimits?: WipLimits,
+    taskId?: string,
   ): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
       const candidate = await client.query<WorkTaskRecord>(`
         SELECT t.*
           FROM work_tasks t
-          JOIN work_epics e ON e.id = t.epic_id
-          JOIN work_projects p ON p.id = e.project_id
+          LEFT JOIN work_epics e ON e.id = t.epic_id
+          JOIN work_projects p ON p.id = t.project_id
          WHERE t.archived = false
-           AND t.status = 'todo'
-           AND e.archived = false
-           AND p.archived = false
+           AND (SELECT COUNT(DISTINCT live.task_id) FROM (
+             SELECT task_id FROM work_task_dispatches WHERE status = 'running'
+             UNION ALL SELECT task_id FROM work_task_planning_runs WHERE status = 'active'
+             UNION ALL SELECT task_id FROM work_lane_entry_automations
+               WHERE status = 'running' AND COALESCE(workflow_snapshot->'laneContract'->>'owner', '')
+                 NOT IN ('task-dispatcher', 'task-dispatcher-review')
+           ) live WHERE live.task_id <> t.id) < 3
+           AND t.status NOT IN ('in_review', 'done', 'cancelled', 'parked')
+           AND ($1::text IS NULL OR t.id = $1)
            ${ projectDispatchEnabledSql('t') }
            AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
-              WHERE d.task_id = t.id AND d.status = 'running'
+              WHERE d.status = 'running' AND (d.task_id = t.id OR
+                (t.github_issue IS NOT NULL AND EXISTS (SELECT 1 FROM work_tasks active_task
+                  WHERE active_task.id = d.task_id AND active_task.github_issue = t.github_issue)))
            )
            AND NOT EXISTS (
              SELECT 1 FROM work_task_stage_claims c
-              WHERE c.task_id = t.id AND c.stage = 'in_progress' AND c.status = 'active'
+              WHERE c.task_id = t.id AND c.status = 'active'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM work_lane_entry_automations lane
+              WHERE lane.task_id = t.id AND lane.status = 'running'
+                AND COALESCE(lane.workflow_snapshot->'laneContract'->>'owner', '')
+                  NOT IN ('task-dispatcher', 'task-dispatcher-review')
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM agent_jobs j WHERE j.status = 'running'
+              AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM work_task_planning_runs planning
+              WHERE planning.task_id = t.id AND planning.status = 'active'
            )
          ORDER BY
            GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) DESC,
            t.id ASC
          FOR UPDATE OF t SKIP LOCKED
          LIMIT 1
-      `);
+      `, [taskId ?? null]);
 
       const task = candidate.rows[0];
       if (!task) return null;
@@ -372,7 +383,7 @@ export class WorkTaskDispatchModel {
         client,
         task.id,
         'todo-execution',
-        'in_progress',
+        task.status === 'todo' ? 'in_progress' : task.status,
         'dispatcher',
         runtimeInstanceId,
       );
@@ -391,15 +402,15 @@ export class WorkTaskDispatchModel {
 
       const updated = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = 'in_progress',
+           SET status = CASE WHEN status = 'todo' THEN 'in_progress' ELSE status END,
                assignee = $2,
                updated_at = now(),
                last_moved_at = now(),
                last_activity_at = now(),
                last_moved_by = $2
-         WHERE id = $1 AND status = 'todo'
+         WHERE id = $1 AND status = $3
         RETURNING *
-      `, [task.id, TASK_ASSIGNEES.dispatcher]);
+      `, [task.id, TASK_ASSIGNEES.dispatcher, task.status]);
       if (!updated.rows[0]) {
         throw new Error(`Atomic dispatch lost task ${ task.id } before execution handoff`);
       }
@@ -412,27 +423,30 @@ export class WorkTaskDispatchModel {
       // attached, and no work_project_domain_events row was appended, so the
       // Projects activity/audit trail silently missed every dispatcher-driven
       // todo -> in_progress transition.
-      const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
-      const laneEntry = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
-        client, committed.id, committed.status, TASK_ASSIGNEES.dispatcher,
-      );
-      const { createPostgresProjectsRepositories } = await import('../../projects/infrastructure/PostgresProjectsRepositories');
-      await createPostgresProjectsRepositories(client).events.append({
-        id:             `projects-event-${ committed.id }-${ laneEntry.entry.generation }-transition`,
-        taskId:         committed.id,
-        generation:     laneEntry.entry.generation,
-        eventType:      'projects.task.transitioned',
-        idempotencyKey: `projects.task.transitioned:${ committed.id }:${ laneEntry.entry.generation }`,
-        occurredAt:     new Date(),
-        payload:        {
-          actor:         TASK_ASSIGNEES.dispatcher,
-          source:        'dispatcher',
-          fromLane:      task.status,
-          toLane:        committed.status,
-          laneEntryId:   laneEntry.entry.id,
-          laneAutomated: laneEntry.entry.status === 'pending',
-        },
-      });
+      if (committed.status !== task.status) {
+        const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
+        const laneEntry = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
+          client, committed.id, committed.status, TASK_ASSIGNEES.dispatcher,
+        );
+        const { createPostgresProjectsRepositories } = await import('../../projects/infrastructure/PostgresProjectsRepositories');
+        await createPostgresProjectsRepositories(client).events.append({
+          id:             `projects-event-${ committed.id }-${ laneEntry.entry.generation }-transition`,
+          taskId:         committed.id,
+          generation:     laneEntry.entry.generation,
+          eventType:      'projects.task.transitioned',
+          idempotencyKey: `projects.task.transitioned:${ committed.id }:${ laneEntry.entry.generation }`,
+          occurredAt:     new Date(),
+          payload:        {
+            actor:         TASK_ASSIGNEES.dispatcher,
+            source:        'dispatcher',
+            fromLane:      task.status,
+            toLane:        committed.status,
+            laneEntryId:   laneEntry.entry.id,
+            laneAutomated: laneEntry.entry.status === 'pending',
+          },
+        });
+
+      }
 
       return { dispatch: inserted.rows[0], task: committed, stage_claim: stageClaim.claim };
     });
@@ -442,21 +456,34 @@ export class WorkTaskDispatchModel {
     agentId: string,
     reviewerAgentIds: string[],
     runtimeInstanceId: string,
+    taskId?: string,
   ): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
       const candidate = await client.query<WorkTaskRecord>(`
         SELECT t.*
           FROM work_tasks t
-          JOIN work_epics e ON e.id = t.epic_id
-          JOIN work_projects p ON p.id = e.project_id
+          LEFT JOIN work_epics e ON e.id = t.epic_id
+          JOIN work_projects p ON p.id = t.project_id
          WHERE t.archived = false
+           AND (SELECT COUNT(DISTINCT live.task_id) FROM (
+             SELECT task_id FROM work_task_dispatches WHERE status = 'running'
+             UNION ALL SELECT task_id FROM work_task_planning_runs WHERE status = 'active'
+             UNION ALL SELECT task_id FROM work_lane_entry_automations
+               WHERE status = 'running' AND COALESCE(workflow_snapshot->'laneContract'->>'owner', '')
+                 NOT IN ('task-dispatcher', 'task-dispatcher-review')
+           ) live WHERE live.task_id <> t.id) < 3
            AND t.status = 'in_review'
-           AND e.archived = false
-           AND p.archived = false
+           AND ($1::text IS NULL OR t.id = $1)
            AND p.dispatch_enabled = true
            AND NOT EXISTS (
+             SELECT 1 FROM work_task_stage_claims c WHERE c.task_id = t.id AND c.status = 'active'
+           )
+           AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
-              WHERE d.task_id = t.id AND d.status = 'running'
+              WHERE d.status = 'running' AND (d.task_id = t.id OR
+                (t.github_issue IS NOT NULL AND EXISTS (SELECT 1 FROM work_tasks active_task
+                  WHERE active_task.id = d.task_id AND active_task.github_issue = t.github_issue)))
            )
            AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
@@ -464,12 +491,26 @@ export class WorkTaskDispatchModel {
                 AND d.status IN ('failed', 'stale')
                 AND d.finished_at > now() - interval '5 minutes'
            )
+           AND NOT EXISTS (
+             SELECT 1 FROM work_lane_entry_automations lane
+              WHERE lane.task_id = t.id AND lane.status = 'running'
+                AND COALESCE(lane.workflow_snapshot->'laneContract'->>'owner', '')
+                  NOT IN ('task-dispatcher', 'task-dispatcher-review')
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM agent_jobs j WHERE j.status = 'running'
+              AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM work_task_planning_runs planning
+              WHERE planning.task_id = t.id AND planning.status = 'active'
+           )
          ORDER BY
            GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) DESC,
            t.id ASC
          FOR UPDATE OF t SKIP LOCKED
          LIMIT 1
-      `);
+      `, [taskId ?? null]);
 
       const task = candidate.rows[0];
       if (!task) return null;
@@ -544,8 +585,8 @@ export class WorkTaskDispatchModel {
     const row = await postgresClient.queryOne<{ count: string }>(`
       SELECT COUNT(*)::text AS count
         FROM work_tasks t
-        JOIN work_epics e ON e.id = t.epic_id
-        JOIN work_projects p ON p.id = e.project_id
+        LEFT JOIN work_epics e ON e.id = t.epic_id
+        JOIN work_projects p ON p.id = t.project_id
        WHERE t.archived = false
          AND t.status = 'in_review'
          AND e.archived = false
@@ -587,8 +628,8 @@ export class WorkTaskDispatchModel {
              )::text AS semantic_role,
              COUNT(*)::text AS count
         FROM work_tasks t
-        JOIN work_epics e ON e.id = t.epic_id
-        JOIN work_projects p ON p.id = e.project_id
+        LEFT JOIN work_epics e ON e.id = t.epic_id
+        JOIN work_projects p ON p.id = t.project_id
         LEFT JOIN LATERAL (
           SELECT semantic_role
             FROM work_lane_definitions
@@ -657,7 +698,7 @@ export class WorkTaskDispatchModel {
         FROM work_tasks t
         LEFT JOIN work_epics e ON e.id = t.epic_id
        WHERE t.status = 'in_progress'
-       ORDER BY t.last_activity_at ASC, t.id ASC
+       ORDER BY GREATEST(t.last_activity_at, t.last_moved_at) DESC, t.id ASC
        LIMIT $4
     `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS, staleMinutes, Math.max(1, limit)]);
 
@@ -690,7 +731,7 @@ export class WorkTaskDispatchModel {
   static async recoverOrphanedInProgress(
     candidates: RecoverableInProgressCandidate[],
     batchSize = 1,
-    retryCeiling = 3,
+    _retryCeiling = 3,
   ): Promise<OrphanRecoveryResult[]> {
     const eligible = candidates.filter(candidate => candidate.exclusionReasons.length === 0).slice(0, Math.max(0, batchSize));
     if (eligible.length === 0) return [];
@@ -701,35 +742,26 @@ export class WorkTaskDispatchModel {
         const locked = await client.query<WorkTaskRecord>(`
           SELECT t.*
             FROM work_tasks t
-            JOIN work_epics e ON e.id = t.epic_id
+            LEFT JOIN work_epics e ON e.id = t.epic_id
            WHERE t.id = $1
              AND t.status = 'in_progress'
              AND t.archived = false
-             AND e.archived = false
-             AND NOT (e.status = ANY($2::text[]))
-             AND NOT EXISTS (
-               SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
-                WHERE LOWER(label) = ANY($3::text[])
-             )
              AND NOT EXISTS (
                SELECT 1 FROM work_task_dispatches d
                 WHERE d.task_id = t.id AND d.status = 'running'
              )
              AND NOT EXISTS (
-               SELECT 1 FROM work_tasks child
-                WHERE child.parent_id = t.id
-                  AND child.archived = false
-                  AND child.status NOT IN ('done', 'cancelled', 'parked')
+               SELECT 1 FROM work_task_stage_claims c WHERE c.task_id = t.id AND c.status = 'active'
              )
              AND NOT EXISTS (
                SELECT 1 FROM agent_jobs j
                 WHERE j.status = 'running'
                   AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
              )
-             AND t.last_activity_at = $4::timestamptz
+             AND t.last_activity_at = $2::timestamptz
              ${ projectDispatchEnabledSql('t') }
            FOR UPDATE OF t SKIP LOCKED
-        `, [candidate.task.id, CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS, candidate.fingerprint]);
+        `, [candidate.task.id, candidate.fingerprint]);
 
         const task = locked.rows[0];
         if (!task) {
@@ -742,14 +774,10 @@ export class WorkTaskDispatchModel {
           [task.id],
         );
         const attemptNumber = Number(count.rows[0]?.count || 0) + 1;
-        const outcome = attemptNumber >= Math.max(1, retryCeiling) ? 'blocked_ceiling' : 'recovered';
-        const nextStatus = outcome === 'recovered' ? 'todo' : 'blocked';
-        const nextAssignee = outcome === 'recovered' ? TASK_ASSIGNEES.dispatcher : TASK_ASSIGNEES.heartbeat;
-        // Ownership-neutral: prior assignee may be a human, dispatcher, heartbeat, or any
-        // other agent identity. Idle timeout is the only gate — see classifyInProgressRow.
-        const reason = outcome === 'recovered'
-          ? 'in_progress task idle past the reclaim threshold with no live owner or operation'
-          : `recovery retry ceiling reached (${ retryCeiling })`;
+        const outcome = 'recovered' as const;
+        const nextStatus = task.status;
+        const nextAssignee = TASK_ASSIGNEES.dispatcher;
+        const reason = 'idle execution is available for in-lane continuation; no retry-count policy gate';
         const auditId = `recovery-${ randomUUID() }`;
         const idleMinutes = Math.max(0, Math.round(
           (Date.now() - new Date(task.last_activity_at).getTime()) / 60000,
@@ -928,21 +956,13 @@ export class WorkTaskDispatchModel {
         SELECT id, status, disposition FROM work_task_dispatches
          WHERE task_id = $1 AND kind = 'verification' AND id <> $2
            AND review_generation_hash = $3
-           AND disposition IS DISTINCT FROM 'REPAIRABLE'
+           AND disposition = 'PASS'
            AND (status = 'completed' OR (status = 'failed' AND failure_reason LIKE 'terminal:%'))
          ORDER BY finished_at DESC NULLS LAST LIMIT 1
       `, [taskId, id, generationHash]);
       if (terminal.rows[0]) {
         const priorDisposition = terminal.rows[0].disposition;
-        const transition = priorDisposition === 'PASS'
-          ? { status: 'done', assignee: null }
-          : priorDisposition === 'REPAIRABLE'
-            ? { status: 'todo', assignee: 'dispatcher' }
-            : priorDisposition === 'REPLAN'
-              ? { status: 'planning', assignee: 'dispatcher' }
-              : priorDisposition
-                ? { status: 'blocked', assignee: 'heartbeat' }
-                : { status: 'planning', assignee: 'dispatcher' };
+        const transition = { status: 'done', assignee: null };
         await client.query(`
           UPDATE work_task_dispatches SET status = 'completed', result = $2, disposition = $7,
             review_generation_hash = $3, review_artifact_types = $4::text[],
@@ -1054,7 +1074,12 @@ export class WorkTaskDispatchModel {
       const custody = await client.query<{ status: string; assignee: string | null; last_moved_by: string | null }>(
         'SELECT status, assignee, last_moved_by FROM work_tasks WHERE id = $1 FOR UPDATE', [row.task_id],
       );
-      let dispatcherOwned = custody.rows[0]?.status === 'in_progress' && custody.rows[0]?.assignee === 'dispatcher';
+      const stage = await client.query<{ stage: string }>(
+        `SELECT stage FROM work_task_stage_claims WHERE task_id = $1 AND status = 'active'
+          AND capability_key = 'todo-execution'`, [row.task_id],
+      );
+      let dispatcherOwned = custody.rows[0]?.assignee === 'dispatcher'
+        && custody.rows[0]?.status === stage.rows[0]?.stage;
       const workerAdvancedTerminal = custody.rows[0]
         && ['done', 'cancelled', 'parked'].includes(custody.rows[0].status)
         && custody.rows[0].last_moved_by !== 'human';
@@ -1065,12 +1090,12 @@ export class WorkTaskDispatchModel {
         // enters independent review. Explicit Human movement always wins.
         const restored = await client.query(`
           UPDATE work_tasks
-             SET status = 'in_progress', assignee = 'dispatcher', completed_at = NULL,
+             SET status = $3, assignee = 'dispatcher', completed_at = NULL,
                  updated_at = now(), last_moved_at = now(), last_activity_at = now(),
                  last_moved_by = 'dispatcher'
            WHERE id = $1 AND status = $2 AND last_moved_by IS DISTINCT FROM 'human'
            RETURNING id
-        `, [row.task_id, custody.rows[0].status]);
+        `, [row.task_id, custody.rows[0].status, stage.rows[0]?.stage ?? 'in_progress']);
         dispatcherOwned = Boolean(restored.rows[0]);
       }
       const task = dispatcherOwned
@@ -1237,7 +1262,10 @@ export class WorkTaskDispatchModel {
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'dispatcher', completed_at = NULL
-         WHERE id = $1 AND status = 'in_progress' AND assignee = 'dispatcher'
+         WHERE id = $1 AND assignee = 'dispatcher'
+           AND EXISTS (SELECT 1 FROM work_task_stage_claims c
+             WHERE c.task_id = $1 AND c.stage = work_tasks.status AND c.status = 'active'
+               AND c.capability_key = 'todo-execution')
          RETURNING *
       `, [taskId, finalization.taskStatus, finalization.taskAssignee]);
       if (!moved.rows[0]) {
@@ -1255,7 +1283,7 @@ export class WorkTaskDispatchModel {
       await client.query(`
         UPDATE work_task_stage_claims
            SET status = 'released', released_at = now(), heartbeat_at = now()
-         WHERE task_id = $1 AND stage = 'in_progress' AND status = 'active'
+         WHERE task_id = $1 AND capability_key = 'todo-execution' AND status = 'active'
       `, [taskId]);
       return moved.rows[0];
     })();
@@ -1294,16 +1322,16 @@ export class WorkTaskDispatchModel {
              SET status = 'recovered', released_at = now(), heartbeat_at = now()
            WHERE task_id = ANY($1::text[])
              AND capability_key = 'todo-execution'
-             AND stage = 'in_progress'
              AND status = 'active'
         `, [executionTaskIds]);
 
         await client.query(`
           UPDATE work_tasks
-             SET status = 'todo', assignee = NULL,
+             SET assignee = 'dispatcher',
                  updated_at = now(), last_moved_at = now(),
                  last_activity_at = now(), last_moved_by = 'dispatcher'
-           WHERE id = ANY($1::text[]) AND status = 'in_progress' AND assignee = 'dispatcher'
+           WHERE id = ANY($1::text[]) AND assignee = 'dispatcher'
+             AND status NOT IN ('done', 'cancelled', 'parked')
         `, [executionTaskIds]);
       }
       if (verificationTaskIds.length > 0) {
@@ -1527,24 +1555,13 @@ export class WorkTaskDispatchModel {
       if (!taskId) return null;
       if (verdict === 'APPROVE' && currentArtifactSha !== artifactSha) return null;
 
-      let finalVerdict = verdict;
-      if (verdict === 'REWORK') {
-        const repeated = await client.query<{ count: string }>(`
-          SELECT COUNT(*)::text AS count FROM work_task_dispatches
-           WHERE task_id = $1 AND kind = 'verification' AND verdict = 'REWORK'
-             AND failure_reason = $2
-        `, [taskId, summary]);
-        if (Number(repeated.rows[0]?.count || 0) >= 2) finalVerdict = 'BLOCKED';
-      }
-
+      const finalVerdict = verdict;
       const transition = finalVerdict === 'APPROVE'
         ? { status: 'done', assignee: null }
         : finalVerdict === 'REWORK'
-          ? { status: 'todo', assignee: 'dispatcher' }
+          ? { status: 'in_review', assignee: 'dispatcher' }
           : { status: 'blocked', assignee: 'heartbeat' };
-      const repeatedSuffix = finalVerdict !== verdict
-        ? '\n\nRepeated identical rework reached the retry ceiling; routed to Heartbeat recovery.'
-        : '';
+      const repeatedSuffix = '';
 
       if (finalVerdict === 'APPROVE') {
         await ArtifactCustodyPolicy.persistWithClient(client, taskId, 'done', {

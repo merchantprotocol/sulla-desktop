@@ -23,7 +23,7 @@ describe('protected review core routine', () => {
       .every((node: any) => node.data.config.inheritParentToolPolicy === true)).toBe(true);
     expect(nodes.find((node: any) => node.id === 'node-review-synthesize')?.data.config.agentId)
       .toBe(DEFAULT_CORE_ROUTINE_AGENT_ID);
-    expect(REVIEW_PROJECT_ARTIFACT_DEFINITION.edges.filter((edge: any) => edge.target === 'node-review-merge')).toHaveLength(3);
+    expect(REVIEW_PROJECT_ARTIFACT_DEFINITION.edges.filter((edge: any) => edge.target === 'node-review-merge')).toHaveLength(1);
   });
 
   it('names every deterministic disposition and grants bounded in-lane repair authority', () => {
@@ -32,6 +32,8 @@ describe('protected review core routine', () => {
       expect(serialized).toContain(disposition);
     }
     expect(serialized).toContain('implement missing work');
+    expect(serialized).toContain('Workflow nodes execute serially');
+    expect(REVIEW_PROJECT_ARTIFACT_DEFINITION.nodes.some((node: any) => node.data.subtype === 'parallel')).toBe(false);
     expect(serialized).toContain('Do not send repairable work to planning');
     expect(serialized).toContain('never duplicate a live conflicting edit');
     expect(serialized).toContain('Never treat unpublished outbound work as sent');
