@@ -217,6 +217,7 @@ interface WorkTaskOutcomeJournalRow {
 }
 
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
+const STALE_DISPATCH_MINUTES = 45;
 
 /**
  * Per-project autonomy switch (work_projects.dispatch_enabled). Paused work is

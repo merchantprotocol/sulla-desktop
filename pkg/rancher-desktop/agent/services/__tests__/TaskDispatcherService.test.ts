@@ -486,7 +486,7 @@ describe('TaskDispatcherService', () => {
     service.destroy();
 
     expect(claimNextMock).toHaveBeenCalledWith(
-      'sulla-desktop', expect.stringContaining('task-dispatcher-'), expect.any(Object),
+      'sulla-desktop', expect.stringContaining('task-dispatcher-'),
     );
   });
 
@@ -526,7 +526,7 @@ describe('TaskDispatcherService', () => {
     service.destroy();
 
     expect(claimNextMock).toHaveBeenCalledWith(
-      'sulla-desktop', expect.stringContaining('task-dispatcher-'), expect.any(Object),
+      'sulla-desktop', expect.stringContaining('task-dispatcher-'),
     );
     expect(executeMock).toHaveBeenCalledTimes(2);
     const workerState = executeMock.mock.calls[0][0];
