@@ -30,6 +30,24 @@ describe('WorkTaskDispatchModel', () => {
     jest.restoreAllMocks();
   });
 
+  it('enumerates every non-archived task newest-first without policy exclusions', async() => {
+    const query = jest.fn(() => Promise.resolve([])) as any;
+    (postgresClient as any).query = query;
+
+    await WorkTaskDispatchModel.enumerateCandidates(250);
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('WHERE t.archived = false');
+    expect(sql).toContain('p.dispatch_enabled AS project_dispatch_enabled');
+    expect(sql).toContain('work_task_waits');
+    expect(sql).toContain('work_task_dependencies');
+    expect(sql).toContain('ORDER BY consideration_at DESC');
+    expect(sql).not.toContain("t.status = 'todo'");
+    expect(sql).not.toContain('LOWER(t.assignee)');
+    expect(sql).not.toContain('p.dispatch_enabled = true');
+    expect(params).toEqual([250]);
+  });
+
   it('claims the next eligible task under a row lock and creates its live lease atomically', async() => {
     const task = {
       id:          'task-1',
@@ -96,15 +114,11 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
     expect(query.mock.calls[0][0]).toContain("t.status = 'todo'");
     expect(query.mock.calls[0][0]).toContain('work_task_dispatches');
-    expect(query.mock.calls[0][0]).toContain("FROM unnest(COALESCE(t.labels, '{}')) AS label");
-    expect(query.mock.calls[0][0]).toContain('LOWER(t.assignee) = ANY($2::text[])');
-    expect(query.mock.calls[0][1]).toEqual([
-      ['done', 'cancelled', 'parked', 'blocked'],
-      ['heartbeat', 'dispatcher', 'sulla-desktop'],
-      ['gated', 'decision', 'human', 'manual', 'no-auto-dispatch'],
-    ]);
-    expect(query.mock.calls[0][0]).toContain('child.parent_id = t.id');
-    expect(query.mock.calls[0][0]).toContain('t.due_at ASC NULLS LAST');
+    expect(query.mock.calls[0][0]).not.toContain("FROM unnest(COALESCE(t.labels, '{}')) AS label");
+    expect(query.mock.calls[0][0]).not.toContain('LOWER(t.assignee)');
+    expect(query.mock.calls[0][0]).not.toContain('child.parent_id = t.id');
+    expect(query.mock.calls[0][0]).toContain('GREATEST(t.last_activity_at, t.last_moved_at');
+    expect(query.mock.calls[0][0]).toContain('DESC');
     expect(query.mock.calls[0][0]).toContain("c.stage = 'in_progress'");
     expect(query.mock.calls[1][0]).toContain('lifecycle_capabilities');
     expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_stage_claims');
@@ -309,20 +323,14 @@ describe('WorkTaskDispatchModel', () => {
     });
     expect(query.mock.calls[0][0]).toContain("t.status = 'in_review'");
     expect(query.mock.calls[0][0]).toContain('JOIN work_projects p ON p.id = e.project_id');
-    expect(query.mock.calls[0][0]).toContain('CASE p.priority');
-    expect(query.mock.calls[0][0].indexOf('CASE p.priority')).toBeLessThan(
-      query.mock.calls[0][0].indexOf('CASE e.priority'),
-    );
-    expect(query.mock.calls[0][0].indexOf('CASE e.priority')).toBeLessThan(
-      query.mock.calls[0][0].indexOf('CASE t.priority'),
-    );
+    expect(query.mock.calls[0][0]).toContain('GREATEST(t.last_activity_at, t.last_moved_at');
+    expect(query.mock.calls[0][0]).not.toContain('CASE p.priority');
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
     expect(query.mock.calls[0][0]).toContain("d.status = 'running'");
     expect(query.mock.calls[0][0]).toContain("d.status IN ('failed', 'stale')");
     expect(query.mock.calls[0][0]).toContain("interval '5 minutes'");
     expect(query.mock.calls[0][0]).not.toContain('<> $3');
-    expect(query.mock.calls[0][1]).toEqual(expect.any(Array));
-    expect(query.mock.calls[0][1]).not.toContain('codex-test');
+    expect(query.mock.calls[0][1]).toBeUndefined();
     expect(query.mock.calls[1][0]).toContain('lifecycle_capabilities');
     expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_stage_claims');
     expect(query.mock.calls[4][0]).toContain("'verification'");
@@ -440,42 +448,30 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[4][1]).toEqual(['task-2', 'in_review', 'heartbeat']);
   });
 
-  it('escalates the third equivalent verifier infrastructure failure to planning', async() => {
+  it('keeps repeated verifier infrastructure failures retryable in review', async() => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [{ task_id: 'task-fail', review_generation_hash: 'g1' }] })
       .mockResolvedValueOnce({ rows: [{ count: '3' }] })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: 'older' }] })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
     await expect(WorkTaskDispatchModel.failVerification('dispatch-fail', 'adapter_unavailable')).resolves.toBe(true);
-    expect(query.mock.calls[2][0]).toContain("'terminal:' || $2");
-    expect(query.mock.calls[4][1][2]).toContain('<!-- artifact-receipt');
-    expect(query.mock.calls[5][1]).toEqual(['task-fail', 'planning', 'dispatcher']);
+    expect(query.mock.calls.some(([sql]: [string]) => sql.includes("'terminal:' || $2"))).toBe(false);
+    expect(query.mock.calls.at(-1)?.[1]).toEqual(['task-fail', 'in_review', 'heartbeat']);
   });
 
-  it('starts the planning lane entry when verifier failures escalate to planning', async() => {
-    // Without RETURNING the UPDATE yields no row, the transition hook never
-    // runs, and the task sits in planning with no council (Rdm0, 2026-10-01).
-    const laneEntry = new Error('lane entry claimed');
-
-    jest.spyOn(WorkLaneWorkflowBindingModel, 'claimLaneEntryInTransaction').mockRejectedValue(laneEntry);
+  it('does not manufacture a planning lane entry from verifier infrastructure failure', async() => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [{ task_id: 'task-fail', review_generation_hash: 'g1' }] })
       .mockResolvedValueOnce({ rows: [{ count: '3' }] })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: 'older' }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: 'task-fail', status: 'planning', assignee: 'dispatcher' }] });
+      .mockResolvedValueOnce({ rows: [{ id: 'task-fail', status: 'in_review', assignee: 'heartbeat' }] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
-    await expect(WorkTaskDispatchModel.failVerification('dispatch-fail', 'adapter_unavailable')).rejects.toBe(laneEntry);
-    expect(query.mock.calls[5][0]).toContain('RETURNING *');
-    expect(WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction).toHaveBeenCalledWith(
-      expect.anything(), 'task-fail', 'planning', 'verifier',
-    );
+    await expect(WorkTaskDispatchModel.failVerification('dispatch-fail', 'adapter_unavailable')).resolves.toBe(true);
+    expect(query.mock.calls.at(-1)?.[0]).toContain('RETURNING *');
+    expect(WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction).not.toHaveBeenCalled();
   });
 
   it('binds one immutable generation and durably excludes every worker and custodian', async() => {
@@ -603,7 +599,6 @@ describe('WorkTaskDispatchModel', () => {
     await WorkTaskDispatchModel.claimNext('agent', 'runtime');
     await WorkTaskDispatchModel.claimNextReview('agent', [], 'runtime');
     expect(sql[0]).toContain('dispatch_project.dispatch_enabled = true');
-    expect(sql[0]).toContain('downstream_project.dispatch_enabled = true');
     expect(sql[1]).toContain('p.dispatch_enabled = true');
   });
 
@@ -772,6 +767,39 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[3][1][2]).toContain('REPLAN');
     expect(query.mock.calls[3][1][2]).toContain('<!-- artifact-receipt');
     expect(query.mock.calls[4][1]).toEqual(['task-3', 'planning', 'dispatcher']);
+  });
+
+  it('accepts a reviewer-advanced generation and keeps repaired work in review', async() => {
+    const oldArtifacts: any[] = [{
+      type: 'code_pr', canonicalRef: 'merchantprotocol/sulla-desktop#999', hash: 'a'.repeat(40), adapter: 'github-pr', code: true,
+    }];
+    const repairedArtifacts: any[] = [{
+      type: 'code_pr', canonicalRef: 'merchantprotocol/sulla-desktop#999', hash: 'b'.repeat(40), adapter: 'github-pr', code: true,
+    }];
+    const oldGeneration = WorkTaskDispatchModel.reviewGenerationHash(oldArtifacts);
+    const repairedGeneration = WorkTaskDispatchModel.reviewGenerationHash(repairedArtifacts);
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-repair', review_generation_hash: oldGeneration }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'task-repair', status: 'in_review', assignee: 'heartbeat' }] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.finalizeProtectedReview(
+      'review-repair',
+      'REPAIRABLE',
+      {
+        workflowExecutionId: 'wfp-repair', reviewerAgentIds: ['reviewer'], excludedAgentIds: [],
+        generationHash: repairedGeneration, artifactTypes: ['code_pr'], artifacts: repairedArtifacts,
+        artifactType: 'code_pr', artifactRef: 'b'.repeat(40), artifactHash: 'b'.repeat(40),
+        summary: 'Implemented the missing work and pushed the repaired head.', checks: ['github-ci'], findings: [],
+      },
+      repairedArtifacts,
+    )).resolves.toBe('REPAIRABLE');
+
+    expect(query.mock.calls[2][1][13]).toBe(repairedGeneration);
+    expect(query.mock.calls[4][1]).toEqual(['task-repair', 'in_review', 'heartbeat']);
   });
 
   it('registers EXTERNAL_WAIT in the durable monitor ledger in the settlement transaction', async() => {

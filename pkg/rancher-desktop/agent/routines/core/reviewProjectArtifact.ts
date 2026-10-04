@@ -28,11 +28,12 @@ export const ARTIFACT_VERIFICATION_ADAPTERS = {
   projects_evidence:        { adapter: 'projects-read', tools: ['get_project_item', 'list_task_comments', 'list_task_waits'] },
 } as const;
 
-const READ_ONLY = [
-  'You are an independent reviewer. Inspect canonical evidence; summaries are only leads.',
+const IN_LANE_AUTHORITY = [
+  'You own the current review lane outcome. Inspect canonical evidence; summaries are only leads.',
   'You have exec and the full Sulla catalog (`sulla` CLI or the sulla-native MCP tool `sulla_tool`):',
-  'check out branches, build, and run any tests you need. Pushing to the branch under review changes',
-  'its head and voids this review generation, so report fixes as findings. Return evidence, not instructions to trust you.',
+  'check out branches, implement missing work, push reversible fixes, and use GitHub CI for tests.',
+  'If you change an artifact, resolve the new immutable head and return REPAIRABLE so the dispatcher rebinds review in this lane.',
+  'Do not send repairable work to planning. Preserve explicit human approvals and never duplicate a live conflicting edit.',
 ].join(' ');
 
 const reviewerNode = (
@@ -51,11 +52,11 @@ const reviewerNode = (
     config:   {
       agentId:                  DEFAULT_CORE_ROUTINE_AGENT_ID,
       agentName:                label,
-      additionalPrompt:         READ_ONLY,
+      additionalPrompt:         IN_LANE_AUTHORITY,
       inheritParentToolPolicy:  true,
       successCriteria:          'A source-backed review mapped to the task acceptance contract and immutable artifact generation.',
       completionContract:       'Return JSON with applicable, verdict, checks, findings, artifactRef, artifactHash, and confidence.',
-      orchestratorInstructions: `${ READ_ONLY } Claimed task and canonical evidence: {{trigger}} Classification: {{Classify Artifact and Risk}} ${ instructions } Return JSON only with keys applicable, verdict (pass|repairable|replan|external_wait|blocked), checks, findings, artifactRef, artifactHash, and confidence. If this lens is not applicable, set applicable=false and explain why; do not invent evidence.`,
+      orchestratorInstructions: `${ IN_LANE_AUTHORITY } Claimed task and canonical evidence: {{trigger}} Classification: {{Classify Artifact and Risk}} ${ instructions } Return JSON only with keys applicable, verdict (pass|repairable|replan|external_wait|blocked), checks, findings, artifactRef, artifactHash, and confidence. If this lens is not applicable, set applicable=false and explain why; do not invent evidence.`,
     },
   },
 });
@@ -99,11 +100,11 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
         config:   {
           agentId:                  DEFAULT_CORE_ROUTINE_AGENT_ID,
           agentName:                'Review Classifier',
-          additionalPrompt:         READ_ONLY,
+          additionalPrompt:         IN_LANE_AUTHORITY,
           inheritParentToolPolicy:  true,
           successCriteria:          'Artifact types, immutable reference, acceptance criteria, dependencies, and risk lenses are identified from source evidence.',
           completionContract:       'Return JSON with generationHash, artifactTypes, artifacts, acceptanceCriteria, dependencies, risk, and requiredReviewLenses.',
-          orchestratorInstructions: `${ READ_ONLY } Inspect the claimed Projects task, bounded comments, originating execution evidence, and canonical artifacts. The trigger contains the already-bound generation and structured artifact components; never replace or omit them. Classify one or more of code_pr, documentation, marketing_campaign, research, data_spreadsheet, design_media, operations_configuration, or projects_evidence. For each component return type, canonicalRef, url, immutable hash, adapter, and code boolean. Use the named read-only adapter for each non-code system of record. For every code component, resolve the remote draft PR, base, full head SHA, diff, and claimed checks. Return JSON only with keys generationHash, artifactTypes, artifacts, acceptanceCriteria, dependencies, risk, and requiredReviewLenses.`,
+          orchestratorInstructions: `${ IN_LANE_AUTHORITY } Inspect the claimed Projects task, bounded comments, originating execution evidence, and canonical artifacts. The trigger contains the already-bound generation and structured artifact components; never replace or omit them. Classify one or more of code_pr, documentation, marketing_campaign, research, data_spreadsheet, design_media, operations_configuration, or projects_evidence. For each component return type, canonicalRef, url, immutable hash, adapter, and code boolean. Use the named adapter for each non-code system of record. For every code component, resolve the remote draft PR, base, full head SHA, diff, and claimed checks. Return JSON only with keys generationHash, artifactTypes, artifacts, acceptanceCriteria, dependencies, risk, and requiredReviewLenses.`,
         },
       },
     },
@@ -158,11 +159,11 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
         config:   {
           agentId:                  DEFAULT_CORE_ROUTINE_AGENT_ID,
           agentName:                'Review Verdict Synthesizer',
-          additionalPrompt:         READ_ONLY,
+          additionalPrompt:         IN_LANE_AUTHORITY,
           inheritParentToolPolicy:  true,
           successCriteria:          'One conservative verdict is tied to the current immutable artifact and every material finding.',
           completionContract:       'Return one JSON object matching the protected disposition and generic pipeline-transition schema.',
-          orchestratorInstructions: `${ READ_ONLY } Original evidence: {{trigger}} Classification: {{Classify Artifact and Risk}} Code review: {{Code and PR Reviewer}} Deliverable review: {{Authoritative Deliverable Reviewer}} Risk review: {{Regression and Authority Reviewer}} Reconcile conflicts conservatively. Echo the trigger generationHash exactly and return every structured artifact component. PASS requires applicable reviewers to prove every criterion against the same current artifact generation; every code component must carry its freshly resolved exact PR head. PASS uses transition {mode:"next"}. Every other disposition selects a configured exception stage with {mode:"specific",stageKey}; in the bundled core template use todo for REPAIRABLE, planning for REPLAN, and blocked for EXTERNAL_WAIT or BLOCKED. Return JSON only: {"disposition":"PASS|REPAIRABLE|REPLAN|EXTERNAL_WAIT|BLOCKED","generationHash":"64 hex","transition":{"mode":"next"}|{"mode":"specific","stageKey":"configured-stage-key"},"custody":{"workKind":"code|non_code","artifactId":"stable id","evidence":{},"provenance":{"actor":"review-routine"}},"artifactTypes":["code_pr"],"artifacts":[{"type":"code_pr","canonicalRef":"owner/repo#1","url":"...","hash":"40-64 hex","adapter":"github-pr","code":true}],"artifactType":"compatibility summary","artifactRef":"stable ref or full SHA","artifactUrl":"...","artifactHash":"40-64 hex SHA/hash","summary":"...","checks":[...],"findings":[...],"wait":{"kind":"github_checks|human_gate|scheduled_time|external_job","targetKey":"stable key","target":{},"fingerprint":"optional hex","nextCheckAt":"optional ISO","dueAt":"optional ISO"}|null}.`,
+          orchestratorInstructions: `${ IN_LANE_AUTHORITY } Original evidence: {{trigger}} Classification: {{Classify Artifact and Risk}} Code review: {{Code and PR Reviewer}} Deliverable review: {{Authoritative Deliverable Reviewer}} Risk review: {{Regression and Authority Reviewer}} Reconcile conflicts conservatively. If findings are repairable and no live conflicting edit or human gate prevents action, implement and push the fix now, then resolve the new immutable head and return REPAIRABLE so review restarts in this same lane. Use REPLAN only for a genuinely contradictory contract that cannot be corrected in-lane; do not use it for missing implementation. PASS requires applicable reviewers to prove every criterion against the same current artifact generation; every code component must carry its freshly resolved exact PR head. Echo the reviewed generationHash for PASS; after an in-lane repair return the new generationHash. PASS uses transition {mode:"next"}; REPAIRABLE stays in the current review lane; REPLAN uses planning only for an unrepairable plan contradiction; EXTERNAL_WAIT and BLOCKED use blocked. Return JSON only: {"disposition":"PASS|REPAIRABLE|REPLAN|EXTERNAL_WAIT|BLOCKED","generationHash":"64 hex","transition":{"mode":"next"}|{"mode":"specific","stageKey":"configured-stage-key"},"custody":{"workKind":"code|non_code","artifactId":"stable id","evidence":{},"provenance":{"actor":"review-routine"}},"artifactTypes":["code_pr"],"artifacts":[{"type":"code_pr","canonicalRef":"owner/repo#1","url":"...","hash":"40-64 hex","adapter":"github-pr","code":true}],"artifactType":"compatibility summary","artifactRef":"stable ref or full SHA","artifactUrl":"...","artifactHash":"40-64 hex SHA/hash","summary":"...","checks":[...],"findings":[...],"wait":{"kind":"github_checks|human_gate|scheduled_time|external_job","targetKey":"stable key","target":{},"fingerprint":"optional hex","nextCheckAt":"optional ISO","dueAt":"optional ISO"}|null}.`,
         },
       },
     },

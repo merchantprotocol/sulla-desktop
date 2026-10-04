@@ -288,17 +288,28 @@ export class TaskDispatcherService {
       const recovered = await WorkTaskDispatchModel.recoverStale();
       if (recovered.length > 0) console.warn(`[TaskDispatcher] Recovered ${ recovered.length } stale dispatch(es)`);
 
+      // Enumerate the whole portfolio before lane-specific claims. This is the
+      // reasoning surface: paused projects, dependencies, waits, assignees and
+      // custom lanes remain visible instead of disappearing behind SQL policy.
+      // Claim methods still enforce collision locks and the explicit project
+      // pause at mutation time.
+      const considered = await WorkTaskDispatchModel.enumerateCandidates();
+      console.log('[TaskDispatcher] Broad candidate consideration', {
+        count: considered.length,
+        newest: considered.slice(0, 10).map(candidate => ({
+          id: candidate.id, lane: candidate.status, at: candidate.consideration_at,
+          paused: !candidate.project_dispatch_enabled,
+          wait: candidate.has_active_wait,
+          dependencies: Number(candidate.unresolved_dependencies || 0),
+          collision: candidate.has_active_dispatch || candidate.has_active_stage_claim,
+        })),
+      });
+
       await this.checkInProgressRecovery();
-      const reviewReady = await this.fillVerificationPool();
-      if (!reviewReady) {
-        outcome = 'no-eligible-work';
-        console.warn('[TaskDispatcher] Protected review is unavailable; holding fresh execution work');
-        return outcome;
-      }
-      // Issue #711: semantic stage-aware WIP limits + downstream-first backpressure.
-      // Additive over the #709 review-drain guard below: this only ever holds MORE
-      // work, never less, and never interrupts already-running work. Re-evaluated
-      // every tick, so queued work resumes automatically as capacity releases.
+      await this.fillVerificationPool();
+      // Preserve WIP telemetry, but do not turn portfolio context into an
+      // admission deny-list. The hard execution bound is the configured worker
+      // concurrency (three by default) plus collision-safe leases.
       try {
         const wipLimits = await resolveWipLimits();
         const roleCounts = await WorkTaskDispatchModel.countByRole();
@@ -309,23 +320,8 @@ export class TaskDispatcherService {
           decision: wipDecision,
           at:       new Date().toISOString(),
         };
-        if (!wipDecision.allowed) {
-          outcome = 'no-eligible-work';
-          console.log(`[TaskDispatcher] Holding fresh execution work: ${ wipDecision.reason }`);
-          return outcome;
-        }
       } catch (wipErr) {
-        // The gate is a safety invariant. If counts/settings cannot be resolved,
-        // fail closed and retry on the next scheduled tick.
-        outcome = 'no-eligible-work';
-        console.warn('[TaskDispatcher] WIP limit evaluation failed; holding fresh execution:', wipErr);
-        return outcome;
-      }
-      const reviewBacklog = await WorkTaskDispatchModel.countReviewBacklog();
-      if (reviewBacklog > 0) {
-        outcome = 'no-eligible-work';
-        console.log(`[TaskDispatcher] Holding fresh todo work until ${ reviewBacklog } downstream review item(s) drain`);
-        return outcome;
+        console.warn('[TaskDispatcher] WIP telemetry unavailable; lease concurrency remains enforced:', wipErr);
       }
       const dispatched = await this.fillExecutionPool();
       outcome = dispatched > 0 ? 'actively-dispatching' : 'no-eligible-work';
@@ -447,7 +443,6 @@ export class TaskDispatcherService {
     const enforceSlots = await RoutineConcurrencyPolicy.isEnabled();
     if (enforceSlots) await RoutineConcurrencyPolicy.reclaimStale();
     const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
-    const wipLimits = await resolveWipLimits();
 
     await LifecycleCapabilityModel.report({
       key:               'todo-execution',
@@ -466,7 +461,7 @@ export class TaskDispatcherService {
         slot = await RoutineConcurrencyPolicy.acquire('execution', concurrency, { owner: RUNTIME_INSTANCE_ID });
         if (!slot) break;
       }
-      const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID, wipLimits);
+      const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID);
       if (!claim) {
         if (slot) await RoutineConcurrencyPolicy.release(slot);
         break;
@@ -796,9 +791,12 @@ export class TaskDispatcherService {
             const codeHeadsMatch = parsedCode.length === currentCode.length && currentCode.every(current =>
               parsedCode.some(parsedArtifact => parsedArtifact.canonicalRef === current.canonicalRef && parsedArtifact.hash === current.hash),
             );
+            const advancedByInLaneRepair = parsed.disposition === 'REPAIRABLE' &&
+              parsed.generationHash === currentGenerationHash && currentGenerationHash !== generationHash;
             if (currentCode.length > 0 && !codeHeadsMatch) {
               await WorkTaskDispatchModel.failVerification(dispatch.id, 'pull_request_artifact_unresolved');
-            } else if (parsed.generationHash !== generationHash || currentGenerationHash !== generationHash) {
+            } else if (!advancedByInLaneRepair &&
+              (parsed.generationHash !== generationHash || currentGenerationHash !== generationHash)) {
               await WorkTaskDispatchModel.failVerification(
                 dispatch.id,
                 `artifact_generation_changed:${ generationHash }:${ currentGenerationHash }`,
@@ -808,7 +806,7 @@ export class TaskDispatcherService {
                 workflowExecutionId: finalState.metadata.lastCompletedWorkflow.executionId,
                 reviewerAgentIds:    selectedReviewerAgentIds,
                 excludedAgentIds,
-                generationHash,
+                generationHash:      parsed.generationHash,
                 artifactTypes:       parsed.artifactTypes,
                 artifacts:           parsed.artifacts,
                 artifactType:        parsed.artifactType,
@@ -1184,7 +1182,7 @@ ${ history || '(no comments)' }
 
 Review independently. Resolve the actual draft PR/branch and matching local worktree from the task and history. Read the current remote head through the GitHub tools, record the FULL exact head SHA, inspect the diff plus callers/consumers, map every acceptance criterion to evidence, and run focused tests/typecheck safely against the matching worktree. Include tenant, security, and regression analysis when relevant. Re-check the remote head immediately before your verdict; if it changed, do not approve until the matching new head is available and reviewed.
 
-You have exec and the full Sulla catalog: check out and fetch branches, build, and run any tests you need. Pushing to the branch under review changes its head, so put fixes in your findings rather than on that branch. The dispatcher applies the transition.
+You have exec and the full Sulla catalog: check out and fetch branches, implement missing work, push reversible fixes, and use GitHub CI for tests. Before editing, verify there is no live conflicting execution. If you change the branch head, report REWORK with the new full SHA so the dispatcher rebinds review in this lane. Do not bounce repairable work to planning. The dispatcher applies the transition.
 
 Choose exactly one verdict:
 - APPROVE: the exact reviewed head satisfies the acceptance contract.
@@ -1251,6 +1249,6 @@ ${ planContext }
 Bounded task evidence, oldest to newest:
 ${ JSON.stringify(history) }
 
-The dispatcher already owns the collision-safe lease. Inspect the canonical artifact and immutable generation directly. Worker summaries are leads, never proof. Pushing to the branch under review changes its head, so this generation can no longer be approved; put fixes in your findings. The dispatcher records the verdict and transition.`;
+The dispatcher already owns the collision-safe lease. Inspect the canonical artifact and immutable generation directly. Worker summaries are leads, never proof. Finish missing work in this lane when the change is reversible and no live conflicting edit exists. Preserve actual human approval/stop boundaries. If you push a repair, re-resolve the exact head and return REPAIRABLE with that new generation so the dispatcher rebinds review here; do not route repairable work to planning. The dispatcher records the verdict and transition.`;
   }
 }

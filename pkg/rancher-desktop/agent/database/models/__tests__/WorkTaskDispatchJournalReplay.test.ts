@@ -161,50 +161,47 @@ describe('WorkTaskDispatchModel.recordReviewLaunchWithExecution scope pair', () 
     );
   });
 
-  it('launches unscoped when the task has no lane-entry generation', async() => {
+  it('seeds a review checkpoint when the task has no lane-entry generation', async() => {
     const markRunning = jest.spyOn(WorkflowExecutionModel, 'markRunning').mockResolvedValue(undefined as any);
     launchWith(null);
 
     await WorkTaskDispatchModel.recordReviewLaunchWithExecution('dispatch-1', LAUNCH);
 
     expect(markRunning).toHaveBeenCalledWith(
-      expect.objectContaining({ scopeTaskId: undefined, scopeGeneration: undefined }),
+      expect.objectContaining({ scopeTaskId: 'task-1', scopeGeneration: 1 }),
       expect.anything(),
     );
   });
 });
 
-describe('WorkTaskDispatchModel drainable review backlog', () => {
+describe('WorkTaskDispatchModel broad review visibility', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  it('excludes wedged review rows from the backpressure count', async() => {
+  it('counts review rows without assignee, dependency, wait, or pause policy filters', async() => {
     const queryOne = jest.spyOn(postgresClient, 'queryOne').mockResolvedValue({ count: '1' } as any);
 
     await expect(WorkTaskDispatchModel.countReviewBacklog()).resolves.toBe(1);
 
     const [sql] = queryOne.mock.calls[0];
-    // Dead-heartbeat running dispatches cannot drain and must not hold todo work.
-    expect(sql).toContain("zombie.status = 'running'");
-    expect(sql).toContain('zombie.heartbeat_at < now()');
-    // A terminal-failed latest verification needs planning/human recovery, not backpressure.
-    expect(sql).toContain("latest_verification.kind = 'verification'");
-    expect(sql).toContain("NOT LIKE 'terminal:%'");
-    // Dependency-held review rows are un-claimable by the review pool.
-    expect(sql).toContain('wtd.dependent_task_id = t.id');
+    expect(sql).toContain("t.status = 'in_review'");
+    expect(sql).not.toContain('dispatch_enabled = true');
+    expect(sql).not.toContain('LOWER(t.assignee)');
+    expect(sql).not.toContain('work_task_dependencies');
   });
 
-  it('mirrors the drainable conditions inside the todo-claim race guard', async() => {
+  it('uses only collision and explicit project-pause guards for todo claims', async() => {
     const query = jest.fn(() => Promise.resolve({ rows: [] })) as any;
     jest.spyOn(postgresClient, 'transaction').mockImplementation((callback: any) => callback({ query }));
 
     await expect(WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime-1')).resolves.toBeNull();
 
     const sql = String(query.mock.calls[0][0]);
-    expect(sql).toContain("downstream.status = 'in_review'");
-    expect(sql).toContain('zombie.task_id = downstream.id');
-    expect(sql).toContain('latest_verification.task_id = downstream.id');
-    expect(sql).toContain('wtd.dependent_task_id = downstream.id');
+    expect(sql).toContain('dispatch_project.dispatch_enabled = true');
+    expect(sql).toContain("d.status = 'running'");
+    expect(sql).toContain("c.status = 'active'");
+    expect(sql).not.toContain('downstream.status');
+    expect(sql).not.toContain('work_task_dependencies');
   });
 });

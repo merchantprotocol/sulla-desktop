@@ -1,9 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 
 import { postgresClient } from '../PostgresClient';
 import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
-import { evaluateClaim, type WipLimits } from '../../services/ProjectAutomationWipLimits';
+import type { WipLimits } from '../../services/ProjectAutomationWipLimits';
 import {
   buildReceipt, receiptInsertInput, renderReceiptComment,
   type ArtifactReceipt, type ArtifactReceiptInput,
@@ -11,7 +10,7 @@ import {
 import { ArtifactReceiptModel } from './ArtifactReceiptModel';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { WorkflowExecutionModel } from './WorkflowExecutionModel';
-import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
+import { NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
 import type { WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
@@ -136,6 +135,17 @@ export interface ClaimedDispatch {
   stage_claim: LifecycleStageClaim;
 }
 
+export interface DispatchCandidate extends WorkTaskRecord {
+  project_status:           string;
+  epic_status:              string | null;
+  project_dispatch_enabled: boolean;
+  has_active_dispatch:      boolean;
+  has_active_stage_claim:   boolean;
+  has_active_wait:          boolean;
+  unresolved_dependencies:  number | string;
+  consideration_at:         string;
+}
+
 export type InProgressExclusionReason =
   | 'archived'
   | 'epic_closed'
@@ -208,41 +218,9 @@ interface WorkTaskOutcomeJournalRow {
 
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
 
-/** Heartbeat-silence threshold shared by recoverStale() and the drainable-review-backlog surface. */
-const STALE_DISPATCH_MINUTES = 45;
-
 /**
- * A review-stage task only exerts downstream-first backpressure while it can
- * actually drain. A single wedged in_review row must never hold the whole
- * conveyor (Jonathon directive 2026-08-28): a task whose running dispatch has
- * a dead heartbeat cannot be claimed for review, a task whose latest
- * verification ended terminal-failed needs planning/human recovery that
- * holding fresh todo work does nothing to advance, and a dependency-held task
- * is un-claimable by the review pool. `alias` is a trusted table alias
- * (e.g. 't', 'downstream'), never user input.
- */
-function drainableReviewSql(alias: string): string {
-  return `AND NOT EXISTS (
-             SELECT 1 FROM work_task_dispatches zombie
-              WHERE zombie.task_id = ${ alias }.id AND zombie.status = 'running'
-                AND zombie.heartbeat_at < now() - (${ STALE_DISPATCH_MINUTES } * interval '1 minute')
-           )
-           AND COALESCE((
-             SELECT latest_verification.status <> 'failed'
-                    OR latest_verification.failure_reason IS NULL
-                    OR latest_verification.failure_reason NOT LIKE 'terminal:%'
-               FROM work_task_dispatches latest_verification
-              WHERE latest_verification.task_id = ${ alias }.id
-                AND latest_verification.kind = 'verification'
-              ORDER BY latest_verification.started_at DESC LIMIT 1
-           ), true)
-           ${ WorkTaskDependencyModel.claimExclusionSql(`${ alias }.id`) }`;
-}
-
-/**
- * Per-project autonomy switch (work_projects.dispatch_enabled). A paused
- * project is invisible to every mechanical claimer and to the WIP/backpressure
- * counts, so pausing one project never starves or throttles the others.
+ * Per-project autonomy switch (work_projects.dispatch_enabled). Paused work is
+ * still enumerated and counted; this predicate is used only at mutation time.
  */
 export function projectDispatchEnabledSql(taskAlias: string): string {
   return `AND EXISTS (
@@ -313,35 +291,64 @@ export class WorkTaskDispatchModel {
     return createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
   }
 
+  /**
+   * The dispatcher's consideration surface is deliberately broader than its
+   * mutation surface. Every non-archived task is visible here, including work
+   * in custom lanes, paused projects, with dependencies/waits, or assigned to
+   * another actor. Those facts are context for the worker, never admission
+   * filters. Collision locks and explicit project pause remain action-time
+   * guards in the lane-specific claim methods below.
+   */
+  static async enumerateCandidates(limit = 500): Promise<DispatchCandidate[]> {
+    return postgresClient.query<DispatchCandidate>(`
+      SELECT t.*,
+             p.status AS project_status,
+             e.status AS epic_status,
+             p.dispatch_enabled AS project_dispatch_enabled,
+             EXISTS (
+               SELECT 1 FROM work_task_dispatches d
+                WHERE d.task_id = t.id AND d.status = 'running'
+             ) AS has_active_dispatch,
+             EXISTS (
+               SELECT 1 FROM work_task_stage_claims c
+                WHERE c.task_id = t.id AND c.status = 'active'
+             ) AS has_active_stage_claim,
+             EXISTS (
+               SELECT 1 FROM work_task_waits w
+                WHERE w.task_id = t.id AND w.status = 'active'
+             ) AS has_active_wait,
+             (SELECT COUNT(*)::text
+                FROM work_task_dependencies dep
+                JOIN work_tasks prerequisite ON prerequisite.id = dep.depends_on_task_id
+               WHERE dep.dependent_task_id = t.id AND dep.archived_at IS NULL
+                 AND prerequisite.archived = false
+                 AND prerequisite.status NOT IN ('done', 'cancelled', 'parked')) AS unresolved_dependencies,
+             GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) AS consideration_at
+        FROM work_tasks t
+        JOIN work_epics e ON e.id = t.epic_id
+        JOIN work_projects p ON p.id = e.project_id
+       WHERE t.archived = false
+       ORDER BY consideration_at DESC, t.id ASC
+       LIMIT $1
+    `, [Math.max(1, Math.min(limit, 5_000))]);
+  }
+
   static async claimNext(
     agentId: string,
     runtimeInstanceId: string,
-    wipLimits?: WipLimits,
+    _wipLimits?: WipLimits,
   ): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
-      // Serialize semantic WIP evaluation with the status mutation. Without the
-      // transaction-scoped lock two dispatcher instances can both observe the
-      // last free slot and oversubscribe the execution stage.
-      if (wipLimits) {
-        await client.query('SELECT pg_advisory_xact_lock($1)', [4823710299]);
-        const counts = await this.countByRoleWithClient(client);
-        if (!evaluateClaim('execution', counts, wipLimits).allowed) return null;
-      }
       const candidate = await client.query<WorkTaskRecord>(`
         SELECT t.*
           FROM work_tasks t
           JOIN work_epics e ON e.id = t.epic_id
+          JOIN work_projects p ON p.id = e.project_id
          WHERE t.archived = false
            AND t.status = 'todo'
            AND e.archived = false
-           AND NOT (e.status = ANY($1::text[]))
-           AND (t.assignee IS NULL OR LOWER(t.assignee) = ANY($2::text[]))
+           AND p.archived = false
            ${ projectDispatchEnabledSql('t') }
-           AND NOT EXISTS (
-             SELECT 1
-               FROM unnest(COALESCE(t.labels, '{}')) AS label
-              WHERE LOWER(label) = ANY($3::text[])
-           )
            AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
               WHERE d.task_id = t.id AND d.status = 'running'
@@ -350,53 +357,12 @@ export class WorkTaskDispatchModel {
              SELECT 1 FROM work_task_stage_claims c
               WHERE c.task_id = t.id AND c.stage = 'in_progress' AND c.status = 'active'
            )
-           AND NOT EXISTS (
-             SELECT 1
-               FROM work_tasks downstream
-               JOIN work_epics downstream_epic ON downstream_epic.id = downstream.epic_id
-               JOIN work_projects downstream_project ON downstream_project.id = downstream_epic.project_id
-              WHERE downstream.archived = false
-                AND downstream.status = 'in_review'
-                AND downstream_epic.archived = false
-                AND downstream_project.archived = false
-                AND downstream_project.dispatch_enabled = true
-                AND NOT (downstream_project.status = ANY($1::text[]))
-                AND NOT (downstream_epic.status = ANY($1::text[]))
-                AND (downstream.assignee IS NULL OR LOWER(downstream.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
-                AND NOT EXISTS (
-                  SELECT 1 FROM unnest(COALESCE(downstream.labels, '{}')) AS downstream_label
-                   WHERE LOWER(downstream_label) = ANY($3::text[])
-                )
-                ${ drainableReviewSql('downstream') }
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM work_tasks child
-              WHERE child.parent_id = t.id
-                AND child.archived = false
-                AND child.status NOT IN ('done', 'cancelled', 'parked')
-           )
-         ${WorkTaskDependencyModel.claimExclusionSql('t.id')}
          ORDER BY
-           CASE e.priority
-             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
-             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
-             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
-             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
-             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
-             ELSE 5 END,
-           CASE t.priority
-             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
-             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
-             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
-             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
-             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
-             ELSE 5 END,
-           t.due_at ASC NULLS LAST,
-           t.last_activity_at ASC,
-           t.position ASC
+           GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) DESC,
+           t.id ASC
          FOR UPDATE OF t SKIP LOCKED
          LIMIT 1
-      `, [CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS]);
+      `);
 
       const task = candidate.rows[0];
       if (!task) return null;
@@ -487,13 +453,6 @@ export class WorkTaskDispatchModel {
            AND e.archived = false
            AND p.archived = false
            AND p.dispatch_enabled = true
-           AND NOT (p.status = ANY($1::text[]))
-           AND NOT (e.status = ANY($1::text[]))
-           AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
-           AND NOT EXISTS (
-             SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
-              WHERE LOWER(label) = ANY($2::text[])
-           )
            AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
               WHERE d.task_id = t.id AND d.status = 'running'
@@ -504,35 +463,12 @@ export class WorkTaskDispatchModel {
                 AND d.status IN ('failed', 'stale')
                 AND d.finished_at > now() - interval '5 minutes'
            )
-         ${WorkTaskDependencyModel.claimExclusionSql('t.id')}
          ORDER BY
-           CASE p.priority
-             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
-             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
-             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
-             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
-             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
-             ELSE 5 END,
-           CASE e.priority
-             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
-             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
-             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
-             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
-             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
-             ELSE 5 END,
-           CASE t.priority
-             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
-             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
-             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
-             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
-             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
-             ELSE 5 END,
-           t.due_at ASC NULLS LAST,
-           t.last_activity_at ASC,
-           t.position ASC
+           GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) DESC,
+           t.id ASC
          FOR UPDATE OF t SKIP LOCKED
          LIMIT 1
-      `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
+      `);
 
       const task = candidate.rows[0];
       if (!task) return null;
@@ -602,16 +538,7 @@ export class WorkTaskDispatchModel {
     return row?.found === true;
   }
 
-  /**
-   * Count autonomous work already at the review stage that can still drain —
-   * claimable by the review pool or actively held by a live verification
-   * lease. Any such row is farther down the conveyor than todo, so the
-   * dispatcher uses this as a hard backpressure gate before claiming fresh
-   * execution work. Wedged rows (dead-heartbeat running dispatch,
-   * terminal-failed latest verification, dependency-held) are excluded via
-   * drainableReviewSql: holding the whole conveyor does nothing to advance
-   * them, and one stuck task must never starve every execution slot.
-   */
+  /** Observability only: review backlog never hides or blocks newer work. */
   static async countReviewBacklog(): Promise<number> {
     const row = await postgresClient.queryOne<{ count: string }>(`
       SELECT COUNT(*)::text AS count
@@ -622,25 +549,15 @@ export class WorkTaskDispatchModel {
          AND t.status = 'in_review'
          AND e.archived = false
          AND p.archived = false
-         AND p.dispatch_enabled = true
-         AND NOT (p.status = ANY($1::text[]))
-         AND NOT (e.status = ANY($1::text[]))
-         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
-         AND NOT EXISTS (
-           SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
-            WHERE LOWER(label) = ANY($2::text[])
-         )
-         ${ drainableReviewSql('t') }
-    `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
+    `);
     return Number(row?.count || 0);
   }
 
   /**
    * Count autonomous, non-terminal work in each semantic lane role across the
    * whole portfolio, honouring custom project lanes via their resolved
-   * semantic_role (issue #711). Queued and active work both count. Closed epics
-   * and non-autonomous or human-gated tasks are excluded, matching the
-   * eligibility surface of countReviewBacklog and the claim paths.
+   * semantic_role (issue #711). This is a visibility count, so paused projects,
+   * assignments, labels and dependencies remain represented.
    */
   static async countByRole(): Promise<Partial<Record<WorkLaneSemanticRole, number>>> {
     return postgresClient.transaction(client => this.countByRoleWithClient(client));
@@ -697,16 +614,8 @@ export class WorkTaskDispatchModel {
        WHERE t.archived = false
          AND e.archived = false
          AND p.archived = false
-         AND p.dispatch_enabled = true
-         AND NOT (p.status = ANY($1::text[]))
-         AND NOT (e.status = ANY($1::text[]))
-         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
-         AND NOT EXISTS (
-           SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
-            WHERE LOWER(label) = ANY($2::text[])
-         )
        GROUP BY 1
-    `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
+    `);
 
     const totals: Partial<Record<WorkLaneSemanticRole, number>> = {};
     for (const row of rows.rows) totals[row.semantic_role] = Number(row.count || 0);
@@ -945,13 +854,32 @@ export class WorkTaskDispatchModel {
         'SELECT MAX(generation)::int AS generation FROM work_lane_entry_automations WHERE task_id = $1',
         [execution.scopeTaskId],
       );
-      const scopeGeneration = Number(generationRow.rows[0]?.generation ?? 0);
+      let scopeGeneration = Number(generationRow.rows[0]?.generation ?? 0);
+      if (scopeGeneration === 0) {
+        // Legacy/recovered tasks can predate lane-entry automation entirely.
+        // Give protected review a real generation checkpoint instead of
+        // launching unscoped and leaving every generation-bound tool unusable.
+        const seeded = await client.query<{ generation: number }>(`
+          INSERT INTO work_lane_entry_automations (
+            id, task_id, generation, previous_lane_key, lane_key,
+            workflow_id, resolution_source, binding_snapshot, workflow_snapshot,
+            execution_id, status, actor, started_at
+          )
+          SELECT $1, t.id, 1, NULL, t.status, $3, 'core', '{}'::jsonb, '{}'::jsonb,
+                 $4, 'running', 'dispatcher', now()
+            FROM work_tasks t
+           WHERE t.id = $2 AND t.status = 'in_review' AND t.archived = false
+          ON CONFLICT (task_id, generation) DO NOTHING
+          RETURNING generation
+        `, [`lane-entry-${ randomUUID() }`, execution.scopeTaskId, execution.workflowId, execution.executionId]);
+        scopeGeneration = Number(seeded.rows[0]?.generation ?? 1);
+      }
       await WorkflowExecutionModel.markRunning({
         executionId: execution.executionId, workflowId: execution.workflowId,
         workflowName: execution.workflowName, workflowSlug: execution.workflowSlug,
         triggerInput: execution.triggerInput,
-        scopeTaskId: scopeGeneration > 0 ? execution.scopeTaskId : undefined,
-        scopeGeneration: scopeGeneration > 0 ? scopeGeneration : undefined,
+        scopeTaskId: execution.scopeTaskId,
+        scopeGeneration,
         autoRestart: false,
       }, client);
     });
@@ -999,6 +927,7 @@ export class WorkTaskDispatchModel {
         SELECT id, status, disposition FROM work_task_dispatches
          WHERE task_id = $1 AND kind = 'verification' AND id <> $2
            AND review_generation_hash = $3
+           AND disposition IS DISTINCT FROM 'REPAIRABLE'
            AND (status = 'completed' OR (status = 'failed' AND failure_reason LIKE 'terminal:%'))
          ORDER BY finished_at DESC NULLS LAST LIMIT 1
       `, [taskId, id, generationHash]);
@@ -1683,21 +1612,11 @@ export class WorkTaskDispatchModel {
       const taskId = current.rows[0]?.task_id;
       if (!taskId) return null;
       const liveGenerationHash = WorkTaskDispatchModel.reviewGenerationHash(currentArtifacts);
-      if (current.rows[0].review_generation_hash !== evidence.generationHash ||
-          liveGenerationHash !== evidence.generationHash) return null;
+      if (liveGenerationHash !== evidence.generationHash) return null;
+      if (current.rows[0].review_generation_hash !== evidence.generationHash && disposition !== 'REPAIRABLE') return null;
 
       const fingerprint = WorkTaskDispatchModel.reviewFingerprint(evidence.findings);
-      let finalDisposition = disposition;
-      if (disposition === 'REPAIRABLE') {
-        const repeats = await client.query<{ count: string }>(`
-          SELECT COUNT(*)::text AS count
-            FROM work_task_dispatches
-           WHERE task_id = $1 AND kind = 'verification'
-             AND disposition = 'REPAIRABLE'
-             AND findings_fingerprint = $2
-        `, [taskId, fingerprint]);
-        if (Number(repeats.rows[0]?.count ?? 0) >= 2) finalDisposition = 'REPLAN';
-      }
+      const finalDisposition = disposition;
 
       const duplicate = await client.query<{ id: string }>(`
         SELECT id FROM work_task_dispatches
@@ -1711,7 +1630,7 @@ export class WorkTaskDispatchModel {
       const transition = finalDisposition === 'PASS'
         ? { status: 'done', assignee: null }
         : finalDisposition === 'REPAIRABLE'
-          ? { status: 'todo', assignee: 'dispatcher' }
+          ? { status: 'in_review', assignee: 'heartbeat' }
           : finalDisposition === 'REPLAN'
             ? { status: 'planning', assignee: 'dispatcher' }
         : { status: 'blocked', assignee: 'heartbeat' };
@@ -1795,9 +1714,6 @@ export class WorkTaskDispatchModel {
       ]);
 
       if (!duplicate.rows[0]) {
-        const escalation = disposition === 'REPAIRABLE' && finalDisposition === 'REPLAN'
-          ? '\n\nThe same finding reached the repair ceiling; routed to planning/#667.'
-          : '';
         const waitLine = finalDisposition === 'EXTERNAL_WAIT' && evidence.wait
           ? `\nDurable wait: ${ evidence.wait.kind } ${ evidence.wait.targetKey }.`
           : '';
@@ -1809,7 +1725,7 @@ export class WorkTaskDispatchModel {
           dispatchId:         id,
           disposition:        finalDisposition,
           nextOwner:          transition.assignee ?? 'complete',
-          validationSummary:  `${ evidence.summary }${ waitLine }${ escalation }`,
+          validationSummary:  `${ evidence.summary }${ waitLine }`,
           artifacts:          evidence.artifacts.map(artifact => ({
             type:         artifact.type,
             canonicalRef: artifact.canonicalRef,
@@ -1851,33 +1767,27 @@ export class WorkTaskDispatchModel {
       const taskId = settled.rows[0]?.task_id;
       if (!taskId) return false;
       const generationHash = settled.rows[0].review_generation_hash;
-      const equivalent = await client.query<{ count: string }>(`
+      await client.query<{ count: string }>(`
         SELECT COUNT(*)::text AS count FROM work_task_dispatches
          WHERE task_id = $1 AND kind = 'verification' AND status = 'failed'
            AND failure_reason = $2
            AND review_generation_hash IS NOT DISTINCT FROM $3
       `, [taskId, reason, generationHash]);
-      const terminal = Number(equivalent.rows[0]?.count ?? 0) >= 3;
-      if (terminal) {
-        await client.query(`UPDATE work_task_dispatches SET failure_reason = 'terminal:' || $2 WHERE id = $1`, [id, reason]);
-      }
       const duplicate = await client.query<{ id: string }>(`
         SELECT id FROM work_task_dispatches
          WHERE task_id = $1 AND kind = 'verification' AND id <> $2
            AND status = 'failed' AND failure_reason = $3
          LIMIT 1
       `, [taskId, id, reason]);
-      if (!duplicate.rows[0] || terminal) {
+      if (!duplicate.rows[0]) {
         await this.persistReceiptWithClient(client, this.reviewReceipt({
           taskId,
-          eventType:         terminal ? 'repair' : 'review',
+          eventType:         'review',
           actor:             'verifier',
           dispatchId:        id,
-          disposition:       terminal ? 'REPLAN' : 'RETRY',
-          nextOwner:         terminal ? 'dispatcher' : 'protected-review',
-          validationSummary: terminal
-            ? `Three equivalent verification infrastructure failures for generation ${ generationHash ?? 'unbound' }: ${ reason }`
-            : `Verification infrastructure failure released for retry: ${ reason }`,
+          disposition:       'RETRY',
+          nextOwner:         'protected-review',
+          validationSummary: `Verification infrastructure failure released for retry: ${ reason }`,
           artifacts:         generationHash
             ? [{ type: 'review_generation', canonicalRef: generationHash, hash: generationHash }]
             : [{ type: 'verification_dispatch', canonicalRef: id }],
@@ -1890,7 +1800,7 @@ export class WorkTaskDispatchModel {
                last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier'
          WHERE id = $1 AND status = 'in_review'
         RETURNING *
-      `, [taskId, terminal ? 'planning' : 'in_review', terminal ? 'dispatcher' : 'heartbeat']);
+      `, [taskId, 'in_review', 'heartbeat']);
       if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
         const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
         await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,

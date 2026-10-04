@@ -26,12 +26,14 @@ describe('protected review core routine', () => {
     expect(REVIEW_PROJECT_ARTIFACT_DEFINITION.edges.filter((edge: any) => edge.target === 'node-review-merge')).toHaveLength(3);
   });
 
-  it('names every deterministic disposition and forbids authority-crossing actions', () => {
+  it('names every deterministic disposition and grants bounded in-lane repair authority', () => {
     const serialized = JSON.stringify(REVIEW_PROJECT_ARTIFACT_DEFINITION);
     for (const disposition of ['PASS', 'REPAIRABLE', 'REPLAN', 'EXTERNAL_WAIT', 'BLOCKED']) {
       expect(serialized).toContain(disposition);
     }
-    expect(serialized).toContain('Pushing to the branch under review changes its head and voids this review generation');
+    expect(serialized).toContain('implement missing work');
+    expect(serialized).toContain('Do not send repairable work to planning');
+    expect(serialized).toContain('never duplicate a live conflicting edit');
     expect(serialized).toContain('Never treat unpublished outbound work as sent');
     expect(serialized).toContain('full head SHA');
   });
