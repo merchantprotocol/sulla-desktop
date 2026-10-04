@@ -31,11 +31,20 @@ jobs:
         corepack enable yarn
         yarn install --immutable --ignore-platform --ignore-scripts
     - name: Run dispatcher regression suite
-      run: >-
-        yarn test:unit:jest --runInBand
-        pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchModel.test.ts
-        pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchBackpressure.test.ts
-        pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchCountByRole.test.ts
-        pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchJournalReplay.test.ts
-        pkg/rancher-desktop/agent/routines/core/__tests__/reviewProjectArtifact.test.ts
-        pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts
+      run: |
+        set -o pipefail
+        log="${RUNNER_TEMP}/dispatcher-regressions.log"
+        yarn test:unit:jest --runInBand \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchModel.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchBackpressure.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchCountByRole.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchJournalReplay.test.ts \
+          pkg/rancher-desktop/agent/routines/core/__tests__/reviewProjectArtifact.test.ts \
+          pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts \
+          2>&1 | tee "$log"
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+          details=$(tail -n 80 "$log" | tail -c 5000 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+          echo "::error title=Focused dispatcher Jest failed::${details}"
+          exit "$rc"
+        fi
