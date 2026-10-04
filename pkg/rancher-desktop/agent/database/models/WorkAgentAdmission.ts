@@ -62,3 +62,29 @@ export function agentAdmissionSql(taskAlias: string, delegationOwner?: string): 
       WHERE live.task_id <> ${ taskId }
     )`;
 }
+
+/** Resolve configured lane roles inside the same transaction as admission. */
+export function taskLaneRoleSql(alias: string): string {
+  return `COALESCE((SELECT lane.semantic_role FROM work_lane_definitions lane
+    WHERE lane.lane_key = ${ alias }.status AND lane.reset_at IS NULL
+      AND lane.archived = false AND lane.enabled = true
+      AND (lane.scope = 'global_default' OR (lane.scope = 'project' AND lane.project_id = ${ alias }.project_id))
+    ORDER BY CASE WHEN lane.scope = 'project' THEN 0 ELSE 1 END LIMIT 1),
+    CASE ${ alias }.status WHEN 'in_review' THEN 'review'
+      WHEN 'done' THEN 'terminal' WHEN 'cancelled' THEN 'terminal'
+      WHEN 'planning' THEN 'planning' WHEN 'blocked' THEN 'blocked' ELSE 'execution' END)`;
+}
+
+/** Translate a lifecycle outcome into the project's configured destination. */
+export function taskLaneTargetSql(alias: string, value: string): string {
+  return `COALESCE((SELECT lane.lane_key FROM work_lane_definitions lane
+    WHERE lane.reset_at IS NULL AND lane.archived = false AND lane.enabled = true
+      AND lane.semantic_role = CASE ${ value } WHEN 'in_review' THEN 'review'
+        WHEN 'done' THEN 'terminal' WHEN 'blocked' THEN 'blocked' ELSE NULL END
+      AND (lane.scope = 'global_default' OR (lane.scope = 'project' AND lane.project_id = ${ alias }.project_id))
+      AND NOT EXISTS (SELECT 1 FROM work_lane_definitions override
+        WHERE override.scope = 'project' AND override.project_id = ${ alias }.project_id
+          AND override.lane_key = lane.lane_key AND override.reset_at IS NULL AND lane.scope = 'global_default')
+    ORDER BY CASE WHEN lane.scope = 'project' THEN 0 ELSE 1 END,
+      CASE WHEN lane.lane_key = ${ value } THEN 0 ELSE 1 END, lane.position, lane.lane_key LIMIT 1), ${ value })`;
+}

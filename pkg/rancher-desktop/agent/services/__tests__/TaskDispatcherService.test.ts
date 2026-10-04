@@ -51,6 +51,10 @@ const acquireSlotMock: any = jest.fn(() => Promise.resolve('slot'));
 const releaseSlotMock: any = jest.fn(() => Promise.resolve());
 const withStatementTimeoutMock: any = jest.fn((_timeoutMs: number, callback: () => Promise<unknown>) => callback());
 
+jest.unstable_mockModule('../../database/models/WorkLaneDefinitionModel', () => ({
+  WorkLaneDefinitionModel: { semanticRoleForStatus: async(_project: string, status: string) =>
+    ['in_review', 'qa'].includes(status) ? 'review' : 'execution' },
+}));
 jest.unstable_mockModule('../../database/PostgresClient', () => ({
   postgresClient: { withStatementTimeout: withStatementTimeoutMock },
 }));
@@ -200,11 +204,14 @@ describe('TaskDispatcherService', () => {
     await service.fillCandidatePool([
       { ...base, id: 'paused', status: 'todo', project_dispatch_enabled: false },
       { ...base, id: 'custom', status: 'client_followup', assignee: 'human', labels: ['gated'], has_active_wait: true, unresolved_dependencies: 2 },
-      { ...base, id: 'repair', status: 'in_review' },
+      { ...base, id: 'repair', status: 'qa', lane_role: 'review' },
+      { ...base, id: 'finished', status: 'shipped', lane_role: 'terminal' },
       { ...base, id: 'busy', status: 'planning', has_active_stage_claim: true },
       { ...base, id: 'resume', status: 'in_progress' },
     ]);
     expect(selected).toEqual(['custom', 'repair', 'resume']);
+    expect(service.fillVerificationPool).toHaveBeenCalledWith('repair');
+    expect(service.fillExecutionPool).not.toHaveBeenCalledWith('repair');
   });
 
   it('continues to later candidates after one admission error', async() => {

@@ -17,6 +17,10 @@ const executeRoutineMock: any = jest.fn();
 const recordReceiptMock: any = jest.fn();
 const reapStaleLeaselessExecutionsMock: any = jest.fn();
 
+jest.unstable_mockModule('../../database/models/WorkLaneDefinitionModel', () => ({
+  WorkLaneDefinitionModel: { semanticRoleForStatus: async(_project: string, status: string) =>
+    (({ 'plan-custom': 'planning', 'blocked-custom': 'blocked' } as Record<string, string>)[status] ?? status) },
+}));
 jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
   WorkItemsModel: {
     getTask:      getTaskMock,
@@ -125,15 +129,13 @@ describe('PlanningCouncilService', () => {
     }));
   });
 
-  it('routes the task back to blocked through the application facade when launch throws', async() => {
+  it('releases failed planning ownership without moving the task backward', async() => {
     executeRoutineMock.mockRejectedValue(new Error('routine engine unavailable'));
     const PlanningCouncilService = await service();
     await PlanningCouncilService.handleTaskStatusTransition({ ...task, status: 'blocked' }, 'in_progress', 'worker');
 
     expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'failed', expect.stringContaining('routine engine unavailable'));
-    expect(applicationUpdateTaskMock).toHaveBeenCalledWith('task-1', {
-      status: 'blocked', assignee: 'heartbeat', actor: 'planning-council',
-    });
+    expect(applicationUpdateTaskMock).not.toHaveBeenCalled();
   });
 
   it('does nothing when the human disabled the locked routine', async() => {
@@ -197,8 +199,16 @@ describe('PlanningCouncilService', () => {
       'failed',
       expect.stringContaining('without persisting a final plan'),
     );
-    expect(applicationUpdateTaskMock).toHaveBeenCalledWith('task-1', {
-      status: 'blocked', assignee: 'heartbeat', actor: 'planning-council',
-    });
+    expect(applicationUpdateTaskMock).not.toHaveBeenCalled();
   });
+  it('launches custom planning lanes with their actual status in the prompt', async() => {
+    const custom = { ...task, status: 'plan-custom' };
+    claimMock.mockResolvedValue({ run, task: custom });
+    const PlanningCouncilService = await service();
+    await PlanningCouncilService.handleTaskStatusTransition(custom, 'blocked-custom', 'worker');
+    expect(claimMock).toHaveBeenCalledWith('task-1', 'plan-custom', 'worker');
+    expect(executeRoutineMock.mock.calls[0][1]).toContain('"status":"plan-custom"');
+    expect(applicationUpdateTaskMock).not.toHaveBeenCalled();
+  });
+
 });

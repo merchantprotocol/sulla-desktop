@@ -24,7 +24,7 @@ describe('WorkTaskPlanningRunModel', () => {
     jest.restoreAllMocks();
   });
 
-  it('claims and moves blocked work to planning in one locked transaction', async() => {
+  it('claims blocked work without changing its lane', async() => {
     jest.spyOn(postgresClient, 'queryOne').mockResolvedValue({ project_id: 'project-1' } as any);
     jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
       ready: false, catalogPresent: false, missingRoles: ['planning'], degradedReason: 'compatibility',
@@ -49,12 +49,11 @@ describe('WorkTaskPlanningRunModel', () => {
 
     const claimed = await WorkTaskPlanningRunModel.claim('task-1', 'blocked', 'heartbeat');
 
-    expect(claimed).toMatchObject({ run: { status: 'active' }, task: { status: 'planning' } });
+    expect(claimed).toMatchObject({ run: { status: 'active' }, task: { status: 'blocked' } });
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE');
     expect(query.mock.calls[1][0]).toContain("status = 'active'");
     expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_planning_runs');
-    expect(query.mock.calls[4][0]).toContain('status = $2');
-    expect(query.mock.calls[4][1]).toEqual(['task-1', 'planning']);
+    expect(query.mock.calls.some(([sql]: [string]) => sql.includes('UPDATE work_tasks'))).toBe(false);
   });
 
   it('does not launch a duplicate when a task already has an active council', async() => {

@@ -9,6 +9,8 @@ import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
 import { WorkTaskPlanningRunModel } from '../WorkTaskPlanningRunModel';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 import { LifecycleCapabilityModel } from '../LifecycleCapabilityModel';
+import { WorkflowExecutionModel } from '../WorkflowExecutionModel';
+import { ArtifactReceiptModel } from '../ArtifactReceiptModel';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
 const connectionString = process.env.SULLA_INTEGRATION_POSTGRES_URL;
@@ -31,17 +33,18 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         id text PRIMARY KEY, project_id text, epic_id text, status text, archived boolean DEFAULT false,
         assignee text, labels text[], source_ref text, github_issue text,
         last_activity_at timestamptz DEFAULT now(), last_moved_at timestamptz DEFAULT now(),
-        updated_at timestamptz DEFAULT now(), created_at timestamptz DEFAULT now(), last_moved_by text
+        updated_at timestamptz DEFAULT now(), created_at timestamptz DEFAULT now(), last_moved_by text, completed_at timestamptz
       );
       CREATE TABLE work_task_dispatches (
         id text PRIMARY KEY, task_id text, agent_id text, thread_id text, kind text, attempt int,
         status text DEFAULT 'running', started_at timestamptz DEFAULT now(), finished_at timestamptz,
         origin_dispatch_id text, origin_agent_id text, origin_evidence jsonb, reviewer_agent_ids text[],
-        artifact_url text, artifact_location text
+        artifact_url text, artifact_location text, workflow_execution_id text, heartbeat_at timestamptz DEFAULT now(),
+        error text, failure_reason text, review_generation_hash text, result text, verdict text, artifact_sha text
       );
       CREATE TABLE work_task_stage_claims (
         id text PRIMARY KEY, task_id text, capability_key text, stage text, owner text,
-        runtime_instance_id text, status text DEFAULT 'active'
+        runtime_instance_id text, status text DEFAULT 'active', released_at timestamptz, heartbeat_at timestamptz DEFAULT now()
       );
       CREATE TABLE lifecycle_capabilities (
         capability_key text PRIMARY KEY, enabled boolean, health text, active_owner text,
@@ -53,19 +56,21 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         id text PRIMARY KEY, task_id text, generation int, previous_lane_key text, lane_key text,
         binding_id text, workflow_id text, resolution_source text, fallback_reason text,
         binding_snapshot jsonb, workflow_snapshot jsonb, status text, actor text,
-        execution_id text, started_at timestamptz, UNIQUE(task_id, generation)
+        execution_id text, started_at timestamptz, completed_at timestamptz, UNIQUE(task_id, generation)
       );
       CREATE TABLE work_task_artifact_custody (id text, task_id text, custody jsonb, created_at timestamptz DEFAULT now());
-      CREATE TABLE work_lane_definitions (lane_key text, semantic_role text, system_required boolean,
+      CREATE TABLE work_lane_definitions (position int DEFAULT 0, lane_key text, semantic_role text, system_required boolean,
         reset_at timestamptz, archived boolean DEFAULT false, enabled boolean DEFAULT true, scope text, project_id text);
       INSERT INTO work_lane_definitions (lane_key, semantic_role, system_required, scope)
-        VALUES ('in_progress', 'execution', true, 'global_default');
+        VALUES ('in_progress', 'execution', true, 'global_default'),
+          ('qa', 'review', false, 'global_default'), ('shipped', 'terminal', false, 'global_default');
       CREATE TABLE work_lane_workflow_bindings (profile_id text, active boolean, archived boolean,
         scope text, epic_id text, lane_key text, project_id text, semantic_role text, created_at timestamptz);
       CREATE TABLE work_project_domain_events (id text, task_id text, generation int, generation_hash text,
         event_type text, idempotency_key text UNIQUE, payload jsonb, occurred_at timestamptz);
       CREATE TABLE work_task_planning_runs (id text PRIMARY KEY, task_id text, status text DEFAULT 'active',
         workflow_id text, trigger_status text, trigger_actor text, attempt int);
+      CREATE TABLE work_task_comments (id text, task_id text, body text, author text);
       CREATE TABLE agent_jobs (job_id text, status text, results jsonb);
       INSERT INTO work_projects VALUES ('enabled', 'working', true), ('paused', 'blocked', false);
       INSERT INTO lifecycle_capabilities VALUES
@@ -91,6 +96,9 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
   });
 
   beforeEach(async() => {
+    jest.spyOn(ArtifactReceiptModel, 'insertIfAbsentWithClient').mockResolvedValue({ inserted: true, row: { id: 'receipt' } } as any);
+    jest.spyOn(ArtifactReceiptModel, 'attachCommentWithClient').mockResolvedValue(undefined);
+    jest.spyOn(WorkflowExecutionModel, 'markRunning').mockResolvedValue(undefined as any);
     jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
       ready: false, catalogPresent: false, missingRoles: ['planning'], degradedReason: 'fixture',
     });
@@ -239,6 +247,52 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     await expect(admit('dispatch', 'b')).resolves.toBeNull();
     await expect(LifecycleCapabilityModel.claimStage('a', 'todo-execution', 'planning', 'dispatcher', 'direct'))
       .resolves.toMatchObject({ claimed: true, claim: { id: direct.claim?.id } });
+  });
+
+  it('routes custom review and terminal lanes by role without executing them as ordinary work', async() => {
+    await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES
+      ('review', 'enabled', 'qa'), ('done', 'enabled', 'shipped')`);
+    expect(await WorkTaskDispatchModel.enumerateCandidates()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'review', lane_role: 'review' }),
+      expect.objectContaining({ id: 'done', lane_role: 'terminal' }),
+    ]));
+    await expect(admit('dispatch', 'review')).resolves.toBeNull();
+    await expect(admit('dispatch', 'done')).resolves.toBeNull();
+    await expect(WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'review-runtime', 'review'))
+      .resolves.toMatchObject({ task: { status: 'qa' }, stage_claim: { stage: 'qa' } });
+  });
+
+  it('keeps blocked work in place when planning takes ownership', async() => {
+    await pool.query("INSERT INTO work_tasks (id, project_id, status) VALUES ('blocked', 'enabled', 'blocked')");
+    await expect(WorkTaskPlanningRunModel.claim('blocked', 'blocked'))
+      .resolves.toMatchObject({ task: { status: 'blocked' } });
+    expect((await pool.query("SELECT status FROM work_tasks WHERE id='blocked'")).rows[0].status).toBe('blocked');
+    expect((await pool.query('SELECT * FROM work_lane_entry_automations')).rows).toHaveLength(0);
+  });
+
+  it('reuses all three slots after legacy review checkpoints settle, including custom lanes', async() => {
+    for (const id of ['a', 'b', 'c', 'next']) {
+      await pool.query("INSERT INTO work_tasks (id, project_id, status) VALUES ($1, 'enabled', 'qa')", [id]);
+    }
+    for (const id of ['a', 'b', 'c']) {
+      const claimed = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], `runtime-${ id }`, id);
+      expect(claimed).not.toBeNull();
+      await WorkTaskDispatchModel.recordReviewLaunchWithExecution(claimed!.dispatch.id, {
+        executionId: `review-${ id }`, workflowId: 'review', workflowName: 'review', workflowSlug: 'review',
+        triggerInput: '', scopeTaskId: id, reviewerAgentIds: [],
+      });
+      expect((await pool.query('SELECT status FROM work_lane_entry_automations WHERE task_id=$1', [id])).rows[0].status)
+        .toBe('completed');
+      // Simulate checkpoints created by the earlier implementation.
+      await pool.query("UPDATE work_lane_entry_automations SET status='running' WHERE task_id=$1", [id]);
+      await WorkTaskDispatchModel.finalizeVerification(claimed!.dispatch.id, 'REWORK', 'a'.repeat(40), null, 'Repaired');
+      expect((await pool.query('SELECT status FROM work_tasks WHERE id=$1', [id])).rows[0].status).toBe('qa');
+    }
+    expect((await pool.query("SELECT * FROM work_lane_entry_automations WHERE status='running'")).rows).toHaveLength(0);
+    expect((await pool.query("SELECT * FROM work_task_stage_claims WHERE status='active'")).rows).toHaveLength(0);
+    const claims = await Promise.all(['a', 'b', 'next'].map(id =>
+      WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], `next-${ id }`, id)));
+    expect(claims.filter(Boolean)).toHaveLength(3);
   });
 
 });

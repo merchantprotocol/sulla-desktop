@@ -20,6 +20,7 @@ import {
   type ReviewDisposition,
   type VerificationVerdict,
 } from '../database/models/WorkTaskDispatchModel';
+import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
 import { WorkflowModel } from '../database/models/WorkflowModel';
 import { WorkflowExecutionModel } from '../database/models/WorkflowExecutionModel';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
@@ -367,7 +368,7 @@ export class TaskDispatcherService {
     for (const candidate of candidates) {
       // Consider every row, even when an explicit stop or live editor prevents action.
       const hold = !candidate.project_dispatch_enabled ? 'project explicitly paused'
-        : ['done', 'cancelled', 'parked'].includes(candidate.status) ? 'terminal task'
+        : (candidate.lane_role === 'terminal' || ['done', 'cancelled', 'parked'].includes(candidate.status)) ? 'terminal task'
           : candidate.has_active_dispatch || candidate.has_active_stage_claim ? 'live owner' : null;
       if (hold) {
         console.log('[TaskDispatcher] Candidate held at action boundary', { taskId: candidate.id, hold });
@@ -375,7 +376,7 @@ export class TaskDispatcherService {
       }
       if (await WorkTaskDispatchModel.countRunning() >= capacity) continue;
       try {
-        if (candidate.status === 'in_review') {
+        if ((candidate.lane_role === 'review' || candidate.status === 'in_review')) {
           if (await this.fillVerificationPool(candidate.id)) dispatched += 1;
         } else {
           dispatched += await this.fillExecutionPool(candidate.id);
@@ -733,7 +734,7 @@ export class TaskDispatcherService {
           if (!parsed) {
             // A missing disposition can mean the synthesis node correctly abstained on a generation superseded mid-flight, not a malformed output.
             const liveTask = await WorkItemsModel.getTask(task.id);
-            if (liveTask?.status !== 'in_review') {
+            if (!liveTask || await WorkLaneDefinitionModel.semanticRoleForStatus(liveTask.project_id, liveTask.status) !== 'review') {
               const currentArtifacts = await this.resolveReviewArtifacts(task, comments, dispatch.origin_evidence);
               const currentGenerationHash = WorkTaskDispatchModel.reviewGenerationHash(currentArtifacts);
               await WorkTaskDispatchModel.failVerification(

@@ -117,7 +117,7 @@ describe('WorkTaskDispatchModel', () => {
       stage_claim: { id: 'stage-1', stage: 'in_progress' },
     });
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
-    expect(query.mock.calls[0][0]).toContain("t.status NOT IN ('in_review', 'done', 'cancelled', 'parked')");
+    expect(query.mock.calls[0][0]).toContain("NOT IN ('review', 'terminal')");
     expect(query.mock.calls[0][0]).toContain('work_task_dispatches');
     expect(query.mock.calls[0][0]).not.toContain("FROM unnest(COALESCE(t.labels, '{}')) AS label");
     expect(query.mock.calls[0][0]).not.toContain('LOWER(t.assignee)');
@@ -326,7 +326,7 @@ describe('WorkTaskDispatchModel', () => {
     await expect(WorkTaskDispatchModel.claimNextReview('codex-test', [], 'runtime-1')).resolves.toMatchObject({
       task: { id: 'task-2' }, dispatch: { kind: 'verification' }, stage_claim: { id: 'stage-review-1' },
     });
-    expect(query.mock.calls[0][0]).toContain("t.status = 'in_review'");
+    expect(query.mock.calls[0][0]).toContain("lane.semantic_role");
     expect(query.mock.calls[0][0]).toContain('JOIN work_projects p ON p.id = t.project_id');
     expect(query.mock.calls[0][0]).toContain('GREATEST(t.last_activity_at, t.last_moved_at');
     expect(query.mock.calls[0][0]).not.toContain('CASE p.priority');
@@ -382,7 +382,7 @@ describe('WorkTaskDispatchModel', () => {
 
     await expect(WorkTaskDispatchModel.recoverStale(45)).resolves.toEqual(['task-2']);
     const claimCall = query.mock.calls.find(([sql]: [string]) => sql.includes('UPDATE work_task_stage_claims'));
-    const taskCall = query.mock.calls.find(([sql]: [string]) => sql.includes("status = 'in_review'"));
+    const taskCall = query.mock.calls.find(([sql]: [string]) => sql.includes('UPDATE work_tasks'));
     expect(claimCall[0]).toContain("capability_key = 'in-review-verification'");
     expect(taskCall[0]).toContain("assignee = 'verifier'");
   });
@@ -463,7 +463,7 @@ describe('WorkTaskDispatchModel', () => {
 
     await expect(WorkTaskDispatchModel.failVerification('dispatch-fail', 'adapter_unavailable')).resolves.toBe(true);
     expect(query.mock.calls.some(([sql]: [string]) => sql.includes("'terminal:' || $2"))).toBe(false);
-    expect(query.mock.calls.at(-1)?.[1]).toEqual(['task-fail', 'in_review', 'heartbeat']);
+    expect(query.mock.calls.find(([sql]: [string]) => sql.includes('UPDATE work_tasks'))?.[1]).toEqual(['task-fail', 'in_review', 'heartbeat']);
   });
 
   it('does not manufacture a planning lane entry from verifier infrastructure failure', async() => {
@@ -475,8 +475,8 @@ describe('WorkTaskDispatchModel', () => {
     (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
 
     await expect(WorkTaskDispatchModel.failVerification('dispatch-fail', 'adapter_unavailable')).resolves.toBe(true);
-    expect(query.mock.calls.at(-1)?.[0]).toContain('RETURNING *');
-    expect(query.mock.calls.at(-1)?.[1]).toEqual(['task-fail', 'in_review', 'heartbeat']);
+    expect(query.mock.calls.find(([sql]: [string]) => sql.includes('UPDATE work_tasks'))?.[0]).toContain('RETURNING *');
+    expect(query.mock.calls.find(([sql]: [string]) => sql.includes('UPDATE work_tasks'))?.[1]).toEqual(['task-fail', 'in_review', 'heartbeat']);
   });
 
   it('binds one immutable generation and durably excludes every worker and custodian', async() => {
@@ -727,7 +727,7 @@ describe('WorkTaskDispatchModel', () => {
     expect(commentBody).toContain('Undo:');
   });
 
-  it('atomically records protected review evidence and routes REPLAN to the planning council', async() => {
+  it('atomically records protected review evidence and keeps REPLAN in the current review lane', async() => {
     const artifacts: any[] = [{
       type:         'code_pr',
       canonicalRef: 'merchantprotocol/sulla-desktop#671',
@@ -767,7 +767,7 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[2][0]).toContain('reviewer_agent_ids = $12::text[]');
     expect(query.mock.calls[3][1][2]).toContain('REPLAN');
     expect(query.mock.calls[3][1][2]).toContain('<!-- artifact-receipt');
-    expect(query.mock.calls[4][1]).toEqual(['task-3', 'planning', 'dispatcher']);
+    expect(query.mock.calls[4][1]).toEqual(['task-3', 'in_review', 'dispatcher']);
   });
 
   it('accepts a reviewer-advanced generation and keeps repaired work in review', async() => {

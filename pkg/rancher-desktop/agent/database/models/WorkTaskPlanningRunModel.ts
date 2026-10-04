@@ -47,8 +47,7 @@ export class WorkTaskPlanningRunModel {
   }
 
   /**
-   * Atomically claims a planning council. A blocked task becomes planning in
-   * the same transaction; an already-planning task is left untouched.
+   * Atomically claims a council without moving unfinished work out of its lane.
    */
   static async claim(
     taskId: string,
@@ -63,9 +62,6 @@ export class WorkTaskPlanningRunModel {
     const planningKeys = capability.ready
       ? await WorkLaneDefinitionModel.laneKeysForRoles(preview.project_id, ['planning', 'blocked'])
       : ['planning', 'blocked'];
-    const planningLaneKey = await WorkLaneDefinitionModel.preferredLaneKey(
-      preview.project_id, 'planning', 'planning',
-    );
     return postgresClient.transaction(async(client: PoolClient) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
       const taskResult = await client.query<WorkTaskRecord>(`
@@ -99,28 +95,7 @@ export class WorkTaskPlanningRunModel {
         RETURNING *
       `, [id, taskId, PROJECT_TASK_PLANNING_WORKFLOW_ID, triggerStatus, actor ?? null, attempt]);
 
-      let claimedTask = task;
-      const currentLane = capability.ready
-        ? await WorkLaneDefinitionModel.resolveStatus(task.project_id, task.status)
-        : null;
-      if ((currentLane?.semantic_role ?? task.status) === 'blocked') {
-        const moved = await client.query<WorkTaskRecord>(`
-          UPDATE work_tasks
-             SET status = $2, assignee = 'planning-council',
-                 updated_at = now(), last_moved_at = now(),
-                 last_activity_at = now(), last_moved_by = 'planning-council'
-           WHERE id = $1
-           RETURNING *
-        `, [taskId, planningLaneKey]);
-        claimedTask = moved.rows[0] ?? task;
-        if (moved.rows[0]) {
-          const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-          await recordTaskTransitionWithClient(client, taskId, task.status, moved.rows[0].status,
-            'planning-council', 'planning-council-claim');
-        }
-      }
-
-      return { run: inserted.rows[0], task: claimedTask };
+      return { run: inserted.rows[0], task };
     });
   }
 

@@ -7,7 +7,7 @@ import {
   buildReceipt, receiptInsertInput, renderReceiptComment,
   type ArtifactReceipt, type ArtifactReceiptInput,
 } from '../../services/ArtifactReceiptService';
-import { agentAdmissionSql } from './WorkAgentAdmission';
+import { agentAdmissionSql, taskLaneRoleSql, taskLaneTargetSql } from './WorkAgentAdmission';
 import { ArtifactReceiptModel } from './ArtifactReceiptModel';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { WorkflowExecutionModel } from './WorkflowExecutionModel';
@@ -141,6 +141,7 @@ export interface DispatchCandidate extends WorkTaskRecord {
   epic_status:              string | null;
   project_dispatch_enabled: boolean;
   has_active_dispatch:      boolean;
+  lane_role?:               WorkLaneSemanticRole;
   has_active_stage_claim:   boolean;
   has_active_wait:          boolean;
   unresolved_dependencies:  number | string;
@@ -290,7 +291,7 @@ export class WorkTaskDispatchModel {
    */
   static async enumerateCandidates(limit?: number): Promise<DispatchCandidate[]> {
     return postgresClient.query<DispatchCandidate>(`
-      SELECT t.*,
+      SELECT t.*, ${ taskLaneRoleSql('t') } AS lane_role,
              p.status AS project_status,
              e.status AS epic_status,
              p.dispatch_enabled AS project_dispatch_enabled,
@@ -336,7 +337,7 @@ export class WorkTaskDispatchModel {
           LEFT JOIN work_epics e ON e.id = t.epic_id
           JOIN work_projects p ON p.id = t.project_id
          WHERE t.archived = false
-           AND t.status NOT IN ('in_review', 'done', 'cancelled', 'parked')
+           AND ${ taskLaneRoleSql('t') } NOT IN ('review', 'terminal') AND t.status <> 'parked'
            AND ($1::text IS NULL OR t.id = $1)
            ${ projectDispatchEnabledSql('t') }
            ${ agentAdmissionSql('t', 'task-dispatcher') }
@@ -442,7 +443,7 @@ export class WorkTaskDispatchModel {
           LEFT JOIN work_epics e ON e.id = t.epic_id
           JOIN work_projects p ON p.id = t.project_id
          WHERE t.archived = false
-           AND t.status = 'in_review'
+           AND ${ taskLaneRoleSql('t') } = 'review'
            AND ($1::text IS NULL OR t.id = $1)
            AND p.dispatch_enabled = true
            ${ agentAdmissionSql('t', 'task-dispatcher-review') }
@@ -470,7 +471,7 @@ export class WorkTaskDispatchModel {
         client,
         task.id,
         'in-review-verification',
-        'in_review',
+        task.status,
         'dispatcher',
         runtimeInstanceId,
         true,
@@ -505,7 +506,7 @@ export class WorkTaskDispatchModel {
         UPDATE work_tasks
            SET assignee = 'verifier', updated_at = now(), last_activity_at = now(),
                last_moved_at = now(), last_moved_by = 'dispatcher'
-         WHERE id = $1 AND status = 'in_review'
+         WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
       `, [task.id]);
 
       return { dispatch: inserted.rows[0], task, stage_claim: stageClaim.claim };
@@ -540,7 +541,7 @@ export class WorkTaskDispatchModel {
         LEFT JOIN work_epics e ON e.id = t.epic_id
         JOIN work_projects p ON p.id = t.project_id
        WHERE t.archived = false
-         AND t.status = 'in_review'
+         AND ${ taskLaneRoleSql('t') } = 'review'
          AND e.archived = false
          AND p.archived = false
     `);
@@ -847,9 +848,9 @@ export class WorkTaskDispatchModel {
             execution_id, status, actor, started_at
           )
           SELECT $1, t.id, 1, NULL, t.status, $3, 'core', '{}'::jsonb, '{}'::jsonb,
-                 $4, 'running', 'dispatcher', now()
+                 $4, 'completed', 'dispatcher', now()
             FROM work_tasks t
-           WHERE t.id = $2 AND t.status = 'in_review' AND t.archived = false
+           WHERE t.id = $2 AND ${ taskLaneRoleSql('t') } = 'review' AND t.archived = false
           ON CONFLICT (task_id, generation) DO NOTHING
           RETURNING generation
         `, [`lane-entry-${ randomUUID() }`, execution.scopeTaskId, execution.workflowId, execution.executionId]);
@@ -880,7 +881,7 @@ export class WorkTaskDispatchModel {
         SELECT d.task_id FROM work_task_dispatches d
         JOIN work_tasks t ON t.id = d.task_id
         WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
-          AND t.status = 'in_review'
+          AND ${ taskLaneRoleSql('t') } = 'review'
         FOR UPDATE OF d, t
       `, [id]);
       const taskId = current.rows[0]?.task_id;
@@ -926,10 +927,10 @@ export class WorkTaskDispatchModel {
           [...new Set(artifacts.map(value => value.type))], JSON.stringify(artifacts), [...excluded], priorDisposition,
           [...workers], [...custodians]]);
         const moved = await client.query<WorkTaskRecord>(`
-          UPDATE work_tasks SET status = $2, assignee = $3, updated_at = now(),
+          UPDATE work_tasks SET status = ${ taskLaneTargetSql('work_tasks', '$2') }, assignee = $3, updated_at = now(),
             last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier',
             completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
-          WHERE id = $1 AND status = 'in_review'
+          WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
           RETURNING *
         `, [taskId, transition.status, transition.assignee]);
         if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
@@ -937,6 +938,7 @@ export class WorkTaskDispatchModel {
           await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
             'verifier', 'protected-review-suppressed');
         }
+        await this.releaseReviewOwnership(client, id, taskId);
         return { generationHash, excludedAgentIds: [...excluded], suppressed: true };
       }
 
@@ -1211,7 +1213,7 @@ export class WorkTaskDispatchModel {
 
       const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = $2, assignee = $3, updated_at = now(),
+           SET status = ${ taskLaneTargetSql('work_tasks', '$2') }, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'dispatcher', completed_at = NULL
          WHERE id = $1 AND assignee = 'dispatcher'
@@ -1292,18 +1294,31 @@ export class WorkTaskDispatchModel {
              SET status = 'recovered', released_at = now(), heartbeat_at = now()
            WHERE task_id = ANY($1::text[])
              AND capability_key = 'in-review-verification'
-             AND stage = 'in_review'
              AND status = 'active'
         `, [verificationTaskIds]);
 
         await client.query(`
           UPDATE work_tasks
-             SET status = 'in_review', assignee = 'heartbeat',
+             SET assignee = 'heartbeat',
                  updated_at = now(), last_moved_at = now(),
                  last_activity_at = now(), last_moved_by = 'dispatcher'
-           WHERE id = ANY($1::text[]) AND status = 'in_review' AND assignee = 'verifier'
+           WHERE id = ANY($1::text[]) AND ${ taskLaneRoleSql('work_tasks') } = 'review' AND assignee = 'verifier'
         `, [verificationTaskIds]);
       }
+      for (const row of stale.rows.filter(row => row.kind === 'verification')) {
+        await this.releaseReviewOwnership(client, row.id, row.task_id);
+      }
+      // Upgrade recovery: older settled reviews could leave their synthetic
+      // lane checkpoint running forever, consuming admission capacity.
+      await client.query(`
+        UPDATE work_lane_entry_automations lane SET status = 'completed', completed_at = now()
+         FROM work_task_dispatches dispatch
+         WHERE dispatch.kind = 'verification' AND dispatch.status <> 'running'
+           AND lane.task_id = dispatch.task_id AND lane.execution_id = dispatch.workflow_execution_id
+           AND lane.status = 'running'
+           AND NOT EXISTS (SELECT 1 FROM work_task_dispatches live
+             WHERE live.workflow_execution_id = lane.execution_id AND live.status = 'running')
+      `);
       return stale.rows.map(row => row.task_id);
     });
   }
@@ -1405,11 +1420,12 @@ export class WorkTaskDispatchModel {
         UPDATE work_task_stage_claims
            SET status = 'recovered', released_at = now(), heartbeat_at = now()
          WHERE task_id = $1 AND status = 'active'
-           AND stage = CASE WHEN $2 = 'verification' THEN 'in_review' ELSE 'in_progress' END
+           AND capability_key = CASE WHEN $2 = 'verification' THEN 'in-review-verification' ELSE 'todo-execution' END
       `, [row.task_id, row.kind]);
       if (journalTerminal && journalTable.rows[0]?.exists) {
         await client.query(`UPDATE work_task_outcome_journal SET consumed_at = COALESCE(consumed_at, now()) WHERE dispatch_id = $1 AND consumed_at IS NULL`, [row.id]);
       }
+      if (row.kind === 'verification') await this.releaseReviewOwnership(client, row.id, row.task_id);
       settled.push(row.id);
     }
     return { inspected: rows.rows.length, evidenced: evidencedIds.length, evidencedIds, settled, reportOnly: reportOnlyIds, timerFallback };
@@ -1435,7 +1451,6 @@ export class WorkTaskDispatchModel {
              SELECT 1 FROM work_task_stage_claims claim
               WHERE claim.task_id = dispatch.task_id
                 AND claim.capability_key = 'in-review-verification'
-                AND claim.stage = 'in_review'
                 AND claim.status = 'active'
            )
         RETURNING dispatch.id, dispatch.task_id
@@ -1446,11 +1461,12 @@ export class WorkTaskDispatchModel {
       if (reclaimedTaskIds.length > 0) {
         await client.query(`
           UPDATE work_tasks
-             SET status = 'in_review', assignee = 'heartbeat', updated_at = now(),
+             SET assignee = 'heartbeat', updated_at = now(),
                  last_activity_at = now(), last_moved_by = 'dispatcher'
-           WHERE id = ANY($1::text[]) AND status = 'in_review' AND assignee = 'verifier'
+           WHERE id = ANY($1::text[]) AND ${ taskLaneRoleSql('work_tasks') } = 'review' AND assignee = 'verifier'
         `, [reclaimedTaskIds]);
       }
+      for (const row of reclaimed.rows) await this.releaseReviewOwnership(client, row.id, row.task_id);
       return reclaimedTaskIds;
     });
   }
@@ -1468,7 +1484,7 @@ export class WorkTaskDispatchModel {
       failures: string;
     }>(`
       SELECT
-        (SELECT COUNT(*) FROM work_tasks WHERE archived = false AND status = 'in_review')::text AS backlog,
+        (SELECT COUNT(*) FROM work_tasks WHERE archived = false AND ${ taskLaneRoleSql('work_tasks') } = 'review')::text AS backlog,
         (SELECT COUNT(*) FROM work_task_dispatches WHERE kind = 'verification' AND status = 'running')::text AS active,
         (SELECT COUNT(*) FROM work_task_dispatches
           WHERE kind = 'verification' AND status = 'completed'
@@ -1486,7 +1502,20 @@ export class WorkTaskDispatchModel {
     };
   }
 
-  /** Settle a parsed verifier verdict and its Projects transition atomically. */
+  /** Release only ownership attached to this review, in its settlement transaction. */
+  private static async releaseReviewOwnership(client: PoolClient, id: string, taskId: string): Promise<void> {
+    await client.query(`
+      UPDATE work_task_stage_claims SET status = 'released', released_at = now(), heartbeat_at = now()
+       WHERE task_id = $1 AND capability_key = 'in-review-verification' AND status = 'active'
+    `, [taskId]);
+    await client.query(`
+      UPDATE work_lane_entry_automations lane SET status = 'completed', completed_at = now()
+       FROM work_task_dispatches dispatch
+       WHERE dispatch.id = $1 AND lane.task_id = dispatch.task_id AND lane.status = 'running'
+         AND lane.execution_id = dispatch.workflow_execution_id
+    `, [id]);
+  }
+
   static async finalizeVerification(
     id: string,
     verdict: VerificationVerdict,
@@ -1500,7 +1529,7 @@ export class WorkTaskDispatchModel {
           FROM work_task_dispatches d
           JOIN work_tasks t ON t.id = d.task_id
          WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
-           AND t.status = 'in_review'
+           AND ${ taskLaneRoleSql('t') } = 'review'
          FOR UPDATE OF d, t
       `, [id]);
       const taskId = current.rows[0]?.task_id;
@@ -1544,11 +1573,11 @@ export class WorkTaskDispatchModel {
       }), 'verifier');
       const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = $2, assignee = $3, updated_at = now(),
+           SET status = CASE WHEN $2 = 'in_review' THEN status ELSE ${ taskLaneTargetSql('work_tasks', '$2') } END, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
                completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
-         WHERE id = $1 AND status = 'in_review'
+         WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
         `, [taskId, transition.status, transition.assignee]);
         if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
@@ -1556,6 +1585,7 @@ export class WorkTaskDispatchModel {
           await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
             'dispatcher', 'dispatch-outcome');
         }
+      await this.releaseReviewOwnership(client, id, taskId);
       return finalVerdict;
     });
   }
@@ -1576,7 +1606,7 @@ export class WorkTaskDispatchModel {
           FROM work_task_dispatches d
           JOIN work_tasks t ON t.id = d.task_id
          WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
-           AND t.status = 'in_review'
+           AND ${ taskLaneRoleSql('t') } = 'review'
          FOR UPDATE OF d, t
       `, [id]);
       const taskId = current.rows[0]?.task_id;
@@ -1602,7 +1632,7 @@ export class WorkTaskDispatchModel {
         : finalDisposition === 'REPAIRABLE'
           ? { status: 'in_review', assignee: 'heartbeat' }
           : finalDisposition === 'REPLAN'
-            ? { status: 'planning', assignee: 'dispatcher' }
+            ? { status: 'in_review', assignee: 'dispatcher' }
         : { status: 'blocked', assignee: 'heartbeat' };
 
       if (finalDisposition === 'PASS') {
@@ -1708,11 +1738,11 @@ export class WorkTaskDispatchModel {
 
       const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = $2, assignee = $3, updated_at = now(),
+           SET status = CASE WHEN $2 = 'in_review' THEN status ELSE ${ taskLaneTargetSql('work_tasks', '$2') } END, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
                completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
-         WHERE id = $1 AND status = 'in_review'
+         WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
       `, [taskId, transition.status, transition.assignee]);
       if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
@@ -1720,6 +1750,7 @@ export class WorkTaskDispatchModel {
         await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
           'verifier', 'protected-review-outcome');
       }
+      await this.releaseReviewOwnership(client, id, taskId);
       return finalDisposition;
     });
   }
@@ -1766,9 +1797,9 @@ export class WorkTaskDispatchModel {
       }
       const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = $2, assignee = $3, updated_at = now(),
+           SET status = CASE WHEN $2 = 'in_review' THEN status ELSE ${ taskLaneTargetSql('work_tasks', '$2') } END, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier'
-         WHERE id = $1 AND status = 'in_review'
+         WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
       `, [taskId, 'in_review', 'heartbeat']);
       if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
@@ -1776,6 +1807,7 @@ export class WorkTaskDispatchModel {
         await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
           'verifier', 'verification-failure');
       }
+      await this.releaseReviewOwnership(client, id, taskId);
       return true;
     });
   }
