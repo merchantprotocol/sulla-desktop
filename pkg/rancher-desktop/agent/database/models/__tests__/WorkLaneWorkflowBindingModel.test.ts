@@ -106,7 +106,6 @@ describe('WorkLaneWorkflowBindingModel', () => {
     const client = {
       query: (jest.fn() as any)
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [{ id: 'entry-1', task_id: 'task-1', generation: 4, lane_key: 'todo' }] }),
     };
     (postgresClient as any).transaction = jest.fn((callback: any) => callback(client));
@@ -114,7 +113,7 @@ describe('WorkLaneWorkflowBindingModel', () => {
     const result = await WorkLaneWorkflowBindingModel.claimLaneEntry('task-1', 'todo');
     expect(result).toEqual({ created: false, entry: expect.objectContaining({ generation: 4 }) });
     expect(client.query.mock.calls[0][0]).toContain('pg_advisory_xact_lock');
-    expect(client.query).toHaveBeenCalledTimes(3);
+    expect(client.query).toHaveBeenCalledTimes(2);
   });
 
   it('boot retry reclaims reconciler-killed rows only while their lane generation is current', async() => {
@@ -135,7 +134,7 @@ describe('WorkLaneWorkflowBindingModel', () => {
     expect(resetSql).toContain('newer.generation > lane.generation');
   });
 
-  it('does not let an unresolved dependency block entry into blocked', async() => {
+  it.each(['todo', 'in_progress', 'in_review', 'blocked'])('treats unresolved dependencies as context when entering %s', async(laneKey) => {
     const assertClaimable = jest.spyOn(WorkTaskDependencyModel, 'assertClaimable')
       .mockRejectedValue(new Error('dependency hold'));
     const client = {
@@ -144,12 +143,12 @@ describe('WorkLaneWorkflowBindingModel', () => {
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [{ project_id: 'project-1', epic_id: null, semantic_role: 'blocked', system_required: true }] })
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ id: 'entry-2', task_id: 'task-1', generation: 5, lane_key: 'blocked' }] }),
+        .mockResolvedValueOnce({ rows: [{ id: 'entry-2', task_id: 'task-1', generation: 5, lane_key: laneKey }] }),
     };
     (postgresClient as any).transaction = jest.fn((callback: any) => callback(client));
 
-    await expect(WorkLaneWorkflowBindingModel.claimLaneEntry('task-1', 'blocked'))
-      .resolves.toMatchObject({ created: true, entry: { lane_key: 'blocked' } });
+    await expect(WorkLaneWorkflowBindingModel.claimLaneEntry('task-1', laneKey))
+      .resolves.toMatchObject({ created: true, entry: { lane_key: laneKey } });
     expect(assertClaimable).not.toHaveBeenCalled();
   });
 

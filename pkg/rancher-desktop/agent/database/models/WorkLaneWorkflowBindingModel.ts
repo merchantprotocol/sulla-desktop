@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
+import { agentAdmissionSql } from './WorkAgentAdmission';
 import { DISPATCHER_RECONCILED_LANE_MESSAGE } from './WorkflowExecutionModel';
 
 import { postgresClient } from '../PostgresClient';
@@ -18,11 +18,6 @@ export interface LaneContract {
 
 export const LANE_ENTRY_INPUT_ENVELOPE = 'project.lane-entry.v1';
 export const LANE_OUTCOME_OUTPUT_ENVELOPE = 'project.lane-outcome.v1';
-
-// Dependency holds prevent work from being claimed into forward execution or
-// review lanes. They must not prevent a task from entering a recovery/settled
-// lane such as blocked, planning, or another non-forward state.
-const DEPENDENCY_GATED_LANE_KEYS = new Set(['todo', 'in_progress', 'in_review']);
 
 export interface LaneWorkflowBindingRecord {
   id:            string;
@@ -390,21 +385,14 @@ export class WorkLaneWorkflowBindingModel {
       const rows = await client.query<LaneEntryAutomationRecord>(`
         UPDATE work_lane_entry_automations lane
            SET execution_id = $2, status = 'running', started_at = now()
-         WHERE id = $1 AND status = 'pending' AND execution_id IS NULL
-           AND (SELECT COUNT(DISTINCT live.task_id) FROM (
-             SELECT task_id FROM work_task_dispatches WHERE status = 'running'
-             UNION ALL SELECT task_id FROM work_task_planning_runs WHERE status = 'active'
-             UNION ALL SELECT task_id FROM work_lane_entry_automations
-               WHERE status = 'running' AND COALESCE(workflow_snapshot->'laneContract'->>'owner', '')
-                 NOT IN ('task-dispatcher', 'task-dispatcher-review')
-           ) live WHERE live.task_id <> lane.task_id) < 3
-           AND NOT EXISTS (SELECT 1 FROM work_task_dispatches d
-             WHERE d.task_id = lane.task_id AND d.status = 'running')
-           AND NOT EXISTS (SELECT 1 FROM work_task_stage_claims c
-             WHERE c.task_id = lane.task_id AND c.status = 'active')
-           AND NOT EXISTS (SELECT 1 FROM work_task_planning_runs p
-             WHERE p.task_id = lane.task_id AND p.status = 'active')
-         RETURNING *
+          FROM work_tasks task JOIN work_projects project ON project.id = task.project_id
+         WHERE lane.id = $1 AND lane.status = 'pending' AND lane.execution_id IS NULL
+           AND task.id = lane.task_id AND task.archived = false
+           AND task.status = lane.lane_key AND project.dispatch_enabled = true
+           AND NOT EXISTS (SELECT 1 FROM work_lane_entry_automations newer
+             WHERE newer.task_id = lane.task_id AND newer.generation > lane.generation)
+           ${ agentAdmissionSql('task') }
+         RETURNING lane.*
       `, [id, executionId]);
       return rows.rows[0] ?? null;
     });
@@ -545,9 +533,6 @@ export class WorkLaneWorkflowBindingModel {
     actor = 'sulla', profileId = 'default'):
     Promise<{ created: boolean; entry: LaneEntryAutomationRecord }> {
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ taskId }`]);
-    if (DEPENDENCY_GATED_LANE_KEYS.has(laneKey)) {
-      await WorkTaskDependencyModel.assertClaimable(taskId, client);
-    }
     const prior = await client.query<LaneEntryAutomationRecord>(`
         SELECT * FROM work_lane_entry_automations WHERE task_id = $1 ORDER BY generation DESC LIMIT 1
       `, [taskId]);

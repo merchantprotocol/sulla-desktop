@@ -7,6 +7,11 @@ import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
 import { WorkTaskDependencyModel } from '../WorkTaskDependencyModel';
 import { WorkTaskPlanningRunModel } from '../WorkTaskPlanningRunModel';
 
+function admissionClient(query: any): any {
+  return { query: (sql: string, ...args: any[]) => sql.includes('projects-agent-admission')
+    ? Promise.resolve({ rows: [] }) : query(sql, ...args) };
+}
+
 describe('WorkTaskPlanningRunModel', () => {
   let originalTransaction: any;
 
@@ -40,7 +45,7 @@ describe('WorkTaskPlanningRunModel', () => {
       .mockResolvedValueOnce({ rows: [run] })
       .mockResolvedValueOnce({ rows: [planning] })
       .mockResolvedValue({ rows: [{ id: 'projects-event-1' }] });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
 
     const claimed = await WorkTaskPlanningRunModel.claim('task-1', 'blocked', 'heartbeat');
 
@@ -62,7 +67,7 @@ describe('WorkTaskPlanningRunModel', () => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [task] })
       .mockResolvedValueOnce({ rows: [{ id: 'planning-existing' }] });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
 
     await expect(WorkTaskPlanningRunModel.claim('task-1', 'planning')).resolves.toBeNull();
     expect(query).toHaveBeenCalledTimes(2);
@@ -93,7 +98,7 @@ describe('WorkTaskPlanningRunModel', () => {
         ],
       })
       .mockResolvedValueOnce({ rows: [{ id: 'task-1' }] });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
 
     await expect(WorkTaskPlanningRunModel.recoverStale(45)).resolves.toEqual(['task-1']);
     expect(query.mock.calls[0][0]).toContain("status = 'stale'");
@@ -117,7 +122,7 @@ describe('WorkTaskPlanningRunModel', () => {
           { id: 'task-custom', project_id: 'project-1', status: 'plan-custom' },
         ],
       });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
 
     await expect(WorkTaskPlanningRunModel.recoverStale()).resolves.toEqual(['task-planning']);
     expect(report).toHaveBeenCalledWith(expect.objectContaining({
@@ -141,7 +146,7 @@ describe('WorkTaskPlanningRunModel', () => {
         ],
       })
       .mockRejectedValueOnce(new Error('semantic query unavailable'));
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
 
     await expect(WorkTaskPlanningRunModel.recoverStale()).resolves.toEqual(['task-planning']);
     expect(report.mock.calls[0][0]).toEqual(expect.objectContaining({

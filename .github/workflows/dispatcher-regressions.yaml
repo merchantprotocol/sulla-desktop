@@ -4,11 +4,15 @@ on:
   pull_request:
     paths:
     - '.github/workflows/dispatcher-regressions.yaml'
+    - 'pkg/rancher-desktop/agent/database/models/WorkAgentAdmission.ts'
+    - 'pkg/rancher-desktop/agent/database/models/LifecycleCapabilityModel.ts'
+    - 'pkg/rancher-desktop/agent/database/models/__tests__/LifecycleCapabilityModel.test.ts'
     - 'pkg/rancher-desktop/agent/database/models/WorkTaskDispatchModel.ts'
     - 'pkg/rancher-desktop/agent/database/models/WorkLaneWorkflowBindingModel.ts'
     - 'pkg/rancher-desktop/agent/database/models/WorkTaskPlanningRunModel.ts'
     - 'pkg/rancher-desktop/agent/routines/core/planProjectTask.ts'
-    - 'pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatch*.test.ts'
+    - 'pkg/rancher-desktop/agent/database/models/__tests__/WorkTask*.test.ts'
+    - 'pkg/rancher-desktop/agent/database/models/__tests__/WorkLaneWorkflowBindingModel.test.ts'
     - 'pkg/rancher-desktop/agent/routines/core/reviewProjectArtifact.ts'
     - 'pkg/rancher-desktop/agent/routines/core/__tests__/reviewProjectArtifact.test.ts'
     - 'pkg/rancher-desktop/agent/services/TaskDispatcherService.ts'
@@ -53,6 +57,9 @@ jobs:
         set +e
         log="${RUNNER_TEMP}/dispatcher-regressions.log"
         yarn test:unit:jest --runInBand \
+          pkg/rancher-desktop/agent/database/models/__tests__/LifecycleCapabilityModel.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkLaneWorkflowBindingModel.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskPlanningRunModel.test.ts \
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchModel.test.ts \
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchAdmission.postgres.test.ts \
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchBackpressure.test.ts \

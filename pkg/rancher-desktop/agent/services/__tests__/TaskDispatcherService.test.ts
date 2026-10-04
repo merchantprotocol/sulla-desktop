@@ -207,6 +207,15 @@ describe('TaskDispatcherService', () => {
     expect(selected).toEqual(['custom', 'repair', 'resume']);
   });
 
+  it('continues to later candidates after one admission error', async() => {
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService() as any;
+    service.fillExecutionPool = (jest.fn() as any).mockRejectedValueOnce(new Error('admission failed')).mockResolvedValueOnce(1);
+    const base = { project_dispatch_enabled: true, status: 'todo' };
+    await expect(service.fillCandidatePool([{ ...base, id: 'broken' }, { ...base, id: 'later' }])).resolves.toBe(1);
+    expect(service.fillExecutionPool.mock.calls).toEqual([['broken'], ['later']]);
+  });
+
   it('does not start a fourth worker across review and execution lanes', async() => {
     const { TaskDispatcherService } = await import('../TaskDispatcherService');
     const service = new TaskDispatcherService() as any;

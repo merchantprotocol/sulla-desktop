@@ -128,7 +128,7 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[1][0]).toContain('lifecycle_capabilities');
     expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_stage_claims');
     expect(query.mock.calls[4][0]).toContain('INSERT INTO work_task_dispatches');
-    expect(query.mock.calls[5][0]).toContain("status = 'in_progress'");
+    expect(query.mock.calls[5][0]).toContain("THEN 'in_progress' ELSE status END");
     expect(query.mock.calls[5][0]).toContain('assignee = $2');
     expect(query.mock.calls[5][1]).toEqual(['task-1', 'dispatcher', 'todo']);
     expect(query.mock.calls[5][0]).toContain('RETURNING *');
@@ -283,14 +283,14 @@ describe('WorkTaskDispatchModel', () => {
         if (sql.includes('work_project_domain_events')) return Promise.resolve({ rows: [{}] });
         return Promise.resolve({ rows: [] });
       });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query: clientQuery }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(clientQuery)));
 
     const claim = await WorkTaskDispatchModel.claimNext('opus-worker', 'runtime-1');
 
     expect(claim?.task).toMatchObject({ id: 'task-new', status: 'in_progress', assignee: 'dispatcher' });
     expect(claim?.stage_claim).toMatchObject({ id: 'stage-new', stage: 'in_progress' });
-    expect(clientQuery.mock.calls[5][0]).toContain("status = 'in_progress'");
-    expect(clientQuery.mock.calls[5][1]).toEqual(['task-new', 'dispatcher']);
+    expect(clientQuery.mock.calls[5][0]).toContain("THEN 'in_progress' ELSE status END");
+    expect(clientQuery.mock.calls[5][1]).toEqual(['task-new', 'dispatcher', 'todo']);
   });
 
   it('claims review work under the same cross-kind lease even when the default profile executed the work', async() => {
@@ -875,7 +875,7 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[1][0]).toContain('UPDATE work_task_dispatches');
     expect(query.mock.calls[2][0]).toContain('INSERT INTO work_task_comments');
     expect(query.mock.calls[3][0]).toContain('UPDATE work_tasks');
-    expect(query.mock.calls[3][0]).toContain("status = 'in_progress'");
+    expect(query.mock.calls[3][0]).toContain("c.stage = work_tasks.status");
     expect(query.mock.calls[3][0]).toContain('RETURNING *');
     expect(committed).toEqual(expect.objectContaining({ id: 'task-1', status: 'in_review' }));
   });

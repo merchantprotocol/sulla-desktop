@@ -58,7 +58,7 @@ describe('WorkTaskDispatchModel.countByRole (issue #711)', () => {
 
   it('keeps WIP telemetry from becoming a policy exclusion', async() => {
     const query = jest.fn<(text: string, params?: unknown[]) => Promise<any>>()
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValue({ rows: [] });
     const { postgresClient } = await import('../../PostgresClient');
     jest.spyOn(postgresClient, 'transaction').mockImplementation((callback: any) => callback({ query }));
 
@@ -68,8 +68,8 @@ describe('WorkTaskDispatchModel.countByRole (issue #711)', () => {
       { ...unlimited, execution: 3 },
     )).resolves.toBeNull();
 
-    expect(query).toHaveBeenCalledTimes(1);
-    expect(query.mock.calls[0][0]).not.toContain('pg_advisory_xact_lock');
-    expect(query.mock.calls[0][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[0][0]).toContain('pg_advisory_xact_lock');
+    expect(query.mock.calls[1][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
   });
 });

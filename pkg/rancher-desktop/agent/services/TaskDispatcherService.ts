@@ -374,10 +374,14 @@ export class TaskDispatcherService {
         continue;
       }
       if (await WorkTaskDispatchModel.countRunning() >= capacity) continue;
-      if (candidate.status === 'in_review') {
-        if (await this.fillVerificationPool(candidate.id)) dispatched += 1;
-      } else {
-        dispatched += await this.fillExecutionPool(candidate.id);
+      try {
+        if (candidate.status === 'in_review') {
+          if (await this.fillVerificationPool(candidate.id)) dispatched += 1;
+        } else {
+          dispatched += await this.fillExecutionPool(candidate.id);
+        }
+      } catch (error) {
+        console.error('[TaskDispatcher] Candidate admission failed; considering remaining work', { taskId: candidate.id, error });
       }
     }
     return dispatched;
@@ -407,7 +411,11 @@ export class TaskDispatcherService {
         slot = await RoutineConcurrencyPolicy.acquire('execution', concurrency, { owner: RUNTIME_INSTANCE_ID });
         if (!slot) break;
       }
-      const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID, undefined, taskId);
+      const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID, undefined, taskId)
+        .catch(async(error) => {
+          if (slot) await RoutineConcurrencyPolicy.release(slot);
+          throw error;
+        });
       if (!claim) {
         if (slot) await RoutineConcurrencyPolicy.release(slot);
         break;
@@ -483,7 +491,10 @@ export class TaskDispatcherService {
         owner === 'core-routine' ? [DEFAULT_CORE_ROUTINE_AGENT_ID] : [],
         RUNTIME_INSTANCE_ID,
         taskId,
-      );
+      ).catch(async(error) => {
+        if (slot) await RoutineConcurrencyPolicy.release(slot);
+        throw error;
+      });
       if (!claim) {
         if (slot) await RoutineConcurrencyPolicy.release(slot);
         break;

@@ -72,7 +72,7 @@ describe('locked Projects planning routine', () => {
     expect(synthesis.prompt).toContain('plan C');
     expect(synthesis.prompt).toContain('DISPOSITION: REVIEW');
 
-    playbook = completeSubAgent(playbook, 'node-plan-synthesis', 'DISPOSITION: REVIEW\n1. Implement safely.').updatedPlaybook;
+    playbook = completeSubAgent(synthesis.updatedPlaybook, 'node-plan-synthesis', 'DISPOSITION: REVIEW\n1. Implement safely.').updatedPlaybook;
     const persistence = processNextStep(playbook);
     expect(persistence.action).toBe('spawn_sub_agent');
     if (persistence.action !== 'spawn_sub_agent') throw new Error('expected persistence agent');
@@ -80,7 +80,7 @@ describe('locked Projects planning routine', () => {
     expect(persistence.prompt).toContain('DISPOSITION: REVIEW');
     expect(persistence.prompt).toContain('sulla project/add_task_comment');
 
-    playbook = completeSubAgent(playbook, 'node-plan-persist', 'Persisted plan; task is todo/dispatcher.').updatedPlaybook;
+    playbook = completeSubAgent(persistence.updatedPlaybook, 'node-plan-persist', 'Persisted plan; task is todo/dispatcher.').updatedPlaybook;
     const response = processNextStep(playbook);
     expect(response.action).toBe('prompt_agent');
   });
@@ -90,7 +90,7 @@ describe('locked Projects planning routine', () => {
     const prompt = String(persist?.data.config.orchestratorInstructions);
 
     expect(prompt).toContain('sulla project/add_task_comment');
-    expect(prompt).toContain('sulla project/update_task');
+    expect(prompt).toContain('sulla project/transition_task_stage');
     expect(prompt).toContain('configured verification lane');
     expect(prompt).toContain('Never move unfinished work to todo or planning');
     expect(prompt).toContain('transition_task_stage');

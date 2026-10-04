@@ -7,6 +7,7 @@ import {
   buildReceipt, receiptInsertInput, renderReceiptComment,
   type ArtifactReceipt, type ArtifactReceiptInput,
 } from '../../services/ArtifactReceiptService';
+import { agentAdmissionSql } from './WorkAgentAdmission';
 import { ArtifactReceiptModel } from './ArtifactReceiptModel';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { WorkflowExecutionModel } from './WorkflowExecutionModel';
@@ -335,39 +336,13 @@ export class WorkTaskDispatchModel {
           LEFT JOIN work_epics e ON e.id = t.epic_id
           JOIN work_projects p ON p.id = t.project_id
          WHERE t.archived = false
-           AND (SELECT COUNT(DISTINCT live.task_id) FROM (
-             SELECT task_id FROM work_task_dispatches WHERE status = 'running'
-             UNION ALL SELECT task_id FROM work_task_planning_runs WHERE status = 'active'
-             UNION ALL SELECT task_id FROM work_lane_entry_automations
-               WHERE status = 'running' AND COALESCE(workflow_snapshot->'laneContract'->>'owner', '')
-                 NOT IN ('task-dispatcher', 'task-dispatcher-review')
-           ) live WHERE live.task_id <> t.id) < 3
            AND t.status NOT IN ('in_review', 'done', 'cancelled', 'parked')
            AND ($1::text IS NULL OR t.id = $1)
            ${ projectDispatchEnabledSql('t') }
-           AND NOT EXISTS (
-             SELECT 1 FROM work_task_dispatches d
-              WHERE d.status = 'running' AND (d.task_id = t.id OR
-                (t.github_issue IS NOT NULL AND EXISTS (SELECT 1 FROM work_tasks active_task
-                  WHERE active_task.id = d.task_id AND active_task.github_issue = t.github_issue)))
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM work_task_stage_claims c
-              WHERE c.task_id = t.id AND c.status = 'active'
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM work_lane_entry_automations lane
-              WHERE lane.task_id = t.id AND lane.status = 'running'
-                AND COALESCE(lane.workflow_snapshot->'laneContract'->>'owner', '')
-                  NOT IN ('task-dispatcher', 'task-dispatcher-review')
-           )
+           ${ agentAdmissionSql('t', 'task-dispatcher') }
            AND NOT EXISTS (
              SELECT 1 FROM agent_jobs j WHERE j.status = 'running'
               AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM work_task_planning_runs planning
-              WHERE planning.task_id = t.id AND planning.status = 'active'
            )
          ORDER BY
            GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) DESC,
@@ -386,6 +361,7 @@ export class WorkTaskDispatchModel {
         task.status === 'todo' ? 'in_progress' : task.status,
         'dispatcher',
         runtimeInstanceId,
+        true,
       );
       if (!stageClaim.claimed || !stageClaim.claim) return null;
 
@@ -466,25 +442,10 @@ export class WorkTaskDispatchModel {
           LEFT JOIN work_epics e ON e.id = t.epic_id
           JOIN work_projects p ON p.id = t.project_id
          WHERE t.archived = false
-           AND (SELECT COUNT(DISTINCT live.task_id) FROM (
-             SELECT task_id FROM work_task_dispatches WHERE status = 'running'
-             UNION ALL SELECT task_id FROM work_task_planning_runs WHERE status = 'active'
-             UNION ALL SELECT task_id FROM work_lane_entry_automations
-               WHERE status = 'running' AND COALESCE(workflow_snapshot->'laneContract'->>'owner', '')
-                 NOT IN ('task-dispatcher', 'task-dispatcher-review')
-           ) live WHERE live.task_id <> t.id) < 3
            AND t.status = 'in_review'
            AND ($1::text IS NULL OR t.id = $1)
            AND p.dispatch_enabled = true
-           AND NOT EXISTS (
-             SELECT 1 FROM work_task_stage_claims c WHERE c.task_id = t.id AND c.status = 'active'
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM work_task_dispatches d
-              WHERE d.status = 'running' AND (d.task_id = t.id OR
-                (t.github_issue IS NOT NULL AND EXISTS (SELECT 1 FROM work_tasks active_task
-                  WHERE active_task.id = d.task_id AND active_task.github_issue = t.github_issue)))
-           )
+           ${ agentAdmissionSql('t', 'task-dispatcher-review') }
            AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
               WHERE d.task_id = t.id AND d.kind = 'verification'
@@ -492,18 +453,8 @@ export class WorkTaskDispatchModel {
                 AND d.finished_at > now() - interval '5 minutes'
            )
            AND NOT EXISTS (
-             SELECT 1 FROM work_lane_entry_automations lane
-              WHERE lane.task_id = t.id AND lane.status = 'running'
-                AND COALESCE(lane.workflow_snapshot->'laneContract'->>'owner', '')
-                  NOT IN ('task-dispatcher', 'task-dispatcher-review')
-           )
-           AND NOT EXISTS (
              SELECT 1 FROM agent_jobs j WHERE j.status = 'running'
               AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM work_task_planning_runs planning
-              WHERE planning.task_id = t.id AND planning.status = 'active'
            )
          ORDER BY
            GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) DESC,
@@ -522,6 +473,7 @@ export class WorkTaskDispatchModel {
         'in_review',
         'dispatcher',
         runtimeInstanceId,
+        true,
       );
       if (!stageClaim.claimed || !stageClaim.claim) return null;
 

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { agentAdmissionSql } from './WorkAgentAdmission';
 import { ArtifactReceiptModel } from './ArtifactReceiptModel';
 import { buildReceipt, receiptInsertInput, renderReceiptComment } from '../../services/ArtifactReceiptService';
 
@@ -219,7 +220,9 @@ export class LifecycleCapabilityModel {
     stage: string,
     owner: string,
     runtimeInstanceId: string,
+    admissionReserved = false,
   ): Promise<ClaimResult> {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
     const capabilityResult = await client.query<LifecycleCapabilityRecord>(`
         SELECT * FROM lifecycle_capabilities WHERE capability_key = $1 FOR UPDATE
       `, [key]);
@@ -245,6 +248,18 @@ export class LifecycleCapabilityModel {
         return { claimed: true, claim };
       }
       return { claimed: false, reason: `${ stage } already claimed by ${ claim.owner }` };
+    }
+
+    // Dispatcher claims already hold this lock and passed the same guard.
+    // Direct lifecycle-tool callers must reserve against every other writer too.
+    if (!admissionReserved) {
+      const available = await client.query(`
+        SELECT t.id FROM work_tasks t JOIN work_projects p ON p.id = t.project_id
+         WHERE t.id = $1 AND t.archived = false AND p.dispatch_enabled = true
+           ${ agentAdmissionSql('t') }
+         FOR UPDATE OF t
+      `, [taskId]);
+      if (!available.rows[0]) return { claimed: false, reason: 'task or artifact has a live writer, capacity is full, or project is paused' };
     }
 
     const inserted = await client.query<LifecycleStageClaim>(`
