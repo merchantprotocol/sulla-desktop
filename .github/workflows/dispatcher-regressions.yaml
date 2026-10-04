@@ -6,6 +6,12 @@ on:
     - '.github/workflows/dispatcher-regressions.yaml'
     - 'pkg/rancher-desktop/agent/database/models/WorkAgentAdmission.ts'
     - 'pkg/rancher-desktop/agent/database/models/LifecycleCapabilityModel.ts'
+    - 'pkg/rancher-desktop/agent/controllers/PlaybookController.ts'
+    - 'pkg/rancher-desktop/agent/controllers/__tests__/PlaybookController.leases.test.ts'
+    - 'pkg/rancher-desktop/agent/nodes/Graph.ts'
+    - 'pkg/rancher-desktop/agent/tools/project/reject_task_review.ts'
+    - 'pkg/rancher-desktop/agent/tools/project/manifests.ts'
+    - 'pkg/rancher-desktop/agent/database/models/__tests__/LifecycleCapabilityModel.reviewReject.postgres.test.ts'
     - 'pkg/rancher-desktop/agent/database/models/__tests__/LifecycleCapabilityModel.test.ts'
     - 'pkg/rancher-desktop/agent/database/models/WorkTaskDispatchModel.ts'
     - 'pkg/rancher-desktop/agent/database/models/WorkLaneWorkflowBindingModel.ts'
@@ -59,6 +65,7 @@ jobs:
         log="${RUNNER_TEMP}/dispatcher-regressions.log"
         yarn test:unit:jest --runInBand \
           pkg/rancher-desktop/agent/database/models/__tests__/LifecycleCapabilityModel.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/LifecycleCapabilityModel.reviewReject.postgres.test.ts \
           pkg/rancher-desktop/agent/database/models/__tests__/WorkLaneWorkflowBindingModel.test.ts \
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskPlanningRunModel.test.ts \
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchModel.test.ts \
@@ -71,6 +78,7 @@ jobs:
           pkg/rancher-desktop/agent/workflow/__tests__/reviewProjectArtifactWorkflow.test.ts \
           pkg/rancher-desktop/agent/services/__tests__/PlanningCouncilService.test.ts \
           pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts \
+          pkg/rancher-desktop/agent/controllers/__tests__/PlaybookController.leases.test.ts \
           2>&1 | tee "$log"
         rc=$?
         if [ "$rc" -ne 0 ]; then

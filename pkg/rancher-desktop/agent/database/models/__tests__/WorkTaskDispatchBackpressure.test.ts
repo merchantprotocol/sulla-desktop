@@ -19,7 +19,8 @@ describe('WorkTaskDispatchModel broad portfolio visibility', () => {
     await expect(WorkTaskDispatchModel.countReviewBacklog()).resolves.toBe(4);
 
     const [sql, params] = queryOne.mock.calls[0];
-    expect(sql).toContain("t.status = 'in_review'");
+    expect(sql).toContain("= 'review'");
+    expect(sql).toContain("lane.semantic_role");
     expect(sql).not.toContain('LOWER(t.assignee)');
     expect(sql).not.toContain('unnest(COALESCE(t.labels');
     expect(sql).not.toContain("d.status = 'running'");

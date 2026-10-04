@@ -2245,7 +2245,7 @@ export class PlaybookController<TState = any> {
     // may have left a sub-agent running justifies holding singleton admission.
     const mayHaveLiveWorkers = this.pendingSubAgents.size > 0
       || (this.unconfirmedWorkers.get(playbook.executionId) ?? 0) > 0;
-    this.unconfirmedWorkers.delete(playbook.executionId);
+    // Keep unconfirmed writers visible after workflow settlement; abort is not termination.
 
     const nodeSummaries = Object.values(playbook.nodeOutputs ?? {}).map((output: PlaybookNodeOutput) => ({
       nodeId:    output.nodeId,
@@ -2454,6 +2454,10 @@ export class PlaybookController<TState = any> {
    * wait). A failed singleton holds admission only while this is non-zero.
    */
   private unconfirmedWorkers = new Map<string, number>();
+
+  hasUnconfirmedWorkers(): boolean {
+    return [...this.unconfirmedWorkers.values()].some(count => count > 0);
+  }
 
   private async executeSubAgent(
     state: TState,

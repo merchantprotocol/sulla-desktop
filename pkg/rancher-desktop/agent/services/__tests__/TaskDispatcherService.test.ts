@@ -367,7 +367,7 @@ describe('TaskDispatcherService', () => {
     await service.initialize();
     service.destroy();
     expect(recoverOrphanedVerificationMock).toHaveBeenCalledWith(['orphan-review']);
-    expect(recoverStaleMock).toHaveBeenCalledWith();
+    expect(recoverStaleMock).toHaveBeenCalledWith(undefined, []);
     expect(reportCapabilityMock).toHaveBeenCalledWith(expect.objectContaining({
       key:     'in-review-verification',
       details: expect.objectContaining({ reclaimed: 1 }),
@@ -450,7 +450,7 @@ describe('TaskDispatcherService', () => {
     await service.initialize();
     service.destroy();
 
-    expect(recoverStaleMock).toHaveBeenCalledWith();
+    expect(recoverStaleMock).toHaveBeenCalledWith(undefined, []);
     expect(recoverPreviousRuntimeMock).toHaveBeenCalledWith('todo-execution', expect.stringContaining('task-dispatcher-'));
     expect(countRunningMock).toHaveBeenCalled();
   });
@@ -597,49 +597,64 @@ describe('TaskDispatcherService', () => {
     expect(updateTaskMock).not.toHaveBeenCalled();
   });
 
-  it('settles an immortal worker at max runtime and releases its WIP slot', async() => {
+  it.each(['execution', 'verification'])('retains a %s writer past timeout until execution returns', async(kind) => {
     jest.useFakeTimers();
     try {
-      const claim = {
-        task: {
-          id:          'immortal-task',
-          title:       'Never returns',
-          description: '',
-          project_id:  'p',
-          epic_id:     'e',
-          priority:    'high',
-        },
-        dispatch: {
-          id:        'immortal-dispatch',
-          task_id:   'immortal-task',
-          agent_id:  'sulla-desktop',
-          thread_id: 'immortal-thread',
-          kind:      'execution',
-          attempt:   1,
-        },
-        stage_claim: { id: 'immortal-stage' },
-      };
-      claimNextMock.mockResolvedValueOnce(claim).mockResolvedValue(null);
-      executeMock.mockImplementation(() => new Promise(() => {}));
+      let finish!: (state: any) => void;
+      executeMock.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
       settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
         if (key === 'taskDispatcherExecutionTimeoutMinutes') return Promise.resolve(0.001);
-        if (key === 'taskDispatcherExecutionTimeoutEnabled') return Promise.resolve(true);
-        if (key === 'taskVerifierOwner') return Promise.resolve('legacy');
+        if (key === 'taskVerifierTimeoutMinutes') return Promise.resolve(1);
         return Promise.resolve(fallback);
       });
-
       const { TaskDispatcherService } = await import('../TaskDispatcherService');
-      const service = new TaskDispatcherService();
-      await service.initialize();
-      await jest.advanceTimersByTimeAsync(60);
-      await Promise.resolve();
+      const service = new TaskDispatcherService() as any;
+      const run = service.runClaim({
+        task: { id: 'slow', status: 'in_review', title: 'Repair', project_id: 'p', epic_id: 'e' },
+        dispatch: { id: 'slow-dispatch', task_id: 'slow', agent_id: 'sulla-desktop', thread_id: 'slow-thread', kind },
+        stage_claim: { id: 'slow-stage' },
+      });
+      await jest.advanceTimersByTimeAsync(120001);
+      expect(service.active.has('slow-dispatch')).toBe(true);
+      expect(settleMock).not.toHaveBeenCalled();
+      expect(failVerificationMock).not.toHaveBeenCalled();
+      expect(releaseStageMock).not.toHaveBeenCalled();
+      expect(graphDeleteMock).not.toHaveBeenCalled();
+      expect(touchMock).toHaveBeenCalledWith('slow-dispatch');
+      finish({ messages: [], metadata: {} });
+      await run;
+      expect(releaseStageMock).toHaveBeenCalledWith('slow-stage');
+      expect(service.active.has('slow-dispatch')).toBe(false);
+      if (kind === 'verification') expect(failVerificationMock).toHaveBeenCalledWith('slow-dispatch', 'verifier_timeout');
+      else expect(settleMock).toHaveBeenCalledWith('slow-dispatch', 'timed_out', undefined, 'execution exceeded 0.001 minute(s)');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 
-      expect(settleMock).toHaveBeenCalledWith(
-        'immortal-dispatch', 'timed_out', undefined, 'execution exceeded 0.001 minute(s)',
-      );
-      expect(releaseStageMock).toHaveBeenCalledWith('immortal-stage');
-      expect(releaseSlotMock).toHaveBeenCalledWith('slot');
-      service.destroy();
+  it('keeps ownership when a completed parent still has an unconfirmed background writer', async() => {
+    jest.useFakeTimers();
+    try {
+      let writerAlive = true;
+      const state = { messages: [], metadata: { lastCompletedWorkflow: { outcome: 'failed' } } };
+      graphGetMock.mockResolvedValueOnce({
+        graph: { execute: async() => state, hasUnconfirmedWorkflowWorkers: () => writerAlive }, state,
+      });
+      const { TaskDispatcherService } = await import('../TaskDispatcherService');
+      const service = new TaskDispatcherService() as any;
+      const run = service.runClaim({
+        task: { id: 'background', status: 'qa', project_id: 'p', epic_id: 'e' },
+        dispatch: { id: 'background-dispatch', task_id: 'background', agent_id: 'sulla-desktop', thread_id: 'background', kind: 'verification' },
+        stage_claim: { id: 'background-stage' },
+      });
+      await jest.advanceTimersByTimeAsync(120001);
+      expect(releaseStageMock).not.toHaveBeenCalled();
+      expect(failVerificationMock).not.toHaveBeenCalled();
+      expect(service.active.has('background-dispatch')).toBe(true);
+      writerAlive = false;
+      await jest.advanceTimersByTimeAsync(1500);
+      await run;
+      expect(releaseStageMock).toHaveBeenCalledWith('background-stage');
     } finally {
       jest.useRealTimers();
     }

@@ -11,6 +11,7 @@ import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 import { LifecycleCapabilityModel } from '../LifecycleCapabilityModel';
 import { WorkflowExecutionModel } from '../WorkflowExecutionModel';
 import { ArtifactReceiptModel } from '../ArtifactReceiptModel';
+import { taskLaneTargetSql } from '../WorkAgentAdmission';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
 const connectionString = process.env.SULLA_INTEGRATION_POSTGRES_URL;
@@ -40,7 +41,11 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         status text DEFAULT 'running', started_at timestamptz DEFAULT now(), finished_at timestamptz,
         origin_dispatch_id text, origin_agent_id text, origin_evidence jsonb, reviewer_agent_ids text[],
         artifact_url text, artifact_location text, workflow_execution_id text, heartbeat_at timestamptz DEFAULT now(),
-        error text, failure_reason text, review_generation_hash text, result text, verdict text, artifact_sha text
+        error text, failure_reason text, review_generation_hash text, result text, verdict text, artifact_sha text,
+        classifier_decision jsonb, selected_agents jsonb, worker_child_ids text[], review_count int DEFAULT 0, repair_count int DEFAULT 0,
+        artifact_type text, artifact_ref text, content_hash text, reviewer_verdict text, review_evidence jsonb, terminal_reason text,
+        disposition text, findings_fingerprint text, review_artifact_type text, review_artifact_types text[], review_artifacts jsonb,
+        excluded_agent_ids text[], review_artifact_ref text, review_artifact_url text, review_artifact_hash text, review_checks jsonb, review_findings jsonb
       );
       CREATE TABLE work_task_stage_claims (
         id text PRIMARY KEY, task_id text, capability_key text, stage text, owner text,
@@ -58,7 +63,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         binding_snapshot jsonb, workflow_snapshot jsonb, status text, actor text,
         execution_id text, started_at timestamptz, completed_at timestamptz, UNIQUE(task_id, generation)
       );
-      CREATE TABLE work_task_artifact_custody (id text, task_id text, custody jsonb, created_at timestamptz DEFAULT now());
+      CREATE TABLE work_task_artifact_custody (id text, task_id text, custody jsonb, transition text, work_kind text, created_by text, created_at timestamptz DEFAULT now());
       CREATE TABLE work_lane_definitions (position int DEFAULT 0, lane_key text, semantic_role text, system_required boolean,
         reset_at timestamptz, archived boolean DEFAULT false, enabled boolean DEFAULT true, scope text, project_id text);
       INSERT INTO work_lane_definitions (lane_key, semantic_role, system_required, scope)
@@ -103,6 +108,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       ready: false, catalogPresent: false, missingRoles: ['planning'], degradedReason: 'fixture',
     });
     jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('planning');
+    await pool.query("DELETE FROM work_lane_definitions WHERE lane_key NOT IN ('in_progress', 'qa', 'shipped')");
     await pool.query('TRUNCATE work_tasks, work_task_dispatches, work_task_stage_claims, work_task_waits, work_task_dependencies, work_lane_entry_automations, work_task_planning_runs, work_task_artifact_custody, work_project_domain_events');
   });
 
@@ -293,6 +299,59 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     const claims = await Promise.all(['a', 'b', 'next'].map(id =>
       WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], `next-${ id }`, id)));
     expect(claims.filter(Boolean)).toHaveLength(3);
+  });
+
+  it('records execution-to-custom-review checkpoint and transition, then supports generation-bound review', async() => {
+    await pool.query("INSERT INTO work_tasks (id, project_id, status) VALUES ('finish', 'enabled', 'todo')");
+    const claim = await WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime', undefined, 'finish');
+    expect(claim).not.toBeNull();
+    await WorkTaskDispatchModel.finalize(claim!.dispatch.id, 'finish', {
+      dispatchStatus: 'completed', taskStatus: 'in_review', taskAssignee: 'heartbeat', comment: 'Ready',
+    });
+    const entries = (await pool.query("SELECT * FROM work_lane_entry_automations WHERE task_id='finish' ORDER BY generation")).rows;
+    expect(entries.map(row => row.lane_key)).toEqual(['in_progress', 'qa']);
+    const events = (await pool.query("SELECT * FROM work_project_domain_events WHERE task_id='finish' ORDER BY generation")).rows;
+    expect(events[1].payload).toMatchObject({ fromLane: 'in_progress', toLane: 'qa' });
+    const review = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'review-runtime', 'finish');
+    await WorkTaskDispatchModel.recordReviewLaunchWithExecution(review!.dispatch.id, {
+      executionId: 'review-finish', workflowId: 'review', workflowName: 'Review', workflowSlug: 'review',
+      triggerInput: '', scopeTaskId: 'finish', reviewerAgentIds: [],
+    });
+    expect(WorkflowExecutionModel.markRunning).toHaveBeenLastCalledWith(expect.objectContaining({ scopeGeneration: 2 }), expect.anything());
+  });
+
+  it.each(['legacy', 'protected'])('records a %s review transition into the actual custom blocked lane', async(mode) => {
+    await pool.query(`INSERT INTO work_lane_definitions (lane_key, semantic_role, scope, project_id)
+      VALUES ('needs_attention', 'blocked', 'project', 'enabled');
+      INSERT INTO work_tasks (id, project_id, status) VALUES ('review-block', 'enabled', 'qa')`);
+    const claim = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime', 'review-block');
+    if (mode === 'legacy') {
+      await WorkTaskDispatchModel.finalizeVerification(claim!.dispatch.id, 'BLOCKED', 'a'.repeat(40), null, 'Human gate');
+    } else {
+      const artifacts: any[] = [{ type: 'projects_evidence', canonicalRef: 'task:review-block', hash: 'a'.repeat(64) }];
+      const generationHash = WorkTaskDispatchModel.reviewGenerationHash(artifacts);
+      await pool.query('UPDATE work_task_dispatches SET review_generation_hash=$2 WHERE id=$1', [claim!.dispatch.id, generationHash]);
+      await WorkTaskDispatchModel.finalizeProtectedReview(claim!.dispatch.id, 'BLOCKED', {
+        workflowExecutionId: 'review-block', reviewerAgentIds: [], excludedAgentIds: [], generationHash,
+        artifactTypes: ['projects_evidence'], artifacts, artifactType: 'projects_evidence', artifactRef: 'task:review-block',
+        artifactHash: 'a'.repeat(64), summary: 'Human gate', checks: [], findings: [],
+      }, artifacts);
+    }
+    expect((await pool.query("SELECT status FROM work_tasks WHERE id='review-block'")).rows[0].status).toBe('needs_attention');
+    const event = (await pool.query("SELECT * FROM work_project_domain_events WHERE task_id='review-block'")).rows[0];
+    expect(event.payload).toMatchObject({ fromLane: 'qa', toLane: 'needs_attention' });
+    expect((await pool.query("SELECT lane_key FROM work_lane_entry_automations WHERE task_id='review-block'")).rows[0].lane_key).toBe('needs_attention');
+  });
+
+  it('prefers successful Done over a project Cancelled override', async() => {
+    await pool.query(`INSERT INTO work_lane_definitions (lane_key, semantic_role, scope, project_id)
+      VALUES ('done', 'terminal', 'global_default', null), ('cancelled', 'terminal', 'project', 'enabled');
+      INSERT INTO work_tasks (id, project_id, status) VALUES ('pass', 'enabled', 'qa')`);
+    const target = (await pool.query(`SELECT ${ taskLaneTargetSql('t', "'done'") } AS target FROM work_tasks t WHERE id='pass'`)).rows[0];
+    expect(target.target).toBe('done');
+    const claim = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime', 'pass');
+    await WorkTaskDispatchModel.finalizeVerification(claim!.dispatch.id, 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'Passed');
+    expect((await pool.query("SELECT status FROM work_tasks WHERE id='pass'")).rows[0].status).toBe('done');
   });
 
 });

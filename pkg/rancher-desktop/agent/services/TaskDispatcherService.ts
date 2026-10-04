@@ -167,7 +167,7 @@ export class TaskDispatcherService {
       this.schedulerId = null;
     }
     for (const abort of this.active.values()) abort.abort();
-    this.active.clear();
+    // runClaim removes each reservation only after its writer has stopped.
   }
 
   private async checkAndDispatch(): Promise<void> {
@@ -271,16 +271,11 @@ export class TaskDispatcherService {
         return outcome;
       }
 
-      // Run on every tick, not just once at boot. recoverStale() only
-      // reclaims dispatches silent past its 45-minute heartbeat threshold,
-      // so it's safe to call continuously -- and it must be, since a
-      // dispatch can go dead mid-process-lifetime (a stuck sub-agent call,
-      // a crashed worker) just as easily as it can from a prior restart.
-      // A one-shot startup-only reclaim leaves those permanently stuck for
-      // the rest of the process's uptime with nothing else watching them.
+      // Recover abandoned records on every tick. In-process writers retain
+      // ownership even after cancellation, until termination is confirmed.
       const journaled = await WorkTaskDispatchModel.recoverPendingOutcomeJournals();
       if (journaled.length > 0) console.log(`[TaskDispatcher] Settled ${ journaled.length } journaled outcome(s)`);
-      const recovered = await WorkTaskDispatchModel.recoverStale();
+      const recovered = await WorkTaskDispatchModel.recoverStale(undefined, [...this.active.keys()]);
       if (recovered.length > 0) console.warn(`[TaskDispatcher] Recovered ${ recovered.length } stale dispatch(es)`);
 
       // Enumerate the whole portfolio before lane-specific claims. This is the
@@ -547,12 +542,11 @@ export class TaskDispatcherService {
     const { dispatch, task, stage_claim: liveStageClaim } = claim;
     const abort = new AbortService();
     this.active.set(dispatch.id, abort);
-    let lastActivityAt = Date.now();
     let leaseTimer: ReturnType<typeof setInterval> | null = null;
     let runTimeout: ReturnType<typeof setTimeout> | null = null;
-    let expireRun: (() => void) | null = null;
     let verifierTimedOut = false;
     let executionTimedOut = false;
+    let writerGraph: any;
 
     try {
       const isVerification = dispatch.kind === 'verification';
@@ -587,13 +581,11 @@ export class TaskDispatcherService {
         dispatch.thread_id,
         { isTrustedUser: 'trusted' },
       ) as { graph: any; state: any };
+      writerGraph = graph;
       state.metadata.lastAgentActivityAt = Date.now();
-      lastActivityAt = Number(state.metadata.lastAgentActivityAt);
       leaseTimer = setInterval(
         () => {
-          const activityAt = Number(state.metadata.lastAgentActivityAt ?? 0);
-          if (activityAt <= lastActivityAt) return;
-          lastActivityAt = activityAt;
+          // A waiting or aborted provider can still write. Keep its reservation live.
           WorkTaskDispatchModel.touch(dispatch.id)
             .catch(err => console.error(`[TaskDispatcher] Lease refresh failed for ${ dispatch.id }:`, err));
         },
@@ -661,9 +653,6 @@ export class TaskDispatcherService {
         ? false
         : await SullaSettingsModel.get('taskDispatcherExecutionTimeoutReportOnly', false);
       const reportOnly = reportOnlySetting === true || reportOnlySetting === 'true';
-      const runtimeDeadline = new Promise<null>((resolve) => {
-        expireRun = () => resolve(null);
-      });
       runTimeout = setTimeout(() => {
         if (!timeoutEnabled || reportOnly) {
           console.warn(`[TaskDispatcher] Execution timeout report-only for ${ dispatch.id } after ${ timeoutMinutes } minute(s)`);
@@ -672,27 +661,10 @@ export class TaskDispatcherService {
         if (isVerification) verifierTimedOut = true;
         else executionTimedOut = true;
         abort.abort();
-        expireRun?.();
-        if (!isVerification) {
-          WorkTaskDispatchModel.settle(
-            dispatch.id,
-            'timed_out',
-            undefined,
-            `execution exceeded ${ timeoutMinutes } minute(s)`,
-          ).catch(err => console.error(`[TaskDispatcher] Timeout settlement failed for ${ dispatch.id }:`, err));
-        }
       }, timeoutMinutes * 60_000);
-      let finalState = await Promise.race([graph.execute(state), runtimeDeadline]);
-
-      // An abort signal is cooperative; an immortal provider promise may
-      // ignore it forever. The deadline itself therefore wins the race and
-      // unwinds runClaim so its finally block releases the stage and WIP slot.
-      if (!finalState) {
-        if (isVerification && verifierTimedOut) {
-          await WorkTaskDispatchModel.failVerification(dispatch.id, 'verifier_timeout');
-        }
-        return;
-      }
+      // Abort is cooperative. Do not release write ownership until execution
+      // actually returns, even when its provider ignores cancellation.
+      let finalState = await graph.execute(state);
 
       // Single-agent workflow nodes (e.g. node-review-classify) are
       // dispatched fire-and-forget inside Graph.execute() so interactive
@@ -708,11 +680,17 @@ export class TaskDispatcherService {
       if (isVerification && verificationOwner === 'core-routine' && !finalState.metadata?.lastCompletedWorkflow) {
         const executionId = state.metadata?.activeWorkflow?.executionId;
         if (executionId) {
-          await this.awaitReviewWorkflowSettlement(executionId, () => verifierTimedOut);
+          await this.awaitReviewWorkflowSettlement(executionId);
         }
       }
 
-      if (executionTimedOut) return;
+      await this.awaitWriterTermination(graph);
+
+      if (executionTimedOut) {
+        await WorkTaskDispatchModel.settle(dispatch.id, 'timed_out', undefined,
+          `execution exceeded ${ timeoutMinutes } minute(s)`);
+        return;
+      }
 
       let outcome = extractAgentTurnOutcome(finalState);
       if (!isVerification && outcome.status === 'completed' && !/<WORK_RESULT>[\s\S]*?<\/WORK_RESULT>/.test(outcome.text)) {
@@ -720,8 +698,12 @@ export class TaskDispatcherService {
           role:    'user',
           content: `Your last turn ended without the required <WORK_RESULT> block. Report the current state now and end with exactly one complete <WORK_RESULT>{\"summary\":\"...\"}</WORK_RESULT> block. If a background check or CI is still running, report it as pending in the summary; do not wait for it.`,
         });
-        finalState = await Promise.race([graph.execute(state), runtimeDeadline]);
-        if (!finalState) return;
+        finalState = await graph.execute(state);
+        if (executionTimedOut) {
+          await WorkTaskDispatchModel.settle(dispatch.id, 'timed_out', undefined,
+            `execution exceeded ${ timeoutMinutes } minute(s)`);
+          return;
+        }
         outcome = extractAgentTurnOutcome(finalState);
       }
       const summary = outcome.text.slice(0, 8_000);
@@ -816,6 +798,7 @@ export class TaskDispatcherService {
         await this.finalizeClaim(claim, outcome.status, summary);
       }
     } catch (err) {
+      await this.awaitWriterTermination(writerGraph);
       const message = err instanceof Error ? err.message : String(err);
       if (dispatch.kind === 'verification') {
         await WorkTaskDispatchModel.failVerification(
@@ -841,23 +824,29 @@ export class TaskDispatcherService {
   /**
    * Poll the durable execution record for a dispatcher-driven review
    * workflow until PlaybookController.releaseWorkflow() has settled it
-   * (WorkflowExecutionModel.settle), or the verifier timeout fires. This
+   * (WorkflowExecutionModel.settle). Timeout only requests abort; ownership
+   * remains reserved while a background writer can survive. This
    * intentionally does not introduce a new drain/poll service -- it only
    * bridges the one call site (runClaim) that needs a synchronous result
    * out of Graph.execute()'s fire-and-forget single-agent node dispatch.
    * The existing pending-completion / continuation machinery is untouched
    * and already works correctly once given the chance to reconnect.
    */
-  private async awaitReviewWorkflowSettlement(executionId: string, timedOut: () => boolean): Promise<void> {
+  private async awaitWriterTermination(graph: any): Promise<void> {
+    while (graph?.hasUnconfirmedWorkflowWorkers?.()) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+  }
+
+  private async awaitReviewWorkflowSettlement(executionId: string): Promise<void> {
     const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
     const pollIntervalMs = 1500;
-    while (!timedOut()) {
+    while (true) {
       const execution = await WorkflowExecutionModel.find(executionId).catch(() => null);
       const status = execution?.attributes?.status;
       if (status === 'completed' || status === 'failed' || status === 'suspended') return;
       await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
     }
-    console.warn(`[TaskDispatcher] awaitReviewWorkflowSettlement: execution ${ executionId } did not settle before verifier timeout`);
   }
 
   private parseVerification(output: string): ParsedVerification | null {

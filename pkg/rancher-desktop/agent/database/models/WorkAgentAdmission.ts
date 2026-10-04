@@ -85,6 +85,7 @@ export function taskLaneTargetSql(alias: string, value: string): string {
       AND NOT EXISTS (SELECT 1 FROM work_lane_definitions override
         WHERE override.scope = 'project' AND override.project_id = ${ alias }.project_id
           AND override.lane_key = lane.lane_key AND override.reset_at IS NULL AND lane.scope = 'global_default')
-    ORDER BY CASE WHEN lane.scope = 'project' THEN 0 ELSE 1 END,
-      CASE WHEN lane.lane_key = ${ value } THEN 0 ELSE 1 END, lane.position, lane.lane_key LIMIT 1), ${ value })`;
+      AND (${ value } <> 'done' OR lane.lane_key NOT IN ('cancelled', 'parked'))
+    ORDER BY CASE WHEN lane.lane_key = ${ value } THEN 0 ELSE 1 END,
+      CASE WHEN lane.scope = 'project' THEN 0 ELSE 1 END, lane.position, lane.lane_key LIMIT 1), ${ value })`;
 }

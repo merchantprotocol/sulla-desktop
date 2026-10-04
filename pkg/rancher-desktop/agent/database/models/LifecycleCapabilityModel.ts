@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
-import { agentAdmissionSql } from './WorkAgentAdmission';
+import { agentAdmissionSql, taskLaneRoleSql } from './WorkAgentAdmission';
 import { ArtifactReceiptModel } from './ArtifactReceiptModel';
 import { buildReceipt, receiptInsertInput, renderReceiptComment } from '../../services/ArtifactReceiptService';
 
@@ -69,7 +69,8 @@ export interface ClaimResult {
 }
 
 export interface SettleReviewRejectInput {
-  /** Task currently sitting in the in_review stage. */
+  expectedGeneration: number;
+  /** Task currently sitting in a configured review lane. */
   taskId:  string;
   /** Acting in-review authority: the effective owner of in-review-verification. */
   actor:   string;
@@ -78,9 +79,9 @@ export interface SettleReviewRejectInput {
 }
 
 export interface SettleReviewRejectResult {
-  /** True when this call performed the handoff (verdict + transition). */
+  /** True when this call recorded new repair findings. */
   settled:        boolean;
-  /** True when the task had already left in_review — a safe no-op replay. */
+  /** True for duplicate findings or a task that already left review. */
   alreadySettled: boolean;
   task?:          WorkTaskRecord;
 }
@@ -289,31 +290,7 @@ export class LifecycleCapabilityModel {
     `, [claimId]);
   }
 
-  /**
-   * First-class atomic reject->repair handoff (#727).
-   *
-   * assertActorCanManageTask treats any Heartbeat transition into a healthy
-   * capability's stage as a hostile takeover of that capability's lease. That
-   * is correct for a generic status edit, but wrong for the one legitimate
-   * stage-product handoff the in-review stage produces on a REJECTED verdict:
-   * routing the task back to todo-execution as a new artifact generation is
-   * the normal output of review, exactly like todo->in_review is the normal
-   * output of execution. This method is the narrow, purpose-built exception —
-   * not a general bypass of the guard: it only ever moves a task that is
-   * currently in_review, and only for the caller who is, at act time, the
-   * effective owner of in-review-verification (the protected review routine
-   * when healthy, or its explicitly named Heartbeat fallback when it is not).
-   *
-   * One transaction records the REJECTED verdict, releases any live review
-   * stage claim, and re-enqueues the task for the todo-execution owner
-   * (dispatcher) — with one concise Projects receipt. Recording the verdict
-   * and performing the handoff are the SAME statement group under the SAME
-   * transaction, so a crash before commit loses nothing: the task is simply
-   * still in_review and the next attempt starts clean. Because the handoff is
-   * gated on `status = 'in_review'`, a duplicate call against a generation
-   * that has already been handed off finds the task no longer in_review and
-   * returns a no-op instead of erroring or double-enqueuing.
-   */
+  /** Record repair findings in the current review generation without releasing its writer. */
   static async settleReviewReject(input: SettleReviewRejectInput): Promise<SettleReviewRejectResult> {
     return postgresClient.transaction(client => LifecycleCapabilityModel.settleReviewRejectWithClient(client, input));
   }
@@ -336,48 +313,32 @@ export class LifecycleCapabilityModel {
       );
     }
 
-    const taskResult = await client.query<{ id: string; status: string; last_moved_at: string }>(`
-      SELECT id, status, last_moved_at FROM work_tasks WHERE id = $1 FOR UPDATE
+    const taskResult = await client.query<WorkTaskRecord & { lane_role: string }>(`
+      SELECT t.*, ${ taskLaneRoleSql('t') } AS lane_role FROM work_tasks t WHERE id = $1 FOR UPDATE
     `, [taskId]);
     const current = taskResult.rows[0];
     if (!current) throw new Error(`Task not found: ${ taskId }`);
-    if (current.status !== 'in_review') {
-      // The review generation this call targets has already been settled
-      // (or the task never entered review). Idempotent no-op, not an error.
-      return { settled: false, alreadySettled: true };
-    }
-
-    await client.query(`
-      UPDATE work_task_stage_claims
-         SET status = 'released', released_at = now(), heartbeat_at = now()
-       WHERE task_id = $1 AND capability_key = 'in-review-verification'
-         AND stage = 'in_review' AND status = 'active'
+    if (current.lane_role !== 'review') return { settled: false, alreadySettled: true };
+    const entry = await client.query<{ generation: number; lane_key: string }>(`
+      SELECT generation, lane_key FROM work_lane_entry_automations
+      WHERE task_id = $1 ORDER BY generation DESC LIMIT 1
     `, [taskId]);
-
-    const updated = await client.query<WorkTaskRecord>(`
-      UPDATE work_tasks
-         SET status = 'todo', assignee = 'dispatcher', updated_at = now(),
-             last_moved_at = now(), last_activity_at = now(), last_moved_by = $2
-       WHERE id = $1 AND status = 'in_review'
-      RETURNING *
-    `, [taskId, input.actor]);
-    if (!updated.rows[0]) return { settled: false, alreadySettled: true };
-
-    const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-    await recordTaskTransitionWithClient(client, taskId, current.status, updated.rows[0].status,
-      input.actor, 'review-reject');
+    if (!Number.isInteger(input.expectedGeneration) ||
+        entry.rows[0]?.generation !== input.expectedGeneration || entry.rows[0]?.lane_key !== current.status) {
+      throw new Error('Review generation changed; inspect the current lane entry before recording findings.');
+    }
 
     const receipt = buildReceipt({
       taskId,
       eventType:         'repair',
       actor:             input.actor,
       disposition:       'REJECTED',
-      nextOwner:         'dispatcher',
+      nextOwner:         'protected-review',
       validationSummary: input.summary,
-      // Keyed by the timestamp this specific review generation was entered so
+      // Keyed by the immutable lane-entry generation so
       // a later reject on a *different* generation of the same task never
       // collides with this receipt's dedupe fingerprint.
-      evidence:          { kind: 'other', ref: `reject-handoff:${ taskId }@${ current.last_moved_at }` },
+      evidence:          { kind: 'other', ref: `review-repair:${ taskId }@${ input.expectedGeneration }` },
     });
     const receiptInsert = receiptInsertInput(receipt, `receipt-${ randomUUID() }`);
     const insertedReceipt = await ArtifactReceiptModel.insertIfAbsentWithClient(client, receiptInsert);
@@ -390,7 +351,9 @@ export class LifecycleCapabilityModel {
       await ArtifactReceiptModel.attachCommentWithClient(client, receiptInsert.id, commentId);
     }
 
-    return { settled: true, alreadySettled: false, task: updated.rows[0] };
+    if (!insertedReceipt.inserted) return { settled: false, alreadySettled: true };
+    await client.query('UPDATE work_tasks SET updated_at = now(), last_activity_at = now() WHERE id = $1', [taskId]);
+    return { settled: true, alreadySettled: false, task: current };
   }
 
   static async assertActorCanManageTask(

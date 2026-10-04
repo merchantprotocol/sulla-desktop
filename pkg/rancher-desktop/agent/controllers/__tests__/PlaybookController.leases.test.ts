@@ -112,6 +112,7 @@ describe('singleton worker lifecycle', () => {
     expect(WorkflowExecutionModel.markSuspended).toHaveBeenCalledWith('singleton-run');
     expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
     expect(state.metadata.lastCompletedWorkflow.outcome).toBe('failed');
+    expect(controller.hasUnconfirmedWorkers()).toBe(true);
   });
 
   it('settles a failed singleton that never left a worker running, so the next scheduled run is admitted', async() => {

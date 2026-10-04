@@ -877,8 +877,8 @@ export class WorkTaskDispatchModel {
     }
     const generationHash = WorkTaskDispatchModel.reviewGenerationHash(artifacts);
     return postgresClient.transaction(async(client: PoolClient) => {
-      const current = await client.query<{ task_id: string }>(`
-        SELECT d.task_id FROM work_task_dispatches d
+      const current = await client.query<{ task_id: string; task_status: string }>(`
+        SELECT t.status AS task_status, d.task_id FROM work_task_dispatches d
         JOIN work_tasks t ON t.id = d.task_id
         WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
           AND ${ taskLaneRoleSql('t') } = 'review'
@@ -933,9 +933,9 @@ export class WorkTaskDispatchModel {
           WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
           RETURNING *
         `, [taskId, transition.status, transition.assignee]);
-        if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
+        if (moved.rows[0] && current.rows[0].task_status !== moved.rows[0].status) {
           const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-          await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
+          await recordTaskTransitionWithClient(client, taskId, current.rows[0].task_status, moved.rows[0].status,
             'verifier', 'protected-review-suppressed');
         }
         await this.releaseReviewOwnership(client, id, taskId);
@@ -1211,6 +1211,7 @@ export class WorkTaskDispatchModel {
         `, [`dispatch-comment-${ randomUUID() }`, taskId, finalization.comment]);
       }
 
+      const previous = await client.query<{ status: string }>('SELECT status FROM work_tasks WHERE id = $1 FOR UPDATE', [taskId]);
       const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
            SET status = ${ taskLaneTargetSql('work_tasks', '$2') }, assignee = $3, updated_at = now(),
@@ -1225,9 +1226,9 @@ export class WorkTaskDispatchModel {
       if (!moved.rows[0]) {
         throw new Error(`Task ${ taskId } is no longer owned by dispatch ${ id }`);
       }
-      if (['planning', 'blocked'].includes(moved.rows[0].status)) {
+      if (previous.rows[0]?.status !== moved.rows[0].status) {
         const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-        await recordTaskTransitionWithClient(client, taskId, 'in_progress', moved.rows[0].status,
+        await recordTaskTransitionWithClient(client, taskId, previous.rows[0].status, moved.rows[0].status,
           'dispatcher', 'dispatch-outcome');
       }
       // Finalization is the durable ownership handoff. Releasing the stage
@@ -1243,14 +1244,14 @@ export class WorkTaskDispatchModel {
     })();
   }
 
-  static async recoverStale(staleMinutes = STALE_DISPATCH_MINUTES): Promise<string[]> {
+  static async recoverStale(staleMinutes = STALE_DISPATCH_MINUTES, liveDispatchIds: string[] = []): Promise<string[]> {
     return postgresClient.transaction(async(client: PoolClient) => {
       const setting = await client.query<{ enabled: boolean }>(
         `SELECT COALESCE(value::boolean, false) AS enabled
            FROM sulla_settings WHERE property = 'taskDispatcherTruthReconciliationEnabled' LIMIT 1`,
       ).catch(() => ({ rows: [] as { enabled: boolean }[] }));
       const reportOnly = !setting.rows[0]?.enabled;
-      const evidence = await this.reconcileRunningDispatchesWithClient(client, reportOnly);
+      const evidence = await this.reconcileRunningDispatchesWithClient(client, reportOnly, liveDispatchIds);
       const stale = await client.query<{ id: string; task_id: string; kind: WorkTaskDispatchKind }>(`
         UPDATE work_task_dispatches
            SET status = 'stale',
@@ -1258,6 +1259,7 @@ export class WorkTaskDispatchModel {
                failure_reason = 'lease_expired',
                finished_at = now()
         WHERE status = 'running'
+           AND NOT (id = ANY($3::text[]))
            AND NOT EXISTS (
              SELECT 1 FROM work_task_outcome_journal j
               WHERE j.dispatch_id = work_task_dispatches.id
@@ -1266,7 +1268,7 @@ export class WorkTaskDispatchModel {
            AND heartbeat_at < now() - ($1 * interval '1 minute')
            AND NOT (id = ANY($2::text[]))
         RETURNING id, task_id, kind
-      `, [staleMinutes, evidence.evidencedIds]);
+      `, [staleMinutes, evidence.evidencedIds, liveDispatchIds]);
 
       const executionTaskIds = stale.rows.filter(row => row.kind === 'execution').map(row => row.task_id);
       const verificationTaskIds = stale.rows.filter(row => row.kind === 'verification').map(row => row.task_id);
@@ -1331,6 +1333,7 @@ export class WorkTaskDispatchModel {
   private static async reconcileRunningDispatchesWithClient(
     client: PoolClient,
     reportOnly: boolean,
+    liveDispatchIds: string[] = [],
   ): Promise<DispatchReconciliationResult & { evidencedIds: string[] }> {
     const journalTable = await client.query<{ exists: boolean }>(
       `SELECT to_regclass('public.work_task_outcome_journal') IS NOT NULL AS exists`,
@@ -1377,9 +1380,9 @@ export class WorkTaskDispatchModel {
            ORDER BY created_at DESC LIMIT 1
         ) ar ON true
         ${ journalJoin }
-       WHERE d.status = 'running'
+       WHERE d.status = 'running' AND NOT (d.id = ANY($1::text[]))
        ORDER BY d.started_at ASC, d.id ASC
-    `);
+    `, [liveDispatchIds]);
     const evidencedIds: string[] = [];
     const settled: string[] = [];
     const reportOnlyIds: string[] = [];
@@ -1524,8 +1527,8 @@ export class WorkTaskDispatchModel {
     summary: string,
   ): Promise<VerificationVerdict | null> {
     return postgresClient.transaction(async(client: PoolClient) => {
-      const current = await client.query<{ task_id: string }>(`
-        SELECT d.task_id
+      const current = await client.query<{ task_id: string; task_status: string }>(`
+        SELECT t.status AS task_status, d.task_id
           FROM work_task_dispatches d
           JOIN work_tasks t ON t.id = d.task_id
          WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
@@ -1580,9 +1583,9 @@ export class WorkTaskDispatchModel {
          WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
         `, [taskId, transition.status, transition.assignee]);
-        if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
+        if (moved.rows[0] && current.rows[0].task_status !== moved.rows[0].status) {
           const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-          await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
+          await recordTaskTransitionWithClient(client, taskId, current.rows[0].task_status, moved.rows[0].status,
             'dispatcher', 'dispatch-outcome');
         }
       await this.releaseReviewOwnership(client, id, taskId);
@@ -1601,8 +1604,8 @@ export class WorkTaskDispatchModel {
     currentArtifacts: ReviewArtifactComponent[],
   ): Promise<ReviewDisposition | null> {
     return postgresClient.transaction(async(client: PoolClient) => {
-      const current = await client.query<{ task_id: string; review_generation_hash: string | null }>(`
-        SELECT d.task_id, d.review_generation_hash
+      const current = await client.query<{ task_id: string; task_status: string; review_generation_hash: string | null }>(`
+        SELECT t.status AS task_status, d.task_id, d.review_generation_hash
           FROM work_task_dispatches d
           JOIN work_tasks t ON t.id = d.task_id
          WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
@@ -1745,9 +1748,9 @@ export class WorkTaskDispatchModel {
          WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
       `, [taskId, transition.status, transition.assignee]);
-      if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
+      if (moved.rows[0] && current.rows[0].task_status !== moved.rows[0].status) {
         const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-        await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
+        await recordTaskTransitionWithClient(client, taskId, current.rows[0].task_status, moved.rows[0].status,
           'verifier', 'protected-review-outcome');
       }
       await this.releaseReviewOwnership(client, id, taskId);
@@ -1802,11 +1805,6 @@ export class WorkTaskDispatchModel {
          WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
       `, [taskId, 'in_review', 'heartbeat']);
-      if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
-        const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-        await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
-          'verifier', 'verification-failure');
-      }
       await this.releaseReviewOwnership(client, id, taskId);
       return true;
     });

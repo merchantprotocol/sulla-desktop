@@ -22,7 +22,9 @@ const JOURNAL_ROW = {
 
 function admissionClient(query: any): any {
   return { query: (sql: string, ...args: any[]) => sql.includes('pg_advisory_xact_lock')
-    ? Promise.resolve({ rows: [] }) : query(sql, ...args) };
+    ? Promise.resolve({ rows: [] })
+    : sql === 'SELECT status FROM work_tasks WHERE id = $1 FOR UPDATE'
+      ? Promise.resolve({ rows: [{ status: 'in_progress' }] }) : query(sql, ...args) };
 }
 
 describe('WorkTaskDispatchModel.finalizeOutcomeJournal idempotent replay', () => {
@@ -49,6 +51,7 @@ describe('WorkTaskDispatchModel.finalizeOutcomeJournal idempotent replay', () =>
       if (sql.includes('SELECT * FROM work_tasks WHERE id')) {
         return Promise.resolve({ rows: [{ id: 'task-1', status: 'in_review', assignee: 'dispatcher' }] });
       }
+      if (sql.includes('INSERT INTO work_project_domain_events')) return Promise.resolve({ rows: [{ id: 'event' }], rowCount: 1 });
       return Promise.resolve({ rows: [], rowCount: 1 });
     }) as any;
     transactionWith(query);
@@ -94,6 +97,7 @@ describe('WorkTaskDispatchModel.finalizeOutcomeJournal idempotent replay', () =>
       if (sql.includes('INSERT INTO work_project_domain_events')) {
         return Promise.resolve({ rows: [{ id: 'projects-event-1' }], rowCount: 1 });
       }
+      if (sql.includes('INSERT INTO work_project_domain_events')) return Promise.resolve({ rows: [{ id: 'event' }], rowCount: 1 });
       return Promise.resolve({ rows: [], rowCount: 1 });
     }) as any;
     transactionWith(query);
@@ -108,6 +112,9 @@ describe('WorkTaskDispatchModel.finalizeOutcomeJournal idempotent replay', () =>
   });
 
   it('redirects a worker self-approved terminal task into independent review', async() => {
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'claimLaneEntryInTransaction').mockResolvedValue({
+      created: true, entry: { id: 'entry', generation: 2, status: 'unautomated' } as any,
+    });
     const query = jest.fn((sql: string) => {
       if (sql.includes('FROM work_task_outcome_journal WHERE id')) return Promise.resolve({ rows: [{ ...JOURNAL_ROW }] });
       if (sql.includes('SELECT stage FROM work_task_stage_claims')) return Promise.resolve({ rows: [{ stage: 'in_progress' }] });
@@ -119,6 +126,7 @@ describe('WorkTaskDispatchModel.finalizeOutcomeJournal idempotent replay', () =>
       if (sql.includes('UPDATE work_tasks') && sql.includes('RETURNING *')) {
         return Promise.resolve({ rows: [{ id: 'task-1', status: 'in_review', assignee: 'heartbeat' }] });
       }
+      if (sql.includes('INSERT INTO work_project_domain_events')) return Promise.resolve({ rows: [{ id: 'event' }], rowCount: 1 });
       return Promise.resolve({ rows: [], rowCount: 1 });
     }) as any;
     transactionWith(query);
@@ -151,6 +159,7 @@ describe('WorkTaskDispatchModel.recordReviewLaunchWithExecution scope pair', () 
     const query = jest.fn((sql: string) => {
       if (sql.includes('UPDATE work_task_dispatches')) return Promise.resolve({ rows: [], rowCount: 1 });
       if (sql.includes('MAX(generation)')) return Promise.resolve({ rows: [{ generation }] });
+      if (sql.includes('INSERT INTO work_project_domain_events')) return Promise.resolve({ rows: [{ id: 'event' }], rowCount: 1 });
       return Promise.resolve({ rows: [], rowCount: 1 });
     }) as any;
     jest.spyOn(postgresClient, 'transaction').mockImplementation((callback: any) => callback(admissionClient(query)));
@@ -193,7 +202,8 @@ describe('WorkTaskDispatchModel broad review visibility', () => {
     await expect(WorkTaskDispatchModel.countReviewBacklog()).resolves.toBe(1);
 
     const [sql] = queryOne.mock.calls[0];
-    expect(sql).toContain("t.status = 'in_review'");
+    expect(sql).toContain("= 'review'");
+    expect(sql).toContain("lane.semantic_role");
     expect(sql).not.toContain('dispatch_enabled = true');
     expect(sql).not.toContain('LOWER(t.assignee)');
     expect(sql).not.toContain('work_task_dependencies');

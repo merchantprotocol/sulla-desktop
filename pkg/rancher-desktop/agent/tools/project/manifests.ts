@@ -445,10 +445,11 @@ export const projectToolManifests: ToolManifest[] = [
   },
   {
     name:        'reject_task_review',
-    description: 'Settle an in_review task with a REJECTED verdict and atomically hand it back to todo-execution for repair. For the acting in-review authority only (the protected review routine, or its named Heartbeat fallback) — not a general status edit; use update_task for everything else. Idempotent: replaying it after the task has already left in_review is a no-op.',
+    description: 'Record generation-bound REJECTED findings for repair in the current configured review lane. Retains live writer ownership; does not move the task. Only the effective review authority may call it. Read inspect_lane_entry_automation for expected_generation. Identical findings in the same generation are idempotent.',
     category:    'project',
     schemaDef:   {
-      task_id: { type: 'string', description: 'Task currently in_review to reject.' },
+      task_id: { type: 'string', description: 'Task currently in a review-role lane.' },
+      expected_generation: { type: 'number', description: 'Current immutable lane-entry generation from inspect_lane_entry_automation.' },
       summary: { type: 'string', description: 'Rejection rationale / repair guidance, recorded on the receipt.' },
       actor:   { type: 'string', optional: true, description: 'Acting in-review authority. Defaults to "heartbeat". Must be the effective owner of in-review-verification at call time.' },
     },

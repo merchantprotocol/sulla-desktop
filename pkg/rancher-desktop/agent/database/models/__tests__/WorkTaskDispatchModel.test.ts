@@ -9,7 +9,9 @@ import { classifyInProgressRow, WorkTaskDispatchModel } from '../WorkTaskDispatc
 
 function admissionClient(query: any): any {
   return { query: (sql: string, ...args: any[]) => sql.includes('pg_advisory_xact_lock')
-    ? Promise.resolve({ rows: [] }) : query(sql, ...args) };
+    ? Promise.resolve({ rows: [] })
+    : sql === 'SELECT status FROM work_tasks WHERE id = $1 FOR UPDATE'
+      ? Promise.resolve({ rows: [{ status: 'in_progress' }] }) : query(sql, ...args) };
 }
 
 describe('WorkTaskDispatchModel', () => {
@@ -368,6 +370,18 @@ describe('WorkTaskDispatchModel', () => {
     const candidateSql = await captureCandidateSql();
     expect(candidateSql).toContain("c.status = 'active'");
     expect(candidateSql).toContain("c.status = 'active'");
+  });
+
+  it('excludes unconfirmed live writers from stale and evidence-based recovery', async() => {
+    const query = jest.fn(async() => ({ rows: [] })) as any;
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
+    await WorkTaskDispatchModel.recoverStale(45, ['unconfirmed-writer']);
+    const stale = query.mock.calls.find(([sql]: [string]) => sql.includes("SET status = 'stale'"));
+    expect(stale[0]).toContain('NOT (id = ANY($3::text[]))');
+    expect(stale[1]).toEqual([45, [], ['unconfirmed-writer']]);
+    const reconcile = query.mock.calls.find(([sql]: [string]) => sql.includes('we.status AS workflow_status'));
+    expect(reconcile[0]).toContain('NOT (d.id = ANY($1::text[]))');
+    expect(reconcile[1]).toEqual([['unconfirmed-writer']]);
   });
 
   it('returns stale verification leases to in_review instead of blocking them', async() => {
@@ -780,7 +794,7 @@ describe('WorkTaskDispatchModel', () => {
     const oldGeneration = WorkTaskDispatchModel.reviewGenerationHash(oldArtifacts);
     const repairedGeneration = WorkTaskDispatchModel.reviewGenerationHash(repairedArtifacts);
     const query = (jest.fn() as any)
-      .mockResolvedValueOnce({ rows: [{ task_id: 'task-repair', review_generation_hash: oldGeneration }] })
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-repair', task_status: 'in_review', review_generation_hash: oldGeneration }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -854,11 +868,15 @@ describe('WorkTaskDispatchModel', () => {
   });
 
   it('finalizes ledger evidence, task state, and Projects comment in one transaction', async() => {
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'claimLaneEntryInTransaction').mockResolvedValue({
+      created: true, entry: { id: 'entry', generation: 2, status: 'unautomated' } as any,
+    });
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [{ status: 'running' }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: 'task-1', status: 'in_review', assignee: 'heartbeat' }] });
+      .mockResolvedValueOnce({ rows: [{ id: 'task-1', status: 'in_review', assignee: 'heartbeat' }] })
+      .mockImplementation((sql: string) => Promise.resolve({ rows: sql.includes('work_project_domain_events') ? [{ id: 'event' }] : [] }));
     (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
 
     const committed = await WorkTaskDispatchModel.finalize('dispatch-1', 'task-1', {
