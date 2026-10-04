@@ -33,6 +33,7 @@ jobs:
     - name: Run dispatcher regression suite
       run: |
         set -o pipefail
+        set +e
         log="${RUNNER_TEMP}/dispatcher-regressions.log"
         yarn test:unit:jest --runInBand \
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchModel.test.ts \
