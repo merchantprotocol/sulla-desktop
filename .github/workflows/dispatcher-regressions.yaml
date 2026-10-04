@@ -83,20 +83,20 @@ jobs:
         rc=$?
         if [ "$rc" -ne 0 ]; then
           node <<'NODE'
-          const fs = require('fs');
-          const file = `${process.env.RUNNER_TEMP}/dispatcher-results.json`;
-          const escape = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
-          if (fs.existsSync(file)) {
-            for (const suite of JSON.parse(fs.readFileSync(file, 'utf8')).testResults) {
-              if (suite.status !== 'failed') continue;
-              const failures = suite.assertionResults.filter(test => test.status === 'failed');
-              const messages = failures.length ? failures.map(test => `${test.fullName}\n${test.failureMessages.join('\n')}`) : [suite.message];
-              for (const message of messages) {
-                console.log(`::error title=Dispatcher regression failure::${escape(suite.name + '\n' + message)}`);
-              }
+        const fs = require('fs');
+        const file = `${process.env.RUNNER_TEMP}/dispatcher-results.json`;
+        const escape = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+        if (fs.existsSync(file)) {
+          for (const suite of JSON.parse(fs.readFileSync(file, 'utf8')).testResults) {
+            if (suite.status !== 'failed') continue;
+            const failures = suite.assertionResults.filter(test => test.status === 'failed');
+            const messages = failures.length ? failures.map(test => `${test.fullName}\n${test.failureMessages.join('\n')}`) : [suite.message];
+            for (const message of messages) {
+              console.log(`::error title=Dispatcher regression failure::${escape(suite.name + '\n' + message)}`);
             }
           }
-          NODE
+        }
+        NODE
           details=$(tail -n 80 "$log" | tail -c 5000 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
           echo "::error title=Focused dispatcher Jest failed::${details}"
           exit "$rc"
