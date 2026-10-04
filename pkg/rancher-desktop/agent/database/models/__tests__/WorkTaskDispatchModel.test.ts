@@ -471,7 +471,7 @@ describe('WorkTaskDispatchModel', () => {
 
     await expect(WorkTaskDispatchModel.failVerification('dispatch-fail', 'adapter_unavailable')).resolves.toBe(true);
     expect(query.mock.calls.at(-1)?.[0]).toContain('RETURNING *');
-    expect(WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction).not.toHaveBeenCalled();
+    expect(query.mock.calls.at(-1)?.[1]).toEqual(['task-fail', 'in_review', 'heartbeat']);
   });
 
   it('binds one immutable generation and durably excludes every worker and custodian', async() => {
