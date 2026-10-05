@@ -329,6 +329,7 @@ export class WorkTaskDispatchModel {
     _wipLimits?: WipLimits,
     taskId?: string,
   ): Promise<ClaimedDispatch | null> {
+    const admission = await agentAdmissionSql('t', 'task-dispatcher');
     return postgresClient.transaction(async(client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
       const candidate = await client.query<WorkTaskRecord & { admission_target?: string }>(`
@@ -340,7 +341,7 @@ export class WorkTaskDispatchModel {
            AND ${ taskLaneRoleSql('t') } NOT IN ('review', 'terminal') AND t.status <> 'parked'
            AND ($1::text IS NULL OR t.id = $1)
            ${ projectDispatchEnabledSql('t') }
-           ${ agentAdmissionSql('t', 'task-dispatcher') }
+           ${ admission }
            AND NOT EXISTS (
              SELECT 1 FROM agent_jobs j WHERE j.status = 'running'
               AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
@@ -436,6 +437,7 @@ export class WorkTaskDispatchModel {
     runtimeInstanceId: string,
     taskId?: string,
   ): Promise<ClaimedDispatch | null> {
+    const admission = await agentAdmissionSql('t', 'task-dispatcher-review');
     return postgresClient.transaction(async(client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
       const candidate = await client.query<WorkTaskRecord>(`
@@ -447,7 +449,7 @@ export class WorkTaskDispatchModel {
            AND ${ taskLaneRoleSql('t') } = 'review'
            AND ($1::text IS NULL OR t.id = $1)
            AND p.dispatch_enabled = true
-           ${ agentAdmissionSql('t', 'task-dispatcher-review') }
+           ${ admission }
            AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
               WHERE d.task_id = t.id AND d.kind = 'verification'

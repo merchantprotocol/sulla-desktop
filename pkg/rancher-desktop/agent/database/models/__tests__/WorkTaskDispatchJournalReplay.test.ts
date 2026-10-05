@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, afterEach, describe, expect, it, jest } from '@jest/globals';
 
+import { SullaSettingsModel } from '../SullaSettingsModel';
 import { postgresClient } from '../../PostgresClient';
 import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
@@ -192,6 +193,9 @@ describe('WorkTaskDispatchModel.recordReviewLaunchWithExecution scope pair', () 
 });
 
 describe('WorkTaskDispatchModel broad review visibility', () => {
+  beforeEach(() => {
+    jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async(_key, fallback) => fallback);
+  });
   afterEach(() => {
     jest.restoreAllMocks();
   });

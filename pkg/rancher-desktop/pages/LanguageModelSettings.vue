@@ -9,6 +9,7 @@ import { getSupportedProviders, fetchModelsForProvider, clearModelCache } from '
 import { heartbeatPrompt } from '../agent/prompts/heartbeat';
 import { soulPrompt } from '../agent/prompts/soul';
 import { useTheme } from '../composables/useTheme';
+import { WORKER_CONCURRENCY_KEY, DEFAULT_WORKER_CONCURRENCY, isValidWorkerConcurrency, normalizeWorkerConcurrency } from '../shared/workerConcurrency';
 import { REMOTE_PROVIDERS } from '../shared/remoteProviders';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -83,6 +84,7 @@ export default defineComponent({
       remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
       // Project Automation master switch
       automatedProjectManagementEnabled: true,
+      routineConcurrencyTotalLimit: DEFAULT_WORKER_CONCURRENCY as number | string,
       // Heartbeat settings
       heartbeatEnabled:      true,
       heartbeatDelayMinutes: 15,
@@ -139,6 +141,9 @@ export default defineComponent({
   },
 
   computed: {
+    workerConcurrencyValid(): boolean {
+      return isValidWorkerConcurrency(this.routineConcurrencyTotalLimit);
+    },
     currentNavItem(): { id: string; name: string } {
       const item = this.navItems.find(item => item.id === this.currentNav) || this.navItems[0];
       console.log('computed currentNavItem:', item, 'currentNav:', this.currentNav);
@@ -220,6 +225,7 @@ export default defineComponent({
     this.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
     this.automatedProjectManagementEnabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', true));
+    this.routineConcurrencyTotalLimit = normalizeWorkerConcurrency(await SullaSettingsModel.get(WORKER_CONCURRENCY_KEY, DEFAULT_WORKER_CONCURRENCY));
     this.botName = await SullaSettingsModel.get('botName', 'Sulla');
     this.primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
     // Load provider/model state from ModelProviderService (source of truth)
@@ -719,6 +725,7 @@ export default defineComponent({
     },
 
     async writeExperimentalSettings(extra: Record<string, unknown> = {}) {
+      if (!this.workerConcurrencyValid) throw new Error('Concurrent workers must be a whole number of at least 1.');
       try {
         // Save non-model settings to database.
         // Model/provider settings are owned by ModelProviderService.
@@ -730,6 +737,7 @@ export default defineComponent({
           heartbeatEnabled:      Boolean(this.heartbeatEnabled),
           heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 15,
           automatedProjectManagementEnabled:        Boolean(this.automatedProjectManagementEnabled),
+          [WORKER_CONCURRENCY_KEY]: Number(this.routineConcurrencyTotalLimit),
           heartbeatPrompt:       String(this.heartbeatPrompt || ''),
           heartbeatProvider:     String(this.heartbeatProvider || 'default'),
           subconsciousProvider:  String(this.subconsciousProvider || 'default'),
@@ -743,6 +751,7 @@ export default defineComponent({
           heartbeatDelayMinutes: 'number',
           heartbeatEnabled:      'boolean',
           automatedProjectManagementEnabled:        'boolean',
+          [WORKER_CONCURRENCY_KEY]: 'number',
         };
 
         for (const [key, value] of Object.entries(settingsToSave)) {
@@ -1686,10 +1695,28 @@ export default defineComponent({
             </p>
           </div>
 
-          <p class="setting-description">
-            Direct agents through their prompts. Every board card is considered, without a numeric
-            concurrency limit. Project pauses, task ownership and approval boundaries still apply.
-          </p>
+          <div class="setting-group">
+            <label class="setting-label" for="dispatcher-worker-limit">Concurrent workers</label>
+            <input
+              id="dispatcher-worker-limit"
+              v-model.number="routineConcurrencyTotalLimit"
+              type="number"
+              min="1"
+              step="1"
+              class="text-input"
+              style="width: 120px;"
+              :aria-invalid="!workerConcurrencyValid"
+              aria-describedby="dispatcher-worker-limit-help"
+            >
+            <p id="dispatcher-worker-limit-help" class="setting-description">
+              Maximum concurrent workers shared by execution, review, planning and other automated routines.
+              Save to apply to new launches. Lowering this value lets running workers finish before more start.
+              Every board card is still considered. Project pauses, task ownership and approval boundaries still apply.
+            </p>
+            <p v-if="!workerConcurrencyValid" role="alert" class="setting-description">
+              Enter a whole number of at least 1.
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -1698,7 +1725,7 @@ export default defineComponent({
     <div class="lm-footer">
       <button
         class="btn role-primary"
-        :disabled="activating || savingSettings"
+        :disabled="activating || savingSettings || !workerConcurrencyValid"
         @click="saveSettings"
       >
         {{ savingSettings ? 'Saving...' : 'Save' }}

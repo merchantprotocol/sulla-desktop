@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, afterEach, describe, expect, it, jest } from '@jest/globals';
 
+import { SullaSettingsModel } from '../SullaSettingsModel';
 import { postgresClient } from '../../PostgresClient';
 import { up as semanticRuntimeMigration } from '../../migrations/0074_semantic_lane_runtime_helpers';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
@@ -10,6 +11,10 @@ import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
 describe('semantic lane runtime consumers', () => {
   const originalTransaction = postgresClient.transaction;
+
+  beforeEach(() => {
+    jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async(_key, fallback) => fallback);
+  });
 
   afterEach(() => {
     (postgresClient as any).transaction = originalTransaction;

@@ -1,3 +1,5 @@
+import { RoutineConcurrencyPolicy } from '../../services/RoutineConcurrencyPolicy';
+
 /** SQL fragments used only with trusted aliases, inside projects-agent-admission. */
 export function liveAgentTasksSql(): string {
   return `SELECT task_id FROM work_task_dispatches WHERE status = 'running'
@@ -40,13 +42,14 @@ function artifactReferencesSql(taskId: string): string {
  * Only the named service may take over its same-task delegation marker; that
  * marker starts no agent. Custom workflows never get this exception.
  */
-export function agentAdmissionSql(taskAlias: string, delegationOwner?: string): string {
+export async function agentAdmissionSql(taskAlias: string, delegationOwner?: string): Promise<string> {
+  const limit = await RoutineConcurrencyPolicy.resolveTotalLimit();
   const taskId = `${ taskAlias }.id`;
   const delegation = delegationOwner
     ? `AND COALESCE(lane.workflow_snapshot->'laneContract'->>'owner', '') <> '${ delegationOwner }'`
     : '';
   return `AND (SELECT COUNT(*) FROM (${ liveAgentTasksSql() }) live
-      WHERE live.task_id <> ${ taskId }) < 5
+      WHERE live.task_id <> ${ taskId }) < ${ limit }
     AND NOT EXISTS (SELECT 1 FROM work_task_dispatches d
       WHERE d.task_id = ${ taskId } AND d.status = 'running')
     AND NOT EXISTS (SELECT 1 FROM work_task_stage_claims c

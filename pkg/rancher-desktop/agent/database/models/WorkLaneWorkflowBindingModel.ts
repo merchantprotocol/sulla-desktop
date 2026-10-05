@@ -380,6 +380,7 @@ export class WorkLaneWorkflowBindingModel {
   }
 
   static async markStarted(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
+    const admission = await agentAdmissionSql('task');
     return postgresClient.transaction(async(client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
       const rows = await client.query<LaneEntryAutomationRecord>(`
@@ -391,7 +392,7 @@ export class WorkLaneWorkflowBindingModel {
            AND task.status = lane.lane_key AND project.dispatch_enabled = true
            AND NOT EXISTS (SELECT 1 FROM work_lane_entry_automations newer
              WHERE newer.task_id = lane.task_id AND newer.generation > lane.generation)
-           ${ agentAdmissionSql('task') }
+           ${ admission }
          RETURNING lane.*
       `, [id, executionId]);
       return rows.rows[0] ?? null;

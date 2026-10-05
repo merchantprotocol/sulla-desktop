@@ -14,6 +14,7 @@ import { ArtifactReceiptModel } from '../ArtifactReceiptModel';
 import { WorkTaskWaitModel } from '../WorkTaskWaitModel';
 import { up as waitSchema } from '../../migrations/0065_create_work_task_waits';
 import { up as waitRepair } from '../../migrations/0102_keep_wait_evidence_in_lane';
+import { SullaSettingsModel } from '../SullaSettingsModel';
 import { taskLaneTargetSql } from '../WorkAgentAdmission';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
@@ -36,10 +37,14 @@ const postgresSuite = connectionString ? describe : describe.skip;
 postgresSuite('dispatcher broad admission against PostgreSQL', () => {
   const schema = `admission_${ randomUUID().replaceAll('-', '') }`;
   const original = { queryAll: postgresClient.queryAll, query: postgresClient.query, queryOne: postgresClient.queryOne, transaction: postgresClient.transaction };
+  let workerLimit = 5;
+  let settingsSpy: any;
   let bootstrap: Pool;
   let pool: Pool;
 
   beforeAll(async() => {
+    settingsSpy = jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async(key: string, fallback: any) =>
+      key === 'routineConcurrencyTotalLimit' ? workerLimit : fallback);
     bootstrap = new Pool({ connectionString });
     await bootstrap.query(`CREATE SCHEMA "${ schema }"`);
     pool = new Pool({ connectionString, max: 8, options: `-c search_path=${ schema }` });
@@ -133,6 +138,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
   });
 
   beforeEach(async() => {
+    workerLimit = 5;
     jest.spyOn(ArtifactReceiptModel, 'insertIfAbsentWithClient').mockResolvedValue({ inserted: true, row: { id: 'receipt' } } as any);
     jest.spyOn(ArtifactReceiptModel, 'attachCommentWithClient').mockResolvedValue(undefined);
     jest.spyOn(WorkflowExecutionModel, 'markRunning').mockResolvedValue(undefined as any);
@@ -147,6 +153,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
   });
 
   afterAll(async() => {
+    settingsSpy?.mockRestore();
     jest.restoreAllMocks();
     Object.assign(postgresClient, original);
     await pool?.end();
@@ -686,13 +693,14 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       await expect(admit(service, 'a')).resolves.toBeNull();
     });
 
-  it('admits only five concurrent mixed writers across admission paths', async() => {
+  it.each([2, 5, 6])('enforces saved capacity %s across simultaneous mixed writers', async(limit) => {
+    workerLimit = limit;
     for (const id of ['a', 'b', 'c', 'd', 'e', 'f']) await taskWithLane(id);
     const results = await Promise.all([
       admit('lane', 'a'), admit('planning', 'b'), admit('dispatch', 'c'),
       admit('lane', 'd'), admit('planning', 'e'), admit('dispatch', 'f'),
     ]);
-    expect(results.filter(Boolean)).toHaveLength(5);
+    expect(results.filter(Boolean)).toHaveLength(limit);
   });
 
   it('keeps public caller leases reserved through dispatcher runtime recovery until release', async() => {

@@ -2,6 +2,8 @@
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
+import { WORKER_CONCURRENCY_KEY, DEFAULT_WORKER_CONCURRENCY, normalizeWorkerConcurrency } from '../../shared/workerConcurrency';
+
 import { postgresClient } from '../database/PostgresClient';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
@@ -39,11 +41,11 @@ export class RoutineConcurrencyPolicy {
 
   /** Keep worker capacity independent of whole-board consideration. */
   static async resolveLimit(_kind: ProtectedRoutineKind, _legacyFallback?: number): Promise<number> {
-    return 5;
+    return this.resolveTotalLimit();
   }
 
-  static async resolveTotalLimit(): Promise<number | null> {
-    return 5;
+  static async resolveTotalLimit(): Promise<number> {
+    return normalizeWorkerConcurrency(await SullaSettingsModel.get(WORKER_CONCURRENCY_KEY, DEFAULT_WORKER_CONCURRENCY));
   }
 
   /** Count active reservations of a kind (or all kinds when omitted). */
@@ -56,16 +58,17 @@ export class RoutineConcurrencyPolicy {
     return Number(row?.count || 0);
   }
 
-  /** Reserve at most five workers under one database lock. */
+  /** Reserve against the current shared worker limit under one database lock. */
   static async acquire(
     kind: ProtectedRoutineKind,
     _limit: number,
     context: RoutineSlotContext = {},
   ): Promise<string | null> {
+    const limit = await this.resolveTotalLimit();
     return postgresClient.transaction(async(client: PoolClient) => {
       await client.query('SELECT pg_advisory_xact_lock($1)', [SLOT_ADVISORY_LOCK_KEY]);
       const active = await client.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM work_routine_slots');
-      if (Number(active.rows[0]?.count || 0) >= 5) return null;
+      if (Number(active.rows[0]?.count || 0) >= limit) return null;
       const id = randomUUID();
       await client.query(
         'INSERT INTO work_routine_slots (id, kind, owner, task_id) VALUES ($1, $2, $3, $4)',
