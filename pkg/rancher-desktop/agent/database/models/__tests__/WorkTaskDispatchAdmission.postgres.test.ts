@@ -244,7 +244,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     }
   });
 
-  it('reuses all three slots after stopped lane writers hit an approval boundary', async() => {
+  it('admits unrelated work while stopped lane writers retain approval boundaries', async() => {
     const { LaneEntryAutomationService } = await import('../../../services/LaneEntryAutomationService');
     await pool.query("UPDATE work_lane_definitions SET requires_human_approval=true WHERE lane_key='qa'");
     for (const id of ['stopped-1', 'stopped-2', 'stopped-3']) {
@@ -254,6 +254,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       await expect(admit('lane', id)).resolves.not.toBeNull();
     }
     await taskWithLane('replacement');
+    await expect(admit('dispatch', 'replacement')).resolves.not.toBeNull();
     await expect(admit('dispatch', 'replacement')).resolves.toBeNull();
     for (const id of ['stopped-1', 'stopped-2', 'stopped-3']) {
       const entry = await WorkLaneWorkflowBindingModel.getLaneEntry(`entry-${ id }`);
@@ -266,8 +267,8 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       });
       expect((await pool.query('SELECT status FROM work_tasks WHERE id=$1', [id])).rows[0].status).toBe('qa');
     }
-    for (const id of ['replacement', 'replacement-2', 'replacement-3']) {
-      if (id !== 'replacement') await taskWithLane(id);
+    for (const id of ['replacement-2', 'replacement-3', 'replacement-4']) {
+      await taskWithLane(id);
       await expect(admit('dispatch', id)).resolves.not.toBeNull();
     }
   });
