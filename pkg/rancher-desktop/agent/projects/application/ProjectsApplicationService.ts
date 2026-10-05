@@ -185,12 +185,23 @@ export class ProjectsApplicationService {
     return WorkProjectViewModel.save({ ...input, actor: input.actor ?? context.actor });
   }
 
+  private requireLaneConfigurationAuthority(context: ProjectsCommandContext): void {
+    if (context.source !== 'ipc' || context.actor !== 'human') {
+      throw new Error('human_approval_required: pipeline structure requires trusted human authorization');
+    }
+  }
+
   listLanes(opts: ListWorkLaneOpts = {}) { return WorkLaneDefinitionModel.list(opts) }
   createLane(input: CreateWorkLaneInput, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    this.requireLaneConfigurationAuthority(context);
     return WorkLaneDefinitionModel.create({ ...input, actor: input.actor ?? context.actor });
   }
 
   updateLane(id: string, changes: UpdateWorkLaneInput, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    if (changes.position !== undefined || changes.requires_human_approval !== undefined ||
+        changes.enabled !== undefined || changes.semantic_role !== undefined) {
+      this.requireLaneConfigurationAuthority(context);
+    }
     return WorkLaneDefinitionModel.update(id, { ...changes, actor: changes.actor ?? context.actor });
   }
 
@@ -202,14 +213,17 @@ export class ProjectsApplicationService {
 
   previewArchiveLane(id: string) { return WorkLaneDefinitionModel.previewArchive(id) }
   restoreLane(id: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    this.requireLaneConfigurationAuthority(context);
     return WorkLaneDefinitionModel.restore(id, context.actor);
   }
 
   reorderLanes(scope: WorkLaneScope, orderedKeys: string[], projectId?: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    this.requireLaneConfigurationAuthority(context);
     return WorkLaneDefinitionModel.reorder(scope, orderedKeys, projectId, context.actor);
   }
 
   resetLaneOverride(projectId: string, laneKey: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    this.requireLaneConfigurationAuthority(context);
     return WorkLaneDefinitionModel.resetProjectOverride(projectId, laneKey, context.actor);
   }
 

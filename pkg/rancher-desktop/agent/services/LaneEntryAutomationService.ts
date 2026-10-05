@@ -82,6 +82,11 @@ export class LaneEntryAutomationService {
           await LaneEntryAutomationService.settleEntry(entry, result);
         },
       });
+      if (result.skipped) {
+        return (await WorkLaneWorkflowBindingModel.markOutcome(entry.id, executionId, 'failed', {
+          disposition: 'activation_skipped', reason: result.skipped,
+        })) ?? started;
+      }
       if (result.executionId !== executionId) {
         throw new Error(`Lane execution identity mismatch: expected ${ executionId }, received ${ result.executionId }.`);
       }

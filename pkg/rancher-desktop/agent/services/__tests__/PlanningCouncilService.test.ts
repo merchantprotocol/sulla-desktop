@@ -106,6 +106,19 @@ describe('PlanningCouncilService', () => {
     reapStaleLeaselessExecutionsMock.mockResolvedValue([]);
   });
 
+  it('connects drained runtime failure to the prebound reservation', async() => {
+    const PlanningCouncilService = await service();
+    findActiveByExecutionMock.mockResolvedValue(run);
+    getTaskMock.mockResolvedValue(task);
+    executeRoutineMock.mockImplementation(async(_id: string, _payload: string, options: any) => {
+      await options.onSettled({ executionId: options.executionId, status: 'failed', error: 'graph failed' });
+      return { executionId: options.executionId };
+    });
+    await PlanningCouncilService.handleTaskStatusTransition(task, 'blocked', 'worker');
+    expect(findActiveByExecutionMock).toHaveBeenCalledWith('planning-execution-planning-1');
+    expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'failed', 'Planning routine failed: graph failed');
+  });
+
   it('retires stale leaseless executions before planning recovery', async() => {
     const PlanningCouncilService = await service();
     await PlanningCouncilService.recoverOnStartup();
@@ -121,7 +134,7 @@ describe('PlanningCouncilService', () => {
     expect(executeRoutineMock).toHaveBeenCalledWith(
       'core-routine-plan-project-task',
       expect.stringContaining('"original_blocker":"Exact blocker"'),
-      { executionId: 'planning-execution-planning-1', allowConcurrent: true, routineKind: 'planning', waitForCapacity: true },
+      expect.objectContaining({ executionId: 'planning-execution-planning-1', allowConcurrent: true, routineKind: 'planning', waitForCapacity: true, onSettled: expect.any(Function) }),
     );
     expect(attachExecutionMock).toHaveBeenCalledWith('planning-1', 'planning-execution-planning-1');
     expect(addCommentMock).toHaveBeenCalledWith(expect.objectContaining({

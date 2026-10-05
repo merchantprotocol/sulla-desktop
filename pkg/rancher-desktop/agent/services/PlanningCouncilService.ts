@@ -135,7 +135,11 @@ export class PlanningCouncilService {
       const execution = await executeRoutine(
         PROJECT_TASK_PLANNING_WORKFLOW_ID,
         JSON.stringify(snapshot),
-        { executionId, allowConcurrent: true, routineKind: 'planning', waitForCapacity: true },
+        { executionId, allowConcurrent: true, routineKind: 'planning', waitForCapacity: true,
+          onSettled: result => PlanningCouncilService.handleWorkflowFinished(
+            result.executionId, result.status, result.error,
+          ),
+        },
       );
       if (execution.skipped) {
         await WorkTaskPlanningRunModel.settleForTask(claim.task.id, 'failed', `Workflow declined: ${ execution.skipped }`);

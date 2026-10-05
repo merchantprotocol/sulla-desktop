@@ -968,6 +968,10 @@ export class WorkItemsModel {
       const epic = await WorkItemsModel.requireEpic(changes.epic_id);
       nextProjectId = epic.project_id;
     }
+    if (nextProjectId && nextProjectId !== existing.project_id &&
+        !await WorkLaneDefinitionModel.resolveStatus(nextProjectId, changes.status ?? existing.status)) {
+      throw new Error('human_approval_required: project move requires an active destination lane');
+    }
     const targetLane = changes.status !== undefined
       ? await WorkLaneDefinitionModel.validateTaskStatus(nextProjectId ?? existing.project_id, changes.status)
       : null;
@@ -1091,8 +1095,13 @@ export class WorkItemsModel {
           // Project moves change the meaning of even an unchanged lane key.
           // Evaluate the source boundary before replacing its project context.
           const held = await client.query<{ held: boolean }>(
-            `SELECT (${ approvalSafeTargetSql('t', "'__project_move__'") }) = t.status AS held
-             FROM work_tasks t WHERE id = $1`, [id]);
+            `SELECT EXISTS (SELECT 1 FROM work_task_waits w WHERE w.task_id=t.id
+               AND w.status='active' AND w.wait_kind='human_gate') OR COALESCE((
+                 SELECT lane.requires_human_approval FROM work_lane_definitions lane
+                 WHERE lane.lane_key=t.status AND lane.reset_at IS NULL
+                   AND (lane.scope='global_default' OR (lane.scope='project' AND lane.project_id=t.project_id))
+                 ORDER BY CASE WHEN lane.scope='project' THEN 0 ELSE 1 END LIMIT 1
+               ), false) AS held FROM work_tasks t WHERE id = $1`, [id]);
           if (held.rows[0]?.held) throw new Error('human_approval_required: project move cannot discard approval');
           const destination = changes.status ?? current.rows[0].status;
           const permitted = await client.query<{ target: string }>(

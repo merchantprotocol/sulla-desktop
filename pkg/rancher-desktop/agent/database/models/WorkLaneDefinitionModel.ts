@@ -355,6 +355,9 @@ export class WorkLaneDefinitionModel {
       const lane = await WorkLaneDefinitionModel.lockLane(client, id);
       if (!lane || lane.reset_at) throw new Error(`No active lane definition found with id: ${ id }`);
       if (lane.archived) return { lane, movedTasks: 0 };
+      if (lane.requires_human_approval && !trustedHuman) {
+        throw new Error('human_approval_required: cannot archive an approval boundary');
+      }
       if (lane.system_required) throw new Error(`Required lane ${ lane.lane_key } cannot be archived.`);
       // Freeze task writes until the occupancy check, optional move, and lane
       // archive commit together. Otherwise a concurrent status update could

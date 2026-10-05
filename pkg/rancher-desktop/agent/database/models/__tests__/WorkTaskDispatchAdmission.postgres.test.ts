@@ -164,6 +164,58 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     expect(candidates[600].id).toBe('1');
   });
 
+  it.each([['preflight_empty', false], ['already_active', false], ['preflight_empty', true], ['already_active', true]])('reuses three skipped lane reservations (%s, shared PR: %s)', async(skipped, shared) => {
+    const { LaneEntryAutomationService } = await import('../../../services/LaneEntryAutomationService');
+    const launch = jest.spyOn(LaneEntryAutomationService as any, 'executeRoutine')
+      .mockResolvedValue({ executionId: '', workflowId: 'custom', skipped });
+    try {
+      for (const id of ['a', 'b', 'c']) {
+        await taskWithLane(id, `owner/repo#${ id }`);
+        await pool.query("UPDATE work_lane_entry_automations SET workflow_id='custom', binding_snapshot='{}' WHERE task_id=$1", [id]);
+        await expect(LaneEntryAutomationService.dispatchEntry(`entry-${ id }`)).resolves.toMatchObject({ status: 'failed' });
+        if (shared) await taskWithLane(`peer-${ id }`, `owner/repo#${ id }`);
+        await expect(admit('dispatch', shared ? `peer-${ id }` : id)).resolves.not.toBeNull();
+      }
+      expect((await pool.query("SELECT COUNT(*)::int AS n FROM work_task_dispatches WHERE status='running'")).rows[0].n).toBe(3);
+    } finally { launch.mockRestore(); }
+  });
+
+  it('rejects a source-only lane transfer and fails closed on undefined positions around approval', async() => {
+    const { WorkItemsModel } = await import('../WorkItemsModel');
+    await pool.query(`INSERT INTO work_lane_definitions
+      (lane_key, semantic_role, scope, project_id, position, requires_human_approval)
+      VALUES ('source-only', 'execution', 'project', 'enabled', 0, false),
+        ('approval', 'manual', 'project', 'paused', 1, true),
+        ('shipped', 'terminal', 'project', 'paused', 2, false)`);
+    await pool.query("INSERT INTO work_tasks (id, project_id, status) VALUES ('move-unknown', 'enabled', 'source-only')");
+    const epic = jest.spyOn(WorkItemsModel as any, 'requireEpic').mockResolvedValue({ id: 'target', project_id: 'paused' });
+    try {
+      await expect(WorkItemsModel.updateTask('move-unknown', { epic_id: 'target', actor: 'worker' }))
+        .rejects.toThrow('active destination lane');
+      expect((await WorkItemsModel.getTask('move-unknown'))?.project_id).toBe('enabled');
+      // A legacy invalid row cannot be used as a stepping stone past the gate.
+      await pool.query("UPDATE work_tasks SET project_id='paused' WHERE id='move-unknown'");
+      await expect(WorkItemsModel.updateTask('move-unknown', { status: 'shipped', actor: 'worker' }))
+        .rejects.toThrow('human_approval_required');
+    } finally { epic.mockRestore(); }
+  });
+
+  it('rejects automated and forged-human pipeline restructuring before it can move approval', async() => {
+    const { ProjectsApplicationService } = await import('../../../projects/application/ProjectsApplicationService');
+    const app = new ProjectsApplicationService({} as any);
+    await pool.query("UPDATE work_lane_definitions SET requires_human_approval=true, position=1 WHERE lane_key='qa'");
+    const lane = (await pool.query("SELECT id FROM work_lane_definitions WHERE lane_key='qa'")).rows[0];
+    for (const actor of ['worker', 'human']) {
+      const context = { source: 'tool' as const, actor };
+      expect(() => app.reorderLanes('global_default', ['in_progress', 'shipped', 'qa'], undefined, context)).toThrow('human_approval_required');
+      expect(() => app.updateLane(lane.id, { position: 99 }, context)).toThrow('human_approval_required');
+      expect(() => app.updateLane(lane.id, { requires_human_approval: false }, context)).toThrow('human_approval_required');
+      expect(() => app.resetLaneOverride('enabled', 'qa', context)).toThrow('human_approval_required');
+    }
+    expect((await pool.query("SELECT position FROM work_lane_definitions WHERE id=$1", [lane.id])).rows[0].position).toBe(1);
+    await expect(app.updateLane(lane.id, { position: 2 }, { source: 'ipc', actor: 'human' })).resolves.toMatchObject({ position: 2 });
+  });
+
   it('retains custom-lane ownership after a post-launch read failure until terminal confirmation', async() => {
     const { LaneEntryAutomationService } = await import('../../../services/LaneEntryAutomationService');
     await taskWithLane('a', 'owner/repo#925');

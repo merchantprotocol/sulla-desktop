@@ -100,6 +100,10 @@ export function approvalSafeTargetSql(alias: string, destination: string, projec
     ORDER BY lane.lane_key, CASE WHEN lane.scope = 'project' THEN 0 ELSE 1 END
   ), active AS (SELECT * FROM effective WHERE enabled = true AND archived = false)
   SELECT CASE
+    WHEN EXISTS (SELECT 1 FROM active WHERE requires_human_approval) AND (
+      NOT EXISTS (SELECT 1 FROM active WHERE lane_key = ${ destination })
+      OR (${ projectEntry ? 'false' : `NOT EXISTS (SELECT 1 FROM active WHERE lane_key = ${ alias }.status)` }))
+    THEN ${ alias }.status
     WHEN EXISTS (SELECT 1 FROM work_task_waits w WHERE w.task_id = ${ alias }.id
       AND w.status = 'active' AND w.wait_kind = 'human_gate')
       OR EXISTS (SELECT 1 FROM active WHERE lane_key = ${ alias }.status AND requires_human_approval)
