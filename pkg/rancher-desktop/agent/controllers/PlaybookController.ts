@@ -2233,19 +2233,26 @@ export class PlaybookController<TState = any> {
     outcome: 'completed' | 'failed',
     error?: string,
   ): Promise<TState> {
-    if (playbook.definition.concurrencyPolicy === 'forbid' && outcome === 'completed' && this.pendingSubAgents.size > 0) {
-      outcome = 'failed';
-      error = 'Singleton cannot complete while a sub-agent may still be running.';
+    const meta = (state as any).metadata;
+    const mayHaveLiveWorkers = this.pendingSubAgents.size > 0
+      || (this.unconfirmedWorkers.get(playbook.executionId) ?? 0) > 0;
+    if (mayHaveLiveWorkers) {
+      if (outcome === 'completed') {
+        outcome = 'failed';
+        error = 'Workflow cannot complete while a sub-agent may still be running.';
+      }
+      // Fence callbacks/retries immediately, but keep heartbeats and every
+      // task/lane reservation until the actual children have stopped.
+      if (meta.activeWorkflow?.executionId === playbook.executionId) {
+        meta.activeWorkflow.status = 'failed';
+      }
+      while ((this.unconfirmedWorkers.get(playbook.executionId) ?? 0) > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
     }
     await this.workflowLease?.heartbeat.assertOwned();
     this.workflowLease?.heartbeat.stop();
     this.workflowLease = null;
-    const meta = (state as any).metadata;
-    // Captured before the pending sets are cleared below: only a failure that
-    // may have left a sub-agent running justifies holding singleton admission.
-    const mayHaveLiveWorkers = this.pendingSubAgents.size > 0
-      || (this.unconfirmedWorkers.get(playbook.executionId) ?? 0) > 0;
-    this.unconfirmedWorkers.delete(playbook.executionId);
 
     const nodeSummaries = Object.values(playbook.nodeOutputs ?? {}).map((output: PlaybookNodeOutput) => ({
       nodeId:    output.nodeId,
@@ -2279,15 +2286,7 @@ export class PlaybookController<TState = any> {
     // Persist final execution status so boot recovery doesn't pick it up again.
     try {
       const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
-      if (playbook.definition.concurrencyPolicy === 'forbid' && outcome === 'failed' && mayHaveLiveWorkers) {
-        // A failed parent does not prove its external worker stopped. Retain
-        // admission until an operator verifies termination and settles the row.
-        // Only when a sub-agent may still be running: a plain failure (e.g. a
-        // provider error) used to suspend here too, silently blocking every
-        // future scheduled run of the routine ("already active") forever.
-        console.warn(`[PlaybookController] Singleton "${ playbook.definition.name }" failed with sub-agent(s) possibly still running — holding admission on ${ playbook.executionId } until settled. Future scheduled runs are blocked until then.`);
-        await WorkflowExecutionModel.markSuspended(playbook.executionId);
-      } else if (outcome === 'completed') {
+      if (outcome === 'completed') {
         const settled = await WorkflowExecutionModel.settle(playbook.executionId, 'completed', undefined, workflowTerminalResult(meta, playbook.executionId)?.outcome);
         if (!settled) throw new Error(`Workflow ${ playbook.executionId } lost terminal settlement ownership.`);
       } else {
@@ -2320,7 +2319,7 @@ export class PlaybookController<TState = any> {
       .join('\n');
 
     const statusLabel = outcome === 'completed' ? 'completed successfully' : `failed: ${ error || 'unknown error' }`;
-    const summaryMsg = `[Workflow Complete] The workflow "${ playbook.definition.name }" has ${ statusLabel }.\n\nNode results:\n${ nodeLines }\n\nYou are now free from the workflow. Continue the conversation naturally — you have full context of what was accomplished above. Respond to the user as needed.`;
+    const summaryMsg = `[Workflow Complete] The workflow "${ playbook.definition.name }" has ${ statusLabel }.\n\nNode results:\n${ nodeLines }\n\nThe workflow has ended. Its terminal receipt is available above.`;
 
     this.injectWorkflowMessage(state, summaryMsg);
 
@@ -2347,8 +2346,8 @@ export class PlaybookController<TState = any> {
       console.warn('[PlaybookController] proactive emit failed:', e);
     }
 
-    state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-
+    // Terminal callbacks have released task/artifact ownership. Never start
+    // another tool-capable parent turn after that boundary.
     return state;
   }
 
@@ -2397,6 +2396,7 @@ export class PlaybookController<TState = any> {
     subState.metadata.lastActivityMs = startedAt;
     let unansweredBumps = 0;
     let watchdogId: NodeJS.Timeout | null = null;
+    const execution = Promise.resolve().then(execute);
 
     try {
       const watchdogPromise = new Promise<never>((_, reject) => {
@@ -2442,9 +2442,12 @@ export class PlaybookController<TState = any> {
           console.warn(`[PlaybookController] Bumping idle sub-graph "${ label }" (bump ${ unansweredBumps }/${ SUB_AGENT_MAX_BUMPS }, idle ${ Math.round(sinceActivity / 1000) }s)`);
         }, SUB_AGENT_WATCHDOG_INTERVAL_MS);
       });
-      return await Promise.race([execute(), watchdogPromise]);
+      return await Promise.race([execution, watchdogPromise]);
     } finally {
       if (watchdogId !== null) clearInterval(watchdogId);
+      // A watchdog only stops waiting. Keep ownership and forbid retries
+      // until the underlying execution really stops, regardless of error text.
+      await execution.catch(() => undefined);
     }
   }
 
@@ -2454,6 +2457,10 @@ export class PlaybookController<TState = any> {
    * wait). A failed singleton holds admission only while this is non-zero.
    */
   private unconfirmedWorkers = new Map<string, number>();
+
+  hasUnconfirmedWorkers(): boolean {
+    return [...this.unconfirmedWorkers.values()].some(count => count > 0);
+  }
 
   private async executeSubAgent(
     state: TState,
@@ -2471,15 +2478,10 @@ export class PlaybookController<TState = any> {
       else this.unconfirmedWorkers.delete(executionId);
     };
     try {
-      const result = await this.executeSubAgentUntracked(state, nodeId, agentId, prompt, config);
-      confirmStopped(); // the worker's turn returned — it is not running
-      return result;
-    } catch (error) {
-      // A thrown error from the worker itself proves it stopped; a timeout or
-      // abort only proves WE stopped waiting.
-      const message = error instanceof Error ? `${ error.name } ${ error.message }` : String(error);
-      if (!/time(d)?\s*-?out|abort/i.test(message)) confirmStopped();
-      throw error;
+      return await this.executeSubAgentUntracked(state, nodeId, agentId, prompt, config);
+    } finally {
+      // The watchdog drains its underlying promise before returning/throwing.
+      confirmStopped();
     }
   }
 
@@ -2544,7 +2546,16 @@ export class PlaybookController<TState = any> {
       finalState = await this.raceWithSubAgentWatchdog(
         subState,
         `Sub-agent "${ agentId || nodeId }"`,
-        () => graph.execute(subState),
+        async() => {
+          try {
+            return await graph.execute(subState);
+          } finally {
+            // Nested workflows can return before their own children stop.
+            while (graph.hasUnconfirmedWorkflowWorkers?.()) {
+              await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+          }
+        },
       );
 
     } finally {

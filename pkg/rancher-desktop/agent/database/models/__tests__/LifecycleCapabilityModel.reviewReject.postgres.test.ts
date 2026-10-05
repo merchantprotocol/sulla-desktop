@@ -1,3 +1,4 @@
+/** @jest-environment node */
 import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
@@ -15,21 +16,15 @@ import { up as createLifecycleCapabilities } from '../../migrations/0068_create_
 import { up as addProjectViewsAndScheduling } from '../../migrations/0075_add_project_views_and_scheduling';
 import { up as createArtifactReceipts } from '../../migrations/0082_create_artifact_receipts';
 import { up as createWorkTaskDependencies } from '../../migrations/0083_create_work_task_dependencies';
+import { up as addReceiptGeneration } from '../../migrations/0088_add_generation_to_artifact_receipts';
 import { LifecycleCapabilityModel } from '../LifecycleCapabilityModel';
-import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
+import { up as createLaneDefinitions } from '../../migrations/0069_create_work_lane_definitions';
+import { up as createLaneBindings } from '../../migrations/0070_create_lane_workflow_bindings';
 
 const connectionString = process.env.SULLA_INTEGRATION_POSTGRES_URL;
 const describeWithPostgres = connectionString ? describe : describe.skip;
 
-/**
- * Real-PostgreSQL coverage for the #727 reject->repair handoff: the acting
- * in-review authority (protected-review owner or its named Heartbeat
- * fallback) can atomically settle a REJECTED verdict and route the task back
- * to todo-execution without needing to own todo-execution itself, while the
- * generic ownership guard still denies everyone else and duplicate
- * settlement of the same review generation stays a no-op.
- */
-describeWithPostgres('LifecycleCapabilityModel.settleReviewReject reject->repair handoff (migrated PostgreSQL)', () => {
+describeWithPostgres('LifecycleCapabilityModel.settleReviewReject in-lane repair findings (migrated PostgreSQL)', () => {
   let bootstrapPool: Pool;
   let pool: Pool;
   let schemaCreated = false;
@@ -64,15 +59,13 @@ describeWithPostgres('LifecycleCapabilityModel.settleReviewReject reject->repair
   const defaultHeartbeatFallback = () => setCapability('in-review-verification', {
     enabled: false, health: 'unavailable', active_owner: null, fallback_mode: 'heartbeat',
   });
-  const healthyExecutionOwnedByDispatcher = () => setCapability('todo-execution', {
-    enabled: true, health: 'healthy', active_owner: 'dispatcher', fallback_mode: 'manual_hold',
-  });
-
-  const seedInReviewTask = async(taskId: string) => {
+  const seedInReviewTask = async(taskId: string, lane = 'in_review') => {
     await pool.query(`
       INSERT INTO work_tasks (id, project_id, epic_id, title, status, assignee)
-      VALUES ($1, 'p1', 'e1', $2, 'in_review', 'verifier')
-    `, [taskId, `Task ${ taskId }`]);
+      VALUES ($1, 'p1', 'e1', $2, $3, 'verifier')
+    `, [taskId, `Task ${ taskId }`, lane]);
+    await pool.query(`INSERT INTO work_lane_entry_automations (id, task_id, generation, lane_key, resolution_source, status)
+      VALUES ($1, $2, 1, $3, 'none', 'completed')`, [`entry-${ taskId }`, taskId, lane]);
   };
 
   beforeAll(async() => {
@@ -84,7 +77,7 @@ describeWithPostgres('LifecycleCapabilityModel.settleReviewReject reject->repair
     for (const migration of [
       createWorkflows, createWorkflowExecutions, createWorkItems, addWorkTaskActor,
       addWorkTaskActivity, createWorkTaskDispatches, addVerificationDispatches,
-      createLifecycleCapabilities, createArtifactReceipts,
+      createLifecycleCapabilities, createLaneDefinitions, createLaneBindings, createArtifactReceipts, addReceiptGeneration,
     ]) await pool.query(migration as any);
     await addProjectViewsAndScheduling(pool as any);
     await createWorkTaskDependencies(pool as any);
@@ -146,23 +139,23 @@ describeWithPostgres('LifecycleCapabilityModel.settleReviewReject reject->repair
     await pool.query(`INSERT INTO work_epics (id, project_id, title) VALUES ('e1', 'p1', 'Epic 1')`);
   });
 
-  it('hands a rejected review back to todo-execution for the healthy capability owner', async() => {
+  it('keeps rejected work in its review lane for the healthy capability owner', async() => {
     await healthyOwnedByRoutine();
     await seedInReviewTask('task-owner');
 
     const result = await LifecycleCapabilityModel.settleReviewReject({
+      expectedGeneration: 1,
       taskId: 'task-owner', actor: 'verifier-routine', summary: 'Missing regression test for the new branch.',
     });
 
     expect(result.settled).toBe(true);
     expect(result.alreadySettled).toBe(false);
-    expect(result.task?.status).toBe('todo');
-    expect(result.task?.assignee).toBe('dispatcher');
+    expect(result.task?.status).toBe('in_review');
+    expect(result.task?.assignee).toBe('verifier');
 
     const row = await taskRow('task-owner');
-    expect(row.status).toBe('todo');
-    expect(row.assignee).toBe('dispatcher');
-    expect(row.last_moved_by).toBe('verifier-routine');
+    expect(row.status).toBe('in_review');
+    expect(row.assignee).toBe('verifier');
 
     const rows = await comments('task-owner');
     expect(rows).toHaveLength(1);
@@ -170,17 +163,18 @@ describeWithPostgres('LifecycleCapabilityModel.settleReviewReject reject->repair
     expect((await receipts('task-owner'))).toHaveLength(1);
   });
 
-  it('hands a rejected review back to todo-execution for the named Heartbeat fallback', async() => {
+  it('keeps rejected work in its review lane for the named Heartbeat fallback', async() => {
     await defaultHeartbeatFallback();
     await seedInReviewTask('task-fallback');
 
     const result = await LifecycleCapabilityModel.settleReviewReject({
+      expectedGeneration: 1,
       taskId: 'task-fallback', actor: 'heartbeat', summary: 'Backlog drain: acceptance criteria not met.',
     });
 
     expect(result.settled).toBe(true);
-    expect(result.task?.status).toBe('todo');
-    expect(result.task?.assignee).toBe('dispatcher');
+    expect(result.task?.status).toBe('in_review');
+    expect(result.task?.assignee).toBe('verifier');
     expect((await comments('task-fallback'))).toHaveLength(1);
   });
 
@@ -189,9 +183,11 @@ describeWithPostgres('LifecycleCapabilityModel.settleReviewReject reject->repair
     await seedInReviewTask('task-dup');
 
     const first = await LifecycleCapabilityModel.settleReviewReject({
+      expectedGeneration: 1,
       taskId: 'task-dup', actor: 'verifier-routine', summary: 'Findings not addressed.',
     });
     const second = await LifecycleCapabilityModel.settleReviewReject({
+      expectedGeneration: 1,
       taskId: 'task-dup', actor: 'verifier-routine', summary: 'Findings not addressed.',
     });
 
@@ -200,8 +196,8 @@ describeWithPostgres('LifecycleCapabilityModel.settleReviewReject reject->repair
     expect(second.alreadySettled).toBe(true);
 
     const row = await taskRow('task-dup');
-    expect(row.status).toBe('todo');
-    expect(row.assignee).toBe('dispatcher');
+    expect(row.status).toBe('in_review');
+    expect(row.assignee).toBe('verifier');
     // No double-enqueue: still exactly one receipt/comment.
     expect((await comments('task-dup'))).toHaveLength(1);
     expect((await receipts('task-dup'))).toHaveLength(1);
@@ -212,6 +208,7 @@ describeWithPostgres('LifecycleCapabilityModel.settleReviewReject reject->repair
     await seedInReviewTask('task-denied');
 
     await expect(LifecycleCapabilityModel.settleReviewReject({
+      expectedGeneration: 1,
       taskId: 'task-denied', actor: 'heartbeat', summary: 'Trying to reject without authority.',
     })).rejects.toThrow(/denied/i);
 
@@ -221,28 +218,24 @@ describeWithPostgres('LifecycleCapabilityModel.settleReviewReject reject->repair
     expect((await receipts('task-denied'))).toHaveLength(0);
   });
 
-  it('lets the dispatcher subsequently claim and re-execute the repaired generation', async() => {
+  it('retains the live writer in a custom review lane and rejects stale generations', async() => {
     await healthyOwnedByRoutine();
-    await healthyExecutionOwnedByDispatcher();
-    await seedInReviewTask('task-repair');
-    // Original generation's execution dispatch, already finished.
-    await pool.query(`
-      INSERT INTO work_task_dispatches (id, task_id, agent_id, thread_id, kind, attempt, status, finished_at)
-      VALUES ('dispatch-gen1', 'task-repair', 'agent-1', 'thread-1', 'execution', 1, 'completed', now())
-    `);
-
-    const settled = await LifecycleCapabilityModel.settleReviewReject({
-      taskId: 'task-repair', actor: 'verifier-routine', summary: 'Repair needed before merge.',
+    await pool.query(`INSERT INTO work_lane_definitions (id, lane_key, scope, project_id, display_name, semantic_role)
+      VALUES ('qa', 'qa', 'project', 'p1', 'QA', 'review')`);
+    await seedInReviewTask('task-repair', 'qa');
+    await pool.query(`INSERT INTO work_task_stage_claims
+      (id, task_id, capability_key, stage, owner, runtime_instance_id)
+      VALUES ('writer', 'task-repair', 'in-review-verification', 'qa', 'verifier-routine', 'runtime')`);
+    await expect(LifecycleCapabilityModel.settleReviewReject({
+      taskId: 'task-repair', actor: 'verifier-routine', expectedGeneration: 0, summary: 'Stale findings',
+    })).rejects.toThrow('generation changed');
+    const result = await LifecycleCapabilityModel.settleReviewReject({
+      taskId: 'task-repair', actor: 'verifier-routine', expectedGeneration: 1, summary: 'Repair here',
     });
-    expect(settled.settled).toBe(true);
-
-    const claim = await WorkTaskDispatchModel.claimNext('agent-1', 'runtime-1');
-    expect(claim).not.toBeNull();
-    expect(claim?.task.id).toBe('task-repair');
-    expect(claim?.task.status).toBe('in_progress');
-    expect(claim?.dispatch.kind).toBe('execution');
-    // A fresh artifact generation: a new dispatch attempt, not a replay of the old one.
-    expect(claim?.dispatch.attempt).toBe(2);
+    expect(result.task?.status).toBe('qa');
+    expect((await pool.query("SELECT status FROM work_task_stage_claims WHERE id='writer'")).rows[0].status).toBe('active');
+    expect((await pool.query("SELECT generation FROM work_lane_entry_automations WHERE task_id='task-repair'")).rows)
+      .toEqual([{ generation: 1 }]);
   });
 
   it('recovers without losing the reject when the settlement transaction is rolled back before commit', async() => {
@@ -253,6 +246,7 @@ describeWithPostgres('LifecycleCapabilityModel.settleReviewReject reject->repair
     try {
       await client.query('BEGIN');
       await LifecycleCapabilityModel.settleReviewRejectWithClient(client, {
+        expectedGeneration: 1,
         taskId: 'task-crash', actor: 'verifier-routine', summary: 'Simulated crash before commit.',
       });
       await client.query('ROLLBACK');
@@ -268,11 +262,12 @@ describeWithPostgres('LifecycleCapabilityModel.settleReviewReject reject->repair
 
     // The next attempt starts clean and succeeds.
     const retry = await LifecycleCapabilityModel.settleReviewReject({
+      expectedGeneration: 1,
       taskId: 'task-crash', actor: 'verifier-routine', summary: 'Simulated crash before commit.',
     });
     expect(retry.settled).toBe(true);
     const afterRetry = await taskRow('task-crash');
-    expect(afterRetry.status).toBe('todo');
+    expect(afterRetry.status).toBe('in_review');
     expect((await comments('task-crash'))).toHaveLength(1);
   });
 });

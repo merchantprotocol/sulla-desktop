@@ -1,17 +1,7 @@
 import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
-/**
- * Settle an in-review task with a REJECTED verdict and atomically hand it
- * back to todo-execution for repair (#727). This is a dedicated, narrowly
- * scoped transition — not update_task — because the acting in-review
- * authority (the protected review routine, or its explicitly named
- * Heartbeat fallback) does not own todo-execution and update_task's guard
- * correctly denies a generic status edit across that boundary. This tool's
- * own authorization check requires the caller to be the effective owner of
- * in-review-verification at call time; everyone else is denied. Calling it
- * twice for a task that has already left in_review is a safe no-op.
- */
+/** Record generation-bound repair findings; retain the current lane and live writer. */
 export class RejectTaskReviewWorker extends BaseTool {
   name = '';
   description = '';
@@ -25,7 +15,7 @@ export class RejectTaskReviewWorker extends BaseTool {
 
     try {
       const result = await getProjectsApplicationService().rejectTaskReview(
-        { taskId, summary },
+        { taskId, summary, expectedGeneration: input.expected_generation },
         { actor, source: 'routine' },
       );
       if (!result.settled) {
@@ -36,7 +26,7 @@ export class RejectTaskReviewWorker extends BaseTool {
       }
       return {
         successBoolean: true,
-        responseString: `Task ${ taskId } rejected and handed back to todo-execution (assignee: ${ result.task?.assignee ?? 'dispatcher' }).`,
+        responseString: `Task ${ taskId } has repair findings recorded in ${ result.task?.status }; its writer retains ownership.`,
       };
     } catch (error: any) {
       return { successBoolean: false, responseString: `Failed to reject task review: ${ error?.message ?? String(error) }` };

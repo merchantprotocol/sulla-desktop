@@ -445,10 +445,11 @@ export const projectToolManifests: ToolManifest[] = [
   },
   {
     name:        'reject_task_review',
-    description: 'Settle an in_review task with a REJECTED verdict and atomically hand it back to todo-execution for repair. For the acting in-review authority only (the protected review routine, or its named Heartbeat fallback) — not a general status edit; use update_task for everything else. Idempotent: replaying it after the task has already left in_review is a no-op.',
+    description: 'Record generation-bound REJECTED findings for repair in the current configured review lane. Retains live writer ownership; does not move the task. Only the effective review authority may call it. Read inspect_lane_entry_automation for expected_generation. Identical findings in the same generation are idempotent.',
     category:    'project',
     schemaDef:   {
-      task_id: { type: 'string', description: 'Task currently in_review to reject.' },
+      task_id: { type: 'string', description: 'Task currently in a review-role lane.' },
+      expected_generation: { type: 'number', description: 'Current immutable lane-entry generation from inspect_lane_entry_automation.' },
       summary: { type: 'string', description: 'Rejection rationale / repair guidance, recorded on the receipt.' },
       actor:   { type: 'string', optional: true, description: 'Acting in-review authority. Defaults to "heartbeat". Must be the effective owner of in-review-verification at call time.' },
     },
@@ -777,7 +778,7 @@ export const projectToolManifests: ToolManifest[] = [
   // ── stage-generation settlement ──────────────────────────────────────
   {
     name:        'settle_stage_generation',
-    description: 'Complete or fail the exact stage-entry generation a workflow run was invoked with. Generation-bound: expected_generation must match the task current lane-entry generation, and settlement only applies to a still-running execution, so a stale or duplicate workflow run cannot clobber a prior settlement. Records the workflow own outcome; does not move the task to a different stage.',
+    description: 'Report a completed or failed outcome for the current stage-entry generation. expected_generation must match a running lane entry. This records evidence only: the reservation stays running until the runtime confirms the workflow and its children have stopped. Does not move the task.',
     category:    'project',
     schemaDef:   {
       task_id:             { type: 'string', description: 'Task whose current stage-entry generation to settle.' },

@@ -25,6 +25,9 @@ jest.unstable_mockModule('../../workflow/WorkflowPlaybook', () => ({
   completeSubAgent: jest.fn((playbook: any) => ({ action: 'continue', updatedPlaybook: playbook })),
 }));
 
+const planningFinished = jest.fn<(...args: any[]) => Promise<void>>().mockResolvedValue(undefined);
+jest.unstable_mockModule('../../services/PlanningCouncilService', () => ({ PlanningCouncilService: { handleWorkflowFinished: planningFinished } }));
+
 const { PlaybookController } = await import('../PlaybookController');
 const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
 const { WorkflowCheckpointModel } = await import('../../database/models/WorkflowCheckpointModel');
@@ -104,15 +107,40 @@ describe('singleton worker lifecycle', () => {
     return { state, controller, execute };
   }
 
-  it('holds admission after a failed parent when a worker timed out and may still be running', async() => {
-    const { state, controller } = setup();
-    // A worker was launched and its stop was never confirmed (it timed out).
-    controller.unconfirmedWorkers.set('singleton-run', 1);
-    await controller.releaseWorkflow(state, state.metadata.activeWorkflow, 'failed', 'Worker timeout');
-    expect(WorkflowExecutionModel.markSuspended).toHaveBeenCalledWith('singleton-run');
-    expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
-    expect(state.metadata.lastCompletedWorkflow.outcome).toBe('failed');
-  });
+  it.each(['singleton', 'core-routine-plan-project-task', 'custom-lane'])(
+    'retains reservations and heartbeats for %s until the child stops', async(workflowId) => {
+      jest.useFakeTimers();
+      const { state, controller } = setup();
+      const playbook = state.metadata.activeWorkflow;
+      playbook.workflowId = workflowId;
+      if (workflowId !== 'singleton') delete playbook.definition.concurrencyPolicy;
+      delete controller.executeSubAgent;
+      let finish!: () => void;
+      controller.executeSubAgentUntracked = jest.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+      const child = controller.executeSubAgent(state, 'worker', 'agent', 'prompt', {});
+      const heartbeat = { assertOwned: jest.fn(async() => undefined), stop: jest.fn() };
+      controller.workflowLease = { executionId: playbook.executionId, heartbeat };
+      const terminal = jest.fn(async() => undefined);
+      state.metadata.onRoutineTerminal = terminal;
+      const release = controller.releaseWorkflow(state, playbook, 'failed', 'Parent aborted');
+      await jest.advanceTimersByTimeAsync(3000);
+      expect(controller.hasUnconfirmedWorkers()).toBe(true);
+      expect(controller.isWorkflowLive(state, playbook.executionId)).toBe(false);
+      expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
+      expect(heartbeat.stop).not.toHaveBeenCalled();
+      expect(terminal).not.toHaveBeenCalled();
+      expect(planningFinished).not.toHaveBeenCalled();
+      expect(state.metadata.lastCompletedWorkflow).toBeUndefined();
+      finish();
+      await child;
+      await jest.advanceTimersByTimeAsync(1500);
+      await release;
+      expect(controller.hasUnconfirmedWorkers()).toBe(false);
+      expect(WorkflowExecutionModel.settle).toHaveBeenCalledWith(playbook.executionId, 'failed', 'Parent aborted');
+      expect(heartbeat.stop).toHaveBeenCalledTimes(1);
+      expect(terminal).toHaveBeenCalledTimes(1);
+      expect(planningFinished).toHaveBeenCalledTimes(workflowId === 'core-routine-plan-project-task' ? 1 : 0);
+    });
 
   it('settles a failed singleton that never left a worker running, so the next scheduled run is admitted', async() => {
     const { state, controller } = setup();
@@ -123,28 +151,53 @@ describe('singleton worker lifecycle', () => {
     expect(WorkflowExecutionModel.markSuspended).not.toHaveBeenCalled();
   });
 
-  it('confirms a worker stopped when its turn returns or it throws, but not on a timeout', async() => {
+  it.each(['absolute cap', 'ignored bumps'])('retains the real watchdog worker through %s until termination', async(mode) => {
+    jest.useFakeTimers();
     const { state, controller } = setup();
-    controller.executeSubAgentUntracked = jest.fn()
-      .mockResolvedValueOnce({ output: 'ok', contractStatus: 'done' } as never)
-      .mockRejectedValueOnce(new Error('worker crashed') as never)
-      .mockRejectedValueOnce(new Error('Sub-agent timed out after 600s') as never);
-    delete controller.executeSubAgent; // use the real tracking wrapper
-    const run = () => (PlaybookController.prototype as any).executeSubAgent.call(controller, state, 'w', 'a', 'p', {});
-
-    await run();
-    await expect(run()).rejects.toThrow('crashed');
-    expect(controller.unconfirmedWorkers.get('singleton-run') ?? 0).toBe(0);
-    await expect(run()).rejects.toThrow('timed out');
-    expect(controller.unconfirmedWorkers.get('singleton-run')).toBe(1);
+    delete controller.executeSubAgent;
+    delete controller.executeSubAgentWithRetry;
+    let finish!: () => void;
+    const child = { messages: [], metadata: {} } as any;
+    controller.executeSubAgentUntracked = jest.fn(() => controller.raceWithSubAgentWatchdog(
+      child, 'Production worker', () => new Promise<void>(resolve => { finish = resolve; }),
+    ));
+    // Exercise the real retry caller: it must not start attempt two while
+    // the first execution survives either production watchdog rejection.
+    controller.executeSubAgentWithRetry(state, 'worker', 'agent', 'prompt', {}, 'Worker', 2);
+    await jest.advanceTimersByTimeAsync(0);
+    let activity: ReturnType<typeof setInterval> | undefined;
+    if (mode === 'absolute cap') {
+      activity = setInterval(() => { child.metadata.lastActivityMs = Date.now(); }, 1000);
+    }
+    await jest.advanceTimersByTimeAsync(mode === 'absolute cap' ? 1800001 : 480001);
+    expect(controller.executeSubAgentUntracked).toHaveBeenCalledTimes(1);
+    expect(controller.hasUnconfirmedWorkers()).toBe(true);
+    expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
+    if (activity) clearInterval(activity);
+    // Fence late retry after proving the surviving execution keeps ownership.
+    state.metadata.activeWorkflow = undefined;
+    finish();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(controller.hasUnconfirmedWorkers()).toBe(false);
+    expect(controller.executeSubAgentUntracked).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses successful release while a child is pending', async() => {
+  it.each(['worker crashed', 'worker aborted'])('releases after an actual execution rejection: %s', async(message) => {
+    const { state, controller } = setup();
+    delete controller.executeSubAgent;
+    controller.executeSubAgentUntracked = jest.fn(() => controller.raceWithSubAgentWatchdog(
+      { metadata: {} }, 'Worker', async() => { throw new Error(message); },
+    ));
+    await expect(controller.executeSubAgent(state, 'worker', 'agent', 'prompt', {})).rejects.toThrow(message);
+    expect(controller.hasUnconfirmedWorkers()).toBe(false);
+  });
+
+  it('fails completed release for an unconsumed child result without retaining a stopped writer', async() => {
     const { state, controller } = setup();
     controller.pendingSubAgents.set('worker', { nodeId: 'worker' });
     await controller.releaseWorkflow(state, state.metadata.activeWorkflow, 'completed');
-    expect(WorkflowExecutionModel.markSuspended).toHaveBeenCalledWith('singleton-run');
-    expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
+    expect(WorkflowExecutionModel.markSuspended).not.toHaveBeenCalled();
+    expect(WorkflowExecutionModel.settle).toHaveBeenCalledWith('singleton-run', 'failed', expect.any(String));
     expect(state.metadata.lastCompletedWorkflow.error).toContain('sub-agent may still be running');
   });
 

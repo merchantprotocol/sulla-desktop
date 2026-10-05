@@ -4,6 +4,11 @@ import { postgresClient } from '../../PostgresClient';
 import { LifecycleCapabilityModel } from '../LifecycleCapabilityModel';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 
+function admissionClient(query: any): any {
+  return { query: (sql: string, ...args: any[]) => sql.includes('projects-agent-admission')
+    ? Promise.resolve({ rows: [] }) : query(sql, ...args) };
+}
+
 describe('LifecycleCapabilityModel', () => {
   const originalQuery = postgresClient.query;
   const originalQueryOne = postgresClient.queryOne;
@@ -75,8 +80,9 @@ describe('LifecycleCapabilityModel', () => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [capability] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'task-1' }] })
       .mockResolvedValueOnce({ rows: [inserted] });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
 
     await expect(LifecycleCapabilityModel.claimStage(
       'task-1', 'in-review-verification', 'in_review', 'heartbeat', 'hb-1',
@@ -102,7 +108,7 @@ describe('LifecycleCapabilityModel', () => {
     let query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [capability] })
       .mockResolvedValueOnce({ rows: [existing] });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
     await expect(LifecycleCapabilityModel.claimStage(
       'task-1', 'stale-recovery', 'stale-recovery', 'heartbeat', 'wake-1',
     )).resolves.toMatchObject({ claimed: true, claim: { id: 'stage-1' } });
@@ -110,23 +116,18 @@ describe('LifecycleCapabilityModel', () => {
     query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [{ ...capability, enabled: true, health: 'healthy', active_owner: 'recovery-service' }] })
       .mockResolvedValueOnce({ rows: [existing] });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
     await expect(LifecycleCapabilityModel.claimStage(
       'task-1', 'stale-recovery', 'stale-recovery', 'heartbeat', 'wake-2',
     )).resolves.toMatchObject({ claimed: false, reason: 'stale-recovery is owned by recovery-service' });
   });
 
-  it('recovers only claims from a previous runtime, never by age', async() => {
-    const query: any = jest.fn(() => Promise.resolve({ rows: [{ task_id: 'task-1' }] }));
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
-
+  it('does not infer caller termination from a different runtime identity', async() => {
+    const query: any = jest.fn();
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
     await expect(LifecycleCapabilityModel.recoverPreviousRuntime('todo-execution', 'runtime-new'))
-      .resolves.toEqual(['task-1']);
-    expect(query).toHaveBeenCalledWith(
-      expect.stringContaining('runtime_instance_id <> $2'),
-      ['todo-execution', 'runtime-new'],
-    );
-    expect((query).mock.calls[0][0]).not.toContain('interval');
+      .resolves.toEqual([]);
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('renders compact truthful state for all lifecycle capabilities', async() => {
@@ -230,7 +231,7 @@ describe('LifecycleCapabilityModel', () => {
       .mockResolvedValueOnce({ rows: [{ project_id: 'project-1', epic_id: 'epic-1' }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
 
     await LifecycleCapabilityModel.report({
       key:               'durable-waits',
@@ -264,7 +265,7 @@ describe('LifecycleCapabilityModel', () => {
     } as any;
     (postgresClient as any).queryOne = jest.fn(() => Promise.resolve(healthy));
     const query: any = jest.fn(() => Promise.resolve({ rows: [] }));
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(admissionClient(query)));
 
     await LifecycleCapabilityModel.report({
       key:               'durable-waits',

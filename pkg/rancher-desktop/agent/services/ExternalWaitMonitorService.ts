@@ -120,7 +120,11 @@ export class ExternalWaitMonitorService {
           : await this.pollGithubChecks(wait);
         this.metrics.checksPerformed += 1;
       } else if (wait.wait_kind === 'human_gate') {
-        observation = this.checkDueThreshold(wait, 'Human gate due-time reached');
+        observation = {
+          fingerprint: wait.last_observed_fingerprint ?? `human-gate:${ wait.id }`,
+          outcome: 'pending', summary: 'Explicit human approval is required.',
+          nextCheckAt: new Date(Date.now() + FAR_FUTURE_MS),
+        };
       } else if (wait.wait_kind === 'scheduled_time') {
         observation = this.checkDueThreshold(wait, 'Scheduled wait time reached');
       } else {

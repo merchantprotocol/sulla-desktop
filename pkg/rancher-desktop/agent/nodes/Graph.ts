@@ -249,6 +249,10 @@ export class Graph<TState = BaseThreadState> {
   // ── Playbook orchestration (delegated to PlaybookController) ──
   private playbookController = new PlaybookController<TState>(this);
 
+  hasUnconfirmedWorkflowWorkers(): boolean {
+    return this.playbookController.hasUnconfirmedWorkers();
+  }
+
   /**
    * Add a node to the graph.
    * @param node - Node instance implementing GraphNode<TState>

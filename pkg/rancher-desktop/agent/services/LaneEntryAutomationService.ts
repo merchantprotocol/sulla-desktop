@@ -82,16 +82,22 @@ export class LaneEntryAutomationService {
           await LaneEntryAutomationService.settleEntry(entry, result);
         },
       });
+      if (result.skipped) {
+        return (await WorkLaneWorkflowBindingModel.markOutcome(entry.id, executionId, 'failed', {
+          disposition: 'activation_skipped', reason: result.skipped,
+        })) ?? started;
+      }
       if (result.executionId !== executionId) {
         throw new Error(`Lane execution identity mismatch: expected ${ executionId }, received ${ result.executionId }.`);
       }
       return (await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id)) ?? started;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const failed = await WorkLaneWorkflowBindingModel.markOutcome(entry.id, executionId, 'failed', {
-        disposition: 'dispatch_failed', message,
-      });
-      return failed ?? started;
+      // executeRoutine may have started a graph before rejecting, and even a
+      // successful launch can be followed by a failed bookkeeping read. Only
+      // the drained terminal callback can release this reservation.
+      console.warn(`[LaneEntryAutomation] Launch/bookkeeping uncertain for ${ entry.id }; ownership retained: ${ message }`);
+      return started;
     }
   }
 
@@ -103,30 +109,37 @@ export class LaneEntryAutomationService {
       ? result.outcome as Record<string, any>
       : {};
     let transitionReceipt: unknown = null;
-    if (result.status === 'completed' && outcome.transition) {
-      const transition = outcome.transition as { mode?: string; stageKey?: string };
-      const { getProjectsApplicationService } = await import('../projects/application/ProjectsApplicationService');
-      const projects = getProjectsApplicationService();
-      const context = { actor: 'sulla' as const, source: 'routine' as const };
-      if (transition.mode === 'next') {
-        transitionReceipt = await projects.transitionTaskRelative({
-          taskId: entry.task_id, direction: 'next', expectedGeneration: entry.generation,
-          custody: outcome.custody,
-        }, context);
-      } else if (transition.mode === 'specific' && typeof transition.stageKey === 'string') {
-        transitionReceipt = await projects.transitionTaskStage({
-          taskId: entry.task_id, stageKey: transition.stageKey, expectedGeneration: entry.generation,
-          custody: outcome.custody,
-        }, context);
-      } else {
-        throw new Error('Lane workflow returned an invalid transition outcome.');
+    let transitionError: string | null = null;
+    try {
+      if (result.status === 'completed' && outcome.transition) {
+        const transition = outcome.transition as { mode?: string; stageKey?: string };
+        const { getProjectsApplicationService } = await import('../projects/application/ProjectsApplicationService');
+        const projects = getProjectsApplicationService();
+        const context = { actor: 'sulla' as const, source: 'routine' as const };
+        if (transition.mode === 'next') {
+          transitionReceipt = await projects.transitionTaskRelative({
+            taskId: entry.task_id, direction: 'next', expectedGeneration: entry.generation,
+            custody: outcome.custody,
+          }, context);
+        } else if (transition.mode === 'specific' && typeof transition.stageKey === 'string') {
+          transitionReceipt = await projects.transitionTaskStage({
+            taskId: entry.task_id, stageKey: transition.stageKey, expectedGeneration: entry.generation,
+            custody: outcome.custody,
+          }, context);
+        } else {
+          throw new Error('Lane workflow returned an invalid transition outcome.');
+        }
       }
+    } catch (error) {
+      transitionError = error instanceof Error ? error.message : String(error);
     }
     await WorkLaneWorkflowBindingModel.markOutcome(
       entry.id,
       result.executionId,
-      result.status,
-      result.status === 'completed'
+      transitionError ? 'failed' : result.status,
+      transitionError
+        ? { disposition: 'transition_failed', message: transitionError, workflowOutcome: outcome }
+        : result.status === 'completed'
         ? { disposition: 'completed', workflowOutcome: outcome, transitionReceipt }
         : { disposition: 'runtime_failed', message: result.error ?? 'Unknown workflow failure' },
     );
@@ -141,30 +154,9 @@ export class LaneEntryAutomationService {
     await Promise.allSettled(recoverable.filter(entry => !this.recovering.has(entry.id)).map(async(entry) => {
       this.recovering.add(entry.id);
       try {
-        if (entry.status === 'running' && entry.execution_id) {
-          if (entry.workflow_execution_status === 'completed' || entry.workflow_execution_status === 'failed') {
-            if (entry.workflow_execution_status === 'completed' && (entry.outcome as any)?.disposition !== 'completion_pending') {
-              await this.settleEntry(entry, { executionId: entry.execution_id, status: 'failed',
-                error: 'Missing durable terminal receipt; manual reconciliation required.' });
-            } else if (entry.workflow_execution_status === 'completed') {
-              await this.settleEntry(entry, {
-                executionId: entry.execution_id, status: 'completed',
-                outcome: (entry.outcome as any)?.workflowOutcome,
-              });
-            } else {
-              await this.settleEntry(entry, {
-                executionId: entry.execution_id, status: 'failed', error: entry.workflow_execution_error ?? 'Unknown workflow failure',
-              });
-            }
-            const settled = await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id);
-            if (settled) results.push(settled);
-            return;
-          }
-          const reset = entry.workflow_execution_status === 'running' || entry.workflow_execution_status === 'suspended'
-            ? await WorkLaneWorkflowBindingModel.resetInterruptedExecution(entry.id, entry.execution_id)
-            : await WorkLaneWorkflowBindingModel.resetMissingExecution(entry.id, entry.execution_id);
-          if (!reset) return;
-        }
+        // Workflow status can be changed by lease recovery while a child is
+        // still alive. The runtime terminal callback alone settles live entries.
+        if (entry.status === 'running') return;
         if (entry.status === 'failed') {
           const reset = await WorkLaneWorkflowBindingModel.resetFailed(entry.id);
           if (!reset) return;

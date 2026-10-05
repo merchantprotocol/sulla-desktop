@@ -39,8 +39,8 @@ describe('WorkTaskDispatchModel.countByRole (issue #711)', () => {
     // resolved COALESCE expression unambiguously.
     expect(sql).toContain('GROUP BY 1');
     expect(sql).not.toContain('GROUP BY semantic_role');
-    expect(sql).toContain("LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier')");
-    expect(sql).toContain('NOT (p.status = ANY($1::text[]))');
+    expect(sql).not.toContain('LOWER(t.assignee)');
+    expect(sql).not.toContain('p.dispatch_enabled = true');
   });
 
   it('falls back to the default status role map when no lane matches', async() => {
@@ -56,10 +56,9 @@ describe('WorkTaskDispatchModel.countByRole (issue #711)', () => {
     expect(counts.planning).toBe(1);
   });
 
-  it('serializes WIP evaluation and rejects a saturated claim before selecting a task', async() => {
+  it('keeps WIP telemetry from becoming a policy exclusion', async() => {
     const query = jest.fn<(text: string, params?: unknown[]) => Promise<any>>()
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ semantic_role: 'execution', count: '3' }] });
+      .mockResolvedValue({ rows: [] });
     const { postgresClient } = await import('../../PostgresClient');
     jest.spyOn(postgresClient, 'transaction').mockImplementation((callback: any) => callback({ query }));
 
@@ -71,7 +70,6 @@ describe('WorkTaskDispatchModel.countByRole (issue #711)', () => {
 
     expect(query).toHaveBeenCalledTimes(2);
     expect(query.mock.calls[0][0]).toContain('pg_advisory_xact_lock');
-    expect(query.mock.calls[1][0]).toContain('GROUP BY 1');
-    expect(query.mock.calls.some(([sql]) => sql.includes('FOR UPDATE OF t SKIP LOCKED'))).toBe(false);
+    expect(query.mock.calls[1][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
   });
 });

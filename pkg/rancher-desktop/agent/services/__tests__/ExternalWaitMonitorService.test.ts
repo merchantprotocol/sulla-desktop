@@ -46,6 +46,17 @@ describe('ExternalWaitMonitorService', () => {
     postgresQueryMock.mockResolvedValue([]);
   });
 
+  it('does not treat an overdue human gate as approval', async() => {
+    const wait: any = { id: 'human', task_id: 'task-1', wait_kind: 'human_gate',
+      due_at: '2000-01-01T00:00:00Z', status: 'active' };
+    claimDueMock.mockResolvedValue([wait]);
+    observeMock.mockResolvedValue({ changed: false, wait });
+    const { ExternalWaitMonitorService } = await import('../ExternalWaitMonitorService');
+    await new ExternalWaitMonitorService().forceCheck();
+    expect(observeMock).toHaveBeenCalledWith('human', expect.objectContaining({ outcome: 'pending' }));
+    expect(recordReceiptMock).not.toHaveBeenCalled();
+  });
+
   it('suppresses repeated pending fingerprints and emits one pending-to-success delta', async() => {
     const wait: any = {
       id:                          'wait-1',

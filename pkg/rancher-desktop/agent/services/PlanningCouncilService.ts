@@ -1,3 +1,4 @@
+import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
 import {
   PROJECT_TASK_PLANNING_WORKFLOW_ID,
@@ -7,7 +8,6 @@ import {
 import { WorkflowModel } from '../database/models/WorkflowModel';
 import { WorkflowExecutionModel } from '../database/models/WorkflowExecutionModel';
 import { recordReceipt } from './ArtifactReceiptService';
-import { getProjectsApplicationService } from '../projects/application/ProjectsApplicationService';
 
 // Planners get all the information: no description, comment-count or
 // comment-length caps (every lane is treated the same).
@@ -24,49 +24,16 @@ export class PlanningCouncilService {
   /** Called after a Projects task update has committed. */
   static async handleTaskStatusTransition(
     task: WorkTaskRecord,
-    previousStatus: string,
+    _previousStatus: string,
     actor?: string,
   ): Promise<void> {
-    if (!['blocked', 'planning'].includes(task.status)) {
-      const settled = await WorkTaskPlanningRunModel.settleForTask(
-        task.id,
-        'completed',
-      );
-      if (settled) {
-        await recordReceipt({
-          taskId: task.id, eventType: 'planning', actor: 'planning-council',
-          workflowExecutionId: settled.execution_id ?? undefined,
-          disposition: 'completed', nextOwner: task.assignee ?? 'complete',
-          validationSummary: `Task returned to ${ task.status }.`,
-          artifacts: [{ type: 'planning_run', canonicalRef: settled.id }],
-          evidence: settled.execution_id
-            ? { kind: 'workflow_execution', ref: settled.execution_id }
-            : { kind: 'other', ref: settled.id },
-        });
-      }
-      return;
-    }
+    const role = await WorkLaneDefinitionModel.semanticRoleForStatus(task.project_id, task.status);
+    // A status update can run inside the recordkeeper's tool call. Only
+    // the drained workflow terminal callback may release its reservation.
+    if (!['blocked', 'planning'].includes(role)) return;
+    if (actor === 'planning-council' && role === 'blocked') return;
 
-    // planning -> blocked is the council's explicit irreversible-gate outcome.
-    // Settle it; do not recursively create another council for the same result.
-    if (previousStatus === 'planning' && task.status === 'blocked') {
-      const settled = await WorkTaskPlanningRunModel.settleForTask(task.id, 'blocked');
-      if (settled) {
-        await recordReceipt({
-          taskId: task.id, eventType: 'planning', actor: 'planning-council',
-          workflowExecutionId: settled.execution_id ?? undefined,
-          disposition: 'blocked', nextOwner: 'heartbeat',
-          validationSummary: 'Planning preserved a genuine gate.',
-          artifacts: [{ type: 'planning_run', canonicalRef: settled.id }],
-          evidence: settled.execution_id
-            ? { kind: 'workflow_execution', ref: settled.execution_id }
-            : { kind: 'other', ref: settled.id },
-        });
-      }
-      return;
-    }
-
-    await PlanningCouncilService.claimAndLaunch(task.id, task.status as 'blocked' | 'planning', actor);
+    await PlanningCouncilService.claimAndLaunch(task.id, task.status, actor);
   }
 
   static async recoverOnStartup(): Promise<void> {
@@ -79,8 +46,8 @@ export class PlanningCouncilService {
         body:    'Recovered a planning council interrupted by restart; retrying with a new durable claim.',
       }).catch(err => console.warn(`[PlanningCouncil] Could not audit recovery for ${ taskId }:`, err));
       const task = await WorkItemsModel.getTask(taskId);
-      if (task && ['blocked', 'planning'].includes(task.status)) {
-        await PlanningCouncilService.claimAndLaunch(taskId, task.status as 'blocked' | 'planning', 'startup-recovery');
+      if (task && ['blocked', 'planning'].includes(await WorkLaneDefinitionModel.semanticRoleForStatus(task.project_id, task.status))) {
+        await PlanningCouncilService.claimAndLaunch(taskId, task.status, 'startup-recovery');
       }
     }
   }
@@ -95,7 +62,25 @@ export class PlanningCouncilService {
     if (!run) return;
 
     const task = await WorkItemsModel.getTask(run.task_id);
-    if (task?.status !== 'planning') return;
+    if (!task) {
+      await WorkTaskPlanningRunModel.settleForTask(run.task_id, 'failed', 'Task no longer exists');
+      return;
+    }
+
+    const role = await WorkLaneDefinitionModel.semanticRoleForStatus(task.project_id, task.status);
+    if (outcome === 'completed' && role !== 'planning') {
+      const disposition = role === 'blocked' ? 'blocked' : 'completed';
+      await WorkTaskPlanningRunModel.settleForTask(task.id, disposition);
+      await recordReceipt({
+        taskId: task.id, eventType: 'planning', actor: 'planning-council',
+        workflowExecutionId: executionId, disposition,
+        nextOwner: task.assignee ?? 'complete',
+        validationSummary: `Planning writers stopped with task in ${ task.status }.`,
+        artifacts: [{ type: 'planning_run', canonicalRef: run.id }],
+        evidence: { kind: 'workflow_execution', ref: executionId },
+      });
+      return;
+    }
 
     const reason = outcome === 'completed'
       ? 'Planning routine completed without persisting a final plan and state transition.'
@@ -108,16 +93,11 @@ export class PlanningCouncilService {
       artifacts: [{ type: 'planning_run', canonicalRef: run.id }],
       evidence: { kind: 'workflow_execution', ref: executionId },
     });
-    await getProjectsApplicationService().updateTask(task.id, {
-      status:   'blocked',
-      assignee: 'heartbeat',
-      actor:    'planning-council',
-    });
   }
 
   private static async claimAndLaunch(
     taskId: string,
-    triggerStatus: 'blocked' | 'planning',
+    triggerStatus: string,
     actor?: string,
   ): Promise<void> {
     const workflow = await WorkflowModel.findById(PROJECT_TASK_PLANNING_WORKFLOW_ID);
@@ -137,21 +117,34 @@ export class PlanningCouncilService {
     const claim = await WorkTaskPlanningRunModel.claim(taskId, triggerStatus, actor);
     if (!claim) return;
 
-    await WorkItemsModel.addComment({
-      task_id: claim.task.id,
-      author:  'planning-council',
-      body:    `Planning council claimed (run ${ claim.run.id }, attempt ${ claim.run.attempt }, trigger ${ triggerStatus }, actor ${ actor || 'unknown' }).`,
-    });
-
+    let launchAttempted = false;
     try {
+      await WorkItemsModel.addComment({
+        task_id: claim.task.id,
+        author:  'planning-council',
+        body:    `Planning council claimed (run ${ claim.run.id }, attempt ${ claim.run.attempt }, trigger ${ triggerStatus }, actor ${ actor || 'unknown' }).`,
+      });
       const snapshot = await PlanningCouncilService.buildSnapshot(claim);
       const { executeRoutine } = await import('@pkg/main/sullaRoutineTemplateEvents');
+      const executionId = `planning-execution-${ claim.run.id }`;
+      // Persist the callback identity before any writer can start.
+      await WorkTaskPlanningRunModel.attachExecution(claim.run.id, executionId);
+      // A launch error can occur after a child starts. Retain ownership until
+      // its terminal callback confirms termination, including bookkeeping errors.
+      launchAttempted = true;
       const execution = await executeRoutine(
         PROJECT_TASK_PLANNING_WORKFLOW_ID,
         JSON.stringify(snapshot),
-        { allowConcurrent: true, routineKind: 'planning', waitForCapacity: true },
+        { executionId, allowConcurrent: true, routineKind: 'planning', waitForCapacity: true,
+          onSettled: result => PlanningCouncilService.handleWorkflowFinished(
+            result.executionId, result.status, result.error,
+          ),
+        },
       );
-      await WorkTaskPlanningRunModel.attachExecution(claim.run.id, execution.playbookExecutionId ?? execution.executionId);
+      if (execution.skipped) {
+        await WorkTaskPlanningRunModel.settleForTask(claim.task.id, 'failed', `Workflow declined: ${ execution.skipped }`);
+        return;
+      }
       await WorkItemsModel.addComment({
         task_id: claim.task.id,
         author:  'planning-council',
@@ -159,17 +152,12 @@ export class PlanningCouncilService {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await WorkTaskPlanningRunModel.settleForTask(claim.task.id, 'failed', message);
+      if (!launchAttempted) await WorkTaskPlanningRunModel.settleForTask(claim.task.id, 'failed', message);
       await WorkItemsModel.addComment({
         task_id: claim.task.id,
         author:  'planning-council',
-        body:    `Planning council launch failed (run ${ claim.run.id }): ${ bounded(message, 1_000) }`,
-      });
-      await getProjectsApplicationService().updateTask(claim.task.id, {
-        status:   'blocked',
-        assignee: 'heartbeat',
-        actor:    'planning-council',
-      });
+        body:    `Planning council launch/bookkeeping failed; ${ launchAttempted ? 'ownership retained pending termination' : 'no workflow started' } (run ${ claim.run.id }): ${ bounded(message, 1_000) }`,
+      }).catch(auditError => console.warn('[PlanningCouncil] Could not audit launch failure:', auditError));
     }
   }
 
@@ -198,7 +186,7 @@ export class PlanningCouncilService {
         id:               task.id,
         title:            bounded(task.title, 500),
         description:      bounded(task.description, MAX_DESCRIPTION_CHARS),
-        status:           'planning',
+        status:           task.status,
         priority:         task.priority,
         assignee:         task.assignee,
         labels:           task.labels ?? [],

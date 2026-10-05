@@ -4,8 +4,6 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 
-import { SullaSettingsModel } from './models/SullaSettingsModel';
-
 // Node's AsyncLocalStorage is unsafe in an Electron renderer: there the async
 // context slot is shared with Blink, so getStore() can read a Blink object and
 // V8 aborts the whole renderer (it took down the password vault on its first
@@ -27,7 +25,8 @@ export class PostgresClient {
     if (this.shuttingDown) return; // Don't reconnect during shutdown
     if (this.pool) return; // Already initialized
 
-    // Get password from settings
+    // Settings extends BaseModel, which imports this client. Load it only on use.
+    const { SullaSettingsModel } = await import('./models/SullaSettingsModel');
     const password = await SullaSettingsModel.get('sullaServicePassword', 'sulla_dev_password');
 
     this.pool = new Pool({
@@ -175,6 +174,8 @@ export class PostgresClient {
    * explicit maxAttempts value.
    */
   async waitForReady(maxAttempts = Number.POSITIVE_INFINITY, intervalMs = 1000): Promise<void> {
+    // Settings extends BaseModel, which imports this client. Load it only on use.
+    const { SullaSettingsModel } = await import('./models/SullaSettingsModel');
     const password = await SullaSettingsModel.get('sullaServicePassword', 'sulla_dev_password');
 
     for (let i = 1; i <= maxAttempts; i++) {

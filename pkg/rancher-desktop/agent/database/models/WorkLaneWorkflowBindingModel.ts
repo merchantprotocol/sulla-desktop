@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
+import { agentAdmissionSql } from './WorkAgentAdmission';
 import { DISPATCHER_RECONCILED_LANE_MESSAGE } from './WorkflowExecutionModel';
 
 import { postgresClient } from '../PostgresClient';
@@ -18,11 +18,6 @@ export interface LaneContract {
 
 export const LANE_ENTRY_INPUT_ENVELOPE = 'project.lane-entry.v1';
 export const LANE_OUTCOME_OUTPUT_ENVELOPE = 'project.lane-outcome.v1';
-
-// Dependency holds prevent work from being claimed into forward execution or
-// review lanes. They must not prevent a task from entering a recovery/settled
-// lane such as blocked, planning, or another non-forward state.
-const DEPENDENCY_GATED_LANE_KEYS = new Set(['todo', 'in_progress', 'in_review']);
 
 export interface LaneWorkflowBindingRecord {
   id:            string;
@@ -359,7 +354,7 @@ export class WorkLaneWorkflowBindingModel {
           AND task.archived = false AND task.status = lane.lane_key
         JOIN work_projects project ON project.id = task.project_id AND project.archived = false
           AND (project.dispatch_enabled = true OR lane.status = 'running')
-        JOIN work_epics epic ON epic.id = task.epic_id AND epic.archived = false
+        LEFT JOIN work_epics epic ON epic.id = task.epic_id
         LEFT JOIN workflow_executions execution ON execution.execution_id = lane.execution_id
        WHERE lane.workflow_id IS NOT NULL
          AND NOT EXISTS (
@@ -380,18 +375,27 @@ export class WorkLaneWorkflowBindingModel {
                AND execution.lease_expires_at <= now())
          ))
        )
-       ORDER BY lane.created_at ASC LIMIT $1
+       ORDER BY GREATEST(task.last_activity_at, task.last_moved_at) DESC, task.id ASC LIMIT $1
     `, [limit]);
   }
 
   static async markStarted(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
-    const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
-      UPDATE work_lane_entry_automations
-         SET execution_id = $2, status = 'running', started_at = now()
-       WHERE id = $1 AND status = 'pending' AND execution_id IS NULL
-       RETURNING *
-    `, [id, executionId]);
-    return rows[0] ?? null;
+    return postgresClient.transaction(async(client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
+      const rows = await client.query<LaneEntryAutomationRecord>(`
+        UPDATE work_lane_entry_automations lane
+           SET execution_id = $2, status = 'running', started_at = now()
+          FROM work_tasks task JOIN work_projects project ON project.id = task.project_id
+         WHERE lane.id = $1 AND lane.status = 'pending' AND lane.execution_id IS NULL
+           AND task.id = lane.task_id AND task.archived = false
+           AND task.status = lane.lane_key AND project.dispatch_enabled = true
+           AND NOT EXISTS (SELECT 1 FROM work_lane_entry_automations newer
+             WHERE newer.task_id = lane.task_id AND newer.generation > lane.generation)
+           ${ agentAdmissionSql('task') }
+         RETURNING lane.*
+      `, [id, executionId]);
+      return rows.rows[0] ?? null;
+    });
   }
 
   static async resetFailed(id: string): Promise<LaneEntryAutomationRecord | null> {
@@ -414,42 +418,33 @@ export class WorkLaneWorkflowBindingModel {
     return rows[0] ?? null;
   }
 
-  static async resetMissingExecution(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
-    const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
-      UPDATE work_lane_entry_automations
-         SET execution_id = NULL, status = 'pending', started_at = NULL
-       WHERE id = $1 AND execution_id = $2 AND status = 'running'
-         AND NOT EXISTS (SELECT 1 FROM workflow_executions WHERE execution_id = $2)
-       RETURNING *
-    `, [id, executionId]);
-    return rows[0] ?? null;
+  /** Absence of an execution row is not confirmation that its writer stopped. */
+  static async resetMissingExecution(_id: string, _executionId: string): Promise<LaneEntryAutomationRecord | null> {
+    return null;
   }
 
-  static async resetInterruptedExecution(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
-    return postgresClient.transaction(async(client) => {
-      const interrupted = await client.query(`
-        UPDATE workflow_executions
-           SET status = 'failed', completed_at = now(), updated_at = now(), error = 'interrupted_before_lane_recovery'
-         WHERE execution_id = $1 AND status IN ('running', 'suspended')
-           AND lease_expires_at IS NOT NULL AND lease_expires_at <= now()
-         RETURNING execution_id
-      `, [executionId]);
-      if (!interrupted.rows[0]) return null;
-      const reset = await client.query<LaneEntryAutomationRecord>(`
-        UPDATE work_lane_entry_automations
-           SET execution_id = NULL, status = 'pending', started_at = NULL, completed_at = NULL, outcome = NULL
-         WHERE id = $1 AND execution_id = $2 AND status = 'running'
-         RETURNING *
-      `, [id, executionId]);
-      return reset.rows[0] ?? null;
-    });
+  /** Lease loss requests abort; only the drained terminal callback releases ownership. */
+  static async resetInterruptedExecution(_id: string, _executionId: string): Promise<LaneEntryAutomationRecord | null> {
+    return null;
+  }
+
+  /** Public reports are evidence, not proof that the calling writer stopped. */
+  static async recordRequestedOutcome(id: string, executionId: string, status: 'completed' | 'failed', outcome: Record<string, unknown>):
+  Promise<LaneEntryAutomationRecord | null> {
+    const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
+      UPDATE work_lane_entry_automations
+         SET outcome = COALESCE(outcome, '{}'::jsonb) || $3::jsonb
+       WHERE id = $1 AND execution_id = $2 AND status = 'running'
+       RETURNING *
+    `, [id, executionId, JSON.stringify({ requestedSettlement: { status, outcome } })]);
+    return rows[0] ?? null;
   }
 
   static async markOutcome(id: string, executionId: string, status: 'completed' | 'failed', outcome: Record<string, unknown>):
   Promise<LaneEntryAutomationRecord | null> {
     const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
       UPDATE work_lane_entry_automations
-         SET status = $3, outcome = $4::jsonb, completed_at = now()
+         SET status = $3, outcome = COALESCE(outcome, '{}'::jsonb) || $4::jsonb, completed_at = now()
        WHERE id = $1 AND execution_id = $2 AND status = 'running'
        RETURNING *
     `, [id, executionId, status, JSON.stringify(outcome)]);
@@ -529,9 +524,6 @@ export class WorkLaneWorkflowBindingModel {
     actor = 'sulla', profileId = 'default'):
     Promise<{ created: boolean; entry: LaneEntryAutomationRecord }> {
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ taskId }`]);
-    if (DEPENDENCY_GATED_LANE_KEYS.has(laneKey)) {
-      await WorkTaskDependencyModel.assertClaimable(taskId, client);
-    }
     const prior = await client.query<LaneEntryAutomationRecord>(`
         SELECT * FROM work_lane_entry_automations WHERE task_id = $1 ORDER BY generation DESC LIMIT 1
       `, [taskId]);

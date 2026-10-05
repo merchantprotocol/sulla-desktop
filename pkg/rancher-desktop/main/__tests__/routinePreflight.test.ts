@@ -30,10 +30,38 @@ beforeEach(() => {
   findActive.mockResolvedValue(null);
   admit.mockResolvedValue(undefined);
   graphExecute.mockResolvedValue(undefined);
-  createGraph.mockResolvedValue({ graph: { execute: graphExecute }, state: { metadata: {}, messages: [] } });
+  createGraph.mockResolvedValue({ graph: { execute: graphExecute, hasUnconfirmedWorkflowWorkers: () => false }, state: { metadata: {}, messages: [] } });
 });
 
 describe('deterministic routine admission before all graph/model work', () => {
+  it('notifies the prebound owner when graph construction fails before any writer starts', async() => {
+    scan.mockResolvedValue({ successBoolean: true, outputs: { shouldRun: true } });
+    createGraph.mockRejectedValueOnce(new Error('graph construction failed'));
+    const onSettled = jest.fn<(...args: any[]) => Promise<void>>().mockResolvedValue(undefined);
+    await expect(executeRoutine(definition.id, '', { executionId: 'prebound', onSettled }))
+      .rejects.toThrow('graph construction failed');
+    expect(graphExecute).not.toHaveBeenCalled();
+    expect(onSettled).toHaveBeenCalledWith(expect.objectContaining({ executionId: 'prebound', status: 'failed' }));
+  });
+
+  it('retains ownership after graph rejection until child writers stop', async() => {
+    scan.mockResolvedValue({ successBoolean: true, outputs: { shouldRun: true } });
+    let childAlive = true;
+    createGraph.mockResolvedValueOnce({ graph: { execute: graphExecute,
+      hasUnconfirmedWorkflowWorkers: () => childAlive }, state: { metadata: {}, messages: [] } });
+    graphExecute.mockRejectedValueOnce(new Error('parent failed'));
+    const onSettled = jest.fn<(...args: any[]) => Promise<void>>().mockResolvedValue(undefined);
+    jest.useFakeTimers();
+    try {
+      await executeRoutine(definition.id, '', { executionId: 'prebound', onSettled });
+      await jest.advanceTimersByTimeAsync(1);
+      expect(onSettled).not.toHaveBeenCalled();
+      childAlive = false;
+      await jest.advanceTimersByTimeAsync(1500);
+      expect(onSettled).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
+    } finally { jest.useRealTimers(); }
+  });
+
   it.each(['Scheduled trigger', 'Catch-up: missed trigger', ''])('empty queue creates no graph for %s', async(trigger) => {
     scan.mockResolvedValue({ successBoolean: true, outputs: { shouldRun: false, count: 0, ready_prs: [] } });
     await expect(executeRoutine(definition.id, trigger)).resolves.toMatchObject({ skipped: 'preflight_empty', executionId: '' });
@@ -126,7 +154,7 @@ describe('browser capability uses the admitted routine', () => {
   it('settles an admitted run when browser setup is denied', async() => {
     definition.browser = true;
     scan.mockResolvedValue({ successBoolean: true, outputs: { shouldRun: true } });
-    createGraph.mockResolvedValue({ graph: { execute: graphExecute }, state: { metadata: { userVisibleBrowser: false }, messages: [] } });
+    createGraph.mockResolvedValue({ graph: { execute: graphExecute, hasUnconfirmedWorkflowWorkers: () => false }, state: { metadata: { userVisibleBrowser: false }, messages: [] } });
     await expect(executeRoutine(definition.id)).rejects.toThrow('visible-browser-capable');
     expect(markFailed).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('visible-browser-capable'));
     expect(graphExecute).not.toHaveBeenCalled();

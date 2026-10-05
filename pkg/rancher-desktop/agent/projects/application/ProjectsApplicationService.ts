@@ -185,29 +185,45 @@ export class ProjectsApplicationService {
     return WorkProjectViewModel.save({ ...input, actor: input.actor ?? context.actor });
   }
 
+  private requireLaneConfigurationAuthority(context: ProjectsCommandContext): void {
+    if (context.source !== 'ipc' || context.actor !== 'human') {
+      throw new Error('human_approval_required: pipeline structure requires trusted human authorization');
+    }
+  }
+
   listLanes(opts: ListWorkLaneOpts = {}) { return WorkLaneDefinitionModel.list(opts) }
   createLane(input: CreateWorkLaneInput, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    this.requireLaneConfigurationAuthority(context);
     return WorkLaneDefinitionModel.create({ ...input, actor: input.actor ?? context.actor });
   }
 
   updateLane(id: string, changes: UpdateWorkLaneInput, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    if (changes.position !== undefined || changes.requires_human_approval !== undefined ||
+        changes.enabled !== undefined || changes.semantic_role !== undefined) {
+      this.requireLaneConfigurationAuthority(context);
+    }
     return WorkLaneDefinitionModel.update(id, { ...changes, actor: changes.actor ?? context.actor });
   }
 
   archiveLane(id: string, destinationLaneKey?: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
-    return WorkLaneDefinitionModel.archive(id, destinationLaneKey, context.actor);
+    const trustedHuman = context.source === 'ipc' && context.actor === 'human';
+    if (context.actor === 'human' && !trustedHuman) throw new Error('human_approval_required: untrusted human actor');
+    return WorkLaneDefinitionModel.archive(id, destinationLaneKey, context.actor, trustedHuman);
   }
 
   previewArchiveLane(id: string) { return WorkLaneDefinitionModel.previewArchive(id) }
   restoreLane(id: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    this.requireLaneConfigurationAuthority(context);
     return WorkLaneDefinitionModel.restore(id, context.actor);
   }
 
   reorderLanes(scope: WorkLaneScope, orderedKeys: string[], projectId?: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    this.requireLaneConfigurationAuthority(context);
     return WorkLaneDefinitionModel.reorder(scope, orderedKeys, projectId, context.actor);
   }
 
   resetLaneOverride(projectId: string, laneKey: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    this.requireLaneConfigurationAuthority(context);
     return WorkLaneDefinitionModel.resetProjectOverride(projectId, laneKey, context.actor);
   }
 
@@ -376,7 +392,11 @@ export class ProjectsApplicationService {
     const taskId = itemId(id);
     const current = await this.repository.getTask(taskId);
     if (!current) return null;
-    const actor = changes.actor ?? context.actor;
+    const trustedHuman = context.source === 'ipc' && context.actor === 'human';
+    if (!trustedHuman && (changes.actor === 'human' || context.actor === 'human')) {
+      throw new Error('human_approval_required: tool input cannot claim human authority');
+    }
+    const actor = trustedHuman ? 'human' : changes.actor ?? context.actor;
 
     if (changes.status !== undefined || changes.assignee !== undefined) {
       await LifecycleCapabilityModel.assertActorCanManageTask(current.status, current.labels, actor);
@@ -403,23 +423,16 @@ export class ProjectsApplicationService {
     return this.repository.updateTask(taskId, { ...changes, actor });
   }
 
-  /**
-   * First-class reject->repair handoff (#727). Distinct from updateTask: the
-   * generic path enforces assertActorCanManageTask (an actor may not walk
-   * into a stage owned by a different healthy capability); this path is the
-   * one narrow exception, gated on its own authorization check inside
-   * LifecycleCapabilityModel.settleReviewReject — the caller must be the
-   * effective owner of in-review-verification at act time. Do not route
-   * generic status edits through this method.
-   */
+  /** Record in-lane repair findings for the effective review authority. */
   rejectTaskReview(
-    input: { taskId: string; summary: string },
+    input: { taskId: string; summary: string; expectedGeneration: number },
     context: ProjectsCommandContext = DEFAULT_CONTEXT,
   ) {
     return LifecycleCapabilityModel.settleReviewReject({
       taskId:  itemId(input.taskId, 'task_id'),
       actor:   context.actor,
       summary: input.summary,
+      expectedGeneration: input.expectedGeneration,
     });
   }
 
@@ -611,15 +624,7 @@ export class ProjectsApplicationService {
     return { receipt: row, created: inserted, stage: task.status, generation };
   }
 
-  /**
-   * Settle one durable external wait a workflow node holds evidence for,
-   * without waiting on the periodic external-wait-monitor poll. Reuses
-   * WorkTaskWaitModel.observe exactly as the monitor already calls it — same
-   * mechanics, same trust model, no new locking. Note: observe() still moves
-   * a task off the literal 'blocked' status onto literal 'planning'/'in_review'
-   * on its legacy compatibility path; that is pre-existing Phase 4-era
-   * behavior this node does not change (see dHAe/MBJx follow-up comment).
-   */
+  /** Record external evidence without moving work out of its current lane. */
   async settleWait(input: SettleTaskWaitInput, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
     const id = itemId(input.id, 'id');
     if (input.outcome !== 'satisfied' && input.outcome !== 'failed') {
@@ -633,7 +638,7 @@ export class ProjectsApplicationService {
     const nextCheckAt = input.nextCheckAt ? new Date(input.nextCheckAt) : new Date();
     if (Number.isNaN(nextCheckAt.getTime())) throw new Error('next_check_at must be a valid ISO date when provided.');
     const observation: WaitObservation = { fingerprint, outcome: input.outcome, summary, nextCheckAt };
-    const result = await WorkTaskWaitModel.observe(id, observation);
+    const result = await WorkTaskWaitModel.observe(id, observation, context.source === 'ipc' && context.actor === 'human');
     if (!result.wait) throw new Error(`No active task wait found with id ${ id }.`);
     return result;
   }
@@ -694,12 +699,9 @@ export class ProjectsApplicationService {
    * Complete or fail the EXACT stage-entry generation a workflow run was
    * invoked with. Generation-bound the same way transition_task_stage and
    * attachEvidence already are: expected_generation must match the task's
-   * current lane-entry generation, and the underlying compare-and-set only
-   * settles a lane entry that is still 'running' under its own recorded
-   * execution_id — so a stale or duplicate workflow run cannot clobber a
-   * settlement that already happened. Settling here records the workflow's
-   * own outcome on the lane-entry ledger; it does not move the task to a
-   * different stage (transition_task_stage/transition_task_relative do that).
+   * current lane-entry generation. This records the requested outcome while
+   * retaining the running reservation. Only the runtime terminal callback,
+   * after writer termination, releases ownership; a tool caller is still live.
    */
   async settleStageGeneration(
     input: SettleStageGenerationInput,
@@ -725,7 +727,7 @@ export class ProjectsApplicationService {
       throw new Error(`Lane entry ${ latest.id } has no active execution to settle.`);
     }
     const outcome = input.outcome && typeof input.outcome === 'object' ? input.outcome : {};
-    const settled = await WorkLaneWorkflowBindingModel.markOutcome(
+    const settled = await WorkLaneWorkflowBindingModel.recordRequestedOutcome(
       latest.id, latest.execution_id, input.status, { ...outcome, settledBy: context.actor },
     );
     if (!settled) {

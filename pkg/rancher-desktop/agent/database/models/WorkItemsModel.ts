@@ -13,6 +13,9 @@
  * DUAL-STORE NOTE: reads and writes ONLY Postgres — no Redis hash.
  */
 
+import { randomUUID } from 'node:crypto';
+
+import { approvalSafeTargetSql } from './WorkAgentAdmission';
 import { postgresClient } from '../PostgresClient';
 import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
 import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
@@ -953,7 +956,10 @@ export class WorkItemsModel {
     return WorkItemsModel.insertTask(input);
   }
 
-  static async updateTask(id: string, changes: UpdateTaskInput): Promise<WorkTaskRecord | null> {
+  static async updateTask(id: string, changes: UpdateTaskInput, humanDecision?: {
+    expectedStage: string; expectedGeneration: number; expectedUpdatedAt: string | null;
+    decision: 'approved' | 'rejected'; waitIds: string[]; comment: string;
+  }): Promise<WorkTaskRecord | null> {
     const existing = await WorkItemsModel.getTask(id);
     if (!existing) return null;
 
@@ -961,6 +967,10 @@ export class WorkItemsModel {
     if (changes.epic_id) {
       const epic = await WorkItemsModel.requireEpic(changes.epic_id);
       nextProjectId = epic.project_id;
+    }
+    if (nextProjectId && nextProjectId !== existing.project_id &&
+        !await WorkLaneDefinitionModel.resolveStatus(nextProjectId, changes.status ?? existing.status)) {
+      throw new Error('human_approval_required: project move requires an active destination lane');
     }
     const targetLane = changes.status !== undefined
       ? await WorkLaneDefinitionModel.validateTaskStatus(nextProjectId ?? existing.project_id, changes.status)
@@ -1053,12 +1063,64 @@ export class WorkItemsModel {
     let updated: WorkTaskRecord | null;
 
     const changesSchedule = changes.due_at !== undefined || changes.start_at !== undefined || changes.milestone_at !== undefined;
-    if (changes.status !== undefined || changesSchedule) {
+    if (changes.status !== undefined || changesSchedule || nextProjectId !== undefined) {
       updated = await postgresClient.transaction(async(client) => {
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ id }`]);
         const current = await client.query<WorkTaskRecord>(
           `SELECT * FROM ${ WorkItemsModel.TASKS } WHERE id = $1 AND archived = false FOR UPDATE`, [id]);
         if (!current.rows[0]) return null;
+        if (humanDecision) {
+          if (actor !== 'human' || !changes.status) throw new Error('human_approval_required');
+          const generation = await client.query<{ generation: number }>(
+            'SELECT COALESCE(MAX(generation), 0)::int AS generation FROM work_lane_entry_automations WHERE task_id=$1', [id]);
+          const updatedAt = current.rows[0].updated_at;
+          if (current.rows[0].status !== humanDecision.expectedStage ||
+              generation.rows[0].generation !== humanDecision.expectedGeneration ||
+              (updatedAt ? new Date(updatedAt).toISOString() : null) !== humanDecision.expectedUpdatedAt) {
+            throw new Error('Human decision is stale. Refresh before deciding.');
+          }
+          const waits = await client.query<{ id: string }>(
+            "SELECT id FROM work_task_waits WHERE task_id=$1 AND status='active' AND wait_kind='human_gate' ORDER BY id FOR UPDATE", [id]);
+          if (JSON.stringify(waits.rows.map(row => row.id)) !== JSON.stringify([...humanDecision.waitIds].sort())) {
+            throw new Error('Human approval waits changed. Refresh before deciding.');
+          }
+          await client.query(`UPDATE work_task_waits SET status=$2, completed_at=now(), updated_at=now(),
+            last_checked_at=now(), last_observed_fingerprint=$3 WHERE id=ANY($1::text[])`,
+          [humanDecision.waitIds, humanDecision.decision === 'approved' ? 'satisfied' : 'failed', humanDecision.comment]);
+          await client.query('INSERT INTO work_task_comments (id, task_id, author, body) VALUES ($1,$2,$3,$4)',
+            [`human-decision-${ randomUUID() }`, id, 'human', humanDecision.comment]);
+        }
+
+        if (nextProjectId !== undefined && nextProjectId !== current.rows[0].project_id && actor !== 'human') {
+          // Project moves change the meaning of even an unchanged lane key.
+          // Evaluate the source boundary before replacing its project context.
+          const held = await client.query<{ held: boolean }>(
+            `SELECT EXISTS (SELECT 1 FROM work_task_waits w WHERE w.task_id=t.id
+               AND w.status='active' AND w.wait_kind='human_gate') OR COALESCE((
+                 SELECT lane.requires_human_approval FROM work_lane_definitions lane
+                 WHERE lane.lane_key=t.status AND lane.reset_at IS NULL
+                   AND (lane.scope='global_default' OR (lane.scope='project' AND lane.project_id=t.project_id))
+                 ORDER BY CASE WHEN lane.scope='project' THEN 0 ELSE 1 END LIMIT 1
+               ), false) AS held FROM work_tasks t WHERE id = $1`, [id]);
+          if (held.rows[0]?.held) throw new Error('human_approval_required: project move cannot discard approval');
+          const destination = changes.status ?? current.rows[0].status;
+          const permitted = await client.query<{ target: string }>(
+            `SELECT ${ approvalSafeTargetSql('destination_task', '$3', true) } AS target
+             FROM (SELECT id, $2::text AS project_id, '__project_entry__'::text AS status
+                   FROM work_tasks WHERE id = $1) destination_task`,
+            [id, nextProjectId, destination]);
+          if (permitted.rows[0]?.target !== destination) {
+            throw new Error('human_approval_required: project move cannot skip destination approval');
+          }
+        }
+        if (changes.status !== undefined && changes.status !== current.rows[0].status && actor !== 'human') {
+          const permitted = await client.query<{ target: string }>(
+            `SELECT ${ approvalSafeTargetSql('t', '$2') } AS target FROM work_tasks t WHERE id = $1`,
+            [id, changes.status]);
+          if (permitted.rows[0]?.target !== changes.status) {
+            throw new Error('human_approval_required: automatic transition cannot cross an approval boundary');
+          }
+        }
         const rows = await client.query<WorkTaskRecord>(updateSql, values);
         const committed = rows.rows[0] ?? null;
         if (committed && enteringReview && changes.custody) {

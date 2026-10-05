@@ -1,0 +1,153 @@
+name: Dispatcher regressions
+
+on:
+  pull_request:
+    paths:
+    - '.github/workflows/dispatcher-regressions.yaml'
+    - 'pkg/rancher-desktop/agent/database/models/WorkAgentAdmission.ts'
+    - 'pkg/rancher-desktop/agent/database/models/WorkItemsModel.ts'
+    - 'pkg/rancher-desktop/agent/services/ProjectsIssueDetailService.ts'
+    - 'pkg/rancher-desktop/agent/services/LaneEntryAutomationService.ts'
+    - 'pkg/rancher-desktop/agent/database/models/WorkTaskWaitModel.ts'
+    - 'pkg/rancher-desktop/agent/database/migrations/0102_keep_wait_evidence_in_lane.ts'
+    - 'pkg/rancher-desktop/agent/projects/application/ProjectsApplicationService.ts'
+    - 'pkg/rancher-desktop/agent/services/ExternalWaitMonitorService.ts'
+    - 'pkg/rancher-desktop/agent/services/__tests__/ExternalWaitMonitorService.test.ts'
+    - 'pkg/rancher-desktop/agent/services/__tests__/PlanningCouncilService.test.ts'
+    - 'pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService*.test.ts'
+    - 'pkg/rancher-desktop/agent/database/models/LifecycleCapabilityModel.ts'
+    - 'pkg/rancher-desktop/agent/controllers/PlaybookController.ts'
+    - 'pkg/rancher-desktop/agent/database/PostgresClient.ts'
+    - 'pkg/rancher-desktop/main/sullaRoutineTemplateEvents.ts'
+    - 'pkg/rancher-desktop/agent/routines/core/__tests__/planProjectTask.test.ts'
+    - 'pkg/rancher-desktop/agent/controllers/__tests__/PlaybookController.leases.test.ts'
+    - 'pkg/rancher-desktop/agent/nodes/Graph.ts'
+    - 'pkg/rancher-desktop/agent/tools/project/reject_task_review.ts'
+    - 'pkg/rancher-desktop/agent/tools/project/manifests.ts'
+    - 'pkg/rancher-desktop/agent/database/models/__tests__/LifecycleCapabilityModel.reviewReject.postgres.test.ts'
+    - 'pkg/rancher-desktop/agent/database/models/__tests__/LifecycleCapabilityModel.test.ts'
+    - 'pkg/rancher-desktop/agent/database/models/WorkTaskDispatchModel.ts'
+    - 'pkg/rancher-desktop/agent/database/models/WorkLaneWorkflowBindingModel.ts'
+    - 'pkg/rancher-desktop/agent/database/models/WorkTaskPlanningRunModel.ts'
+    - 'pkg/rancher-desktop/agent/routines/core/planProjectTask.ts'
+    - 'pkg/rancher-desktop/agent/database/models/__tests__/WorkTask*.test.ts'
+    - 'pkg/rancher-desktop/agent/database/models/__tests__/WorkLaneWorkflowBindingModel.test.ts'
+    - 'pkg/rancher-desktop/agent/routines/core/reviewProjectArtifact.ts'
+    - 'pkg/rancher-desktop/agent/routines/core/__tests__/reviewProjectArtifact.test.ts'
+    - 'pkg/rancher-desktop/agent/services/PlanningCouncilService.ts'
+    - 'pkg/rancher-desktop/agent/services/TaskDispatcherService.ts'
+    - 'pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-jest:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dispatcher_ci
+          POSTGRES_PASSWORD: dispatcher_ci
+          POSTGRES_DB: dispatcher_ci
+        ports:
+        - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dispatcher_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SULLA_INTEGRATION_POSTGRES_URL: postgres://dispatcher_ci:dispatcher_ci@localhost:5432/dispatcher_ci
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      with:
+        node-version-file: package.json
+    - name: Install JavaScript dependencies
+      run: |
+        corepack enable yarn
+        yarn install --immutable --ignore-platform --ignore-scripts
+    - name: Run dispatcher regression suite
+      run: |
+        set -o pipefail
+        set +e
+        log="${RUNNER_TEMP}/dispatcher-regressions.log"
+        yarn test:unit:jest --runInBand --json --outputFile="${RUNNER_TEMP}/dispatcher-results.json" \
+          pkg/rancher-desktop/agent/database/models/__tests__/LifecycleCapabilityModel.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/LifecycleCapabilityModel.reviewReject.postgres.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkLaneWorkflowBindingModel.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskPlanningRunModel.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchModel.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchAdmission.postgres.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchBackpressure.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchCountByRole.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchJournalReplay.test.ts \
+          pkg/rancher-desktop/agent/routines/core/__tests__/reviewProjectArtifact.test.ts \
+          pkg/rancher-desktop/agent/routines/core/__tests__/planProjectTask.test.ts \
+          pkg/rancher-desktop/agent/workflow/__tests__/reviewProjectArtifactWorkflow.test.ts \
+          pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService.readyTasksSettleGeneration.test.ts \
+          pkg/rancher-desktop/main/__tests__/routinePreflight.test.ts \
+          pkg/rancher-desktop/agent/services/__tests__/LaneEntryAutomationService.test.ts \
+          pkg/rancher-desktop/agent/services/__tests__/PlanningCouncilService.test.ts \
+          pkg/rancher-desktop/agent/services/__tests__/ExternalWaitMonitorService.test.ts \
+          pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskWaitModel.test.ts \
+          pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService.test.ts \
+          pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService.leaseEvidenceWait.test.ts \
+          pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts \
+          pkg/rancher-desktop/agent/controllers/__tests__/PlaybookController.leases.test.ts \
+          2>&1 | tee "$log"
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+          node <<'NODE'
+        const fs = require('fs');
+        const file = `${process.env.RUNNER_TEMP}/dispatcher-results.json`;
+        const escape = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+        if (fs.existsSync(file)) {
+          for (const suite of JSON.parse(fs.readFileSync(file, 'utf8')).testResults) {
+            if (suite.status !== 'failed') continue;
+            const failures = suite.assertionResults.filter(test => test.status === 'failed');
+            const messages = failures.length ? failures.map(test => `${test.fullName}\n${test.failureMessages.join('\n')}`) : [suite.message];
+            for (const message of messages) {
+              console.log(`::error title=Dispatcher regression failure::${escape(suite.name + '\n' + message)}`);
+            }
+          }
+        }
+        NODE
+          details=$(tail -n 80 "$log" | tail -c 5000 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+          echo "::error title=Focused dispatcher Jest failed::${details}"
+          exit "$rc"
+        fi
+    - name: Typecheck routine settlement production module
+      if: ${{ !cancelled() }}
+      run: |
+        node --max-old-space-size=4096 <<'NODE'
+        const ts = require('typescript');
+        const path = require('path');
+        const target = path.resolve('pkg/rancher-desktop/main/sullaRoutineTemplateEvents.ts');
+        const config = ts.readConfigFile('tsconfig.json', ts.sys.readFile);
+        if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
+        const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd());
+        if (parsed.errors.length) throw new Error(ts.formatDiagnosticsWithColorAndContext(parsed.errors, {
+          getCanonicalFileName: f => f, getCurrentDirectory: ts.sys.getCurrentDirectory, getNewLine: () => '\n',
+        }));
+        // Resolve real imports and declarations, but gate this production module;
+        // this is not a claim that the repository-wide typecheck is clean.
+        const program = ts.createProgram([target, ...parsed.fileNames.filter(f => f.endsWith('.d.ts'))], {
+          ...parsed.options, noEmit: true, skipLibCheck: true,
+        });
+        const source = program.getSourceFile(target);
+        if (!source) throw new Error('Routine production module was not loaded');
+        const diagnostics = [...program.getSyntacticDiagnostics(source), ...program.getSemanticDiagnostics(source)];
+        for (const d of diagnostics) {
+          const location = d.file && d.start !== undefined ? d.file.getLineAndCharacterOfPosition(d.start) : null;
+          const message = `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, '\n')}`;
+          const escaped = message.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+          console.log(`::error file=${d.file?.fileName || target},line=${(location?.line || 0) + 1}::${escaped}`);
+        }
+        if (diagnostics.length) process.exit(1);
+        console.log('Routine settlement production module: syntax and semantic diagnostics passed.');
+        NODE

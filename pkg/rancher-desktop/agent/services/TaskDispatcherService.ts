@@ -1,11 +1,8 @@
-import { Octokit } from '@octokit/rest';
-
 import { AbortService } from './AbortService';
 import { ArtifactCustodyPolicy } from './ArtifactCustodyPolicy';
 import { buildReceipt, renderReceiptComment } from './ArtifactReceiptService';
 import { resolvePullRequestHead, resolvePullRequestHeads } from './GitHubPullRequestHeadService';
 import { GraphRegistry } from './GraphRegistry';
-import { getIntegrationService } from './IntegrationService';
 import { resolveWipLimits, evaluateClaim, type WipLimits, type RoleCounts, type BackpressureDecision } from './ProjectAutomationWipLimits';
 import { RoutineConcurrencyPolicy } from './RoutineConcurrencyPolicy';
 import { postgresClient } from '../database/PostgresClient';
@@ -16,12 +13,14 @@ import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItem
 import {
   WorkTaskDispatchModel,
   type ClaimedDispatch,
+  type DispatchCandidate,
   type ProtectedReviewEvidence,
   type ReviewArtifactComponent,
   type ReviewArtifactType,
   type ReviewDisposition,
   type VerificationVerdict,
 } from '../database/models/WorkTaskDispatchModel';
+import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
 import { WorkflowModel } from '../database/models/WorkflowModel';
 import { WorkflowExecutionModel } from '../database/models/WorkflowExecutionModel';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
@@ -41,12 +40,8 @@ const DEFAULT_CONCURRENCY = 3;
 const RUNTIME_INSTANCE_ID = `task-dispatcher-${ process.pid }-${ Date.now() }`;
 const DEFAULT_VERIFIER_TIMEOUT_MINUTES = 45;
 const DEFAULT_EXECUTION_TIMEOUT_MINUTES = 90;
-const DEFAULT_IN_PROGRESS_STALE_MINUTES = 360;
-const DEFAULT_RECOVERY_BATCH_SIZE = 1;
-const DEFAULT_RECOVERY_RETRY_CEILING = 3;
 const DEFAULT_TICK_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_TICK_QUERY_TIMEOUT_MS = 30_000;
-const LINKED_PR_REQUEST_TIMEOUT_MS = 30_000;
 const LEGACY_VERIFIER_TOOLS = [
   'file_search', 'read_file',
   'git_status', 'git_diff', 'git_log', 'git_blame',
@@ -190,7 +185,7 @@ export class TaskDispatcherService {
       this.schedulerId = null;
     }
     for (const abort of this.active.values()) abort.abort();
-    this.active.clear();
+    // runClaim removes each reservation only after its writer has stopped.
   }
 
   private async checkAndDispatch(): Promise<void> {
@@ -294,29 +289,33 @@ export class TaskDispatcherService {
         return outcome;
       }
 
-      // Run on every tick, not just once at boot. recoverStale() only
-      // reclaims dispatches silent past its 45-minute heartbeat threshold,
-      // so it's safe to call continuously -- and it must be, since a
-      // dispatch can go dead mid-process-lifetime (a stuck sub-agent call,
-      // a crashed worker) just as easily as it can from a prior restart.
-      // A one-shot startup-only reclaim leaves those permanently stuck for
-      // the rest of the process's uptime with nothing else watching them.
+      // Recover abandoned records on every tick. In-process writers retain
+      // ownership even after cancellation, until termination is confirmed.
       const journaled = await WorkTaskDispatchModel.recoverPendingOutcomeJournals();
       if (journaled.length > 0) console.log(`[TaskDispatcher] Settled ${ journaled.length } journaled outcome(s)`);
-      const recovered = await WorkTaskDispatchModel.recoverStale();
+      const recovered = await WorkTaskDispatchModel.recoverStale(undefined, [...this.active.keys()]);
       if (recovered.length > 0) console.warn(`[TaskDispatcher] Recovered ${ recovered.length } stale dispatch(es)`);
 
-      await this.checkInProgressRecovery();
-      const reviewReady = await this.fillVerificationPool();
-      if (!reviewReady) {
-        outcome = 'no-eligible-work';
-        console.warn('[TaskDispatcher] Protected review is unavailable; holding fresh execution work');
-        return outcome;
-      }
-      // Issue #711: semantic stage-aware WIP limits + downstream-first backpressure.
-      // Additive over the #709 review-drain guard below: this only ever holds MORE
-      // work, never less, and never interrupts already-running work. Re-evaluated
-      // every tick, so queued work resumes automatically as capacity releases.
+      // Enumerate the whole portfolio before lane-specific claims. This is the
+      // reasoning surface: paused projects, dependencies, waits, assignees and
+      // custom lanes remain visible instead of disappearing behind SQL policy.
+      // Claim methods still enforce collision locks and the explicit project
+      // pause at mutation time.
+      const considered = await WorkTaskDispatchModel.enumerateCandidates();
+      console.log('[TaskDispatcher] Broad candidate consideration', {
+        count: considered.length,
+        newest: considered.slice(0, 10).map(candidate => ({
+          id: candidate.id, lane: candidate.status, at: candidate.consideration_at,
+          paused: !candidate.project_dispatch_enabled,
+          wait: candidate.has_active_wait,
+          dependencies: Number(candidate.unresolved_dependencies || 0),
+          collision: candidate.has_active_dispatch || candidate.has_active_stage_claim,
+        })),
+      });
+
+      // Preserve WIP telemetry, but do not turn portfolio context into an
+      // admission deny-list. The hard execution bound is the configured worker
+      // concurrency (three by default) plus collision-safe leases.
       try {
         const wipLimits = await resolveWipLimits();
         const roleCounts = await WorkTaskDispatchModel.countByRole();
@@ -327,25 +326,10 @@ export class TaskDispatcherService {
           decision: wipDecision,
           at:       new Date().toISOString(),
         };
-        if (!wipDecision.allowed) {
-          outcome = 'no-eligible-work';
-          console.log(`[TaskDispatcher] Holding fresh execution work: ${ wipDecision.reason }`);
-          return outcome;
-        }
       } catch (wipErr) {
-        // The gate is a safety invariant. If counts/settings cannot be resolved,
-        // fail closed and retry on the next scheduled tick.
-        outcome = 'no-eligible-work';
-        console.warn('[TaskDispatcher] WIP limit evaluation failed; holding fresh execution:', wipErr);
-        return outcome;
+        console.warn('[TaskDispatcher] WIP telemetry unavailable; lease concurrency remains enforced:', wipErr);
       }
-      const reviewBacklog = await WorkTaskDispatchModel.countReviewBacklog();
-      if (reviewBacklog > 0) {
-        outcome = 'no-eligible-work';
-        console.log(`[TaskDispatcher] Holding fresh todo work until ${ reviewBacklog } downstream review item(s) drain`);
-        return outcome;
-      }
-      const dispatched = await this.fillExecutionPool();
+      const dispatched = await this.fillCandidatePool(considered);
       outcome = dispatched > 0 ? 'actively-dispatching' : 'no-eligible-work';
       if (this.activeTickGeneration === generation) {
         await this.reportTickHealth('healthy');
@@ -390,82 +374,39 @@ export class TaskDispatcherService {
     });
   }
 
-  private async checkInProgressRecovery(): Promise<void> {
-    const enabledSetting = await SullaSettingsModel.get('taskDispatcherInProgressRecoveryEnabled', false);
-    const enabled = enabledSetting === true || enabledSetting === 'true';
-    const staleConfigured = Number(await SullaSettingsModel.get(
-      'taskDispatcherInProgressStaleMinutes', DEFAULT_IN_PROGRESS_STALE_MINUTES,
-    ));
-    const batchConfigured = Number(await SullaSettingsModel.get(
-      'taskDispatcherRecoveryBatchSize', DEFAULT_RECOVERY_BATCH_SIZE,
-    ));
-    const ceilingConfigured = Number(await SullaSettingsModel.get(
-      'taskDispatcherRecoveryRetryCeiling', DEFAULT_RECOVERY_RETRY_CEILING,
-    ));
-    const staleMinutes = Math.max(15, staleConfigured || DEFAULT_IN_PROGRESS_STALE_MINUTES);
-    const batchSize = Math.max(1, Math.min(25, batchConfigured || DEFAULT_RECOVERY_BATCH_SIZE));
-    const retryCeiling = Math.max(1, Math.min(10, ceilingConfigured || DEFAULT_RECOVERY_RETRY_CEILING));
-    const candidates = await WorkTaskDispatchModel.findRecoverableInProgress(staleMinutes, 100);
-
-    for (const candidate of candidates.filter(item => item.exclusionReasons.length === 0 && item.task.github_issue)) {
-      if (await this.hasActiveLinkedPullRequest(candidate.task.github_issue!)) {
-        candidate.exclusionReasons.push('linked_external_operation');
+  private async fillCandidatePool(candidates: DispatchCandidate[]): Promise<number> {
+    let dispatched = 0;
+    const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
+    const capacity = Math.min(DEFAULT_CONCURRENCY, Math.max(1, configured || DEFAULT_CONCURRENCY));
+    for (const candidate of candidates) {
+      // Consider every row, even when an explicit stop or live editor prevents action.
+      const hold = !candidate.project_dispatch_enabled ? 'project explicitly paused'
+        : (candidate.lane_role === 'terminal' || ['done', 'cancelled', 'parked'].includes(candidate.status)) ? 'terminal task'
+          : candidate.has_active_dispatch || candidate.has_active_stage_claim ? 'live owner' : null;
+      if (hold) {
+        console.log('[TaskDispatcher] Candidate held at action boundary', { taskId: candidate.id, hold });
+        continue;
+      }
+      if (await WorkTaskDispatchModel.countRunning() >= capacity) continue;
+      try {
+        if ((candidate.lane_role === 'review' || candidate.status === 'in_review')) {
+          if (await this.fillVerificationPool(candidate.id)) dispatched += 1;
+        } else {
+          dispatched += await this.fillExecutionPool(candidate.id);
+        }
+      } catch (error) {
+        console.error('[TaskDispatcher] Candidate admission failed; considering remaining work', { taskId: candidate.id, error });
       }
     }
-
-    const eligible = candidates.filter(candidate => candidate.exclusionReasons.length === 0);
-    const excludedCounts = candidates.flatMap(candidate => candidate.exclusionReasons)
-      .reduce<Record<string, number>>((counts, reason) => {
-        counts[reason] = (counts[reason] || 0) + 1;
-        return counts;
-      }, {});
-    console.log('[TaskDispatcher] In-progress recovery report', {
-      mode:     enabled ? 'enabled' : 'report-only',
-      scanned:  candidates.length,
-      eligible: eligible.length,
-      excluded: excludedCounts,
-      staleMinutes,
-      batchSize,
-      retryCeiling,
-    });
-
-    if (!enabled || eligible.length === 0) return;
-    const recovered = await WorkTaskDispatchModel.recoverOrphanedInProgress(eligible, batchSize, retryCeiling);
-    const counts = recovered.reduce<Record<string, number>>((outcomes, result) => {
-      outcomes[result.outcome] = (outcomes[result.outcome] || 0) + 1;
-      return outcomes;
-    }, {});
-    console.warn('[TaskDispatcher] In-progress recovery outcomes', counts);
+    return dispatched;
   }
 
-  private async hasActiveLinkedPullRequest(reference: string): Promise<boolean> {
-    const match = /^(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/#\s]+?)(?:\/pull\/|#)(\d+)$/i.exec(reference.trim());
-    if (!match) return false;
-    try {
-      const token = await getIntegrationService().getIntegrationValue('github', 'token');
-      if (!token) return true;
-      const octokit = new Octokit({ auth: token.value });
-      const { data } = await octokit.pulls.get({
-        owner:   match[1],
-        repo:    match[2],
-        pull_number: Number(match[3]),
-        request: { timeout: LINKED_PR_REQUEST_TIMEOUT_MS },
-      });
-      return data.state === 'open';
-    } catch (err: any) {
-      if (err?.status === 404) return false;
-      console.warn(`[TaskDispatcher] Linked PR check failed for ${ reference }; excluding candidate`, err);
-      return true;
-    }
-  }
-
-  private async fillExecutionPool(): Promise<number> {
+  private async fillExecutionPool(taskId?: string): Promise<number> {
     const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
     const concurrency = await RoutineConcurrencyPolicy.resolveLimit('execution', configured || DEFAULT_CONCURRENCY);
     const enforceSlots = await RoutineConcurrencyPolicy.isEnabled();
     if (enforceSlots) await RoutineConcurrencyPolicy.reclaimStale();
     const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
-    const wipLimits = await resolveWipLimits();
 
     await LifecycleCapabilityModel.report({
       key:               'todo-execution',
@@ -476,7 +417,7 @@ export class TaskDispatcherService {
       fallbackMode:      'manual_hold',
     });
 
-    let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution'));
+    let freeSlots = Math.min(taskId ? 1 : concurrency, Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution')));
     let dispatched = 0;
     while (freeSlots > 0 && this.initialized) {
       let slot: string | null = null;
@@ -484,7 +425,11 @@ export class TaskDispatcherService {
         slot = await RoutineConcurrencyPolicy.acquire('execution', concurrency, { owner: RUNTIME_INSTANCE_ID });
         if (!slot) break;
       }
-      const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID, wipLimits);
+      const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID, undefined, taskId)
+        .catch(async(error) => {
+          if (slot) await RoutineConcurrencyPolicy.release(slot);
+          throw error;
+        });
       if (!claim) {
         if (slot) await RoutineConcurrencyPolicy.release(slot);
         break;
@@ -503,7 +448,7 @@ export class TaskDispatcherService {
     return dispatched;
   }
 
-  private async fillVerificationPool(): Promise<boolean> {
+  private async fillVerificationPool(taskId?: string): Promise<boolean> {
     const enabled = await SullaSettingsModel.get('taskVerifierEnabled', true);
     if (!enabled) {
       await LifecycleCapabilityModel.report({
@@ -547,7 +492,8 @@ export class TaskDispatcherService {
       details:           { ...(await WorkTaskDispatchModel.verificationPoolStats()), reclaimed: this.reclaimedReviews },
     });
 
-    let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('verification'));
+    let freeSlots = Math.min(taskId ? 1 : concurrency, Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('verification')));
+    let dispatched = false;
     while (freeSlots > 0 && this.initialized) {
       let slot: string | null = null;
       if (enforceSlots) {
@@ -558,7 +504,11 @@ export class TaskDispatcherService {
         agentId,
         owner === 'core-routine' ? [DEFAULT_CORE_ROUTINE_AGENT_ID] : [],
         RUNTIME_INSTANCE_ID,
-      );
+        taskId,
+      ).catch(async(error) => {
+        if (slot) await RoutineConcurrencyPolicy.release(slot);
+        throw error;
+      });
       if (!claim) {
         if (slot) await RoutineConcurrencyPolicy.release(slot);
         break;
@@ -572,6 +522,7 @@ export class TaskDispatcherService {
           if (heldSlot) void RoutineConcurrencyPolicy.release(heldSlot);
         });
       freeSlots -= 1;
+      dispatched = true;
     }
     await LifecycleCapabilityModel.report({
       key:               'in-review-verification',
@@ -582,7 +533,7 @@ export class TaskDispatcherService {
       fallbackMode:      'manual_hold',
       details:           { ...(await WorkTaskDispatchModel.verificationPoolStats()), reclaimed: this.reclaimedReviews },
     });
-    return true;
+    return dispatched;
   }
 
   /**
@@ -609,12 +560,11 @@ export class TaskDispatcherService {
     const { dispatch, task, stage_claim: liveStageClaim } = claim;
     const abort = new AbortService();
     this.active.set(dispatch.id, abort);
-    let lastActivityAt = Date.now();
     let leaseTimer: ReturnType<typeof setInterval> | null = null;
     let runTimeout: ReturnType<typeof setTimeout> | null = null;
-    let expireRun: (() => void) | null = null;
     let verifierTimedOut = false;
     let executionTimedOut = false;
+    let writerGraph: any;
 
     try {
       const isVerification = dispatch.kind === 'verification';
@@ -649,13 +599,11 @@ export class TaskDispatcherService {
         dispatch.thread_id,
         { isTrustedUser: 'trusted' },
       ) as { graph: any; state: any };
+      writerGraph = graph;
       state.metadata.lastAgentActivityAt = Date.now();
-      lastActivityAt = Number(state.metadata.lastAgentActivityAt);
       leaseTimer = setInterval(
         () => {
-          const activityAt = Number(state.metadata.lastAgentActivityAt ?? 0);
-          if (activityAt <= lastActivityAt) return;
-          lastActivityAt = activityAt;
+          // A waiting or aborted provider can still write. Keep its reservation live.
           WorkTaskDispatchModel.touch(dispatch.id)
             .catch(err => console.error(`[TaskDispatcher] Lease refresh failed for ${ dispatch.id }:`, err));
         },
@@ -723,9 +671,6 @@ export class TaskDispatcherService {
         ? false
         : await SullaSettingsModel.get('taskDispatcherExecutionTimeoutReportOnly', false);
       const reportOnly = reportOnlySetting === true || reportOnlySetting === 'true';
-      const runtimeDeadline = new Promise<null>((resolve) => {
-        expireRun = () => resolve(null);
-      });
       runTimeout = setTimeout(() => {
         if (!timeoutEnabled || reportOnly) {
           console.warn(`[TaskDispatcher] Execution timeout report-only for ${ dispatch.id } after ${ timeoutMinutes } minute(s)`);
@@ -734,27 +679,10 @@ export class TaskDispatcherService {
         if (isVerification) verifierTimedOut = true;
         else executionTimedOut = true;
         abort.abort();
-        expireRun?.();
-        if (!isVerification) {
-          WorkTaskDispatchModel.settle(
-            dispatch.id,
-            'timed_out',
-            undefined,
-            `execution exceeded ${ timeoutMinutes } minute(s)`,
-          ).catch(err => console.error(`[TaskDispatcher] Timeout settlement failed for ${ dispatch.id }:`, err));
-        }
       }, timeoutMinutes * 60_000);
-      let finalState = await Promise.race([graph.execute(state), runtimeDeadline]);
-
-      // An abort signal is cooperative; an immortal provider promise may
-      // ignore it forever. The deadline itself therefore wins the race and
-      // unwinds runClaim so its finally block releases the stage and WIP slot.
-      if (!finalState) {
-        if (isVerification && verifierTimedOut) {
-          await WorkTaskDispatchModel.failVerification(dispatch.id, 'verifier_timeout');
-        }
-        return;
-      }
+      // Abort is cooperative. Do not release write ownership until execution
+      // actually returns, even when its provider ignores cancellation.
+      let finalState = await graph.execute(state);
 
       // Single-agent workflow nodes (e.g. node-review-classify) are
       // dispatched fire-and-forget inside Graph.execute() so interactive
@@ -770,11 +698,17 @@ export class TaskDispatcherService {
       if (isVerification && verificationOwner === 'core-routine' && !finalState.metadata?.lastCompletedWorkflow) {
         const executionId = state.metadata?.activeWorkflow?.executionId;
         if (executionId) {
-          await this.awaitReviewWorkflowSettlement(executionId, () => verifierTimedOut);
+          await this.awaitReviewWorkflowSettlement(executionId);
         }
       }
 
-      if (executionTimedOut) return;
+      await this.awaitWriterTermination(graph);
+
+      if (executionTimedOut) {
+        await WorkTaskDispatchModel.settle(dispatch.id, 'timed_out', undefined,
+          `execution exceeded ${ timeoutMinutes } minute(s)`);
+        return;
+      }
 
       let outcome = extractAgentTurnOutcome(finalState);
       if (!isVerification && outcome.status === 'completed' && !/<WORK_RESULT>[\s\S]*?<\/WORK_RESULT>/.test(outcome.text)) {
@@ -782,8 +716,13 @@ export class TaskDispatcherService {
           role:    'user',
           content: `Your last turn ended without the required <WORK_RESULT> block. Report the current state now and end with exactly one complete <WORK_RESULT>{\"summary\":\"...\"}</WORK_RESULT> block. If a background check or CI is still running, report it as pending in the summary; do not wait for it.`,
         });
-        finalState = await Promise.race([graph.execute(state), runtimeDeadline]);
-        if (!finalState) return;
+        finalState = await graph.execute(state);
+        await this.awaitWriterTermination(graph);
+        if (executionTimedOut) {
+          await WorkTaskDispatchModel.settle(dispatch.id, 'timed_out', undefined,
+            `execution exceeded ${ timeoutMinutes } minute(s)`);
+          return;
+        }
         outcome = extractAgentTurnOutcome(finalState);
       }
       const summary = boundedOutcomeText(outcome.text, OUTCOME_TEXT_CAP);
@@ -796,7 +735,7 @@ export class TaskDispatcherService {
           if (!parsed) {
             // A missing disposition can mean the synthesis node correctly abstained on a generation superseded mid-flight, not a malformed output.
             const liveTask = await WorkItemsModel.getTask(task.id);
-            if (liveTask?.status !== 'in_review') {
+            if (!liveTask || await WorkLaneDefinitionModel.semanticRoleForStatus(liveTask.project_id, liveTask.status) !== 'review') {
               const currentArtifacts = await this.resolveReviewArtifacts(task, comments, dispatch.origin_evidence);
               const currentGenerationHash = WorkTaskDispatchModel.reviewGenerationHash(currentArtifacts);
               await WorkTaskDispatchModel.failVerification(
@@ -814,9 +753,12 @@ export class TaskDispatcherService {
             const codeHeadsMatch = parsedCode.length === currentCode.length && currentCode.every(current =>
               parsedCode.some(parsedArtifact => parsedArtifact.canonicalRef === current.canonicalRef && parsedArtifact.hash === current.hash),
             );
+            const advancedByInLaneRepair = parsed.disposition === 'REPAIRABLE' &&
+              parsed.generationHash === currentGenerationHash && currentGenerationHash !== generationHash;
             if (currentCode.length > 0 && !codeHeadsMatch) {
               await WorkTaskDispatchModel.failVerification(dispatch.id, 'pull_request_artifact_unresolved');
-            } else if (parsed.generationHash !== generationHash || currentGenerationHash !== generationHash) {
+            } else if (!advancedByInLaneRepair &&
+              (parsed.generationHash !== generationHash || currentGenerationHash !== generationHash)) {
               await WorkTaskDispatchModel.failVerification(
                 dispatch.id,
                 `artifact_generation_changed:${ generationHash }:${ currentGenerationHash }`,
@@ -826,7 +768,7 @@ export class TaskDispatcherService {
                 workflowExecutionId: finalState.metadata.lastCompletedWorkflow.executionId,
                 reviewerAgentIds:    selectedReviewerAgentIds,
                 excludedAgentIds,
-                generationHash,
+                generationHash:      parsed.generationHash,
                 artifactTypes:       parsed.artifactTypes,
                 artifacts:           parsed.artifacts,
                 artifactType:        parsed.artifactType,
@@ -865,7 +807,7 @@ export class TaskDispatcherService {
                 `artifact_head_changed:${ parsed.artifactSha }:${ currentHead.sha }`,
               );
             } else {
-              await WorkTaskDispatchModel.finalizeVerification(
+              await this.settleLegacyVerification(
                 dispatch.id, parsed.verdict, parsed.artifactSha, currentHead?.sha ?? null, parsed.summary,
               );
             }
@@ -875,6 +817,7 @@ export class TaskDispatcherService {
         await this.finalizeClaim(claim, outcome.status, summary);
       }
     } catch (err) {
+      await this.awaitWriterTermination(writerGraph);
       const message = err instanceof Error ? err.message : String(err);
       if (dispatch.kind === 'verification') {
         await WorkTaskDispatchModel.failVerification(
@@ -900,23 +843,39 @@ export class TaskDispatcherService {
   /**
    * Poll the durable execution record for a dispatcher-driven review
    * workflow until PlaybookController.releaseWorkflow() has settled it
-   * (WorkflowExecutionModel.settle), or the verifier timeout fires. This
+   * (WorkflowExecutionModel.settle). Timeout only requests abort; ownership
+   * remains reserved while a background writer can survive. This
    * intentionally does not introduce a new drain/poll service -- it only
    * bridges the one call site (runClaim) that needs a synchronous result
    * out of Graph.execute()'s fire-and-forget single-agent node dispatch.
    * The existing pending-completion / continuation machinery is untouched
    * and already works correctly once given the chance to reconnect.
    */
-  private async awaitReviewWorkflowSettlement(executionId: string, timedOut: () => boolean): Promise<void> {
+  private async awaitWriterTermination(graph: any): Promise<void> {
+    while (graph?.hasUnconfirmedWorkflowWorkers?.()) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+  }
+
+  private async awaitReviewWorkflowSettlement(executionId: string): Promise<void> {
     const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
     const pollIntervalMs = 1500;
-    while (!timedOut()) {
+    while (true) {
       const execution = await WorkflowExecutionModel.find(executionId).catch(() => null);
       const status = execution?.attributes?.status;
       if (status === 'completed' || status === 'failed' || status === 'suspended') return;
       await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
     }
-    console.warn(`[TaskDispatcher] awaitReviewWorkflowSettlement: execution ${ executionId } did not settle before verifier timeout`);
+  }
+
+  /** Called only after runClaim has drained every writer. */
+  private async settleLegacyVerification(
+    ...args: Parameters<typeof WorkTaskDispatchModel.finalizeVerification>
+  ): Promise<void> {
+    const settled = await WorkTaskDispatchModel.finalizeVerification(...args);
+    if (!settled) {
+      await WorkTaskDispatchModel.failVerification(args[0], 'legacy_review_settlement_rejected');
+    }
   }
 
   private parseVerification(output: string): ParsedVerification | null {
@@ -1040,7 +999,7 @@ export class TaskDispatcherService {
     const { dispatch, task } = claim;
     const parsed = status === 'completed' ? this.parseWorkResult(summary) : null;
     const malformed = status === 'completed' && !parsed;
-    const taskStatus = malformed ? 'planning' : status === 'completed' ? 'in_review' : 'blocked';
+    const taskStatus = malformed || status === 'failed' ? task.status : status === 'completed' ? 'in_review' : 'blocked';
     const dispatchStatus = malformed ? 'failed' : status;
     const concise = parsed?.summary ?? summary.slice(0, 1_500);
     const comment = malformed
@@ -1070,7 +1029,7 @@ export class TaskDispatcherService {
       const journalId = await WorkTaskDispatchModel.appendOutcomeJournal(dispatch.id, task.id, {
         dispatchStatus,
         taskStatus,
-        taskAssignee: taskStatus === 'planning' ? 'dispatcher' : 'heartbeat',
+        taskAssignee: malformed || status === 'failed' ? 'dispatcher' : 'heartbeat',
         comment: renderReceiptComment(receipt),
         receipt,
         result: status === 'failed' ? undefined : summary,
@@ -1161,6 +1120,8 @@ Priority: ${ task.priority }
 Project: ${ task.project_id }
 Epic: ${ task.epic_id ?? '(none)' }
 Dispatch: ${ dispatchId }
+Current lane: ${ task.status }
+Context: ${ JSON.stringify({ assignee: task.assignee, labels: task.labels }) }
 
 Description:
 ${ task.description || '(no description)' }
@@ -1171,7 +1132,9 @@ ${ planContext }
 Task history, oldest to newest (on a repair round the latest review findings are here; fix every one and say how in your receipt):
 ${ JSON.stringify(history) }
 
-Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
+Read active waits and dependencies with Projects tools and reason about what can be advanced now. Labels, assignees, lane names and dependency links are context, not blanket exclusions. Preserve explicit human stops and approvals at the action they cover. Continue unfinished work in this lane yourself. Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
+
+Implement only inside the VM. Keep worktrees under /Users/jonathonbyrdziak/Sites/worktrees. Run tests, builds and typechecks only on GitHub.
 
 You have the same full access as the primary agent: exec and the whole Sulla catalog (projects, GitHub, browser, workflows, sub-agents, everything). Read and comment on any task, including ${ task.id }, and create follow-up tasks when useful. The one coordination rule: the dispatcher moves ${ task.id } between lanes, so don't change its status yourself; return your WORK_RESULT and it goes to independent review.
 
@@ -1200,9 +1163,9 @@ ${ task.description || '(no description)' }
 Dispatcher and task history:
 ${ history || '(no comments)' }
 
-Review independently. Resolve the actual draft PR/branch and matching local worktree from the task and history. Read the current remote head through the GitHub tools, record the FULL exact head SHA, inspect the diff plus callers/consumers, map every acceptance criterion to evidence, and run focused tests/typecheck safely against the matching worktree. Include tenant, security, and regression analysis when relevant. Re-check the remote head immediately before your verdict; if it changed, do not approve until the matching new head is available and reviewed.
+Review independently. Resolve the actual draft PR/branch and matching local worktree from the task and history. Read the current remote head through the GitHub tools, record the FULL exact head SHA, inspect the diff plus callers/consumers, map every acceptance criterion to evidence, and inspect GitHub CI tests/typecheck evidence for the matching head; never run tests locally. Include tenant, security, and regression analysis when relevant. Re-check the remote head immediately before your verdict; if it changed, do not approve until the matching new head is available and reviewed.
 
-You have exec and the full Sulla catalog: check out and fetch branches, build, and run any tests you need. Pushing to the branch under review changes its head, so put fixes in your findings rather than on that branch. The dispatcher applies the transition.
+You have exec and the full Sulla catalog: check out and fetch branches, implement missing work, push reversible fixes, and use GitHub CI for tests. Before editing, verify there is no live conflicting execution. If you change the branch head, report REWORK with the new full SHA so the dispatcher rebinds review in this lane. Do not bounce repairable work to planning. The dispatcher applies the transition.
 
 Choose exactly one verdict:
 - APPROVE: the exact reviewed head satisfies the acceptance contract.
@@ -1269,6 +1232,6 @@ ${ planContext }
 Bounded task evidence, oldest to newest:
 ${ JSON.stringify(history) }
 
-The dispatcher already owns the collision-safe lease. Inspect the canonical artifact and immutable generation directly. Worker summaries are leads, never proof. Pushing to the branch under review changes its head, so this generation can no longer be approved; put fixes in your findings. The dispatcher records the verdict and transition.`;
+The dispatcher already owns the collision-safe lease. Review workflow nodes execute serially; finish all writes before returning, never leave background repair writers. Implement in the VM, use /Users/jonathonbyrdziak/Sites/worktrees, and run tests only on GitHub. Inspect the canonical artifact and immutable generation directly. Worker summaries are leads, never proof. Finish missing work in this lane when the change is reversible and no live conflicting edit exists. Preserve actual human approval/stop boundaries. If you push a repair, re-resolve the exact head and return REPAIRABLE with that new generation so the dispatcher rebinds review here; do not route repairable work to planning. The dispatcher records the verdict and transition.`;
   }
 }

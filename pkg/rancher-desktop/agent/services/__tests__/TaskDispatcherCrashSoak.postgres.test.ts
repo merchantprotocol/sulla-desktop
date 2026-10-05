@@ -121,18 +121,18 @@ describeWithPostgres('TaskDispatcher crash/restart convergence soak', () => {
     expect(result.signal).toBe('SIGKILL');
   }
 
-  async function bootAndAssertTruth(taskId: string): Promise<void> {
+  async function bootAndAssertTruth(taskId: string, confirmed: boolean): Promise<void> {
     await WorkTaskDispatchModel.recoverPendingOutcomeJournals();
     await WorkTaskDispatchModel.recoverStale(0);
     await DispatcherLivenessModel.beginTick(60_000);
     await DispatcherLivenessModel.completeTick(60_000, 'idle');
 
-    const running = await pool.query(`SELECT id FROM work_task_dispatches WHERE status = 'running'`);
-    expect(running.rows).toHaveLength(0);
+    const running = await pool.query(`SELECT id FROM work_task_dispatches WHERE task_id = $1 AND status = 'running'`, [taskId]);
+    expect(running.rows).toHaveLength(confirmed ? 0 : 1);
     const stranded = await pool.query(`
       SELECT d.id FROM work_task_dispatches d JOIN work_tasks t ON t.id = d.task_id
-       WHERE d.status = 'running' AND t.status IN ('done', 'in_review', 'blocked')
-    `);
+       WHERE d.task_id = $1 AND d.status = 'running' AND t.status IN ('done', 'in_review', 'blocked')
+    `, [taskId]);
     expect(stranded.rows).toHaveLength(0);
     const liveness = await pool.query(`SELECT checking, last_outcome, last_tick_at FROM dispatcher_liveness WHERE id = true`);
     expect(liveness.rows[0]).toMatchObject({ checking: false, last_outcome: 'idle' });
@@ -142,13 +142,13 @@ describeWithPostgres('TaskDispatcher crash/restart convergence soak', () => {
        WHERE task_id = $1 GROUP BY task_id HAVING COUNT(*) > 1
     `, [taskId]);
     expect(duplicatePullRequests.rows).toHaveLength(0);
-    const activeClaims = await pool.query(`SELECT id FROM work_task_stage_claims WHERE status = 'active'`);
-    expect(activeClaims.rows).toHaveLength(0);
+    const activeClaims = await pool.query(`SELECT id FROM work_task_stage_claims WHERE task_id = $1 AND status = 'active'`, [taskId]);
+    expect(activeClaims.rows).toHaveLength(confirmed ? 0 : 1);
   }
 
-  it.each(seams)('SIGKILL at %s converges on the next boot', async(seam) => {
+  it.each(seams)('SIGKILL at %s preserves ownership until durable terminal confirmation', async(seam) => {
     const taskId = `task-${ seam }`;
     await crashAt(seam, taskId);
-    await bootAndAssertTruth(taskId);
+    await bootAndAssertTruth(taskId, ['journal-before-finalize', 'finalize-before-liveness'].includes(seam));
   });
 });

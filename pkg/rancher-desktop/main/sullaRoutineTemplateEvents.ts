@@ -22,6 +22,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import yaml from 'yaml';
+import type { Graph } from '@pkg/agent/nodes/Graph';
 import { workflowTerminalResult } from '@pkg/agent/services/WorkflowTerminalResult';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -690,6 +691,29 @@ export async function executeRoutine(
   triggerPayload?: string,
   options?: RoutineExecutionOptions,
 ): Promise<RoutineExecutionResult> {
+  let started = false;
+  try {
+    return await executeRoutineInternal(workflowId, triggerPayload, options, () => { started = true });
+  } catch (error) {
+    // Before graph.execute there can be no child writer. Afterwards the
+    // internal settlement path drains children before notifying the owner.
+    if (!started && options?.executionId) {
+      const { WorkflowExecutionModel } = await import('@pkg/agent/database/models/WorkflowExecutionModel');
+      try {
+        await WorkflowExecutionModel.markFailed(options.executionId, String(error));
+      } finally {
+        await options.onSettled?.({ executionId: options.executionId, status: 'failed',
+          error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    throw error;
+  }
+}
+
+async function executeRoutineInternal(
+  workflowId: string, triggerPayload: string | undefined,
+  options: RoutineExecutionOptions | undefined, onGraphStarted: () => void,
+): Promise<RoutineExecutionResult> {
   if (!workflowId) {
     throw new Error('executeRoutine: workflowId is required');
   }
@@ -704,130 +728,142 @@ export async function executeRoutine(
   let routineSlotId: string | null = null;
   const graphExecutionId = options?.executionId ?? `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
   const WS_CHANNEL = 'sulla-desktop';
+  let graphStarted = false;
+  try {
+    // Pass through the user payload as-is. When empty, the playbook's
+    // createPlaybookState will substitute the routine framing into the
+    // trigger node's output. Do NOT synthesize a "Run routine X" string —
+    // LLMs misread that as an imperative and trigger recursive workflow calls.
+    const message = (triggerPayload ?? '').trim();
 
-  // Pass through the user payload as-is. When empty, the playbook's
-  // createPlaybookState will substitute the routine framing into the
-  // trigger node's output. Do NOT synthesize a "Run routine X" string —
-  // LLMs misread that as an imperative and trigger recursive workflow calls.
-  const message = (triggerPayload ?? '').trim();
-
-  if (protectedKind && await RoutineConcurrencyPolicy.isEnabled()) {
-    await RoutineConcurrencyPolicy.reclaimStale();
-    const limit = await RoutineConcurrencyPolicy.resolveLimit(protectedKind);
-    const slotContext = {
-      owner:  options?.executionId ?? workflowId,
-      taskId: options?.executionScope?.taskId,
-    };
-    routineSlotId = options?.waitForCapacity
-      ? await RoutineConcurrencyPolicy.acquireWhenAvailable(protectedKind, limit, slotContext)
-      : await RoutineConcurrencyPolicy.acquire(protectedKind, limit, slotContext);
-    if (!routineSlotId) {
-      throw new Error(`Routine concurrency limit reached for ${ protectedKind } work.`);
+    if (protectedKind && await RoutineConcurrencyPolicy.isEnabled()) {
+      await RoutineConcurrencyPolicy.reclaimStale();
+      const limit = await RoutineConcurrencyPolicy.resolveLimit(protectedKind);
+      const slotContext = {
+        owner:  options?.executionId ?? workflowId,
+        taskId: options?.executionScope?.taskId,
+      };
+      routineSlotId = options?.waitForCapacity
+        ? await RoutineConcurrencyPolicy.acquireWhenAvailable(protectedKind, limit, slotContext)
+        : await RoutineConcurrencyPolicy.acquire(protectedKind, limit, slotContext);
+      if (!routineSlotId) {
+        throw new Error(`Routine concurrency limit reached for ${ protectedKind } work.`);
+      }
     }
-  }
 
-  // Activate on plain data first: singleton and deterministic preflight can
-  // decline without constructing an agent, recalling memory, or calling a model.
-  const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
-  const admissionState = { metadata: { scopedWorkflowId: workflowId }, messages: [] };
+    // Activate on plain data first: singleton and deterministic preflight can
+    // decline without constructing an agent, recalling memory, or calling a model.
+    const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
+    const admissionState = { metadata: { scopedWorkflowId: workflowId }, messages: [] };
 
-  let activation;
-  try {
-    activation = await activateWorkflowOnState(admissionState as any, {
-    workflowId,
-    message,
-    startNodeId:       options?.startNodeId,
-    resumeExecutionId: options?.resumeExecutionId,
-    force:             options?.force,
-    definitionSnapshot: options?.definitionSnapshot,
-    executionScope:    options?.executionScope,
-    executionId:       options?.executionId,
-    allowConcurrent:   options?.allowConcurrent,
-    });
-  } catch (error) {
-    if (routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
-    throw error;
-  }
-
-  if (!activation.ok) {
-    if (routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
-    if (activation.skipped) return { workflowId, executionId: '', skipped: activation.skipped };
-    throw new Error(activation.responseString);
-  }
-
-  let graphResult;
-  try {
-    const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
-    graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, graphExecutionId);
-  } catch (error) {
-    if (routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
-    // Keep admitted singleton rows active if graph construction failed. They
-    // must not be automatically replaced while execution ownership is uncertain.
-    throw error;
-  }
-  const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
-  const state = (graphResult as { state: Record<string, any> }).state;
-  state.metadata = { ...state.metadata, ...admissionState.metadata };
-  const { configureRoutineBrowser } = await import('@pkg/agent/workflow/routineBrowser');
-  // Use the admitted immutable definition (including resume/snapshot), not a
-  // second mutable workflow lookup or caller-supplied trigger instructions.
-  try {
-    await configureRoutineBrowser(state as any, state.metadata.activeWorkflow.definition);
-  } catch (error) {
-    const { WorkflowExecutionModel } = await import('@pkg/agent/database/models/WorkflowExecutionModel');
-    await WorkflowExecutionModel.markFailed(state.metadata.activeWorkflow.executionId, String(error));
-    if (routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
-    throw error;
-  }
-
-  const executionId = state.metadata.activeWorkflow?.executionId;
-  if (!executionId) throw new Error('Workflow activation did not produce an execution id.');
-
-  await options?.onStarted?.(executionId);
-
-  const slotHeartbeat = routineSlotId
-    ? setInterval(() => { if (routineSlotId) void RoutineConcurrencyPolicy.heartbeat(routineSlotId); }, 30_000)
-    : null;
-  const releaseRoutineSlot = async() => {
-    if (slotHeartbeat) clearInterval(slotHeartbeat);
-    if (routineSlotId) {
-      const id = routineSlotId;
-      routineSlotId = null;
-      await RoutineConcurrencyPolicy.release(id);
-    }
-  };
-
-  let settled = false;
-  const settle = async(result: { executionId: string; status: 'completed' | 'failed'; error?: string; outcome?: unknown }) => {
-    if (settled || result.executionId !== executionId) return;
-    settled = true;
+    let activation;
     try {
-      await options?.onSettled?.(result);
-    } finally {
-      delete state.metadata.onRoutineTerminal;
-      await releaseRoutineSlot();
+      activation = await activateWorkflowOnState(admissionState as any, {
+      workflowId,
+      message,
+      startNodeId:       options?.startNodeId,
+      resumeExecutionId: options?.resumeExecutionId,
+      force:             options?.force,
+      definitionSnapshot: options?.definitionSnapshot,
+      executionScope:    options?.executionScope,
+      executionId:       options?.executionId,
+      allowConcurrent:   options?.allowConcurrent,
+      });
+    } catch (error) {
+      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null; }
+      throw error;
     }
-  };
-  // A graph yield is not workflow completion. The controller also calls this
-  // after an asynchronous continuation reaches its durable terminal state.
-  state.metadata.onRoutineTerminal = async() => {
-    const result = workflowTerminalResult(state.metadata, executionId);
-    if (result) await settle(result);
-  };
-  graph.execute(state).then(async() => {
-    await state.metadata.onRoutineTerminal?.();
-  }).catch(async(err) => {
-    console.error(`[Sulla] routine execution ${ executionId } failed:`, err);
-    await settle({ executionId, status: 'failed', error: err instanceof Error ? err.message : String(err) });
-  });
 
-  console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);
+    if (!activation.ok) {
+      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null; }
+      if (activation.skipped) return { workflowId, executionId: '', skipped: activation.skipped };
+      throw new Error(activation.responseString);
+    }
 
-  let playbookExecutionId: string | undefined;
-  try {
-    const parsed = JSON.parse(activation.responseString);
-    if (typeof parsed?.executionId === 'string') playbookExecutionId = parsed.executionId;
-  } catch { /* activation errors were handled above; response parsing is best-effort */ }
+    let graphResult;
+    try {
+      const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
+      graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, graphExecutionId);
+    } catch (error) {
+      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null; }
+      // The outer pre-start handler retires the prebound execution and owner.
+      throw error;
+    }
+    const graph: Pick<Graph<any>, 'execute' | 'hasUnconfirmedWorkflowWorkers'> = graphResult.graph;
+    const state = (graphResult as { state: Record<string, any> }).state;
+    state.metadata = { ...state.metadata, ...admissionState.metadata };
+    const { configureRoutineBrowser } = await import('@pkg/agent/workflow/routineBrowser');
+    // Use the admitted immutable definition (including resume/snapshot), not a
+    // second mutable workflow lookup or caller-supplied trigger instructions.
+    try {
+      await configureRoutineBrowser(state as any, state.metadata.activeWorkflow.definition);
+    } catch (error) {
+      const { WorkflowExecutionModel } = await import('@pkg/agent/database/models/WorkflowExecutionModel');
+      await WorkflowExecutionModel.markFailed(state.metadata.activeWorkflow.executionId, String(error));
+      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null; }
+      throw error;
+    }
 
-  return { executionId, playbookExecutionId, workflowId };
+    const executionId = state.metadata.activeWorkflow?.executionId;
+    if (!executionId) throw new Error('Workflow activation did not produce an execution id.');
+
+    await options?.onStarted?.(executionId);
+
+    const slotHeartbeat = routineSlotId
+      ? setInterval(() => { if (routineSlotId) void RoutineConcurrencyPolicy.heartbeat(routineSlotId); }, 30_000)
+      : null;
+    const releaseRoutineSlot = async() => {
+      if (slotHeartbeat) clearInterval(slotHeartbeat);
+      if (routineSlotId) {
+        const id = routineSlotId;
+        routineSlotId = null;
+        await RoutineConcurrencyPolicy.release(id);
+      }
+    };
+
+    let settled = false;
+    const settle = async(result: { executionId: string; status: 'completed' | 'failed'; error?: string; outcome?: unknown }) => {
+      if (settled || result.executionId !== executionId) return;
+      // A rejected/yielded parent turn can still own asynchronous child writers.
+      // Do not release the lane reservation or routine slot from the catch path.
+      while (graph.hasUnconfirmedWorkflowWorkers()) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+      if (settled) return;
+      settled = true;
+      try {
+        await options?.onSettled?.(result);
+      } finally {
+        delete state.metadata.onRoutineTerminal;
+        await releaseRoutineSlot();
+      }
+    };
+    // A graph yield is not workflow completion. The controller also calls this
+    // after an asynchronous continuation reaches its durable terminal state.
+    state.metadata.onRoutineTerminal = async() => {
+      const result = workflowTerminalResult(state.metadata, executionId);
+      if (result) await settle(result);
+    };
+    graphStarted = true;
+    onGraphStarted();
+    Promise.resolve().then(() => graph.execute(state)).then(async() => {
+      await state.metadata.onRoutineTerminal?.();
+    }).catch(async(err) => {
+      console.error(`[Sulla] routine execution ${ executionId } failed:`, err);
+      await settle({ executionId, status: 'failed', error: err instanceof Error ? err.message : String(err) });
+    });
+
+    console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);
+
+    let playbookExecutionId: string | undefined;
+    try {
+      const parsed = JSON.parse(activation.responseString);
+      if (typeof parsed?.executionId === 'string') playbookExecutionId = parsed.executionId;
+    } catch { /* activation errors were handled above; response parsing is best-effort */ }
+
+    return { executionId, playbookExecutionId, workflowId };
+  } catch (error) {
+    if (!graphStarted && routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
+    throw error;
+  }
 }

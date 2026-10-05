@@ -1,17 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 
 import { postgresClient } from '../PostgresClient';
 import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
-import { evaluateClaim, type WipLimits } from '../../services/ProjectAutomationWipLimits';
+import type { WipLimits } from '../../services/ProjectAutomationWipLimits';
 import {
   buildReceipt, receiptInsertInput, renderReceiptComment,
   type ArtifactReceipt, type ArtifactReceiptInput,
 } from '../../services/ArtifactReceiptService';
+import { agentAdmissionSql, approvalSafeTargetSql, taskLaneRoleSql, taskLaneTargetSql, taskTargetCompletedSql } from './WorkAgentAdmission';
 import { ArtifactReceiptModel } from './ArtifactReceiptModel';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { WorkflowExecutionModel } from './WorkflowExecutionModel';
-import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
+import { NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
 import type { WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
@@ -136,6 +136,18 @@ export interface ClaimedDispatch {
   stage_claim: LifecycleStageClaim;
 }
 
+export interface DispatchCandidate extends WorkTaskRecord {
+  project_status:           string;
+  epic_status:              string | null;
+  project_dispatch_enabled: boolean;
+  has_active_dispatch:      boolean;
+  lane_role?:               WorkLaneSemanticRole;
+  has_active_stage_claim:   boolean;
+  has_active_wait:          boolean;
+  unresolved_dependencies:  number | string;
+  consideration_at:         string;
+}
+
 export type InProgressExclusionReason =
   | 'archived'
   | 'epic_closed'
@@ -182,7 +194,7 @@ export interface DispatchReconciliationResult {
 
 export interface WorkTaskDispatchFinalization {
   dispatchStatus: Exclude<WorkTaskDispatchStatus, 'running' | 'stale'>;
-  taskStatus:     'in_review' | 'planning' | 'blocked';
+  taskStatus:     string;
   taskAssignee:   'heartbeat' | 'dispatcher';
   comment:        string;
   result?:        string;
@@ -196,7 +208,7 @@ interface WorkTaskOutcomeJournalRow {
   dispatch_id: string;
   task_id: string;
   dispatch_status: Exclude<WorkTaskDispatchStatus, 'running' | 'stale'>;
-  task_status: 'in_review' | 'planning' | 'blocked';
+  task_status: string;
   task_assignee: 'heartbeat' | 'dispatcher';
   comment: string;
   result: string | null;
@@ -207,42 +219,11 @@ interface WorkTaskOutcomeJournalRow {
 }
 
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
-
-/** Heartbeat-silence threshold shared by recoverStale() and the drainable-review-backlog surface. */
 const STALE_DISPATCH_MINUTES = 45;
 
 /**
- * A review-stage task only exerts downstream-first backpressure while it can
- * actually drain. A single wedged in_review row must never hold the whole
- * conveyor (Jonathon directive 2026-08-28): a task whose running dispatch has
- * a dead heartbeat cannot be claimed for review, a task whose latest
- * verification ended terminal-failed needs planning/human recovery that
- * holding fresh todo work does nothing to advance, and a dependency-held task
- * is un-claimable by the review pool. `alias` is a trusted table alias
- * (e.g. 't', 'downstream'), never user input.
- */
-function drainableReviewSql(alias: string): string {
-  return `AND NOT EXISTS (
-             SELECT 1 FROM work_task_dispatches zombie
-              WHERE zombie.task_id = ${ alias }.id AND zombie.status = 'running'
-                AND zombie.heartbeat_at < now() - (${ STALE_DISPATCH_MINUTES } * interval '1 minute')
-           )
-           AND COALESCE((
-             SELECT latest_verification.status <> 'failed'
-                    OR latest_verification.failure_reason IS NULL
-                    OR latest_verification.failure_reason NOT LIKE 'terminal:%'
-               FROM work_task_dispatches latest_verification
-              WHERE latest_verification.task_id = ${ alias }.id
-                AND latest_verification.kind = 'verification'
-              ORDER BY latest_verification.started_at DESC LIMIT 1
-           ), true)
-           ${ WorkTaskDependencyModel.claimExclusionSql(`${ alias }.id`) }`;
-}
-
-/**
- * Per-project autonomy switch (work_projects.dispatch_enabled). A paused
- * project is invisible to every mechanical claimer and to the WIP/backpressure
- * counts, so pausing one project never starves or throttles the others.
+ * Per-project autonomy switch (work_projects.dispatch_enabled). Paused work is
+ * still enumerated and counted; this predicate is used only at mutation time.
  */
 export function projectDispatchEnabledSql(taskAlias: string): string {
   return `AND EXISTS (
@@ -252,24 +233,11 @@ export function projectDispatchEnabledSql(taskAlias: string): string {
            )`;
 }
 
-/**
- * Idle in_progress reclaim is ownership-neutral by design (Jonathon
- * directive 2026-08-25, Projects task 1Nk7): whoever is actively working a
- * task — human or agent — holds it as assignee exactly like any other
- * sub-agent assignment. There is no "must already be assignee=dispatcher"
- * or "must be an autonomous owner" gate here. The only protections against
- * yanking real work out from under someone are activity-based
- * (stale_activity / has_live_dispatch / has_active_child /
- * has_active_agent_job) and the explicit opt-out labels in
- * NON_AUTONOMOUS_TASK_LABELS (e.g. "human", "gated", "no-auto-dispatch").
- */
+/** Compatibility recovery reports retain only liveness and explicit stop guards. */
 export function classifyInProgressRow(row: InProgressClassificationRow): InProgressExclusionReason[] {
   const reasons: InProgressExclusionReason[] = [];
   if (row.archived) reasons.push('archived');
-  if (!row.epic_open) reasons.push('epic_closed');
-  if (!row.autonomous_labels) reasons.push('non_autonomous_label');
   if (row.has_live_dispatch) reasons.push('live_dispatch');
-  if (row.has_active_child) reasons.push('active_child');
   if (!row.stale_activity) reasons.push('recent_activity');
   if (row.has_active_agent_job) reasons.push('active_agent_job');
   if (row.project_dispatch_enabled === false) reasons.push('project_dispatch_paused');
@@ -313,101 +281,89 @@ export class WorkTaskDispatchModel {
     return createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
   }
 
+  /**
+   * The dispatcher's consideration surface is deliberately broader than its
+   * mutation surface. Every non-archived task is visible here, including work
+   * in custom lanes, paused projects, with dependencies/waits, or assigned to
+   * another actor. Those facts are context for the worker, never admission
+   * filters. Collision locks and explicit project pause remain action-time
+   * guards in the lane-specific claim methods below.
+   */
+  static async enumerateCandidates(limit?: number): Promise<DispatchCandidate[]> {
+    return postgresClient.query<DispatchCandidate>(`
+      SELECT t.*, ${ taskLaneRoleSql('t') } AS lane_role,
+             p.status AS project_status,
+             e.status AS epic_status,
+             p.dispatch_enabled AS project_dispatch_enabled,
+             EXISTS (
+               SELECT 1 FROM work_task_dispatches d
+                WHERE d.task_id = t.id AND d.status = 'running'
+             ) AS has_active_dispatch,
+             EXISTS (
+               SELECT 1 FROM work_task_stage_claims c
+                WHERE c.task_id = t.id AND c.status = 'active'
+             ) AS has_active_stage_claim,
+             EXISTS (
+               SELECT 1 FROM work_task_waits w
+                WHERE w.task_id = t.id AND w.status = 'active'
+             ) AS has_active_wait,
+             (SELECT COUNT(*)::text
+                FROM work_task_dependencies dep
+                JOIN work_tasks prerequisite ON prerequisite.id = dep.depends_on_task_id
+               WHERE dep.dependent_task_id = t.id AND dep.archived_at IS NULL
+                 AND prerequisite.archived = false
+                 AND prerequisite.status NOT IN ('done', 'cancelled', 'parked')) AS unresolved_dependencies,
+             GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) AS consideration_at
+        FROM work_tasks t
+        LEFT JOIN work_epics e ON e.id = t.epic_id
+        JOIN work_projects p ON p.id = t.project_id
+       WHERE t.archived = false
+       ORDER BY consideration_at DESC, t.id ASC
+       LIMIT $1
+    `, [limit === undefined ? null : Math.max(1, limit)]);
+  }
+
   static async claimNext(
     agentId: string,
     runtimeInstanceId: string,
-    wipLimits?: WipLimits,
+    _wipLimits?: WipLimits,
+    taskId?: string,
   ): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
-      // Serialize semantic WIP evaluation with the status mutation. Without the
-      // transaction-scoped lock two dispatcher instances can both observe the
-      // last free slot and oversubscribe the execution stage.
-      if (wipLimits) {
-        await client.query('SELECT pg_advisory_xact_lock($1)', [4823710299]);
-        const counts = await this.countByRoleWithClient(client);
-        if (!evaluateClaim('execution', counts, wipLimits).allowed) return null;
-      }
-      const candidate = await client.query<WorkTaskRecord>(`
-        SELECT t.*
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
+      const candidate = await client.query<WorkTaskRecord & { admission_target?: string }>(`
+        SELECT t.*, ${ approvalSafeTargetSql('t', "CASE WHEN t.status = 'todo' THEN 'in_progress' ELSE t.status END") } AS admission_target
           FROM work_tasks t
-          JOIN work_epics e ON e.id = t.epic_id
+          LEFT JOIN work_epics e ON e.id = t.epic_id
+          JOIN work_projects p ON p.id = t.project_id
          WHERE t.archived = false
-           AND t.status = 'todo'
-           AND e.archived = false
-           AND NOT (e.status = ANY($1::text[]))
-           AND (t.assignee IS NULL OR LOWER(t.assignee) = ANY($2::text[]))
+           AND ${ taskLaneRoleSql('t') } NOT IN ('review', 'terminal') AND t.status <> 'parked'
+           AND ($1::text IS NULL OR t.id = $1)
            ${ projectDispatchEnabledSql('t') }
+           ${ agentAdmissionSql('t', 'task-dispatcher') }
            AND NOT EXISTS (
-             SELECT 1
-               FROM unnest(COALESCE(t.labels, '{}')) AS label
-              WHERE LOWER(label) = ANY($3::text[])
+             SELECT 1 FROM agent_jobs j WHERE j.status = 'running'
+              AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
            )
-           AND NOT EXISTS (
-             SELECT 1 FROM work_task_dispatches d
-              WHERE d.task_id = t.id AND d.status = 'running'
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM work_task_stage_claims c
-              WHERE c.task_id = t.id AND c.stage = 'in_progress' AND c.status = 'active'
-           )
-           AND NOT EXISTS (
-             SELECT 1
-               FROM work_tasks downstream
-               JOIN work_epics downstream_epic ON downstream_epic.id = downstream.epic_id
-               JOIN work_projects downstream_project ON downstream_project.id = downstream_epic.project_id
-              WHERE downstream.archived = false
-                AND downstream.status = 'in_review'
-                AND downstream_epic.archived = false
-                AND downstream_project.archived = false
-                AND downstream_project.dispatch_enabled = true
-                AND NOT (downstream_project.status = ANY($1::text[]))
-                AND NOT (downstream_epic.status = ANY($1::text[]))
-                AND (downstream.assignee IS NULL OR LOWER(downstream.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
-                AND NOT EXISTS (
-                  SELECT 1 FROM unnest(COALESCE(downstream.labels, '{}')) AS downstream_label
-                   WHERE LOWER(downstream_label) = ANY($3::text[])
-                )
-                ${ drainableReviewSql('downstream') }
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM work_tasks child
-              WHERE child.parent_id = t.id
-                AND child.archived = false
-                AND child.status NOT IN ('done', 'cancelled', 'parked')
-           )
-         ${WorkTaskDependencyModel.claimExclusionSql('t.id')}
          ORDER BY
-           CASE e.priority
-             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
-             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
-             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
-             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
-             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
-             ELSE 5 END,
-           CASE t.priority
-             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
-             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
-             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
-             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
-             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
-             ELSE 5 END,
-           t.due_at ASC NULLS LAST,
-           t.last_activity_at ASC,
-           t.position ASC
+           GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) DESC,
+           t.id ASC
          FOR UPDATE OF t SKIP LOCKED
          LIMIT 1
-      `, [CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS]);
+      `, [taskId ?? null]);
 
       const task = candidate.rows[0];
       if (!task) return null;
 
+      const claimStatus = task.admission_target ?? (task.status === 'todo' ? 'in_progress' : task.status);
       const stageClaim = await LifecycleCapabilityModel.claimStageWithClient(
         client,
         task.id,
         'todo-execution',
-        'in_progress',
+        claimStatus,
         'dispatcher',
         runtimeInstanceId,
+        true,
       );
       if (!stageClaim.claimed || !stageClaim.claim) return null;
 
@@ -424,15 +380,15 @@ export class WorkTaskDispatchModel {
 
       const updated = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = 'in_progress',
+           SET status = $4,
                assignee = $2,
                updated_at = now(),
                last_moved_at = now(),
                last_activity_at = now(),
                last_moved_by = $2
-         WHERE id = $1 AND status = 'todo'
+         WHERE id = $1 AND status = $3
         RETURNING *
-      `, [task.id, TASK_ASSIGNEES.dispatcher]);
+      `, [task.id, TASK_ASSIGNEES.dispatcher, task.status, claimStatus]);
       if (!updated.rows[0]) {
         throw new Error(`Atomic dispatch lost task ${ task.id } before execution handoff`);
       }
@@ -445,27 +401,30 @@ export class WorkTaskDispatchModel {
       // attached, and no work_project_domain_events row was appended, so the
       // Projects activity/audit trail silently missed every dispatcher-driven
       // todo -> in_progress transition.
-      const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
-      const laneEntry = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
-        client, committed.id, committed.status, TASK_ASSIGNEES.dispatcher,
-      );
-      const { createPostgresProjectsRepositories } = await import('../../projects/infrastructure/PostgresProjectsRepositories');
-      await createPostgresProjectsRepositories(client).events.append({
-        id:             `projects-event-${ committed.id }-${ laneEntry.entry.generation }-transition`,
-        taskId:         committed.id,
-        generation:     laneEntry.entry.generation,
-        eventType:      'projects.task.transitioned',
-        idempotencyKey: `projects.task.transitioned:${ committed.id }:${ laneEntry.entry.generation }`,
-        occurredAt:     new Date(),
-        payload:        {
-          actor:         TASK_ASSIGNEES.dispatcher,
-          source:        'dispatcher',
-          fromLane:      task.status,
-          toLane:        committed.status,
-          laneEntryId:   laneEntry.entry.id,
-          laneAutomated: laneEntry.entry.status === 'pending',
-        },
-      });
+      if (committed.status !== task.status) {
+        const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
+        const laneEntry = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
+          client, committed.id, committed.status, TASK_ASSIGNEES.dispatcher,
+        );
+        const { createPostgresProjectsRepositories } = await import('../../projects/infrastructure/PostgresProjectsRepositories');
+        await createPostgresProjectsRepositories(client).events.append({
+          id:             `projects-event-${ committed.id }-${ laneEntry.entry.generation }-transition`,
+          taskId:         committed.id,
+          generation:     laneEntry.entry.generation,
+          eventType:      'projects.task.transitioned',
+          idempotencyKey: `projects.task.transitioned:${ committed.id }:${ laneEntry.entry.generation }`,
+          occurredAt:     new Date(),
+          payload:        {
+            actor:         TASK_ASSIGNEES.dispatcher,
+            source:        'dispatcher',
+            fromLane:      task.status,
+            toLane:        committed.status,
+            laneEntryId:   laneEntry.entry.id,
+            laneAutomated: laneEntry.entry.status === 'pending',
+          },
+        });
+
+      }
 
       return { dispatch: inserted.rows[0], task: committed, stage_claim: stageClaim.claim };
     });
@@ -475,64 +434,36 @@ export class WorkTaskDispatchModel {
     agentId: string,
     reviewerAgentIds: string[],
     runtimeInstanceId: string,
+    taskId?: string,
   ): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
       const candidate = await client.query<WorkTaskRecord>(`
         SELECT t.*
           FROM work_tasks t
-          JOIN work_epics e ON e.id = t.epic_id
-          JOIN work_projects p ON p.id = e.project_id
+          LEFT JOIN work_epics e ON e.id = t.epic_id
+          JOIN work_projects p ON p.id = t.project_id
          WHERE t.archived = false
-           AND t.status = 'in_review'
-           AND e.archived = false
-           AND p.archived = false
+           AND ${ taskLaneRoleSql('t') } = 'review'
+           AND ($1::text IS NULL OR t.id = $1)
            AND p.dispatch_enabled = true
-           AND NOT (p.status = ANY($1::text[]))
-           AND NOT (e.status = ANY($1::text[]))
-           AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
-           AND NOT EXISTS (
-             SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
-              WHERE LOWER(label) = ANY($2::text[])
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM work_task_dispatches d
-              WHERE d.task_id = t.id AND d.status = 'running'
-           )
+           ${ agentAdmissionSql('t', 'task-dispatcher-review') }
            AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
               WHERE d.task_id = t.id AND d.kind = 'verification'
                 AND d.status IN ('failed', 'stale')
                 AND d.finished_at > now() - interval '5 minutes'
            )
-         ${WorkTaskDependencyModel.claimExclusionSql('t.id')}
+           AND NOT EXISTS (
+             SELECT 1 FROM agent_jobs j WHERE j.status = 'running'
+              AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
+           )
          ORDER BY
-           CASE p.priority
-             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
-             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
-             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
-             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
-             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
-             ELSE 5 END,
-           CASE e.priority
-             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
-             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
-             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
-             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
-             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
-             ELSE 5 END,
-           CASE t.priority
-             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
-             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
-             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
-             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
-             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
-             ELSE 5 END,
-           t.due_at ASC NULLS LAST,
-           t.last_activity_at ASC,
-           t.position ASC
+           GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) DESC,
+           t.id ASC
          FOR UPDATE OF t SKIP LOCKED
          LIMIT 1
-      `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
+      `, [taskId ?? null]);
 
       const task = candidate.rows[0];
       if (!task) return null;
@@ -541,9 +472,10 @@ export class WorkTaskDispatchModel {
         client,
         task.id,
         'in-review-verification',
-        'in_review',
+        task.status,
         'dispatcher',
         runtimeInstanceId,
+        true,
       );
       if (!stageClaim.claimed || !stageClaim.claim) return null;
 
@@ -575,7 +507,7 @@ export class WorkTaskDispatchModel {
         UPDATE work_tasks
            SET assignee = 'verifier', updated_at = now(), last_activity_at = now(),
                last_moved_at = now(), last_moved_by = 'dispatcher'
-         WHERE id = $1 AND status = 'in_review'
+         WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
       `, [task.id]);
 
       return { dispatch: inserted.rows[0], task, stage_claim: stageClaim.claim };
@@ -602,45 +534,26 @@ export class WorkTaskDispatchModel {
     return row?.found === true;
   }
 
-  /**
-   * Count autonomous work already at the review stage that can still drain —
-   * claimable by the review pool or actively held by a live verification
-   * lease. Any such row is farther down the conveyor than todo, so the
-   * dispatcher uses this as a hard backpressure gate before claiming fresh
-   * execution work. Wedged rows (dead-heartbeat running dispatch,
-   * terminal-failed latest verification, dependency-held) are excluded via
-   * drainableReviewSql: holding the whole conveyor does nothing to advance
-   * them, and one stuck task must never starve every execution slot.
-   */
+  /** Observability only: review backlog never hides or blocks newer work. */
   static async countReviewBacklog(): Promise<number> {
     const row = await postgresClient.queryOne<{ count: string }>(`
       SELECT COUNT(*)::text AS count
         FROM work_tasks t
-        JOIN work_epics e ON e.id = t.epic_id
-        JOIN work_projects p ON p.id = e.project_id
+        LEFT JOIN work_epics e ON e.id = t.epic_id
+        JOIN work_projects p ON p.id = t.project_id
        WHERE t.archived = false
-         AND t.status = 'in_review'
+         AND ${ taskLaneRoleSql('t') } = 'review'
          AND e.archived = false
          AND p.archived = false
-         AND p.dispatch_enabled = true
-         AND NOT (p.status = ANY($1::text[]))
-         AND NOT (e.status = ANY($1::text[]))
-         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
-         AND NOT EXISTS (
-           SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
-            WHERE LOWER(label) = ANY($2::text[])
-         )
-         ${ drainableReviewSql('t') }
-    `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
+    `);
     return Number(row?.count || 0);
   }
 
   /**
    * Count autonomous, non-terminal work in each semantic lane role across the
    * whole portfolio, honouring custom project lanes via their resolved
-   * semantic_role (issue #711). Queued and active work both count. Closed epics
-   * and non-autonomous or human-gated tasks are excluded, matching the
-   * eligibility surface of countReviewBacklog and the claim paths.
+   * semantic_role (issue #711). This is a visibility count, so paused projects,
+   * assignments, labels and dependencies remain represented.
    */
   static async countByRole(): Promise<Partial<Record<WorkLaneSemanticRole, number>>> {
     return postgresClient.transaction(client => this.countByRoleWithClient(client));
@@ -669,8 +582,8 @@ export class WorkTaskDispatchModel {
              )::text AS semantic_role,
              COUNT(*)::text AS count
         FROM work_tasks t
-        JOIN work_epics e ON e.id = t.epic_id
-        JOIN work_projects p ON p.id = e.project_id
+        LEFT JOIN work_epics e ON e.id = t.epic_id
+        JOIN work_projects p ON p.id = t.project_id
         LEFT JOIN LATERAL (
           SELECT semantic_role
             FROM work_lane_definitions
@@ -697,16 +610,8 @@ export class WorkTaskDispatchModel {
        WHERE t.archived = false
          AND e.archived = false
          AND p.archived = false
-         AND p.dispatch_enabled = true
-         AND NOT (p.status = ANY($1::text[]))
-         AND NOT (e.status = ANY($1::text[]))
-         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'))
-         AND NOT EXISTS (
-           SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
-            WHERE LOWER(label) = ANY($2::text[])
-         )
        GROUP BY 1
-    `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
+    `);
 
     const totals: Partial<Record<WorkLaneSemanticRole, number>> = {};
     for (const row of rows.rows) totals[row.semantic_role] = Number(row.count || 0);
@@ -747,7 +652,7 @@ export class WorkTaskDispatchModel {
         FROM work_tasks t
         LEFT JOIN work_epics e ON e.id = t.epic_id
        WHERE t.status = 'in_progress'
-       ORDER BY t.last_activity_at ASC, t.id ASC
+       ORDER BY GREATEST(t.last_activity_at, t.last_moved_at) DESC, t.id ASC
        LIMIT $4
     `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS, staleMinutes, Math.max(1, limit)]);
 
@@ -780,7 +685,7 @@ export class WorkTaskDispatchModel {
   static async recoverOrphanedInProgress(
     candidates: RecoverableInProgressCandidate[],
     batchSize = 1,
-    retryCeiling = 3,
+    _retryCeiling = 3,
   ): Promise<OrphanRecoveryResult[]> {
     const eligible = candidates.filter(candidate => candidate.exclusionReasons.length === 0).slice(0, Math.max(0, batchSize));
     if (eligible.length === 0) return [];
@@ -791,35 +696,26 @@ export class WorkTaskDispatchModel {
         const locked = await client.query<WorkTaskRecord>(`
           SELECT t.*
             FROM work_tasks t
-            JOIN work_epics e ON e.id = t.epic_id
+            LEFT JOIN work_epics e ON e.id = t.epic_id
            WHERE t.id = $1
              AND t.status = 'in_progress'
              AND t.archived = false
-             AND e.archived = false
-             AND NOT (e.status = ANY($2::text[]))
-             AND NOT EXISTS (
-               SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
-                WHERE LOWER(label) = ANY($3::text[])
-             )
              AND NOT EXISTS (
                SELECT 1 FROM work_task_dispatches d
                 WHERE d.task_id = t.id AND d.status = 'running'
              )
              AND NOT EXISTS (
-               SELECT 1 FROM work_tasks child
-                WHERE child.parent_id = t.id
-                  AND child.archived = false
-                  AND child.status NOT IN ('done', 'cancelled', 'parked')
+               SELECT 1 FROM work_task_stage_claims c WHERE c.task_id = t.id AND c.status = 'active'
              )
              AND NOT EXISTS (
                SELECT 1 FROM agent_jobs j
                 WHERE j.status = 'running'
                   AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
              )
-             AND t.last_activity_at = $4::timestamptz
+             AND t.last_activity_at = $2::timestamptz
              ${ projectDispatchEnabledSql('t') }
            FOR UPDATE OF t SKIP LOCKED
-        `, [candidate.task.id, CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS, candidate.fingerprint]);
+        `, [candidate.task.id, candidate.fingerprint]);
 
         const task = locked.rows[0];
         if (!task) {
@@ -832,14 +728,10 @@ export class WorkTaskDispatchModel {
           [task.id],
         );
         const attemptNumber = Number(count.rows[0]?.count || 0) + 1;
-        const outcome = attemptNumber >= Math.max(1, retryCeiling) ? 'blocked_ceiling' : 'recovered';
-        const nextStatus = outcome === 'recovered' ? 'todo' : 'blocked';
-        const nextAssignee = outcome === 'recovered' ? TASK_ASSIGNEES.dispatcher : TASK_ASSIGNEES.heartbeat;
-        // Ownership-neutral: prior assignee may be a human, dispatcher, heartbeat, or any
-        // other agent identity. Idle timeout is the only gate — see classifyInProgressRow.
-        const reason = outcome === 'recovered'
-          ? 'in_progress task idle past the reclaim threshold with no live owner or operation'
-          : `recovery retry ceiling reached (${ retryCeiling })`;
+        const outcome = 'recovered' as const;
+        const nextStatus = task.status;
+        const nextAssignee = TASK_ASSIGNEES.dispatcher;
+        const reason = 'idle execution is available for in-lane continuation; no retry-count policy gate';
         const auditId = `recovery-${ randomUUID() }`;
         const idleMinutes = Math.max(0, Math.round(
           (Date.now() - new Date(task.last_activity_at).getTime()) / 60000,
@@ -945,13 +837,32 @@ export class WorkTaskDispatchModel {
         'SELECT MAX(generation)::int AS generation FROM work_lane_entry_automations WHERE task_id = $1',
         [execution.scopeTaskId],
       );
-      const scopeGeneration = Number(generationRow.rows[0]?.generation ?? 0);
+      let scopeGeneration = Number(generationRow.rows[0]?.generation ?? 0);
+      if (scopeGeneration === 0) {
+        // Legacy/recovered tasks can predate lane-entry automation entirely.
+        // Give protected review a real generation checkpoint instead of
+        // launching unscoped and leaving every generation-bound tool unusable.
+        const seeded = await client.query<{ generation: number }>(`
+          INSERT INTO work_lane_entry_automations (
+            id, task_id, generation, previous_lane_key, lane_key,
+            workflow_id, resolution_source, binding_snapshot, workflow_snapshot,
+            execution_id, status, actor, started_at
+          )
+          SELECT $1, t.id, 1, NULL, t.status, $3, 'core', '{}'::jsonb, '{}'::jsonb,
+                 $4, 'completed', 'dispatcher', now()
+            FROM work_tasks t
+           WHERE t.id = $2 AND ${ taskLaneRoleSql('t') } = 'review' AND t.archived = false
+          ON CONFLICT (task_id, generation) DO NOTHING
+          RETURNING generation
+        `, [`lane-entry-${ randomUUID() }`, execution.scopeTaskId, execution.workflowId, execution.executionId]);
+        scopeGeneration = Number(seeded.rows[0]?.generation ?? 1);
+      }
       await WorkflowExecutionModel.markRunning({
         executionId: execution.executionId, workflowId: execution.workflowId,
         workflowName: execution.workflowName, workflowSlug: execution.workflowSlug,
         triggerInput: execution.triggerInput,
-        scopeTaskId: scopeGeneration > 0 ? execution.scopeTaskId : undefined,
-        scopeGeneration: scopeGeneration > 0 ? scopeGeneration : undefined,
+        scopeTaskId: execution.scopeTaskId,
+        scopeGeneration,
         autoRestart: false,
       }, client);
     });
@@ -967,11 +878,11 @@ export class WorkTaskDispatchModel {
     }
     const generationHash = WorkTaskDispatchModel.reviewGenerationHash(artifacts);
     return postgresClient.transaction(async(client: PoolClient) => {
-      const current = await client.query<{ task_id: string }>(`
-        SELECT d.task_id FROM work_task_dispatches d
+      const current = await client.query<{ task_id: string; task_status: string }>(`
+        SELECT t.status AS task_status, d.task_id FROM work_task_dispatches d
         JOIN work_tasks t ON t.id = d.task_id
         WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
-          AND t.status = 'in_review'
+          AND ${ taskLaneRoleSql('t') } = 'review'
         FOR UPDATE OF d, t
       `, [id]);
       const taskId = current.rows[0]?.task_id;
@@ -999,20 +910,13 @@ export class WorkTaskDispatchModel {
         SELECT id, status, disposition FROM work_task_dispatches
          WHERE task_id = $1 AND kind = 'verification' AND id <> $2
            AND review_generation_hash = $3
+           AND disposition = 'PASS'
            AND (status = 'completed' OR (status = 'failed' AND failure_reason LIKE 'terminal:%'))
          ORDER BY finished_at DESC NULLS LAST LIMIT 1
       `, [taskId, id, generationHash]);
       if (terminal.rows[0]) {
         const priorDisposition = terminal.rows[0].disposition;
-        const transition = priorDisposition === 'PASS'
-          ? { status: 'done', assignee: null }
-          : priorDisposition === 'REPAIRABLE'
-            ? { status: 'todo', assignee: 'dispatcher' }
-            : priorDisposition === 'REPLAN'
-              ? { status: 'planning', assignee: 'dispatcher' }
-              : priorDisposition
-                ? { status: 'blocked', assignee: 'heartbeat' }
-                : { status: 'planning', assignee: 'dispatcher' };
+        const transition = { status: 'done', assignee: null };
         await client.query(`
           UPDATE work_task_dispatches SET status = 'completed', result = $2, disposition = $7,
             review_generation_hash = $3, review_artifact_types = $4::text[],
@@ -1024,17 +928,18 @@ export class WorkTaskDispatchModel {
           [...new Set(artifacts.map(value => value.type))], JSON.stringify(artifacts), [...excluded], priorDisposition,
           [...workers], [...custodians]]);
         const moved = await client.query<WorkTaskRecord>(`
-          UPDATE work_tasks SET status = $2, assignee = $3, updated_at = now(),
+          UPDATE work_tasks SET status = ${ taskLaneTargetSql('work_tasks', '$2') }, assignee = $3, updated_at = now(),
             last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier',
-            completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
-          WHERE id = $1 AND status = 'in_review'
+            completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskTargetCompletedSql('work_tasks', taskLaneTargetSql('work_tasks', '$2')) } THEN now() ELSE completed_at END
+          WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
           RETURNING *
         `, [taskId, transition.status, transition.assignee]);
-        if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
+        if (moved.rows[0] && current.rows[0].task_status !== moved.rows[0].status) {
           const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-          await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
+          await recordTaskTransitionWithClient(client, taskId, current.rows[0].task_status, moved.rows[0].status,
             'verifier', 'protected-review-suppressed');
         }
+        await this.releaseReviewOwnership(client, id, taskId);
         return { generationHash, excludedAgentIds: [...excluded], suppressed: true };
       }
 
@@ -1124,7 +1029,12 @@ export class WorkTaskDispatchModel {
       const custody = await client.query<{ status: string; assignee: string | null; last_moved_by: string | null }>(
         'SELECT status, assignee, last_moved_by FROM work_tasks WHERE id = $1 FOR UPDATE', [row.task_id],
       );
-      let dispatcherOwned = custody.rows[0]?.status === 'in_progress' && custody.rows[0]?.assignee === 'dispatcher';
+      const stage = await client.query<{ stage: string }>(
+        `SELECT stage FROM work_task_stage_claims WHERE task_id = $1 AND status = 'active'
+          AND capability_key = 'todo-execution'`, [row.task_id],
+      );
+      let dispatcherOwned = custody.rows[0]?.assignee === 'dispatcher'
+        && custody.rows[0]?.status === stage.rows[0]?.stage;
       const workerAdvancedTerminal = custody.rows[0]
         && ['done', 'cancelled', 'parked'].includes(custody.rows[0].status)
         && custody.rows[0].last_moved_by !== 'human';
@@ -1135,12 +1045,12 @@ export class WorkTaskDispatchModel {
         // enters independent review. Explicit Human movement always wins.
         const restored = await client.query(`
           UPDATE work_tasks
-             SET status = 'in_progress', assignee = 'dispatcher', completed_at = NULL,
+             SET status = $3, assignee = 'dispatcher', completed_at = NULL,
                  updated_at = now(), last_moved_at = now(), last_activity_at = now(),
                  last_moved_by = 'dispatcher'
            WHERE id = $1 AND status = $2 AND last_moved_by IS DISTINCT FROM 'human'
            RETURNING id
-        `, [row.task_id, custody.rows[0].status]);
+        `, [row.task_id, custody.rows[0].status, stage.rows[0]?.stage ?? 'in_progress']);
         dispatcherOwned = Boolean(restored.rows[0]);
       }
       const task = dispatcherOwned
@@ -1302,20 +1212,24 @@ export class WorkTaskDispatchModel {
         `, [`dispatch-comment-${ randomUUID() }`, taskId, finalization.comment]);
       }
 
+      const previous = await client.query<{ status: string }>('SELECT status FROM work_tasks WHERE id = $1 FOR UPDATE', [taskId]);
       const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = $2, assignee = $3, updated_at = now(),
+           SET status = ${ taskLaneTargetSql('work_tasks', '$2') }, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'dispatcher', completed_at = NULL
-         WHERE id = $1 AND status = 'in_progress' AND assignee = 'dispatcher'
+         WHERE id = $1 AND assignee = 'dispatcher'
+           AND EXISTS (SELECT 1 FROM work_task_stage_claims c
+             WHERE c.task_id = $1 AND c.stage = work_tasks.status AND c.status = 'active'
+               AND c.capability_key = 'todo-execution')
          RETURNING *
       `, [taskId, finalization.taskStatus, finalization.taskAssignee]);
       if (!moved.rows[0]) {
         throw new Error(`Task ${ taskId } is no longer owned by dispatch ${ id }`);
       }
-      if (['planning', 'blocked'].includes(moved.rows[0].status)) {
+      if (previous.rows[0]?.status !== moved.rows[0].status) {
         const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-        await recordTaskTransitionWithClient(client, taskId, 'in_progress', moved.rows[0].status,
+        await recordTaskTransitionWithClient(client, taskId, previous.rows[0].status, moved.rows[0].status,
           'dispatcher', 'dispatch-outcome');
       }
       // Finalization is the durable ownership handoff. Releasing the stage
@@ -1325,184 +1239,19 @@ export class WorkTaskDispatchModel {
       await client.query(`
         UPDATE work_task_stage_claims
            SET status = 'released', released_at = now(), heartbeat_at = now()
-         WHERE task_id = $1 AND stage = 'in_progress' AND status = 'active'
+         WHERE task_id = $1 AND capability_key = 'todo-execution' AND status = 'active'
       `, [taskId]);
       return moved.rows[0];
     })();
   }
 
-  static async recoverStale(staleMinutes = STALE_DISPATCH_MINUTES): Promise<string[]> {
-    return postgresClient.transaction(async(client: PoolClient) => {
-      const setting = await client.query<{ enabled: boolean }>(
-        `SELECT COALESCE(value::boolean, false) AS enabled
-           FROM sulla_settings WHERE property = 'taskDispatcherTruthReconciliationEnabled' LIMIT 1`,
-      ).catch(() => ({ rows: [] as { enabled: boolean }[] }));
-      const reportOnly = !setting.rows[0]?.enabled;
-      const evidence = await this.reconcileRunningDispatchesWithClient(client, reportOnly);
-      const stale = await client.query<{ id: string; task_id: string; kind: WorkTaskDispatchKind }>(`
-        UPDATE work_task_dispatches
-           SET status = 'stale',
-               error = 'dispatcher lease expired or app restarted',
-               failure_reason = 'lease_expired',
-               finished_at = now()
-        WHERE status = 'running'
-           AND NOT EXISTS (
-             SELECT 1 FROM work_task_outcome_journal j
-              WHERE j.dispatch_id = work_task_dispatches.id
-                AND j.consumed_at IS NULL
-           )
-           AND heartbeat_at < now() - ($1 * interval '1 minute')
-           AND NOT (id = ANY($2::text[]))
-        RETURNING id, task_id, kind
-      `, [staleMinutes, evidence.evidencedIds]);
-
-      const executionTaskIds = stale.rows.filter(row => row.kind === 'execution').map(row => row.task_id);
-      const verificationTaskIds = stale.rows.filter(row => row.kind === 'verification').map(row => row.task_id);
-      if (executionTaskIds.length > 0) {
-        await client.query(`
-          UPDATE work_task_stage_claims
-             SET status = 'recovered', released_at = now(), heartbeat_at = now()
-           WHERE task_id = ANY($1::text[])
-             AND capability_key = 'todo-execution'
-             AND stage = 'in_progress'
-             AND status = 'active'
-        `, [executionTaskIds]);
-
-        await client.query(`
-          UPDATE work_tasks
-             SET status = 'todo', assignee = NULL,
-                 updated_at = now(), last_moved_at = now(),
-                 last_activity_at = now(), last_moved_by = 'dispatcher'
-           WHERE id = ANY($1::text[]) AND status = 'in_progress' AND assignee = 'dispatcher'
-        `, [executionTaskIds]);
-      }
-      if (verificationTaskIds.length > 0) {
-        await client.query(`
-          UPDATE work_task_stage_claims
-             SET status = 'recovered', released_at = now(), heartbeat_at = now()
-           WHERE task_id = ANY($1::text[])
-             AND capability_key = 'in-review-verification'
-             AND stage = 'in_review'
-             AND status = 'active'
-        `, [verificationTaskIds]);
-
-        await client.query(`
-          UPDATE work_tasks
-             SET status = 'in_review', assignee = 'heartbeat',
-                 updated_at = now(), last_moved_at = now(),
-                 last_activity_at = now(), last_moved_by = 'dispatcher'
-           WHERE id = ANY($1::text[]) AND status = 'in_review' AND assignee = 'verifier'
-        `, [verificationTaskIds]);
-      }
-      return stale.rows.map(row => row.task_id);
-    });
-  }
-
-  /**
-   * Reconcile dispatches from durable evidence before applying the lease timer.
-   * This is deliberately the only recovery authority: recoverStale() calls it
-   * on every boot/tick, and the timer only sees dispatches with no evidence.
-   */
-  private static async reconcileRunningDispatchesWithClient(
-    client: PoolClient,
-    reportOnly: boolean,
-  ): Promise<DispatchReconciliationResult & { evidencedIds: string[] }> {
-    const journalTable = await client.query<{ exists: boolean }>(
-      `SELECT to_regclass('public.work_task_outcome_journal') IS NOT NULL AS exists`,
-    );
-    const journalJoin = journalTable.rows[0]?.exists ? `
-        LEFT JOIN LATERAL (
-          SELECT dispatch_status, task_status
-            FROM work_task_outcome_journal
-           WHERE dispatch_id = d.id AND consumed_at IS NULL
-           ORDER BY created_at DESC LIMIT 1
-        ) journal ON true` : `
-        LEFT JOIN LATERAL (
-          SELECT NULL::text AS dispatch_status, NULL::text AS task_status
-        ) journal ON true`;
-    const rows = await client.query<{
-      id: string;
-      task_id: string;
-      kind: WorkTaskDispatchKind;
-      artifact_url: string | null;
-      artifact_ref: string | null;
-      content_hash: string | null;
-      task_status: string;
-      task_assignee: string | null;
-      workflow_status: string | null;
-      receipt_event: string | null;
-      receipt_disposition: string | null;
-      journal_status: string | null;
-      journal_task_status: string | null;
-    }>(`
-      SELECT d.id, d.task_id, d.kind, d.artifact_url, d.artifact_ref, d.content_hash,
-             t.status AS task_status, t.assignee AS task_assignee,
-             we.status AS workflow_status,
-             ar.event_type AS receipt_event, ar.disposition AS receipt_disposition,
-             journal.dispatch_status AS journal_status,
-             journal.task_status AS journal_task_status
-        FROM work_task_dispatches d
-        JOIN work_tasks t ON t.id = d.task_id
-        LEFT JOIN workflow_executions we ON we.execution_id = d.workflow_execution_id
-        LEFT JOIN LATERAL (
-          SELECT event_type, disposition
-            FROM work_artifact_receipts
-           WHERE task_id = d.task_id
-             AND (dispatch_id = d.id OR workflow_execution_id = d.workflow_execution_id)
-           ORDER BY created_at DESC LIMIT 1
-        ) ar ON true
-        ${ journalJoin }
-       WHERE d.status = 'running'
-       ORDER BY d.started_at ASC, d.id ASC
-    `);
-    const evidencedIds: string[] = [];
-    const settled: string[] = [];
-    const reportOnlyIds: string[] = [];
-    const timerFallback: string[] = [];
-    for (const row of rows.rows) {
-      const journalTerminal = ['completed', 'blocked', 'failed'].includes(row.journal_status ?? '')
-        && (row.journal_task_status === 'done' || row.journal_task_status === 'in_review' || row.journal_task_status === 'blocked');
-      const terminalTask = ['done', 'in_review'].includes(row.task_status);
-      const durableReceipt = Boolean(row.receipt_event);
-      const deliveredArtifact = durableReceipt || Boolean(row.artifact_url || row.artifact_ref || row.content_hash);
-      const completedWorkflow = row.workflow_status === 'completed';
-      const failedWorkflow = row.workflow_status === 'failed';
-      const evidence = journalTerminal || completedWorkflow || failedWorkflow || (terminalTask && deliveredArtifact);
-      if (!evidence) {
-        timerFallback.push(row.id);
-        continue;
-      }
-      evidencedIds.push(row.id);
-      const nextStatus = journalTerminal
-        ? row.journal_status!
-        : failedWorkflow ? 'failed' : 'completed';
-      const reason = journalTerminal ? 'outcome journal' : completedWorkflow ? 'workflow execution' : deliveredArtifact ? 'delivered artifact + task state' : 'task state';
-      if (reportOnly) {
-        reportOnlyIds.push(row.id);
-        console.warn('[TaskDispatcher] Truth reconciliation report-only proposal', {
-          dispatchId: row.id, taskId: row.task_id, status: nextStatus, reason,
-        });
-        continue;
-      }
-      await client.query(`
-        UPDATE work_task_dispatches
-           SET status = $2, result = COALESCE(result, $3),
-               failure_reason = CASE WHEN $2 = 'failed' THEN COALESCE(failure_reason, 'evidence_reconciled') ELSE failure_reason END,
-               heartbeat_at = now(), finished_at = COALESCE(finished_at, now())
-         WHERE id = $1 AND status = 'running'
-      `, [row.id, nextStatus, `Reconciled from ${ reason }.`]);
-      await client.query(`
-        UPDATE work_task_stage_claims
-           SET status = 'recovered', released_at = now(), heartbeat_at = now()
-         WHERE task_id = $1 AND status = 'active'
-           AND stage = CASE WHEN $2 = 'verification' THEN 'in_review' ELSE 'in_progress' END
-      `, [row.task_id, row.kind]);
-      if (journalTerminal && journalTable.rows[0]?.exists) {
-        await client.query(`UPDATE work_task_outcome_journal SET consumed_at = COALESCE(consumed_at, now()) WHERE dispatch_id = $1 AND consumed_at IS NULL`, [row.id]);
-      }
-      settled.push(row.id);
-    }
-    return { inspected: rows.rows.length, evidenced: evidencedIds.length, evidencedIds, settled, reportOnly: reportOnlyIds, timerFallback };
+  static async recoverStale(_staleMinutes = STALE_DISPATCH_MINUTES, _liveDispatchIds: string[] = []): Promise<string[]> {
+    // A replacement runtime's active map cannot see surviving external writers.
+    // Lease age, workflow status and delivered artifacts do not prove that all
+    // writers stopped. Retain both dispatch and stage reservations until owning
+    // terminal settlement, or replay of an outcome journal written after drain.
+    // recoverPendingOutcomeJournals handles that durable confirmation on boot.
+    return [];
   }
 
   /**
@@ -1525,7 +1274,6 @@ export class WorkTaskDispatchModel {
              SELECT 1 FROM work_task_stage_claims claim
               WHERE claim.task_id = dispatch.task_id
                 AND claim.capability_key = 'in-review-verification'
-                AND claim.stage = 'in_review'
                 AND claim.status = 'active'
            )
         RETURNING dispatch.id, dispatch.task_id
@@ -1536,11 +1284,12 @@ export class WorkTaskDispatchModel {
       if (reclaimedTaskIds.length > 0) {
         await client.query(`
           UPDATE work_tasks
-             SET status = 'in_review', assignee = 'heartbeat', updated_at = now(),
+             SET assignee = 'heartbeat', updated_at = now(),
                  last_activity_at = now(), last_moved_by = 'dispatcher'
-           WHERE id = ANY($1::text[]) AND status = 'in_review' AND assignee = 'verifier'
+           WHERE id = ANY($1::text[]) AND ${ taskLaneRoleSql('work_tasks') } = 'review' AND assignee = 'verifier'
         `, [reclaimedTaskIds]);
       }
+      for (const row of reclaimed.rows) await this.releaseReviewOwnership(client, row.id, row.task_id);
       return reclaimedTaskIds;
     });
   }
@@ -1558,7 +1307,7 @@ export class WorkTaskDispatchModel {
       failures: string;
     }>(`
       SELECT
-        (SELECT COUNT(*) FROM work_tasks WHERE archived = false AND status = 'in_review')::text AS backlog,
+        (SELECT COUNT(*) FROM work_tasks WHERE archived = false AND ${ taskLaneRoleSql('work_tasks') } = 'review')::text AS backlog,
         (SELECT COUNT(*) FROM work_task_dispatches WHERE kind = 'verification' AND status = 'running')::text AS active,
         (SELECT COUNT(*) FROM work_task_dispatches
           WHERE kind = 'verification' AND status = 'completed'
@@ -1576,7 +1325,20 @@ export class WorkTaskDispatchModel {
     };
   }
 
-  /** Settle a parsed verifier verdict and its Projects transition atomically. */
+  /** Release only ownership attached to this review, in its settlement transaction. */
+  private static async releaseReviewOwnership(client: PoolClient, id: string, taskId: string): Promise<void> {
+    await client.query(`
+      UPDATE work_task_stage_claims SET status = 'released', released_at = now(), heartbeat_at = now()
+       WHERE task_id = $1 AND capability_key = 'in-review-verification' AND status = 'active'
+    `, [taskId]);
+    await client.query(`
+      UPDATE work_lane_entry_automations lane SET status = 'completed', completed_at = now()
+       FROM work_task_dispatches dispatch
+       WHERE dispatch.id = $1 AND lane.task_id = dispatch.task_id AND lane.status = 'running'
+         AND lane.execution_id = dispatch.workflow_execution_id
+    `, [id]);
+  }
+
   static async finalizeVerification(
     id: string,
     verdict: VerificationVerdict,
@@ -1585,36 +1347,25 @@ export class WorkTaskDispatchModel {
     summary: string,
   ): Promise<VerificationVerdict | null> {
     return postgresClient.transaction(async(client: PoolClient) => {
-      const current = await client.query<{ task_id: string }>(`
-        SELECT d.task_id
+      const current = await client.query<{ task_id: string; task_status: string }>(`
+        SELECT t.status AS task_status, d.task_id
           FROM work_task_dispatches d
           JOIN work_tasks t ON t.id = d.task_id
          WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
-           AND t.status = 'in_review'
+           AND ${ taskLaneRoleSql('t') } = 'review'
          FOR UPDATE OF d, t
       `, [id]);
       const taskId = current.rows[0]?.task_id;
       if (!taskId) return null;
       if (verdict === 'APPROVE' && currentArtifactSha !== artifactSha) return null;
 
-      let finalVerdict = verdict;
-      if (verdict === 'REWORK') {
-        const repeated = await client.query<{ count: string }>(`
-          SELECT COUNT(*)::text AS count FROM work_task_dispatches
-           WHERE task_id = $1 AND kind = 'verification' AND verdict = 'REWORK'
-             AND failure_reason = $2
-        `, [taskId, summary]);
-        if (Number(repeated.rows[0]?.count || 0) >= 2) finalVerdict = 'BLOCKED';
-      }
-
+      const finalVerdict = verdict;
       const transition = finalVerdict === 'APPROVE'
         ? { status: 'done', assignee: null }
         : finalVerdict === 'REWORK'
-          ? { status: 'todo', assignee: 'dispatcher' }
+          ? { status: 'in_review', assignee: 'dispatcher' }
           : { status: 'blocked', assignee: 'heartbeat' };
-      const repeatedSuffix = finalVerdict !== verdict
-        ? '\n\nRepeated identical rework reached the retry ceiling; routed to Heartbeat recovery.'
-        : '';
+      const repeatedSuffix = '';
 
       if (finalVerdict === 'APPROVE') {
         await ArtifactCustodyPolicy.persistWithClient(client, taskId, 'done', {
@@ -1645,18 +1396,19 @@ export class WorkTaskDispatchModel {
       }), 'verifier');
       const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = $2, assignee = $3, updated_at = now(),
+           SET status = CASE WHEN $2 = 'in_review' THEN status ELSE ${ taskLaneTargetSql('work_tasks', '$2') } END, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
-               completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
-         WHERE id = $1 AND status = 'in_review'
+               completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskTargetCompletedSql('work_tasks', taskLaneTargetSql('work_tasks', '$2')) } THEN now() ELSE completed_at END
+         WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
         `, [taskId, transition.status, transition.assignee]);
-        if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
+        if (moved.rows[0] && current.rows[0].task_status !== moved.rows[0].status) {
           const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-          await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
+          await recordTaskTransitionWithClient(client, taskId, current.rows[0].task_status, moved.rows[0].status,
             'dispatcher', 'dispatch-outcome');
         }
+      await this.releaseReviewOwnership(client, id, taskId);
       return finalVerdict;
     });
   }
@@ -1672,32 +1424,22 @@ export class WorkTaskDispatchModel {
     currentArtifacts: ReviewArtifactComponent[],
   ): Promise<ReviewDisposition | null> {
     return postgresClient.transaction(async(client: PoolClient) => {
-      const current = await client.query<{ task_id: string; review_generation_hash: string | null }>(`
-        SELECT d.task_id, d.review_generation_hash
+      const current = await client.query<{ task_id: string; task_status: string; review_generation_hash: string | null }>(`
+        SELECT t.status AS task_status, d.task_id, d.review_generation_hash
           FROM work_task_dispatches d
           JOIN work_tasks t ON t.id = d.task_id
          WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
-           AND t.status = 'in_review'
+           AND ${ taskLaneRoleSql('t') } = 'review'
          FOR UPDATE OF d, t
       `, [id]);
       const taskId = current.rows[0]?.task_id;
       if (!taskId) return null;
       const liveGenerationHash = WorkTaskDispatchModel.reviewGenerationHash(currentArtifacts);
-      if (current.rows[0].review_generation_hash !== evidence.generationHash ||
-          liveGenerationHash !== evidence.generationHash) return null;
+      if (liveGenerationHash !== evidence.generationHash) return null;
+      if (current.rows[0].review_generation_hash !== evidence.generationHash && disposition !== 'REPAIRABLE') return null;
 
       const fingerprint = WorkTaskDispatchModel.reviewFingerprint(evidence.findings);
-      let finalDisposition = disposition;
-      if (disposition === 'REPAIRABLE') {
-        const repeats = await client.query<{ count: string }>(`
-          SELECT COUNT(*)::text AS count
-            FROM work_task_dispatches
-           WHERE task_id = $1 AND kind = 'verification'
-             AND disposition = 'REPAIRABLE'
-             AND findings_fingerprint = $2
-        `, [taskId, fingerprint]);
-        if (Number(repeats.rows[0]?.count ?? 0) >= 2) finalDisposition = 'REPLAN';
-      }
+      const finalDisposition = disposition;
 
       const duplicate = await client.query<{ id: string }>(`
         SELECT id FROM work_task_dispatches
@@ -1711,9 +1453,9 @@ export class WorkTaskDispatchModel {
       const transition = finalDisposition === 'PASS'
         ? { status: 'done', assignee: null }
         : finalDisposition === 'REPAIRABLE'
-          ? { status: 'todo', assignee: 'dispatcher' }
+          ? { status: 'in_review', assignee: 'heartbeat' }
           : finalDisposition === 'REPLAN'
-            ? { status: 'planning', assignee: 'dispatcher' }
+            ? { status: 'in_review', assignee: 'dispatcher' }
         : { status: 'blocked', assignee: 'heartbeat' };
 
       if (finalDisposition === 'PASS') {
@@ -1795,9 +1537,6 @@ export class WorkTaskDispatchModel {
       ]);
 
       if (!duplicate.rows[0]) {
-        const escalation = disposition === 'REPAIRABLE' && finalDisposition === 'REPLAN'
-          ? '\n\nThe same finding reached the repair ceiling; routed to planning/#667.'
-          : '';
         const waitLine = finalDisposition === 'EXTERNAL_WAIT' && evidence.wait
           ? `\nDurable wait: ${ evidence.wait.kind } ${ evidence.wait.targetKey }.`
           : '';
@@ -1809,7 +1548,7 @@ export class WorkTaskDispatchModel {
           dispatchId:         id,
           disposition:        finalDisposition,
           nextOwner:          transition.assignee ?? 'complete',
-          validationSummary:  `${ evidence.summary }${ waitLine }${ escalation }`,
+          validationSummary:  `${ evidence.summary }${ waitLine }`,
           artifacts:          evidence.artifacts.map(artifact => ({
             type:         artifact.type,
             canonicalRef: artifact.canonicalRef,
@@ -1822,18 +1561,19 @@ export class WorkTaskDispatchModel {
 
       const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = $2, assignee = $3, updated_at = now(),
+           SET status = CASE WHEN $2 = 'in_review' THEN status ELSE ${ taskLaneTargetSql('work_tasks', '$2') } END, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
-               completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
-         WHERE id = $1 AND status = 'in_review'
+               completed_at = CASE WHEN $2 = 'done' AND ${ taskLaneTargetSql('work_tasks', '$2') } <> status AND ${ taskTargetCompletedSql('work_tasks', taskLaneTargetSql('work_tasks', '$2')) } THEN now() ELSE completed_at END
+         WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
       `, [taskId, transition.status, transition.assignee]);
-      if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
+      if (moved.rows[0] && current.rows[0].task_status !== moved.rows[0].status) {
         const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-        await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
+        await recordTaskTransitionWithClient(client, taskId, current.rows[0].task_status, moved.rows[0].status,
           'verifier', 'protected-review-outcome');
       }
+      await this.releaseReviewOwnership(client, id, taskId);
       return finalDisposition;
     });
   }
@@ -1851,33 +1591,27 @@ export class WorkTaskDispatchModel {
       const taskId = settled.rows[0]?.task_id;
       if (!taskId) return false;
       const generationHash = settled.rows[0].review_generation_hash;
-      const equivalent = await client.query<{ count: string }>(`
+      await client.query<{ count: string }>(`
         SELECT COUNT(*)::text AS count FROM work_task_dispatches
          WHERE task_id = $1 AND kind = 'verification' AND status = 'failed'
            AND failure_reason = $2
            AND review_generation_hash IS NOT DISTINCT FROM $3
       `, [taskId, reason, generationHash]);
-      const terminal = Number(equivalent.rows[0]?.count ?? 0) >= 3;
-      if (terminal) {
-        await client.query(`UPDATE work_task_dispatches SET failure_reason = 'terminal:' || $2 WHERE id = $1`, [id, reason]);
-      }
       const duplicate = await client.query<{ id: string }>(`
         SELECT id FROM work_task_dispatches
          WHERE task_id = $1 AND kind = 'verification' AND id <> $2
            AND status = 'failed' AND failure_reason = $3
          LIMIT 1
       `, [taskId, id, reason]);
-      if (!duplicate.rows[0] || terminal) {
+      if (!duplicate.rows[0]) {
         await this.persistReceiptWithClient(client, this.reviewReceipt({
           taskId,
-          eventType:         terminal ? 'repair' : 'review',
+          eventType:         'review',
           actor:             'verifier',
           dispatchId:        id,
-          disposition:       terminal ? 'REPLAN' : 'RETRY',
-          nextOwner:         terminal ? 'dispatcher' : 'protected-review',
-          validationSummary: terminal
-            ? `Three equivalent verification infrastructure failures for generation ${ generationHash ?? 'unbound' }: ${ reason }`
-            : `Verification infrastructure failure released for retry: ${ reason }`,
+          disposition:       'RETRY',
+          nextOwner:         'protected-review',
+          validationSummary: `Verification infrastructure failure released for retry: ${ reason }`,
           artifacts:         generationHash
             ? [{ type: 'review_generation', canonicalRef: generationHash, hash: generationHash }]
             : [{ type: 'verification_dispatch', canonicalRef: id }],
@@ -1886,16 +1620,12 @@ export class WorkTaskDispatchModel {
       }
       const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = $2, assignee = $3, updated_at = now(),
+           SET status = CASE WHEN $2 = 'in_review' THEN status ELSE ${ taskLaneTargetSql('work_tasks', '$2') } END, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier'
-         WHERE id = $1 AND status = 'in_review'
+         WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review'
         RETURNING *
-      `, [taskId, terminal ? 'planning' : 'in_review', terminal ? 'dispatcher' : 'heartbeat']);
-      if (moved.rows[0] && ['planning', 'blocked'].includes(moved.rows[0].status)) {
-        const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-        await recordTaskTransitionWithClient(client, taskId, 'in_review', moved.rows[0].status,
-          'verifier', 'verification-failure');
-      }
+      `, [taskId, 'in_review', 'heartbeat']);
+      await this.releaseReviewOwnership(client, id, taskId);
       return true;
     });
   }

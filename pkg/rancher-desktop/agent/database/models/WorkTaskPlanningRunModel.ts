@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 
 import { postgresClient } from '../PostgresClient';
-import { LifecycleCapabilityModel } from './LifecycleCapabilityModel';
+import { agentAdmissionSql } from './WorkAgentAdmission';
 import { WorkLaneDefinitionModel } from './WorkLaneDefinitionModel';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
@@ -33,22 +32,8 @@ export interface ClaimedPlanningRun {
 }
 
 export class WorkTaskPlanningRunModel {
-  private static async reportStaleRecoveryDegraded(reason: string): Promise<void> {
-    await LifecycleCapabilityModel.report({
-      key:          'planning-council',
-      enabled:      true,
-      health:       'degraded',
-      owner:        'planning-council',
-      fallbackMode: 'keep_current',
-      error:        `Planning stale recovery entered stable-key compatibility mode: ${ reason }`,
-    }).catch(reportError => console.warn(
-      '[PlanningCouncil] Could not persist degraded stale-recovery capability:', reportError,
-    ));
-  }
-
   /**
-   * Atomically claims a planning council. A blocked task becomes planning in
-   * the same transaction; an already-planning task is left untouched.
+   * Atomically claims a council without moving unfinished work out of its lane.
    */
   static async claim(
     taskId: string,
@@ -63,18 +48,17 @@ export class WorkTaskPlanningRunModel {
     const planningKeys = capability.ready
       ? await WorkLaneDefinitionModel.laneKeysForRoles(preview.project_id, ['planning', 'blocked'])
       : ['planning', 'blocked'];
-    const planningLaneKey = await WorkLaneDefinitionModel.preferredLaneKey(
-      preview.project_id, 'planning', 'planning',
-    );
     return postgresClient.transaction(async(client: PoolClient) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
       const taskResult = await client.query<WorkTaskRecord>(`
-        SELECT * FROM work_tasks
-         WHERE id = $1 AND archived = false
+        SELECT t.* FROM work_tasks t
+         WHERE t.id = $1 AND t.archived = false
+           ${ agentAdmissionSql('t', 'planning-council') }
+           AND EXISTS (SELECT 1 FROM work_projects p WHERE p.id = t.project_id AND p.dispatch_enabled = true)
          FOR UPDATE
       `, [taskId]);
       const task = taskResult.rows[0];
       if (!task || !planningKeys.includes(task.status)) return null;
-      if ((await WorkTaskDependencyModel.listUnresolvedDependencies(taskId, client)).length > 0) return null;
 
       const active = await client.query<{ id: string }>(`
         SELECT id FROM work_task_planning_runs
@@ -97,28 +81,7 @@ export class WorkTaskPlanningRunModel {
         RETURNING *
       `, [id, taskId, PROJECT_TASK_PLANNING_WORKFLOW_ID, triggerStatus, actor ?? null, attempt]);
 
-      let claimedTask = task;
-      const currentLane = capability.ready
-        ? await WorkLaneDefinitionModel.resolveStatus(task.project_id, task.status)
-        : null;
-      if ((currentLane?.semantic_role ?? task.status) === 'blocked') {
-        const moved = await client.query<WorkTaskRecord>(`
-          UPDATE work_tasks
-             SET status = $2, assignee = 'planning-council',
-                 updated_at = now(), last_moved_at = now(),
-                 last_activity_at = now(), last_moved_by = 'planning-council'
-           WHERE id = $1
-           RETURNING *
-        `, [taskId, planningLaneKey]);
-        claimedTask = moved.rows[0] ?? task;
-        if (moved.rows[0]) {
-          const { recordTaskTransitionWithClient } = await import('./TaskTransitionEffects');
-          await recordTaskTransitionWithClient(client, taskId, task.status, moved.rows[0].status,
-            'planning-council', 'planning-council-claim');
-        }
-      }
-
-      return { run: inserted.rows[0], task: claimedTask };
+      return { run: inserted.rows[0], task };
     });
   }
 
@@ -161,118 +124,13 @@ export class WorkTaskPlanningRunModel {
     `, [executionId]) ?? null;
   }
 
-  /** Expire one task's abandoned claim during its next status event. */
-  static async recoverStaleForTask(taskId: string, staleMinutes = 45): Promise<boolean> {
-    const row = await postgresClient.queryOne<{ id: string }>(`
-      UPDATE work_task_planning_runs
-         SET status = 'stale',
-             error = 'planning council lease expired before status retry',
-             finished_at = now()
-       WHERE task_id = $1
-         AND status = 'active'
-         AND (
-           (execution_id IS NULL AND heartbeat_at <= now() - ($2 * interval '1 minute'))
-           OR (execution_id IS NOT NULL AND (
-             NOT EXISTS (SELECT 1 FROM workflow_executions execution WHERE execution.execution_id = work_task_planning_runs.execution_id)
-             OR EXISTS (
-               SELECT 1 FROM workflow_executions execution
-                WHERE execution.execution_id = work_task_planning_runs.execution_id
-                  AND (execution.status NOT IN ('running', 'suspended')
-                    OR (execution.lease_expires_at IS NOT NULL AND execution.lease_expires_at <= now())
-                    OR execution.heartbeat_at <= now() - ($2 * interval '1 minute'))
-             )
-           ))
-         )
-       RETURNING id
-    `, [taskId, staleMinutes]);
-    return Boolean(row);
+  /** Missing/expired workflow leases cannot establish writer termination. */
+  static async recoverStaleForTask(_taskId: string, _staleMinutes = 45): Promise<boolean> {
+    return false;
   }
 
-  /** Marks expired councils stale and returns tasks that still need planning. */
-  static async recoverStale(staleMinutes = 45): Promise<string[]> {
-    const degradedReasons: string[] = [];
-    const recovered = await postgresClient.transaction(async(client: PoolClient) => {
-      const stale = await client.query<{ task_id: string }>(`
-        UPDATE work_task_planning_runs
-           SET status = 'stale',
-               error = 'planning council lease expired or app restarted',
-               finished_at = now()
-         WHERE status = 'active'
-           AND (
-             (execution_id IS NULL AND heartbeat_at <= now() - ($1 * interval '1 minute'))
-             OR (execution_id IS NOT NULL AND (
-               NOT EXISTS (SELECT 1 FROM workflow_executions execution WHERE execution.execution_id = work_task_planning_runs.execution_id)
-               OR EXISTS (
-                 SELECT 1 FROM workflow_executions execution
-                  WHERE execution.execution_id = work_task_planning_runs.execution_id
-                    AND (execution.status NOT IN ('running', 'suspended')
-                      OR (execution.lease_expires_at IS NOT NULL AND execution.lease_expires_at <= now())
-                      OR execution.heartbeat_at <= now() - ($1 * interval '1 minute'))
-               )
-             ))
-           )
-        RETURNING task_id
-      `, [staleMinutes]);
-      if (stale.rows.length === 0) return [];
-
-      const ids = stale.rows.map(row => row.task_id);
-      const taskRows = await client.query<{ id: string; project_id: string; status: string }>(`
-        SELECT id, project_id, status FROM work_tasks
-         WHERE id = ANY($1::text[]) AND archived = false
-      `, [ids]);
-      const projectIds = [...new Set(taskRows.rows.map(row => row.project_id))];
-      const capabilities = new Map(await Promise.all(projectIds.map(async(projectId) => [
-        projectId,
-        await WorkLaneDefinitionModel.runtimeCapability(projectId),
-      ] as const)));
-      const degradedProjects = projectIds.filter(projectId => !capabilities.get(projectId)?.ready);
-      if (degradedProjects.length > 0) {
-        const reasons = degradedProjects.map(projectId =>
-          `${ projectId }: ${ capabilities.get(projectId)?.degradedReason ?? 'semantic lane capability unavailable' }`,
-        );
-        degradedReasons.push(...reasons);
-      }
-
-      const healthyIds = taskRows.rows
-        .filter(row => capabilities.get(row.project_id)?.ready)
-        .map(row => row.id);
-      let semanticIds: string[] = [];
-      let semanticQueryFailed = false;
-      if (healthyIds.length > 0) {
-        try {
-          const tasks = await client.query<{ id: string }>(`
-        SELECT task.id FROM work_tasks task
-        JOIN LATERAL (
-          SELECT lane.semantic_role FROM work_lane_definitions lane
-           WHERE lane.reset_at IS NULL AND lane.archived = false AND lane.enabled = true
-             AND lane.lane_key = task.status
-             AND (lane.scope = 'global_default'
-               OR (lane.scope = 'project' AND lane.project_id = task.project_id))
-           ORDER BY CASE WHEN lane.scope = 'project' THEN 0 ELSE 1 END LIMIT 1
-        ) effective ON true
-         WHERE task.id = ANY($1::text[])
-           AND task.archived = false
-           AND effective.semantic_role IN ('planning', 'blocked')
-          `, [healthyIds]);
-          semanticIds = tasks.rows.map(row => row.id);
-        } catch (error) {
-          semanticQueryFailed = true;
-          const message = error instanceof Error ? error.message : String(error);
-          degradedReasons.push(
-            `semantic role query failed after capability passed: ${ message }`,
-          );
-        }
-      }
-
-      const compatibilityIds = taskRows.rows
-        .filter(row => semanticQueryFailed || !capabilities.get(row.project_id)?.ready)
-        .filter(row => row.status === 'planning' || row.status === 'blocked')
-        .map(row => row.id);
-      return [...new Set([...semanticIds, ...compatibilityIds])];
-    });
-    if (degradedReasons.length > 0) {
-      await WorkTaskPlanningRunModel.reportStaleRecoveryDegraded(degradedReasons.join('; '));
-    }
-    return recovered;
+  /** The drained terminal callback owns settlement, including after heartbeat loss. */
+  static async recoverStale(_staleMinutes = 45): Promise<string[]> {
+    return [];
   }
 }
