@@ -13,6 +13,8 @@
  * DUAL-STORE NOTE: reads and writes ONLY Postgres — no Redis hash.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { approvalSafeTargetSql } from './WorkAgentAdmission';
 import { postgresClient } from '../PostgresClient';
 import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
@@ -954,7 +956,10 @@ export class WorkItemsModel {
     return WorkItemsModel.insertTask(input);
   }
 
-  static async updateTask(id: string, changes: UpdateTaskInput): Promise<WorkTaskRecord | null> {
+  static async updateTask(id: string, changes: UpdateTaskInput, humanDecision?: {
+    expectedStage: string; expectedGeneration: number; expectedUpdatedAt: string | null;
+    decision: 'approved' | 'rejected'; waitIds: string[]; comment: string;
+  }): Promise<WorkTaskRecord | null> {
     const existing = await WorkItemsModel.getTask(id);
     if (!existing) return null;
 
@@ -1060,6 +1065,28 @@ export class WorkItemsModel {
         const current = await client.query<WorkTaskRecord>(
           `SELECT * FROM ${ WorkItemsModel.TASKS } WHERE id = $1 AND archived = false FOR UPDATE`, [id]);
         if (!current.rows[0]) return null;
+        if (humanDecision) {
+          if (actor !== 'human' || !changes.status) throw new Error('human_approval_required');
+          const generation = await client.query<{ generation: number }>(
+            'SELECT COALESCE(MAX(generation), 0)::int AS generation FROM work_lane_entry_automations WHERE task_id=$1', [id]);
+          const updatedAt = current.rows[0].updated_at;
+          if (current.rows[0].status !== humanDecision.expectedStage ||
+              generation.rows[0].generation !== humanDecision.expectedGeneration ||
+              (updatedAt ? new Date(updatedAt).toISOString() : null) !== humanDecision.expectedUpdatedAt) {
+            throw new Error('Human decision is stale. Refresh before deciding.');
+          }
+          const waits = await client.query<{ id: string }>(
+            "SELECT id FROM work_task_waits WHERE task_id=$1 AND status='active' AND wait_kind='human_gate' ORDER BY id FOR UPDATE", [id]);
+          if (JSON.stringify(waits.rows.map(row => row.id)) !== JSON.stringify([...humanDecision.waitIds].sort())) {
+            throw new Error('Human approval waits changed. Refresh before deciding.');
+          }
+          await client.query(`UPDATE work_task_waits SET status=$2, completed_at=now(), updated_at=now(),
+            last_checked_at=now(), last_observed_fingerprint=$3 WHERE id=ANY($1::text[])`,
+          [humanDecision.waitIds, humanDecision.decision === 'approved' ? 'satisfied' : 'failed', humanDecision.comment]);
+          await client.query('INSERT INTO work_task_comments (id, task_id, author, body) VALUES ($1,$2,$3,$4)',
+            [`human-decision-${ randomUUID() }`, id, 'human', humanDecision.comment]);
+        }
+
         if (nextProjectId !== undefined && nextProjectId !== current.rows[0].project_id && actor !== 'human') {
           // Project moves change the meaning of even an unchanged lane key.
           // Evaluate the source boundary before replacing its project context.

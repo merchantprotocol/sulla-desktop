@@ -5,6 +5,9 @@ on:
     paths:
     - '.github/workflows/dispatcher-regressions.yaml'
     - 'pkg/rancher-desktop/agent/database/models/WorkAgentAdmission.ts'
+    - 'pkg/rancher-desktop/agent/database/models/WorkItemsModel.ts'
+    - 'pkg/rancher-desktop/agent/services/ProjectsIssueDetailService.ts'
+    - 'pkg/rancher-desktop/agent/services/LaneEntryAutomationService.ts'
     - 'pkg/rancher-desktop/agent/database/models/WorkTaskWaitModel.ts'
     - 'pkg/rancher-desktop/agent/database/migrations/0102_keep_wait_evidence_in_lane.ts'
     - 'pkg/rancher-desktop/agent/projects/application/ProjectsApplicationService.ts'

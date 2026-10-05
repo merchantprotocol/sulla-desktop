@@ -134,9 +134,9 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     });
     jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('planning');
     await pool.query("DELETE FROM work_lane_definitions WHERE scope='project'");
-    await pool.query('UPDATE work_lane_definitions SET requires_human_approval=false, position=0');
+    await pool.query("UPDATE work_lane_definitions SET requires_human_approval=false, position=0, semantic_role=CASE lane_key WHEN 'qa' THEN 'review' WHEN 'shipped' THEN 'terminal' ELSE 'execution' END");
     await pool.query("DELETE FROM work_lane_definitions WHERE lane_key NOT IN ('in_progress', 'qa', 'shipped')");
-    await pool.query('TRUNCATE work_task_outcome_journal, workflow_executions, work_tasks, work_task_dispatches, work_task_stage_claims, work_task_waits, work_task_dependencies, work_lane_entry_automations, work_task_planning_runs, work_task_artifact_custody, work_project_domain_events');
+    await pool.query('TRUNCATE work_task_outcome_journal, workflow_executions, work_tasks, work_task_dispatches, work_task_stage_claims, work_task_waits, work_task_dependencies, work_lane_entry_automations, work_task_planning_runs, work_task_artifact_custody, work_project_domain_events, work_task_comments');
   });
 
   afterAll(async() => {
@@ -185,32 +185,125 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     }
   });
 
-  it.each(['approved', 'rejected'] as const)('retires human waits through the Projects %s decision entry point', async(decision) => {
+  it('reuses all three slots after stopped lane writers hit an approval boundary', async() => {
+    const { LaneEntryAutomationService } = await import('../../../services/LaneEntryAutomationService');
+    await pool.query("UPDATE work_lane_definitions SET requires_human_approval=true WHERE lane_key='qa'");
+    for (const id of ['stopped-1', 'stopped-2', 'stopped-3']) {
+      await taskWithLane(id, `owner/repo#${ id }`);
+      await pool.query("UPDATE work_tasks SET status='qa' WHERE id=$1", [id]);
+      await pool.query("UPDATE work_lane_entry_automations SET lane_key='qa' WHERE task_id=$1", [id]);
+      await expect(admit('lane', id)).resolves.not.toBeNull();
+    }
+    await taskWithLane('replacement');
+    await expect(admit('dispatch', 'replacement')).resolves.toBeNull();
+    for (const id of ['stopped-1', 'stopped-2', 'stopped-3']) {
+      const entry = await WorkLaneWorkflowBindingModel.getLaneEntry(`entry-${ id }`);
+      await (LaneEntryAutomationService as any).settleEntry(entry, {
+        executionId: `exec-${ id }`, status: 'completed',
+        outcome: { transition: { mode: 'specific', stageKey: 'in_progress' } },
+      });
+      expect(await WorkLaneWorkflowBindingModel.getLaneEntry(`entry-${ id }`)).toMatchObject({
+        status: 'failed', outcome: { disposition: 'transition_failed', message: expect.stringContaining('human_approval_required') },
+      });
+      expect((await pool.query('SELECT status FROM work_tasks WHERE id=$1', [id])).rows[0].status).toBe('qa');
+    }
+    for (const id of ['replacement', 'replacement-2', 'replacement-3']) {
+      if (id !== 'replacement') await taskWithLane(id);
+      await expect(admit('dispatch', id)).resolves.not.toBeNull();
+    }
+  });
+
+  it.each(['rollback', 'concurrent-pass'] as const)('keeps human decision atomic during %s', async(mode) => {
     const { WorkItemsModel } = await import('../WorkItemsModel');
-    const { getProjectsApplicationService } = await import('../../../projects/application/ProjectsApplicationService');
     const { decideProjectsHumanGate } = await import('../../../services/ProjectsIssueDetailService');
+    const { getProjectsOrchestrationEventService } = await import('../../../projects/application/ProjectsOrchestrationEventService');
+    const { getTaskDispatcherService } = await import('../../../services/TaskDispatcherService');
     await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES ('decision', 'enabled', 'qa');
       INSERT INTO work_task_waits (id, task_id, wait_kind) VALUES ('approval-wait', 'decision', 'human_gate');
       UPDATE work_lane_definitions SET position=CASE lane_key WHEN 'qa' THEN 1 WHEN 'shipped' THEN 2 ELSE 0 END`);
-    const projects = getProjectsApplicationService();
+    const claim = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime', 'decision');
+    const original = WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction.bind(WorkLaneWorkflowBindingModel);
+    let entered!: () => void;
+    const enteredPromise = new Promise<void>(resolve => { entered = resolve });
+    let release!: () => void;
+    const hold = new Promise<void>(resolve => { release = resolve });
     const mocks = [
       jest.spyOn(WorkItemsModel, 'listComments').mockResolvedValue([]),
       jest.spyOn(ArtifactReceiptModel, 'listByTask').mockResolvedValue([]),
-      jest.spyOn(projects, 'addComment').mockResolvedValue({} as any),
-      // Keep the stage at qa so the next real dispatcher claim demonstrates
-      // that retirement, rather than a mocked task transition, unblocks PASS.
-      jest.spyOn(projects, 'transitionTaskRelative').mockResolvedValue({} as any),
+      jest.spyOn(getProjectsOrchestrationEventService(), 'drain').mockResolvedValue(undefined as any),
+      jest.spyOn(getTaskDispatcherService(), 'forceCheck').mockResolvedValue(undefined),
+      jest.spyOn(WorkLaneWorkflowBindingModel, 'claimLaneEntryInTransaction').mockImplementation(async(...args) => {
+        entered();
+        await hold;
+        if (mode === 'rollback') throw new Error('injected transition event failure');
+        return original(...args);
+      }),
+    ];
+    const decision = decideProjectsHumanGate('decision', 'rejected', 'Needs repair', 'qa');
+    // Attach a rejection handler before releasing the failure injection.
+    const decisionResult = decision.then(() => null, error => error);
+    try {
+      await Promise.race([enteredPromise, decisionResult.then(error => { throw error ?? new Error('Decision settled before transition checkpoint') })]);
+      expect((await WorkTaskWaitModel.get('approval-wait'))?.status).toBe('active');
+      expect((await pool.query("SELECT status FROM work_tasks WHERE id='decision'")).rows[0].status).toBe('qa');
+      const pass = mode === 'concurrent-pass'
+        ? WorkTaskDispatchModel.finalizeVerification(claim!.dispatch.id, 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'Passed')
+        : null;
+      release();
+      const error = await decisionResult;
+      if (mode === 'rollback') {
+        expect(error?.message).toContain('injected transition event failure');
+        expect((await WorkTaskWaitModel.get('approval-wait'))?.status).toBe('active');
+        expect((await pool.query("SELECT status FROM work_tasks WHERE id='decision'")).rows[0].status).toBe('qa');
+        expect((await pool.query("SELECT * FROM work_task_comments WHERE task_id='decision'")).rows).toHaveLength(0);
+      } else {
+        expect(error).toBeNull();
+        expect(await pass).toBeNull();
+        expect((await WorkTaskWaitModel.get('approval-wait'))?.status).toBe('failed');
+        expect((await pool.query("SELECT status FROM work_tasks WHERE id='decision'")).rows[0].status).toBe('in_progress');
+      }
+    } finally {
+      release();
+      await decisionResult;
+      mocks.forEach(mock => mock.mockRestore());
+    }
+  });
+
+  it('rejects a human decision if the task generation changed while the decision was being prepared', async() => {
+    const { WorkItemsModel } = await import('../WorkItemsModel');
+    await taskWithLane('stale');
+    await pool.query("INSERT INTO work_task_waits (id, task_id, wait_kind) VALUES ('stale-wait', 'stale', 'human_gate')");
+    const before = await WorkItemsModel.getTask('stale');
+    await expect(WorkItemsModel.updateTask('stale', { status: 'in_progress', actor: 'human' }, {
+      expectedStage: 'planning', expectedGeneration: 0,
+      expectedUpdatedAt: new Date(before!.updated_at!).toISOString(),
+      decision: 'rejected', waitIds: ['stale-wait'], comment: 'Stale rejection',
+    })).rejects.toThrow('Human decision is stale');
+    expect((await WorkTaskWaitModel.get('stale-wait'))?.status).toBe('active');
+    expect((await WorkItemsModel.getTask('stale'))?.status).toBe('planning');
+  });
+
+  it.each(['approved', 'rejected'] as const)('retires human waits through the Projects %s decision entry point', async(decision) => {
+    const { WorkItemsModel } = await import('../WorkItemsModel');
+    const { decideProjectsHumanGate } = await import('../../../services/ProjectsIssueDetailService');
+    await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES ('decision', 'enabled', 'qa');
+      INSERT INTO work_task_waits (id, task_id, wait_kind) VALUES ('approval-wait', 'decision', 'human_gate');
+      UPDATE work_lane_definitions SET position=CASE lane_key WHEN 'qa' THEN 1 WHEN 'shipped' THEN 2 ELSE 0 END;
+      UPDATE work_lane_definitions SET semantic_role='manual' WHERE lane_key='shipped'`);
+    const { getProjectsOrchestrationEventService } = await import('../../../projects/application/ProjectsOrchestrationEventService');
+    const { getTaskDispatcherService } = await import('../../../services/TaskDispatcherService');
+    const mocks = [
+      jest.spyOn(WorkItemsModel, 'listComments').mockResolvedValue([]),
+      jest.spyOn(ArtifactReceiptModel, 'listByTask').mockResolvedValue([]),
+      jest.spyOn(getProjectsOrchestrationEventService(), 'drain').mockResolvedValue(undefined as any),
+      jest.spyOn(getTaskDispatcherService(), 'forceCheck').mockResolvedValue(undefined),
     ];
     try {
       await decideProjectsHumanGate('decision', decision, 'Explicit human decision', 'qa');
       expect((await WorkTaskWaitModel.get('approval-wait'))?.status).toBe(decision === 'approved' ? 'satisfied' : 'failed');
-      expect(projects.transitionTaskRelative).toHaveBeenCalledWith(
-        { taskId: 'decision', direction: decision === 'approved' ? 'next' : 'previous' }, { actor: 'human', source: 'ipc' });
-      if (decision === 'approved') {
-        const claim = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime', 'decision');
-        await WorkTaskDispatchModel.finalizeVerification(claim!.dispatch.id, 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'Passed');
-        expect((await pool.query("SELECT status FROM work_tasks WHERE id='decision'")).rows[0].status).toBe('shipped');
-      }
+      expect((await pool.query("SELECT status FROM work_tasks WHERE id='decision'")).rows[0].status)
+        .toBe(decision === 'approved' ? 'shipped' : 'in_progress');
+      expect((await pool.query("SELECT * FROM work_task_comments WHERE task_id='decision'")).rows.length).toBeGreaterThan(0);
     } finally { mocks.forEach(mock => mock.mockRestore()); }
   });
 
@@ -225,7 +318,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     const lane = (await pool.query("SELECT id FROM work_lane_definitions WHERE lane_key='qa'")).rows[0];
     const projects = new ProjectsApplicationService({} as any);
     await expect(projects.archiveLane(lane.id, 'shipped', { source: 'tool', actor: 'worker' })).rejects.toThrow('human_approval_required');
-    await expect(projects.archiveLane(lane.id, 'shipped', { source: 'tool', actor: 'human' })).rejects.toThrow('human_approval_required');
+    expect(() => projects.archiveLane(lane.id, 'shipped', { source: 'tool', actor: 'human' })).toThrow('human_approval_required');
     expect((await pool.query("SELECT status FROM work_tasks WHERE id='bulk'")).rows[0].status).toBe('qa');
     expect((await pool.query('SELECT archived FROM work_lane_definitions WHERE id=$1', [lane.id])).rows[0].archived).toBe(false);
   });

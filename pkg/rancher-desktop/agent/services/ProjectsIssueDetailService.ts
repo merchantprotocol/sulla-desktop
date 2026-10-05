@@ -1,5 +1,6 @@
 import { Octokit } from '@octokit/rest';
 
+import { ArtifactCustodyPolicy } from './ArtifactCustodyPolicy';
 import { extractPullRequestReferences } from './GitHubPullRequestHeadService';
 import { getIntegrationService } from './IntegrationService';
 import { evaluatePullRequestMergeReadiness } from './ProjectsIssueReview';
@@ -7,7 +8,7 @@ import { ArtifactReceiptModel, type ArtifactReceiptRow } from '../database/model
 import { WorkItemsModel, type WorkCommentRecord, type WorkTaskRecord } from '../database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
 import { WorkTaskWaitModel } from '../database/models/WorkTaskWaitModel';
-import { getProjectsApplicationService } from '../projects/application/ProjectsApplicationService';
+import { WorkLaneWorkflowBindingModel } from '../database/models/WorkLaneWorkflowBindingModel';
 
 export interface ProjectsPullRequestBrief {
   repository:     string;
@@ -212,6 +213,7 @@ export async function decideProjectsHumanGate(
   reason: string,
   expectedStage: string,
 ): Promise<ProjectsIssueDetail> {
+  const generation = (await WorkLaneWorkflowBindingModel.listLaneEntries(taskId))[0]?.generation ?? 0;
   const before = await loadProjectsIssueDetail(taskId);
   if (!expectedStage || before.task.status !== expectedStage) {
     throw new Error(`This issue moved from ${ expectedStage || 'an unknown stage' } to ${ before.task.status }. Refresh before deciding.`);
@@ -222,25 +224,26 @@ export async function decideProjectsHumanGate(
   const normalizedReason = reason.trim();
   if (decision === 'rejected' && !normalizedReason) throw new Error('A rejection reason is required.');
 
-  const decidedAt = new Date().toISOString();
-  const projects = getProjectsApplicationService();
-  // This entry point is invoked by the explicit Projects human-decision IPC.
-  // Generic cancellation deliberately cannot retire approval waits.
-  for (const waitId of before.humanGate.waitIds) {
-    await projects.settleWait({
-      id: waitId,
-      outcome: decision === 'approved' ? 'satisfied' : 'failed',
-      summary: `Human gate ${ decision } by human at ${ decidedAt }${ normalizedReason ? `: ${ normalizedReason }` : '' }`,
-    }, { actor: 'human', source: 'ipc' });
+  const targetStage = (decision === 'approved' ? before.humanGate.nextStage : before.humanGate.previousStage)!;
+  const target = await WorkLaneDefinitionModel.resolveStatus(before.task.project_id, targetStage);
+  if (target?.semantic_role === 'review') await ArtifactCustodyPolicy.assertForTransition('in_review', undefined);
+  if (target?.semantic_role === 'terminal') await ArtifactCustodyPolicy.assertForTransition('done', undefined);
+  if (target?.semantic_role === 'terminal' && before.task.assignee === 'dispatcher') {
+    throw new Error('Terminal tasks cannot remain assigned to dispatcher.');
   }
-  await projects.transitionTaskRelative({
-    taskId,
-    direction: decision === 'approved' ? 'next' : 'previous',
-  }, { actor: 'human', source: 'ipc' });
-  await projects.addComment({
-    task_id: taskId,
-    author:  'human',
-    body:    [
+  const decidedAt = new Date().toISOString();
+  // Commit the task, generation event, approval waits and audit together. A
+  // concurrent PASS sees either the gate or the completed human transition.
+  await WorkItemsModel.updateTask(taskId, {
+    status: targetStage,
+    actor: 'human',
+  }, {
+    expectedStage,
+    expectedGeneration: generation,
+    expectedUpdatedAt: before.task.updated_at ? new Date(before.task.updated_at).toISOString() : null,
+    decision,
+    waitIds: before.humanGate.waitIds,
+    comment: [
       `Human gate ${ decision }.`,
       'Decision by: human',
       `Recorded at: ${ decidedAt }`,
@@ -249,7 +252,7 @@ export async function decideProjectsHumanGate(
         ? 'This decision advanced the configured Projects pipeline only. No merge, deployment, payment, or external communication was performed.'
         : 'This decision returned the issue to the previous configured pipeline stage for repair.',
     ].filter(Boolean).join('\n'),
-  }, { actor: 'human', source: 'ipc' });
+  });
 
   return loadProjectsIssueDetail(taskId);
 }
