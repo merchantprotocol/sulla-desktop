@@ -82,20 +82,9 @@ export function getTaskDispatcherService(): TaskDispatcherService {
 
 const OUTCOME_TEXT_CAP = 8_000;
 
-/**
- * The stored copy of a worker's last turn, capped. A plain slice cut the
- * closing tag off a WORK_RESULT that started late in a long narration, and the
- * receipt was rejected for a result the worker did return (zOpm). Keep every
- * complete WORK_RESULT block whole, so the parser sees exactly what the worker
- * sent, and trim only the narration in front of it.
- */
+/** Bounded diagnostic text; task state and comments carry the worker outcome. */
 export function boundedOutcomeText(text: string, cap = OUTCOME_TEXT_CAP): string {
-  if (text.length <= cap) return text;
-  const blocks = text.match(/<WORK_RESULT>[\s\S]*?<\/WORK_RESULT>/g);
-  if (!blocks) return text.slice(0, cap);
-  const tail = blocks.join('\n');
-  const room = cap - tail.length - 1;
-  return room > 0 ? `${ text.slice(0, room) }\n${ tail }` : tail;
+  return text.slice(0, cap);
 }
 
 /**
@@ -1034,7 +1023,7 @@ ${ planContext }
 Task history, oldest to newest (on a repair round the latest review findings are here; fix every one and record how in task comments):
 ${ JSON.stringify(history) }
 
-Read active waits and dependencies with Projects tools and reason about what can be advanced now. Labels, assignees, lane names and dependency links are context, not blanket exclusions. Preserve explicit human stops and approvals at the action they cover. Continue unfinished work in this lane yourself. Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
+Read active waits and dependencies with Projects tools and reason about what can be advanced now. Labels, assignees, lane names and dependency links are context, not blanket exclusions. Preserve explicit human stops and approvals at the action they cover. Continue unfinished work in this lane yourself. Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a concrete dependency prevents further work, document the exact requirement in the task comments and update its status through Projects tools; reversible uncertainty is yours to decide.
 
 Implement only inside the VM. Keep worktrees under /Users/jonathonbyrdziak/Sites/worktrees. Run tests, builds and typechecks only on GitHub.
 
