@@ -591,6 +591,9 @@ export class TaskDispatcherService {
       ) as { graph: any; state: any };
       writerGraph = graph;
       state.metadata.lastAgentActivityAt = Date.now();
+      // This worker owns the task for the dispatch; sub-agents it spawns for
+      // the same task inherit ownership instead of being refused.
+      state.metadata.ownedProjectTaskIds = [task.id];
       leaseTimer = setInterval(
         () => {
           // A waiting or aborted provider can still write. Keep its reservation live.

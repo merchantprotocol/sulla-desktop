@@ -1,6 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 import { extractAgentTurnOutcome } from './agentTurnOutcome';
-import { createJob, completeJob, failJob, getJobAbortSignal } from './jobRegistry';
+import { createJob, completeJob, deleteJob, failJob, getJobAbortSignal, markCompletionDelivered } from './jobRegistry';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 import { combineAborts } from '../../services/AbortService';
 import { findAgentDir } from '../../utils/sullaPaths';
@@ -18,6 +18,15 @@ interface SpawnTask {
   agentName?: string;
   prompt:     string;
   label?:     string;
+  /** Projects task this sub-agent works. The job owns it for the whole run:
+   *  assignee becomes the agent and no other writer may take the task. */
+  projectTaskId?: string;
+}
+
+/** Projects tasks the calling graph already owns (dispatch or parent job). */
+function inheritedTaskIds(metadata: any): string[] {
+  const owned = Array.isArray(metadata?.ownedProjectTaskIds) ? metadata.ownedProjectTaskIds : [];
+  return owned.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
 }
 
 /** The agent-config selector for a task: agentId, or its agentName alias. */
@@ -68,6 +77,14 @@ export class SpawnAgentWorker extends BaseTool {
       // (e.g. a caller passing the wrong key ran a generic sub-agent on the
       // fallback provider instead of the intended worker) — a costly no-op
       // with no signal. A missing selector is still fine (documented default).
+      const projectTaskId = tasks[i].projectTaskId;
+      if (projectTaskId !== undefined && (typeof projectTaskId !== 'string' || !projectTaskId.trim())) {
+        return {
+          successBoolean: false,
+          responseString: `Task at index ${ i } has an invalid projectTaskId; pass the Projects task id string (e.g. "AwBS") or omit it.`,
+        };
+      }
+
       const selector = taskAgentSelector(tasks[i]);
       if (selector && !findAgentDir(selector)) {
         return {
@@ -104,6 +121,35 @@ export class SpawnAgentWorker extends BaseTool {
     // Threaded into each sub-agent so stop_agent_job(jobId) can cancel them.
     let jobAbortSignal: AbortSignal | undefined;
 
+    // ── Task ownership ──────────────────────────────────────────
+    // A job that works a Projects task owns it for its whole run. Ownership is
+    // taken before anything launches, under the dispatcher's admission lock,
+    // so this job and a dispatch (or another session's job) can't both win.
+    const inherited = inheritedTaskIds((this.state as any)?.metadata);
+    const assignees: Record<string, string> = {};
+    for (const task of tasks) {
+      if (task.projectTaskId) assignees[task.projectTaskId.trim()] = taskAgentSelector(task) || parentChannel;
+    }
+    let ownershipJob: Awaited<ReturnType<typeof createJob>> | undefined;
+    if (Object.keys(assignees).length > 0) {
+      ownershipJob = await createJob(tasks.length, parentChannel, parentThreadId);
+      const { WorkTaskOwnershipModel } = await import('../../database/models/WorkTaskOwnershipModel');
+      let refusal: string | undefined;
+      try {
+        const claim = await WorkTaskOwnershipModel.claimForJob(ownershipJob.jobId, assignees, inherited);
+        if (!claim.claimed) {
+          refusal = `Not launched: ${ claim.conflicts.map(owner => `task ${ owner.taskId } is owned by ${ owner.kind } ${ owner.ref }`).join('; ') }. ` +
+            'Only one agent may work a task at a time. Wait for that owner to finish, or work a different task.';
+        }
+      } catch (err) {
+        refusal = `Not launched: could not take ownership of ${ Object.keys(assignees).join(', ') } (${ (err as Error).message }).`;
+      }
+      if (refusal) {
+        deleteJob(ownershipJob.jobId);
+        return { successBoolean: false, responseString: refusal };
+      }
+    }
+
     // ── Single task executor ────────────────────────────────────
     const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {
       const selector = taskAgentSelector(task);
@@ -126,6 +172,11 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.modelSlot = 'primary';
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;
+        // Ownership flows down: a sub-agent may delegate the tasks it holds.
+        subState.metadata.ownedProjectTaskIds = [...new Set([
+          ...inherited,
+          ...(task.projectTaskId ? [task.projectTaskId.trim()] : []),
+        ])];
 
         // Propagate abort so both the user's stop button (parent AbortService)
         // AND stop_agent_job(jobId) (this job's signal) reach the sub-agents.
@@ -216,7 +267,7 @@ export class SpawnAgentWorker extends BaseTool {
 
     // ── Async mode: fire and forget ─────────────────────────────
     if (async_) {
-      const job = await createJob(tasks.length, parentChannel, parentThreadId);
+      const job = ownershipJob ?? await createJob(tasks.length, parentChannel, parentThreadId);
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
       jobAbortSignal = getJobAbortSignal(job.jobId);
@@ -232,7 +283,6 @@ export class SpawnAgentWorker extends BaseTool {
           // re-invokes it — the results would strand and the orchestrator would
           // report that the sub-agents "died".
           const delivered = await wakeParentGraph(parentChannel, parentThreadId, job.jobId, results);
-          const { markCompletionDelivered } = await import('./jobRegistry');
           if (delivered) await markCompletionDelivered(job.jobId);
         })
         .catch(async(err) => {
@@ -255,7 +305,20 @@ export class SpawnAgentWorker extends BaseTool {
     }
 
     // ── Sync mode: block until complete ─────────────────────────
-    const results = await executeAll();
+    if (ownershipJob) jobAbortSignal = getJobAbortSignal(ownershipJob.jobId);
+    let results: AgentJobResult[];
+    try {
+      results = await executeAll();
+    } catch (err) {
+      if (ownershipJob) failJob(ownershipJob.jobId, (err as Error).message);
+      throw err;
+    }
+    if (ownershipJob) {
+      // The caller is reading the results right here; only the ownership
+      // record needs settling, not a background wake.
+      await completeJob(ownershipJob.jobId, results);
+      await markCompletionDelivered(ownershipJob.jobId);
+    }
 
     const allSuccess = results.every(r => r.status === 'completed');
 

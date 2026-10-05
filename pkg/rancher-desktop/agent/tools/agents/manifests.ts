@@ -8,13 +8,14 @@ export const agentToolManifests: ToolManifest[] = [
     schemaDef:   {
       tasks: {
         type:        'array',
-        description: 'Array of task objects. Each task has: prompt (required — the instruction), agentId (optional — agent config folder name from ~/sulla/agents/, defaults to the parent/primary agent; agentName is accepted as an alias), label (optional — human-readable name for the task). A non-empty agentId/agentName that does not match a config folder is rejected — it is NOT silently run as the default agent.',
+        description: 'Array of task objects. Each task has: prompt (required — the instruction), agentId (optional — agent config folder name from ~/sulla/agents/, defaults to the parent/primary agent; agentName is accepted as an alias), label (optional — human-readable name for the task), projectTaskId (required when the sub-agent works a Projects task — the job then owns that task for its run and launch is refused if another agent already owns it). A non-empty agentId/agentName that does not match a config folder is rejected — it is NOT silently run as the default agent.',
         items:       {
           type:       'object',
           properties: {
             agentId:   { type: 'string', description: 'Agent config folder name from ~/sulla/agents/ (e.g. "codex-test"). Omit to use the default agent. Must match an existing folder.', optional: true },
             agentName: { type: 'string', description: 'Alias for agentId. Same resolution rules.', optional: true },
             prompt:    { type: 'string', description: 'The task/instruction to give the sub-agent.' },
+            projectTaskId: { type: 'string', optional: true, description: 'REQUIRED whenever the sub-agent works a Projects task: the task id (e.g. "AwBS"). The job owns that task for its whole run (assignee = this agent; the dispatcher and other sessions stay off it) and hands it back when the job ends. Launch is refused if another agent already owns the task.' },
             label:     { type: 'string', description: 'Optional human-readable label for this task.', optional: true },
           },
         },

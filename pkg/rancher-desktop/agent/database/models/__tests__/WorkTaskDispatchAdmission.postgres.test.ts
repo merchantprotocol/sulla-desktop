@@ -17,6 +17,7 @@ import { up as waitRepair } from '../../migrations/0102_keep_wait_evidence_in_la
 import { SullaSettingsModel } from '../SullaSettingsModel';
 import { taskLaneTargetSql } from '../WorkAgentAdmission';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
+import { WorkTaskOwnershipModel } from '../WorkTaskOwnershipModel';
 
 // Keep the runtime shell (Electron, tools and model providers) outside these
 // database tests. Decision, settlement, transition and admission remain real.
@@ -112,7 +113,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         attempt_count int DEFAULT 0, max_attempts int DEFAULT 3, terminal_at timestamptz, terminal_reason text,
         started_at timestamptz DEFAULT now());
       CREATE TABLE work_task_comments (id text, task_id text, body text, author text);
-      CREATE TABLE agent_jobs (job_id text, status text, results jsonb);
+      CREATE TABLE agent_jobs (job_id text, status text, results jsonb, project_task_ids text[] NOT NULL DEFAULT '{}', project_task_prior_assignees jsonb NOT NULL DEFAULT '{}'::jsonb);
       INSERT INTO work_projects (id, status, dispatch_enabled) VALUES ('enabled', 'working', true), ('paused', 'blocked', false);
       INSERT INTO lifecycle_capabilities VALUES
         ('todo-execution', true, 'healthy', 'dispatcher', 'manual_hold', false),
@@ -149,7 +150,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     await pool.query("DELETE FROM work_lane_definitions WHERE scope='project'");
     await pool.query("UPDATE work_lane_definitions SET requires_human_approval=false, position=0, semantic_role=CASE lane_key WHEN 'qa' THEN 'review' WHEN 'shipped' THEN 'terminal' ELSE 'execution' END");
     await pool.query("DELETE FROM work_lane_definitions WHERE lane_key NOT IN ('in_progress', 'qa', 'shipped')");
-    await pool.query('TRUNCATE work_task_outcome_journal, workflow_executions, work_tasks, work_task_dispatches, work_task_stage_claims, work_task_waits, work_task_dependencies, work_lane_entry_automations, work_task_planning_runs, work_task_artifact_custody, work_project_domain_events, work_task_comments');
+    await pool.query('TRUNCATE work_task_outcome_journal, workflow_executions, work_tasks, work_task_dispatches, work_task_stage_claims, work_task_waits, work_task_dependencies, work_lane_entry_automations, work_task_planning_runs, work_task_artifact_custody, work_project_domain_events, work_task_comments, agent_jobs');
   });
 
   afterAll(async() => {
@@ -689,6 +690,47 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     expect((await pool.query("SELECT status, terminal_reason FROM workflow_executions WHERE execution_id='exec-dead'")).rows[0])
       .toEqual({ status: 'failed', terminal_reason: 'orphan_recovered' });
     await expect(admit('planning', 'a')).resolves.not.toBeNull();
+  });
+
+  it('lets a running agent job own its task until it finishes, then hands it back', async() => {
+    await taskWithLane('a');
+    await pool.query("UPDATE work_tasks SET assignee='heartbeat' WHERE id='a'");
+    await pool.query("INSERT INTO agent_jobs (job_id, status) VALUES ('job-1', 'running'), ('job-2', 'running')");
+    await expect(WorkTaskOwnershipModel.claimForJob('job-1', { a: 'codex-sol' })).resolves.toEqual({ claimed: true, conflicts: [] });
+    expect((await pool.query("SELECT assignee FROM work_tasks WHERE id='a'")).rows[0].assignee).toBe('codex-sol');
+
+    // Every other writer sees the owner and stays off the task.
+    await expect(admit('dispatch', 'a')).resolves.toBeNull();
+    await expect(admit('planning', 'a')).resolves.toBeNull();
+    await expect(WorkTaskOwnershipModel.claimForJob('job-2', { a: 'codex-luna' })).resolves.toEqual({
+      claimed: false, conflicts: [{ taskId: 'a', kind: 'agent_job', ref: 'job-1' }],
+    });
+    expect((await pool.query("SELECT project_task_ids FROM agent_jobs WHERE job_id='job-2'")).rows[0].project_task_ids).toEqual([]);
+
+    await pool.query("UPDATE agent_jobs SET status='completed' WHERE job_id='job-1'");
+    await WorkTaskOwnershipModel.releaseForJob('job-1');
+    expect((await pool.query("SELECT assignee FROM work_tasks WHERE id='a'")).rows[0].assignee).toBe('heartbeat');
+    await expect(admit('dispatch', 'a')).resolves.not.toBeNull();
+  });
+
+  it('refuses a job on a dispatched task unless the dispatch worker is delegating its own task', async() => {
+    await taskWithLane('a');
+    await expect(admit('dispatch', 'a')).resolves.not.toBeNull();
+    await pool.query("INSERT INTO agent_jobs (job_id, status) VALUES ('job-3', 'running')");
+    const refused = await WorkTaskOwnershipModel.claimForJob('job-3', { a: 'codex-sol' });
+    expect(refused.claimed).toBe(false);
+    expect(refused.conflicts.map(owner => owner.kind)).toEqual(expect.arrayContaining(['dispatch', 'stage_claim']));
+    await expect(WorkTaskOwnershipModel.claimForJob('job-3', { a: 'codex-sol' }, ['a'])).resolves.toEqual({ claimed: true, conflicts: [] });
+  });
+
+  it('does not undo a reassignment made while the job ran', async() => {
+    await taskWithLane('a');
+    await pool.query("INSERT INTO agent_jobs (job_id, status) VALUES ('job-4', 'running')");
+    await WorkTaskOwnershipModel.claimForJob('job-4', { a: 'codex-sol' });
+    await pool.query("UPDATE work_tasks SET assignee='human' WHERE id='a'");
+    await pool.query("UPDATE agent_jobs SET status='failed' WHERE job_id='job-4'");
+    await WorkTaskOwnershipModel.releaseForJob('job-4');
+    expect((await pool.query("SELECT assignee FROM work_tasks WHERE id='a'")).rows[0].assignee).toBe('human');
   });
 
   it('reserves custody-only artifact references across mixed writers', async() => {

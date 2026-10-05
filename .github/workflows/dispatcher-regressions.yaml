@@ -41,6 +41,10 @@ on:
     - 'pkg/rancher-desktop/pages/LanguageModelSettings.vue'
     - 'pkg/rancher-desktop/agent/services/__tests__/RoutineConcurrencyPolicy.test.ts'
     - 'pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts'
+    - 'pkg/rancher-desktop/agent/database/models/WorkTaskOwnershipModel.ts'
+    - 'pkg/rancher-desktop/agent/tools/agents/spawn_agent.ts'
+    - 'pkg/rancher-desktop/agent/tools/agents/jobRegistry.ts'
+    - 'pkg/rancher-desktop/agent/tools/agents/__tests__/spawnAgentTaskOwnership.test.ts'
   workflow_dispatch:
 
 permissions:
@@ -104,6 +108,7 @@ jobs:
           pkg/rancher-desktop/agent/services/__tests__/RoutineConcurrencyPolicy.test.ts \
           pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts \
           pkg/rancher-desktop/agent/controllers/__tests__/PlaybookController.leases.test.ts \
+          pkg/rancher-desktop/agent/tools/agents/__tests__/spawnAgentTaskOwnership.test.ts \
           2>&1 | tee "$log"
         rc=$?
         if [ "$rc" -ne 0 ]; then
