@@ -1,10 +1,13 @@
 /** @jest-environment node */
+/* eslint-disable @typescript-eslint/require-await -- async mocks stand in for downloads, tunnels and DNS */
 import http from 'node:http';
 import net from 'node:net';
 
 import { jest } from '@jest/globals';
 
-import { isLoopbackUrl, parseTunnelUrl, PreviewShareManager, startGate, type Gate } from '@pkg/main/previewShare';
+import {
+  cloudflaredReady, isLoopbackUrl, lookupPublicOrSystem, parseTunnelUrl, PreviewShareManager, SETTING_UP_MESSAGE, startGate, waitForPublicDns, type Gate,
+} from '@pkg/main/previewShare';
 
 let upstream: http.Server;
 let upstreamPort: number;
@@ -163,9 +166,13 @@ describe('PreviewShareManager', () => {
     const manager = new PreviewShareManager({ startGate, startTunnel, now: () => clock });
 
     return {
-      manager, startGate, startTunnel, gateClose, tunnelClose,
-      tick: (ms: number) => { clock += ms; },
-      touch: () => { last = clock; },
+      manager,
+      startGate,
+      startTunnel,
+      gateClose,
+      tunnelClose,
+      tick:  (ms: number) => { clock += ms },
+      touch: () => { last = clock },
     };
   }
 
@@ -207,5 +214,138 @@ describe('PreviewShareManager', () => {
     expect(f.tunnelClose).toHaveBeenCalledTimes(1);
     expect(f.gateClose).toHaveBeenCalledTimes(1);
     await f.manager.closeAll();
+  });
+});
+
+describe('cloudflared readiness', () => {
+  test('returns the binary once it is ready', async() => {
+    await expect(cloudflaredReady(1_000, async() => '/bin/cloudflared')).resolves.toBe('/bin/cloudflared');
+  });
+
+  test('a slow first-run install tells the phone sharing is being set up, without brew', async() => {
+    const err = await cloudflaredReady(10, () => new Promise(() => {})).catch((e: Error) => e);
+    expect((err as Error).message).toBe(SETTING_UP_MESSAGE);
+    expect(SETTING_UP_MESSAGE).toMatch(/^Setting up sharing…/);
+    expect(SETTING_UP_MESSAGE).not.toContain('brew');
+  });
+
+  test('a failed install is reported plainly', async() => {
+    await expect(cloudflaredReady(1_000, async() => { throw new Error('checksum mismatch') }))
+      .rejects.toThrow("Sulla couldn't set up sharing: checksum mismatch");
+  });
+});
+
+describe('waitForPublicDns', () => {
+  test('retries until public resolvers answer', async() => {
+    const lookup = jest.fn<(h: string) => Promise<string[]>>()
+      .mockRejectedValueOnce(Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' }))
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(['104.16.0.1']);
+    await expect(waitForPublicDns('calm-river.trycloudflare.com', 5_000, lookup, async() => {})).resolves.toBe(true);
+    expect(lookup).toHaveBeenCalledTimes(3);
+    expect(lookup).toHaveBeenCalledWith('calm-river.trycloudflare.com');
+  });
+
+  test('a stalled lookup cannot overrun the DNS budget', async() => {
+    jest.useFakeTimers();
+    try {
+      const lookup = jest.fn(() => new Promise<string[]>(() => {}));
+      const result = waitForPublicDns('x.trycloudflare.com', 150, lookup);
+      await jest.advanceTimersByTimeAsync(150);
+      await expect(result).resolves.toBe(false);
+      expect(lookup).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('retry sleep uses only the remaining budget', async() => {
+    jest.useFakeTimers();
+    try {
+      const lookup = jest.fn(async() => [] as string[]);
+      const result = waitForPublicDns('x.trycloudflare.com', 150, lookup);
+      await jest.advanceTimersByTimeAsync(150);
+      await expect(result).resolves.toBe(false);
+      expect(lookup).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('reports false after the deadline instead of throwing, so a working tunnel is still handed out', async() => {
+    const lookup = jest.fn(async() => { throw Object.assign(new Error('queryA ETIMEOUT'), { code: 'ETIMEOUT' }) });
+    await expect(waitForPublicDns('x.trycloudflare.com', 0, lookup, async() => {})).resolves.toBe(false);
+  });
+});
+
+describe('lookupPublicOrSystem', () => {
+  const err = (code: string) => Object.assign(new Error(code), { code });
+
+  test('uses the public answer when public DNS is reachable', async() => {
+    const system = jest.fn(async() => ['10.0.0.1']);
+    await expect(lookupPublicOrSystem('a.trycloudflare.com', async() => ['104.16.0.1'], system)).resolves.toEqual(['104.16.0.1']);
+    expect(system).not.toHaveBeenCalled();
+  });
+
+  test('NXDOMAIN from public DNS means not published yet, not a blocked network', async() => {
+    const system = jest.fn(async() => ['10.0.0.1']);
+    await expect(lookupPublicOrSystem('a.trycloudflare.com', async() => { throw err('ENOTFOUND') }, system)).rejects.toThrow('ENOTFOUND');
+    expect(system).not.toHaveBeenCalled();
+  });
+
+  test.each(['ETIMEOUT', 'ECONNREFUSED', 'EREFUSED'])('falls back to the system resolver when public DNS fails with %s', async(code) => {
+    const system = jest.fn(async() => ['104.16.0.1']);
+    await expect(lookupPublicOrSystem('a.trycloudflare.com', async() => { throw err(code) }, system)).resolves.toEqual(['104.16.0.1']);
+    expect(system).toHaveBeenCalledWith('a.trycloudflare.com');
+  });
+
+  test('a network that blocks public DNS still gets its link once the system resolver sees it', async() => {
+    const system = jest.fn<(h: string) => Promise<string[]>>()
+      .mockRejectedValueOnce(err('ENOTFOUND'))
+      .mockResolvedValueOnce(['104.16.0.1']);
+    const lookup = (h: string) => lookupPublicOrSystem(h, async() => { throw err('ETIMEOUT') }, system);
+    await expect(waitForPublicDns('a.trycloudflare.com', 5_000, lookup, async() => {})).resolves.toBe(true);
+  });
+});
+
+describe('PreviewShareManager rotation', () => {
+  function rotationFixture() {
+    let n = 0;
+    let clock = 0;
+    const tunnelClose = jest.fn();
+    const manager = new PreviewShareManager({
+      startGate:   async(target: URL) => ({ port: 4000, target, issueTicket: () => 'tk', lastUsed: () => clock, close: async() => {} }),
+      startTunnel: async() => ({ publicUrl: `https://name-${ ++n }.trycloudflare.com`, close: tunnelClose }),
+      now:         () => clock,
+    });
+
+    return { manager, tunnelClose, tick: (ms: number) => { clock += ms } };
+  }
+
+  test('immediate fresh retry replaces the failed hostname without waiting ten seconds', async() => {
+    const { manager, tunnelClose } = rotationFixture();
+    expect((await manager.open('http://localhost:5180/')).url).toContain('name-1');
+    expect((await manager.open('http://localhost:5180/')).url).toContain('name-1');
+    expect((await manager.open('http://localhost:5180/', { fresh: true })).url).toContain('name-2');
+    expect(tunnelClose).toHaveBeenCalledTimes(1);
+    await manager.closeAll();
+  });
+
+  test('simultaneous fresh requests share one new tunnel instead of killing each other', async() => {
+    const { manager, tunnelClose } = rotationFixture();
+    await manager.open('http://localhost:5180/');
+    const [a, b] = await Promise.all([
+      manager.open('http://localhost:5180/', { fresh: true }),
+      manager.open('http://localhost:5180/', { fresh: true }),
+    ]);
+    expect(a.url).toContain('name-2');
+    expect(b.url).toContain('name-2');
+    expect(tunnelClose).toHaveBeenCalledTimes(1);
+    // A subsequent failed lookup must be able to replace this hostname too.
+    expect((await manager.open('http://localhost:5180/', { fresh: true })).url).toContain('name-3');
+    expect(tunnelClose).toHaveBeenCalledTimes(2);
+    await manager.closeAll();
   });
 });

@@ -230,7 +230,8 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
       .some(u => !!u && isLoopbackUrl(u) && new URL(u).origin === origin);
     if (!known) throw new Error('That link is not a bookmark or a running Docker container on this desktop');
 
-    return { ...await previewShares.open(url), proxied: true };
+    // `fresh` asks for a new tunnel hostname when the phone cached a failed lookup.
+    return { ...await previewShares.open(url, { fresh: params.fresh === true }), proxied: true };
   }
   case 'bookmarks.close': {
     if (typeof params.url !== 'string' || !isLoopbackUrl(params.url)) throw new Error('Local URL required');
