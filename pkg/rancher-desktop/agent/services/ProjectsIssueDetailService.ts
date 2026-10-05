@@ -228,14 +228,12 @@ export async function decideProjectsHumanGate(
   const target = await WorkLaneDefinitionModel.resolveStatus(before.task.project_id, targetStage);
   if (target?.semantic_role === 'review') await ArtifactCustodyPolicy.assertForTransition('in_review', undefined);
   if (target?.semantic_role === 'terminal') await ArtifactCustodyPolicy.assertForTransition('done', undefined);
-  if (target?.semantic_role === 'terminal' && before.task.assignee === 'dispatcher') {
-    throw new Error('Terminal tasks cannot remain assigned to dispatcher.');
-  }
   const decidedAt = new Date().toISOString();
   // Commit the task, generation event, approval waits and audit together. A
   // concurrent PASS sees either the gate or the completed human transition.
   await WorkItemsModel.updateTask(taskId, {
     status: targetStage,
+    ...(target?.semantic_role === 'terminal' ? { assignee: null } : {}),
     actor: 'human',
   }, {
     expectedStage,

@@ -17,6 +17,13 @@ import { up as waitRepair } from '../../migrations/0102_keep_wait_evidence_in_la
 import { taskLaneTargetSql } from '../WorkAgentAdmission';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
+// Keep the runtime shell (Electron, tools and model providers) outside these
+// database tests. Decision, settlement, transition and admission remain real.
+jest.unstable_mockModule('../../../services/GraphRegistry', () => ({ GraphRegistry: {} }));
+jest.unstable_mockModule('../../../tools/registry', () => ({ toolRegistry: {} }));
+jest.unstable_mockModule('../../../services/IntegrationService', () => ({
+  getIntegrationService: () => ({ getIntegrationValue: jest.fn() }),
+}));
 jest.unstable_mockModule('../../../services/ConversationLogger', () => ({ getConversationLogger: jest.fn() }));
 jest.unstable_mockModule('../../../services/WebSocketClientService', () => ({ getWebSocketClientService: () => ({ send: jest.fn() }) }));
 jest.unstable_mockModule('../../../workflow/lockedCoreRoutineExecution', () => ({
@@ -213,12 +220,38 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     }
   });
 
+  it('reuses three stopped legacy review slots without overwriting human rejection', async() => {
+    const { TaskDispatcherService } = await import('../../../services/TaskDispatcherService');
+    const service = new TaskDispatcherService() as any;
+    const claims = [];
+    for (const id of ['901', '902', '903']) {
+      await pool.query("INSERT INTO work_tasks (id, project_id, status, github_issue) VALUES ($1, 'enabled', 'qa', $2)",
+        [id, `owner/repo#${ id }`]);
+      claims.push((await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime', id))!);
+      await taskWithLane(`replacement-${ id }`, `owner/repo#${ id }`);
+    }
+    for (const claim of claims) {
+      await pool.query("UPDATE work_tasks SET status='in_progress', last_moved_by='human' WHERE id=$1", [claim.task.id]);
+      await expect(admit('dispatch', claim.task.id)).resolves.toBeNull();
+      await expect(admit('dispatch', `replacement-${ claim.task.id }`)).resolves.toBeNull();
+    }
+    for (const claim of claims) {
+      await service.settleLegacyVerification(claim.dispatch.id, 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'Stopped review');
+      expect((await pool.query('SELECT status, last_moved_by FROM work_tasks WHERE id=$1', [claim.task.id])).rows[0])
+        .toMatchObject({ status: 'in_progress', last_moved_by: 'human' });
+      expect((await pool.query('SELECT status FROM work_task_dispatches WHERE id=$1', [claim.dispatch.id])).rows[0].status).toBe('failed');
+    }
+    for (const id of ['901', '902', '903']) {
+      await expect(admit('dispatch', `replacement-${ id }`)).resolves.not.toBeNull();
+    }
+  });
+
   it.each(['rollback', 'concurrent-pass'] as const)('keeps human decision atomic during %s', async(mode) => {
     const { WorkItemsModel } = await import('../WorkItemsModel');
     const { decideProjectsHumanGate } = await import('../../../services/ProjectsIssueDetailService');
     const { getProjectsOrchestrationEventService } = await import('../../../projects/application/ProjectsOrchestrationEventService');
     const { getTaskDispatcherService } = await import('../../../services/TaskDispatcherService');
-    await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES ('decision', 'enabled', 'qa');
+    await pool.query(`INSERT INTO work_tasks (id, project_id, status, assignee) VALUES ('decision', 'enabled', 'qa', 'dispatcher');
       INSERT INTO work_task_waits (id, task_id, wait_kind) VALUES ('approval-wait', 'decision', 'human_gate');
       UPDATE work_lane_definitions SET position=CASE lane_key WHEN 'qa' THEN 1 WHEN 'shipped' THEN 2 ELSE 0 END`);
     const claim = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime', 'decision');
@@ -247,7 +280,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       expect((await WorkTaskWaitModel.get('approval-wait'))?.status).toBe('active');
       expect((await pool.query("SELECT status FROM work_tasks WHERE id='decision'")).rows[0].status).toBe('qa');
       const pass = mode === 'concurrent-pass'
-        ? WorkTaskDispatchModel.finalizeVerification(claim!.dispatch.id, 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'Passed')
+        ? (getTaskDispatcherService() as any).settleLegacyVerification(claim!.dispatch.id, 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'Passed')
         : null;
       release();
       const error = await decisionResult;
@@ -258,7 +291,10 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         expect((await pool.query("SELECT * FROM work_task_comments WHERE task_id='decision'")).rows).toHaveLength(0);
       } else {
         expect(error).toBeNull();
-        expect(await pass).toBeNull();
+        await pass;
+        expect((await pool.query('SELECT status FROM work_task_dispatches WHERE id=$1', [claim!.dispatch.id])).rows[0].status).toBe('failed');
+        expect((await pool.query('SELECT status FROM work_task_stage_claims WHERE task_id=$1', ['decision'])).rows.every(row => row.status === 'released')).toBe(true);
+        await expect(admit('dispatch', 'decision')).resolves.not.toBeNull();
         expect((await WorkTaskWaitModel.get('approval-wait'))?.status).toBe('failed');
         expect((await pool.query("SELECT status FROM work_tasks WHERE id='decision'")).rows[0].status).toBe('in_progress');
       }
@@ -286,10 +322,12 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
   it.each(['approved', 'rejected'] as const)('retires human waits through the Projects %s decision entry point', async(decision) => {
     const { WorkItemsModel } = await import('../WorkItemsModel');
     const { decideProjectsHumanGate } = await import('../../../services/ProjectsIssueDetailService');
-    await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES ('decision', 'enabled', 'qa');
+    jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
+      ready: true, catalogPresent: true, missingRoles: [], degradedReason: null,
+    });
+    await pool.query(`INSERT INTO work_tasks (id, project_id, status, assignee) VALUES ('decision', 'enabled', 'qa', 'dispatcher');
       INSERT INTO work_task_waits (id, task_id, wait_kind) VALUES ('approval-wait', 'decision', 'human_gate');
-      UPDATE work_lane_definitions SET position=CASE lane_key WHEN 'qa' THEN 1 WHEN 'shipped' THEN 2 ELSE 0 END;
-      UPDATE work_lane_definitions SET semantic_role='manual' WHERE lane_key='shipped'`);
+      UPDATE work_lane_definitions SET position=CASE lane_key WHEN 'qa' THEN 1 WHEN 'shipped' THEN 2 ELSE 0 END`);
     const { getProjectsOrchestrationEventService } = await import('../../../projects/application/ProjectsOrchestrationEventService');
     const { getTaskDispatcherService } = await import('../../../services/TaskDispatcherService');
     const mocks = [
@@ -298,12 +336,24 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       jest.spyOn(getProjectsOrchestrationEventService(), 'drain').mockResolvedValue(undefined as any),
       jest.spyOn(getTaskDispatcherService(), 'forceCheck').mockResolvedValue(undefined),
     ];
+    const claim = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime', 'decision');
+    await pool.query("UPDATE work_tasks SET assignee='dispatcher' WHERE id='decision'");
     try {
       await decideProjectsHumanGate('decision', decision, 'Explicit human decision', 'qa');
       expect((await WorkTaskWaitModel.get('approval-wait'))?.status).toBe(decision === 'approved' ? 'satisfied' : 'failed');
       expect((await pool.query("SELECT status FROM work_tasks WHERE id='decision'")).rows[0].status)
         .toBe(decision === 'approved' ? 'shipped' : 'in_progress');
+      if (decision === 'approved') {
+        expect((await pool.query("SELECT assignee, completed_at FROM work_tasks WHERE id='decision'")).rows[0])
+          .toMatchObject({ assignee: null, completed_at: expect.any(Date) });
+      }
       expect((await pool.query("SELECT * FROM work_task_comments WHERE task_id='decision'")).rows.length).toBeGreaterThan(0);
+      expect((await pool.query('SELECT status FROM work_task_dispatches WHERE id=$1', [claim!.dispatch.id])).rows[0].status).toBe('running');
+      expect((await pool.query("SELECT status FROM work_task_stage_claims WHERE task_id='decision'")).rows[0].status).toBe('active');
+      await expect(admit('dispatch', 'decision')).resolves.toBeNull();
+      await (getTaskDispatcherService() as any).settleLegacyVerification(claim!.dispatch.id, 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'Stopped review');
+      expect((await pool.query("SELECT status FROM work_tasks WHERE id='decision'")).rows[0].status)
+        .toBe(decision === 'approved' ? 'shipped' : 'in_progress');
     } finally { mocks.forEach(mock => mock.mockRestore()); }
   });
 

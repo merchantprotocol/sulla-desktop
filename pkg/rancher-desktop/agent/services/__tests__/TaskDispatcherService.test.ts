@@ -788,6 +788,41 @@ describe('TaskDispatcherService', () => {
     expect(verifierState.messages[0].content).toContain('matching local worktree');
   });
 
+  it('retires a rejected legacy settlement only after its remaining writer stops', async() => {
+    jest.useFakeTimers();
+    try {
+      let running = true;
+      graphGetMock.mockResolvedValueOnce({
+        graph: { execute: executeMock, hasUnconfirmedWorkflowWorkers: () => running },
+        state: { messages: [], metadata: {} },
+      });
+      executeMock.mockResolvedValueOnce({
+        metadata: {
+          agent: { status: 'completed' },
+          finalSummary: `<VERIFIER_RESULT>{"verdict":"APPROVE","artifact_sha":"${ 'a'.repeat(40) }","summary":"Passed"}</VERIFIER_RESULT>`,
+        }, messages: [],
+      });
+      finalizeVerificationMock.mockResolvedValueOnce(null);
+      const { TaskDispatcherService } = await import('../TaskDispatcherService');
+      const service = new TaskDispatcherService() as any;
+      const run = service.runClaim({
+        task: { id: 'rejected', status: 'in_review', title: 'Review', project_id: 'p', epic_id: 'e' },
+        dispatch: { id: 'rejected-dispatch', task_id: 'rejected', agent_id: 'sulla-desktop', thread_id: 'rejected-thread', kind: 'verification' },
+        stage_claim: { id: 'rejected-stage' },
+      });
+      await jest.advanceTimersByTimeAsync(3000);
+      expect(finalizeVerificationMock).not.toHaveBeenCalled();
+      expect(failVerificationMock).not.toHaveBeenCalled();
+      expect(releaseStageMock).not.toHaveBeenCalled();
+      running = false;
+      await jest.advanceTimersByTimeAsync(1500);
+      await run;
+      expect(failVerificationMock).toHaveBeenCalledWith('rejected-dispatch', 'legacy_review_settlement_rejected');
+      expect(releaseStageMock).toHaveBeenCalledWith('rejected-stage');
+      expect(service.active.size).toBe(0);
+    } finally { jest.useRealTimers(); }
+  });
+
   it('invalidates approval when the live PR head changed after review', async() => {
     claimNextReviewMock
       .mockResolvedValueOnce({

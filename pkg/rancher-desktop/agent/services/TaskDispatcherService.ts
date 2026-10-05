@@ -789,7 +789,7 @@ export class TaskDispatcherService {
                 `artifact_head_changed:${ parsed.artifactSha }:${ currentHead.sha }`,
               );
             } else {
-              await WorkTaskDispatchModel.finalizeVerification(
+              await this.settleLegacyVerification(
                 dispatch.id, parsed.verdict, parsed.artifactSha, currentHead?.sha ?? null, parsed.summary,
               );
             }
@@ -847,6 +847,16 @@ export class TaskDispatcherService {
       const status = execution?.attributes?.status;
       if (status === 'completed' || status === 'failed' || status === 'suspended') return;
       await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+    }
+  }
+
+  /** Called only after runClaim has drained every writer. */
+  private async settleLegacyVerification(
+    ...args: Parameters<typeof WorkTaskDispatchModel.finalizeVerification>
+  ): Promise<void> {
+    const settled = await WorkTaskDispatchModel.finalizeVerification(...args);
+    if (!settled) {
+      await WorkTaskDispatchModel.failVerification(args[0], 'legacy_review_settlement_rejected');
     }
   }
 
