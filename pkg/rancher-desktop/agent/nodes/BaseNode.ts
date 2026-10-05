@@ -1218,8 +1218,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const recentMsgs = messages.filter(m => m.role !== 'system').slice(-3);
         const reducedMessages = [...systemMsgs, ...recentMsgs];
 
-        // Retry uses non-streaming fallback
-        reply = await this.llm.chat(reducedMessages, {
+        // Keep retry output on the same live UI path.
+        reply = await this.callLLMStreaming(state, reducedMessages, {
           maxTokens:   options.maxTokens,
           format:      options.format,
           temperature: options.temperature,
@@ -1228,7 +1228,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           conversationId,
           nodeName,
           profileId: (state.metadata as any).profileId,
-        });
+        }, nodeRunContext);
       }
 
       if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) {
@@ -1270,7 +1270,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind })`,
           );
           const retryMessages = this.buildReducedRetryMessages(messages);
-          const retryReply = await this.llm.chat(retryMessages, {
+          const retryReply = await this.callLLMStreaming(state, retryMessages, {
             maxTokens:   options.maxTokens,
             format:      options.format,
             temperature: options.temperature,
@@ -1279,7 +1279,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             conversationId,
             nodeName,
             profileId: (state.metadata as any).profileId,
-          });
+          }, nodeRunContext);
           if (retryReply && (retryReply.content?.trim() || retryReply.metadata.tool_calls?.length)) {
             (retryReply.metadata as any).retry_used = true;
             (retryReply.metadata as any).retry_provider = primaryName;
@@ -1338,7 +1338,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             const chatMessages = messages.filter(msg =>
               ['system', 'user', 'assistant'].includes(msg.role),
             );
-            const reply = await secondary.chat(chatMessages, {
+            const reply = await this.callLLMStreaming(state, chatMessages, {
               signal:      state.metadata?.options?.abort?.signal,
               temperature: options.temperature,
               maxTokens:   options.maxTokens,
@@ -1346,7 +1346,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
               tools:       llmTools,
               conversationId,
               nodeName,
-            });
+              profileId: (state.metadata as any).profileId,
+            }, nodeRunContext, secondary);
             if (reply && (reply.content?.trim() || reply.metadata.tool_calls?.length)) {
             // Annotate the reply so downstream UI can badge it as a fallback.
               (reply.metadata as any).fallback_used = true;
@@ -1555,11 +1556,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     messages: ChatMessage[],
     options: any,
     nodeRunContext: any,
+    provider: BaseLanguageModel = this.llm!,
   ): Promise<NormalizedResponse | null> {
     const controller = this.getChatController();
     const ctx = controller.buildContext(state);
 
-    this.voiceLog(state, 'LLM', 'STREAM_START', { mode: controller.getMode(), model: this.llm?.getModel() });
+    this.voiceLog(state, 'LLM', 'STREAM_START', { mode: controller.getMode(), model: provider.getModel() });
 
     // Reset extractor state for this new LLM call
     controller.reset();
@@ -1685,29 +1687,33 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       }
     };
 
-    const reply = await this.llm!.chatStream(messages, { onToken, onActivity, onFilePatch, onToolEvent }, { ...options, state });
-
-    // End-of-turn flush. `onActivity` only fires segment boundaries while
-    // the model is still producing activity; a stream that ends naturally
-    // (just tokens → done, or thinking → done with no more segments)
-    // never hits those boundaries, so the last open streaming/thinking
-    // bubble stays stuck in "live" mode forever — blinking cursor, timer
-    // running, even though the graph has moved on or terminated.
-    //
-    // Emit both closing sentinels unconditionally here. The dispatcher
-    // only closes the MOST RECENT uncompleted bubble for each kind, so
-    // this is a no-op when nothing is open.
-    if (!isVoiceMode) {
-      if (contentBuffer.trim()) {
-        const stripped = stripProtocolTagsStreaming(contentBuffer);
-        if (stripped.trim()) {
-          this.wsChatMessage(state, stripped, 'assistant', 'streaming');
-          streamingWsSent = true;
+    let reply: NormalizedResponse | null;
+    try {
+      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onToolEvent }, { ...options, state });
+    } finally {
+      // Close partial output on failure too, before recovery starts another stream.
+      // End-of-turn flush. `onActivity` only fires segment boundaries while
+      // the model is still producing activity; a stream that ends naturally
+      // (just tokens → done, or thinking → done with no more segments)
+      // never hits those boundaries, so the last open streaming/thinking
+      // bubble stays stuck in "live" mode forever — blinking cursor, timer
+      // running, even though the graph has moved on or terminated.
+      //
+      // Emit both closing sentinels unconditionally here. The dispatcher
+      // only closes the MOST RECENT uncompleted bubble for each kind, so
+      // this is a no-op when nothing is open.
+      if (!isVoiceMode) {
+        if (contentBuffer.trim()) {
+          const stripped = stripProtocolTagsStreaming(contentBuffer);
+          if (stripped.trim()) {
+            this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+            streamingWsSent = true;
+          }
+          contentBuffer = '';
         }
-        contentBuffer = '';
+        this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
       }
-      this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
-      this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
     }
 
     if (!reply) {

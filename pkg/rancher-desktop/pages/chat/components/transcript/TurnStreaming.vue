@@ -4,7 +4,7 @@
 -->
 <template>
   <div class="chat-turn sulla chat-fade-in">
-    <span class="chat-role">Sulla · responding</span>
+    <span class="chat-role">Sulla · {{ timeLabel }} · responding</span>
     <div class="chat-body">
       <IsolatedHtml
         v-if="isHtmlDocument"
@@ -31,6 +31,11 @@ import { renderMarkdown } from '../../messages/markdown';
 import type { StreamingMessage } from '../../models/Message';
 
 const props = defineProps<{ msg: StreamingMessage }>();
+
+const timeLabel = computed(() => {
+  const d = new Date(props.msg.createdAt);
+  return `${ d.getHours() % 12 || 12 }:${ String(d.getMinutes()).padStart(2, '0') }`;
+});
 
 // Same detection as TurnSulla — bare <style>/<html>/<body> etc. routes
 // through Shadow DOM so mid-stream CSS can't leak into the host app.

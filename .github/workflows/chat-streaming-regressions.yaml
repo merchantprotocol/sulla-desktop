@@ -1,0 +1,51 @@
+name: Chat streaming regressions
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/chat-streaming-regressions.yaml'
+      - 'pkg/rancher-desktop/agent/nodes/BaseNode.ts'
+      - 'pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.providerRecovery.test.ts'
+      - 'pkg/rancher-desktop/pages/chat/components/transcript/TurnStreaming.vue'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  streaming:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      with:
+        node-version-file: package.json
+    - name: Install JavaScript dependencies
+      run: |
+        corepack enable yarn
+        yarn install --immutable --ignore-platform --ignore-scripts
+    - name: Verify recovery streaming
+      run: |
+        set -o pipefail
+        set +e
+        yarn test:unit:jest --runInBand --json --outputFile="${RUNNER_TEMP}/streaming-results.json" \
+          pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.providerRecovery.test.ts \
+          pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.conversationLogging.test.ts \
+          pkg/rancher-desktop/pages/chat/services/__tests__/PersonaAdapter.test.ts 2>&1 | tee "${RUNNER_TEMP}/streaming.log"
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+          node <<'NODE'
+        const fs = require('fs');
+        const file = `${process.env.RUNNER_TEMP}/streaming-results.json`;
+        const escape = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+        if (fs.existsSync(file)) {
+          for (const suite of JSON.parse(fs.readFileSync(file, 'utf8')).testResults) {
+            if (suite.status !== 'failed') continue;
+            const failures = suite.assertionResults.filter(test => test.status === 'failed');
+            const messages = failures.length ? failures.map(test => `${test.fullName}\n${test.failureMessages.join('\n')}`) : [suite.message];
+            for (const message of messages) console.log(`::error title=Streaming regression failure::${escape(suite.name + '\n' + message)}`);
+          }
+        }
+        NODE
+          exit "$rc"
+        fi

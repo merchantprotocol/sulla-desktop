@@ -31,6 +31,13 @@ const wsSendMock: any = jest.fn(async() => true);
   throw new Error(`unmocked require() in test: ${ id }`);
 };
 
+jest.unstable_mockModule('@pkg/utils/paths', () => ({
+  default: { sullaHome: '/tmp/sulla-test', sullaConfig: '/tmp/sulla-test', sullaDesktopCodebase: '/tmp/sulla-test', logs: '/tmp' },
+}));
+jest.unstable_mockModule('@pkg/utils/logging', () => ({
+  default: new Proxy({}, { get: () => ({ log: jest.fn(), warn: jest.fn(), error: jest.fn(), info: jest.fn(), debug: jest.fn() }) }),
+}));
+
 jest.unstable_mockModule('../../languagemodels', () => ({
   getAgentOverrideService: jest.fn(async() => null),
   getPrimaryService:       jest.fn(async() => null),
