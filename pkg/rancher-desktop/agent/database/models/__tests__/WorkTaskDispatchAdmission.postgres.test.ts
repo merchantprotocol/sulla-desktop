@@ -686,6 +686,8 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     await expect(admit('planning', 'a')).resolves.toBeNull();
     await expect(WorkTaskPlanningRunModel.recoverStale(45)).resolves.toEqual(['a']);
     expect((await pool.query("SELECT status FROM work_task_planning_runs WHERE task_id='a'")).rows[0].status).toBe('stale');
+    expect((await pool.query("SELECT status, terminal_reason FROM workflow_executions WHERE execution_id='exec-dead'")).rows[0])
+      .toEqual({ status: 'failed', terminal_reason: 'orphan_recovered' });
     await expect(admit('planning', 'a')).resolves.not.toBeNull();
   });
 

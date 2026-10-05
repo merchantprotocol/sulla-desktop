@@ -380,10 +380,13 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[1][1]).toEqual(['task-old', 'in-review-verification']);
     expect(query.mock.calls[2][0]).toContain('work_lane_entry_automations');
     expect(query.mock.calls[2][1]).toEqual(['task-old', 'exec-old']);
-    expect(query.mock.calls[3][0]).toContain("assignee = 'verifier'");
-    expect(query.mock.calls[3][0]).not.toContain('SET status');
-    expect(query.mock.calls[4][0]).toContain('INSERT INTO work_task_comments');
-    expect(query.mock.calls[4][1][2]).toContain('dispatch-old');
+    expect(query.mock.calls[3][0]).toContain('UPDATE workflow_executions');
+    expect(query.mock.calls[3][0]).toContain("terminal_reason = 'orphan_recovered'");
+    expect(query.mock.calls[3][1]).toEqual(['exec-old']);
+    expect(query.mock.calls[4][0]).toContain("assignee = 'verifier'");
+    expect(query.mock.calls[4][0]).not.toContain('SET status');
+    expect(query.mock.calls[5][0]).toContain('INSERT INTO work_task_comments');
+    expect(query.mock.calls[5][1][2]).toContain('dispatch-old');
   });
 
   it('releases the execution claim of a recovered execution orphan', async() => {

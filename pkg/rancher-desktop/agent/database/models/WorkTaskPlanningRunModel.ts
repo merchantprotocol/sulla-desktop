@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { postgresClient } from '../PostgresClient';
 import { LiveWriterRegistry } from '../../services/LiveWriterRegistry';
 import { agentAdmissionSql, noWriterEvidenceSql } from './WorkAgentAdmission';
+import { settleOrphanExecution } from './WorkTaskDispatchModel';
 import { WorkLaneDefinitionModel } from './WorkLaneDefinitionModel';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
@@ -142,7 +143,7 @@ export class WorkTaskPlanningRunModel {
   }
 
   private static async recoverOrphans(staleMinutes: number, taskId?: string): Promise<string[]> {
-    const rows = await postgresClient.query<{ task_id: string }>(`
+    const rows = await postgresClient.query<{ task_id: string; execution_id: string | null }>(`
       UPDATE work_task_planning_runs run
          SET status = 'stale',
              error = 'no live writer evidence: council heartbeat, workflow execution and agent jobs all silent',
@@ -151,8 +152,13 @@ export class WorkTaskPlanningRunModel {
          AND ($2::text IS NULL OR run.task_id = $2)
          AND run.heartbeat_at < now() - ($1::int * interval '1 minute')
          ${ noWriterEvidenceSql('run.task_id', 'run.execution_id', '$1::int', '$3::text[]') }
-      RETURNING run.task_id
+      RETURNING run.task_id, run.execution_id
     `, [Math.max(0, Math.floor(staleMinutes)), taskId ?? null, LiveWriterRegistry.executionIds()]);
+    for (const row of rows) {
+      if (row.execution_id) {
+        await postgresClient.transaction(client => settleOrphanExecution(client, row.execution_id as string));
+      }
+    }
     return [...new Set(rows.map(row => row.task_id))];
   }
 }

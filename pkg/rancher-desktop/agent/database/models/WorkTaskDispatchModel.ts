@@ -221,6 +221,18 @@ interface WorkTaskOutcomeJournalRow {
   consumed_at: string | null;
 }
 
+/** Close a workflow execution whose writer has no live evidence. */
+export async function settleOrphanExecution(client: PoolClient, executionId: string): Promise<void> {
+  await client.query(`
+    UPDATE workflow_executions
+       SET status = 'failed', completed_at = COALESCE(completed_at, NOW()),
+           terminal_at = COALESCE(terminal_at, NOW()), terminal_reason = 'orphan_recovered',
+           error = COALESCE(error, 'no live writer evidence; reservation recovered'),
+           owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
+     WHERE execution_id = $1 AND status IN ('running', 'suspended')
+  `, [executionId]);
+}
+
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
 const STALE_DISPATCH_MINUTES = 45;
 
@@ -1300,6 +1312,10 @@ export class WorkTaskDispatchModel {
             UPDATE work_lane_entry_automations SET status = 'completed', completed_at = now()
              WHERE task_id = $1 AND status = 'running' AND execution_id = $2
           `, [row.task_id, row.workflow_execution_id]);
+          // Review executions are auto_restart=false, so execution reconciliation
+          // never settles them; a dead one keeps the one-active-execution-per-lane
+          // index and every relaunch fails with a duplicate key.
+          await settleOrphanExecution(client, row.workflow_execution_id);
         }
         if (row.kind === 'verification') {
           await client.query(`
