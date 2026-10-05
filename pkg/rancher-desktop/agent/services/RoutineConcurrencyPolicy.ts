@@ -1,9 +1,4 @@
-/**
- * Tracks protected routine lifetimes without a numeric admission ceiling.
- * Prompt instructions direct workload. Task/artifact ownership is enforced
- * separately by WorkAgentAdmission; the automation switch remains an explicit stop.
- * Legacy limit arguments/settings are retained for caller compatibility only.
- */
+/** Shared admission ceiling for concurrently dispatched routine workers. */
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
@@ -42,13 +37,13 @@ export class RoutineConcurrencyPolicy {
     return Boolean(await SullaSettingsModel.get(MASTER_ENABLED_KEY, true));
   }
 
-  /** Unbounded admission; callers terminate when their candidate inventory is exhausted. */
+  /** Keep worker capacity independent of whole-board consideration. */
   static async resolveLimit(_kind: ProtectedRoutineKind, _legacyFallback?: number): Promise<number> {
-    return Number.POSITIVE_INFINITY;
+    return 5;
   }
 
   static async resolveTotalLimit(): Promise<number | null> {
-    return null;
+    return 5;
   }
 
   /** Count active reservations of a kind (or all kinds when omitted). */
@@ -61,7 +56,7 @@ export class RoutineConcurrencyPolicy {
     return Number(row?.count || 0);
   }
 
-  /** Record a running routine. Numeric limits no longer refuse unrelated work. */
+  /** Reserve at most five workers under one database lock. */
   static async acquire(
     kind: ProtectedRoutineKind,
     _limit: number,
@@ -69,6 +64,8 @@ export class RoutineConcurrencyPolicy {
   ): Promise<string | null> {
     return postgresClient.transaction(async(client: PoolClient) => {
       await client.query('SELECT pg_advisory_xact_lock($1)', [SLOT_ADVISORY_LOCK_KEY]);
+      const active = await client.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM work_routine_slots');
+      if (Number(active.rows[0]?.count || 0) >= 5) return null;
       const id = randomUUID();
       await client.query(
         'INSERT INTO work_routine_slots (id, kind, owner, task_id) VALUES ($1, $2, $3, $4)',

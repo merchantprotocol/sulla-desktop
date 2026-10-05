@@ -45,7 +45,9 @@ export function agentAdmissionSql(taskAlias: string, delegationOwner?: string): 
   const delegation = delegationOwner
     ? `AND COALESCE(lane.workflow_snapshot->'laneContract'->>'owner', '') <> '${ delegationOwner }'`
     : '';
-  return `AND NOT EXISTS (SELECT 1 FROM work_task_dispatches d
+  return `AND (SELECT COUNT(*) FROM (${ liveAgentTasksSql() }) live
+      WHERE live.task_id <> ${ taskId }) < 5
+    AND NOT EXISTS (SELECT 1 FROM work_task_dispatches d
       WHERE d.task_id = ${ taskId } AND d.status = 'running')
     AND NOT EXISTS (SELECT 1 FROM work_task_stage_claims c
       WHERE c.task_id = ${ taskId } AND c.status = 'active')
