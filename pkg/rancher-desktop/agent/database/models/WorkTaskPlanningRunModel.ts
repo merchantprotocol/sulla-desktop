@@ -48,12 +48,13 @@ export class WorkTaskPlanningRunModel {
     const planningKeys = capability.ready
       ? await WorkLaneDefinitionModel.laneKeysForRoles(preview.project_id, ['planning', 'blocked'])
       : ['planning', 'blocked'];
+    const admission = await agentAdmissionSql('t', 'planning-council');
     return postgresClient.transaction(async(client: PoolClient) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
       const taskResult = await client.query<WorkTaskRecord>(`
         SELECT t.* FROM work_tasks t
          WHERE t.id = $1 AND t.archived = false
-           ${ await agentAdmissionSql('t', 'planning-council') }
+           ${ admission }
            AND EXISTS (SELECT 1 FROM work_projects p WHERE p.id = t.project_id AND p.dispatch_enabled = true)
          FOR UPDATE
       `, [taskId]);

@@ -64,9 +64,9 @@ export class RoutineConcurrencyPolicy {
     _limit: number,
     context: RoutineSlotContext = {},
   ): Promise<string | null> {
+    const limit = await this.resolveTotalLimit();
     return postgresClient.transaction(async(client: PoolClient) => {
       await client.query('SELECT pg_advisory_xact_lock($1)', [SLOT_ADVISORY_LOCK_KEY]);
-      const limit = await this.resolveTotalLimit();
       const active = await client.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM work_routine_slots');
       if (Number(active.rows[0]?.count || 0) >= limit) return null;
       const id = randomUUID();

@@ -192,6 +192,7 @@ export class LifecycleCapabilityModel {
     owner: string,
     runtimeInstanceId: string,
   ): Promise<ClaimResult> {
+    const admission = await agentAdmissionSql('t');
     return postgresClient.transaction(client => LifecycleCapabilityModel.claimStageWithClient(
       client,
       taskId,
@@ -199,6 +200,8 @@ export class LifecycleCapabilityModel {
       stage,
       owner,
       runtimeInstanceId,
+      false,
+      admission,
     ));
   }
 
@@ -210,6 +213,7 @@ export class LifecycleCapabilityModel {
     owner: string,
     runtimeInstanceId: string,
     admissionReserved = false,
+    preparedAdmission?: string,
   ): Promise<ClaimResult> {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))");
     const capabilityResult = await client.query<LifecycleCapabilityRecord>(`
@@ -245,7 +249,7 @@ export class LifecycleCapabilityModel {
       const available = await client.query(`
         SELECT t.id FROM work_tasks t JOIN work_projects p ON p.id = t.project_id
          WHERE t.id = $1 AND t.archived = false AND p.dispatch_enabled = true
-           ${ await agentAdmissionSql('t') }
+           ${ preparedAdmission ?? await agentAdmissionSql('t') }
          FOR UPDATE OF t
       `, [taskId]);
       if (!available.rows[0]) return { claimed: false, reason: 'task or artifact has a live writer, capacity is full, or project is paused' };
