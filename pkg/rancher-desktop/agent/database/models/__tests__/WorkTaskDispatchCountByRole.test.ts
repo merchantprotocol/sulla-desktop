@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, jest } from '@jest/globals';
 
+import { SullaSettingsModel } from '../SullaSettingsModel';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
 import type { WipLimits } from '../../../services/ProjectAutomationWipLimits';
