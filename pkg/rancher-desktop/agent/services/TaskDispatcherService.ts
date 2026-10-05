@@ -274,7 +274,14 @@ export class TaskDispatcherService {
       const journaled = await WorkTaskDispatchModel.recoverPendingOutcomeJournals();
       if (journaled.length > 0) console.log(`[TaskDispatcher] Settled ${ journaled.length } journaled outcome(s)`);
       const recovered = await WorkTaskDispatchModel.recoverStale(undefined, [...this.active.keys()]);
-      if (recovered.length > 0) console.warn(`[TaskDispatcher] Recovered ${ recovered.length } stale dispatch(es)`);
+      if (recovered.length > 0) console.warn(`[TaskDispatcher] Recovered ${ recovered.length } orphaned dispatch(es)`, recovered);
+      try {
+        const { PlanningCouncilService } = await import('./PlanningCouncilService');
+        const councils = await PlanningCouncilService.recoverOrphanedCouncils();
+        if (councils.length > 0) console.warn(`[TaskDispatcher] Recovered ${ councils.length } orphaned planning council(s)`, councils);
+      } catch (councilErr) {
+        console.warn('[TaskDispatcher] Planning council orphan recovery failed; dispatch continues:', councilErr);
+      }
 
       // Enumerate the whole portfolio before lane-specific claims. This is the
       // reasoning surface: paused projects, dependencies, waits, assignees and

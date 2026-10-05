@@ -7,6 +7,7 @@ import { ArtifactReceiptModel } from '../ArtifactReceiptModel';
 import { WorkItemsModel } from '../WorkItemsModel';
 import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
 import { classifyInProgressRow, WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
+import { LiveWriterRegistry } from '../../../services/LiveWriterRegistry';
 
 function admissionClient(query: any): any {
   return { query: (sql: string, ...args: any[]) => sql.includes('pg_advisory_xact_lock')
@@ -346,10 +347,55 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[5][0]).toContain("assignee = 'verifier'");
   });
 
-  it.each([[[]], [['unconfirmed-writer']]])('retains reservations during restart recovery with live ids %j', async(liveIds) => {
-    const transaction = jest.spyOn(postgresClient, 'transaction');
-    await expect(WorkTaskDispatchModel.recoverStale(0, liveIds as string[])).resolves.toEqual([]);
-    expect(transaction).not.toHaveBeenCalled();
+  it('recovers only dispatches with no live writer evidence', async() => {
+    const query = (jest.fn() as any).mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    LiveWriterRegistry.acquire('exec-live');
+    try {
+      await expect(WorkTaskDispatchModel.recoverStale(45, ['dispatch-live'])).resolves.toEqual([]);
+    } finally {
+      LiveWriterRegistry.release('exec-live');
+    }
+    const sql = query.mock.calls[0][0];
+    expect(sql).toContain("d.status = 'running'");
+    expect(sql).toContain('NOT (d.id = ANY($2::text[]))');
+    expect(sql).toContain('work_task_outcome_journal');
+    expect(sql).toContain('ANY($3::text[])');
+    expect(sql).toContain('FROM work_task_stage_claims claim');
+    expect(sql).toContain("execution.status IN ('running', 'suspended')");
+    expect(sql).toContain('execution.lease_expires_at > now()');
+    expect(sql).toContain("job.status = 'running'");
+    expect(query.mock.calls[0][1]).toEqual([45, ['dispatch-live'], ['exec-live']]);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases ownership of a recovered review orphan without moving its lane', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ id: 'dispatch-old', task_id: 'task-old', kind: 'verification', workflow_execution_id: 'exec-old' }] })
+      .mockResolvedValue({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.recoverStale(45, [])).resolves.toEqual(['task-old']);
+    expect(query.mock.calls[1][0]).toContain("SET status = 'recovered'");
+    expect(query.mock.calls[1][1]).toEqual(['task-old', 'in-review-verification']);
+    expect(query.mock.calls[2][0]).toContain('work_lane_entry_automations');
+    expect(query.mock.calls[2][1]).toEqual(['task-old', 'exec-old']);
+    expect(query.mock.calls[3][0]).toContain("assignee = 'verifier'");
+    expect(query.mock.calls[3][0]).not.toContain('SET status');
+    expect(query.mock.calls[4][0]).toContain('INSERT INTO work_task_comments');
+    expect(query.mock.calls[4][1][2]).toContain('dispatch-old');
+  });
+
+  it('releases the execution claim of a recovered execution orphan', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ id: 'dispatch-x', task_id: 'task-x', kind: 'execution', workflow_execution_id: null }] })
+      .mockResolvedValue({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.recoverStale(45, [])).resolves.toEqual(['task-x']);
+    expect(query.mock.calls[1][1]).toEqual(['task-x', 'todo-execution']);
+    expect(query.mock.calls[2][0]).toContain('INSERT INTO work_task_comments');
+    expect(query).toHaveBeenCalledTimes(3);
   });
 
   it('reclaims only verification dispatches whose previous-runtime claims were recovered', async() => {

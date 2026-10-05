@@ -7,7 +7,10 @@ import {
   buildReceipt, receiptInsertInput, renderReceiptComment,
   type ArtifactReceipt, type ArtifactReceiptInput,
 } from '../../services/ArtifactReceiptService';
-import { agentAdmissionSql, approvalSafeTargetSql, taskLaneRoleSql, taskLaneTargetSql, taskTargetCompletedSql } from './WorkAgentAdmission';
+import {
+  agentAdmissionSql, approvalSafeTargetSql, noWriterEvidenceSql, taskLaneRoleSql, taskLaneTargetSql, taskTargetCompletedSql,
+} from './WorkAgentAdmission';
+import { LiveWriterRegistry } from '../../services/LiveWriterRegistry';
 import { ArtifactReceiptModel } from './ArtifactReceiptModel';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { WorkflowExecutionModel } from './WorkflowExecutionModel';
@@ -1247,13 +1250,77 @@ export class WorkTaskDispatchModel {
     })();
   }
 
-  static async recoverStale(_staleMinutes = STALE_DISPATCH_MINUTES, _liveDispatchIds: string[] = []): Promise<string[]> {
-    // A replacement runtime's active map cannot see surviving external writers.
-    // Lease age, workflow status and delivered artifacts do not prove that all
-    // writers stopped. Retain both dispatch and stage reservations until owning
-    // terminal settlement, or replay of an outcome journal written after drain.
-    // recoverPendingOutcomeJournals handles that durable confirmation on boot.
-    return [];
+  /**
+   * Settle running dispatches that no live writer owns. Lease age alone is not
+   * proof (an external child can outlive an app restart), so a dispatch is
+   * recovered only when every writer signal is absent: it is not in this
+   * runtime's active map, its own heartbeat and every active stage claim on the
+   * task are silent past the threshold, no unconsumed outcome journal is
+   * waiting to replay, its workflow execution is not running/suspended with a
+   * fresh heartbeat or unexpired lease, and no running agent job references
+   * the task. Anything with writer evidence keeps its reservation.
+   *
+   * Recovery only releases ownership; the task stays in its lane so the next
+   * tick re-admits it (claimNext accepts in-lane execution, claimNextReview
+   * accepts review lanes).
+   */
+  static async recoverStale(staleMinutes = STALE_DISPATCH_MINUTES, liveDispatchIds: string[] = []): Promise<string[]> {
+    const minutes = Math.max(0, Math.floor(staleMinutes));
+    return postgresClient.transaction(async(client: PoolClient) => {
+      const stale = await client.query<{
+        id: string; task_id: string; kind: WorkTaskDispatchKind; workflow_execution_id: string | null;
+      }>(`
+        UPDATE work_task_dispatches d
+           SET status = 'stale',
+               failure_reason = 'orphan_recovered',
+               error = 'no live writer evidence for ' || $1::int || ' minute(s): dispatch heartbeat, stage claims, workflow execution and agent jobs all silent',
+               heartbeat_at = now(),
+               finished_at = now()
+         WHERE d.status = 'running'
+           AND NOT (d.id = ANY($2::text[]))
+           AND d.heartbeat_at < now() - ($1::int * interval '1 minute')
+           AND NOT EXISTS (
+             SELECT 1 FROM work_task_outcome_journal journal
+              WHERE journal.dispatch_id = d.id AND journal.consumed_at IS NULL
+           )
+           ${ noWriterEvidenceSql('d.task_id', 'd.workflow_execution_id', '$1::int', '$3::text[]') }
+        RETURNING d.id, d.task_id, d.kind, d.workflow_execution_id
+      `, [minutes, liveDispatchIds, LiveWriterRegistry.executionIds()]);
+      if (stale.rows.length === 0) return [];
+
+      for (const row of stale.rows) {
+        const capability = row.kind === 'verification' ? 'in-review-verification' : 'todo-execution';
+        await client.query(`
+          UPDATE work_task_stage_claims
+             SET status = 'recovered', released_at = now(), heartbeat_at = now()
+           WHERE task_id = $1 AND capability_key = $2 AND status = 'active'
+        `, [row.task_id, capability]);
+        if (row.workflow_execution_id) {
+          await client.query(`
+            UPDATE work_lane_entry_automations SET status = 'completed', completed_at = now()
+             WHERE task_id = $1 AND status = 'running' AND execution_id = $2
+          `, [row.task_id, row.workflow_execution_id]);
+        }
+        if (row.kind === 'verification') {
+          await client.query(`
+            UPDATE work_tasks
+               SET assignee = 'dispatcher', updated_at = now(), last_activity_at = now(), last_moved_by = 'dispatcher'
+             WHERE id = $1 AND ${ taskLaneRoleSql('work_tasks') } = 'review' AND assignee = 'verifier'
+          `, [row.task_id]);
+        }
+        await client.query(`
+          INSERT INTO work_task_comments (id, task_id, body, author)
+          VALUES ($1, $2, $3, 'dispatcher')
+        `, [
+          `comment-${ randomUUID() }`, row.task_id,
+          `${ new Date().toISOString().slice(0, 10) }: Released orphaned ${ row.kind } dispatch ${ row.id }. ` +
+          `No live writer evidence for ${ minutes } minute(s): its heartbeat, stage claims, workflow execution ` +
+          `and agent jobs were all silent, so it was holding a worker slot. The task stays in its lane and ` +
+          `will be picked up again on a later tick. Undo: none needed.`,
+        ]);
+      }
+      return stale.rows.map(row => row.task_id);
+    });
   }
 
   /**

@@ -8,6 +8,38 @@ export function liveAgentTasksSql(): string {
     UNION SELECT task_id FROM work_lane_entry_automations WHERE status = 'running'`;
 }
 
+/**
+ * Writer-evidence guard for orphan recovery. Appends predicates that are true
+ * only when nothing indicates a live writer for the task: no active stage
+ * claim heartbeat inside the window, no running/suspended workflow execution
+ * with a fresh heartbeat or unexpired lease, and no running agent job that
+ * references the task, and the execution is not in this process's live-writer
+ * registry. `taskId`/`executionId` are trusted column expressions; `minutes`
+ * and `liveExecutions` are bound parameter placeholders such as `$1::int` and
+ * `$3::text[]`.
+ */
+export function noWriterEvidenceSql(taskId: string, executionId: string, minutes: string, liveExecutions: string): string {
+  return `AND NOT (COALESCE(${ executionId }, '') = ANY(${ liveExecutions }))
+    AND NOT EXISTS (
+      SELECT 1 FROM work_task_stage_claims claim
+       WHERE claim.task_id = ${ taskId } AND claim.status = 'active'
+         AND claim.heartbeat_at >= now() - (${ minutes } * interval '1 minute')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM workflow_executions execution
+       WHERE execution.execution_id = ${ executionId }
+         AND execution.status IN ('running', 'suspended')
+         AND (execution.heartbeat_at >= now() - (${ minutes } * interval '1 minute')
+           OR execution.lease_expires_at > now())
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM agent_jobs job
+        JOIN work_tasks task ON task.id = ${ taskId }
+       WHERE job.status = 'running'
+         AND (job.job_id = task.source_ref OR COALESCE(job.results, '[]'::jsonb)::text LIKE '%' || task.id || '%')
+    )`;
+}
+
 function canonicalReferenceSql(value: string): string {
   const reference = `regexp_replace(btrim(${ value }),
     '^https?://(www[.])?github[.]com/([^/]+/[^/]+)/(pull|issues)/([0-9]+)([/#?].*)?$',

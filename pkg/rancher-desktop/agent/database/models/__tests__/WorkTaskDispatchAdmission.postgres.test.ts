@@ -629,13 +629,11 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       await expect(admit('dispatch', nextTask)).resolves.not.toBeNull();
     });
 
-  it.each(['a', 'b'])('retains restarted dispatch ownership until writer termination, then admits %s', async(nextTask) => {
+  it.each(['a', 'b'])('retains a restarted dispatch while an external writer job runs, then recovers it and admits %s', async(nextTask) => {
     await taskWithLane('a', 'owner/repo#925');
     await taskWithLane('b', 'https://github.com/owner/repo/pull/925');
     const claim = await WorkTaskDispatchModel.claimNext('sulla-desktop', 'old-runtime', undefined, 'a');
     expect(claim).not.toBeNull();
-    let finish!: () => void;
-    const survivingWriter = new Promise<void>(resolve => { finish = resolve; });
     await pool.query("UPDATE work_task_dispatches SET heartbeat_at=now()-interval '2 hours' WHERE id=$1", [claim!.dispatch.id]);
     await pool.query("UPDATE work_task_stage_claims SET heartbeat_at=now()-interval '2 hours' WHERE task_id='a'");
     if (nextTask === 'b') {
@@ -643,24 +641,52 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       await pool.query("INSERT INTO workflow_executions (execution_id, status) VALUES ('old-parent', 'completed')");
       await pool.query("UPDATE work_task_dispatches SET workflow_execution_id='old-parent', artifact_url='https://github.com/owner/repo/pull/925' WHERE id=$1", [claim!.dispatch.id]);
     }
-    // The restarted process has no active map entries for the surviving writer.
+    // The surviving external child is visible as a running agent job.
+    await pool.query("INSERT INTO agent_jobs (job_id, status, results) VALUES ('job-a', 'running', '[{\"task\":\"a\"}]'::jsonb)");
     await expect(WorkTaskDispatchModel.recoverStale(0, [])).resolves.toEqual([]);
     expect((await pool.query('SELECT status FROM work_task_dispatches WHERE id=$1', [claim!.dispatch.id])).rows[0].status).toBe('running');
     expect((await pool.query("SELECT status FROM work_task_stage_claims WHERE task_id='a'")).rows[0].status).toBe('active');
-    await expect(admit('dispatch', 'a')).resolves.toBeNull();
     await expect(admit('dispatch', 'b')).resolves.toBeNull();
     await expect(admit('lane', 'b')).resolves.toBeNull();
     await expect(admit('planning', 'b')).resolves.toBeNull();
-    finish();
-    await survivingWriter;
-    // The owning runtime journals only after writer drain. A new runtime can
-    // replay that durable confirmation without an in-memory active entry.
-    const journalId = await WorkTaskDispatchModel.appendOutcomeJournal(claim!.dispatch.id, 'a', {
-      dispatchStatus: 'completed', taskStatus: 'planning', taskAssignee: 'dispatcher',
-      comment: 'Writer termination confirmed; unfinished work remains in its lane.',
-    });
-    await expect(WorkTaskDispatchModel.recoverPendingOutcomeJournals()).resolves.toEqual([journalId]);
+
+    // Once the child is gone nothing evidences a writer, so the reservation
+    // is released on the next pass instead of holding a slot forever.
+    await pool.query("UPDATE agent_jobs SET status='completed' WHERE job_id='job-a'");
+    await expect(WorkTaskDispatchModel.recoverStale(0, [])).resolves.toEqual(['a']);
+    expect((await pool.query('SELECT status, failure_reason FROM work_task_dispatches WHERE id=$1', [claim!.dispatch.id])).rows[0])
+      .toEqual({ status: 'stale', failure_reason: 'orphan_recovered' });
+    expect((await pool.query("SELECT status FROM work_task_stage_claims WHERE task_id='a'")).rows[0].status).toBe('recovered');
+    expect((await pool.query("SELECT count(*)::int AS n FROM work_task_comments WHERE task_id='a'")).rows[0].n).toBe(1);
     await expect(admit('dispatch', nextTask)).resolves.not.toBeNull();
+  });
+
+  it('never recovers a dispatch this runtime still owns or one with a pending outcome journal', async() => {
+    await taskWithLane('a');
+    await taskWithLane('c');
+    const live = await WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime-now', undefined, 'a');
+    const journaled = await WorkTaskDispatchModel.claimNext('sulla-desktop', 'old-runtime', undefined, 'c');
+    await pool.query("UPDATE work_task_dispatches SET heartbeat_at=now()-interval '2 hours'");
+    await pool.query("UPDATE work_task_stage_claims SET heartbeat_at=now()-interval '2 hours'");
+    await WorkTaskDispatchModel.appendOutcomeJournal(journaled!.dispatch.id, 'c', {
+      dispatchStatus: 'completed', taskStatus: 'planning', taskAssignee: 'dispatcher', comment: 'drained',
+    });
+    await expect(WorkTaskDispatchModel.recoverStale(0, [live!.dispatch.id])).resolves.toEqual([]);
+    expect((await pool.query("SELECT status FROM work_task_dispatches ORDER BY task_id")).rows.map(r => r.status))
+      .toEqual(['running', 'running']);
+  });
+
+  it('recovers a planning council whose workflow lease expired with no live writer, then readmits it', async() => {
+    await taskWithLane('a');
+    await expect(admit('planning', 'a')).resolves.not.toBeNull();
+    await pool.query(`INSERT INTO workflow_executions (execution_id, status, lease_expires_at, heartbeat_at)
+      VALUES ('exec-dead', 'running', now() - interval '13 hours', now() - interval '13 hours')`);
+    await pool.query("UPDATE work_task_planning_runs SET execution_id='exec-dead', heartbeat_at=now()-interval '13 hours' WHERE task_id='a'");
+    await pool.query("UPDATE work_lane_entry_automations SET status='completed' WHERE task_id='a'");
+    await expect(admit('planning', 'a')).resolves.toBeNull();
+    await expect(WorkTaskPlanningRunModel.recoverStale(45)).resolves.toEqual(['a']);
+    expect((await pool.query("SELECT status FROM work_task_planning_runs WHERE task_id='a'")).rows[0].status).toBe('stale');
+    await expect(admit('planning', 'a')).resolves.not.toBeNull();
   });
 
   it('reserves custody-only artifact references across mixed writers', async() => {

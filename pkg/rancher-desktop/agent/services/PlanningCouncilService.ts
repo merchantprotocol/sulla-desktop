@@ -38,18 +38,28 @@ export class PlanningCouncilService {
 
   static async recoverOnStartup(): Promise<void> {
     await WorkflowExecutionModel.reapStaleLeaselessExecutions();
+    await PlanningCouncilService.recoverOrphanedCouncils();
+  }
+
+  /**
+   * Release councils with no live writer evidence and relaunch the ones whose
+   * task still needs planning. Safe to call every dispatcher tick: councils
+   * with a heartbeating workflow or running child job are left alone.
+   */
+  static async recoverOrphanedCouncils(): Promise<string[]> {
     const taskIds = await WorkTaskPlanningRunModel.recoverStale(45);
     for (const taskId of taskIds) {
       await WorkItemsModel.addComment({
         task_id: taskId,
         author:  'planning-council',
-        body:    'Recovered a planning council interrupted by restart; retrying with a new durable claim.',
+        body:    'Recovered an orphaned planning council (no live writer evidence); retrying with a new durable claim.',
       }).catch(err => console.warn(`[PlanningCouncil] Could not audit recovery for ${ taskId }:`, err));
       const task = await WorkItemsModel.getTask(taskId);
       if (task && ['blocked', 'planning'].includes(await WorkLaneDefinitionModel.semanticRoleForStatus(task.project_id, task.status))) {
-        await PlanningCouncilService.claimAndLaunch(taskId, task.status, 'startup-recovery');
+        await PlanningCouncilService.claimAndLaunch(taskId, task.status, 'orphan-recovery');
       }
     }
+    return taskIds;
   }
 
   /** Controller callback for a workflow that stopped before moving the task. */
