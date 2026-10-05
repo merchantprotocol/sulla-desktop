@@ -245,7 +245,7 @@ export class LifecycleCapabilityModel {
       const available = await client.query(`
         SELECT t.id FROM work_tasks t JOIN work_projects p ON p.id = t.project_id
          WHERE t.id = $1 AND t.archived = false AND p.dispatch_enabled = true
-           ${ agentAdmissionSql('t') }
+           ${ await agentAdmissionSql('t') }
          FOR UPDATE OF t
       `, [taskId]);
       if (!available.rows[0]) return { claimed: false, reason: 'task or artifact has a live writer, capacity is full, or project is paused' };

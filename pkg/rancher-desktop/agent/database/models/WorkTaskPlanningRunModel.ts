@@ -53,7 +53,7 @@ export class WorkTaskPlanningRunModel {
       const taskResult = await client.query<WorkTaskRecord>(`
         SELECT t.* FROM work_tasks t
          WHERE t.id = $1 AND t.archived = false
-           ${ agentAdmissionSql('t', 'planning-council') }
+           ${ await agentAdmissionSql('t', 'planning-council') }
            AND EXISTS (SELECT 1 FROM work_projects p WHERE p.id = t.project_id AND p.dispatch_enabled = true)
          FOR UPDATE
       `, [taskId]);

@@ -37,6 +37,8 @@ on:
     - 'pkg/rancher-desktop/agent/services/PlanningCouncilService.ts'
     - 'pkg/rancher-desktop/agent/services/TaskDispatcherService.ts'
     - 'pkg/rancher-desktop/agent/services/RoutineConcurrencyPolicy.ts'
+    - 'pkg/rancher-desktop/shared/workerConcurrency.ts'
+    - 'pkg/rancher-desktop/pages/LanguageModelSettings.vue'
     - 'pkg/rancher-desktop/agent/services/__tests__/RoutineConcurrencyPolicy.test.ts'
     - 'pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts'
   workflow_dispatch:

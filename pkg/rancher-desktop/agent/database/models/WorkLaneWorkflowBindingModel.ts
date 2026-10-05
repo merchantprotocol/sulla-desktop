@@ -391,7 +391,7 @@ export class WorkLaneWorkflowBindingModel {
            AND task.status = lane.lane_key AND project.dispatch_enabled = true
            AND NOT EXISTS (SELECT 1 FROM work_lane_entry_automations newer
              WHERE newer.task_id = lane.task_id AND newer.generation > lane.generation)
-           ${ agentAdmissionSql('task') }
+           ${ await agentAdmissionSql('task') }
          RETURNING lane.*
       `, [id, executionId]);
       return rows.rows[0] ?? null;
