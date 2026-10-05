@@ -81,9 +81,8 @@ export default defineComponent({
       modelLoadError:        '' as string,
       remoteRetryCount:      3, // Number of retries before falling back to local LLM
       remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
-      // Project Automation (single concurrent-agent limit; see Project Automation tab)
+      // Project Automation master switch
       automatedProjectManagementEnabled: true,
-      routineConcurrencyTotalLimit: 5,
       // Heartbeat settings
       heartbeatEnabled:      true,
       heartbeatDelayMinutes: 15,
@@ -221,7 +220,6 @@ export default defineComponent({
     this.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
     this.automatedProjectManagementEnabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', true));
-    this.routineConcurrencyTotalLimit = Number(await SullaSettingsModel.get('routineConcurrencyTotalLimit', 5));
     this.botName = await SullaSettingsModel.get('botName', 'Sulla');
     this.primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
     // Load provider/model state from ModelProviderService (source of truth)
@@ -732,7 +730,6 @@ export default defineComponent({
           heartbeatEnabled:      Boolean(this.heartbeatEnabled),
           heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 15,
           automatedProjectManagementEnabled:        Boolean(this.automatedProjectManagementEnabled),
-          routineConcurrencyTotalLimit: Number(this.routineConcurrencyTotalLimit),
           heartbeatPrompt:       String(this.heartbeatPrompt || ''),
           heartbeatProvider:     String(this.heartbeatProvider || 'default'),
           subconsciousProvider:  String(this.subconsciousProvider || 'default'),
@@ -746,7 +743,6 @@ export default defineComponent({
           heartbeatDelayMinutes: 'number',
           heartbeatEnabled:      'boolean',
           automatedProjectManagementEnabled:        'boolean',
-          routineConcurrencyTotalLimit: 'number',
         };
 
         for (const [key, value] of Object.entries(settingsToSave)) {
@@ -1690,26 +1686,10 @@ export default defineComponent({
             </p>
           </div>
 
-          <!-- Concurrent agent limit -->
-          <div
-            v-if="automatedProjectManagementEnabled"
-            class="setting-group"
-          >
-            <label class="setting-label">Concurrent agent limit count</label>
-            <div class="delay-input">
-              <input
-                v-model.number="routineConcurrencyTotalLimit"
-                type="number"
-                class="text-input"
-                min="0"
-                max="32"
-                style="width: 120px;"
-              >
-            </div>
-            <p class="setting-description">
-              Maximum number of protected Projects routines (agents) allowed to run at the same time, across all work. 0 = unlimited.
-            </p>
-          </div>
+          <p class="setting-description">
+            Direct agents through their prompts. Every board card is considered, without a numeric
+            concurrency limit. Project pauses, task ownership and approval boundaries still apply.
+          </p>
         </div>
       </div>
     </div>

@@ -480,7 +480,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     await expect(WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime', undefined, 'dependency')).resolves.toBeNull();
   });
 
-  it('enforces three total leases during concurrent mixed review/execution claims', async() => {
+  it('admits four independent concurrent mixed review/execution claims', async() => {
     await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES
       ('a', 'enabled', 'in_review'), ('b', 'enabled', 'custom'), ('c', 'enabled', 'blocked'), ('d', 'enabled', 'in_review')`);
     const claims = await Promise.all([
@@ -489,7 +489,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime-c', undefined, 'c'),
       WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime-d', 'd'),
     ]);
-    expect(claims.filter(Boolean)).toHaveLength(3);
+    expect(claims.filter(Boolean)).toHaveLength(4);
   });
 
   it('holds live lane writers and duplicate PRs without removing them from consideration', async() => {
@@ -685,12 +685,12 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       await expect(admit(service, 'a')).resolves.toBeNull();
     });
 
-  it('bounds simultaneous lane, planning and dispatcher writers to three tasks', async() => {
+  it('admits independent lane, planning and dispatcher writers beyond three tasks', async() => {
     for (const id of ['a', 'b', 'c', 'd']) await taskWithLane(id);
     const results = await Promise.all([
       admit('lane', 'a'), admit('planning', 'b'), admit('dispatch', 'c'), admit('lane', 'd'),
     ]);
-    expect(results.filter(Boolean)).toHaveLength(3);
+    expect(results.filter(Boolean)).toHaveLength(4);
   });
 
   it('keeps public caller leases reserved through dispatcher runtime recovery until release', async() => {

@@ -36,7 +36,6 @@ import { createPlaybookState } from '../workflow/WorkflowPlaybook';
 
 const CHECK_INTERVAL_MS = 60_000;
 const LEASE_HEARTBEAT_MS = 120_000;
-const DEFAULT_CONCURRENCY = 3;
 const RUNTIME_INSTANCE_ID = `task-dispatcher-${ process.pid }-${ Date.now() }`;
 const DEFAULT_VERIFIER_TIMEOUT_MINUTES = 45;
 const DEFAULT_EXECUTION_TIMEOUT_MINUTES = 90;
@@ -124,6 +123,7 @@ export class TaskDispatcherService {
   private lastTickError: string | null = null;
   private schedulerId: ReturnType<typeof setInterval> | null = null;
   private reclaimedReviews = 0;
+  private lastConsideration: { considered: number; dispatched: number; holds: Record<string, number> } | null = null;
   private active = new Map<string, AbortService>();
   private lastBackpressure: {
     limits:   WipLimits;
@@ -313,9 +313,7 @@ export class TaskDispatcherService {
         })),
       });
 
-      // Preserve WIP telemetry, but do not turn portfolio context into an
-      // admission deny-list. The hard execution bound is the configured worker
-      // concurrency (three by default) plus collision-safe leases.
+      // WIP counts inform prompt-directed work; they never deny admission.
       try {
         const wipLimits = await resolveWipLimits();
         const roleCounts = await WorkTaskDispatchModel.countByRole();
@@ -327,10 +325,10 @@ export class TaskDispatcherService {
           at:       new Date().toISOString(),
         };
       } catch (wipErr) {
-        console.warn('[TaskDispatcher] WIP telemetry unavailable; lease concurrency remains enforced:', wipErr);
+        console.warn('[TaskDispatcher] WIP telemetry unavailable; collision ownership remains enforced:', wipErr);
       }
       const dispatched = await this.fillCandidatePool(considered);
-      outcome = dispatched > 0 ? 'actively-dispatching' : 'no-eligible-work';
+      outcome = dispatched > 0 ? 'actively-dispatching' : 'idle';
       if (this.activeTickGeneration === generation) {
         await this.reportTickHealth('healthy');
       }
@@ -370,40 +368,46 @@ export class TaskDispatcherService {
         activeTickStartedAt: this.activeTickStartedAt,
         tickWedgeCount: this.tickWedgeCount,
         lastTickError: this.lastTickError,
+        boardConsideration: this.lastConsideration,
       },
     });
   }
 
   private async fillCandidatePool(candidates: DispatchCandidate[]): Promise<number> {
     let dispatched = 0;
-    const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
-    const capacity = Math.min(DEFAULT_CONCURRENCY, Math.max(1, configured || DEFAULT_CONCURRENCY));
+    const holds: Record<string, number> = {};
+    const recordHold = (reason: string) => { holds[reason] = (holds[reason] || 0) + 1; };
     for (const candidate of candidates) {
       // Consider every row, even when an explicit stop or live editor prevents action.
       const hold = !candidate.project_dispatch_enabled ? 'project explicitly paused'
         : (candidate.lane_role === 'terminal' || ['done', 'cancelled', 'parked'].includes(candidate.status)) ? 'terminal task'
           : candidate.has_active_dispatch || candidate.has_active_stage_claim ? 'live owner' : null;
       if (hold) {
+        recordHold(hold);
         console.log('[TaskDispatcher] Candidate held at action boundary', { taskId: candidate.id, hold });
         continue;
       }
-      if (await WorkTaskDispatchModel.countRunning() >= capacity) continue;
       try {
         if ((candidate.lane_role === 'review' || candidate.status === 'in_review')) {
           if (await this.fillVerificationPool(candidate.id)) dispatched += 1;
+          else recordHold('review unavailable or ownership conflict');
         } else {
-          dispatched += await this.fillExecutionPool(candidate.id);
+          const started = await this.fillExecutionPool(candidate.id);
+          dispatched += started;
+          if (!started) recordHold('ownership conflict or task changed');
         }
       } catch (error) {
+        recordHold('admission error');
         console.error('[TaskDispatcher] Candidate admission failed; considering remaining work', { taskId: candidate.id, error });
       }
     }
+    this.lastConsideration = { considered: candidates.length, dispatched, holds };
+    console.log('[TaskDispatcher] Board consideration complete', this.lastConsideration);
     return dispatched;
   }
 
   private async fillExecutionPool(taskId?: string): Promise<number> {
-    const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
-    const concurrency = await RoutineConcurrencyPolicy.resolveLimit('execution', configured || DEFAULT_CONCURRENCY);
+    const concurrency = await RoutineConcurrencyPolicy.resolveLimit('execution');
     const enforceSlots = await RoutineConcurrencyPolicy.isEnabled();
     if (enforceSlots) await RoutineConcurrencyPolicy.reclaimStale();
     const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
@@ -417,7 +421,7 @@ export class TaskDispatcherService {
       fallbackMode:      'manual_hold',
     });
 
-    let freeSlots = Math.min(taskId ? 1 : concurrency, Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution')));
+    let freeSlots = taskId ? 1 : concurrency;
     let dispatched = 0;
     while (freeSlots > 0 && this.initialized) {
       let slot: string | null = null;
@@ -476,8 +480,7 @@ export class TaskDispatcherService {
       });
       return false;
     }
-    const configured = Number(await SullaSettingsModel.get('taskVerifierConcurrency', DEFAULT_CONCURRENCY));
-    const concurrency = await RoutineConcurrencyPolicy.resolveLimit('review', configured || DEFAULT_CONCURRENCY);
+    const concurrency = await RoutineConcurrencyPolicy.resolveLimit('review');
     const enforceSlots = await RoutineConcurrencyPolicy.isEnabled();
     if (enforceSlots) await RoutineConcurrencyPolicy.reclaimStale();
     const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
@@ -492,7 +495,7 @@ export class TaskDispatcherService {
       details:           { ...(await WorkTaskDispatchModel.verificationPoolStats()), reclaimed: this.reclaimedReviews },
     });
 
-    let freeSlots = Math.min(taskId ? 1 : concurrency, Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('verification')));
+    let freeSlots = taskId ? 1 : concurrency;
     let dispatched = false;
     while (freeSlots > 0 && this.initialized) {
       let slot: string | null = null;
