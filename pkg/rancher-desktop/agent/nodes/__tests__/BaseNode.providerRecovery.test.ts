@@ -22,6 +22,13 @@ const secondaryService = {
   chatStream:      secondaryChatStreamMock,
 };
 
+jest.unstable_mockModule('@pkg/utils/paths', () => ({
+  default: { sullaHome: '/tmp/sulla-test', sullaConfig: '/tmp/sulla-test', sullaDesktopCodebase: '/tmp/sulla-test', logs: '/tmp' },
+}));
+jest.unstable_mockModule('@pkg/utils/logging', () => ({
+  default: new Proxy({}, { get: () => ({ log: jest.fn(), warn: jest.fn(), error: jest.fn(), info: jest.fn(), debug: jest.fn() }) }),
+}));
+
 jest.unstable_mockModule('../../languagemodels', () => ({
   getAgentOverrideService: jest.fn(async() => null),
   getPrimaryService:       jest.fn(async() => primaryService),
@@ -168,7 +175,8 @@ describe('BaseNode provider recovery', () => {
         return true;
       }
       async execute(state: any) {
-        return this.normalizedChat(state, 'System prompt', { disableTools: true });
+        const reply = await this.normalizedChat(state, 'System prompt', { disableTools: true });
+        return { state, decision: { type: 'end' as const }, response: reply };
       }
     }
     const abort = new AbortController();
@@ -193,7 +201,7 @@ describe('BaseNode provider recovery', () => {
     expect(sent).toContainEqual({ content: 'Working through the fallback', kind: 'thinking' });
     expect(sent).toContainEqual({ content: 'First part', kind: 'streaming' });
     finish({ content: 'First part', metadata: {} });
-    const reply = await run;
+    const { response: reply } = await run;
     expect(reply?.metadata.streamingEmitted).toBe(true);
     expect(sent.slice(-2)).toEqual([
       { content: '', kind: 'streaming_complete' },
@@ -211,7 +219,8 @@ describe('BaseNode provider recovery', () => {
         return true;
       }
       async execute(state: any) {
-        return this.normalizedChat(state, 'System prompt', { disableTools: true });
+        const reply = await this.normalizedChat(state, 'System prompt', { disableTools: true });
+        return { state, decision: { type: 'end' as const }, response: reply };
       }
     }
     primaryChatStreamMock.mockImplementationOnce(async(_messages: any, callbacks: any) => {
@@ -227,7 +236,7 @@ describe('BaseNode provider recovery', () => {
       messages: [{ role: 'user', content: 'Please answer.' }],
       metadata: { threadId: 'test-thread', wsChannel: 'test-channel', options: {} },
     };
-    const reply = await new TestNode('test-node', 'TestNode').execute(state);
+    const { response: reply } = await new TestNode('test-node', 'TestNode').execute(state);
     expect(reply?.content).toBe('Recovered');
     expect(reply?.metadata).toMatchObject({ retry_used: true, streamingEmitted: true });
     expect(primaryChatMock).not.toHaveBeenCalled();
