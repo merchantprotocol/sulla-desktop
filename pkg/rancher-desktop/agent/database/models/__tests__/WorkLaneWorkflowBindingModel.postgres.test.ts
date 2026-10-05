@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, afterAll, afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { Pool } from 'pg';
 
 import { LaneEntryAutomationService } from '../../../services/LaneEntryAutomationService';
+import { SullaSettingsModel } from '../SullaSettingsModel';
 import { postgresClient } from '../../PostgresClient';
 import { up as createWorkflows } from '../../migrations/0023_create_workflows_table';
 import { up as createWorkflowExecutions } from '../../migrations/0026_create_workflow_executions_table';
@@ -127,6 +128,10 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
     await pool?.end();
     await bootstrapPool?.query(`DROP SCHEMA "${ schema }" CASCADE`);
     await bootstrapPool?.end();
+  });
+
+  beforeEach(() => {
+    jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async(_key, fallback) => fallback);
   });
 
   afterEach(() => {

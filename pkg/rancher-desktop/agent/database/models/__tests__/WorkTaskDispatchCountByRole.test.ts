@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
@@ -15,6 +15,10 @@ const unlimited: WipLimits = {
 };
 
 describe('WorkTaskDispatchModel.countByRole (issue #711)', () => {
+  beforeEach(() => {
+    jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async(_key, fallback) => fallback);
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
   });

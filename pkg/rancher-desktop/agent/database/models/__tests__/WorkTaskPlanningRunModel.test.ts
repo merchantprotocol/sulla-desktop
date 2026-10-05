@@ -1,5 +1,6 @@
-import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 
+import { SullaSettingsModel } from '../SullaSettingsModel';
 import { postgresClient } from '../../PostgresClient';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
@@ -16,6 +17,10 @@ describe('WorkTaskPlanningRunModel', () => {
 
   beforeAll(() => {
     originalTransaction = postgresClient.transaction;
+  });
+
+  beforeEach(() => {
+    jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async(_key, fallback) => fallback);
   });
 
   afterEach(() => {
