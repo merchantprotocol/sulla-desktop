@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { LaneEntryAutomationService } from '../../../services/LaneEntryAutomationService';
+import { SullaSettingsModel } from '../SullaSettingsModel';
 import { postgresClient } from '../../PostgresClient';
 import { ArtifactReceiptModel } from '../ArtifactReceiptModel';
 import { WorkItemsModel } from '../WorkItemsModel';
@@ -24,6 +25,7 @@ describe('WorkTaskDispatchModel', () => {
   });
 
   beforeEach(() => {
+    jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async(_key, fallback) => fallback);
     jest.spyOn(ArtifactReceiptModel, 'insertIfAbsentWithClient').mockResolvedValue({
       inserted: true,
       row:      { id: 'receipt-1' } as any,

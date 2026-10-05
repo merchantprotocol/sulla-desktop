@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+import { SullaSettingsModel } from '../SullaSettingsModel';
 import { postgresClient } from '../../PostgresClient';
 import { LifecycleCapabilityModel } from '../LifecycleCapabilityModel';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
@@ -16,6 +17,7 @@ describe('LifecycleCapabilityModel', () => {
 
   beforeEach(() => {
     jest.restoreAllMocks();
+    jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async(_key, fallback) => fallback);
     jest.spyOn(WorkLaneDefinitionModel, 'semanticRoleForStatus').mockImplementation((_projectId, status) => {
       const role = status === 'planning'
         ? 'planning'
