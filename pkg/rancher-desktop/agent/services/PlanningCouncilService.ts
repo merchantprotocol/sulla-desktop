@@ -126,15 +126,21 @@ export class PlanningCouncilService {
       });
       const snapshot = await PlanningCouncilService.buildSnapshot(claim);
       const { executeRoutine } = await import('@pkg/main/sullaRoutineTemplateEvents');
+      const executionId = `planning-execution-${ claim.run.id }`;
+      // Persist the callback identity before any writer can start.
+      await WorkTaskPlanningRunModel.attachExecution(claim.run.id, executionId);
       // A launch error can occur after a child starts. Retain ownership until
       // its terminal callback confirms termination, including bookkeeping errors.
       launchAttempted = true;
       const execution = await executeRoutine(
         PROJECT_TASK_PLANNING_WORKFLOW_ID,
         JSON.stringify(snapshot),
-        { allowConcurrent: true, routineKind: 'planning', waitForCapacity: true },
+        { executionId, allowConcurrent: true, routineKind: 'planning', waitForCapacity: true },
       );
-      await WorkTaskPlanningRunModel.attachExecution(claim.run.id, execution.playbookExecutionId ?? execution.executionId);
+      if (execution.skipped) {
+        await WorkTaskPlanningRunModel.settleForTask(claim.task.id, 'failed', `Workflow declined: ${ execution.skipped }`);
+        return;
+      }
       await WorkItemsModel.addComment({
         task_id: claim.task.id,
         author:  'planning-council',

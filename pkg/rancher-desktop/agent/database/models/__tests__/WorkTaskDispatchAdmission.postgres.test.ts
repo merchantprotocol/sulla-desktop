@@ -385,6 +385,37 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     } finally { epic.mockRestore(); }
   });
 
+  it.each([false, true])('checks destination approval before project transfer (same key: %s)', async(sameKey) => {
+    const { WorkItemsModel } = await import('../WorkItemsModel');
+    await pool.query("INSERT INTO work_tasks (id, project_id, status) VALUES ('move-target', 'enabled', $1)",
+      [sameKey ? 'shipped' : 'qa']);
+    await pool.query(`INSERT INTO work_lane_definitions
+      (lane_key, semantic_role, scope, project_id, position, requires_human_approval)
+      VALUES ('destination-approval', 'manual', 'project', 'paused', 1, true),
+             ('shipped', 'terminal', 'project', 'paused', 2, false)`);
+    const epic = jest.spyOn(WorkItemsModel as any, 'requireEpic').mockResolvedValue({ id: 'target', project_id: 'paused' });
+    try {
+      await expect(WorkItemsModel.updateTask('move-target', {
+        epic_id: 'target', ...(sameKey ? {} : { status: 'shipped' }), actor: 'worker',
+      })).rejects.toThrow('human_approval_required');
+      expect((await pool.query("SELECT project_id FROM work_tasks WHERE id='move-target'")).rows[0].project_id).toBe('enabled');
+    } finally { epic.mockRestore(); }
+  });
+
+  it('finds a prebound planning reservation at terminal confirmation and releases competing work', async() => {
+    const { PlanningCouncilService } = await import('../../../services/PlanningCouncilService');
+    await pool.query(`INSERT INTO work_tasks (id, project_id, status, github_issue)
+      VALUES ('prebound', 'enabled', 'blocked', 'owner/repo#44'), ('competitor', 'enabled', 'blocked', 'owner/repo#44')`);
+    const claim = await WorkTaskPlanningRunModel.claim('prebound', 'blocked');
+    expect(claim).not.toBeNull();
+    const executionId = `planning-execution-${ claim!.run.id }`;
+    await WorkTaskPlanningRunModel.attachExecution(claim!.run.id, executionId);
+    await expect(WorkTaskPlanningRunModel.claim('competitor', 'blocked')).resolves.toBeNull();
+    await PlanningCouncilService.handleWorkflowFinished(executionId, 'completed');
+    expect(await WorkTaskPlanningRunModel.findActiveByExecution(executionId)).toBeNull();
+    await expect(WorkTaskPlanningRunModel.claim('competitor', 'blocked')).resolves.not.toBeNull();
+  });
+
   it('claims waiting human-owned custom-lane work in place and rejects a duplicate claim', async() => {
     await pool.query(`INSERT INTO work_tasks (id, project_id, status, assignee, labels)
       VALUES ('custom', 'enabled', 'custom_lane', 'human', ARRAY['gated']), ('dependency', 'paused', 'todo', null, '{}');

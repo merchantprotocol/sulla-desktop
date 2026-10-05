@@ -1094,6 +1094,15 @@ export class WorkItemsModel {
             `SELECT (${ approvalSafeTargetSql('t', "'__project_move__'") }) = t.status AS held
              FROM work_tasks t WHERE id = $1`, [id]);
           if (held.rows[0]?.held) throw new Error('human_approval_required: project move cannot discard approval');
+          const destination = changes.status ?? current.rows[0].status;
+          const permitted = await client.query<{ target: string }>(
+            `SELECT ${ approvalSafeTargetSql('destination_task', '$3', true) } AS target
+             FROM (SELECT id, $2::text AS project_id, '__project_entry__'::text AS status
+                   FROM work_tasks WHERE id = $1) destination_task`,
+            [id, nextProjectId, destination]);
+          if (permitted.rows[0]?.target !== destination) {
+            throw new Error('human_approval_required: project move cannot skip destination approval');
+          }
         }
         if (changes.status !== undefined && changes.status !== current.rows[0].status && actor !== 'human') {
           const permitted = await client.query<{ target: string }>(

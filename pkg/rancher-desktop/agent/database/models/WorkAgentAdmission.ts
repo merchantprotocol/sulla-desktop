@@ -92,7 +92,7 @@ export function taskLaneTargetSql(alias: string, value: string): string {
 }
 
 /** Keep consideration broad; stop automatic movement at the actual approval boundary. */
-export function approvalSafeTargetSql(alias: string, destination: string): string {
+export function approvalSafeTargetSql(alias: string, destination: string, projectEntry = false): string {
   return `(WITH effective AS (
     SELECT DISTINCT ON (lane.lane_key) lane.* FROM work_lane_definitions lane
     WHERE lane.reset_at IS NULL
@@ -106,7 +106,7 @@ export function approvalSafeTargetSql(alias: string, destination: string): strin
     THEN ${ alias }.status
     ELSE COALESCE((SELECT gate.lane_key FROM active gate
       WHERE gate.requires_human_approval
-        AND gate.position > (SELECT position FROM active WHERE lane_key = ${ alias }.status)
+        AND gate.position > ${ projectEntry ? "'-Infinity'::float8" : `(SELECT position FROM active WHERE lane_key = ${ alias }.status)` }
         AND gate.position < (SELECT position FROM active WHERE lane_key = ${ destination })
       ORDER BY gate.position, gate.lane_key LIMIT 1), ${ destination }) END)`;
 }

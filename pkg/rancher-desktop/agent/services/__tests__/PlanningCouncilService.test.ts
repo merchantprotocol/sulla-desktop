@@ -121,9 +121,9 @@ describe('PlanningCouncilService', () => {
     expect(executeRoutineMock).toHaveBeenCalledWith(
       'core-routine-plan-project-task',
       expect.stringContaining('"original_blocker":"Exact blocker"'),
-      { allowConcurrent: true, routineKind: 'planning', waitForCapacity: true },
+      { executionId: 'planning-execution-planning-1', allowConcurrent: true, routineKind: 'planning', waitForCapacity: true },
     );
-    expect(attachExecutionMock).toHaveBeenCalledWith('planning-1', 'wfp-1');
+    expect(attachExecutionMock).toHaveBeenCalledWith('planning-1', 'planning-execution-planning-1');
     expect(addCommentMock).toHaveBeenCalledWith(expect.objectContaining({
       task_id: 'task-1', author: 'planning-council',
     }));
@@ -138,12 +138,11 @@ describe('PlanningCouncilService', () => {
     expect(applicationUpdateTaskMock).not.toHaveBeenCalled();
   });
 
-  it.each(['attachment', 'audit'])('retains a live writer after post-launch %s failure', async(failure) => {
+  it('retains a live writer after post-launch audit failure', async() => {
     let stopWriter!: () => void;
     const writer = new Promise<void>(resolve => { stopWriter = resolve });
     executeRoutineMock.mockImplementation(async() => ({ executionId: 'graph-1', playbookExecutionId: 'wfp-1' }));
-    if (failure === 'attachment') attachExecutionMock.mockRejectedValueOnce(new Error('database unavailable'));
-    else addCommentMock.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('audit unavailable'));
+    addCommentMock.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('audit unavailable'));
     const PlanningCouncilService = await service();
     await PlanningCouncilService.handleTaskStatusTransition(task, 'blocked', 'worker');
     expect(settleForTaskMock).not.toHaveBeenCalled();
@@ -155,6 +154,35 @@ describe('PlanningCouncilService', () => {
     expect(settleForTaskMock).not.toHaveBeenCalled();
     stopWriter();
     await settlement;
+    expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'completed');
+  });
+
+  it('does not launch when durable callback binding fails', async() => {
+    attachExecutionMock.mockRejectedValueOnce(new Error('database unavailable'));
+    const PlanningCouncilService = await service();
+    await PlanningCouncilService.handleTaskStatusTransition(task, 'blocked', 'worker');
+    expect(executeRoutineMock).not.toHaveBeenCalled();
+    expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'failed', 'database unavailable');
+  });
+
+  it('releases prebound ownership when activation explicitly declines to start', async() => {
+    executeRoutineMock.mockResolvedValueOnce({ executionId: '', skipped: 'preflight_empty' });
+    const PlanningCouncilService = await service();
+    await PlanningCouncilService.handleTaskStatusTransition(task, 'blocked', 'worker');
+    expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'failed', 'Workflow declined: preflight_empty');
+  });
+
+  it('binds the terminal identity before a fast workflow can finish', async() => {
+    const PlanningCouncilService = await service();
+    getTaskMock.mockResolvedValue({ ...task, status: 'todo' });
+    executeRoutineMock.mockImplementationOnce(async(_id: string, _payload: string, options: any) => {
+      expect(attachExecutionMock).toHaveBeenCalledWith(run.id, options.executionId);
+      findActiveByExecutionMock.mockImplementation(async(id: string) =>
+        id === options.executionId ? run : null);
+      await PlanningCouncilService.handleWorkflowFinished(options.executionId, 'completed');
+      return { executionId: options.executionId };
+    });
+    await PlanningCouncilService.handleTaskStatusTransition(task, 'blocked', 'worker');
     expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'completed');
   });
 
