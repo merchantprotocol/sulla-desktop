@@ -195,7 +195,9 @@ export class ProjectsApplicationService {
   }
 
   archiveLane(id: string, destinationLaneKey?: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
-    return WorkLaneDefinitionModel.archive(id, destinationLaneKey, context.actor);
+    const trustedHuman = context.source === 'ipc' && context.actor === 'human';
+    if (context.actor === 'human' && !trustedHuman) throw new Error('human_approval_required: untrusted human actor');
+    return WorkLaneDefinitionModel.archive(id, destinationLaneKey, context.actor, trustedHuman);
   }
 
   previewArchiveLane(id: string) { return WorkLaneDefinitionModel.previewArchive(id) }

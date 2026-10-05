@@ -82,7 +82,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
         execution_id text, started_at timestamptz, completed_at timestamptz, outcome jsonb, UNIQUE(task_id, generation)
       );
       CREATE TABLE work_task_artifact_custody (id text, task_id text, custody jsonb, transition text, work_kind text, created_by text, created_at timestamptz DEFAULT now());
-      CREATE TABLE work_lane_definitions (requires_human_approval boolean DEFAULT false, position int DEFAULT 0, lane_key text, semantic_role text, system_required boolean,
+      CREATE TABLE work_lane_definitions (id text DEFAULT md5(random()::text), archived_at timestamptz, updated_at timestamptz, updated_by text, requires_human_approval boolean DEFAULT false, position int DEFAULT 0, lane_key text, semantic_role text, system_required boolean,
         reset_at timestamptz, archived boolean DEFAULT false, enabled boolean DEFAULT true, scope text, project_id text);
       INSERT INTO work_lane_definitions (lane_key, semantic_role, system_required, scope)
         VALUES ('in_progress', 'execution', true, 'global_default'),
@@ -155,6 +155,91 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     expect(candidates).toHaveLength(601);
     expect(candidates[0]).toMatchObject({ id: '601', project_dispatch_enabled: false, epic_id: null });
     expect(candidates[600].id).toBe('1');
+  });
+
+  it('retains custom-lane ownership after a post-launch read failure until terminal confirmation', async() => {
+    const { LaneEntryAutomationService } = await import('../../../services/LaneEntryAutomationService');
+    await taskWithLane('a', 'owner/repo#925');
+    await taskWithLane('b', 'owner/repo#925');
+    await pool.query("UPDATE work_lane_entry_automations SET workflow_id='custom', binding_snapshot='{}' WHERE id='entry-a'");
+    const originalRead = WorkLaneWorkflowBindingModel.getLaneEntry.bind(WorkLaneWorkflowBindingModel);
+    const read = jest.spyOn(WorkLaneWorkflowBindingModel, 'getLaneEntry');
+    read.mockImplementationOnce(originalRead).mockRejectedValueOnce(new Error('post-launch read failure'));
+    let terminal: any;
+    const launch = jest.spyOn(LaneEntryAutomationService as any, 'executeRoutine').mockImplementation(async(...args: unknown[]) => {
+      terminal = (args[2] as any).onSettled;
+      return { executionId: 'lane-exec-a-1', workflowId: 'custom' };
+    });
+    try {
+      await expect(LaneEntryAutomationService.dispatchEntry('entry-a')).resolves.toMatchObject({ status: 'running' });
+      read.mockImplementation(originalRead);
+      for (const kind of ['dispatch', 'planning', 'lane']) {
+        await expect(admit(kind, 'a')).resolves.toBeNull();
+        await expect(admit(kind, 'b')).resolves.toBeNull();
+      }
+      await terminal({ executionId: 'lane-exec-a-1', status: 'completed' });
+      await expect(admit('dispatch', 'b')).resolves.not.toBeNull();
+    } finally {
+      read.mockRestore();
+      launch.mockRestore();
+    }
+  });
+
+  it.each(['approved', 'rejected'] as const)('retires human waits through the Projects %s decision entry point', async(decision) => {
+    const { WorkItemsModel } = await import('../WorkItemsModel');
+    const { getProjectsApplicationService } = await import('../../../projects/application/ProjectsApplicationService');
+    const { decideProjectsHumanGate } = await import('../../../services/ProjectsIssueDetailService');
+    await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES ('decision', 'enabled', 'qa');
+      INSERT INTO work_task_waits (id, task_id, wait_kind) VALUES ('approval-wait', 'decision', 'human_gate');
+      UPDATE work_lane_definitions SET position=CASE lane_key WHEN 'qa' THEN 1 WHEN 'shipped' THEN 2 ELSE 0 END`);
+    const projects = getProjectsApplicationService();
+    const mocks = [
+      jest.spyOn(WorkItemsModel, 'listComments').mockResolvedValue([]),
+      jest.spyOn(ArtifactReceiptModel, 'listByTask').mockResolvedValue([]),
+      jest.spyOn(projects, 'addComment').mockResolvedValue({} as any),
+      // Keep the stage at qa so the next real dispatcher claim demonstrates
+      // that retirement, rather than a mocked task transition, unblocks PASS.
+      jest.spyOn(projects, 'transitionTaskRelative').mockResolvedValue({} as any),
+    ];
+    try {
+      await decideProjectsHumanGate('decision', decision, 'Explicit human decision', 'qa');
+      expect((await WorkTaskWaitModel.get('approval-wait'))?.status).toBe(decision === 'approved' ? 'satisfied' : 'failed');
+      expect(projects.transitionTaskRelative).toHaveBeenCalledWith(
+        { taskId: 'decision', direction: decision === 'approved' ? 'next' : 'previous' }, { actor: 'human', source: 'ipc' });
+      if (decision === 'approved') {
+        const claim = await WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime', 'decision');
+        await WorkTaskDispatchModel.finalizeVerification(claim!.dispatch.id, 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'Passed');
+        expect((await pool.query("SELECT status FROM work_tasks WHERE id='decision'")).rows[0].status).toBe('shipped');
+      }
+    } finally { mocks.forEach(mock => mock.mockRestore()); }
+  });
+
+  it.each(['lane', 'wait', 'intermediate'])('rejects bulk archival across a %s approval boundary', async(boundary) => {
+    const { ProjectsApplicationService } = await import('../../../projects/application/ProjectsApplicationService');
+    await pool.query("UPDATE work_lane_definitions SET position=CASE lane_key WHEN 'qa' THEN 1 WHEN 'shipped' THEN 3 ELSE 0 END");
+    await pool.query("INSERT INTO work_tasks (id, project_id, status) VALUES ('bulk', 'enabled', 'qa')");
+    if (boundary === 'lane') await pool.query("UPDATE work_lane_definitions SET requires_human_approval=true WHERE lane_key='qa'");
+    if (boundary === 'wait') await pool.query("INSERT INTO work_task_waits (task_id, wait_kind) VALUES ('bulk', 'human_gate')");
+    if (boundary === 'intermediate') await pool.query(`INSERT INTO work_lane_definitions
+      (lane_key, semantic_role, scope, position, requires_human_approval) VALUES ('approval', 'manual', 'global_default', 2, true)`);
+    const lane = (await pool.query("SELECT id FROM work_lane_definitions WHERE lane_key='qa'")).rows[0];
+    const projects = new ProjectsApplicationService({} as any);
+    await expect(projects.archiveLane(lane.id, 'shipped', { source: 'tool', actor: 'worker' })).rejects.toThrow('human_approval_required');
+    await expect(projects.archiveLane(lane.id, 'shipped', { source: 'tool', actor: 'human' })).rejects.toThrow('human_approval_required');
+    expect((await pool.query("SELECT status FROM work_tasks WHERE id='bulk'")).rows[0].status).toBe('qa');
+    expect((await pool.query('SELECT archived FROM work_lane_definitions WHERE id=$1', [lane.id])).rows[0].archived).toBe(false);
+  });
+
+  it.each(['lane', 'wait'])('retains source %s approval on cross-project moves with unchanged lane keys', async(boundary) => {
+    const { WorkItemsModel } = await import('../WorkItemsModel');
+    await pool.query("INSERT INTO work_tasks (id, project_id, status) VALUES ('move', 'enabled', 'qa')");
+    if (boundary === 'lane') await pool.query("UPDATE work_lane_definitions SET requires_human_approval=true WHERE lane_key='qa'");
+    else await pool.query("INSERT INTO work_task_waits (task_id, wait_kind) VALUES ('move', 'human_gate')");
+    const epic = jest.spyOn(WorkItemsModel as any, 'requireEpic').mockResolvedValue({ id: 'target', project_id: 'paused' });
+    try {
+      await expect(WorkItemsModel.updateTask('move', { epic_id: 'target', actor: 'worker' })).rejects.toThrow('human_approval_required');
+      expect((await pool.query("SELECT project_id FROM work_tasks WHERE id='move'")).rows[0].project_id).toBe('enabled');
+    } finally { epic.mockRestore(); }
   });
 
   it('claims waiting human-owned custom-lane work in place and rejects a duplicate claim', async() => {

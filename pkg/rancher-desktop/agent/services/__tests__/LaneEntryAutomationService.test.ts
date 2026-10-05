@@ -106,6 +106,18 @@ describe('LaneEntryAutomationService', () => {
       expect.objectContaining({ transitionReceipt: expect.objectContaining({ toStage: 'publish' }) }));
   });
 
+  it('retains the reservation when launch rejects after possibly starting a writer', async() => {
+    const entry: any = { id: 'uncertain', task_id: 'task-1', generation: 1, status: 'pending',
+      workflow_id: 'custom', workflow_snapshot: {}, binding_snapshot: {} };
+    const running = { ...entry, status: 'running', execution_id: 'lane-exec-task-1-1' };
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'getLaneEntry').mockResolvedValue(entry);
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'markStarted').mockResolvedValue(running);
+    const release = jest.spyOn(WorkLaneWorkflowBindingModel, 'markOutcome');
+    jest.spyOn(LaneEntryAutomationService as any, 'executeRoutine').mockRejectedValue(new Error('uncertain launch'));
+    await expect(LaneEntryAutomationService.dispatchEntry('uncertain')).resolves.toEqual(running);
+    expect(release).not.toHaveBeenCalled();
+  });
+
   it('retries a committed pending outbox row once', async() => {
     const entry: any = { id: 'entry-4', status: 'pending', workflow_id: 'wf-1' };
     jest.spyOn(WorkLaneWorkflowBindingModel, 'listRecoverable').mockResolvedValue([entry]);

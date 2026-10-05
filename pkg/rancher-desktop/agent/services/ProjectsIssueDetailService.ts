@@ -224,6 +224,15 @@ export async function decideProjectsHumanGate(
 
   const decidedAt = new Date().toISOString();
   const projects = getProjectsApplicationService();
+  // This entry point is invoked by the explicit Projects human-decision IPC.
+  // Generic cancellation deliberately cannot retire approval waits.
+  for (const waitId of before.humanGate.waitIds) {
+    await projects.settleWait({
+      id: waitId,
+      outcome: decision === 'approved' ? 'satisfied' : 'failed',
+      summary: `Human gate ${ decision } by human at ${ decidedAt }${ normalizedReason ? `: ${ normalizedReason }` : '' }`,
+    }, { actor: 'human', source: 'ipc' });
+  }
   await projects.transitionTaskRelative({
     taskId,
     direction: decision === 'approved' ? 'next' : 'previous',
@@ -241,7 +250,6 @@ export async function decideProjectsHumanGate(
         : 'This decision returned the issue to the previous configured pipeline stage for repair.',
     ].filter(Boolean).join('\n'),
   }, { actor: 'human', source: 'ipc' });
-  await Promise.all(before.humanGate.waitIds.map(waitId =>
-    WorkTaskWaitModel.cancel(waitId, `Human gate ${ decision } by human at ${ decidedAt }`)));
+
   return loadProjectsIssueDetail(taskId);
 }

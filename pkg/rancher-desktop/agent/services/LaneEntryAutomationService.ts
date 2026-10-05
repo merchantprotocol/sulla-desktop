@@ -88,10 +88,11 @@ export class LaneEntryAutomationService {
       return (await WorkLaneWorkflowBindingModel.getLaneEntry(entry.id)) ?? started;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const failed = await WorkLaneWorkflowBindingModel.markOutcome(entry.id, executionId, 'failed', {
-        disposition: 'dispatch_failed', message,
-      });
-      return failed ?? started;
+      // executeRoutine may have started a graph before rejecting, and even a
+      // successful launch can be followed by a failed bookkeeping read. Only
+      // the drained terminal callback can release this reservation.
+      console.warn(`[LaneEntryAutomation] Launch/bookkeeping uncertain for ${ entry.id }; ownership retained: ${ message }`);
+      return started;
     }
   }
 

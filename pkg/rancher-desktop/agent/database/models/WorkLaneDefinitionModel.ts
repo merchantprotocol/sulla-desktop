@@ -1,4 +1,5 @@
 import { postgresClient } from '../PostgresClient';
+import { approvalSafeTargetSql } from './WorkAgentAdmission';
 
 import type { PoolClient } from 'pg';
 
@@ -349,7 +350,7 @@ export class WorkLaneDefinitionModel {
     return ordered[0].lane_key;
   }
 
-  static async archive(id: string, destinationKey?: string, actor = 'sulla'): Promise<ArchiveWorkLaneResult> {
+  static async archive(id: string, destinationKey?: string, actor = 'sulla', trustedHuman = false): Promise<ArchiveWorkLaneResult> {
     return postgresClient.transaction(async(client) => {
       const lane = await WorkLaneDefinitionModel.lockLane(client, id);
       if (!lane || lane.reset_at) throw new Error(`No active lane definition found with id: ${ id }`);
@@ -393,6 +394,13 @@ export class WorkLaneDefinitionModel {
                   AND project_lane.lane_key = $3
                   AND project_lane.reset_at IS NULL
              )`;
+        if (!trustedHuman) {
+          const guarded = await client.query<{ id: string }>(
+            `SELECT id, $2::text AS actor FROM work_tasks WHERE archived = false AND status = $3 ${ moveFilter }
+              AND (${ approvalSafeTargetSql('work_tasks', '$1') }) IS DISTINCT FROM $1 LIMIT 1`, moveParams,
+          );
+          if (guarded.rows.length) throw new Error('human_approval_required: lane archival would cross an approval boundary');
+        }
         await client.query(
           `UPDATE work_tasks SET status = $1, updated_at = now(), last_moved_at = now(),
              last_activity_at = now(), last_moved_by = $2

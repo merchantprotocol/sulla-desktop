@@ -1054,12 +1054,20 @@ export class WorkItemsModel {
     let updated: WorkTaskRecord | null;
 
     const changesSchedule = changes.due_at !== undefined || changes.start_at !== undefined || changes.milestone_at !== undefined;
-    if (changes.status !== undefined || changesSchedule) {
+    if (changes.status !== undefined || changesSchedule || nextProjectId !== undefined) {
       updated = await postgresClient.transaction(async(client) => {
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ id }`]);
         const current = await client.query<WorkTaskRecord>(
           `SELECT * FROM ${ WorkItemsModel.TASKS } WHERE id = $1 AND archived = false FOR UPDATE`, [id]);
         if (!current.rows[0]) return null;
+        if (nextProjectId !== undefined && nextProjectId !== current.rows[0].project_id && actor !== 'human') {
+          // Project moves change the meaning of even an unchanged lane key.
+          // Evaluate the source boundary before replacing its project context.
+          const held = await client.query<{ held: boolean }>(
+            `SELECT (${ approvalSafeTargetSql('t', "'__project_move__'") }) = t.status AS held
+             FROM work_tasks t WHERE id = $1`, [id]);
+          if (held.rows[0]?.held) throw new Error('human_approval_required: project move cannot discard approval');
+        }
         if (changes.status !== undefined && changes.status !== current.rows[0].status && actor !== 'human') {
           const permitted = await client.query<{ target: string }>(
             `SELECT ${ approvalSafeTargetSql('t', '$2') } AS target FROM work_tasks t WHERE id = $1`,
