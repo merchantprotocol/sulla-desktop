@@ -12,8 +12,8 @@ jest.unstable_mockModule('../../database/PostgresClient', () => ({ postgresClien
 jest.unstable_mockModule('../../database/models/DispatcherLivenessModel', () => ({ DispatcherLivenessModel: {} }));
 jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () => ({ LifecycleCapabilityModel: {} }));
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({ SullaSettingsModel: {} }));
-jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({ WorkItemsModel: {} }));
-jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({ WorkTaskDispatchModel: {} }));
+jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({ WorkItemsModel: { addComment } }));
+jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({ WorkTaskDispatchModel: { settle } }));
 jest.unstable_mockModule('../../database/models/WorkLaneDefinitionModel', () => ({ WorkLaneDefinitionModel: {} }));
 jest.unstable_mockModule('../../database/models/WorkflowModel', () => ({ WorkflowModel: {} }));
 jest.unstable_mockModule('../../database/models/WorkflowExecutionModel', () => ({ WorkflowExecutionModel: {} }));
@@ -26,6 +26,8 @@ jest.unstable_mockModule('../../routines/core/reviewProjectArtifact', () => ({
 }));
 jest.unstable_mockModule('../../tools/fullAgentTools', () => ({ FULL_AGENT_TOOL_NAMES: [] }));
 
+const settle = jest.fn<any>().mockResolvedValue(undefined);
+const addComment = jest.fn<any>().mockResolvedValue(undefined);
 let Service: any;
 beforeAll(async() => { Service = (await import('../TaskDispatcherService')).TaskDispatcherService; });
 const candidate = (id: string, overrides = {}) => ({
@@ -56,5 +58,28 @@ describe('whole-board dispatcher consideration', () => {
       'admission error': 1, 'review unavailable or ownership conflict': 1,
     } });
     expect(service.fillExecutionPool).toHaveBeenCalledWith('next');
+  });
+});
+
+describe('direct task comment handoff', () => {
+  it('includes complete task details and all comments beyond the former budget', () => {
+    const service = new Service();
+    const task = { id: 'task', title: 'Full task', description: 'Acceptance', github_issue: 'owner/repo#1' };
+    const body = 'x'.repeat(210000);
+    const prompt = service.buildWorkerPrompt(task, 'dispatch', 'worker', [
+      { author: 'human', body }, { author: 'reviewer', body: 'latest finding' },
+    ]);
+    expect(prompt).toContain(JSON.stringify(task));
+    expect(prompt).toContain(body);
+    expect(prompt).toContain('latest finding');
+    expect(prompt).toContain('project/add_task_comment');
+    expect(prompt).toContain('project/update_task');
+    expect(prompt).not.toContain('WORK_RESULT');
+  });
+  it.each(['completed', 'blocked', 'failed'])('settles %s without rewriting the task lane', async(status) => {
+    settle.mockClear(); addComment.mockClear();
+    await new Service().finalizeClaim({ task: { id: 'task', status: 'in_progress' }, dispatch: { id: 'dispatch' } }, status, 'plain response');
+    expect(settle).toHaveBeenCalledWith('dispatch', status, 'plain response', status === 'failed' ? 'plain response' : undefined);
+    expect(addComment).toHaveBeenCalledTimes(status === 'failed' ? 1 : 0);
   });
 });

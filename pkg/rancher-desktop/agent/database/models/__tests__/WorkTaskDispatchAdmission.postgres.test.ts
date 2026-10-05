@@ -686,12 +686,13 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       await expect(admit(service, 'a')).resolves.toBeNull();
     });
 
-  it('admits independent lane, planning and dispatcher writers beyond three tasks', async() => {
-    for (const id of ['a', 'b', 'c', 'd']) await taskWithLane(id);
+  it('admits only five concurrent mixed writers across admission paths', async() => {
+    for (const id of ['a', 'b', 'c', 'd', 'e', 'f']) await taskWithLane(id);
     const results = await Promise.all([
-      admit('lane', 'a'), admit('planning', 'b'), admit('dispatch', 'c'), admit('lane', 'd'),
+      admit('lane', 'a'), admit('planning', 'b'), admit('dispatch', 'c'),
+      admit('lane', 'd'), admit('planning', 'e'), admit('dispatch', 'f'),
     ]);
-    expect(results.filter(Boolean)).toHaveLength(4);
+    expect(results.filter(Boolean)).toHaveLength(5);
   });
 
   it('keeps public caller leases reserved through dispatcher runtime recovery until release', async() => {

@@ -177,14 +177,8 @@ describe('TaskDispatcherService planning handoff', () => {
       },
     }, 'completed', 'worker returned no structured work result');
 
-    expect(recordTaskTransitionMock).toHaveBeenCalledTimes(1);
-    expect(recordTaskTransitionMock).toHaveBeenCalledWith(
-      expect.anything(), 'task-1', 'in_progress', 'planning', 'dispatcher', 'dispatch-outcome',
-    );
-    expect(events).toEqual([
-      'task-row-returned',
-      'planning-transition-recorded',
-      'transaction-committed',
-    ]);
+    expect(recordTaskTransitionMock).not.toHaveBeenCalled();
+    expect(storedTask.status).toBe('in_progress');
+    expect(events).toEqual([]);
   });
 });

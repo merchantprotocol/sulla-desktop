@@ -1,6 +1,4 @@
 import { AbortService } from './AbortService';
-import { ArtifactCustodyPolicy } from './ArtifactCustodyPolicy';
-import { buildReceipt, renderReceiptComment } from './ArtifactReceiptService';
 import { resolvePullRequestHead, resolvePullRequestHeads } from './GitHubPullRequestHeadService';
 import { GraphRegistry } from './GraphRegistry';
 import { resolveWipLimits, evaluateClaim, type WipLimits, type RoleCounts, type BackpressureDecision } from './ProjectAutomationWipLimits';
@@ -52,13 +50,6 @@ const LEGACY_VERIFIER_TOOLS = [
  * reaches the whole Sulla catalog. No lane is restricted.
  */
 const MECHANICAL_WORKER_TOOLS = FULL_AGENT_TOOL_NAMES;
-/**
- * Agents get every comment in full. Only a runaway history beyond this many
- * characters drops its OLDEST comments from the prompt (never truncates a
- * body), and the prompt says how to read the rest.
- */
-const HISTORY_PROMPT_BUDGET_CHARS = 200_000;
-
 const PROTECTED_REVIEW_TOOLS = [...new Set([
   ...Object.values(ARTIFACT_VERIFICATION_ADAPTERS).flatMap(adapter => [...adapter.tools]),
 ])] as string[];
@@ -713,21 +704,7 @@ export class TaskDispatcherService {
         return;
       }
 
-      let outcome = extractAgentTurnOutcome(finalState);
-      if (!isVerification && outcome.status === 'completed' && !/<WORK_RESULT>[\s\S]*?<\/WORK_RESULT>/.test(outcome.text)) {
-        state.messages.push({
-          role:    'user',
-          content: `Your last turn ended without the required <WORK_RESULT> block. Report the current state now and end with exactly one complete <WORK_RESULT>{\"summary\":\"...\"}</WORK_RESULT> block. If a background check or CI is still running, report it as pending in the summary; do not wait for it.`,
-        });
-        finalState = await graph.execute(state);
-        await this.awaitWriterTermination(graph);
-        if (executionTimedOut) {
-          await WorkTaskDispatchModel.settle(dispatch.id, 'timed_out', undefined,
-            `execution exceeded ${ timeoutMinutes } minute(s)`);
-          return;
-        }
-        outcome = extractAgentTurnOutcome(finalState);
-      }
+      const outcome = extractAgentTurnOutcome(finalState);
       const summary = boundedOutcomeText(outcome.text, OUTCOME_TEXT_CAP);
 
       if (isVerification) {
@@ -1000,100 +977,22 @@ export class TaskDispatcherService {
     summary: string,
   ): Promise<void> {
     const { dispatch, task } = claim;
-    const parsed = status === 'completed' ? this.parseWorkResult(summary) : null;
-    const malformed = status === 'completed' && !parsed;
-    const taskStatus = malformed || status === 'failed' ? task.status : status === 'completed' ? 'in_review' : 'blocked';
-    const dispatchStatus = malformed ? 'failed' : status;
-    const concise = parsed?.summary ?? summary.slice(0, 1_500);
-    const comment = malformed
-      ? `Dispatch ${ dispatch.id } stopped before review: no parseable work result was found.`
-      : `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }: ${ concise }`;
-    const receipt = buildReceipt({
-      taskId:     task.id,
-      eventType:  'execution',
-      actor:      'dispatcher',
-      dispatchId: dispatch.id,
-      disposition: malformed ? 'custody_rejected' : status,
-      nextOwner:  taskStatus === 'in_review' ? 'review' : taskStatus,
-      validationSummary: concise,
-      artifacts: parsed?.custody ? [parsed.custody.workKind === 'code' ? {
-        type:         'pull_request',
-        canonicalRef: parsed.custody.prUrl ?? undefined,
-        url:          parsed.custody.prUrl ?? undefined,
-        hash:         parsed.custody.prHeadSha ?? parsed.custody.commitSha ?? undefined,
-      } : {
-        type:         'authoritative_artifact',
-        canonicalRef: parsed.custody.artifactId ?? undefined,
-        url:          parsed.custody.artifactUrl ?? undefined,
-      }] : [],
-      evidence: { kind: 'dispatch', ref: dispatch.id },
-    });
-    try {
-      const journalId = await WorkTaskDispatchModel.appendOutcomeJournal(dispatch.id, task.id, {
-        dispatchStatus,
-        taskStatus,
-        taskAssignee: malformed || status === 'failed' ? 'dispatcher' : 'heartbeat',
-        comment: renderReceiptComment(receipt),
-        receipt,
-        result: status === 'failed' ? undefined : summary,
-        error:  status === 'failed' || malformed ? concise : undefined,
-        evidence: parsed?.custody ? {
-          artifactType:     parsed.custody.workKind === 'code' ? 'code_pull_request' : 'non_code_artifact',
-          artifactLocation: parsed.custody.branch ?? parsed.custody.artifactId ?? undefined,
-          artifactUrl:      parsed.custody.prUrl ?? parsed.custody.artifactUrl ?? undefined,
-          artifactRef:      parsed.custody.prHeadSha ?? parsed.custody.artifactId ?? undefined,
-          contentHash:      parsed.custody.commitSha ?? undefined,
-          reviewEvidence:   parsed.custody.validation ?? parsed.custody.evidence,
-          custody:          parsed.custody,
-        } : undefined,
+    // The worker persists evidence and lane through Projects tools. Never infer
+    // task completion from a chat response or overwrite a newer task transition.
+    await WorkTaskDispatchModel.settle(
+      dispatch.id, status, summary, status === 'failed' ? summary : undefined,
+    );
+    if (status === 'failed') {
+      await WorkItemsModel.addComment({
+        id: `dispatch-failure-${ dispatch.id }`, task_id: task.id, author: 'dispatcher',
+        body: `Worker run ${ dispatch.id } failed: ${ summary.slice(0, 1500) }. Saved task state and comments are preserved.`,
       });
-      await WorkTaskDispatchModel.finalizeOutcomeJournal(journalId);
-    } catch (err) {
-      console.error(`[TaskDispatcher] Could not journal/finalize ${ dispatch.id }:`, err);
     }
   }
 
-  private parseWorkResult(output: string): { summary: string; custody?: import('./ArtifactCustodyPolicy').ArtifactCustody } | null {
-    const matches = [...output.matchAll(/<WORK_RESULT>([\s\S]*?)<\/WORK_RESULT>/g)];
-    if (matches.length !== 1) return null;
-    try {
-      const parsed = JSON.parse(matches[0][1].trim());
-      if (typeof parsed?.summary !== 'string' || !parsed.summary.trim()) return null;
-      // Custody is optional — a worker may omit it entirely. Only reject the
-      // whole result when custody is present but structurally malformed.
-      const custody = parsed.custody;
-      if (custody !== undefined && !ArtifactCustodyPolicy.validate(custody).ok) return null;
-      return { summary: parsed.summary.trim().slice(0, 1_500), custody };
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Project and epic descriptions hold the spec location, decided defaults and
-   * source-of-truth rules that task descriptions only cite ("Spec §4"). Without
-   * them the worker builds and the reviewer judges against different halves of
-   * the contract, and the task bounces.
-   */
-  /**
-   * Every comment, every body in full, oldest to newest. Only if the total
-   * exceeds HISTORY_PROMPT_BUDGET_CHARS are the oldest comments left out, with
-   * a pointer the agent can follow to read them.
-   */
-  private fullHistory(taskId: string, comments: { author: string | null; body: string }[]): { author: string; body: string }[] {
-    const all = comments.map(comment => ({ author: comment.author || 'unknown', body: comment.body }));
-    let total = 0;
-    let start = all.length;
-    while (start > 0 && total + all[start - 1].body.length <= HISTORY_PROMPT_BUDGET_CHARS) {
-      start -= 1;
-      total += all[start].body.length;
-    }
-    if (start === 0) return all;
-
-    return [
-      { author: 'dispatcher', body: `${ start } older comment(s) not inlined for size. Read them with: sulla project/list_task_comments '{"task_id":"${ taskId }"}'` },
-      ...all.slice(start),
-    ];
+  /** Every comment body, oldest to newest, without truncation. */
+  private fullHistory(_taskId: string, comments: { author: string | null; body: string }[]): { author: string; body: string }[] {
+    return comments.map(comment => ({ author: comment.author || 'unknown', body: comment.body }));
   }
 
   private async loadPlanContext(task: WorkTaskRecord): Promise<string> {
@@ -1124,7 +1023,7 @@ Project: ${ task.project_id }
 Epic: ${ task.epic_id ?? '(none)' }
 Dispatch: ${ dispatchId }
 Current lane: ${ task.status }
-Context: ${ JSON.stringify({ assignee: task.assignee, labels: task.labels }) }
+Full task details: ${ JSON.stringify(task) }
 
 Description:
 ${ task.description || '(no description)' }
@@ -1132,21 +1031,18 @@ ${ task.description || '(no description)' }
 Plan context (project and epic descriptions; specs, decided defaults and source-of-truth pointers the task cites live here, so open every file or URL they name before building):
 ${ planContext }
 
-Task history, oldest to newest (on a repair round the latest review findings are here; fix every one and say how in your receipt):
+Task history, oldest to newest (on a repair round the latest review findings are here; fix every one and record how in task comments):
 ${ JSON.stringify(history) }
 
 Read active waits and dependencies with Projects tools and reason about what can be advanced now. Labels, assignees, lane names and dependency links are context, not blanket exclusions. Preserve explicit human stops and approvals at the action they cover. Continue unfinished work in this lane yourself. Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
 
 Implement only inside the VM. Keep worktrees under /Users/jonathonbyrdziak/Sites/worktrees. Run tests, builds and typechecks only on GitHub.
 
-You have the same full access as the primary agent: exec and the whole Sulla catalog (projects, GitHub, browser, workflows, sub-agents, everything). Read and comment on any task, including ${ task.id }, and create follow-up tasks when useful. The one coordination rule: the dispatcher moves ${ task.id } between lanes, so don't change its status yourself; return your WORK_RESULT and it goes to independent review.
+You have exec and the full Sulla catalog. Use project/add_task_comment to write progress, decisions, PR links and exact heads, validation results, and remaining work directly to task ${ task.id }. Identify yourself as ${ workerAgentId } and include dispatch ${ dispatchId } in your comment. Persist your outcome before ending, including partial progress.
 
-If CI, tests, or another background check is still running, do not end your turn waiting for it. Report its state as pending in WORK_RESULT, then stop.
+Resolve this project's lanes with project/resolve_lanes. Use project/update_task to advance your task when the evidence supports it. Finished implementation goes to independent review, not directly to done. Preserve actual human approval boundaries. Continue repairable work yourself; use blocked only for a concrete dependency you cannot resolve and document the exact requirement. Save code PR links on the task as well as in comments.
 
-Completed work MUST end with exactly one machine block containing at least a summary:
-<WORK_RESULT>{"summary":"concise receipt"}</WORK_RESULT>
-
-Custody/evidence metadata is OPTIONAL — attach it when it strengthens the receipt, in whatever shape fits the work. For code work include what you have of branch, commitSha, prUrl, prHeadSha, validation, and provenance, e.g. "custody":{"workKind":"code","branch":"feat/example","commitSha":"FULL_SHA","prUrl":"https://github.com/owner/repo/pull/123","prHeadSha":"FULL_SHA","validation":{"tests":"exact commands and outcomes"},"provenance":{"agentId":"${ workerAgentId }","dispatchId":"${ dispatchId }"}}. For non-code work, "workKind":"non_code" with an artifactId or artifactUrl and evidence is plenty. Omitting custody never blocks the task from entering review; only a missing/duplicate WORK_RESULT block or a structurally malformed custody payload is rejected.`;
+If CI or another background check is pending, record its link and current state in the task comments before returning. Saved task details, comments and lane are the handoff. No special result block is required.`;
   }
 
   private buildVerifierPrompt(task: WorkTaskRecord, dispatchId: string, comments: { author: string | null; body: string }[]): string {

@@ -10,7 +10,7 @@ jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: (...args: any[]) => settingsGet(...args) },
 }));
 let policy: typeof import('../RoutineConcurrencyPolicy');
-describe('prompt-directed routine admission', () => {
+describe('five-worker routine admission', () => {
   beforeAll(async() => { policy = await import('../RoutineConcurrencyPolicy'); });
   beforeEach(() => {
     jest.clearAllMocks();
@@ -19,18 +19,22 @@ describe('prompt-directed routine admission', () => {
     query.mockResolvedValue({ rows: [{ count: '100' }] });
     transaction.mockImplementation((callback: any) => callback({ query }));
   });
-  it('ignores legacy limits for every routine kind', async() => {
+  it('uses the global five-worker limit for every kind', async() => {
     for (const kind of policy.PROTECTED_ROUTINE_KINDS) {
-      expect(await policy.RoutineConcurrencyPolicy.resolveLimit(kind, 1)).toBe(Infinity);
+      expect(await policy.RoutineConcurrencyPolicy.resolveLimit(kind, 1)).toBe(5);
     }
-    expect(await policy.RoutineConcurrencyPolicy.resolveTotalLimit()).toBeNull();
+    expect(await policy.RoutineConcurrencyPolicy.resolveTotalLimit()).toBe(5);
   });
-  it('records more than 32 concurrent routines despite an old three-job setting', async() => {
-    const ids = await Promise.all(Array.from({ length: 40 }, (_, index) =>
-      policy.RoutineConcurrencyPolicy.acquire('execution', 3, { taskId: `task-${ index }` })));
-    expect(new Set(ids).size).toBe(40);
-    expect(ids.every(Boolean)).toBe(true);
-    expect(query.mock.calls.filter(([sql]: any[]) => sql.startsWith('INSERT INTO work_routine_slots'))).toHaveLength(40);
+  it('refuses a sixth reservation without inserting a slot', async() => {
+    query.mockResolvedValue({ rows: [{ count: '5' }] });
+    expect(await policy.RoutineConcurrencyPolicy.acquire('execution', 99)).toBeNull();
+    expect(query.mock.calls.some(([sql]: any[]) => sql.startsWith('INSERT'))).toBe(false);
+  });
+  it('allows the fifth reservation under the admission lock', async() => {
+    query.mockResolvedValue({ rows: [{ count: '4' }] });
+    expect(await policy.RoutineConcurrencyPolicy.acquire('review', 99)).toBeTruthy();
+    expect(query.mock.calls[0][0]).toContain('pg_advisory_xact_lock');
+    expect(query.mock.calls.filter(([sql]: any[]) => sql.startsWith('INSERT'))).toHaveLength(1);
   });
   it('retains the explicit automation stop', async() => {
     settingsGet.mockResolvedValue(false);
