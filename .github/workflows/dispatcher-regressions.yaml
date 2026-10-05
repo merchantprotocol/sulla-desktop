@@ -36,6 +36,8 @@ on:
     - 'pkg/rancher-desktop/agent/routines/core/__tests__/reviewProjectArtifact.test.ts'
     - 'pkg/rancher-desktop/agent/services/PlanningCouncilService.ts'
     - 'pkg/rancher-desktop/agent/services/TaskDispatcherService.ts'
+    - 'pkg/rancher-desktop/agent/services/RoutineConcurrencyPolicy.ts'
+    - 'pkg/rancher-desktop/agent/services/__tests__/RoutineConcurrencyPolicy.test.ts'
     - 'pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts'
   workflow_dispatch:
 
@@ -97,6 +99,7 @@ jobs:
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskWaitModel.test.ts \
           pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService.test.ts \
           pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService.leaseEvidenceWait.test.ts \
+          pkg/rancher-desktop/agent/services/__tests__/RoutineConcurrencyPolicy.test.ts \
           pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts \
           pkg/rancher-desktop/agent/controllers/__tests__/PlaybookController.leases.test.ts \
           2>&1 | tee "$log"

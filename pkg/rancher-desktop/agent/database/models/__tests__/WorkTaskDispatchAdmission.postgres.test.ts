@@ -244,7 +244,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     }
   });
 
-  it('reuses all three slots after stopped lane writers hit an approval boundary', async() => {
+  it('admits unrelated work while stopped lane writers retain approval boundaries', async() => {
     const { LaneEntryAutomationService } = await import('../../../services/LaneEntryAutomationService');
     await pool.query("UPDATE work_lane_definitions SET requires_human_approval=true WHERE lane_key='qa'");
     for (const id of ['stopped-1', 'stopped-2', 'stopped-3']) {
@@ -254,6 +254,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       await expect(admit('lane', id)).resolves.not.toBeNull();
     }
     await taskWithLane('replacement');
+    await expect(admit('dispatch', 'replacement')).resolves.not.toBeNull();
     await expect(admit('dispatch', 'replacement')).resolves.toBeNull();
     for (const id of ['stopped-1', 'stopped-2', 'stopped-3']) {
       const entry = await WorkLaneWorkflowBindingModel.getLaneEntry(`entry-${ id }`);
@@ -266,8 +267,8 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       });
       expect((await pool.query('SELECT status FROM work_tasks WHERE id=$1', [id])).rows[0].status).toBe('qa');
     }
-    for (const id of ['replacement', 'replacement-2', 'replacement-3']) {
-      if (id !== 'replacement') await taskWithLane(id);
+    for (const id of ['replacement-2', 'replacement-3', 'replacement-4']) {
+      await taskWithLane(id);
       await expect(admit('dispatch', id)).resolves.not.toBeNull();
     }
   });
@@ -480,7 +481,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     await expect(WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime', undefined, 'dependency')).resolves.toBeNull();
   });
 
-  it('enforces three total leases during concurrent mixed review/execution claims', async() => {
+  it('admits four independent concurrent mixed review/execution claims', async() => {
     await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES
       ('a', 'enabled', 'in_review'), ('b', 'enabled', 'custom'), ('c', 'enabled', 'blocked'), ('d', 'enabled', 'in_review')`);
     const claims = await Promise.all([
@@ -489,7 +490,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime-c', undefined, 'c'),
       WorkTaskDispatchModel.claimNextReview('sulla-desktop', [], 'runtime-d', 'd'),
     ]);
-    expect(claims.filter(Boolean)).toHaveLength(3);
+    expect(claims.filter(Boolean)).toHaveLength(4);
   });
 
   it('holds live lane writers and duplicate PRs without removing them from consideration', async() => {
@@ -685,12 +686,12 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       await expect(admit(service, 'a')).resolves.toBeNull();
     });
 
-  it('bounds simultaneous lane, planning and dispatcher writers to three tasks', async() => {
+  it('admits independent lane, planning and dispatcher writers beyond three tasks', async() => {
     for (const id of ['a', 'b', 'c', 'd']) await taskWithLane(id);
     const results = await Promise.all([
       admit('lane', 'a'), admit('planning', 'b'), admit('dispatch', 'c'), admit('lane', 'd'),
     ]);
-    expect(results.filter(Boolean)).toHaveLength(3);
+    expect(results.filter(Boolean)).toHaveLength(4);
   });
 
   it('keeps public caller leases reserved through dispatcher runtime recovery until release', async() => {
