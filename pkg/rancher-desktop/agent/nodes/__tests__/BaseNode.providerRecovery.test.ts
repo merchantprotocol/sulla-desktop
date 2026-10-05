@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const primaryChatStreamMock: any = jest.fn();
 const primaryChatMock: any = jest.fn();
 const secondaryChatMock: any = jest.fn();
+const secondaryChatStreamMock: any = jest.fn();
 
 const primaryService = {
   getContextWindow: jest.fn(() => 100_000),
@@ -18,6 +19,7 @@ const secondaryService = {
   initialize:      jest.fn(async() => true),
   isAvailable:     jest.fn(() => true),
   chat:            secondaryChatMock,
+  chatStream:      secondaryChatStreamMock,
 };
 
 jest.unstable_mockModule('../../languagemodels', () => ({
@@ -96,10 +98,11 @@ describe('BaseNode provider recovery', () => {
     primaryChatStreamMock.mockReset();
     primaryChatMock.mockReset();
     secondaryChatMock.mockReset();
+    secondaryChatStreamMock.mockReset();
 
     primaryChatStreamMock.mockRejectedValue(new Error('Codex app-server event stream lag dropped events'));
-    primaryChatMock.mockRejectedValue(new Error('codex exited with code null'));
-    secondaryChatMock.mockResolvedValue({
+    primaryChatMock.mockRejectedValue(new Error('Non-streaming recovery must not be called'));
+    secondaryChatStreamMock.mockResolvedValue({
       content:  'fallback response ok',
       metadata: {
         rawProviderContent: 'fallback response ok',
@@ -131,9 +134,10 @@ describe('BaseNode provider recovery', () => {
     const node = new TestNode('test-node', 'TestNode');
     const result = await node.execute(state);
 
-    expect(primaryChatStreamMock).toHaveBeenCalledTimes(1);
-    expect(primaryChatMock).toHaveBeenCalledTimes(1);
-    expect(secondaryChatMock).toHaveBeenCalledTimes(1);
+    expect(primaryChatStreamMock).toHaveBeenCalledTimes(2);
+    expect(primaryChatMock).not.toHaveBeenCalled();
+    expect(secondaryChatStreamMock).toHaveBeenCalledTimes(1);
+    expect(secondaryChatMock).not.toHaveBeenCalled();
     expect(result.response).toBe('fallback response ok');
 
     const assistantMessage = state.messages[state.messages.length - 1];
@@ -142,7 +146,7 @@ describe('BaseNode provider recovery', () => {
       content: 'fallback response ok',
     });
 
-    const fallbackReply = secondaryChatMock.mock.results[0].value;
+    const fallbackReply = secondaryChatStreamMock.mock.results[0].value;
     await expect(fallbackReply).resolves.toMatchObject({
       metadata: {
         fallback_used:   true,
@@ -153,6 +157,81 @@ describe('BaseNode provider recovery', () => {
         fallback_model:  'gpt-5',
       },
     });
+  });
+
+  it('publishes fallback text and activity before completion and preserves call context', async() => {
+    const { BaseNode } = await import('../BaseNode');
+    const sent: { content: string; kind: string }[] = [];
+    class TestNode extends BaseNode<any> {
+      protected override async wsChatMessage(_state: any, content: string, _role: any, kind: string) {
+        sent.push({ content, kind });
+        return true;
+      }
+      async execute(state: any) {
+        return this.normalizedChat(state, 'System prompt', { disableTools: true });
+      }
+    }
+    const abort = new AbortController();
+    const state: any = {
+      messages: [{ role: 'user', content: 'Please answer.' }],
+      metadata: { threadId: 'test-thread', wsChannel: 'test-channel', profileId: 'profile', options: { abort } },
+    };
+    let finish!: (value: any) => void;
+    let started!: () => void;
+    const streaming = new Promise<void>(resolve => { started = resolve });
+    secondaryChatStreamMock.mockImplementation((_messages: any, callbacks: any, options: any) => {
+      expect(options.state).toBe(state);
+      expect(options.signal).toBe(abort.signal);
+      expect(options.profileId).toBe('profile');
+      callbacks.onActivity('Working through the fallback');
+      callbacks.onToken('First part');
+      started();
+      return new Promise(resolve => { finish = resolve });
+    });
+    const run = new TestNode('test-node', 'TestNode').execute(state);
+    await streaming;
+    expect(sent).toContainEqual({ content: 'Working through the fallback', kind: 'thinking' });
+    expect(sent).toContainEqual({ content: 'First part', kind: 'streaming' });
+    finish({ content: 'First part', metadata: {} });
+    const reply = await run;
+    expect(reply?.metadata.streamingEmitted).toBe(true);
+    expect(sent.slice(-2)).toEqual([
+      { content: '', kind: 'streaming_complete' },
+      { content: '', kind: 'thinking_complete' },
+    ]);
+    expect(secondaryChatMock).not.toHaveBeenCalled();
+  });
+
+  it('closes partial output before retrying and streams the successful retry', async() => {
+    const { BaseNode } = await import('../BaseNode');
+    const sent: string[] = [];
+    class TestNode extends BaseNode<any> {
+      protected override async wsChatMessage(_state: any, _content: string, _role: any, kind: string) {
+        sent.push(kind);
+        return true;
+      }
+      async execute(state: any) {
+        return this.normalizedChat(state, 'System prompt', { disableTools: true });
+      }
+    }
+    primaryChatStreamMock.mockImplementationOnce(async(_messages: any, callbacks: any) => {
+      callbacks.onToken('Partial');
+      throw new Error('Codex app-server event stream lag dropped events');
+    }).mockImplementationOnce(async(_messages: any, callbacks: any) => {
+      expect(sent.slice(-2)).toEqual(['streaming_complete', 'thinking_complete']);
+      callbacks.onActivity('Retrying');
+      callbacks.onToken('Recovered');
+      return { content: 'Recovered', metadata: {} };
+    });
+    const state: any = {
+      messages: [{ role: 'user', content: 'Please answer.' }],
+      metadata: { threadId: 'test-thread', wsChannel: 'test-channel', options: {} },
+    };
+    const reply = await new TestNode('test-node', 'TestNode').execute(state);
+    expect(reply?.content).toBe('Recovered');
+    expect(reply?.metadata).toMatchObject({ retry_used: true, streamingEmitted: true });
+    expect(primaryChatMock).not.toHaveBeenCalled();
+    expect(secondaryChatStreamMock).not.toHaveBeenCalled();
   });
 
   it('ends the graph cycle without re-dispatching an already persisted assistant response', async() => {

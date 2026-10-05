@@ -1,0 +1,32 @@
+name: Chat streaming regressions
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/chat-streaming-regressions.yaml'
+      - 'pkg/rancher-desktop/agent/nodes/BaseNode.ts'
+      - 'pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.providerRecovery.test.ts'
+      - 'pkg/rancher-desktop/pages/chat/components/transcript/TurnStreaming.vue'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  streaming:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      with:
+        node-version-file: package.json
+    - name: Install JavaScript dependencies
+      run: |
+        corepack enable yarn
+        yarn install --immutable --ignore-platform --ignore-scripts
+    - name: Verify recovery streaming
+      run: |
+        yarn test:unit:jest --runInBand \
+          pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.providerRecovery.test.ts \
+          pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.conversationLogging.test.ts \
+          pkg/rancher-desktop/pages/chat/services/__tests__/PersonaAdapter.test.ts
