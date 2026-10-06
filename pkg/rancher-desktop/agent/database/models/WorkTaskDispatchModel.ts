@@ -300,8 +300,8 @@ export class WorkTaskDispatchModel {
    * The dispatcher's consideration surface is deliberately broader than its
    * mutation surface. Every non-archived task is visible here, including work
    * in custom lanes, paused projects, with dependencies/waits, or assigned to
-   * another actor. Those facts are context for the worker, never admission
-   * filters. Collision locks and explicit project pause remain action-time
+   * another actor. Enumeration is diagnostic; unresolved dependencies and
+   * running outside jobs are excluded atomically at admission. Collision locks and explicit project pause remain action-time
    * guards in the lane-specific claim methods below.
    */
   static async enumerateCandidates(limit?: number): Promise<DispatchCandidate[]> {
@@ -356,10 +356,28 @@ export class WorkTaskDispatchModel {
            AND ${ taskLaneRoleSql('t') } NOT IN ('review', 'terminal') AND t.status <> 'parked'
            AND ($1::text IS NULL OR t.id = $1)
            ${ projectDispatchEnabledSql('t') }
+           AND NOT EXISTS (
+             SELECT 1 FROM work_task_dispatches previous
+             WHERE previous.id = (SELECT latest.id FROM work_task_dispatches latest
+               WHERE latest.task_id = t.id AND latest.kind = 'execution'
+               ORDER BY latest.started_at DESC, latest.id DESC LIMIT 1)
+               AND previous.status <> 'running'
+               AND previous.origin_evidence->>'executionStartLane' = t.status
+               AND previous.finished_at > now() - interval '15 minutes'
+               AND t.last_moved_at <= previous.finished_at
+           )
            ${ admission }
            AND NOT EXISTS (
+             SELECT 1 FROM work_task_dependencies dep
+             JOIN work_tasks prerequisite ON prerequisite.id = dep.depends_on_task_id
+             WHERE dep.dependent_task_id = t.id AND dep.archived_at IS NULL
+               AND prerequisite.archived = false
+               AND NOT (${ taskTargetCompletedSql('prerequisite', 'prerequisite.status') })
+           )
+           AND NOT EXISTS (
              SELECT 1 FROM agent_jobs j WHERE j.status = 'running'
-              AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
+              AND (t.id = ANY(j.project_task_ids) OR j.job_id = t.source_ref
+                OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
            )
          ORDER BY
            GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) DESC,
@@ -386,13 +404,13 @@ export class WorkTaskDispatchModel {
       const id = `dispatch-${ randomUUID() }`;
       const threadId = `task-dispatch-${ task.id }-${ Date.now() }`;
       const inserted = await client.query<WorkTaskDispatchRecord>(`
-        INSERT INTO work_task_dispatches (id, task_id, agent_id, thread_id, kind, attempt)
+        INSERT INTO work_task_dispatches (id, task_id, agent_id, thread_id, kind, attempt, origin_evidence)
         VALUES ($1, $2, $3, $4, 'execution', COALESCE((
           SELECT MAX(attempt) + 1 FROM work_task_dispatches
            WHERE task_id = $2 AND kind = 'execution'
-        ), 1))
+        ), 1), jsonb_build_object('executionStartLane', $5::text))
         RETURNING *
-      `, [id, task.id, agentId, threadId]);
+      `, [id, task.id, agentId, threadId, claimStatus]);
 
       const updated = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
@@ -466,6 +484,13 @@ export class WorkTaskDispatchModel {
            AND p.dispatch_enabled = true
            ${ admission }
            AND NOT EXISTS (
+             SELECT 1 FROM work_task_dependencies dep
+             JOIN work_tasks prerequisite ON prerequisite.id = dep.depends_on_task_id
+             WHERE dep.dependent_task_id = t.id AND dep.archived_at IS NULL
+               AND prerequisite.archived = false
+               AND NOT (${ taskTargetCompletedSql('prerequisite', 'prerequisite.status') })
+           )
+           AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
               WHERE d.task_id = t.id AND d.kind = 'verification'
                 AND d.status IN ('failed', 'stale')
@@ -473,7 +498,8 @@ export class WorkTaskDispatchModel {
            )
            AND NOT EXISTS (
              SELECT 1 FROM agent_jobs j WHERE j.status = 'running'
-              AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
+              AND (t.id = ANY(j.project_task_ids) OR j.job_id = t.source_ref
+                OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
            )
          ORDER BY
            GREATEST(t.last_activity_at, t.last_moved_at, COALESCE(t.updated_at, t.created_at)) DESC,
@@ -662,7 +688,8 @@ export class WorkTaskDispatchModel {
              EXISTS (
                SELECT 1 FROM agent_jobs j
                 WHERE j.status = 'running'
-                  AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
+                  AND (t.id = ANY(j.project_task_ids) OR j.job_id = t.source_ref
+                OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
              ) AS has_active_agent_job,
              (SELECT COUNT(*)::text FROM work_task_recovery_attempts a WHERE a.task_id = t.id) AS recovery_attempts,
              COALESCE((SELECT p.dispatch_enabled FROM work_projects p WHERE p.id = t.project_id), true) AS project_dispatch_enabled
@@ -727,7 +754,8 @@ export class WorkTaskDispatchModel {
              AND NOT EXISTS (
                SELECT 1 FROM agent_jobs j
                 WHERE j.status = 'running'
-                  AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
+                  AND (t.id = ANY(j.project_task_ids) OR j.job_id = t.source_ref
+                OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
              )
              AND t.last_activity_at = $2::timestamptz
              ${ projectDispatchEnabledSql('t') }
