@@ -18,6 +18,7 @@
  */
 
 import { postgresClient } from '../../database/PostgresClient';
+import { WorkTaskOwnershipModel } from '../../database/models/WorkTaskOwnershipModel';
 
 export interface AgentJobResult {
   label:    string;
@@ -83,11 +84,14 @@ let bootSweepDone: Promise<void> | null = null;
 function ensureBootSweep(): Promise<void> {
   bootSweepDone ??= (async() => {
     try {
-      await postgresClient.query(
+      const swept = await postgresClient.query(
         `UPDATE agent_jobs
             SET status = 'failed', error = 'app restarted mid-job', finished_at = now()
-          WHERE status = 'running'`,
-      );
+          WHERE status = 'running'
+          RETURNING job_id`,
+      ) as any[];
+      // Jobs that died with the previous process hand their tasks back.
+      await WorkTaskOwnershipModel.releaseSweptJobs((swept ?? []).map((row: any) => row.job_id));
     } catch (err) {
       console.warn('[jobRegistry] boot sweep failed (will rely on in-memory state):', (err as Error).message);
     }
@@ -151,7 +155,7 @@ export function abortJob(jobId: string): 'stopped' | 'not-found' | 'already-fini
   void dbWrite(
     `UPDATE agent_jobs SET status = 'stopped', finished_at = now() WHERE job_id = $1`,
     [jobId],
-  );
+  ).then(() => releaseOwnedTasks(jobId));
 
   return 'stopped';
 }
@@ -220,6 +224,7 @@ export async function completeJob(jobId: string, results: AgentJobResult[]): Pro
     `UPDATE agent_jobs SET status = 'completed', finished_at = now(), results = $2::jsonb, completion_delivered_at = NULL WHERE job_id = $1`,
     [jobId, JSON.stringify(results)],
   );
+  await releaseOwnedTasks(jobId);
 }
 
 /** Mark a persisted completion delivered only after the graph wake was sent. */
@@ -264,7 +269,16 @@ export function failJob(jobId: string, error: string): void {
   void dbWrite(
     `UPDATE agent_jobs SET status = 'failed', finished_at = now(), error = $2 WHERE job_id = $1`,
     [jobId, error],
-  );
+  ).then(() => releaseOwnedTasks(jobId));
+}
+
+/** Hand a finished job's Projects tasks back; never fails the caller. */
+async function releaseOwnedTasks(jobId: string): Promise<void> {
+  try {
+    await WorkTaskOwnershipModel.releaseForJob(jobId);
+  } catch (err) {
+    console.warn(`[jobRegistry] could not release tasks owned by ${ jobId }:`, (err as Error).message);
+  }
 }
 
 export function deleteJob(jobId: string): void {

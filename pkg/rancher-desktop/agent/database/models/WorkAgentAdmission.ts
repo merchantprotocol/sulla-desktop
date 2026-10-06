@@ -5,7 +5,8 @@ export function liveAgentTasksSql(): string {
   return `SELECT task_id FROM work_task_dispatches WHERE status = 'running'
     UNION SELECT task_id FROM work_task_planning_runs WHERE status = 'active'
     UNION SELECT task_id FROM work_task_stage_claims WHERE status = 'active'
-    UNION SELECT task_id FROM work_lane_entry_automations WHERE status = 'running'`;
+    UNION SELECT task_id FROM work_lane_entry_automations WHERE status = 'running'
+    UNION SELECT unnest(project_task_ids) FROM agent_jobs WHERE status = 'running'`;
 }
 
 /**
@@ -36,7 +37,8 @@ export function noWriterEvidenceSql(taskId: string, executionId: string, minutes
       SELECT 1 FROM agent_jobs job
         JOIN work_tasks task ON task.id = ${ taskId }
        WHERE job.status = 'running'
-         AND (job.job_id = task.source_ref OR COALESCE(job.results, '[]'::jsonb)::text LIKE '%' || task.id || '%')
+         AND (task.id = ANY(job.project_task_ids) OR job.job_id = task.source_ref
+           OR COALESCE(job.results, '[]'::jsonb)::text LIKE '%' || task.id || '%')
     )`;
 }
 
@@ -88,6 +90,8 @@ export async function agentAdmissionSql(taskAlias: string, delegationOwner?: str
       WHERE c.task_id = ${ taskId } AND c.status = 'active')
     AND NOT EXISTS (SELECT 1 FROM work_task_planning_runs planning
       WHERE planning.task_id = ${ taskId } AND planning.status = 'active')
+    AND NOT EXISTS (SELECT 1 FROM agent_jobs owning_job
+      WHERE owning_job.status = 'running' AND ${ taskId } = ANY(owning_job.project_task_ids))
     AND NOT EXISTS (SELECT 1 FROM work_lane_entry_automations lane
       WHERE lane.task_id = ${ taskId } AND lane.status = 'running' ${ delegation })
     AND NOT EXISTS (

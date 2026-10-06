@@ -90,3 +90,18 @@ describe('direct task comment handoff', () => {
     expect(addComment).toHaveBeenCalledTimes(status === 'failed' ? 1 : 0);
   });
 });
+
+describe('dead-run settlement', () => {
+  it('settles a dead work run as timed out, keeps the lane, and leaves an audit comment', async() => {
+    settle.mockClear(); addComment.mockClear();
+    await new Service().settleDeadRun(
+      { id: 'dispatch-dead', task_id: 'task' }, false, 'no agent activity for 30 minute(s)', { metadata: {} },
+    );
+    expect(settle).toHaveBeenCalledWith('dispatch-dead', 'timed_out', undefined, 'dead run: no agent activity for 30 minute(s)');
+    expect(addComment).toHaveBeenCalledWith(expect.objectContaining({
+      task_id: 'task',
+      author:  'dispatcher',
+      body:    expect.stringContaining('Stopped work run dispatch-dead as dead (no agent activity for 30 minute(s))'),
+    }));
+  });
+});

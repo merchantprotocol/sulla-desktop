@@ -41,6 +41,17 @@ on:
     - 'pkg/rancher-desktop/pages/LanguageModelSettings.vue'
     - 'pkg/rancher-desktop/agent/services/__tests__/RoutineConcurrencyPolicy.test.ts'
     - 'pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts'
+    - 'pkg/rancher-desktop/agent/database/models/WorkTaskOwnershipModel.ts'
+    - 'pkg/rancher-desktop/agent/tools/agents/spawn_agent.ts'
+    - 'pkg/rancher-desktop/agent/tools/agents/jobRegistry.ts'
+    - 'pkg/rancher-desktop/agent/tools/agents/__tests__/spawnAgentTaskOwnership.test.ts'
+    - 'pkg/rancher-desktop/agent/routines/core/executeProjectTodo.ts'
+    - 'pkg/rancher-desktop/agent/prompts/projectReport.ts'
+    - 'pkg/rancher-desktop/agent/prompts/sections/soul.ts'
+    - 'pkg/rancher-desktop/agent/services/RunActivity.ts'
+    - 'pkg/rancher-desktop/agent/services/__tests__/RunActivity.test.ts'
+    - 'pkg/rancher-desktop/agent/controllers/ToolExecutor.ts'
+    - 'pkg/rancher-desktop/agent/nodes/BaseNode.ts'
   workflow_dispatch:
 
 permissions:
@@ -92,6 +103,8 @@ jobs:
           pkg/rancher-desktop/agent/database/models/__tests__/WorkTaskDispatchJournalReplay.test.ts \
           pkg/rancher-desktop/agent/routines/core/__tests__/reviewProjectArtifact.test.ts \
           pkg/rancher-desktop/agent/routines/core/__tests__/planProjectTask.test.ts \
+          pkg/rancher-desktop/agent/routines/core/__tests__/executeProjectTodo.test.ts \
+          pkg/rancher-desktop/agent/prompts/__tests__/projectReport.test.ts \
           pkg/rancher-desktop/agent/workflow/__tests__/reviewProjectArtifactWorkflow.test.ts \
           pkg/rancher-desktop/agent/projects/application/__tests__/ProjectsApplicationService.readyTasksSettleGeneration.test.ts \
           pkg/rancher-desktop/main/__tests__/routinePreflight.test.ts \
@@ -104,6 +117,8 @@ jobs:
           pkg/rancher-desktop/agent/services/__tests__/RoutineConcurrencyPolicy.test.ts \
           pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts \
           pkg/rancher-desktop/agent/controllers/__tests__/PlaybookController.leases.test.ts \
+          pkg/rancher-desktop/agent/tools/agents/__tests__/spawnAgentTaskOwnership.test.ts \
+          pkg/rancher-desktop/agent/services/__tests__/RunActivity.test.ts \
           2>&1 | tee "$log"
         rc=$?
         if [ "$rc" -ne 0 ]; then

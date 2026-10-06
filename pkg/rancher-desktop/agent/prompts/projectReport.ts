@@ -155,7 +155,7 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
     : `## ▶️ Actionable now (${ next.length } of ${ actionableRows.length })`);
   lines.push(opts.lifecycleAware
     ? '_Only rows listed here have an explicit named Heartbeat fallback (or no lifecycle stage). Heartbeat may act within that fallback; absence or manual hold never grants ownership._'
-    : '_This is a portfolio dispatch queue, not a one-task limit. Heartbeat should hydrate and dispatch as many independent tasks as available sub-agent capacity allows, one task per work agent, then continue across the queue for the full wake._');
+    : '_Task selection, admission, assignment, retries, and recovery belong to the mechanical dispatcher. This report is context, not permission for Heartbeat or another LLM to dispatch portfolio workers. Workers execute only their already-claimed task; do not create a second dispatch path._');
   if (!next.length) {
     lines.push('_No open tasks in scope._');
   } else {
