@@ -136,8 +136,10 @@ describe('system-owned review evidence', () => {
     const original = { ...completed({}), completedAt: 'now', nodeResults: [
       { nodeId: 'node-review-code', result: 'Original findings', label: 'Code and PR Reviewer' },
     ] };
-    const state = { messages: [], metadata: { lastCompletedWorkflow: original } };
+    const state = { messages: [], metadata: { lastCompletedWorkflow: original, cycleComplete: true, waitingForUser: true } };
     const graph = { execute: jest.fn<any>().mockImplementation(async(s: any) => {
+      expect(s.metadata.cycleComplete).toBe(false);
+      expect(s.metadata.waitingForUser).toBe(false);
       s.metadata.lastCompletedWorkflow = completed({ summary: 'Still missing verdict' }); return s;
     }) };
     const result = await service.retryProtectedSynthesis(state, original, { id: 'dispatch', task_id: 'task' },

@@ -993,6 +993,10 @@ export class TaskDispatcherService {
     const retry = createPlaybookStateFromNode(definition as any, 'node-review-synthesize', seeds);
     state.metadata.lastCompletedWorkflow = undefined;
     state.metadata.activeWorkflow = retry;
+    state.metadata.cycleComplete = false;
+    state.metadata.waitingForUser = false;
+    state.metadata.iterations = 0;
+    state.metadata.consecutiveSameNode = 0;
     state.messages.push({ role: 'user', content:
       `The verdict failed validation (${ reason }). Retry synthesis once using the preserved reviewer outputs. Return the required JSON only; do not repeat reviews or change artifacts.` });
     await WorkTaskDispatchModel.recordReviewLaunchWithExecution(dispatch.id, {
