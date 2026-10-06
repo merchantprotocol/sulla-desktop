@@ -1344,6 +1344,11 @@ export class WorkTaskDispatchModel {
    * explicitly recovered during startup. Healthy current-runtime leases are
    * never selected, regardless of their age.
    */
+  /** Close one dead workflow execution (no-op unless running/suspended). */
+  static async settleOrphanExecution(executionId: string): Promise<void> {
+    await postgresClient.transaction(client => settleOrphanExecution(client, executionId));
+  }
+
   static async recoverOrphanedVerification(taskIds: string[]): Promise<string[]> {
     if (taskIds.length === 0) return [];
     return postgresClient.transaction(async(client: PoolClient) => {

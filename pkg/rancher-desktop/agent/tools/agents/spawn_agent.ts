@@ -1,7 +1,8 @@
 import { BaseTool, ToolResponse } from '../base';
 import { extractAgentTurnOutcome } from './agentTurnOutcome';
-import { createJob, completeJob, deleteJob, failJob, getJobAbortSignal, markCompletionDelivered } from './jobRegistry';
+import { abortJob, createJob, completeJob, deleteJob, failJob, getJobAbortSignal, markCompletionDelivered } from './jobRegistry';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
+import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
 import { combineAborts } from '../../services/AbortService';
 import { findAgentDir } from '../../utils/sullaPaths';
 
@@ -120,6 +121,8 @@ export class SpawnAgentWorker extends BaseTool {
     // Abort signal for THIS async job (set once the job is created below).
     // Threaded into each sub-agent so stop_agent_job(jobId) can cancel them.
     let jobAbortSignal: AbortSignal | undefined;
+    // Set once a job exists; its id is the dead-run activity key for the job.
+    let activityJobId: string | undefined;
 
     // ── Task ownership ──────────────────────────────────────────
     // A job that works a Projects task owns it for its whole run. Ownership is
@@ -172,6 +175,11 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.modelSlot = 'primary';
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;
+        // Activity flows up: anything this sub-agent does keeps its parent run
+        // (and this job) alive for dead-run detection.
+        subState.metadata.activityKeys = RunActivity.inherit(
+          (this.state as any)?.metadata, ...(activityJobId ? [activityJobId] : []),
+        );
         // Ownership flows down: a sub-agent may delegate the tasks it holds.
         subState.metadata.ownedProjectTaskIds = [...new Set([
           ...inherited,
@@ -271,11 +279,27 @@ export class SpawnAgentWorker extends BaseTool {
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
       jobAbortSignal = getJobAbortSignal(job.jobId);
+      activityJobId = job.jobId;
+
+      // A job whose whole agent tree goes silent is dead: stop it (which hands
+      // back any task it owns) and tell the parent, instead of waiting forever
+      // on a provider call that will never return.
+      let stoppedAsDead = false;
+      const stopDeadRunWatch = watchForDeadRun(job.jobId, async(reason) => {
+        if (abortJob(job.jobId) !== 'stopped') return;
+        stoppedAsDead = true;
+        const message = `dead run: ${ reason }; job stopped`;
+        console.warn(`[spawn_agent] Async job ${ job.jobId } ${ message }`);
+        await emitProactiveCompletion(parentChannel, job.jobId, [], message);
+        await wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], message);
+      });
 
       // Launch in background — do not await
       executeAll()
         .then(async(results) => {
           await completeJob(job.jobId, results);
+          if (stoppedAsDead) return; // the parent was already told
+
           console.log(`[spawn_agent] Async job ${ job.jobId } completed — ${ results.length } result(s)`);
           await emitProactiveCompletion(parentChannel, job.jobId, results);
           // Feed the results back INTO the orchestrator's loop, not just onto a
@@ -288,9 +312,11 @@ export class SpawnAgentWorker extends BaseTool {
         .catch(async(err) => {
           failJob(job.jobId, (err as Error).message);
           console.error(`[spawn_agent] Async job ${ job.jobId } failed:`, err);
+          if (stoppedAsDead) return;
           await emitProactiveCompletion(parentChannel, job.jobId, [], (err as Error).message);
           wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], (err as Error).message);
-        });
+        })
+        .finally(stopDeadRunWatch);
 
       return {
         successBoolean: true,
@@ -305,13 +331,24 @@ export class SpawnAgentWorker extends BaseTool {
     }
 
     // ── Sync mode: block until complete ─────────────────────────
-    if (ownershipJob) jobAbortSignal = getJobAbortSignal(ownershipJob.jobId);
+    let stopDeadRunWatch: (() => void) | undefined;
+    if (ownershipJob) {
+      const jobId = ownershipJob.jobId;
+      jobAbortSignal = getJobAbortSignal(jobId);
+      activityJobId = jobId;
+      // Stopping a dead job hands its tasks back even if the hung call never returns.
+      stopDeadRunWatch = watchForDeadRun(jobId, (reason) => {
+        if (abortJob(jobId) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } dead run: ${ reason }; job stopped`);
+      });
+    }
     let results: AgentJobResult[];
     try {
       results = await executeAll();
     } catch (err) {
       if (ownershipJob) failJob(ownershipJob.jobId, (err as Error).message);
       throw err;
+    } finally {
+      stopDeadRunWatch?.();
     }
     if (ownershipJob) {
       // The caller is reading the results right here; only the ownership

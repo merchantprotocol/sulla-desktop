@@ -45,6 +45,10 @@ on:
     - 'pkg/rancher-desktop/agent/tools/agents/spawn_agent.ts'
     - 'pkg/rancher-desktop/agent/tools/agents/jobRegistry.ts'
     - 'pkg/rancher-desktop/agent/tools/agents/__tests__/spawnAgentTaskOwnership.test.ts'
+    - 'pkg/rancher-desktop/agent/services/RunActivity.ts'
+    - 'pkg/rancher-desktop/agent/services/__tests__/RunActivity.test.ts'
+    - 'pkg/rancher-desktop/agent/controllers/ToolExecutor.ts'
+    - 'pkg/rancher-desktop/agent/nodes/BaseNode.ts'
   workflow_dispatch:
 
 permissions:
@@ -109,6 +113,7 @@ jobs:
           pkg/rancher-desktop/agent/services/__tests__/TaskDispatcherService.test.ts \
           pkg/rancher-desktop/agent/controllers/__tests__/PlaybookController.leases.test.ts \
           pkg/rancher-desktop/agent/tools/agents/__tests__/spawnAgentTaskOwnership.test.ts \
+          pkg/rancher-desktop/agent/services/__tests__/RunActivity.test.ts \
           2>&1 | tee "$log"
         rc=$?
         if [ "$rc" -ne 0 ]; then

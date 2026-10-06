@@ -36,9 +36,16 @@ describe('spawn_agent task ownership', () => {
     expect(query.mock.calls.some(([sql]) => String(sql).startsWith('DELETE FROM agent_jobs'))).toBe(true);
   });
 
-  it('lets a dispatch worker delegate the task it already owns', async() => {
+  it('lets a dispatch worker delegate the task it already owns, and hands it back when done', async() => {
     jest.spyOn(postgresClient, 'query').mockResolvedValue([] as any);
     const claim = jest.spyOn(WorkTaskOwnershipModel, 'claimForJob').mockResolvedValue({ claimed: true, conflicts: [] });
+    let released!: () => void;
+    const releasedOnce = new Promise<void>(resolve => { released = resolve; });
+    const release = jest.spyOn(WorkTaskOwnershipModel, 'releaseForJob').mockImplementation(async() => { released(); });
+    (GraphRegistry as any).getOrCreateAgentGraph.mockResolvedValue({
+      graph: { execute: async(state: any) => state },
+      state: { messages: [], metadata: {} },
+    });
     const worker = new SpawnAgentWorker();
     worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'parent', ownedProjectTaskIds: ['AwBS'] } });
 
@@ -49,6 +56,9 @@ describe('spawn_agent task ownership', () => {
 
     expect(result.successBoolean).toBe(true);
     expect(claim).toHaveBeenCalledWith(expect.any(String), { AwBS: 'sulla-desktop' }, ['AwBS']);
+    // The background job must settle (and release) before the test ends.
+    await releasedOnce;
+    expect(release).toHaveBeenCalledWith(JSON.parse(result.responseString).jobId);
   });
 
   it('rejects a blank projectTaskId before creating any job', async() => {

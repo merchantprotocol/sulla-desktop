@@ -57,6 +57,7 @@ const ORCHESTRATOR_REENTRY_MAX_MS = parseInt(
 
 import { throwIfAborted } from '../services/AbortService';
 import { LiveWriterRegistry } from '../services/LiveWriterRegistry';
+import { RunActivity } from '../services/RunActivity';
 import { WorkflowLeaseHeartbeat, WorkflowLeaseLostError } from '../workflow/WorkflowLeaseHeartbeat';
 import { getConversationLogger } from '../services/ConversationLogger';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
@@ -2540,6 +2541,8 @@ export class PlaybookController<TState = any> {
     const parentChannel = (_state as any).metadata?.wsChannel || 'workbench';
     subState.metadata.workflowNodeId = nodeId;
     subState.metadata.workflowParentChannel = parentChannel;
+    // Work done by this sub-agent counts as activity for the run that owns it.
+    subState.metadata.activityKeys = RunActivity.inherit(parentMeta);
 
     // Bumpers in BaseNode.onToken / onActivity and ToolExecutor.
     // executeToolCalls update lastActivityMs as work happens; the shared

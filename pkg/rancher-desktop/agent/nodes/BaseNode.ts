@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { RunActivity } from '../services/RunActivity';
 import path from 'node:path'; // used by enrichPrompt for active_projects_file
 
 import { ChatController, type ChatMode } from '../controllers/ChatController';
@@ -1579,6 +1580,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Sub-agent inactivity watchdog in PlaybookController reads this —
       // every token proves the LLM is generating, not hung.
       state.metadata.lastActivityMs = Date.now();
+      RunActivity.touch(state.metadata);
 
       // Run token through all active extractors (speak extraction, etc.)
       const cleaned = controller.processChunk(token, ctx);
@@ -1618,6 +1620,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Provider is emitting thinking/tool_use blocks — clear proof work
       // is happening even if raw tokens are sparse (long Claude Code turns).
       state.metadata.lastActivityMs = Date.now();
+      RunActivity.touch(state.metadata);
 
       const flushedStreaming = !isVoiceMode && contentBuffer.trim().length > 0;
       if (!isVoiceMode && contentBuffer.trim()) {
@@ -1655,6 +1658,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // so the patch block lands between text segments rather than mid-stream.
     const onFilePatch = (info: import('../util/linePatch').FilePatchInfo): void => {
       state.metadata.lastActivityMs = Date.now();
+      RunActivity.touch(state.metadata);
       if (!isVoiceMode && contentBuffer.trim()) {
         const stripped = stripProtocolTagsStreaming(contentBuffer);
         if (stripped.trim()) {
@@ -1878,6 +1882,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // promise. This marker is shared with the dispatcher through the live
     // graph state and is intentionally updated before transport delivery.
     (state.metadata as any).lastAgentActivityAt = Date.now();
+    RunActivity.touch(state.metadata);
 
     const threadId = state.metadata.threadId;
 

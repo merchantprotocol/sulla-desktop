@@ -3,6 +3,7 @@ import { resolvePullRequestHead, resolvePullRequestHeads } from './GitHubPullReq
 import { GraphRegistry } from './GraphRegistry';
 import { resolveWipLimits, evaluateClaim, type WipLimits, type RoleCounts, type BackpressureDecision } from './ProjectAutomationWipLimits';
 import { RoutineConcurrencyPolicy } from './RoutineConcurrencyPolicy';
+import { DEAD_RUN_GRACE_MS, watchForDeadRun } from './RunActivity';
 import { postgresClient } from '../database/PostgresClient';
 import { DispatcherLivenessModel, type DispatcherTickOutcome } from '../database/models/DispatcherLivenessModel';
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
@@ -11,6 +12,7 @@ import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItem
 import {
   WorkTaskDispatchModel,
   type ClaimedDispatch,
+  type WorkTaskDispatchRecord,
   type DispatchCandidate,
   type ProtectedReviewEvidence,
   type ReviewArtifactComponent,
@@ -34,6 +36,9 @@ import { createPlaybookState } from '../workflow/WorkflowPlaybook';
 
 const CHECK_INTERVAL_MS = 60_000;
 const LEASE_HEARTBEAT_MS = 120_000;
+
+/** A run that was aborted as dead or timed out and did not stop in time. */
+class DeadRunError extends Error {}
 const RUNTIME_INSTANCE_ID = `task-dispatcher-${ process.pid }-${ Date.now() }`;
 const DEFAULT_VERIFIER_TIMEOUT_MINUTES = 45;
 const DEFAULT_EXECUTION_TIMEOUT_MINUTES = 90;
@@ -555,6 +560,25 @@ export class TaskDispatcherService {
     let verifierTimedOut = false;
     let executionTimedOut = false;
     let writerGraph: any;
+    let runState: any;
+    // Dead-run handling. Abort is cooperative, so a run whose provider call
+    // hangs would never return and would hold its slot forever. Once a run is
+    // declared dead (or times out) and has not stopped within the grace
+    // period, every wait below gives up and the run is settled here.
+    let deadRunReason: string | null = null;
+    let stopDeadRunWatch: (() => void) | null = null;
+    let abandonTimer: ReturnType<typeof setTimeout> | null = null;
+    let rejectAbandoned: (err: Error) => void = () => undefined;
+    const abandoned = new Promise<never>((_, reject) => { rejectAbandoned = reject; });
+    abandoned.catch(() => undefined);
+    const untilAbandoned = <T>(work: Promise<T>): Promise<T> => {
+      work.catch(() => undefined);
+      return Promise.race([work, abandoned]);
+    };
+    const giveUpAfterGrace = (reason: string): void => {
+      if (abandonTimer) return;
+      abandonTimer = setTimeout(() => rejectAbandoned(new DeadRunError(reason)), DEAD_RUN_GRACE_MS);
+    };
 
     try {
       const isVerification = dispatch.kind === 'verification';
@@ -590,7 +614,11 @@ export class TaskDispatcherService {
         { isTrustedUser: 'trusted' },
       ) as { graph: any; state: any };
       writerGraph = graph;
+      runState = state;
       state.metadata.lastAgentActivityAt = Date.now();
+      // Every token, thinking event and tool call in this run's tree (review
+      // sub-agents and spawned helpers included) refreshes this run's clock.
+      state.metadata.activityKeys = [dispatch.id];
       // This worker owns the task for the dispatch; sub-agents it spawns for
       // the same task inherit ownership instead of being refused.
       state.metadata.ownedProjectTaskIds = [task.id];
@@ -672,10 +700,17 @@ export class TaskDispatcherService {
         if (isVerification) verifierTimedOut = true;
         else executionTimedOut = true;
         abort.abort();
+        giveUpAfterGrace(`exceeded ${ timeoutMinutes } minute(s) and did not stop after abort`);
       }, timeoutMinutes * 60_000);
+      stopDeadRunWatch = watchForDeadRun(dispatch.id, (reason) => {
+        deadRunReason = reason;
+        console.warn(`[TaskDispatcher] Dead run ${ dispatch.id } (task ${ task.id }): ${ reason }; aborting`);
+        abort.abort();
+        giveUpAfterGrace(reason);
+      }, () => this.workflowLeaseAlive(state));
       // Abort is cooperative. Do not release write ownership until execution
       // actually returns, even when its provider ignores cancellation.
-      let finalState = await graph.execute(state);
+      let finalState: any = await untilAbandoned<any>(graph.execute(state));
 
       // Single-agent workflow nodes (e.g. node-review-classify) are
       // dispatched fire-and-forget inside Graph.execute() so interactive
@@ -691,11 +726,17 @@ export class TaskDispatcherService {
       if (isVerification && verificationOwner === 'core-routine' && !finalState.metadata?.lastCompletedWorkflow) {
         const executionId = state.metadata?.activeWorkflow?.executionId;
         if (executionId) {
-          await this.awaitReviewWorkflowSettlement(executionId);
+          await untilAbandoned(this.awaitReviewWorkflowSettlement(executionId, () => this.active.has(dispatch.id)));
         }
       }
 
-      await this.awaitWriterTermination(graph);
+      await untilAbandoned(this.awaitWriterTermination(graph, () => this.active.has(dispatch.id)));
+
+      if (deadRunReason) {
+        // It stopped after the dead-run abort; whatever it returned is not a result.
+        await this.settleDeadRun(dispatch, isVerification, deadRunReason, state);
+        return;
+      }
 
       if (executionTimedOut) {
         await WorkTaskDispatchModel.settle(dispatch.id, 'timed_out', undefined,
@@ -796,7 +837,12 @@ export class TaskDispatcherService {
         await this.finalizeClaim(claim, outcome.status, summary);
       }
     } catch (err) {
-      await this.awaitWriterTermination(writerGraph);
+      if (err instanceof DeadRunError) {
+        await this.settleDeadRun(dispatch, dispatch.kind === 'verification', err.message, runState);
+        return;
+      }
+      await untilAbandoned(this.awaitWriterTermination(writerGraph, () => this.active.has(dispatch.id)))
+        .catch(() => undefined);
       const message = err instanceof Error ? err.message : String(err);
       if (dispatch.kind === 'verification') {
         await WorkTaskDispatchModel.failVerification(
@@ -809,6 +855,8 @@ export class TaskDispatcherService {
     } finally {
       if (runTimeout) clearTimeout(runTimeout);
       if (leaseTimer) clearInterval(leaseTimer);
+      if (abandonTimer) clearTimeout(abandonTimer);
+      stopDeadRunWatch?.();
       await LifecycleCapabilityModel.releaseStage(liveStageClaim.id)
         .catch(err => console.error(`[TaskDispatcher] Stage-claim release failed for ${ liveStageClaim.id }:`, err));
       this.active.delete(dispatch.id);
@@ -830,16 +878,47 @@ export class TaskDispatcherService {
    * The existing pending-completion / continuation machinery is untouched
    * and already works correctly once given the chance to reconnect.
    */
-  private async awaitWriterTermination(graph: any): Promise<void> {
-    while (graph?.hasUnconfirmedWorkflowWorkers?.()) {
+  /** A review whose workflow still renews its lease is not dead, however quiet. */
+  private async workflowLeaseAlive(state: any): Promise<boolean> {
+    const executionId = state?.metadata?.activeWorkflow?.executionId;
+    if (!executionId) return false;
+    const execution = await WorkflowExecutionModel.find(executionId).catch(() => null);
+    const attributes: any = execution?.attributes ?? {};
+    const leaseExpiresAt = attributes.lease_expires_at ? new Date(attributes.lease_expires_at).getTime() : 0;
+    return ['running', 'suspended'].includes(attributes.status) && leaseExpiresAt > Date.now();
+  }
+
+  /** Settle a dead run, close its workflow, and leave an audit comment. */
+  private async settleDeadRun(dispatch: WorkTaskDispatchRecord, isVerification: boolean, reason: string, state: any): Promise<void> {
+    const detail = `dead run: ${ reason }`;
+    if (isVerification) {
+      await WorkTaskDispatchModel.failVerification(dispatch.id, `dead_run: ${ reason }`.slice(0, 2_000));
+    } else {
+      await WorkTaskDispatchModel.settle(dispatch.id, 'timed_out', undefined, detail);
+    }
+    const executionId = state?.metadata?.activeWorkflow?.executionId || dispatch.workflow_execution_id;
+    if (executionId) {
+      await WorkTaskDispatchModel.settleOrphanExecution(executionId)
+        .catch(err => console.error(`[TaskDispatcher] Could not close dead workflow ${ executionId }:`, err));
+    }
+    await WorkItemsModel.addComment({
+      task_id: dispatch.task_id,
+      author:  'dispatcher',
+      body:    `${ new Date().toISOString().slice(0, 10) }: Stopped ${ isVerification ? 'review' : 'work' } run ${ dispatch.id } as dead (${ reason }). ` +
+        'It was aborted and did not finish, so its slot and lease were released. The task stays in its lane and will be picked up again.',
+    }).catch(err => console.error(`[TaskDispatcher] Could not comment dead run ${ dispatch.id }:`, err));
+  }
+
+  private async awaitWriterTermination(graph: any, isLive: () => boolean = () => true): Promise<void> {
+    while (isLive() && graph?.hasUnconfirmedWorkflowWorkers?.()) {
       await new Promise(resolve => setTimeout(resolve, 1500));
     }
   }
 
-  private async awaitReviewWorkflowSettlement(executionId: string): Promise<void> {
+  private async awaitReviewWorkflowSettlement(executionId: string, isLive: () => boolean = () => true): Promise<void> {
     const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
     const pollIntervalMs = 1500;
-    while (true) {
+    while (isLive()) {
       const execution = await WorkflowExecutionModel.find(executionId).catch(() => null);
       const status = execution?.attributes?.status;
       if (status === 'completed' || status === 'failed' || status === 'suspended') return;

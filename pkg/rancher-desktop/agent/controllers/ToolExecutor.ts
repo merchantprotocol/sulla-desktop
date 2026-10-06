@@ -12,6 +12,7 @@
  */
 
 import { throwIfAborted } from '../services/AbortService';
+import { RunActivity } from '../services/RunActivity';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { BaseTool } from '../tools/base';
 import { toolRegistry } from '../tools/registry';
@@ -136,6 +137,7 @@ export class ToolExecutor {
 
     state.metadata.hadToolCalls = true;
     state.metadata.lastActivityMs = Date.now();
+    RunActivity.touch(state.metadata);
     if (this.ctx.currentNodeRunContext) {
       this.ctx.currentNodeRunContext.hadToolCalls = true;
     }
@@ -256,6 +258,7 @@ export class ToolExecutor {
           // while — bump activity on return so the watchdog doesn't
           // mistake legitimate tool wait for an idle agent.
           state.metadata.lastActivityMs = Date.now();
+          RunActivity.touch(state.metadata);
           const toolSuccess = result?.success === true;
           const toolError = typeof result?.error === 'string'
             ? result.error
@@ -436,6 +439,7 @@ export class ToolExecutor {
         } catch { /* best-effort */ }
         perf.log(`[InProcToolTiming] node=${ this.ctx.nodeName } tool=${ toolName } ms=${ invokeMs } success=${ result?.success === true } parallel=true arg="${ argHint }"`);
         state.metadata.lastActivityMs = Date.now();
+        RunActivity.touch(state.metadata);
 
         const toolSuccess = result?.success === true;
         const toolError = typeof result?.error === 'string'
@@ -672,6 +676,7 @@ export class ToolExecutor {
     result?: any,
   ): Promise<boolean> {
     (state.metadata as any).lastAgentActivityAt = Date.now();
+    RunActivity.touch(state.metadata);
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
     const cappedResult = capWireResult(result);
     const sent = await this.dispatchToWebSocket(connectionId, {
@@ -741,6 +746,7 @@ export class ToolExecutor {
     result: ToolResult,
   ): Promise<void> {
     (state.metadata as any).lastAgentActivityAt = Date.now();
+    RunActivity.touch(state.metadata);
     if (action === 'emit_chat_message') return;
 
     const formatPayload = (payload: unknown, maxLen?: number): string => {
