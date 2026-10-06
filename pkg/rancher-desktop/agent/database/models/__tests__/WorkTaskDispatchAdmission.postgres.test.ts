@@ -172,6 +172,37 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     expect(candidates[600].id).toBe('1');
   });
 
+  it.each(['in_progress', 'qa'])('skips open dependencies in %s and admits after custom terminal completion', async(status) => {
+    await pool.query("INSERT INTO work_tasks (id, project_id, status) VALUES ('dependent', 'enabled', $1), ('prerequisite', 'enabled', 'in_progress')", [status]);
+    await pool.query("INSERT INTO work_task_dependencies VALUES ('dependent', 'prerequisite', NULL)");
+    const claim = () => status === 'qa'
+      ? WorkTaskDispatchModel.claimNextReview('reviewer', [], 'runtime', 'dependent')
+      : WorkTaskDispatchModel.claimNext('worker', 'runtime', undefined, 'dependent');
+    await expect(claim()).resolves.toBeNull();
+    await pool.query("UPDATE work_tasks SET status='shipped' WHERE id='prerequisite'");
+    await expect(claim()).resolves.not.toBeNull();
+  });
+
+  it.each(['project_task_ids', 'source_ref'])('skips a running outside job linked by %s', async(link) => {
+    await pool.query("INSERT INTO work_tasks (id, project_id, status, source_ref) VALUES ('owned', 'enabled', 'in_progress', $1)", [link === 'source_ref' ? 'outside' : null]);
+    await pool.query("INSERT INTO agent_jobs (job_id, status, project_task_ids) VALUES ('outside', 'running', $1)", [link === 'project_task_ids' ? ['owned'] : []]);
+    await expect(WorkTaskDispatchModel.claimNext('worker', 'runtime', undefined, 'owned')).resolves.toBeNull();
+    await pool.query("UPDATE agent_jobs SET status='completed'");
+    await expect(WorkTaskDispatchModel.claimNext('worker', 'runtime', undefined, 'owned')).resolves.not.toBeNull();
+  });
+
+  it.each(['elapsed', 'moved'])('backs off an unchanged task until %s', async(release) => {
+    await pool.query("INSERT INTO work_tasks (id, project_id, status) VALUES ('noop', 'enabled', 'in_progress')");
+    await pool.query(`INSERT INTO work_task_dispatches (id, task_id, kind, status, finished_at, origin_evidence)
+      VALUES ('previous', 'noop', 'execution', 'completed', now(), '{"executionStartLane":"in_progress"}')`);
+    await expect(WorkTaskDispatchModel.claimNext('worker', 'runtime', undefined, 'noop')).resolves.toBeNull();
+    if (release === 'elapsed') await pool.query("UPDATE work_task_dispatches SET finished_at=now()-interval '16 minutes'");
+    else await pool.query("UPDATE work_tasks SET last_moved_at=now() WHERE id='noop'");
+    const claimed = await WorkTaskDispatchModel.claimNext('worker', 'runtime', undefined, 'noop');
+    expect(claimed).not.toBeNull();
+    expect(claimed?.dispatch.origin_evidence).toMatchObject({ executionStartLane: 'in_progress' });
+  });
+
   it.each([['preflight_empty', false], ['already_active', false], ['preflight_empty', true], ['already_active', true]])('reuses three skipped lane reservations (%s, shared PR: %s)', async(skipped, shared) => {
     const { LaneEntryAutomationService } = await import('../../../services/LaneEntryAutomationService');
     const launch = jest.spyOn(LaneEntryAutomationService as any, 'executeRoutine')
