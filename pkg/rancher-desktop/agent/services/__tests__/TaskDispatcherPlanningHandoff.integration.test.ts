@@ -40,7 +40,7 @@ jest.unstable_mockModule('../../utils/sullaPaths', () => ({
   findAgentDir: jest.fn(() => '/agents/opus-worker'),
 }));
 jest.unstable_mockModule('../../workflow/WorkflowPlaybook', () => ({
-  createPlaybookState: jest.fn(),
+  createPlaybookState: jest.fn(), createPlaybookStateFromNode: jest.fn(),
 }));
 jest.unstable_mockModule('../GraphRegistry', () => ({
   GraphRegistry: { delete: jest.fn(), getOrCreateAgentGraph: jest.fn() },
