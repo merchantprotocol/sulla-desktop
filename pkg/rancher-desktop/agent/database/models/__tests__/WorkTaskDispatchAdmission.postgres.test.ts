@@ -510,7 +510,7 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
 
   it('claims waiting human-owned custom-lane work in place and rejects a duplicate claim', async() => {
     await pool.query(`INSERT INTO work_tasks (id, project_id, status, assignee, labels)
-      VALUES ('custom', 'enabled', 'custom_lane', 'human', ARRAY['gated']), ('dependency', 'paused', 'todo', null, '{}');
+      VALUES ('custom', 'enabled', 'custom_lane', 'human', ARRAY['gated']), ('dependency', 'paused', 'done', null, '{}');
       INSERT INTO work_task_waits (task_id, status) VALUES ('custom', 'active');
       INSERT INTO work_task_dependencies VALUES ('custom', 'dependency', null)`);
     const claims = await Promise.all([1, 2].map(n => WorkTaskDispatchModel.claimNext('sulla-desktop', `runtime-${ n }`, undefined, 'custom')));
@@ -541,10 +541,14 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
     await expect(WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime', undefined, 'lane')).resolves.toBeNull();
     expect(await WorkTaskDispatchModel.enumerateCandidates()).toHaveLength(3);
   });
-  it('admits unresolved todo dependencies through real lane-entry and audit SQL', async() => {
+  it('leaves unresolved todo dependencies untouched and admits after completion through real lane-entry and audit SQL', async() => {
     await pool.query(`INSERT INTO work_tasks (id, project_id, status) VALUES
       ('todo', 'enabled', 'todo'), ('prerequisite', 'paused', 'todo');
       INSERT INTO work_task_dependencies VALUES ('todo', 'prerequisite', null)`);
+    await expect(WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime', undefined, 'todo')).resolves.toBeNull();
+    expect((await pool.query("SELECT * FROM work_lane_entry_automations WHERE task_id='todo'")).rows).toHaveLength(0);
+    expect((await pool.query("SELECT * FROM work_project_domain_events WHERE task_id='todo'")).rows).toHaveLength(0);
+    await pool.query("UPDATE work_tasks SET status='done' WHERE id='prerequisite'");
     await expect(WorkTaskDispatchModel.claimNext('sulla-desktop', 'runtime', undefined, 'todo'))
       .resolves.toMatchObject({ task: { status: 'in_progress' } });
     expect((await pool.query("SELECT * FROM work_lane_entry_automations WHERE task_id='todo'")).rows)
@@ -690,6 +694,10 @@ postgresSuite('dispatcher broad admission against PostgreSQL', () => {
       .toEqual({ status: 'stale', failure_reason: 'orphan_recovered' });
     expect((await pool.query("SELECT status FROM work_task_stage_claims WHERE task_id='a'")).rows[0].status).toBe('recovered');
     expect((await pool.query("SELECT count(*)::int AS n FROM work_task_comments WHERE task_id='a'")).rows[0].n).toBe(1);
+    if (nextTask === 'a') {
+      await expect(admit('dispatch', nextTask)).resolves.toBeNull();
+      await pool.query("UPDATE work_task_dispatches SET finished_at=now()-interval '16 minutes' WHERE id=$1", [claim!.dispatch.id]);
+    }
     await expect(admit('dispatch', nextTask)).resolves.not.toBeNull();
   });
 

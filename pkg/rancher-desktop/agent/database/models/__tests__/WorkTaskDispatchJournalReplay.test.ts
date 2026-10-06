@@ -213,7 +213,7 @@ describe('WorkTaskDispatchModel broad review visibility', () => {
     expect(sql).not.toContain('work_task_dependencies');
   });
 
-  it('uses only collision and explicit project-pause guards for todo claims', async() => {
+  it('enforces dependencies and no-progress backoff alongside collision and pause guards', async() => {
     const query = jest.fn(() => Promise.resolve({ rows: [] })) as any;
     jest.spyOn(postgresClient, 'transaction').mockImplementation((callback: any) => callback(admissionClient(query)));
 
@@ -224,6 +224,8 @@ describe('WorkTaskDispatchModel broad review visibility', () => {
     expect(sql).toContain("d.status = 'running'");
     expect(sql).toContain("c.status = 'active'");
     expect(sql).not.toContain('downstream.status');
-    expect(sql).not.toContain('work_task_dependencies');
+    expect(sql).toContain('work_task_dependencies');
+    expect(sql).toContain("previous.origin_evidence->>'executionStartLane'");
+    expect(sql).toContain("interval '15 minutes'");
   });
 });
