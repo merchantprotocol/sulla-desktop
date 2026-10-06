@@ -56,6 +56,7 @@ const ORCHESTRATOR_REENTRY_MAX_MS = parseInt(
 );
 
 import { throwIfAborted } from '../services/AbortService';
+import { LiveWriterRegistry } from '../services/LiveWriterRegistry';
 import { WorkflowLeaseHeartbeat, WorkflowLeaseLostError } from '../workflow/WorkflowLeaseHeartbeat';
 import { getConversationLogger } from '../services/ConversationLogger';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
@@ -2472,10 +2473,12 @@ export class PlaybookController<TState = any> {
     const executionId: string | undefined = (state as any)?.metadata?.activeWorkflow?.executionId;
     if (!executionId) return this.executeSubAgentUntracked(state, nodeId, agentId, prompt, config);
     this.unconfirmedWorkers.set(executionId, (this.unconfirmedWorkers.get(executionId) ?? 0) + 1);
+    LiveWriterRegistry.acquire(executionId);
     const confirmStopped = () => {
       const left = (this.unconfirmedWorkers.get(executionId) ?? 1) - 1;
       if (left > 0) this.unconfirmedWorkers.set(executionId, left);
       else this.unconfirmedWorkers.delete(executionId);
+      LiveWriterRegistry.release(executionId);
     };
     try {
       return await this.executeSubAgentUntracked(state, nodeId, agentId, prompt, config);

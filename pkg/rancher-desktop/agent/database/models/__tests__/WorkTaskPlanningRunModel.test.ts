@@ -6,6 +6,7 @@ import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
 import { WorkTaskDependencyModel } from '../WorkTaskDependencyModel';
 import { WorkTaskPlanningRunModel } from '../WorkTaskPlanningRunModel';
+import { LiveWriterRegistry } from '../../../services/LiveWriterRegistry';
 
 function admissionClient(query: any): any {
   return { query: (sql: string, ...args: any[]) => sql.includes('projects-agent-admission')
@@ -88,15 +89,24 @@ describe('WorkTaskPlanningRunModel', () => {
     expect(query.mock.calls[0][0]).toContain("status = 'active'");
   });
 
-  it('retains reservations when recovery has no writer termination confirmation', async() => {
-    const query = jest.spyOn(postgresClient, 'query').mockResolvedValue([] as any);
-    const queryOne = jest.spyOn(postgresClient, 'queryOne').mockResolvedValue(null as any);
-    const transaction = jest.fn();
-    (postgresClient as any).transaction = transaction;
-    await expect(WorkTaskPlanningRunModel.recoverStale(45)).resolves.toEqual([]);
-    await expect(WorkTaskPlanningRunModel.recoverStaleForTask('task-1', 45)).resolves.toBe(false);
-    expect(query).not.toHaveBeenCalled();
-    expect(queryOne).not.toHaveBeenCalled();
-    expect(transaction).not.toHaveBeenCalled();
+  it('recovers only councils with no live writer evidence', async() => {
+    const query = jest.spyOn(postgresClient, 'query')
+      .mockResolvedValueOnce([{ task_id: 'task-1' }, { task_id: 'task-1' }] as any)
+      .mockResolvedValueOnce([] as any);
+    LiveWriterRegistry.acquire('exec-live');
+    try {
+      await expect(WorkTaskPlanningRunModel.recoverStale(45)).resolves.toEqual(['task-1']);
+      await expect(WorkTaskPlanningRunModel.recoverStaleForTask('task-2', 45)).resolves.toBe(false);
+    } finally {
+      LiveWriterRegistry.release('exec-live');
+    }
+    const sql = String(query.mock.calls[0][0]);
+    expect(sql).toContain("run.status = 'active'");
+    expect(sql).toContain('ANY($3::text[])');
+    expect(sql).toContain("execution.status IN ('running', 'suspended')");
+    expect(sql).toContain('execution.lease_expires_at > now()');
+    expect(sql).toContain("job.status = 'running'");
+    expect(query.mock.calls[0][1]).toEqual([45, null, ['exec-live']]);
+    expect(query.mock.calls[1][1]).toEqual([45, 'task-2', ['exec-live']]);
   });
 });
