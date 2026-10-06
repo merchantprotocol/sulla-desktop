@@ -375,8 +375,12 @@
 </template>
 
 <script lang="ts">
-import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, nextTick, onActivated, onMounted, onUnmounted, watch } from 'vue';
 
+// Every page and every browser tab mounts its own AgentHeader, so there is one
+// tab strip per page. They share a single scroll offset so switching tabs
+// never resets the strip back to the left.
+let sharedTabScrollLeft = 0;
 </script>
 
 <script setup lang="ts">
@@ -553,6 +557,44 @@ function updateScrollButtons() {
   canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
 }
 
+/** Hidden strips (inactive browser tabs, kept-alive pages) must not drive the shared offset. */
+function isStripVisible(el: HTMLElement): boolean {
+  return el.clientWidth > 0 && getComputedStyle(el).visibility !== 'hidden';
+}
+
+function onTabStripScroll() {
+  const el = getScrollEl();
+  if (!el) return;
+  if (isStripVisible(el)) sharedTabScrollLeft = el.scrollLeft;
+  updateScrollButtons();
+}
+
+/**
+ * Restore the shared scroll offset on the visible strip, then scroll the
+ * minimum needed to fully show the active tab.
+ */
+function syncTabStrip() {
+  const el = getScrollEl();
+  if (!el || !isStripVisible(el)) return;
+
+  let left = sharedTabScrollLeft;
+  const active = el.querySelector<HTMLElement>('.tab-active, .tab-active-native');
+
+  if (active) {
+    const start = active.offsetLeft;
+    const end = start + active.offsetWidth;
+
+    if (start < left) {
+      left = start;
+    } else if (end > left + el.clientWidth) {
+      left = end - el.clientWidth;
+    }
+  }
+  el.scrollTo({ left, behavior: 'instant' });
+  sharedTabScrollLeft = el.scrollLeft;
+  updateScrollButtons();
+}
+
 function scrollTabsLeft() {
   const el = getScrollEl();
   if (el) el.scrollBy({ left: -(el.clientWidth * 0.75), behavior: 'smooth' });
@@ -587,10 +629,12 @@ onMounted(() => {
   if (el) {
     scrollObserver = new ResizeObserver(() => updateScrollButtons());
     scrollObserver.observe(el);
-    el.addEventListener('scroll', updateScrollButtons, { passive: true });
+    el.addEventListener('scroll', onTabStripScroll, { passive: true });
     updateScrollButtons();
   }
+  nextTick(syncTabStrip);
 });
+onActivated(() => nextTick(syncTabStrip));
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyboardShortcuts);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
@@ -601,7 +645,7 @@ onUnmounted(() => {
     scrollObserver = null;
   }
   const el = getScrollEl();
-  if (el) el.removeEventListener('scroll', updateScrollButtons);
+  if (el) el.removeEventListener('scroll', onTabStripScroll);
 });
 
 function onRestoreClosedTab(index: number) {
@@ -821,6 +865,10 @@ watch(
 watch(() => orderedTabs.value.length, () => {
   nextTick(updateScrollButtons);
 });
+
+// The newly active tab's strip becomes visible after the parent re-renders;
+// carry the scroll offset over and keep the focused tab in view.
+watch(() => route.path, () => nextTick(syncTabStrip), { flush: 'post' });
 
 // ── Adjacent tab on close (Chrome behavior) ──
 // Defined after orderedTabs to avoid temporal dead zone in immediate watchers
