@@ -13,19 +13,22 @@ jest.unstable_mockModule('../../database/models/DispatcherLivenessModel', () => 
 jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () => ({ LifecycleCapabilityModel: {} }));
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({ SullaSettingsModel: {} }));
 jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({ WorkItemsModel: { addComment } }));
-jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({ WorkTaskDispatchModel: { settle } }));
+jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({ WorkTaskDispatchModel: { settle, recordReviewLaunchWithExecution: recordReviewLaunch, reviewGenerationHash: (artifacts: any[]) => artifacts.map(a => a.hash).join('').padEnd(64, '0').slice(0, 64) } }));
 jest.unstable_mockModule('../../database/models/WorkLaneDefinitionModel', () => ({ WorkLaneDefinitionModel: {} }));
 jest.unstable_mockModule('../../database/models/WorkflowModel', () => ({ WorkflowModel: {} }));
 jest.unstable_mockModule('../../database/models/WorkflowExecutionModel', () => ({ WorkflowExecutionModel: {} }));
 jest.unstable_mockModule('../../tools/agents/agentTurnOutcome', () => ({ extractAgentTurnOutcome: {} }));
 jest.unstable_mockModule('../../tools/registry', () => ({ toolRegistry: {} }));
-jest.unstable_mockModule('../../workflow/WorkflowPlaybook', () => ({ createPlaybookState: {} }));
+jest.unstable_mockModule('../../workflow/WorkflowPlaybook', () => ({ createPlaybookState: {}, createPlaybookStateFromNode: retryPlaybook }));
 jest.unstable_mockModule('../../routines/core/defaultCoreAgent', () => ({ DEFAULT_CORE_ROUTINE_AGENT_ID: 'sulla-desktop' }));
 jest.unstable_mockModule('../../routines/core/reviewProjectArtifact', () => ({
-  REVIEW_PROJECT_ARTIFACT_DEFINITION: {}, REVIEW_PROJECT_ARTIFACT_ID: 'review', ARTIFACT_VERIFICATION_ADAPTERS: {},
+  REVIEWER_NODE_IDS: ['node-review-code', 'node-review-deliverable', 'node-review-risk'],
+  REVIEW_PROJECT_ARTIFACT_DEFINITION: { nodes: [] }, REVIEW_PROJECT_ARTIFACT_ID: 'review', ARTIFACT_VERIFICATION_ADAPTERS: { code_pr: { adapter: 'github-pr', tools: [] }, projects_evidence: { adapter: 'projects-read', tools: [] } },
 }));
 jest.unstable_mockModule('../../tools/fullAgentTools', () => ({ FULL_AGENT_TOOL_NAMES: [] }));
 
+const recordReviewLaunch = jest.fn<any>().mockResolvedValue(undefined);
+const retryPlaybook = jest.fn<any>().mockReturnValue({ executionId: 'retry', currentNodeIds: ['node-review-synthesize'] });
 const settle = jest.fn<any>().mockResolvedValue(undefined);
 const addComment = jest.fn<any>().mockResolvedValue(undefined);
 let Service: any;
@@ -103,5 +106,73 @@ describe('dead-run settlement', () => {
       author:  'dispatcher',
       body:    expect.stringContaining('Stopped work run dispatch-dead as dead (no agent activity for 30 minute(s))'),
     }));
+  });
+});
+
+
+describe('system-owned review evidence', () => {
+  const artifact = (ref: string, hash = 'a'.repeat(40)) => ({
+    type: 'code_pr', canonicalRef: ref, hash, adapter: 'github-pr', code: true, url: null,
+  });
+  const completed = (result: unknown) => ({ workflowId: 'review', outcome: 'completed',
+    nodeResults: [{ nodeId: 'node-review-synthesize', result: JSON.stringify(result) }] });
+
+  it('accepts a valid judgment despite missing or corrupted model-echoed hashes', () => {
+    const service = new Service();
+    const artifacts = [artifact('owner/repo#1')];
+    const parsed = service.parseProtectedReview(completed({
+      disposition: 'PASS', generationHash: 'wrong', artifactHash: 'wrong',
+      artifacts: [artifact('unrelated/repo#8')], summary: 'Criteria verified', checks: [], findings: [],
+    }), artifacts);
+    expect(parsed.value).not.toBeNull();
+    expect(parsed.value.artifacts).toEqual(artifacts);
+    expect(parsed.value.artifactHash).toBe('a'.repeat(40));
+    expect(parsed.value.artifactRef).toBe('owner/repo#1');
+  });
+
+  it('runs synthesis once with preserved outputs even if the retry is still malformed', async() => {
+    const service = new Service();
+    service.awaitWriterTermination = jest.fn<any>().mockResolvedValue(undefined);
+    const original = { ...completed({}), completedAt: 'now', nodeResults: [
+      { nodeId: 'node-review-code', result: 'Original findings', label: 'Code and PR Reviewer' },
+    ] };
+    const state = { messages: [], metadata: { lastCompletedWorkflow: original, cycleComplete: true, waitingForUser: true } };
+    const graph = { execute: jest.fn<any>().mockImplementation(async(s: any) => {
+      expect(s.metadata.cycleComplete).toBe(false);
+      expect(s.metadata.waitingForUser).toBe(false);
+      s.metadata.lastCompletedWorkflow = completed({ summary: 'Still missing verdict' }); return s;
+    }) };
+    const result = await service.retryProtectedSynthesis(state, original, { id: 'dispatch', task_id: 'task' },
+      ['reviewer'], 'missing_or_invalid_disposition', graph, (work: Promise<any>) => work);
+    expect(graph.execute).toHaveBeenCalledTimes(1);
+    expect(retryPlaybook).toHaveBeenLastCalledWith({ nodes: [] }, 'node-review-synthesize', {
+      'node-review-code': { ...original.nodeResults[0], completedAt: 'now' },
+    });
+    expect(recordReviewLaunch).toHaveBeenLastCalledWith('dispatch', expect.objectContaining({ executionId: 'retry', scopeTaskId: 'task' }));
+    expect(service.parseProtectedReview(result.metadata.lastCompletedWorkflow, [artifact('owner/repo#1')]).value).toBeNull();
+  });
+
+  it('retries completed synthesis only when all original reviewer outputs survive', () => {
+    const service = new Service();
+    const evidence = { ...completed({}), nodeResults: ['code', 'deliverable', 'risk'].map(lens => ({
+      nodeId: `node-review-${ lens }`, result: '{"verdict":"pass"}',
+    })) };
+    expect(service.hasRetryableReviewOutput(evidence)).toBe(true);
+    expect(service.hasRetryableReviewOutput({ ...evidence, outcome: 'failed' })).toBe(false);
+    expect(service.hasRetryableReviewOutput({ ...evidence, nodeResults: evidence.nodeResults.slice(1) })).toBe(false);
+  });
+
+  it('still rejects malformed judgments rather than inventing a disposition', () => {
+    const service = new Service();
+    expect(service.parseProtectedReview(completed({ summary: 'No verdict' }), [artifact('owner/repo#1')]).value).toBeNull();
+    expect(service.parseProtectedReview({ outcome: 'failed', workflowId: 'review' }, [artifact('owner/repo#1')]).value).toBeNull();
+  });
+
+  it('ignores another PR changing but preserves a changed head on the bound PR', () => {
+    const service = new Service();
+    const claimed = [artifact('owner/repo#1')];
+    expect(service.boundReviewArtifacts(claimed, [artifact('owner/repo#2', 'b'.repeat(40)), ...claimed])).toEqual(claimed);
+    expect(service.boundReviewArtifacts(claimed, [artifact('owner/repo#1', 'b'.repeat(40))])[0].hash).toBe('b'.repeat(40));
+    expect(service.boundReviewArtifacts(claimed, [artifact('owner/repo#2')])).toBeNull();
   });
 });

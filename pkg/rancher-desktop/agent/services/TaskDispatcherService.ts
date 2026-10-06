@@ -27,12 +27,13 @@ import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent
 import {
   REVIEW_PROJECT_ARTIFACT_DEFINITION,
   REVIEW_PROJECT_ARTIFACT_ID,
+  REVIEWER_NODE_IDS,
   ARTIFACT_VERIFICATION_ADAPTERS,
 } from '../routines/core/reviewProjectArtifact';
 import { extractAgentTurnOutcome } from '../tools/agents/agentTurnOutcome';
 import { FULL_AGENT_TOOL_NAMES } from '../tools/fullAgentTools';
 import { toolRegistry } from '../tools/registry';
-import { createPlaybookState } from '../workflow/WorkflowPlaybook';
+import { createPlaybookState, createPlaybookStateFromNode } from '../workflow/WorkflowPlaybook';
 
 const CHECK_INTERVAL_MS = 60_000;
 const LEASE_HEARTBEAT_MS = 120_000;
@@ -751,7 +752,22 @@ export class TaskDispatcherService {
         if (verifierTimedOut) {
           await WorkTaskDispatchModel.failVerification(dispatch.id, 'verifier_timeout');
         } else if (verificationOwner === 'core-routine') {
-          const { value: parsed, reason: parseFailureReason } = this.parseProtectedReview(finalState.metadata?.lastCompletedWorkflow);
+          let review = this.parseProtectedReview(finalState.metadata?.lastCompletedWorkflow, claimedArtifacts);
+          const completed = finalState.metadata?.lastCompletedWorkflow;
+          if (!review.value && this.hasRetryableReviewOutput(completed) && !verifierTimedOut && !deadRunReason) {
+            const current = await this.resolveReviewArtifacts(task, comments, dispatch.origin_evidence);
+            const bound = this.boundReviewArtifacts(claimedArtifacts, current);
+            const liveTask = await WorkItemsModel.getTask(task.id);
+            if (bound && WorkTaskDispatchModel.reviewGenerationHash(bound) === generationHash && liveTask &&
+                await WorkLaneDefinitionModel.semanticRoleForStatus(liveTask.project_id, liveTask.status) === 'review') {
+              finalState = await this.retryProtectedSynthesis(finalState, completed, dispatch,
+                selectedReviewerAgentIds, review.reason, graph, untilAbandoned);
+              if (deadRunReason) { await this.settleDeadRun(dispatch, true, deadRunReason, finalState); return; }
+              if (verifierTimedOut) { await WorkTaskDispatchModel.failVerification(dispatch.id, 'verifier_timeout'); return; }
+              review = this.parseProtectedReview(finalState.metadata?.lastCompletedWorkflow, claimedArtifacts);
+            }
+          }
+          const { value: parsed, reason: parseFailureReason } = review;
           if (!parsed) {
             // A missing disposition can mean the synthesis node correctly abstained on a generation superseded mid-flight, not a malformed output.
             const liveTask = await WorkItemsModel.getTask(task.id);
@@ -767,34 +783,25 @@ export class TaskDispatcherService {
             }
           } else {
             const currentArtifacts = await this.resolveReviewArtifacts(task, comments, dispatch.origin_evidence);
-            const currentGenerationHash = WorkTaskDispatchModel.reviewGenerationHash(currentArtifacts);
-            const parsedCode = parsed.artifacts.filter(artifact => artifact.code || artifact.type === 'code_pr');
-            const currentCode = currentArtifacts.filter(artifact => artifact.code || artifact.type === 'code_pr');
-            const codeHeadsMatch = parsedCode.length === currentCode.length && currentCode.every(current =>
-              parsedCode.some(parsedArtifact => parsedArtifact.canonicalRef === current.canonicalRef && parsedArtifact.hash === current.hash),
-            );
-            const advancedByInLaneRepair = parsed.disposition === 'REPAIRABLE' &&
-              parsed.generationHash === currentGenerationHash && currentGenerationHash !== generationHash;
-            if (currentCode.length > 0 && !codeHeadsMatch) {
+            const boundArtifacts = this.boundReviewArtifacts(claimedArtifacts, currentArtifacts);
+            const boundHash = boundArtifacts ? WorkTaskDispatchModel.reviewGenerationHash(boundArtifacts) : null;
+            const advancedByInLaneRepair = parsed.disposition === 'REPAIRABLE' && boundHash !== null && boundHash !== generationHash;
+            if (!boundArtifacts) {
               await WorkTaskDispatchModel.failVerification(dispatch.id, 'pull_request_artifact_unresolved');
-            } else if (!advancedByInLaneRepair &&
-              (parsed.generationHash !== generationHash || currentGenerationHash !== generationHash)) {
-              await WorkTaskDispatchModel.failVerification(
-                dispatch.id,
-                `artifact_generation_changed:${ generationHash }:${ currentGenerationHash }`,
-              );
+            } else if (!advancedByInLaneRepair && boundHash !== generationHash) {
+              await WorkTaskDispatchModel.failVerification(dispatch.id, `artifact_generation_changed:${ generationHash }:${ boundHash }`);
             } else {
               const evidence: ProtectedReviewEvidence = {
                 workflowExecutionId: finalState.metadata.lastCompletedWorkflow.executionId,
                 reviewerAgentIds:    selectedReviewerAgentIds,
                 excludedAgentIds,
-                generationHash:      parsed.generationHash,
+                generationHash:      boundHash!,
                 artifactTypes:       parsed.artifactTypes,
-                artifacts:           parsed.artifacts,
+                artifacts:           boundArtifacts,
                 artifactType:        parsed.artifactType,
                 artifactRef:         parsed.artifactRef,
                 artifactUrl:         parsed.artifactUrl,
-                artifactHash:        parsed.artifactHash,
+                artifactHash:        boundArtifacts[0].hash,
                 summary:             parsed.summary,
                 checks:              parsed.checks,
                 findings:            parsed.findings,
@@ -804,7 +811,7 @@ export class TaskDispatcherService {
                 dispatch.id,
                 parsed.disposition,
                 evidence,
-                currentArtifacts,
+                boundArtifacts,
               );
               if (!settled) {
                 await WorkTaskDispatchModel.failVerification(dispatch.id, 'protected_review_settlement_rejected');
@@ -968,12 +975,72 @@ export class TaskDispatcherService {
     }
   }
 
-  private parseProtectedReview(completed: any): ProtectedReviewParseResult {
+  private async retryProtectedSynthesis(
+    state: any, completed: any, dispatch: ClaimedDispatch['dispatch'], reviewerAgentIds: string[],
+    reason: string | null, graph: any, bounded: <T>(work: Promise<T>) => Promise<T>,
+  ): Promise<any> {
+    const seeds = Object.fromEntries((completed.nodeResults ?? []).map((node: any) =>
+      [node.nodeId, { ...node, completedAt: completed.completedAt }]));
+    const retryInstruction = `Formatting retry (${ reason }). Preserve the original reviewer findings. Return the required JSON only. Do not repeat reviews, edit artifacts, or push repairs during this retry.`;
+    const definition = { ...REVIEW_PROJECT_ARTIFACT_DEFINITION,
+      nodes: REVIEW_PROJECT_ARTIFACT_DEFINITION.nodes.map((node: any) => node.id !== 'node-review-synthesize' ? node : {
+        ...node, data: { ...node.data, config: { ...node.data.config,
+          additionalPrompt: retryInstruction,
+          orchestratorInstructions: `${ node.data.config.orchestratorInstructions }\n${ retryInstruction }`,
+        } },
+      }),
+    };
+    const retry = createPlaybookStateFromNode(definition as any, 'node-review-synthesize', seeds);
+    state.metadata.lastCompletedWorkflow = undefined;
+    state.metadata.activeWorkflow = retry;
+    state.metadata.cycleComplete = false;
+    state.metadata.waitingForUser = false;
+    state.metadata.iterations = 0;
+    state.metadata.consecutiveSameNode = 0;
+    state.messages.push({ role: 'user', content:
+      `The verdict failed validation (${ reason }). Retry synthesis once using the preserved reviewer outputs. Return the required JSON only; do not repeat reviews or change artifacts.` });
+    await WorkTaskDispatchModel.recordReviewLaunchWithExecution(dispatch.id, {
+      executionId: retry.executionId, workflowId: REVIEW_PROJECT_ARTIFACT_ID,
+      workflowName: REVIEW_PROJECT_ARTIFACT_DEFINITION.name, workflowSlug: REVIEW_PROJECT_ARTIFACT_ID,
+      triggerInput: 'Retry malformed synthesis once with preserved reviewer evidence',
+      scopeTaskId: dispatch.task_id, reviewerAgentIds,
+    });
+    const result = await bounded<any>(graph.execute(state));
+    if (!result.metadata?.lastCompletedWorkflow) {
+      await bounded(this.awaitReviewWorkflowSettlement(retry.executionId, () => this.active.has(dispatch.id)));
+    }
+    await bounded(this.awaitWriterTermination(graph, () => this.active.has(dispatch.id)));
+    return result;
+  }
+
+  private hasRetryableReviewOutput(completed: any): boolean {
+    return completed?.workflowId === REVIEW_PROJECT_ARTIFACT_ID && completed?.outcome === 'completed' &&
+      REVIEWER_NODE_IDS.every(id => completed.nodeResults?.some((node: any) =>
+        node.nodeId === id && node.result !== undefined && node.result !== null && node.result !== ''));
+  }
+
+  private boundReviewArtifacts(claimed: ReviewArtifactComponent[], current: ReviewArtifactComponent[]): ReviewArtifactComponent[] | null {
+    const resolved = claimed.map(artifact => current.find(candidate =>
+      candidate.type === artifact.type && candidate.canonicalRef === artifact.canonicalRef));
+    return resolved.some(artifact => !artifact) ? null : resolved as ReviewArtifactComponent[];
+  }
+
+  private parseProtectedReview(completed: any, authoritative?: ReviewArtifactComponent[]): ProtectedReviewParseResult {
     if (completed?.outcome !== 'completed' || completed.workflowId !== REVIEW_PROJECT_ARTIFACT_ID) {
       return { value: null, reason: 'workflow_did_not_complete' };
     }
     const synthesis = completed.nodeResults?.find((node: any) => node.nodeId === 'node-review-synthesize');
     const parsed = this.parseJsonObject(synthesis?.result);
+    if (parsed && authoritative?.length) {
+      // Model-echoed identity fields are not evidence. Bind the judgment to
+      // the system snapshot; re-resolve that snapshot before settlement.
+      Object.assign(parsed, {
+        generationHash: WorkTaskDispatchModel.reviewGenerationHash(authoritative),
+        artifacts: authoritative, artifactTypes: [...new Set(authoritative.map(artifact => artifact.type))],
+        artifactType: authoritative[0].type, artifactRef: authoritative[0].canonicalRef,
+        artifactUrl: authoritative[0].url, artifactHash: authoritative[0].hash,
+      });
+    }
     if (!parsed || !['PASS', 'REPAIRABLE', 'REPLAN', 'EXTERNAL_WAIT', 'BLOCKED'].includes(parsed.disposition)) {
       return { value: null, reason: 'missing_or_invalid_disposition' };
     }
