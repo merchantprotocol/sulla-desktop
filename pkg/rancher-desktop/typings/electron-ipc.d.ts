@@ -440,6 +440,8 @@ export interface IpcMainInvokeEvents {
   'git-show-staged':               (dirPath: string, file: string) => string;
   'agents-list':                   () => { id: string; name: string; description: string; type: string; templateId: string; path: string }[];
   'agents:list':                   () => import('@pkg/main/agentsIpc').AgentsListResponse;
+  'agents:conversations':          (channel: string, limit?: number, offset?: number) => import('@pkg/main/agentsIpc').AgentConversationSummary[];
+  'agents:conversation':           (id: string) => import('@pkg/main/agentsIpc').AgentConversationDetail | null;
   'agents-get-prompt-templates':   () => { soul: string; environment: string };
   'agents-delete':                 (agentId: string) => boolean;
   'agents-get-template-variables': () => { key: string; label: string; preview: string }[];

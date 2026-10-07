@@ -277,6 +277,24 @@ export class ConversationHistoryModel {
   }
 
   /**
+   * Conversations run on one agent channel, newest first. Includes hidden
+   * rows — the Agents tab asks for a specific agent, subconscious ones too.
+   */
+  static async getByChannel(channelId: string, limit = 50, offset = 0): Promise<ConversationHistoryRecord[]> {
+    try {
+      return await postgresClient.query<ConversationHistoryRecord>(`
+        SELECT * FROM ${ ConversationHistoryModel.TABLE }
+        WHERE channel_id = $1 AND status != 'deleted'
+        ORDER BY last_active_at DESC
+        LIMIT $2 OFFSET $3
+      `, [channelId, limit, offset]);
+    } catch (err) {
+      console.error('[ConversationHistoryModel] Failed to get by channel:', err);
+      return [];
+    }
+  }
+
+  /**
    * Search conversations by title and summary using ILIKE.
    */
   static async search(query: string): Promise<ConversationHistoryRecord[]> {
