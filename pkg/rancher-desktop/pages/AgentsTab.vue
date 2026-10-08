@@ -2,10 +2,10 @@
   AgentsTab — live view of every running "loop" in the system: the heartbeat,
   active agents + subagents, scheduled routines, and spawned jobs.
 
-  Stage 1 (this file): read-only roster. Polls the main-process `agents:list`
-  IPC every 3s (v1 — a push channel replaces polling in Stage 3). Click-through
-  detail (live activity feed, kill/message controls) is Stage 2 — rows carry a
-  `cursor-default` for now and detail is intentionally stubbed.
+  Read-only roster. Polls the main-process `agents:list` IPC every 3s (v1 — a
+  push channel replaces polling in Stage 3). Clicking an agent opens its
+  stored conversations (AgentConversations). Kill/message controls are not
+  built yet.
 -->
 <template>
   <div
@@ -14,7 +14,10 @@
   >
     <div class="flex flex-col h-full">
       <!-- Hero header -->
-      <div class="overflow-hidden agents-header">
+      <div
+        v-if="!selectedAgent"
+        class="overflow-hidden agents-header"
+      >
         <div class="py-12 sm:px-2 lg:relative lg:px-0 lg:py-16">
           <div class="mx-auto max-w-6xl px-4 md:px-6 lg:px-8">
             <div class="flex items-center justify-between gap-8">
@@ -39,8 +42,24 @@
         </div>
       </div>
 
+      <!-- Agent detail: stored conversations -->
+      <div
+        v-if="selectedAgent"
+        class="flex-1 min-h-0"
+      >
+        <AgentConversations
+          :channel="selectedAgent.channel"
+          :agent-name="selectedAgent.name"
+          :tick="pollTick"
+          @close="selectedAgent = null"
+        />
+      </div>
+
       <!-- Body -->
-      <div class="flex-1 overflow-auto">
+      <div
+        v-else
+        class="flex-1 overflow-auto"
+      >
         <div class="mx-auto max-w-6xl px-4 py-6 space-y-8">
           <!-- Loading state -->
           <div
@@ -100,7 +119,12 @@
                 <div
                   v-for="agent in data.agents"
                   :key="agent.channel"
-                  class="agents-row group flex items-center gap-3 px-4 py-3 rounded-lg"
+                  class="agents-row group flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer"
+                  role="button"
+                  tabindex="0"
+                  :title="`View ${ agent.name } conversations`"
+                  @click="openAgent(agent)"
+                  @keydown.enter="openAgent(agent)"
                 >
                   <span
                     class="flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full"
@@ -225,6 +249,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 
 import { useTheme } from '@pkg/composables/useTheme';
+import AgentConversations from '@pkg/pages/agents/AgentConversations.vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { AgentsListResponse } from '@pkg/main/agentsIpc';
@@ -239,11 +264,22 @@ const data = ref<AgentsListResponse>({
   agents: [], heartbeat: null, jobs: [], routines: [],
 });
 
+const selectedAgent = ref<{ channel: string; name: string } | null>(null);
+// Bumped every poll so the open conversation view refreshes on the same beat.
+const pollTick = ref(0);
+
 let pollTimer: ReturnType<typeof setInterval> | undefined;
+
+function openAgent(agent: AgentsListResponse['agents'][number]) {
+  selectedAgent.value = { channel: agent.channel, name: agent.name };
+}
 
 // ── Data loading ──
 
 async function loadAgents() {
+  pollTick.value++;
+  // The roster isn't visible while an agent's conversations are open.
+  if (selectedAgent.value) return;
   try {
     data.value = await ipcRenderer.invoke('agents:list' as any);
     polling.value = true;
