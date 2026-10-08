@@ -257,6 +257,9 @@ export default defineComponent({
     this.remoteRetryCount = await SullaSettingsModel.get('remoteRetryCount', 3);
     this.remoteTimeoutSeconds = Number(await SullaSettingsModel.get('remoteTimeoutSeconds', 60));
     this.heartbeatEnabled = await SullaSettingsModel.get('heartbeatEnabled', true);
+    // The phone and other windows can flip these switches while this window
+    // stays open; re-read them whenever the window regains focus.
+    window.addEventListener('focus', this.refreshSwitches);
 
     console.log('Loaded settings values:', {
       activeMode:           this.activeMode,
@@ -392,6 +395,7 @@ export default defineComponent({
   },
 
   beforeUnmount() {
+    window.removeEventListener('focus', this.refreshSwitches);
     // Clean up IPC listeners
     ipcRenderer.removeAllListeners('settings-write-error');
     ipcRenderer.removeAllListeners('model-provider:state-changed');
@@ -734,9 +738,7 @@ export default defineComponent({
           primaryUserName:       String(this.primaryUserName || ''),
           remoteRetryCount:      Number(this.remoteRetryCount) || 3,
           remoteTimeoutSeconds:  Number(this.remoteTimeoutSeconds) || 60,
-          heartbeatEnabled:      Boolean(this.heartbeatEnabled),
           heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 15,
-          automatedProjectManagementEnabled:        Boolean(this.automatedProjectManagementEnabled),
           [WORKER_CONCURRENCY_KEY]: Number(this.routineConcurrencyTotalLimit),
           heartbeatPrompt:       String(this.heartbeatPrompt || ''),
           heartbeatProvider:     String(this.heartbeatProvider || 'default'),
@@ -749,8 +751,6 @@ export default defineComponent({
           remoteRetryCount:      'number',
           remoteTimeoutSeconds:  'number',
           heartbeatDelayMinutes: 'number',
-          heartbeatEnabled:      'boolean',
-          automatedProjectManagementEnabled:        'boolean',
           [WORKER_CONCURRENCY_KEY]: 'number',
         };
 
@@ -975,6 +975,25 @@ export default defineComponent({
 
     closeWindow() {
       window.close();
+    },
+
+    // On/off switches save the moment they are flipped and are never part of
+    // the Save batch, so a stale form can't switch them back on.
+    async persistSwitch(key: 'heartbeatEnabled' | 'automatedProjectManagementEnabled', event: Event) {
+      const input = event.target as HTMLInputElement;
+      const enabled = input.checked;
+      try {
+        await SullaSettingsModel.set(key, enabled, 'boolean');
+        this[key] = enabled;
+      } catch (err) {
+        input.checked = this[key];
+        this.activationError = `Failed to save setting: ${ err instanceof Error ? err.message : String(err) }`;
+      }
+    },
+
+    async refreshSwitches() {
+      this.heartbeatEnabled = Boolean(await SullaSettingsModel.get('heartbeatEnabled', true));
+      this.automatedProjectManagementEnabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', true));
     },
 
     async onPrimaryModelChange(event: Event) {
@@ -1590,8 +1609,9 @@ export default defineComponent({
             <div class="toggle-switch">
               <label class="switch">
                 <input
-                  v-model="heartbeatEnabled"
+                  :checked="heartbeatEnabled"
                   type="checkbox"
+                  @change="persistSwitch('heartbeatEnabled', $event)"
                 >
                 <span class="slider" />
               </label>
@@ -1683,8 +1703,9 @@ export default defineComponent({
             <div class="toggle-switch">
               <label class="switch">
                 <input
-                  v-model="automatedProjectManagementEnabled"
+                  :checked="automatedProjectManagementEnabled"
                   type="checkbox"
+                  @change="persistSwitch('automatedProjectManagementEnabled', $event)"
                 >
                 <span class="slider" />
               </label>
