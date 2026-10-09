@@ -13,7 +13,7 @@
       messages. The transcript replaces it once a conversation begins.
 -->
 <template>
-  <div class="chat-root" :class="{ 'artifact-open': hasArtifact, 'history-open': historyOpen, 'file-tree-open': fileTreeOpen, 'artifact-expanded': artifactExpanded }">
+  <div class="chat-root" :class="{ 'artifact-open': hasArtifact, 'history-open': historyOpen, 'file-tree-open': fileTreeOpen, 'artifact-expanded': artifactExpanded, 'subagents-open': subAgentMessages.length > 0 }">
     <Canvas />
 
     <div class="shell">
@@ -33,6 +33,7 @@
         @archived-click="onArchivedClick"
         @close="controller.toggleHistory()"
       />
+      <SubAgentRail :agents="subAgentMessages" />
 
       <main class="main">
         <!--
@@ -91,6 +92,7 @@ import ArtifactSidebar   from './components/artifact/ArtifactSidebar.vue';
 import HistoryRail       from './components/history/HistoryRail.vue';
 import FileTreeRail      from './components/files/FileTreeRail.vue';
 import EmptyState        from './components/empty/EmptyState.vue';
+import SubAgentRail      from './components/subagent/SubAgentRail.vue';
 
 import { restoreChatFromHistory } from './services/historyRestore';
 
@@ -116,6 +118,7 @@ import { useBrowserTabs }        from '@pkg/composables/useBrowserTabs';
 import type { FileEntry }        from './components/files/FileTreeRail.vue';
 
 import type { Thread }   from './models/Thread';
+import type { SubAgentMessage } from './models/Message';
 import { asThreadId, type ThreadId } from './types/chat';
 
 /**
@@ -220,6 +223,12 @@ async function hydrateFromDbBackup(id: ThreadId): Promise<void> {
 }
 
 const controller = initController();
+
+// Sub-agent activity belongs to the current conversation, but stays outside
+// the transcript so the chat itself remains readable while workers run.
+const subAgentMessages = computed(() => controller.thread.value.messages.filter(
+  (message): message is SubAgentMessage => message.kind === 'subagent',
+));
 
 // ─── Shared model selector (source of truth for selected model) ───
 // AgentModelSelectorController talks to the main-process ModelProviderService
@@ -726,6 +735,9 @@ onBeforeUnmount(() => {
 
 .chat-root.history-open   .main { left: 260px; }
 .chat-root.file-tree-open .main { left: 260px; }
+.chat-root.subagents-open .main { left: 260px; }
+.chat-root.history-open.subagents-open   .main,
+.chat-root.file-tree-open.subagents-open .main { left: 520px; }
 .chat-root.artifact-open  .main { right: 560px; }
 .chat-root.artifact-open.artifact-expanded .main { right: 70vw; }
 
@@ -742,10 +754,22 @@ onBeforeUnmount(() => {
   width: 260px;
   z-index: 7;
 }
+.shell :deep(.subagent-rail) {
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 260px;
+  z-index: 6;
+}
+.chat-root.history-open   .shell :deep(.subagent-rail),
+.chat-root.file-tree-open .shell :deep(.subagent-rail) { left: 260px; }
 .shell :deep(.artifact) {
   position: absolute;
   top: 0; bottom: 0; right: 0;
   width: 560px;
   z-index: 6;
+}
+
+@media (max-width: 900px) {
+  .chat-root.subagents-open .main { left: 0; }
 }
 </style>
