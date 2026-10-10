@@ -9,19 +9,50 @@
     <div class="audio-content">
       <!-- Sidebar navigation -->
       <nav class="audio-nav">
-        <div
-          v-for="item in navItems"
-          :key="item.id"
-          class="nav-item"
-          :class="{ active: currentNav === item.id }"
-          @click="currentNav = item.id"
-        >
-          {{ item.name }}
+        <div class="noir-audio-rail-head">
+          <div class="noir-audio-rail-title">
+            Audio
+          </div>
+          <div class="noir-audio-rail-copy">
+            How Sulla listens and speaks
+          </div>
+        </div>
+        <div class="noir-audio-rail-items">
+          <span
+            class="noir-audio-rail-marker"
+            :style="{ transform: `translateY(${navItems.findIndex(item => item.id === currentNav) * 44}px)` }"
+          />
+          <div
+            v-for="item in navItems"
+            :key="item.id"
+            class="nav-item"
+            :class="{ active: currentNav === item.id }"
+            @click="currentNav = item.id"
+          >
+            <span class="noir-audio-glyph">{{ item.icon }}</span>
+            <span>{{ item.name }}</span>
+          </div>
+        </div>
+        <div class="noir-audio-rail-foot">
+          <span :class="micPermission === 'granted' ? 'noir-audio-ok' : 'noir-audio-warn'" />
+          {{ micPermission === 'granted' ? 'Microphone ready' : 'Setup needs attention' }}<br>
+          {{ ttsFullyConfigured ? 'two-way voice ready' : 'text replies only' }}
         </div>
       </nav>
 
       <!-- Content area -->
       <div class="audio-body">
+        <div class="noir-audio-page-head">
+          <div class="noir-audio-eyebrow">
+            {{ currentNavItem.name }}
+          </div>
+          <div class="noir-audio-headline">
+            {{ currentNavItem.headline }}
+          </div>
+          <div class="noir-audio-lead">
+            {{ currentNavItem.lead }}
+          </div>
+        </div>
         <!-- ═══════════════════════════════════════════════════════════
              Microphone Tab
              ═══════════════════════════════════════════════════════════ -->
@@ -385,7 +416,7 @@
               class="status-banner banner-info"
             >
               <span>{{ kokoroStatus.phase === 'downloading'
-                ? `Downloading… ${ Math.round(kokoroStatus.progress * 100) }%`
+                ? `Downloading… ${Math.round(kokoroStatus.progress * 100)}%`
                 : 'Unpacking…' }}</span>
             </div>
             <div
@@ -1092,14 +1123,15 @@ useTheme();
 // ─── Navigation ─────────────────────────────────────────────────
 
 const navItems = [
-  { id: 'microphone', name: 'Microphone' },
-  { id: 'transcription', name: 'Transcription' },
-  { id: 'tts', name: 'Text-to-Speech' },
-  { id: 'speaker', name: 'System Audio' },
-  { id: 'secretary', name: 'Secretary Mode' },
+  { id: 'microphone', name: 'Microphone', icon: '◉', headline: 'Every word, clearly heard.', lead: 'Choose your input and see exactly what reaches Sulla.' },
+  { id: 'transcription', name: 'Transcription', icon: '¶', headline: 'Speech becomes text.', lead: 'Choose the engine, manage local models, and test the live transcript.' },
+  { id: 'tts', name: 'Text-to-Speech', icon: '◇', headline: 'Give Sulla a voice.', lead: 'Choose a provider and the voice used for spoken replies.' },
+  { id: 'speaker', name: 'System Audio', icon: '≋', headline: 'Hear what your Mac hears.', lead: 'Capture speaker output for meetings and shared audio.' },
+  { id: 'secretary', name: 'Secretary Mode', icon: '▤', headline: 'Meetings, remembered.', lead: 'Bring microphone, system audio, and transcription together.' },
 ];
 
 const currentNav = ref('microphone');
+const currentNavItem = computed(() => navItems.find(item => item.id === currentNav.value) || navItems[0]);
 
 // ─── TTS Providers ──────────────────────────────────────────────
 
@@ -1126,7 +1158,12 @@ const ttsProvider = ref('kokoro');
 
 // ─── Kokoro model status ────────────────────────────────────────
 
-type KokoroStatus = { phase: 'missing' | 'downloading' | 'extracting' | 'ready' | 'error'; progress: number; error?: string; bytes: number };
+interface KokoroStatus {
+  phase:    'missing' | 'downloading' | 'extracting' | 'ready' | 'error';
+  progress: number;
+  error?:   string;
+  bytes:    number;
+}
 const kokoroStatus = ref<KokoroStatus>({ phase: 'missing', progress: 0, bytes: 349_906_910 });
 
 ipc.on('voice-kokoro-status-changed', (_event: any, status: KokoroStatus) => {
@@ -2222,7 +2259,7 @@ async function previewVoice(): Promise<void> {
       return;
     }
     if (ttsProvider.value === 'kokoro' && kokoroStatus.value.phase !== 'ready') {
-      void downloadKokoro();
+      downloadKokoro().catch(() => undefined);
       ttsPreviewError.value = 'The on-device voice is still downloading — try again when it finishes.';
       return;
     }
@@ -3184,5 +3221,317 @@ onUnmounted(() => {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-primary, var(--body-text));
+}
+</style>
+
+<style lang="scss" scoped>
+.noir-audio-rail-head,
+.noir-audio-rail-marker,
+.noir-audio-glyph,
+.noir-audio-rail-foot,
+.noir-audio-page-head {
+  display: none;
+}
+
+:global(.theme-noir-dark) .audio-settings {
+  background: #01030a;
+  color: #dee4ec;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+:global(.theme-noir-dark) .audio-header {
+  display: none;
+}
+
+:global(.theme-noir-dark) .audio-nav {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 230px;
+  padding: 24px 14px 16px;
+  border-right: 1px solid rgba(168, 192, 220, 0.08);
+  background: rgba(3, 6, 12, 0.6);
+}
+
+:global(.theme-noir-dark) .noir-audio-rail-head {
+  display: block;
+  padding: 0 10px 24px;
+}
+
+:global(.theme-noir-dark) .noir-audio-rail-title {
+  color: #f3f5f8;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+:global(.theme-noir-dark) .noir-audio-rail-copy {
+  margin-top: 6px;
+  color: #7a8291;
+  font-size: 10.5px;
+}
+
+:global(.theme-noir-dark) .noir-audio-rail-items {
+  position: relative;
+}
+
+:global(.theme-noir-dark) .audio-nav .nav-item {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 40px;
+  margin: 0 0 4px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 20px;
+  color: #a9b3c1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 40px;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+:global(.theme-noir-dark) .audio-nav .nav-item:hover {
+  color: #f3f5f8;
+  background: rgba(80, 150, 179, 0.08);
+}
+
+:global(.theme-noir-dark) .audio-nav .nav-item.active {
+  border: 0;
+  color: #f3f5f8;
+  background: transparent;
+  font-weight: 500;
+}
+
+:global(.theme-noir-dark) .noir-audio-rail-marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: 40px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.18), rgba(80, 150, 179, 0.07));
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.23), 0 0 22px rgba(80, 150, 179, 0.08);
+  transition: transform linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) .58s;
+}
+
+:global(.theme-noir-dark) .noir-audio-rail-marker::before {
+  position: absolute;
+  top: 9px;
+  left: -14px;
+  width: 3px;
+  height: 22px;
+  border-radius: 2px;
+  background: #6ab0cc;
+  box-shadow: 0 0 12px #5096b3;
+  content: "";
+}
+
+:global(.theme-noir-dark) .noir-audio-glyph {
+  display: inline-grid;
+  width: 16px;
+  place-items: center;
+  color: #a8c0dc;
+  font-size: 15px;
+}
+
+:global(.theme-noir-dark) .noir-audio-rail-foot {
+  display: block;
+  margin-top: auto;
+  padding: 12px 13px;
+  border-radius: 14px;
+  color: #7a8291;
+  background: rgba(168, 192, 220, 0.025);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+  font-size: 10.5px;
+  line-height: 1.65;
+}
+
+:global(.theme-noir-dark) .noir-audio-ok,
+:global(.theme-noir-dark) .noir-audio-warn {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #3fb950;
+  box-shadow: 0 0 8px rgba(63, 185, 80, 0.7);
+}
+
+:global(.theme-noir-dark) .noir-audio-warn {
+  background: #e3b341;
+  box-shadow: 0 0 8px rgba(227, 179, 65, 0.55);
+}
+
+:global(.theme-noir-dark) .audio-body {
+  padding: 30px 34px;
+  background: radial-gradient(circle at 18% 0%, rgba(80, 150, 179, 0.05), transparent 32%), #01030a;
+}
+
+:global(.theme-noir-dark) .noir-audio-page-head {
+  display: block;
+  max-width: 920px;
+  margin-bottom: 22px;
+  animation: noir-audio-in 340ms ease both;
+}
+
+:global(.theme-noir-dark) .noir-audio-eyebrow {
+  margin-bottom: 7px;
+  color: #6ab0cc;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .noir-audio-headline {
+  color: #f3f5f8;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+:global(.theme-noir-dark) .noir-audio-lead {
+  margin-top: 7px;
+  color: #a9b3c1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+:global(.theme-noir-dark) .tab-content {
+  max-width: 920px;
+  animation: noir-audio-in 340ms ease both;
+}
+
+:global(.theme-noir-dark) .tab-content > h2,
+:global(.theme-noir-dark) .tab-content > .description {
+  display: none;
+}
+
+:global(.theme-noir-dark) .setting-section,
+:global(.theme-noir-dark) .setup-gate,
+:global(.theme-noir-dark) .pipeline-section,
+:global(.theme-noir-dark) .status-banner,
+:global(.theme-noir-dark) .transcript-area {
+  margin: 0 0 12px;
+  padding: 18px;
+  border: 0;
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .setting-section h3 {
+  margin: 0 0 6px;
+  color: #f3f5f8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .description,
+:global(.theme-noir-dark) .provider-hint,
+:global(.theme-noir-dark) .setup-gate-description {
+  color: #7a8291;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+:global(.theme-noir-dark) .setting-select,
+:global(.theme-noir-dark) input[type="text"],
+:global(.theme-noir-dark) input[type="number"] {
+  min-height: 40px;
+  border: 0;
+  border-radius: 12px;
+  color: #f3f5f8;
+  background: rgba(3, 6, 12, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.12);
+}
+
+:global(.theme-noir-dark) .provider-card,
+:global(.theme-noir-dark) .whisper-model-card {
+  min-height: 52px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(3, 6, 12, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.07);
+}
+
+:global(.theme-noir-dark) .provider-card:hover,
+:global(.theme-noir-dark) .provider-card.provider-active {
+  border: 0;
+  background: rgba(80, 150, 179, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.4), 0 0 16px rgba(80, 150, 179, 0.1);
+}
+
+:global(.theme-noir-dark) .status-banner.banner-success {
+  color: #9fd8a8;
+  background: rgba(63, 185, 80, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(63, 185, 80, 0.25);
+}
+
+:global(.theme-noir-dark) .status-banner.banner-error {
+  color: #e7a19c;
+  background: rgba(248, 81, 73, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(248, 81, 73, 0.25);
+}
+
+:global(.theme-noir-dark) .status-banner.banner-info,
+:global(.theme-noir-dark) .status-banner.banner-warning {
+  color: #d5c18d;
+  background: rgba(227, 179, 65, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(227, 179, 65, 0.25);
+}
+
+:global(.theme-noir-dark) .action-btn,
+:global(.theme-noir-dark) .action-btn-small {
+  min-height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 16px;
+  color: #dee4ec;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.16);
+  transition: transform 180ms ease, background 160ms ease;
+}
+
+:global(.theme-noir-dark) .action-btn:hover,
+:global(.theme-noir-dark) .action-btn-small:hover {
+  transform: translateY(-1px);
+  background: rgba(80, 150, 179, 0.1);
+}
+
+:global(.theme-noir-dark) .btn-primary,
+:global(.theme-noir-dark) .btn-active-green {
+  color: #fff;
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 16px rgba(80, 150, 179, 0.35);
+}
+
+:global(.theme-noir-dark) .mic-meter-track,
+:global(.theme-noir-dark) .speaker-meter-track {
+  background: rgba(168, 192, 220, 0.1);
+}
+
+@keyframes noir-audio-in {
+  from { opacity: 0; filter: blur(8px); transform: translateY(8px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .noir-audio-rail-marker,
+  :global(.theme-noir-dark) .noir-audio-page-head,
+  :global(.theme-noir-dark) .tab-content,
+  :global(.theme-noir-dark) .action-btn,
+  :global(.theme-noir-dark) .action-btn-small {
+    animation: none;
+    transition: none;
+  }
 }
 </style>
