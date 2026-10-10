@@ -270,7 +270,7 @@ export interface IpcMainInvokeEvents {
   'browser-tab-view:reload':        (tabId: string) => void;
   'browser-tab-view:stop':          (tabId: string) => void;
   'browser-tab-view:set-bounds':    (tabId: string, bounds: Electron.Rectangle) => void;
-  'browser-tab-view:focus':         (tabId: string | null, clearOnlyIfFocusedTabId?: string) => void;
+  'browser-tab-view:focus':         (tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number) => void;
   'browser-tab-view:exec-js':       (tabId: string, code: string) => unknown;
   'browser-tab-view:reclaim-chrome-focus': () => boolean;
 

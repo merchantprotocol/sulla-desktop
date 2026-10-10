@@ -14,6 +14,7 @@ import { getWindow, openUrlInApp } from '@pkg/window';
 import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
 
 const console = Logging.sulla;
+const perf = Logging.perf;
 
 interface VaultAccountMatch {
   accountId: string;
@@ -98,6 +99,14 @@ export class BrowserTabViewManager {
    * view without a flash of stale coordinates.
    */
   private latestBounds = new Map<string, Electron.Rectangle>();
+  /**
+   * Placement last pushed to each native view ('focused' or the parked
+   * rect). Lets reconcileVisibility skip views already where they belong,
+   * so a tab switch touches only the outgoing and incoming views instead
+   * of re-bounding and re-ordering every open tab. Keyed by view object so
+   * a wedge-recovery replacement view starts with no cached placement.
+   */
+  private appliedPlacement = new WeakMap<WebContentsView, string>();
   private failedUrls = new Map<string, string>(); // tabId → original URL that failed
   private retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /**
@@ -458,7 +467,7 @@ export class BrowserTabViewManager {
    * comes up). Every caller — renderer, chrome-api, login overlay —
    * funnels through here. `reconcileVisibility` does the mechanical work.
    */
-  setFocusedTab(tabId: string | null, clearOnlyIfFocusedTabId?: string): void {
+  setFocusedTab(tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number): void {
     if (tabId === null && clearOnlyIfFocusedTabId && this.focusedTabId !== clearOnlyIfFocusedTabId) {
       console.log(`[BrowserTabView] ignored stale focus clear from ${ clearOnlyIfFocusedTabId }; focused=${ this.focusedTabId ?? '(none)' }`);
       return;
@@ -468,7 +477,12 @@ export class BrowserTabViewManager {
     if (this.focusedTabId) this.lastActiveAt.set(this.focusedTabId, Date.now());
     this.focusedTabId = tabId;
     if (tabId) this.viewHealth.set(tabId, this.newViewHealth());
-    this.reconcileVisibility();
+    const started = Date.now();
+    const touched = this.reconcileVisibility();
+    // ipcWaitMs = renderer send → main handling. A high value means the main
+    // process event loop was busy (agent streams etc.), not the view swap.
+    const ipcWait = sentAt ? `${ started - sentAt }` : 'n/a';
+    perf.log(`[TabSwitchTiming] to=${ tabId ?? '(none)' } ipcWaitMs=${ ipcWait } reconcileMs=${ Date.now() - started } viewsTouched=${ touched }/${ this.views.size }`);
   }
 
   /**
@@ -521,9 +535,9 @@ export class BrowserTabViewManager {
    * This is the ONLY place in the codebase that mutates
    * contentView.addChildView / removeChildView / setBounds for tab views.
    */
-  private reconcileVisibility(): void {
+  private reconcileVisibility(): number {
     const mainWindow = getWindow('main-agent');
-    if (!mainWindow) return;
+    if (!mainWindow) return 0;
 
     // Park unfocused views just off-screen to the left: x = -(width + margin)
     // so the right edge sits PARK_MARGIN pixels past the viewport's left edge.
@@ -534,6 +548,7 @@ export class BrowserTabViewManager {
     // buffer zone; -100_000 kills tile generation and capturePage returns
     // empty NativeImages indefinitely.
     const PARK_MARGIN = 100;
+    let touched = 0;
 
     for (const [tabId, view] of this.views) {
       if (tabId === this.focusedTabId) {
@@ -546,6 +561,8 @@ export class BrowserTabViewManager {
         this.lastActiveAt.set(tabId, Date.now());
         const bounds = this.latestBounds.get(tabId);
         if (bounds) view.setBounds(bounds);
+        touched++;
+        this.appliedPlacement.set(view, 'focused');
         try {
           // addChildView on an attached view promotes it to top of z-order;
           // on a detached view, re-attaches at top. Either way: top.
@@ -565,6 +582,13 @@ export class BrowserTabViewManager {
           width,
           height: Math.max(last?.height ?? 800, 1),
         };
+        // Window id in the key: a recreated main window must re-attach every view.
+        const placement = `${ mainWindow.id }:${ parked.x },${ parked.y },${ parked.width },${ parked.height }`;
+        // Already parked here — re-bounding and re-ordering it again is pure
+        // native churn on every switch.
+        if (this.appliedPlacement.get(view) === placement) continue;
+        this.appliedPlacement.set(view, placement);
+        touched++;
         view.setBounds(parked);
         try {
           // Ensure still attached (no-op if already attached). Index 0 puts
@@ -575,6 +599,8 @@ export class BrowserTabViewManager {
         }
       }
     }
+
+    return touched;
   }
 
   // ---------------------------------------------------------------------------

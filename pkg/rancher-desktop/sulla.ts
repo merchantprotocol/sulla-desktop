@@ -18,6 +18,7 @@ import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { redisClient } from '@pkg/agent/database/RedisClient';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
+import { startEventLoopLagMonitor } from '@pkg/main/eventLoopLagMonitor';
 
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
@@ -672,6 +673,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   // ── Browser Tab Views (WebContentsView-based) ─────────────────────────────
   const { BrowserTabViewManager } = await import('@pkg/window/browserTabViewManager');
   const tabViewManager = BrowserTabViewManager.getInstance();
+  startEventLoopLagMonitor();
 
   const { tabRegistry } = await import('@pkg/main/browserTabs/TabRegistry');
 
@@ -716,8 +718,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   // whenever its computed "which tab should be visible right now" changes.
   // A hidden-tab clear includes the originating tab id so stale watcher
   // events from the previously visible tab cannot hide the newly active tab.
-  ipcMainProxy.handle('browser-tab-view:focus', async(_event: Electron.IpcMainInvokeEvent, tabId: string | null, clearOnlyIfFocusedTabId?: string) => {
-    tabViewManager.setFocusedTab(tabId, clearOnlyIfFocusedTabId);
+  ipcMainProxy.handle('browser-tab-view:focus', async(_event: Electron.IpcMainInvokeEvent, tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number) => {
+    tabViewManager.setFocusedTab(tabId, clearOnlyIfFocusedTabId, sentAt);
   });
 
   // A chrome text field (chat composer, address bar) lost focus without any
