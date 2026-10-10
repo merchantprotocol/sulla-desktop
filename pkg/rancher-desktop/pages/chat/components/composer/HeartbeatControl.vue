@@ -1,39 +1,39 @@
 <template>
-  <div class="heartbeat-control">
-    <div
+  <div
+    ref="root"
+    class="heartbeat-control"
+  >
+    <button
+      type="button"
       class="heartbeat-pill"
       :class="{ enabled: isOn, broken: !!error }"
+      title="Chat heartbeat"
+      :aria-expanded="open"
+      @click="open = !open"
     >
-      <button
-        type="button"
-        role="switch"
-        class="heartbeat-switch"
-        :aria-checked="isOn"
-        :title="isOn ? 'Turn chat heartbeat off' : 'Turn chat heartbeat on'"
-        @click="toggle"
-      >
-        <span class="track"><span class="thumb" /></span>
-        <span aria-hidden="true">♥</span>
-        <span>{{ label }}</span>
-      </button>
-      <button
-        type="button"
-        class="heartbeat-settings"
-        title="Heartbeat settings"
-        :aria-expanded="open"
-        @click="open = !open"
-      >
-        ⚙
-      </button>
-    </div>
+      <span aria-hidden="true">♥</span>
+      <span>{{ label }}</span>
+    </button>
 
     <form
       v-if="open"
       class="heartbeat-popover"
       @submit.prevent="save"
     >
-      <div class="heartbeat-title">
-        Chat heartbeat
+      <div class="heartbeat-header">
+        <span class="heartbeat-title">Chat heartbeat</span>
+        <button
+          type="button"
+          role="switch"
+          class="heartbeat-switch"
+          :class="{ enabled: isOn }"
+          :aria-checked="isOn"
+          :title="isOn ? 'Turn chat heartbeat off' : 'Turn chat heartbeat on'"
+          @click="toggle"
+        >
+          <span class="switch-label">{{ isOn ? 'On' : 'Off' }}</span>
+          <span class="track"><span class="thumb" /></span>
+        </button>
       </div>
       <label>
         <span>Wake every</span>
@@ -81,7 +81,7 @@
           type="submit"
           class="save-button"
         >
-          {{ isOn ? 'Save' : 'Save & turn on' }}
+          Save
         </button>
       </div>
     </form>
@@ -110,6 +110,7 @@ const controller = useChatController();
 const presets = [1, 2, 5, 10, 15, 30, 60];
 const DEFAULT_MINUTES = 5;
 const open = ref(false);
+const root = ref<HTMLElement | null>(null);
 const now = ref(Date.now());
 const choice = ref(String(DEFAULT_MINUTES));
 const error = ref('');
@@ -189,7 +190,6 @@ async function apply(config: ChatHeartbeatConfig): Promise<void> {
   const normalized = normalizeChatHeartbeatConfig(config);
   controller.setHeartbeat(normalized);
   syncForm(normalized);
-  open.value = false;
   // Register on demand — the chat may not have been registered yet (thread
   // id arrived late, or the first attempt failed).
   if (!registeredThreadId && !await register(backendThreadId.value)) {
@@ -206,14 +206,30 @@ async function apply(config: ChatHeartbeatConfig): Promise<void> {
   }
 }
 
-async function save(): Promise<void> {
-  const intervalMinutes = choice.value === 'custom' ? Number(customMinutes.value) : Number(choice.value);
-  await apply({ intervalMinutes, message: draftMessage.value });
+function draftMinutes(): number {
+  return choice.value === 'custom' ? Number(customMinutes.value) : Number(choice.value);
 }
 
+// Save keeps the switch where it is; while off it only remembers the
+// interval for the next time the switch is turned on.
+async function save(): Promise<void> {
+  if (!isOn.value) lastMinutes.value = draftMinutes();
+  await apply({ intervalMinutes: isOn.value ? draftMinutes() : null, message: draftMessage.value });
+  open.value = false;
+}
+
+// The switch applies immediately and leaves the panel open.
 async function toggle(): Promise<void> {
-  const message = controller.heartbeat.value.message;
-  await apply({ intervalMinutes: isOn.value ? null : lastMinutes.value, message });
+  if (isOn.value) {
+    await apply({ intervalMinutes: null, message: draftMessage.value });
+    return;
+  }
+  lastMinutes.value = draftMinutes();
+  await apply({ intervalMinutes: lastMinutes.value, message: draftMessage.value });
+}
+
+function onPointerDown(event: PointerEvent): void {
+  if (open.value && root.value && !root.value.contains(event.target as Node)) open.value = false;
 }
 
 function onStatus(_event: unknown, value: ChatHeartbeatStatus): void {
@@ -247,6 +263,7 @@ onMounted(() => {
   ipcRenderer.on('chat-heartbeat:status', onStatus);
   ipcRenderer.on('chat-heartbeat:config', onConfig);
   ipcRenderer.on('chat-heartbeat:beat', onBeat);
+  document.addEventListener('pointerdown', onPointerDown);
   clock = setInterval(() => { now.value = Date.now() }, 1_000);
 });
 
@@ -254,6 +271,7 @@ onBeforeUnmount(() => {
   ipcRenderer.removeListener('chat-heartbeat:status', onStatus);
   ipcRenderer.removeListener('chat-heartbeat:config', onConfig);
   ipcRenderer.removeListener('chat-heartbeat:beat', onBeat);
+  document.removeEventListener('pointerdown', onPointerDown);
   if (clock) clearInterval(clock);
   if (registeredThreadId) ipcRenderer.invoke('chat-heartbeat:unregister', registeredThreadId).catch(() => undefined);
 });
@@ -262,29 +280,29 @@ onBeforeUnmount(() => {
 <style scoped>
 .heartbeat-control { position: relative; margin-right: auto; letter-spacing: normal; text-transform: none; }
 .heartbeat-pill {
-  display: inline-flex; align-items: center;
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
   border: 1px solid var(--border-muted); border-radius: 999px;
-  background: var(--surface-1); color: var(--text-muted);
+  background: var(--surface-1); color: var(--text-muted); font: inherit; cursor: pointer;
 }
+.heartbeat-pill:hover { color: var(--text); }
 .heartbeat-pill.enabled { color: var(--accent); border-color: var(--accent-border); background: var(--accent-dim); }
 .heartbeat-pill.broken { color: var(--warning); border-color: var(--warning); }
-.heartbeat-switch, .heartbeat-settings {
-  display: inline-flex; align-items: center; gap: 6px;
-  border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer;
+.heartbeat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.heartbeat-switch {
+  display: inline-flex; align-items: center; gap: 8px; padding: 2px 0;
+  border: 0; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer;
 }
-.heartbeat-switch { padding: 3px 4px 3px 6px; }
-.heartbeat-settings { padding: 3px 8px 3px 4px; opacity: 0.7; }
-.heartbeat-settings:hover { opacity: 1; }
+.heartbeat-switch.enabled { color: var(--accent); }
 .track {
-  position: relative; width: 24px; height: 14px; border-radius: 999px;
+  position: relative; width: 34px; height: 20px; border-radius: 999px;
   background: var(--surface-3); border: 1px solid var(--border); transition: background 0.15s;
 }
 .thumb {
-  position: absolute; top: 1px; left: 1px; width: 10px; height: 10px; border-radius: 50%;
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
   background: var(--text-muted); transition: transform 0.15s, background 0.15s;
 }
-.heartbeat-pill.enabled .track { background: var(--accent); border-color: var(--accent); }
-.heartbeat-pill.enabled .thumb { transform: translateX(10px); background: var(--bg); }
+.heartbeat-switch.enabled .track { background: var(--accent); border-color: var(--accent); }
+.heartbeat-switch.enabled .thumb { transform: translateX(14px); background: var(--bg); }
 .heartbeat-error { margin-top: 10px; color: var(--warning); }
 .heartbeat-popover {
   position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 30;
@@ -292,7 +310,7 @@ onBeforeUnmount(() => {
   background: var(--surface-1); color: var(--text); border: 1px solid var(--border);
   box-shadow: var(--shadow-lg); font-family: var(--font-body); font-size: 12px;
 }
-.heartbeat-title { margin-bottom: 12px; font-weight: 700; }
+.heartbeat-title { font-weight: 700; }
 label { display: grid; gap: 6px; margin-top: 10px; color: var(--text-muted); }
 select, input, textarea {
   width: 100%; box-sizing: border-box; border: 1px solid var(--border-muted); border-radius: 8px;
