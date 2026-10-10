@@ -114,15 +114,15 @@ describe('wakeTargetFromState', () => {
   });
 });
 
-function notice(taskId = 'b1'): BackgroundTaskNotice {
-  return { taskId, status: 'completed', summary: `task ${ taskId } done`, followUpText: 'FINISHED', completedAt: 0 };
+function notice(taskId = 'b1', followUpText = ''): BackgroundTaskNotice {
+  return { taskId, status: 'completed', summary: `task ${ taskId } done`, followUpText, completedAt: 0 };
 }
 
 describe('BackgroundCompletionDelivery', () => {
   beforeEach(() => { jest.useFakeTimers() });
   afterEach(() => { jest.useRealTimers() });
 
-  it('wakes an idle thread immediately with a system-sourced user_message', () => {
+  it('delivers an unhandled notice once with a system-sourced user_message', () => {
     const send = jest.fn(async() => {});
     const delivery = new BackgroundCompletionDelivery(send);
     const state = { metadata: { cycleComplete: true } };
@@ -136,8 +136,36 @@ describe('BackgroundCompletionDelivery', () => {
     expect(payload.data.threadId).toBe('thread_1');
     expect(payload.data.metadata).toMatchObject({ source: 'background_task_completion', inputSource: 'system' });
     expect(payload.data.content).toContain('task b1 done');
-    expect(payload.data.content).toContain('FINISHED');
     expect(delivery.hasPending('conv')).toBe(false);
+
+    delivery.deliver('conv', { channel: 'sulla-desktop', threadId: 'thread_1', state }, [notice()]);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-deliver a completion the Claude session already handled', () => {
+    const send = jest.fn(async() => {});
+    const delivery = new BackgroundCompletionDelivery(send);
+    const target = { channel: 'c', threadId: 't', state: { metadata: { cycleComplete: true } } };
+
+    delivery.deliver('conv', target, [notice('handled', 'FINISHED')]);
+    delivery.deliver('conv', target, [notice('handled')]);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(delivery.hasPending('conv')).toBe(false);
+  });
+
+  it('batches multiple unhandled notices and deduplicates task ids', () => {
+    const send = jest.fn(async() => {});
+    const delivery = new BackgroundCompletionDelivery(send);
+    const target = { channel: 'c', threadId: 't', state: { metadata: { cycleComplete: true } } };
+
+    delivery.deliver('conv', target, [notice('a'), notice('b'), notice('a')]);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const payload = send.mock.calls[0][1] as any;
+    expect(payload.data.metadata.taskIds).toEqual(['a', 'b']);
+    expect(payload.data.content).toContain('task a done');
+    expect(payload.data.content).toContain('task b done');
   });
 
   it('holds the wake while the thread is busy instead of aborting the running turn', () => {
@@ -196,7 +224,7 @@ describe('BackgroundCompletionDelivery', () => {
 
 describe('formatBackgroundNotices', () => {
   it('marks the message as automatic and includes output path and follow-up', () => {
-    const text = formatBackgroundNotices([{ ...notice(), outputFile: '/tmp/x.output' }]);
+    const text = formatBackgroundNotices([{ ...notice('b1', 'FINISHED'), outputFile: '/tmp/x.output' }]);
 
     expect(text).toContain('[Background task finished while you were idle]');
     expect(text).toContain('/tmp/x.output');
