@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -48,15 +49,21 @@ export class AgentDefinitionService {
     const promptFiles = patch.promptContent !== undefined && patch.promptFiles === undefined
       ? { ...current.prompt_files, 'prompt.md': patch.promptContent }
       : patch.promptFiles;
-    return AgentDefinitionModel.update(id, { ...patch, ...(promptFiles ? { promptFiles } : {}) });
+    // A user edit detaches a filesystem import so startup refresh never overwrites it.
+    const sourceKind = patch.sourceKind ?? (current.source_kind === 'filesystem-import' ? 'local' : undefined);
+    return AgentDefinitionModel.update(id, { ...patch, ...(promptFiles ? { promptFiles } : {}), ...(sourceKind ? { sourceKind } : {}) });
   }
 
   setStatus(id: string, status: AgentDefinitionStatus): Promise<AgentDefinition | null> { return AgentDefinitionModel.setStatus(id, status) }
   delete(id: string): Promise<boolean> { return AgentDefinitionModel.delete(id) }
 
-  /** Import legacy directories once. Existing DB slugs always win. */
-  async importLegacyDirectories(roots = resolveAllAgentsDirs()): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  /**
+   * Import legacy directories. Unedited filesystem imports refresh when their
+   * files change (so shipped agent updates land); every other DB row wins.
+   */
+  async importLegacyDirectories(roots = resolveAllAgentsDirs()): Promise<{ imported: number; refreshed: number; skipped: number; errors: string[] }> {
     let imported = 0;
+    let refreshed = 0;
     let skipped = 0;
     const errors: string[] = [];
     const seen = new Set<string>();
@@ -69,16 +76,18 @@ export class AgentDefinitionService {
         const configPath = path.join(dir, 'config.yaml');
         if (!fs.existsSync(configPath)) continue;
         try {
-          const config = yaml.parse(fs.readFileSync(configPath, 'utf8')) ?? {};
+          const configText = fs.readFileSync(configPath, 'utf8');
+          const config = yaml.parse(configText) ?? {};
           const promptFiles: Record<string, string> = {};
           for (const file of fs.readdirSync(dir, { withFileTypes: true })) {
             if (file.isFile() && file.name.endsWith('.md') && file.name !== 'environment.md') {
               promptFiles[file.name] = fs.readFileSync(path.join(dir, file.name), 'utf8');
             }
           }
-          const existed = await this.findBySlug(entry.name);
-          await AgentDefinitionModel.importIfMissing({
-            slug:          entry.name,
+          const contentHash = createHash('sha256')
+            .update(JSON.stringify([configText, Object.keys(promptFiles).sort().map(name => [name, promptFiles[name]])]))
+            .digest('hex');
+          const content = {
             name:          String(config.name || entry.name),
             description:   String(config.description || ''),
             systemPrompt:  promptFiles['prompt.md'] ?? '',
@@ -92,16 +101,24 @@ export class AgentDefinitionService {
             provider:      typeof config.provider === 'string' ? config.provider : null,
             model:         typeof config.model === 'string' ? config.model : null,
             config,
-            status:        'production',
-            sourceKind:    'filesystem-import',
-          });
-          existed ? skipped++ : imported++;
+            contentHash,
+          };
+          const existing = await this.findBySlug(entry.name);
+          if (!existing) {
+            await AgentDefinitionModel.importIfMissing({ slug: entry.name, ...content, status: 'production', sourceKind: 'filesystem-import' });
+            imported++;
+          } else if (existing.source_kind === 'filesystem-import' && existing.content_hash !== contentHash) {
+            await AgentDefinitionModel.update(existing.id, content);
+            refreshed++;
+          } else {
+            skipped++;
+          }
         } catch (error) {
           errors.push(`${ entry.name }: ${ error instanceof Error ? error.message : String(error) }`);
         }
       }
     }
-    return { imported, skipped, errors };
+    return { imported, refreshed, skipped, errors };
   }
 
   toManifest(agent: AgentDefinition): AgentMarketplaceManifest {

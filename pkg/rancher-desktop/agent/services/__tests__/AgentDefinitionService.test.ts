@@ -71,13 +71,14 @@ describe('AgentDefinitionService', () => {
         skill_refs:     input.skillRefs ?? [],
         provider:       input.provider ?? null,
         model:          input.model ?? null,
+        content_hash:   input.contentHash ?? null,
       });
       stored.set(input.slug, row);
       return row;
     });
     const service = new AgentDefinitionService();
     expect(await service.importLegacyDirectories([root])).toMatchObject({ imported: 1, skipped: 0, errors: [] });
-    expect(await service.importLegacyDirectories([root])).toMatchObject({ imported: 0, skipped: 1, errors: [] });
+    expect(await service.importLegacyDirectories([root])).toMatchObject({ imported: 0, refreshed: 0, skipped: 1, errors: [] });
     expect(stored.get('lossless-agent')).toMatchObject({
       config:         { injectObservations: false, extra: { nested: true } },
       prompt_content: 'primary prompt',
@@ -119,5 +120,35 @@ describe('AgentDefinitionService', () => {
     const imported = await service.importManifest(manifest);
     expect(manifest).toMatchObject({ apiVersion: 'sulla/v3', kind: 'Agent', manifestVersion: 1 });
     expect(service.toManifest(imported)).toEqual(manifest);
+  });
+
+  it('refreshes unedited imports when files change but never overwrites user edits', async() => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-agent-'));
+    const dir = path.join(root, 'builtin-agent');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'config.yaml'), 'name: Builtin\n');
+    fs.writeFileSync(path.join(dir, 'prompt.md'), 'v1');
+    let row = definition({ id: 'builtin', slug: 'builtin-agent', content_hash: 'old-hash' });
+    jest.spyOn(AgentDefinitionModel, 'findBySlug').mockImplementation(() => Promise.resolve(row));
+    jest.spyOn(AgentDefinitionModel, 'get').mockImplementation(() => Promise.resolve(row));
+    const update = jest.spyOn(AgentDefinitionModel, 'update').mockImplementation((_id, patch) => {
+      row = { ...row, ...(patch.promptContent !== undefined ? { prompt_content: patch.promptContent } : {}), content_hash: patch.contentHash ?? row.content_hash, source_kind: patch.sourceKind ?? row.source_kind };
+      return Promise.resolve(row);
+    });
+    const service = new AgentDefinitionService();
+
+    expect(await service.importLegacyDirectories([root])).toMatchObject({ refreshed: 1, skipped: 0 });
+    expect(row.prompt_content).toBe('v1');
+    expect(row.status).toBe('production');
+    expect(await service.importLegacyDirectories([root])).toMatchObject({ refreshed: 0, skipped: 1 });
+
+    await service.update('builtin', { promptContent: 'my edit' });
+    expect(row.source_kind).toBe('local');
+    fs.writeFileSync(path.join(dir, 'prompt.md'), 'v2');
+    update.mockClear();
+    expect(await service.importLegacyDirectories([root])).toMatchObject({ refreshed: 0, skipped: 1 });
+    expect(update).not.toHaveBeenCalled();
+    expect(row.prompt_content).toBe('my edit');
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });
