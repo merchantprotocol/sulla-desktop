@@ -56,6 +56,20 @@ export interface AgentsListResponse {
   }[];
 }
 
+export interface AgentDefinitionResponse {
+  id:                 string;
+  slug:               string;
+  name:               string;
+  description:        string;
+  provider:           string | null;
+  model:              string | null;
+  prompt:             string;
+  sourceKind:         string;
+  marketplaceVersion: string | null;
+  status:             string;
+  enabled:            boolean;
+}
+
 export interface AgentConversationSummary {
   id:           string;
   title:        string;
@@ -102,7 +116,63 @@ async function previewFor(id: string, logFile: string | undefined, logsDir: stri
 // ── IPC handler ──────────────────────────────────────────────────────────────
 
 export function initAgentsIpc(): void {
-  ipcMain.handle('agents:list', async (): Promise<AgentsListResponse> => {
+  ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
+    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+    return (await agentDefinitionService.list()).filter(a => a.status !== 'archive').map(a => ({
+      id:                 a.id,
+      slug:               a.slug,
+      name:               a.name,
+      description:        a.description,
+      provider:           a.provider,
+      model:              a.model,
+      prompt:             a.prompt_content,
+      sourceKind:         a.source_kind,
+      marketplaceVersion: a.marketplace_version,
+      status:             a.status,
+      enabled:            a.enabled,
+    }));
+  });
+
+  ipcMain.handle('agent-definitions:create', async(_event, input: { slug: string; name: string; description?: string; provider?: string; model?: string; prompt: string }) => {
+    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+    return agentDefinitionService.create({
+      slug:          input.slug,
+      name:          input.name,
+      description:   input.description ?? '',
+      provider:      input.provider ?? null,
+      model:         input.model ?? null,
+      systemPrompt:  input.prompt,
+      promptContent: input.prompt,
+      promptFiles:   { 'prompt.md': input.prompt },
+      status:        'production',
+      sourceKind:    'local',
+    });
+  });
+
+  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: { name?: string; description?: string; provider?: string; model?: string; prompt?: string }) => {
+    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+    return agentDefinitionService.update(id, {
+      ...patch,
+      ...(patch.prompt !== undefined ? { systemPrompt: patch.prompt, promptContent: patch.prompt } : {}),
+    });
+  });
+
+  ipcMain.handle('agent-definitions:delete', async(_event, id: string) => {
+    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+    return agentDefinitionService.delete(id);
+  });
+
+  ipcMain.handle('agent-definitions:export', async(_event, slug: string) => {
+    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+    return agentDefinitionService.exportManifest(slug);
+  });
+
+  ipcMain.handle('agent-definitions:import', async(_event, manifest: import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest) => {
+    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+    return agentDefinitionService.importManifest(manifest);
+  });
+
+  ipcMain.handle('agents:list', async(): Promise<AgentsListResponse> => {
     // Gather all four data sources in parallel. Each is wrapped so a
     // failure in one never blocks the others.
 

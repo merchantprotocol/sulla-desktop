@@ -1,17 +1,17 @@
-import type { ThreadId, ArtifactId }      from '../types/chat';
-import type { Message }                   from './Message';
-import type { Artifact }                  from './Artifact';
-import type { Attachment }                from './Attachment';
-import type { QueuedMessage }             from './QueuedMessage';
-import type { PopoverState }              from './Command';
-import type { RunState }                  from './RunState';
-import type { VoiceState }                from './VoiceState';
+import type { Artifact } from './Artifact';
+import type { Attachment } from './Attachment';
+import type { PopoverState } from './Command';
+import type { Message } from './Message';
+import type { QueuedMessage } from './QueuedMessage';
+import type { RunState } from './RunState';
+import type { VoiceState } from './VoiceState';
+import type { ThreadId, ArtifactId } from '../types/chat';
 
 export interface ModelDescriptor {
-  id:     string;
-  name:   string;
-  tier:   'hosted' | 'local';
-  ctx:    string;     // "1M ctx" | "200K ctx"
+  id:   string;
+  name: string;
+  tier: 'hosted' | 'local';
+  ctx:  string;     // "1M ctx" | "200K ctx"
 }
 
 export type ConnectionState = 'online' | 'degraded' | 'offline';
@@ -25,15 +25,15 @@ export interface ModalState {
  * Mirrored from the backend's AgentPersonaService state via the adapter.
  */
 export interface TokenUsage {
-  totalTokens:       number;
-  promptTokens:      number;
-  completionTokens:  number;
-  inputCost:         number;   // USD
-  outputCost:        number;   // USD
-  totalCost:         number;   // USD
-  responseCount:     number;
-  avgResponseMs:     number;
-  tokensPerSecond:   number;
+  totalTokens:      number;
+  promptTokens:     number;
+  completionTokens: number;
+  inputCost:        number;   // USD
+  outputCost:       number;   // USD
+  totalCost:        number;   // USD
+  responseCount:    number;
+  avgResponseMs:    number;
+  tokensPerSecond:  number;
 }
 
 export const emptyTokenUsage = (): TokenUsage => ({
@@ -64,27 +64,30 @@ export interface SidebarState {
  * controller so the reactive view layer can respond.
  */
 export interface Thread {
-  id:        ThreadId;
-  title:     string;
-  createdAt: number;
-  updatedAt: number;
-  messages:  Message[];
+  id:               ThreadId;
+  title:            string;
+  createdAt:        number;
+  updatedAt:        number;
+  messages:         Message[];
   /** Metadata about the backend conversation/thread (for resumption) */
   backendThreadId?: string;
+  /** Chat-local inference selection. Never written to global model settings. */
+  agentId?:         string | null;
+  providerId?:      string | null;
 }
 
 /** The full saveable state of a live chat session. */
 export interface ThreadState {
-  thread:         Thread;
-  runState:       RunState;
-  queue:          QueuedMessage[];
-  staged:         Attachment[];
-  voice:          VoiceState;
-  artifacts:      Artifact[];
+  thread:           Thread;
+  runState:         RunState;
+  queue:            QueuedMessage[];
+  staged:           Attachment[];
+  voice:            VoiceState;
+  artifacts:        Artifact[];
   activeArtifactId: ArtifactId | null;
-  popover:        PopoverState;
-  modals:         ModalState;
-  sidebar:        SidebarState;
-  connection:     ConnectionState;
-  model:          ModelDescriptor;
+  popover:          PopoverState;
+  modals:           ModalState;
+  sidebar:          SidebarState;
+  connection:       ConnectionState;
+  model:            ModelDescriptor;
 }

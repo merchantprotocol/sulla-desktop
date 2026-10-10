@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import { RunActivity } from '../services/RunActivity';
 import path from 'node:path'; // used by enrichPrompt for active_projects_file
 
@@ -17,9 +16,10 @@ import { parseJson } from '../services/JsonParseService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { toolRegistry } from '../tools/registry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
+import { agentDefinitionService } from '../services/AgentDefinitionService';
 import { sanitizeConversationContext } from '../utils/conversationContext';
 import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
-import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
+import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
 import { prepareProviderMessages } from './contextBudget';
@@ -319,10 +319,6 @@ function truncateBootstrapContent(content: string, maxChars: number = BOOTSTRAP_
   return `${ content.slice(0, headSize) }\n\n[... ${ truncated } chars truncated ...]\n\n${ content.slice(-tailSize) }`;
 }
 
-/** Cache for loaded agent prompt files (agentId -> combined markdown content). */
-const agentPromptCache = new Map<string, { content: string; loadedAt: number }>();
-const AGENT_PROMPT_CACHE_TTL = 30_000; // 30s — reload agent files periodically
-
 /**
  * Result of loading agent .md files, split into section overrides
  * and generic prompt content for the section-based builder.
@@ -340,9 +336,6 @@ export interface AgentPromptLoadResult {
   config:           AgentConfig | null;
 }
 
-/** Cache for loaded agent prompt load results */
-const agentPromptLoadCache = new Map<string, { result: AgentPromptLoadResult; loadedAt: number }>();
-
 /**
  * Load agent .md files and split them into section overrides vs generic prompt content.
  * Files whose basename (minus .md) matches a registered section ID become overrides.
@@ -351,46 +344,24 @@ const agentPromptLoadCache = new Map<string, { result: AgentPromptLoadResult; lo
 export async function loadAgentPromptData(agentId: string): Promise<AgentPromptLoadResult | null> {
   if (!agentId) return null;
 
-  // Check cache
-  const cached = agentPromptLoadCache.get(agentId);
-  if (cached && Date.now() - cached.loadedAt < AGENT_PROMPT_CACHE_TTL) {
-    return cached.result;
-  }
-
-  const agentDir = findAgentDir(agentId);
-  if (!agentDir) return null;
-
   try {
-    // Lazy import to avoid circular dependency at module load time
+    const definition = await agentDefinitionService.findBySlug(agentId);
+    if (!definition || !definition.enabled || definition.status === 'archive') return null;
     const { REGISTERED_SECTION_IDS } = await import('../prompts/sections/index');
-
-    const entries = fs.readdirSync(agentDir, { withFileTypes: true });
-    const mdFiles = entries
-      .filter(e => e.isFile() && e.name.endsWith('.md') && e.name !== 'environment.md')
-      .sort((a, b) => {
-        const order = (name: string) => name === 'soul.md' ? 0 : 1;
-        return order(a.name) - order(b.name) || a.name.localeCompare(b.name);
-      });
-
-    // Read config.yaml
-    let agentName = agentId;
-    let config: AgentConfig | null = null;
-    const yamlPath = path.join(agentDir, 'config.yaml');
-    if (fs.existsSync(yamlPath)) {
-      try {
-        const yaml = await import('yaml');
-        config = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
-        if (config?.name) agentName = config.name;
-      } catch { /* ignore yaml parse errors */ }
-    }
+    const agentName = definition.name || agentId;
+    const config = { ...definition.config, name: agentName, description: definition.description,
+      tools: definition.allowed_tools, skills: definition.skill_refs,
+      provider: definition.provider || undefined, model: definition.model || undefined } as AgentConfig;
+    const mdFiles = Object.entries(definition.prompt_files)
+      .filter(([name]) => name.endsWith('.md') && name !== 'environment.md')
+      .sort(([a], [b]) => (a === 'soul.md' ? -1 : b === 'soul.md' ? 1 : a.localeCompare(b)));
 
     const sectionOverrides = new Map<string, string>();
     const genericSections: string[] = [];
     let totalChars = 0;
 
-    for (const file of mdFiles) {
-      const filePath = path.join(agentDir, file.name);
-      let content = fs.readFileSync(filePath, 'utf-8').trim();
+    for (const [fileName, rawContent] of mdFiles) {
+      let content = String(rawContent).trim();
       if (!content) continue;
 
       // Truncate if exceeds per-file limit
@@ -398,13 +369,13 @@ export async function loadAgentPromptData(agentId: string): Promise<AgentPromptL
 
       // Check total budget
       if (totalChars + content.length > BOOTSTRAP_TOTAL_MAX_CHARS) {
-        console.warn(`[BaseNode] Bootstrap total budget exceeded for ${ agentId }, skipping ${ file.name }`);
+        console.warn(`[BaseNode] Bootstrap total budget exceeded for ${ agentId }, skipping ${ fileName }`);
         break;
       }
       totalChars += content.length;
 
       // Check if this file name matches a registered section ID
-      const sectionId = file.name.replace(/\.md$/, '');
+      const sectionId = fileName.replace(/\.md$/, '');
       if (REGISTERED_SECTION_IDS.has(sectionId)) {
         sectionOverrides.set(sectionId, content);
       } else {
@@ -416,7 +387,7 @@ export async function loadAgentPromptData(agentId: string): Promise<AgentPromptL
     const vars = await getTemplateVariables();
     vars['{{agent_name}}'] = agentName;
     vars['{{agent_id}}'] = agentId;
-    vars['{{agent_dir}}'] = agentDir;
+    vars['{{agent_dir}}'] = '';
 
     const genericPrompt = genericSections.length > 0
       ? applyTemplateVars(genericSections.join('\n\n'), vars)
@@ -439,91 +410,9 @@ export async function loadAgentPromptData(agentId: string): Promise<AgentPromptL
       config,
     };
 
-    agentPromptLoadCache.set(agentId, { result, loadedAt: Date.now() });
     return result;
   } catch (err) {
     console.error(`[BaseNode] Failed to load agent prompt data for ${ agentId }:`, err);
-    return null;
-  }
-}
-
-/**
- * Load all .md files from an agent's directory and return them as a combined
- * prompt string with template variables substituted.
- *
- * Returns null if the agent directory doesn't exist or has no .md files,
- * in which case the caller should fall back to the global soul prompt.
- */
-async function loadAgentPromptFiles(agentId: string): Promise<string | null> {
-  if (!agentId) return null;
-
-  // Check cache
-  const cached = agentPromptCache.get(agentId);
-  if (cached && Date.now() - cached.loadedAt < AGENT_PROMPT_CACHE_TTL) {
-    return cached.content;
-  }
-
-  const agentDir = findAgentDir(agentId);
-  if (!agentDir) return null;
-
-  try {
-    const entries = fs.readdirSync(agentDir, { withFileTypes: true });
-    const mdFiles = entries
-      .filter(e => e.isFile() && e.name.endsWith('.md') && e.name !== 'environment.md')
-      .sort((a, b) => {
-        // soul.md first, then alphabetical
-        const order = (name: string) => name === 'soul.md' ? 0 : 1;
-        return order(a.name) - order(b.name) || a.name.localeCompare(b.name);
-      });
-
-    if (mdFiles.length === 0) return null;
-
-    // Read config.yaml for agent name (used in the identity prefix)
-    let agentName = agentId;
-    const yamlPath = path.join(agentDir, 'config.yaml');
-    if (fs.existsSync(yamlPath)) {
-      try {
-        const yaml = await import('yaml');
-        const parsed = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
-        if (parsed?.name) agentName = parsed.name;
-      } catch { /* ignore yaml parse errors */ }
-    }
-
-    // Read all .md files
-    const sections: string[] = [];
-    for (const file of mdFiles) {
-      const filePath = path.join(agentDir, file.name);
-      const content = fs.readFileSync(filePath, 'utf-8').trim();
-      if (content) {
-        sections.push(content);
-      }
-    }
-
-    if (sections.length === 0) return null;
-
-    // Get template variables and substitute
-    const vars = await getTemplateVariables();
-    // Add agent-specific variables
-    vars['{{agent_name}}'] = agentName;
-    vars['{{agent_id}}'] = agentId;
-    vars['{{agent_dir}}'] = agentDir;
-
-    const combined = applyTemplateVars(sections.join('\n\n'), vars);
-
-    // Build the final prompt with an identity prefix
-    const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
-    const identityPrefix = primaryUserName.trim()
-      ? `You are ${ agentName } (agent: ${ agentId })\nThe Human's name is: ${ primaryUserName }\n\n`
-      : `You are ${ agentName } (agent: ${ agentId })\n\n`;
-
-    const result = identityPrefix + combined;
-
-    // Cache it
-    agentPromptCache.set(agentId, { content: result, loadedAt: Date.now() });
-
-    return result;
-  } catch (err) {
-    console.error(`[BaseNode] Failed to load agent prompt files for ${ agentId }:`, err);
     return null;
   }
 }
@@ -618,9 +507,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const templateVars = await getTemplateVariables();
     templateVars['{{agent_name}}'] = agentMeta?.name || agentId || templateVars['{{botName}}'];
     templateVars['{{agent_id}}'] = agentId;
-    templateVars['{{agent_dir}}'] = agentId === DEFAULT_CORE_ROUTINE_AGENT_ID
-      ? ''
-      : findAgentDir(agentId) || path.join(resolveSullaAgentsDir(), agentId);
+    templateVars['{{agent_dir}}'] = '';
 
     // Load agent-specific .md files and split into section overrides vs generic prompt
     let agentSectionOverrides = new Map<string, string>();
@@ -964,16 +851,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     if (agentId === DEFAULT_CORE_ROUTINE_AGENT_ID) return true;
 
     try {
-      const agentDir = findAgentDir(agentId);
-      const configPath = agentDir ? path.join(agentDir, 'config.yaml') : '';
-      if (fs.existsSync(configPath)) {
-        const yaml = await import('yaml');
-        const agentCfg = yaml.parse(fs.readFileSync(configPath, 'utf-8'));
-        if (agentCfg?.injectObservations === false) {
-          return false;
-        }
-      }
-    } catch { /* ignore config read errors — default to injecting */ }
+      const definition = await agentDefinitionService.findBySlug(agentId);
+      if (definition?.config?.injectObservations === false) return false;
+    } catch { /* default to injecting */ }
 
     return true;
   }

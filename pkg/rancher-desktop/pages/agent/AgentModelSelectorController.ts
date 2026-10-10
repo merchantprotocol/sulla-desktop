@@ -32,7 +32,19 @@ export interface ProviderGroup {
   models:           ModelOption[];
 }
 
+export interface AgentOption {
+  id:          string;
+  slug:        string;
+  name:        string;
+  description: string;
+  provider:    string | null;
+  model:       string | null;
+  status:      string;
+  enabled:     boolean;
+}
+
 export class AgentModelSelectorController {
+  private hasChatSelection = false;
   readonly showModelMenu = ref(false);
   readonly modelMenuEl = ref<HTMLElement | null>(null);
   readonly buttonRef = ref<HTMLElement | null>(null);
@@ -44,6 +56,8 @@ export class AgentModelSelectorController {
 
   /** Grouped providers with their models */
   readonly providerGroups = ref<ProviderGroup[]>([]);
+  readonly agentOptions = ref<AgentOption[]>([]);
+  readonly activeAgentId = ref<string | null>(null);
 
   readonly loadingProviders = ref(false);
 
@@ -55,10 +69,13 @@ export class AgentModelSelectorController {
     loading:     Ref<boolean>;
     isRunning:   Ref<boolean>;
 
-    modelName: Ref<string>;
-    modelMode: Ref<'remote'>;
+    modelName:        Ref<string>;
+    modelMode:        Ref<'remote'>;
+    onSelectForChat?: (selection: { providerId: string; modelId: string; agentId: string | null; label: string }) => void;
   }) {
     this.activeModelLabel = computed(() => {
+      const agent = this.agentOptions.value.find(item => item.slug === this.activeAgentId.value);
+      if (agent) return agent.name;
       const provider = this.activePrimaryProvider.value;
       const model = this.activeModelId.value;
 
@@ -104,11 +121,13 @@ export class AgentModelSelectorController {
     return this.loadingProviders.value;
   }
 
+  get agentOptionsValue(): AgentOption[] { return this.agentOptions.value }
+
   async toggleModelMenu(): Promise<void> {
     this.showModelMenu.value = !this.showModelMenu.value;
 
     if (this.showModelMenu.value) {
-      await this.refreshProviderGroups();
+      await this.refresh();
     }
   }
 
@@ -123,22 +142,42 @@ export class AgentModelSelectorController {
    * when their surface becomes visible.
    */
   async refresh(): Promise<void> {
-    await this.refreshProviderGroups();
+    await Promise.all([this.refreshProviderGroups(), this.refreshAgents()]);
   }
 
   /**
-   * Select a model — delegates to ModelProviderService via IPC.
-   * The service writes to DB and broadcasts state-changed.
+   * Select a model for this chat only. Global provider defaults are read to
+   * seed new chats but are never mutated by this picker.
    */
-  async selectModel(option: ModelOption): Promise<void> {
+  selectModel(option: ModelOption): void {
     try {
-      const newState = await ipcRenderer.invoke('model-provider:select-model', option.providerId, option.modelId);
-
-      this.applyState(newState);
+      this.hasChatSelection = true;
+      this.activeAgentId.value = null;
+      this.applyState({ primaryProvider: option.providerId, activeModelId: option.modelId });
       this.updateActiveFlags(option.providerId, option.modelId);
+      this.deps.onSelectForChat?.({ providerId: option.providerId, modelId: option.modelId, agentId: null, label: option.modelLabel });
     } finally {
       this.showModelMenu.value = false;
     }
+  }
+
+  selectAgent(agent: AgentOption): void {
+    this.hasChatSelection = true;
+    this.activeAgentId.value = agent.slug;
+    const providerId = agent.provider ?? this.activePrimaryProvider.value;
+    const modelId = agent.model ?? this.activeModelId.value;
+    this.applyState({ primaryProvider: providerId, activeModelId: modelId });
+    this.updateActiveFlags('', '');
+    this.deps.onSelectForChat?.({ providerId, modelId, agentId: agent.slug, label: agent.name });
+    this.showModelMenu.value = false;
+  }
+
+  restoreForChat(providerId: string | null | undefined, modelId: string, agentId?: string | null): void {
+    this.hasChatSelection = true;
+    if (providerId) this.activePrimaryProvider.value = providerId;
+    if (modelId) this.activeModelId.value = modelId;
+    this.activeAgentId.value = agentId ?? null;
+    this.updateActiveFlags(providerId ?? '', modelId);
   }
 
   // ─── Internal ──────────────────────────────────────────────────
@@ -186,6 +225,13 @@ export class AgentModelSelectorController {
     } finally {
       this.loadingProviders.value = false;
     }
+  }
+
+  private async refreshAgents(): Promise<void> {
+    try {
+      this.agentOptions.value = (await ipcRenderer.invoke('agent-definitions:list'))
+        .filter(agent => agent.enabled && agent.status === 'production');
+    } catch { this.agentOptions.value = [] }
   }
 
   private async fetchModelsForGroup(group: ProviderGroup, isActive: boolean): Promise<void> {
@@ -236,6 +282,7 @@ export class AgentModelSelectorController {
     _event: Electron.IpcRendererEvent,
     state: { primaryProvider: string; activeModelId: string; modelMode?: string },
   ) => {
+    if (this.hasChatSelection) return;
     this.applyState(state);
     this.updateActiveFlags(state.primaryProvider, state.activeModelId);
   };
@@ -245,6 +292,7 @@ export class AgentModelSelectorController {
     _event: Electron.IpcRendererEvent,
     data: { model: string; type: string; provider?: string },
   ) => {
+    if (this.hasChatSelection) return;
     const providerId = (data as any).provider || 'grok';
     this.applyState({
       primaryProvider: providerId,

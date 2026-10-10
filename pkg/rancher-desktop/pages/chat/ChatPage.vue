@@ -238,8 +238,16 @@ const modelSelector   = new AgentModelSelectorController({
   isRunning:   _modelIsRunning,
   modelName:   _modelName,
   modelMode:   _modelMode,
+  onSelectForChat: ({ providerId, modelId, agentId, label }) => {
+    const known = findModel(modelId);
+    controller.selectForChat(known ?? { id: modelId, name: label || modelId, tier: 'hosted', ctx: '' }, providerId, agentId);
+  },
 });
-modelSelector.start();
+modelSelector.start().then(() => {
+  if (controller.thread.value.providerId || controller.thread.value.agentId) {
+    modelSelector.restoreForChat(controller.thread.value.providerId, controller.model.value.id, controller.thread.value.agentId);
+  }
+}).catch(error => console.warn('[ChatPage] Failed to initialize model selector:', error));
 
 // Mirror the selector's active model into ChatController.model so the
 // status badge, PersonaAdapter payload, and anything else reading

@@ -59,6 +59,17 @@ export class DatabaseManager {
 
     await this.runMigrations();
 
+    // Legacy agent folders are a one-time compatibility input. The DB row is
+    // authoritative after the first successful insert; files remain untouched.
+    try {
+      const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+      const result = await agentDefinitionService.importLegacyDirectories();
+      console.log(`[DB] Legacy agents: ${ result.imported } imported, ${ result.skipped } already present`);
+      if (result.errors.length) console.warn('[DB] Legacy agent import errors:', result.errors);
+    } catch (error) {
+      console.warn('[DB] Legacy agent import failed:', error);
+    }
+
     // Now that tables are ready, sync settings to persistent storage
     await SullaSettingsModel.bootstrap();
 

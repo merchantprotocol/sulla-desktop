@@ -193,6 +193,26 @@
                 </button>
               </div>
 
+              <template v-if="modelSelector.agentOptionsValue.length">
+                <div class="px-3 py-2 text-xs font-semibold tracking-wide text-content-secondary">
+                  Agents
+                </div>
+                <button
+                  v-for="agent in modelSelector.agentOptionsValue"
+                  :key="agent.id"
+                  type="button"
+                  class="flex w-full items-start justify-between gap-3 px-3 py-2 text-left text-sm text-content hover:bg-surface-hover"
+                  @click="modelSelector.selectAgent(agent)"
+                >
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate">{{ agent.name }}</span>
+                    <span class="block truncate text-xs text-content-muted">{{ agent.description || agent.slug }}</span>
+                  </span>
+                  <span class="shrink-0 text-xs text-content-secondary">{{ agent.model || 'default' }}</span>
+                </button>
+                <div class="border-t border-edge" />
+              </template>
+
               <div
                 v-if="modelSelector.loadingProvidersValue"
                 class="px-3 py-2 text-sm text-content-secondary"
@@ -461,7 +481,7 @@ const props = withDefaults(defineProps<{
   formClass?:    string;
   panelClass?:   string;
 }>(), {
-  formClass: 'group/composer mx-auto w-full',
+  formClass:  'group/composer mx-auto w-full',
   panelClass: '',
 });
 
@@ -648,7 +668,7 @@ function updateComposerLayout(): void {
 }
 
 const handleModelSwitcherClick = (): void => {
-  void props.modelSelector.toggleModelMenu();
+  props.modelSelector.toggleModelMenu();
 };
 
 watch(() => props.modelValue, async() => {
@@ -660,7 +680,7 @@ watch(() => props.modelValue, async() => {
 function handleVoiceShortcut(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V') {
     e.preventDefault();
-    void toggleRecording();
+    toggleRecording();
   }
 }
 

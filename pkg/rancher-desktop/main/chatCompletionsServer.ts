@@ -8,7 +8,6 @@ import express, { Request, Response, NextFunction } from 'express';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
-import { resolveSullaAgentsDir, resolveAllAgentsDirs } from '@pkg/agent/utils/sullaPaths';
 import paths from '@pkg/utils/paths';
 import { sessionAllowsTool } from './toolSessionPolicy';
 
@@ -502,21 +501,14 @@ export class ChatCompletionsServer {
 
   /**
    * Handle models requests (OpenAI-compatible).
-   * Returns available agent IDs read from ~/sulla/agents/.
+   * Returns available agent IDs from the canonical database.
    */
   public async handleModels(req: Request, res: Response) {
     try {
-      const agentIdSet = new Set<string>();
-
-      for (const agentsDir of resolveAllAgentsDirs()) {
-        try {
-          const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
-          entries.filter(e => e.isDirectory()).forEach(e => agentIdSet.add(e.name));
-        } catch {
-          // agents dir may not exist yet
-        }
-      }
-      const agentIds = Array.from(agentIdSet);
+      const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+      const agentIds = (await agentDefinitionService.list())
+        .filter(agent => agent.enabled && agent.status !== 'archive')
+        .map(agent => agent.slug);
 
       const response = {
         object: 'list',

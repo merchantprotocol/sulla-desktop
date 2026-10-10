@@ -10,6 +10,16 @@ function newController(): ChatController {
 }
 
 describe('ChatController — state transitions', () => {
+  it('keeps model and agent selection scoped to one persisted chat', () => {
+    const first = newController();
+    const second = newController();
+    const originalSecond = second.model.value.id;
+    first.selectForChat({ id: 'gpt-6.1-sol', name: 'Sol', tier: 'hosted', ctx: '' }, 'codex', 'reviewer');
+    expect(first.serialize().thread).toMatchObject({ agentId: 'reviewer', providerId: 'codex' });
+    expect(first.serialize().model.id).toBe('gpt-6.1-sol');
+    expect(second.model.value.id).toBe(originalSecond);
+  });
+
   it('sends a user message and enters thinking phase', () => {
     const c = newController();
     expect(c.runState.value.phase).toBe('idle');

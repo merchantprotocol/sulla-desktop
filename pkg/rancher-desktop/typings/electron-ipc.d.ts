@@ -442,6 +442,12 @@ export interface IpcMainInvokeEvents {
   'agents:list':                   () => import('@pkg/main/agentsIpc').AgentsListResponse;
   'agents:conversations':          (channel: string, limit?: number, offset?: number) => import('@pkg/main/agentsIpc').AgentConversationSummary[];
   'agents:conversation':           (id: string) => import('@pkg/main/agentsIpc').AgentConversationDetail | null;
+  'agent-definitions:list':        () => import('@pkg/main/agentsIpc').AgentDefinitionResponse[];
+  'agent-definitions:create':      (input: { slug: string; name: string; description?: string; provider?: string; model?: string; prompt: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
+  'agent-definitions:update':      (id: string, patch: { name?: string; description?: string; provider?: string; model?: string; prompt?: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition | null;
+  'agent-definitions:delete':      (id: string) => boolean;
+  'agent-definitions:export':      (slug: string) => import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest;
+  'agent-definitions:import':      (manifest: import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
   'agents-get-prompt-templates':   () => { soul: string; environment: string };
   'agents-delete':                 (agentId: string) => boolean;
   'agents-get-template-variables': () => { key: string; label: string; preview: string }[];
