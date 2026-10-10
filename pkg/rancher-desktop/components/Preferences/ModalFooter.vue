@@ -26,6 +26,9 @@ export default defineComponent({
 
 <template>
   <div class="preferences-footer">
+    <div class="preferences-noir-save-note">
+      Changes stay local until you click Apply
+    </div>
     <div class="preferences-alert">
       <preferences-alert />
     </div>
@@ -68,6 +71,10 @@ export default defineComponent({
       display: flex;
       justify-content: flex-end;
       gap: 1rem;
+    }
+
+    .preferences-noir-save-note {
+      display: none;
     }
   }
 </style>

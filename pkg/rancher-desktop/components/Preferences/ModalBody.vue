@@ -43,6 +43,46 @@ export default defineComponent({
     componentFromNavItem(): string {
       return `preferences-body-${ this.normalizeNavItem }`;
     },
+    noirSection(): { eyebrow: string, headline: string, lead: string } {
+      const sections: Record<string, { eyebrow: string, headline: string, lead: string }> = {
+        Application: {
+          eyebrow: 'Application',
+          headline: 'Make Sulla work your way.',
+          lead:     'Control startup, updates, access, and the environment around Sulla Desktop.',
+        },
+        Appearance: {
+          eyebrow: 'Appearance',
+          headline: 'Set the mood.',
+          lead:     'Choose the visual language Sulla uses across every window.',
+        },
+        'Virtual Machine': {
+          eyebrow: 'Virtual Machine',
+          headline: 'Shape the machine underneath.',
+          lead:     'Tune the hardware, storage, and emulation that power your local workloads.',
+        },
+        WSL: {
+          eyebrow: 'WSL',
+          headline: 'Connect Sulla to Windows.',
+          lead:     'Manage distribution integrations and the proxy used by the Linux environment.',
+        },
+        'Container Engine': {
+          eyebrow: 'Container Engine',
+          headline: 'Choose how containers run.',
+          lead:     'Select the engine and decide which images are allowed on this machine.',
+        },
+        Kubernetes: {
+          eyebrow: 'Kubernetes',
+          headline: 'Tune your local cluster.',
+          lead:     'Choose the version, port, and services that make up the development cluster.',
+        },
+      };
+
+      return sections[this.currentNavItem] ?? {
+        eyebrow: this.currentNavItem,
+        headline: 'Shape how Sulla runs.',
+        lead:     'Adjust this part of your local environment.',
+      };
+    },
   },
   mounted() {
     (this.$root as any).navigate = this.navigate;
@@ -65,6 +105,16 @@ export default defineComponent({
 
 <template>
   <div class="preferences-body">
+    <div
+      :key="currentNavItem"
+      class="preferences-noir-intro"
+    >
+      <div class="preferences-noir-eyebrow">
+        {{ noirSection.eyebrow }}
+      </div>
+      <h1>{{ noirSection.headline }}</h1>
+      <p>{{ noirSection.lead }}</p>
+    </div>
     <slot>
       <component
         v-bind="$attrs"
@@ -87,5 +137,9 @@ export default defineComponent({
       bottom: 0.75rem;
       right: 0.75rem;
     }
+  }
+
+  .preferences-noir-intro {
+    display: none;
   }
 </style>
