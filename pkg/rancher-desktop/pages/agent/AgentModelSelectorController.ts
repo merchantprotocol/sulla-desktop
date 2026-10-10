@@ -227,7 +227,7 @@ export class AgentModelSelectorController {
     }
   }
 
-  private async refreshAgents(): Promise<void> {
+  async refreshAgents(): Promise<void> {
     try {
       this.agentOptions.value = (await ipcRenderer.invoke('agent-definitions:list'))
         .filter(agent => agent.enabled && agent.status === 'production');

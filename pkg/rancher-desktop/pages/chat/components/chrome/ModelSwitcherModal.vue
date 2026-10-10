@@ -3,13 +3,31 @@
     <div v-if="open" class="modal-veil" @click.self="controller.closeModal()">
       <div class="modal">
         <div class="mhead">
-          <span>Switch model · ⌘K</span>
+          <span>Switch agent or model · ⌘K</span>
           <button class="x" type="button" @click="controller.closeModal()">✕</button>
         </div>
         <div class="msearch">
-          <input v-model="query" type="text" placeholder="search models…" autofocus>
+          <input v-model="query" type="text" placeholder="search agents and models…" autofocus>
         </div>
         <div class="mlist">
+          <template v-if="filteredAgents.length">
+            <div class="mgroup-head">
+              <span class="provider">Agents</span>
+            </div>
+            <div
+              v-for="a in filteredAgents"
+              :key="`agent-${a.slug}`"
+              :class="['mitem', { active: a.slug === activeAgentId }]"
+              :title="a.description || a.slug"
+              @click="pickAgent(a)"
+            >
+              <span class="name">{{ a.name }}</span>
+              <span v-if="a.slug === activeAgentId" class="tier active">active</span>
+              <span v-else class="tier">{{ a.model || 'default' }}</span>
+            </div>
+            <div v-if="filteredGroups.length" class="mdivider" />
+          </template>
+
           <div
             v-if="selector.loadingProvidersValue && providerGroups.length === 0"
             class="mempty"
@@ -44,11 +62,11 @@
             <div
               v-for="m in group.models"
               :key="`${ group.providerId }-${ m.modelId }`"
-              :class="['mitem', { active: m.isActiveModel }]"
+              :class="['mitem', { active: m.isActiveModel && !activeAgentId }]"
               @click="pick(m)"
             >
               <span class="name">{{ m.modelLabel }}</span>
-              <span v-if="m.isActiveModel" class="tier active">active</span>
+              <span v-if="m.isActiveModel && !activeAgentId" class="tier active">active</span>
               <span v-else class="tier">{{ group.providerId }}</span>
             </div>
           </template>
@@ -61,7 +79,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 
-import type { ModelOption } from '@pkg/pages/agent/AgentModelSelectorController';
+import type { AgentOption, ModelOption } from '@pkg/pages/agent/AgentModelSelectorController';
 
 import { useChatController, useModelSelector } from '../../controller/useChatController';
 
@@ -76,6 +94,19 @@ const query = ref('');
 // process IPC broadcasts ("model-provider:state-changed") re-render
 // the list automatically.
 const providerGroups = computed(() => selector.providerGroups.value);
+
+const activeAgentId = computed(() => selector.activeAgentId.value);
+
+const filteredAgents = computed(() => {
+  const q = query.value.trim().toLowerCase();
+  const agents = selector.agentOptions.value;
+  if (!q) return agents;
+  return agents.filter(a =>
+    a.name.toLowerCase().includes(q) ||
+    a.slug.toLowerCase().includes(q) ||
+    (a.description ?? '').toLowerCase().includes(q),
+  );
+});
 
 const filteredGroups = computed(() => {
   const q = query.value.trim().toLowerCase();
@@ -94,15 +125,24 @@ const filteredGroups = computed(() => {
 
 // First time the modal opens, ask the selector to load provider groups
 // so the list is populated. Subsequent opens reuse the cached groups —
-// IPC state-changed broadcasts keep them fresh automatically.
+// IPC state-changed broadcasts keep them fresh automatically. Agents are
+// re-read on every open so ones created in the Agents tab show up.
 watch(open, (isOpen) => {
-  if (isOpen && providerGroups.value.length === 0 && !selector.loadingProvidersValue) {
+  if (!isOpen) return;
+  if (providerGroups.value.length === 0 && !selector.loadingProvidersValue) {
     selector.refresh();
+  } else {
+    selector.refreshAgents();
   }
 });
 
 async function pick(option: ModelOption): Promise<void> {
   await selector.selectModel(option);
+  controller.closeModal();
+}
+
+function pickAgent(agent: AgentOption): void {
+  selector.selectAgent(agent);
   controller.closeModal();
 }
 </script>
