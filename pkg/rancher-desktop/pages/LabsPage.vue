@@ -192,3 +192,94 @@ h1 {
   transform: translateX(3px);
 }
 </style>
+
+<style scoped>
+:global(.theme-noir-dark) .labs-page {
+  padding: 34px 38px;
+  background:
+    radial-gradient(90% 65% at 8% 0%, rgba(80, 150, 179, 0.12), transparent 58%),
+    #01030a;
+}
+
+:global(.theme-noir-dark) .labs-header {
+  margin-bottom: 28px;
+  animation: noir-labs-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
+}
+
+:global(.theme-noir-dark) .labs-title-row {
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+:global(.theme-noir-dark) .labs-icon {
+  display: none;
+}
+
+:global(.theme-noir-dark) h1 {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+:global(.theme-noir-dark) .labs-badge {
+  color: #6ab0cc;
+  background: rgba(80, 150, 179, 0.12);
+  border-color: rgba(106, 176, 204, 0.28);
+  border-radius: 9px;
+}
+
+:global(.theme-noir-dark) .labs-subtitle {
+  color: #a9b3c1;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+}
+
+:global(.theme-noir-dark) .labs-card {
+  padding: 20px;
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.025), 0 18px 42px rgba(0, 0, 0, 0.18);
+  transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), border-color 0.2s ease, background 0.2s ease;
+}
+
+:global(.theme-noir-dark) .labs-card:hover {
+  border-color: rgba(106, 176, 204, 0.35);
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.14), rgba(80, 150, 179, 0.035));
+  transform: translateY(-3px);
+}
+
+:global(.theme-noir-dark) .card-icon {
+  width: 48px;
+  height: 48px;
+  color: #6ab0cc;
+  background: linear-gradient(145deg, rgba(80, 150, 179, 0.2), rgba(80, 150, 179, 0.06));
+  border-color: rgba(106, 176, 204, 0.3);
+  border-radius: 14px;
+  box-shadow: 0 0 24px rgba(80, 150, 179, 0.12);
+}
+
+:global(.theme-noir-dark) .card-body h3 {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 19px;
+}
+
+:global(.theme-noir-dark) .card-body p { color: #a9b3c1; }
+:global(.theme-noir-dark) .card-footer { border-color: rgba(168, 192, 220, 0.08); }
+:global(.theme-noir-dark) .card-status,
+:global(.theme-noir-dark) .card-footer svg { color: #6ab0cc; }
+
+@keyframes noir-labs-in {
+  from { opacity: 0; transform: translateY(8px); filter: blur(8px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .labs-header { animation: none; }
+  :global(.theme-noir-dark) .labs-card { transition-duration: 0.01ms; }
+}
+</style>

@@ -2557,3 +2557,231 @@ html, body {
 }
 .flash-overlay.flash { opacity: 0.15; transition: opacity 0.01s; }
 </style>
+
+<style>
+.theme-noir-dark .capture-studio-app {
+  --bg-page: #01030a;
+  --bg-surface: #070d1a;
+  --bg-surface-alt: rgba(168, 192, 220, 0.045);
+  --bg-surface-hover: rgba(80, 150, 179, 0.12);
+  --text-primary: #f3f5f8;
+  --text-secondary: #a9b3c1;
+  --text-muted: #7a8291;
+  --text-dim: #484f5a;
+  --accent: #5096b3;
+  --accent-hover: #6ab0cc;
+  --border: rgba(168, 192, 220, 0.12);
+  --border-subtle: rgba(168, 192, 220, 0.07);
+  --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace;
+  background:
+    radial-gradient(90% 60% at 50% 110%, rgba(80, 150, 179, 0.14), transparent 62%),
+    #01030a;
+}
+
+.theme-noir-dark .capture-studio-app .canvas {
+  background:
+    radial-gradient(75% 70% at 50% 55%, rgba(80, 150, 179, 0.07), transparent 64%),
+    #01030a;
+}
+
+.theme-noir-dark .capture-studio-app .screen-preview,
+.theme-noir-dark .capture-studio-app .sbs-camera,
+.theme-noir-dark .capture-studio-app .fullscreen-camera {
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 18px;
+  background: rgba(7, 13, 26, 0.78);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46), inset 0 0 0 1px rgba(168, 192, 220, 0.025);
+}
+
+.theme-noir-dark .capture-studio-app .layout-bar,
+.theme-noir-dark .capture-studio-app .float-controls,
+.theme-noir-dark .capture-studio-app .tp-float-toolbar,
+.theme-noir-dark .capture-studio-app .shape-picker {
+  background: rgba(3, 6, 12, 0.74);
+  border-color: rgba(168, 192, 220, 0.12);
+  border-radius: 18px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(168, 192, 220, 0.025);
+  backdrop-filter: blur(20px);
+}
+
+.theme-noir-dark .capture-studio-app .layout-btn,
+.theme-noir-dark .capture-studio-app .src-toggle,
+.theme-noir-dark .capture-studio-app .add-src-btn,
+.theme-noir-dark .capture-studio-app .prompter-toggle,
+.theme-noir-dark .capture-studio-app .track-toggle-btn,
+.theme-noir-dark .capture-studio-app .screenshot-btn {
+  border-radius: 12px;
+  transition: color 0.16s, background 0.16s, border-color 0.16s, transform 0.48s cubic-bezier(.22, 1, .36, 1);
+}
+
+.theme-noir-dark .capture-studio-app .layout-btn:hover,
+.theme-noir-dark .capture-studio-app .src-toggle:hover,
+.theme-noir-dark .capture-studio-app .add-src-btn:hover,
+.theme-noir-dark .capture-studio-app .prompter-toggle:hover,
+.theme-noir-dark .capture-studio-app .track-toggle-btn:hover,
+.theme-noir-dark .capture-studio-app .screenshot-btn:hover {
+  color: #f3f5f8;
+  background: rgba(80, 150, 179, 0.13);
+  transform: translateY(-1px);
+}
+
+.theme-noir-dark .capture-studio-app .layout-btn.active,
+.theme-noir-dark .capture-studio-app .prompter-toggle.active,
+.theme-noir-dark .capture-studio-app .track-toggle-btn.active {
+  color: #f3f5f8;
+  background: linear-gradient(180deg, rgba(80, 150, 179, 0.3), rgba(80, 150, 179, 0.14));
+  border-color: rgba(106, 176, 204, 0.5);
+  box-shadow: 0 0 14px rgba(80, 150, 179, 0.2);
+}
+
+.theme-noir-dark .capture-studio-app .info-badge {
+  min-height: 28px;
+  padding: 0 10px;
+  color: #a9b3c1;
+  background: rgba(3, 6, 12, 0.7);
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 14px;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  backdrop-filter: blur(16px);
+}
+
+.theme-noir-dark .capture-studio-app .info-badge .dot.green {
+  box-shadow: 0 0 8px rgba(63, 185, 80, 0.7);
+}
+
+.theme-noir-dark .capture-studio-app .record-pill {
+  min-width: 110px;
+  height: 40px;
+  justify-content: center;
+  border-radius: 20px;
+  transition: transform 0.5s cubic-bezier(.22, 1, .36, 1), box-shadow 0.2s, background 0.2s;
+}
+
+.theme-noir-dark .capture-studio-app .record-pill.idle {
+  background: linear-gradient(180deg, #ff6a63, #d94039);
+  box-shadow: 0 0 20px rgba(248, 81, 73, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  animation: noir-record-pulse 2.2s ease-in-out infinite;
+}
+
+.theme-noir-dark .capture-studio-app .record-pill.idle:hover {
+  transform: translateY(-2px) scale(1.025);
+  box-shadow: 0 0 30px rgba(248, 81, 73, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+}
+
+.theme-noir-dark .capture-studio-app .record-pill.active {
+  background: rgba(248, 81, 73, 0.08);
+  border-color: rgba(248, 81, 73, 0.55);
+  box-shadow: 0 0 18px rgba(248, 81, 73, 0.15);
+}
+
+.theme-noir-dark .capture-studio-app .fc-timer,
+.theme-noir-dark .capture-studio-app .track-status,
+.theme-noir-dark .capture-studio-app .disk-info,
+.theme-noir-dark .capture-studio-app .tp-tb-val {
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.theme-noir-dark .capture-studio-app .track-panel {
+  padding: 8px 10px 10px;
+  background: rgba(3, 6, 12, 0.82);
+  border-color: rgba(168, 192, 220, 0.08);
+  box-shadow: 0 -18px 42px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(20px);
+}
+
+.theme-noir-dark .capture-studio-app .track-panel.open { height: 190px; }
+.theme-noir-dark .capture-studio-app .track-panel-header {
+  height: 30px;
+  padding: 0 8px;
+  color: #6ab0cc;
+  border: 0;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  letter-spacing: 0.14em;
+}
+
+.theme-noir-dark .capture-studio-app .track-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 142px;
+}
+
+.theme-noir-dark .capture-studio-app .track-lane {
+  height: 35px;
+  padding: 0 10px;
+  border: 1px solid rgba(168, 192, 220, 0.065);
+  border-radius: 11px;
+  background: rgba(168, 192, 220, 0.03);
+  transition: background 0.15s, border-color 0.15s, transform 0.42s cubic-bezier(.22, 1, .36, 1);
+}
+
+.theme-noir-dark .capture-studio-app .track-lane:hover {
+  background: rgba(80, 150, 179, 0.08);
+  border-color: rgba(106, 176, 204, 0.18);
+  transform: translateX(2px);
+}
+
+.theme-noir-dark .capture-studio-app .track-name { color: #dee4ec; }
+.theme-noir-dark .capture-studio-app .track-wave {
+  height: 21px;
+  background: rgba(1, 3, 10, 0.72);
+  border: 1px solid rgba(168, 192, 220, 0.06);
+  border-radius: 7px;
+}
+
+.theme-noir-dark .capture-studio-app .track-mute,
+.theme-noir-dark .capture-studio-app .track-remove {
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 8px;
+}
+
+.theme-noir-dark .capture-studio-app .add-popup,
+.theme-noir-dark .capture-studio-app .ctx-menu,
+.theme-noir-dark .capture-studio-app .tp-script-overlay,
+.theme-noir-dark .capture-studio-app .playback-overlay {
+  background: rgba(7, 13, 26, 0.96);
+  border-color: rgba(168, 192, 220, 0.12);
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.62), inset 0 0 0 1px rgba(168, 192, 220, 0.025);
+  backdrop-filter: blur(20px);
+}
+
+.theme-noir-dark .capture-studio-app .add-popup,
+.theme-noir-dark .capture-studio-app .ctx-menu { border-radius: 18px; }
+.theme-noir-dark .capture-studio-app .type-card,
+.theme-noir-dark .capture-studio-app .playback-tile {
+  background: rgba(168, 192, 220, 0.035);
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 14px;
+}
+
+.theme-noir-dark .capture-studio-app .type-card:hover {
+  background: rgba(80, 150, 179, 0.1);
+  border-color: rgba(106, 176, 204, 0.32);
+  transform: translateY(-2px);
+}
+
+.theme-noir-dark .capture-studio-app .loading-screen {
+  background: radial-gradient(circle at 50% 45%, rgba(80, 150, 179, 0.16), transparent 38%), #01030a;
+}
+
+.theme-noir-dark .capture-studio-app .loading-content h1,
+.theme-noir-dark .capture-studio-app .playback-title {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+}
+
+@keyframes noir-record-pulse {
+  0%, 100% { box-shadow: 0 0 18px rgba(248, 81, 73, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.24); }
+  50% { box-shadow: 0 0 30px rgba(248, 81, 73, 0.52), 0 0 0 7px rgba(248, 81, 73, 0.045), inset 0 1px 0 rgba(255, 255, 255, 0.24); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-noir-dark .capture-studio-app .record-pill.idle { animation: none; }
+  .theme-noir-dark .capture-studio-app .track-lane,
+  .theme-noir-dark .capture-studio-app .record-pill,
+  .theme-noir-dark .capture-studio-app .layout-btn,
+  .theme-noir-dark .capture-studio-app .src-toggle { transition-duration: 0.01ms; }
+}
+</style>
