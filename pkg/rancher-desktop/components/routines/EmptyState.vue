@@ -79,32 +79,32 @@ const hasActions = computed(() => !!slots.default);
   justify-content: center;
 }
 
-:global(.theme-noir-dark) .empty-state {
+:global(.theme-noir) .empty-state {
   padding: 68px 40px;
-  border: 1px solid rgba(168, 192, 220, 0.08);
+  border: 1px solid var(--nx-hair);
   border-radius: 22px;
   background:
-    radial-gradient(70% 100% at 50% 115%, rgba(80, 150, 179, 0.12), transparent 70%),
-    rgba(168, 192, 220, 0.035);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+    radial-gradient(70% 100% at 50% 115%, color-mix(in srgb, var(--nx-accent) 12%, transparent), transparent 70%),
+    color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025);
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir-dark) .kicker {
-  color: #6ab0cc;
+:global(.theme-noir) .kicker {
+  color: var(--nx-accent-2);
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir-dark) .title {
+:global(.theme-noir) .title {
   font-family: 'Playfair Display', Georgia, serif;
   font-style: normal;
-  color: #f3f5f8;
+  color: var(--nx-read-1);
 }
 
-:global(.theme-noir-dark) .message {
+:global(.theme-noir) .message {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   font-style: normal;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
 }
 </style>

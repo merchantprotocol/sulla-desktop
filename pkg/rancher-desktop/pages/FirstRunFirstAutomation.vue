@@ -332,12 +332,12 @@ async function skip() {
   .ffa-grid { grid-template-columns: 1fr 1fr; }
 }
 
-:global(.theme-noir-dark) .ffa {
+:global(.theme-noir) .ffa {
   --ffa-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
-  color: #dee4ec;
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .ffa form::before {
+:global(.theme-noir) .ffa form::before {
   content: "FIRST AUTOMATION";
   display: block;
   margin-top: 5px;
@@ -345,10 +345,10 @@ async function skip() {
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: .14em;
-  color: #6ab0cc;
+  color: var(--nx-accent-2);
 }
 
-:global(.theme-noir-dark) .ffa-title {
+:global(.theme-noir) .ffa-title {
   max-width: 690px;
   margin: 7px 0 8px;
   font-family: "Playfair Display", Georgia, serif;
@@ -356,33 +356,33 @@ async function skip() {
   line-height: 1.08;
   font-weight: 600;
   letter-spacing: -.02em;
-  color: #f3f5f8;
+  color: var(--nx-read-1);
   text-wrap: balance;
 }
 
-:global(.theme-noir-dark) .ffa-lead {
+:global(.theme-noir) .ffa-lead {
   margin-bottom: 20px;
   font-size: 14px;
   line-height: 1.6;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
 }
 
-:global(.theme-noir-dark) .ffa-grid { gap: 8px; }
+:global(.theme-noir) .ffa-grid { gap: 8px; }
 
-:global(.theme-noir-dark) .ffa-option {
+:global(.theme-noir) .ffa-option {
   position: relative;
   min-height: 146px;
   gap: 5px;
   padding: 15px;
   border-color: transparent;
   border-radius: 16px;
-  background: rgba(168, 192, 220, .035);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .08);
-  color: #dee4ec;
+  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--nx-hair);
+  color: var(--nx-read-2);
   transition: transform .58s var(--ffa-spring), background .2s ease, box-shadow .25s ease;
 }
 
-:global(.theme-noir-dark) .ffa-option::after {
+:global(.theme-noir) .ffa-option::after {
   content: "";
   position: absolute;
   top: 14px;
@@ -391,120 +391,125 @@ async function skip() {
   height: 16px;
   border-radius: 50%;
   background: radial-gradient(circle, transparent 0 25%, transparent 28% 100%);
-  box-shadow: inset 0 0 0 1.5px #484f5a;
+  box-shadow: inset 0 0 0 1.5px var(--nx-read-5);
   transition: background .2s ease, box-shadow .2s ease, transform .58s var(--ffa-spring);
 }
 
-:global(.theme-noir-dark) .ffa-option:hover {
+:global(.theme-noir) .ffa-option:hover {
   transform: translateY(-2px);
   border-color: transparent;
-  background: rgba(80, 150, 179, .07);
-  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, .2), 0 14px 28px rgba(0, 0, 0, .16);
+  background: color-mix(in srgb, var(--nx-accent) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 14px 28px rgba(0, 0, 0, .16);
 }
 
-:global(.theme-noir-dark) .ffa-option.is-selected {
+:global(.theme-noir) .ffa-option.is-selected {
   border-color: transparent;
-  background: rgba(80, 150, 179, .12);
-  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, .42), 0 0 22px rgba(80, 150, 179, .1);
+  background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 42%, transparent), 0 0 22px color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir-dark) .ffa-option.is-selected::after {
-  background: radial-gradient(circle, #6ab0cc 0 33%, transparent 37% 100%);
-  box-shadow: inset 0 0 0 1.5px #6ab0cc, 0 0 8px rgba(106, 176, 204, .7);
+:global(.theme-noir) .ffa-option.is-selected::after {
+  background: radial-gradient(circle, var(--nx-accent-2) 0 33%, transparent 37% 100%);
+  box-shadow: inset 0 0 0 1.5px var(--nx-accent-2), 0 0 8px color-mix(in srgb, var(--nx-accent-2) 70%, transparent);
   transform: scale(1.04);
 }
 
-:global(.theme-noir-dark) .ffa-option b {
-  color: #f3f5f8;
+:global(.theme-noir) .ffa-option b {
+  color: var(--nx-read-1);
   font-size: 14px;
   font-weight: 600;
 }
 
-:global(.theme-noir-dark) .ffa-icon {
+:global(.theme-noir) .ffa-icon {
   font-size: 21px;
   filter: grayscale(.2) saturate(.75);
 }
 
-:global(.theme-noir-dark) .ffa-when {
+:global(.theme-noir) .ffa-when {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 9.5px;
   font-weight: 500;
   letter-spacing: .1em;
-  color: #6ab0cc;
+  color: var(--nx-accent-2);
 }
 
-:global(.theme-noir-dark) .ffa-desc {
+:global(.theme-noir) .ffa-desc {
   font-size: 12px;
   line-height: 1.45;
-  color: #7a8291;
+  color: var(--nx-read-4);
 }
 
-:global(.theme-noir-dark) .ffa-custom {
+:global(.theme-noir) .ffa-custom {
   margin-top: 10px;
   padding: 13px 15px;
   border: 0;
   border-radius: 16px;
-  background: rgba(3, 6, 12, .5);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .1);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .5);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
   transition: box-shadow .22s ease, background .22s ease;
 }
 
-:global(.theme-noir-dark) .ffa-custom.is-selected {
+:global(.theme-noir) .ffa-custom.is-selected {
   border: 0;
-  background: rgba(80, 150, 179, .06);
-  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, .42), 0 0 18px rgba(80, 150, 179, .08);
+  background: color-mix(in srgb, var(--nx-accent) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 42%, transparent), 0 0 18px color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir-dark) .ffa-custom-label {
+:global(.theme-noir) .ffa-custom-label {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10px;
   font-weight: 500;
   letter-spacing: .12em;
   text-transform: uppercase;
-  color: #7a8291;
+  color: var(--nx-read-4);
 }
 
-:global(.theme-noir-dark) .ffa-custom textarea {
+:global(.theme-noir) .ffa-custom textarea {
   min-height: 68px;
-  color: #dee4ec;
-  caret-color: #6ab0cc;
+  color: var(--nx-read-2);
+  caret-color: var(--nx-accent-2);
 }
 
-:global(.theme-noir-dark) .ffa-custom textarea::placeholder { color: #484f5a; }
+:global(.theme-noir) .ffa-custom textarea::placeholder { color: var(--nx-read-5); }
 
-:global(.theme-noir-dark) .ffa-error { color: #f4a39f; }
+:global(.theme-noir) .ffa-error { color: rgb(from var(--nx-danger) calc(r - 4) calc(g + 82) calc(b + 86)); }
 
-:global(.theme-noir-dark) .ffa-back,
-:global(.theme-noir-dark) .ffa-skip {
+:global(.theme-noir) .ffa-back,
+:global(.theme-noir) .ffa-skip {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
   font-weight: 500;
-  color: #7a8291;
+  color: var(--nx-read-4);
 }
 
-:global(.theme-noir-dark) .ffa-back:hover,
-:global(.theme-noir-dark) .ffa-skip:hover { color: #dee4ec; }
+:global(.theme-noir) .ffa-back:hover,
+:global(.theme-noir) .ffa-skip:hover { color: var(--nx-read-2); }
 
-:global(.theme-noir-dark) .ffa-btn {
+:global(.theme-noir) .ffa-btn {
   min-height: 40px;
   padding: 0 20px;
   border-radius: 20px;
   font-size: 14px;
   font-weight: 600;
   color: #fff;
-  background: linear-gradient(180deg, #6ab0cc, #5096b3);
-  box-shadow: 0 0 18px rgba(80, 150, 179, .34);
+  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 34%, transparent);
   transition: transform .58s var(--ffa-spring), box-shadow .2s ease;
 }
 
-:global(.theme-noir-dark) .ffa-btn:not(:disabled):hover { box-shadow: 0 0 24px rgba(80, 150, 179, .48); }
-:global(.theme-noir-dark) .ffa-btn:not(:disabled):active { transform: scale(.95); }
+:global(.theme-noir) .ffa-btn:not(:disabled):hover { box-shadow: 0 0 24px color-mix(in srgb, var(--nx-accent) 48%, transparent); }
+:global(.theme-noir) .ffa-btn:not(:disabled):active { transform: scale(.95); }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .ffa-option,
-  :global(.theme-noir-dark) .ffa-option::after,
-  :global(.theme-noir-dark) .ffa-btn {
+  :global(.theme-noir) .ffa-option,
+  :global(.theme-noir) .ffa-option::after,
+  :global(.theme-noir) .ffa-btn {
     transition-duration: .01ms;
   }
+}
+
+/* Noir Light softens dark-only elevation shadows for paper surfaces. */
+:global(.theme-noir-light) .ffa-option:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 14px 28px color-mix(in srgb, var(--nx-ink) 8%, transparent);
 }
 </style>

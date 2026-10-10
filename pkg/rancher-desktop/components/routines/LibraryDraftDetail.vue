@@ -499,7 +499,7 @@ footer {
 }
 .btn.primary:disabled { opacity: 0.55; cursor: not-allowed; }
 
-:global(.theme-noir-dark) .page {
+:global(.theme-noir) .page {
   position: fixed;
   z-index: 90;
   top: 0;
@@ -509,87 +509,92 @@ footer {
   overflow-y: auto;
   padding: 28px 32px 52px;
   gap: 18px;
-  color: #dee4ec;
+  color: var(--nx-read-2);
   background:
-    radial-gradient(90% 45% at 100% 0%, rgba(80, 150, 179, 0.15), transparent 62%),
-    rgba(3, 6, 12, 0.985);
-  border-left: 1px solid rgba(168, 192, 220, 0.1);
-  box-shadow: -32px 0 80px rgba(0, 0, 0, 0.62), -70vw 0 0 rgba(1, 3, 10, 0.5);
+    radial-gradient(90% 45% at 100% 0%, color-mix(in srgb, var(--nx-accent) 15%, transparent), transparent 62%),
+    rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.985);
+  border-left: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
+  box-shadow: -32px 0 80px rgba(0, 0, 0, 0.62), -70vw 0 0 color-mix(in srgb, var(--nx-paper) 50%, transparent);
   backdrop-filter: blur(28px);
   animation: noir-draft-drawer 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) both;
 }
 
-:global(.theme-noir-dark) .back {
+:global(.theme-noir) .back {
   position: sticky;
   top: 0;
   z-index: 3;
   min-height: 34px;
-  border-color: rgba(168, 192, 220, 0.12);
+  border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
   border-radius: 17px;
-  color: #a9b3c1;
-  background: rgba(3, 6, 12, 0.74);
+  color: var(--nx-read-3);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.74);
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir-dark) h1,
-:global(.theme-noir-dark) h2 {
+:global(.theme-noir) h1,
+:global(.theme-noir) h2 {
   font-family: 'Playfair Display', Georgia, serif;
   font-style: normal;
-  color: #f3f5f8;
+  color: var(--nx-read-1);
 }
 
-:global(.theme-noir-dark) .tabs {
+:global(.theme-noir) .tabs {
   width: fit-content;
   gap: 3px;
   padding: 4px;
-  border: 1px solid rgba(168, 192, 220, 0.1);
+  border: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
   border-radius: 17px;
-  background: rgba(3, 6, 12, 0.7);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.7);
 }
 
-:global(.theme-noir-dark) .tab {
+:global(.theme-noir) .tab {
   min-height: 30px;
   padding: 0 14px;
   border: 0;
   border-radius: 13px;
-  color: #7a8291;
+  color: var(--nx-read-4);
 }
 
-:global(.theme-noir-dark) .tab.on {
+:global(.theme-noir) .tab.on {
   border: 0;
-  color: #f3f5f8;
-  background: linear-gradient(180deg, rgba(80, 150, 179, 0.28), rgba(80, 150, 179, 0.12));
-  box-shadow: inset 0 0 0 0.5px rgba(106, 176, 204, 0.5), 0 0 16px rgba(80, 150, 179, 0.18);
+  color: var(--nx-read-1);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--nx-accent-2) 50%, transparent), 0 0 16px color-mix(in srgb, var(--nx-accent) 18%, transparent);
 }
 
-:global(.theme-noir-dark) .file-entry,
-:global(.theme-noir-dark) .publish-card {
-  border-color: rgba(168, 192, 220, 0.08);
+:global(.theme-noir) .file-entry,
+:global(.theme-noir) .publish-card {
+  border-color: var(--nx-hair);
   border-radius: 17px;
-  background: rgba(168, 192, 220, 0.035);
+  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
 }
 
-:global(.theme-noir-dark) input,
-:global(.theme-noir-dark) .file-body {
+:global(.theme-noir) input,
+:global(.theme-noir) .file-body {
   min-height: 40px;
-  border-color: rgba(168, 192, 220, 0.12);
+  border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
   border-radius: 12px;
-  color: #f3f5f8;
-  background: rgba(3, 6, 12, 0.68);
+  color: var(--nx-read-1);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.68);
 }
 
-:global(.theme-noir-dark) .btn {
+:global(.theme-noir) .btn {
   border-radius: 17px;
 }
 
-:global(.theme-noir-dark) .btn.primary {
-  border-color: rgba(106, 176, 204, 0.46);
-  background: linear-gradient(180deg, #6ab0cc, #5096b3);
-  box-shadow: 0 0 20px rgba(80, 150, 179, 0.25);
+:global(.theme-noir) .btn.primary {
+  border-color: color-mix(in srgb, var(--nx-accent-2) 46%, transparent);
+  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
+  box-shadow: 0 0 20px color-mix(in srgb, var(--nx-accent) 25%, transparent);
 }
 
 @keyframes noir-draft-drawer {
   from { opacity: 0; transform: translateX(48px); filter: blur(8px); }
   to { opacity: 1; transform: none; filter: none; }
+}
+
+/* Noir Light softens dark-only elevation shadows for paper surfaces. */
+:global(.theme-noir-light) .page {
+  box-shadow: -32px 0 80px color-mix(in srgb, var(--nx-ink) 14%, transparent), -70vw 0 0 color-mix(in srgb, var(--nx-paper) 50%, transparent);
 }
 </style>
