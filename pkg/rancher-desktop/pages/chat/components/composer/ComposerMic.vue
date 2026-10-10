@@ -39,22 +39,22 @@ defineEmits<{ (e: 'toggle'): void }>();
   color: white; animation: chat-pulse-glow 1.6s ease-in-out infinite;
 }
 .noir-mic { display: none; width: 17px; height: 17px; }
-:global(.theme-noir-dark) .mic-btn {
-  width: 34px; height: 34px; border: 0; color: #a9b3c1; background: transparent;
+:global(.theme-noir) .mic-btn {
+  width: 34px; height: 34px; border: 0; color: var(--nx-read-3); background: transparent;
   transition: background 0.16s, color 0.16s, box-shadow 0.16s;
 }
-:global(.theme-noir-dark) .classic-mic { display: none; }
-:global(.theme-noir-dark) .noir-mic { display: block; }
-:global(.theme-noir-dark) .mic-btn:hover { border: 0; color: #f3f5f8; background: rgba(80, 150, 179, 0.12); box-shadow: none; }
-:global(.theme-noir-dark) .mic-btn.live {
-  color: #f3f5f8; background: rgba(80, 150, 179, 0.3); border: 0;
+:global(.theme-noir) .classic-mic { display: none; }
+:global(.theme-noir) .noir-mic { display: block; }
+:global(.theme-noir) .mic-btn:hover { border: 0; color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 12%, transparent); box-shadow: none; }
+:global(.theme-noir) .mic-btn.live {
+  color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 30%, transparent); border: 0;
   animation: noir-mic-pulse 1.6s cubic-bezier(.22, 1, .36, 1) infinite;
 }
 @keyframes noir-mic-pulse {
-  from { box-shadow: 0 0 0 0 rgba(106, 176, 204, 0.45); }
-  to { box-shadow: 0 0 0 12px rgba(106, 176, 204, 0); }
+  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--nx-accent-2) 45%, transparent); }
+  to { box-shadow: 0 0 0 12px color-mix(in srgb, var(--nx-accent-2) 0%, transparent); }
 }
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .mic-btn.live { animation: none; }
+  :global(.theme-noir) .mic-btn.live { animation: none; }
 }
 </style>

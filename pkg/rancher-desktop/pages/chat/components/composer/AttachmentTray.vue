@@ -48,22 +48,22 @@ function iconFor(kind: string): string {
   font-size: 12px; padding: 0; transition: all 0.15s ease;
 }
 .att-chip .rm:hover { background: rgba(252,165,165,0.12); color: var(--err); }
-:global(.theme-noir-dark) .attach-tray { gap: 6px; padding-top: 10px; margin: 0; }
-:global(.theme-noir-dark) .att-chip {
+:global(.theme-noir) .attach-tray { gap: 6px; padding-top: 10px; margin: 0; }
+:global(.theme-noir) .att-chip {
   height: 36px; gap: 8px; padding: 0 8px 0 6px; border: 0; border-radius: 12px;
-  color: #f3f5f8; background: rgba(168, 192, 220, 0.06);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+  color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--nx-hair);
   font-family: var(--font-body); font-size: 12px;
   animation: noir-file-in 0.5s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) both;
 }
-:global(.theme-noir-dark) .att-chip:nth-child(2) { animation-delay: 0.07s; }
-:global(.theme-noir-dark) .att-chip .ic {
+:global(.theme-noir) .att-chip:nth-child(2) { animation-delay: 0.07s; }
+:global(.theme-noir) .att-chip .ic {
   display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px;
-  color: #03060c; background: linear-gradient(135deg, #a8c0dc, #5096b3);
+  color: var(--bg-surface-alt); background: linear-gradient(135deg, var(--steel-200), var(--nx-accent));
   font: 800 8.5px var(--mono);
 }
-:global(.theme-noir-dark) .att-chip .name { font-weight: 500; }
-:global(.theme-noir-dark) .att-chip .size { color: #7a8291; font-family: var(--mono); }
+:global(.theme-noir) .att-chip .name { font-weight: 500; }
+:global(.theme-noir) .att-chip .size { color: var(--nx-read-4); font-family: var(--mono); }
 @keyframes noir-file-in { from { opacity: 0; transform: scale(0.85); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { :global(.theme-noir-dark) .att-chip { animation: none; } }
+@media (prefers-reduced-motion: reduce) { :global(.theme-noir) .att-chip { animation: none; } }
 </style>

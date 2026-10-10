@@ -32,20 +32,20 @@ defineEmits<{ (e: 'pick'): void }>();
   border-color: var(--steel-400); color: var(--steel-400);
   box-shadow: 0 0 14px rgba(106, 176, 204, 0.3);
 }
-:global(.theme-noir-dark) .attach-btn {
-  position: relative; width: 34px; height: 34px; border: 0; color: #a9b3c1;
+:global(.theme-noir) .attach-btn {
+  position: relative; width: 34px; height: 34px; border: 0; color: var(--nx-read-3);
   transition: background 0.16s, color 0.16s, transform 0.5s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 }
-:global(.theme-noir-dark) .attach-btn svg { display: none; }
-:global(.theme-noir-dark) .attach-btn::before,
-:global(.theme-noir-dark) .attach-btn::after {
+:global(.theme-noir) .attach-btn svg { display: none; }
+:global(.theme-noir) .attach-btn::before,
+:global(.theme-noir) .attach-btn::after {
   content: ""; position: absolute; left: 50%; top: 50%; width: 13px; height: 1.8px;
   margin: -0.9px 0 0 -6.5px; border-radius: 1px; background: currentColor;
   transition: transform 0.5s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 }
-:global(.theme-noir-dark) .attach-btn::after { transform: rotate(90deg); }
-:global(.theme-noir-dark) .attach-btn.open { color: #f3f5f8; background: rgba(80, 150, 179, 0.14); }
-:global(.theme-noir-dark) .attach-btn.open::before { transform: rotate(45deg); }
-:global(.theme-noir-dark) .attach-btn.open::after { transform: rotate(135deg); }
-:global(.theme-noir-dark) .attach-btn:hover { border: 0; color: #f3f5f8; background: rgba(80, 150, 179, 0.12); box-shadow: none; }
+:global(.theme-noir) .attach-btn::after { transform: rotate(90deg); }
+:global(.theme-noir) .attach-btn.open { color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 14%, transparent); }
+:global(.theme-noir) .attach-btn.open::before { transform: rotate(45deg); }
+:global(.theme-noir) .attach-btn.open::after { transform: rotate(135deg); }
+:global(.theme-noir) .attach-btn:hover { border: 0; color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 12%, transparent); box-shadow: none; }
 </style>
