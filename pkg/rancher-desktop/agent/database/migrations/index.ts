@@ -1,6 +1,7 @@
 import { up as up_0102, down as down_0102 } from './0102_keep_wait_evidence_in_lane';
 import { up as up_0103, down as down_0103 } from './0103_add_agent_job_project_tasks';
 import { up as up_0104, down as down_0104 } from './0104_add_agent_job_ui_state';
+import { up as up_0105, down as down_0105 } from './0105_expand_agent_definitions';
 import { up as up_0098, down as down_0098 } from './0098_create_decisions';
 import { up as up_0099, down as down_0099 } from './0099_create_browser_bookmarks';
 import { up as up_0100, down as down_0100 } from './0100_create_reflex_engine';
@@ -183,4 +184,5 @@ export const migrationsRegistry = [
   { name: '0102_keep_wait_evidence_in_lane', up: up_0102, down: down_0102 },
   { name: '0103_add_agent_job_project_tasks', up: up_0103, down: down_0103 },
   { name: '0104_add_agent_job_ui_state', up: up_0104, down: down_0104 },
+  { name: '0105_expand_agent_definitions', up: up_0105, down: down_0105 },
 ] as const;

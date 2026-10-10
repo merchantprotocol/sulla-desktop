@@ -19,6 +19,21 @@ export class MarketplaceValidateWorker extends BaseTool {
       return { successBoolean: false, responseString: `Missing required field: slug.` };
     }
 
+    if (kind === 'agent') {
+      const { agentDefinitionService } = await import('../../services/AgentDefinitionService');
+      const agent = await agentDefinitionService.findBySlug(slug);
+      if (!agent) return { successBoolean: false, responseString: `Agent not found in the database: ${ slug }` };
+      const manifest = agentDefinitionService.toManifest(agent);
+      const issues = [
+        !manifest.metadata.title ? 'metadata.title is required' : '',
+        !manifest.metadata.version ? 'metadata.version is required' : '',
+        typeof manifest.spec.prompt !== 'string' ? 'spec.prompt must be a string' : '',
+      ].filter(Boolean);
+      return issues.length
+        ? { successBoolean: false, responseString: `agent/${ slug } has ${ issues.length } issue(s):\n${ issues.map(issue => `  ✗ ${ issue }`).join('\n') }` }
+        : { successBoolean: true, responseString: `✓ agent/${ slug } passes sulla/v3 Agent manifest validation.` };
+    }
+
     const dir = artifactDir(kind, slug);
     if (!fs.existsSync(dir)) {
       return { successBoolean: false, responseString: `Not installed locally: ${ dir }` };

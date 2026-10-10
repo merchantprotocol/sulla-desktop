@@ -299,38 +299,15 @@ export function initSullaEvents(): void {
 
 
   ipcMainProxy.handle('agents-list', async() => {
-    const yaml = require('yaml');
-    const agentsDir = path.join(getSullaHomeDir(), 'agents');
-
-    if (!fs.existsSync(agentsDir)) return [];
-
-    const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
-    const agents: { id: string; name: string; description: string; type: string; templateId: string; path: string }[] = [];
-
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-      const agentDir = path.join(agentsDir, entry.name);
-      const yamlPath = path.join(agentDir, 'config.yaml');
-
-      if (!fs.existsSync(yamlPath)) continue;
-      try {
-        const content = fs.readFileSync(yamlPath, 'utf-8');
-        const parsed = yaml.parse(content) || {};
-
-        agents.push({
-          id:          entry.name,
-          name:        parsed.name || entry.name,
-          description: parsed.description || '',
-          type:        parsed.type || 'worker',
-          templateId:  parsed.templateId || 'glass-core',
-          path:        agentDir,
-        });
-      } catch (err) {
-        console.warn(`[Sulla] Failed to parse config.yaml in ${ entry.name }:`, err);
-      }
-    }
-
-    return agents;
+    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+    return (await agentDefinitionService.list()).filter(agent => agent.enabled && agent.status !== 'archive').map(agent => ({
+      id:          agent.slug,
+      name:        agent.name,
+      description: agent.description,
+      type:        String(agent.config.type || 'worker'),
+      templateId:  String(agent.config.templateId || 'glass-core'),
+      path:        '',
+    }));
   });
 
   ipcMainProxy.handle('tools-list-by-category', async() => {

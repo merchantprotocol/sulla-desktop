@@ -26,6 +26,20 @@ export class MarketplaceScaffoldWorker extends BaseTool {
       return { successBoolean: false, responseString: `Invalid "slug". Use kebab-case: ^[a-z0-9][a-z0-9-]*$` };
     }
 
+    if (kind === 'agent') {
+      const { agentDefinitionService } = await import('../../services/AgentDefinitionService');
+      if (await agentDefinitionService.findBySlug(slug)) {
+        return { successBoolean: false, responseString: `Agent already exists in the database: ${ slug }.` };
+      }
+      await agentDefinitionService.create({
+        slug, name, description, promptContent: '', promptFiles: {}, status: 'draft', sourceKind: 'local',
+      });
+      return {
+        successBoolean: true,
+        responseString: `Scaffolded database-backed agent/${ slug }. Edit it in the Agents area, then export its sulla/v3 manifest for marketplace packaging.`,
+      };
+    }
+
     const dir = artifactDir(kind, slug);
     if (fs.existsSync(dir)) {
       return { successBoolean: false, responseString: `Directory already exists: ${ dir }. Pick a different slug or remove it first.` };

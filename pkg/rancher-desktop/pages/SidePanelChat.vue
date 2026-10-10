@@ -275,6 +275,7 @@ const modelName = ref('');
 const modelMode = ref<'local' | 'remote'>('remote');
 const systemReady = ref(true);
 const isRunning = computed<boolean>(() => true);
+const chatSelection = ref<Record<string, string>>({});
 
 const modelSelector = new AgentModelSelectorController({
   systemReady,
@@ -282,6 +283,9 @@ const modelSelector = new AgentModelSelectorController({
   modelName,
   modelMode,
   isRunning,
+  onSelectForChat: ({ providerId, modelId, agentId }) => {
+    chatSelection.value = { providerId, modelId, ...(agentId ? { agentId } : {}) };
+  },
 });
 
 const displayMessages = computed(() => {
@@ -306,12 +310,12 @@ const renderMarkdown = (markdown: string): string => {
 const composerRef = ref<InstanceType<typeof AgentComposer> | null>(null);
 
 const send = () => {
-  chatController.send();
+  chatController.send(chatSelection.value);
 };
 
 const sendWithAttachments = () => {
   const attachments = composerRef.value?.consumeAttachments?.() || [];
-  chatController.send(undefined, attachments.length > 0 ? attachments : undefined);
+  chatController.send(chatSelection.value, attachments.length > 0 ? attachments : undefined);
 };
 
 const stop = () => {
@@ -366,7 +370,7 @@ ipcRenderer.on('side-panel:set-prompt' as any, (_event: unknown, payload: string
   // Send with attachments if present (e.g. screenshots)
   if (data.attachments?.length) {
     nextTick(() => {
-      chatController.send(undefined, data.attachments);
+      chatController.send(chatSelection.value, data.attachments);
     });
   } else {
     nextTick(() => send());

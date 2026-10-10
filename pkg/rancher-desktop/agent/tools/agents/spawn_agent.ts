@@ -3,9 +3,9 @@ import { extractAgentTurnOutcome } from './agentTurnOutcome';
 import { emitSubAgentExchange } from './jobExchange';
 import { abortJob, createJob, completeJob, deleteJob, failJob, getJobAbortSignal, markCompletionDelivered, updateJobTask } from './jobRegistry';
 import { combineAborts } from '../../services/AbortService';
+import { agentDefinitionService } from '../../services/AgentDefinitionService';
 import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
-import { findAgentDir } from '../../utils/sullaPaths';
 
 import type { AgentJobResult, AgentJobTask } from './jobRegistry';
 
@@ -14,7 +14,7 @@ const MAX_TASKS = 10;
 
 interface SpawnTask {
   agentId?:   string;
-  /** Alias for agentId — the agent config folder name under ~/sulla/agents/.
+  /** Alias for agentId — the database-backed custom agent slug.
    *  Accepted because callers routinely reach for "agentName"; resolved to the
    *  same selector so a natural-but-wrong key no longer silently no-ops. */
   agentName?: string;
@@ -88,10 +88,10 @@ export class SpawnAgentWorker extends BaseTool {
       }
 
       const selector = taskAgentSelector(tasks[i]);
-      if (selector && !findAgentDir(selector)) {
+      if (selector && !await agentDefinitionService.findBySlug(selector)) {
         return {
           successBoolean: false,
-          responseString: `Task at index ${ i } references agent "${ selector }" but no config folder exists under ~/sulla/agents/. Use a valid agentId (or omit it to use the default agent).`,
+          responseString: `Task at index ${ i } references agent "${ selector }" but no enabled agent definition exists. Use a valid agentId (or omit it to use the default agent).`,
         };
       }
     }

@@ -16,20 +16,22 @@
 
 import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
 
+import { StreamUpdateScheduler } from './StreamUpdateScheduler';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
+import { asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 import type { ChatController } from '../controller/ChatController';
 import type {
   ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, HtmlPayload,
 } from '../models/Artifact';
 import type { Attachment } from '../models/Attachment';
-import type { Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
+import type {
+  Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
   ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, SubAgentExchangeMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
   PatchMessage, PatchHunk, ProactiveMessage,
 } from '../models/Message';
-import { asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
-import { StreamUpdateScheduler } from './StreamUpdateScheduler';
-
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export interface PersonaAdapterOptions {
   channelId?: string;
@@ -37,7 +39,7 @@ export interface PersonaAdapterOptions {
 }
 
 export class PersonaAdapter {
-  private ci: ChatInterface;
+  private ci:           ChatInterface;
   private stopWatchers: WatchStopHandle[] = [];
   // Backend stream deltas can arrive faster than Vue can paint. Publish the
   // leading update immediately, then cap continuous updates to ~30fps. A pure
@@ -142,7 +144,7 @@ export class PersonaAdapter {
       for (const message of this.controller.thread.value.messages) {
         if (message.kind === 'tool_approval' && message.approvalId === record.id) {
           this.controller.updateMessage<ToolApprovalMessage>(message.id, {
-            decision: record.status === 'approved' ? 'approved' : record.status === 'denied' ? 'denied' : 'timed_out',
+            decision:        record.status === 'approved' ? 'approved' : record.status === 'denied' ? 'denied' : 'timed_out',
             resolutionError: undefined,
           });
         } else if (message.kind === 'tool_question' && message.questionId === record.id) {
@@ -152,7 +154,7 @@ export class PersonaAdapter {
     };
     ipcRenderer.on('decisions:changed', applyDecision);
     this.stopWatchers.push(() => ipcRenderer.removeListener('decisions:changed', applyDecision));
-    void ipcRenderer.invoke('decisions:list').then(records => records.forEach(r => applyDecision(undefined, r))).catch(() => undefined);
+    ipcRenderer.invoke('decisions:list').then(records => records.forEach(r => applyDecision(undefined, r))).catch(() => undefined);
 
     // Approval bridge — when the user clicks approve/deny on a
     // ToolApproval card, the controller fires a `toolApprovalResolved`
@@ -160,7 +162,7 @@ export class PersonaAdapter {
     // whichever backend tool is awaiting its decision unblocks. Keeps
     // the controller transport-free; only the adapter knows about IPC.
     const unsubscribeApproval = this.controller.on('toolApprovalResolved', (ev) => {
-      void ipcRenderer.invoke('approval:resolve', {
+      ipcRenderer.invoke('approval:resolve', {
         approvalId: ev.approvalId,
         decision:   ev.decision,
         note:       ev.note,
@@ -177,7 +179,7 @@ export class PersonaAdapter {
     // main via the `question:resolve` IPC so the backend tool awaiting the
     // answer unblocks. Same shape as the approval bridge above.
     const unsubscribeQuestion = this.controller.on('toolQuestionAnswered', (ev) => {
-      void ipcRenderer.invoke('question:resolve', {
+      ipcRenderer.invoke('question:resolve', {
         questionId: ev.questionId,
         answers:    ev.answers,
       }).then(receipt => {
@@ -243,7 +245,13 @@ export class PersonaAdapter {
 
     const resolved = await Promise.all(mapped);
     // Spoken turns are tagged so the backend answers in voice mode (<speak> → TTS).
-    await this.ci.send(inputSource ? { inputSource } : undefined, resolved.length ? resolved : undefined);
+    const selection = {
+      ...(inputSource ? { inputSource } : {}),
+      ...(this.controller.thread.value.agentId ? { agentId: this.controller.thread.value.agentId } : {}),
+      ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),
+      ...(this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
+    };
+    await this.ci.send(selection, resolved.length ? resolved : undefined);
   }
 
   /**
@@ -261,8 +269,8 @@ export class PersonaAdapter {
     await this.ci.injectMessage(text, resolved.length ? resolved : undefined);
   }
 
-  stop(): void { this.ci.stop(); }
-  continueRun(): void { this.ci.continueRun(); }
+  stop(): void { this.ci.stop() }
+  continueRun(): void { this.ci.continueRun() }
   newChat(): void {
     this.ci.newChat();
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
@@ -374,7 +382,7 @@ export class PersonaAdapter {
     const phase = this.controller.runState.value.phase;
     if (running && (phase === 'idle' || phase === 'paused' || phase === 'error')) {
       this.controller.transitionRun({
-        type: 'think',
+        type:      'think',
         messageId: newMessageId(),
       });
     }
@@ -410,10 +418,15 @@ export class PersonaAdapter {
     // User turn
     if (b.role === 'user') {
       return {
-        id, kind: 'user', createdAt, text: b.content ?? '',
-        attachments: b.image ? [{
-          id: newAttachmentId(), name: b.image.alt || 'image', size: '', kind: 'image',
-        }] : undefined,
+        id,
+        kind:        'user',
+        createdAt,
+        text:        b.content ?? '',
+        attachments: b.image
+          ? [{
+            id: newAttachmentId(), name: b.image.alt || 'image', size: '', kind: 'image',
+          }]
+          : undefined,
       } satisfies UserMessage;
     }
 
@@ -435,9 +448,14 @@ export class PersonaAdapter {
         }
       }
       return {
-        id, kind: 'thinking', createdAt,
-        thoughts, startedAt: createdAt, completed, completedAt,
-        summary: completed ? firstLineOf(b.content ?? '') : undefined,
+        id,
+        kind:      'thinking',
+        createdAt,
+        thoughts,
+        startedAt: createdAt,
+        completed,
+        completedAt,
+        summary:   completed ? firstLineOf(b.content ?? '') : undefined,
       } satisfies ThinkingMessage;
     }
 
@@ -464,11 +482,13 @@ export class PersonaAdapter {
         })),
       }));
       return {
-        id, kind: 'patch', createdAt,
-        path:  b.filePatch.path,
-        stat:  b.filePatch.stat,
+        id,
+        kind:       'patch',
+        createdAt,
+        path:       b.filePatch.path,
+        stat:       b.filePatch.stat,
         hunks,
-        state: 'applied',
+        state:      'applied',
         revertMeta: b.filePatch.revertMeta,
       } satisfies PatchMessage;
     }
@@ -479,7 +499,9 @@ export class PersonaAdapter {
     // that don't were already dropped in MessageDispatcher).
     if (b.kind === 'citation' && Array.isArray(b.citations) && b.citations.length > 0) {
       return {
-        id, kind: 'citation', createdAt,
+        id,
+        kind:    'citation',
+        createdAt,
         sources: b.citations.map(s => ({
           num:    s.num,
           title:  s.title,
@@ -498,7 +520,9 @@ export class PersonaAdapter {
     // whatever the controller updated it to.
     if (b.kind === 'tool_approval' && b.toolApproval) {
       return {
-        id, kind: 'tool_approval', createdAt,
+        id,
+        kind:       'tool_approval',
+        createdAt,
         reason:     b.toolApproval.reason,
         command:    b.toolApproval.command,
         decision:   'pending',
@@ -514,7 +538,9 @@ export class PersonaAdapter {
     // awaited promise settles. Status starts 'pending' on first seen.
     if (b.kind === 'tool_question' && b.toolQuestion) {
       return {
-        id, kind: 'tool_question', createdAt,
+        id,
+        kind:       'tool_question',
+        createdAt,
         questionId: b.toolQuestion.questionId,
         questions:  b.toolQuestion.questions,
         status:     'pending',
@@ -524,11 +550,15 @@ export class PersonaAdapter {
     // Tool card
     if (b.kind === 'tool' && b.toolCard) {
       const status: ToolMessage['status'] =
-        b.toolCard.status === 'success' ? 'ok'
-        : b.toolCard.status === 'failed' ? 'error'
-        : 'running';
+        b.toolCard.status === 'success'
+          ? 'ok'
+          : b.toolCard.status === 'failed'
+            ? 'error'
+            : 'running';
       return {
-        id, kind: 'tool', createdAt,
+        id,
+        kind: 'tool',
+        createdAt,
         tool: b.toolCard.label || b.toolCard.toolName || 'Tool',
         desc: b.toolCard.summary || b.toolCard.description || '',
         status,
@@ -555,8 +585,10 @@ export class PersonaAdapter {
         return null;
       }
       return {
-        id, kind: 'channel', createdAt,
-        agent:   b.channelMeta?.senderId       || 'Agent',
+        id,
+        kind:  'channel',
+        createdAt,
+        agent:   b.channelMeta?.senderId || 'Agent',
         channel,
         text:    b.content ?? '',
       } satisfies ChannelMessage;
@@ -573,10 +605,13 @@ export class PersonaAdapter {
       const sa = b.subAgentActivity;
       const backendStatus = sa?.status;
       const status: SubAgentMessage['status'] =
-        backendStatus === 'completed' ? 'done'
-        : backendStatus === 'failed' ? 'error'
-        : backendStatus === 'blocked' ? 'error'
-        : 'running';
+        backendStatus === 'completed'
+          ? 'done'
+          : backendStatus === 'failed'
+            ? 'error'
+            : backendStatus === 'blocked'
+              ? 'error'
+              : 'running';
 
       const rawLines = sa?.thinkingLines ?? [];
       const steps = rawLines.map(line => {
@@ -586,14 +621,16 @@ export class PersonaAdapter {
         return { tag: 'thinking', text };
       }).filter(s => s.text.length > 0);
 
-      const desc = sa?.output?.trim()
-        || sa?.error?.trim()
-        || sa?.latestThinking?.trim()
-        || (b.content ?? '').trim()
-        || (status === 'done' ? 'Completed' : status === 'error' ? 'Failed' : 'Working…');
+      const desc = sa?.output?.trim() ||
+        sa?.error?.trim() ||
+        sa?.latestThinking?.trim() ||
+        (b.content ?? '').trim() ||
+        (status === 'done' ? 'Completed' : status === 'error' ? 'Failed' : 'Working…');
 
       return {
-        id, kind: 'subagent', createdAt,
+        id,
+        kind: 'subagent',
+        createdAt,
         name: sa?.nodeLabel || 'sub-agent',
         desc,
         status,
@@ -612,7 +649,9 @@ export class PersonaAdapter {
     // finish, heartbeat insight) is reaching out unprompted.
     if (b.kind === 'proactive' && b.proactive) {
       return {
-        id, kind: 'proactive', createdAt,
+        id,
+        kind:     'proactive',
+        createdAt,
         headline: b.proactive.headline,
         body:     b.proactive.body,
       } satisfies ProactiveMessage;
@@ -657,7 +696,7 @@ export class PersonaAdapter {
                 // the full AgentRoutines editor. Without it the pane renders
                 // an empty div.
                 const payload: WorkflowPayload = {
-                  id: wfId,
+                  id:   wfId,
                   name: wfName || String(definition.name ?? wfId),
                   nodes,
                   edges,
@@ -680,14 +719,19 @@ export class PersonaAdapter {
           return { id, kind: 'html', createdAt, html, artifactId } satisfies HtmlMessage;
         }
         return {
-          id, kind: 'sulla', createdAt,
+          id,
+          kind:  'sulla',
+          createdAt,
           text:  raw,
           model: this.controller.model.value.name,
         } satisfies SullaMessage;
       }
       return {
-        id, kind: 'streaming', createdAt,
-        text: b.content ?? '', startedAt: createdAt,
+        id,
+        kind:      'streaming',
+        createdAt,
+        text:      b.content ?? '',
+        startedAt: createdAt,
       } satisfies StreamingMessage;
     }
 
@@ -708,8 +752,10 @@ export class PersonaAdapter {
 
     // Fallback — plain assistant text
     return {
-      id, kind: 'sulla', createdAt,
-      text: b.content ?? '',
+      id,
+      kind:  'sulla',
+      createdAt,
+      text:  b.content ?? '',
       model: this.controller.model.value.name,
     } satisfies SullaMessage;
   }
@@ -783,7 +829,7 @@ export class PersonaAdapter {
     this.workflowArtifacts.set(`authoring-${ doc.slug }`, artifactId);
 
     const current = this.controller.artifacts.value.list.find(a => a.id === artifactId);
-    const prev = (current?.payload as WorkflowPayload | undefined);
+    const prev = current?.payload as WorkflowPayload | undefined;
     const prevNodeState = new Map<string, WorkflowNode['runtimeState']>();
     const prevEdgeState = new Map<string, WorkflowEdge['runtimeState']>();
     if (prev) {
@@ -802,10 +848,10 @@ export class PersonaAdapter {
       _status:     doc._status,
       viewport:    doc.viewport,
       nodes:       doc.nodes.map(n => ({
-        id:       n.id,
-        type:     n.type,
-        position: n.position,
-        data:     n.data,
+        id:           n.id,
+        type:         n.type,
+        position:     n.position,
+        data:         n.data,
         runtimeState: prevNodeState.get(n.id),
       })),
       edges: doc.edges.map(e => ({
@@ -926,9 +972,9 @@ export class PersonaAdapter {
       this.controller.updateArtifact(existing, { payload, status: 'done' });
       return existing;
     }
-    const artifactName = name || `Workflow — ${shortStamp(createdAt)}`;
+    const artifactName = name || `Workflow — ${ shortStamp(createdAt) }`;
     const artifactId = this.controller.openArtifact('workflow', {
-      name: artifactName,
+      name:   artifactName,
       payload,
       status: 'done',
     });
@@ -997,11 +1043,11 @@ function mapWorkflowNodeState(
   status: 'running' | 'completed' | 'failed' | 'waiting',
 ): WorkflowNode['state'] {
   switch (status) {
-    case 'running':   return 'active';
-    case 'completed': return 'done';
-    case 'failed':    return 'error';
-    case 'waiting':   return 'idle';
-    default:          return 'idle';
+  case 'running': return 'active';
+  case 'completed': return 'done';
+  case 'failed': return 'error';
+  case 'waiting': return 'idle';
+  default: return 'idle';
   }
 }
 
