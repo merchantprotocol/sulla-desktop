@@ -1,6 +1,6 @@
 <template>
   <div
-    class="flex h-full flex-col"
+    class="secretary-root flex h-full flex-col"
     style="background: var(--bg, #0d1117);"
   >
     <!-- ════════════════════════════════════════════════════════════
@@ -1256,5 +1256,194 @@ onUnmounted(() => {
 .dt-chat-send:disabled {
   opacity: 0.4;
   cursor: default;
+}
+</style>
+
+<style scoped>
+@keyframes noir-secretary-wave {
+  0%, 100% { transform: scaleY(.35); opacity: .55; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+
+:global(.theme-noir-dark) .secretary-root {
+  background:
+    radial-gradient(80% 55% at 50% 110%, rgba(80, 150, 179, .13), transparent 62%),
+    #01030a !important;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .welcome-inner {
+  max-width: 760px;
+  animation: noir-secretary-enter .48s cubic-bezier(.22, 1, .36, 1) both;
+}
+
+@keyframes noir-secretary-enter {
+  from { opacity: 0; transform: translateY(8px); filter: blur(8px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+:global(.theme-noir-dark) .welcome-title {
+  margin: 0 0 8px;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 38px;
+  font-weight: 600;
+  letter-spacing: -.025em;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .welcome-subtitle {
+  margin: 0 0 6px;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: .04em;
+  color: #7a8291;
+}
+
+:global(.theme-noir-dark) .welcome-card {
+  margin-top: 30px;
+  border: 0;
+  border-radius: 22px;
+  background: rgba(3, 6, 12, .7);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .1), 0 24px 70px rgba(0, 0, 0, .42);
+  transition: transform .58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), box-shadow .25s;
+}
+
+:global(.theme-noir-dark) .welcome-card:hover {
+  transform: translateY(-4px);
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, .35), 0 0 42px rgba(80, 150, 179, .13), 0 28px 72px rgba(0, 0, 0, .48);
+}
+
+:global(.theme-noir-dark) .dt-header {
+  min-height: 52px;
+  padding: 0 18px;
+  background: rgba(3, 6, 12, .62);
+  border-color: rgba(168, 192, 220, .08);
+  backdrop-filter: blur(22px);
+}
+
+:global(.theme-noir-dark) .dt-traffic { display: none; }
+
+:global(.theme-noir-dark) .dt-title,
+:global(.theme-noir-dark) .dt-pane-hdr,
+:global(.theme-noir-dark) .dt-section-hdr {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  color: #6ab0cc;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .dt-title { text-align: left; }
+
+:global(.theme-noir-dark) .dt-header-live .dt-title::before {
+  content: 'Live meeting  ·  ';
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .dt-rec {
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #f3f5f8;
+  background: rgba(248, 81, 73, .08);
+  box-shadow: inset 0 0 0 1px rgba(248, 81, 73, .18);
+}
+
+:global(.theme-noir-dark) .dt-rec-dot {
+  background: #f85149;
+  box-shadow: 0 0 10px rgba(248, 81, 73, .8);
+}
+
+:global(.theme-noir-dark) .dt-level-bars { gap: 3px; height: 20px; align-items: center; }
+:global(.theme-noir-dark) .dt-level-bar {
+  width: 2px;
+  height: 14px !important;
+  background: rgba(106, 176, 204, .25);
+  transform-origin: center;
+}
+:global(.theme-noir-dark) .dt-level-bar.active {
+  background: #6ab0cc;
+  box-shadow: 0 0 6px rgba(106, 176, 204, .65);
+  animation: noir-secretary-wave .75s ease-in-out infinite;
+}
+:global(.theme-noir-dark) .dt-level-bar:nth-child(2).active { animation-delay: -.25s; }
+:global(.theme-noir-dark) .dt-level-bar:nth-child(3).active { animation-delay: -.5s; }
+:global(.theme-noir-dark) .dt-level-bar:nth-child(4).active { animation-delay: -.15s; }
+
+:global(.theme-noir-dark) .dt-body-live { gap: 14px; padding: 14px; }
+:global(.theme-noir-dark) .dt-divider { background: rgba(168, 192, 220, .08); }
+:global(.theme-noir-dark) .dt-pane-left,
+:global(.theme-noir-dark) .dt-pane-right {
+  border-radius: 18px;
+  background: rgba(168, 192, 220, .035);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .08);
+}
+:global(.theme-noir-dark) .dt-pane-hdr {
+  padding: 12px 16px;
+  background: transparent;
+  border-color: rgba(168, 192, 220, .08);
+}
+
+:global(.theme-noir-dark) .dt-timeline { gap: 16px; padding: 18px; }
+:global(.theme-noir-dark) .dt-bubble-row { justify-content: flex-start; }
+:global(.theme-noir-dark) .dt-bubble {
+  max-width: 92%;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+:global(.theme-noir-dark) .dt-bubble-header { margin-bottom: 6px; gap: 8px; }
+:global(.theme-noir-dark) .dt-bubble-speaker {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 9px;
+  border-radius: 11px;
+  color: #dee4ec;
+  background: rgba(80, 150, 179, .12);
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, .22);
+}
+:global(.theme-noir-dark) .dt-bubble-speaker::before {
+  content: 'who · ';
+  color: #6ab0cc;
+  font-weight: 500;
+}
+:global(.theme-noir-dark) .dt-bubble-time { color: #484f5a; }
+:global(.theme-noir-dark) .dt-bubble-text { color: #dee4ec; font-size: 14px; line-height: 1.62; }
+:global(.theme-noir-dark) .dt-bubble-you .dt-bubble-text { color: #f3f5f8; }
+
+:global(.theme-noir-dark) .dt-item {
+  margin: 0 0 7px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: #a9b3c1;
+  background: rgba(3, 6, 12, .48);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .06);
+}
+:global(.theme-noir-dark) .dt-decision { border: 0; box-shadow: inset 2px 0 #3fb950, inset 0 0 0 1px rgba(63, 185, 80, .13); }
+:global(.theme-noir-dark) .dt-insight { color: #7a8291; }
+:global(.theme-noir-dark) .dt-chat-input { padding: 12px; background: transparent; border-color: rgba(168, 192, 220, .08); }
+:global(.theme-noir-dark) .dt-chat-field {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 20px;
+  background: rgba(3, 6, 12, .68);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .12);
+}
+:global(.theme-noir-dark) .dt-chat-field:focus { box-shadow: inset 0 0 0 1px rgba(106, 176, 204, .55), 0 0 22px rgba(80, 150, 179, .12); }
+:global(.theme-noir-dark) .dt-chat-send,
+:global(.theme-noir-dark) .dt-btn-new,
+:global(.theme-noir-dark) .dt-btn-unmuted {
+  border-color: rgba(106, 176, 204, .32);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(106, 176, 204, .24), rgba(80, 150, 179, .12));
+  color: #dee4ec;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .welcome-inner,
+  :global(.theme-noir-dark) .dt-level-bar.active,
+  :global(.theme-noir-dark) .dt-rec-dot { animation: none; }
+  :global(.theme-noir-dark) .welcome-card { transition: none; }
 }
 </style>
