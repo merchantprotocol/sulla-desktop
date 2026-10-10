@@ -170,7 +170,8 @@ async function register(threadId: string): Promise<boolean> {
     const result = await ipcRenderer.invoke('chat-heartbeat:register', {
       threadId,
       channel: 'sulla-desktop',
-      config:  controller.heartbeat.value,
+      // Plain copy — IPC can't structured-clone Vue's reactive proxy.
+      config:  normalizeChatHeartbeatConfig(controller.heartbeat.value),
       busy:    controller.isRunning.value,
     });
     if (!result?.success) throw new Error(result?.error || 'register failed');
