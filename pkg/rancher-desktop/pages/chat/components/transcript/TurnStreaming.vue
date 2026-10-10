@@ -4,7 +4,10 @@
 -->
 <template>
   <div class="chat-turn sulla chat-fade-in">
-    <span class="chat-role">Sulla · {{ timeLabel }} · responding</span>
+    <span class="chat-role"><span
+      class="noir-avatar"
+      aria-hidden="true"
+    >S</span>Sulla · {{ timeLabel }} · responding</span>
     <div class="chat-body">
       <IsolatedHtml
         v-if="isHtmlDocument"
@@ -18,6 +21,9 @@
         class="chat-cursor"
         aria-hidden="true"
       />
+    </div>
+    <div class="writing-status">
+      <span aria-hidden="true" />Writing…
     </div>
   </div>
 </template>
@@ -54,3 +60,10 @@ const htmlDocument = computed(() => {
 
 const rendered = computed(() => renderMarkdown(props.msg.text));
 </script>
+
+<style scoped>
+.writing-status,
+.noir-avatar {
+  display: none;
+}
+</style>

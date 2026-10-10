@@ -3,17 +3,36 @@
   hands each to MessageRouter. Owns scroll behavior.
 -->
 <template>
-  <div ref="scroller" class="scroller">
+  <div
+    ref="scroller"
+    class="scroller"
+  >
     <div class="chat-dialogue">
       <!-- Time marker for today (phase-0 scaffold) -->
-      <TimeMarker v-if="showTodayMarker" :label="todayLabel" />
+      <TimeMarker
+        v-if="showTodayMarker"
+        :label="todayLabel"
+      />
 
-      <template v-for="m in controller.messages.value" :key="m.id">
-        <MessageRouter :msg="m" />
+      <template
+        v-for="entry in transcriptEntries"
+        :key="entry.id"
+      >
+        <ToolGroup
+          v-if="entry.kind === 'tool-group'"
+          :messages="entry.messages"
+        />
+        <MessageRouter
+          v-else
+          :msg="entry"
+        />
       </template>
     </div>
 
-    <ScrollPill :visible="showPill" @jump="scrollToBottom" />
+    <ScrollPill
+      :visible="showPill"
+      @jump="scrollToBottom"
+    />
   </div>
 </template>
 
@@ -21,15 +40,18 @@
 import { computed, ref } from 'vue';
 
 import MessageRouter from './MessageRouter.vue';
-import ScrollPill    from './ScrollPill.vue';
-import TimeMarker    from './TimeMarker.vue';
-import { useChatController } from '../../controller/useChatController';
+import ScrollPill from './ScrollPill.vue';
+import TimeMarker from './TimeMarker.vue';
+import { groupTranscriptTools } from './toolGroups';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
+import { useChatController } from '../../controller/useChatController';
+import ToolGroup from '../tool/ToolGroup.vue';
 
 const controller = useChatController();
-const scroller   = ref<HTMLElement | null>(null);
+const scroller = ref<HTMLElement | null>(null);
 
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, controller.messages);
+const transcriptEntries = computed(() => groupTranscriptTools(controller.messages.value));
 
 const showTodayMarker = computed(() => controller.messages.value.length > 0);
 const todayLabel = computed(() => {

@@ -12,6 +12,13 @@
         <span class="plus">+{{ msg.stat.added }}</span>
         <span class="minus">−{{ msg.stat.removed }}</span>
       </span>
+      <button
+        class="patch-copy"
+        type="button"
+        @click="copyPatch"
+      >
+        {{ copied ? 'Copied' : 'Copy' }}
+      </button>
     </div>
     <div class="patch-body">
       <div
@@ -25,23 +32,58 @@
     </div>
     <div class="patch-actions">
       <template v-if="msg.state === 'proposed'">
-        <button class="apply"  type="button" @click="apply">Apply</button>
+        <button
+          class="apply"
+          type="button"
+          @click="apply"
+        >
+          Apply
+        </button>
         <span class="sep">·</span>
-        <button class="open"   type="button" @click="open">Open File</button>
+        <button
+          class="open"
+          type="button"
+          @click="open"
+        >
+          Open File
+        </button>
         <span class="sep">·</span>
-        <button class="reject" type="button" @click="reject">Reject</button>
+        <button
+          class="reject"
+          type="button"
+          @click="reject"
+        >
+          Reject
+        </button>
       </template>
       <template v-else-if="msg.state === 'applied'">
-        <button class="open"   type="button" @click="open">Open File</button>
+        <button
+          class="open"
+          type="button"
+          @click="open"
+        >
+          Open File
+        </button>
         <template v-if="canRevert">
           <span class="sep">·</span>
-          <button class="revert" type="button" :disabled="reverting" @click="revert">
+          <button
+            class="revert"
+            type="button"
+            :disabled="reverting"
+            @click="revert"
+          >
             {{ reverting ? 'Reverting…' : 'Revert' }}
           </button>
         </template>
       </template>
       <template v-else>
-        <button class="open"   type="button" @click="open">Open File</button>
+        <button
+          class="open"
+          type="button"
+          @click="open"
+        >
+          Open File
+        </button>
       </template>
     </div>
   </div>
@@ -49,17 +91,21 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import type { PatchMessage } from '../../models/Message';
-import type { CodePayload } from '../../models/Artifact';
+
 import { useChatController } from '../../controller/useChatController';
+
+import type { CodePayload } from '../../models/Artifact';
+import type { PatchMessage } from '../../models/Message';
 
 const props = defineProps<{ msg: PatchMessage }>();
 const controller = useChatController();
 
 const reverting = ref(false);
+const copied = ref(false);
 
 const flatLines = computed(() => props.msg.hunks.flatMap(h => h.lines));
-const stateClass = computed(() => props.msg.state === 'applied' ? 'applied'
+const stateClass = computed(() => props.msg.state === 'applied'
+  ? 'applied'
   : props.msg.state === 'rejected' ? 'rejected' : '');
 const canRevert = computed(() => !!props.msg.revertMeta);
 
@@ -81,11 +127,25 @@ async function revert(): Promise<void> {
 function open(): void {
   // Spawn a code artifact populated from the patch
   const payload: CodePayload = {
-    path: props.msg.path,
+    path:     props.msg.path,
     language: 'typescript',
-    lines: flatLines.value.map(l => ({ n: l.n, text: l.text, op: l.op })),
+    lines:    flatLines.value.map(l => ({ n: l.n, text: l.text, op: l.op })),
   };
   controller.openArtifact('code', { name: props.msg.path.split('/').pop(), payload, status: 'editing' });
+}
+function copyPatch(): void {
+  const text = flatLines.value.map((line) => {
+    const node = document.createElement('span');
+    node.innerHTML = line.text;
+    const prefix = line.op === 'add' ? '+' : line.op === 'remove' ? '-' : ' ';
+
+    return `${ prefix }${ node.textContent ?? '' }`;
+  }).join('\n');
+
+  navigator.clipboard?.writeText(text).then(() => {
+    copied.value = true;
+    window.setTimeout(() => { copied.value = false }, 1_500);
+  }).catch(() => undefined);
 }
 </script>
 
@@ -112,6 +172,7 @@ function open(): void {
 .patch-head .stat { margin-left: auto; font-size: 10px; color: var(--text-secondary); }
 .patch-head .stat .plus  { color: var(--text-success); }
 .patch-head .stat .minus { color: var(--text-error); margin-left: 6px; }
+.patch-copy { display: none; }
 .patch-body {
   font-family: var(--font-mono, ui-monospace, monospace); font-size: 13px; line-height: 1.7;
   color: var(--text-primary);

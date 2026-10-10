@@ -6,11 +6,19 @@
     <span class="kind">{{ msg.tool }}</span>
     <span class="desc">{{ msg.desc }}</span>
     <span class="meta">{{ metaLabel }}</span>
+    <details
+      v-if="msg.output"
+      class="tool-output"
+    >
+      <summary>Output</summary>
+      <pre>{{ msg.output }}</pre>
+    </details>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
+
 import type { ToolMessage } from '../../models/Message';
 
 const props = defineProps<{ msg: ToolMessage }>();
@@ -56,4 +64,5 @@ const metaLabel = computed(() => props.msg.meta ?? (props.msg.status === 'runnin
 .tool.run .meta { color: var(--steel-400); }
 .tool.err::before { background: var(--err); }
 .tool.err .kind   { background: rgba(252,165,165,0.12); color: var(--err); border-color: rgba(252,165,165,0.3); }
+.tool-output { display: none; }
 </style>

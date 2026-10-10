@@ -10,7 +10,7 @@
       :rel="s.url ? 'noopener' : undefined"
     >
       <div class="title">{{ s.title }}</div>
-      <div class="meta"><span class="num">{{ s.num }}</span>{{ s.origin }}</div>
+      <div class="meta"><span class="num">{{ s.num }}</span><span class="origin">{{ s.origin }}</span></div>
     </a>
   </div>
 </template>
