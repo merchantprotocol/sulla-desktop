@@ -294,6 +294,27 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .heartbeat-heart.enabled { animation: none; }
 }
+:global(.theme-noir-dark) .heartbeat-heart {
+  display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  border-radius: 50%; color: #7a8291; opacity: 1; font-size: 15px;
+}
+:global(.theme-noir-dark) .heartbeat-heart:hover { color: #f3f5f8; background: rgba(80, 150, 179, 0.12); }
+:global(.theme-noir-dark) .heartbeat-heart.enabled {
+  color: #6ab0cc; text-shadow: 0 0 10px rgba(106, 176, 204, 0.7);
+  animation: noir-heartbeat 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
+}
+@keyframes noir-heartbeat {
+  0%, 40%, 100% { transform: scale(1); }
+  15% { transform: scale(1.22); }
+  28% { transform: scale(1.08); }
+}
+:global(.theme-noir-dark) .heartbeat-popover {
+  right: 0; left: auto; bottom: calc(100% + 12px); border-color: rgba(168, 192, 220, 0.16);
+  border-radius: 18px; color: #dee4ec; background: rgba(12, 18, 28, 0.98);
+}
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .heartbeat-heart.enabled { animation: none; }
+}
 .heartbeat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .heartbeat-switch {
   display: inline-flex; align-items: center; gap: 8px; padding: 2px 0;

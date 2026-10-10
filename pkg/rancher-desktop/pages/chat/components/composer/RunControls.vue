@@ -55,4 +55,12 @@ const visible      = computed(() => showStop.value || showContinue.value);
 .run-controls .continue::before {
   content: "▸"; color: var(--steel-400); font-size: 13px;
 }
+:global(.theme-noir-dark) .run-controls .stop { display: none; }
+:global(.theme-noir-dark) .run-controls {
+  top: auto; right: 56px; bottom: 28px; z-index: 5;
+}
+:global(.theme-noir-dark) .run-controls .continue {
+  padding: 6px 10px; border-color: rgba(168, 192, 220, 0.16);
+  color: #a9b3c1; background: rgba(12, 18, 28, 0.9);
+}
 </style>
