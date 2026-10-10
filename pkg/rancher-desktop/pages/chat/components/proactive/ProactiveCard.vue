@@ -33,6 +33,7 @@ defineProps<{ msg: ProactiveMessage }>();
 .body {
   font-family: var(--serif); font-size: 16px; line-height: 1.55;
   color: var(--read-1);
+  white-space: pre-wrap;
 }
 .body strong { color: white; font-style: italic; font-weight: 600; margin-right: 4px; }
 </style>

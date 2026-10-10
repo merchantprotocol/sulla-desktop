@@ -219,6 +219,15 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'agent-tab:ready': (payload: { contractId: string; threadId: string }) => {
+    messages: Array<{
+      id?:        string;
+      role?:      string;
+      content?:   unknown;
+      timestamp?: number;
+      metadata?:  Record<string, unknown>;
+    }>;
+  };
   'chat-artifacts:list': (input: { threadId: string; includeClosed?: boolean }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord[];
   'chat-artifacts:get': (input: { threadId: string; idOrName: string }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
   'chat-artifacts:save': (input: {

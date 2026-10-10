@@ -1,6 +1,6 @@
 # Sub-Agents
 
-Spawn parallel sub-agents to do work independently. **The ONE delegation pattern is `spawn_agent`**: async jobs (the default) now **wake the parent graph with their results when they finish** — the orchestrator continues automatically with the results injected into its loop. No polling loop is required; `check_agent_jobs` remains as a fallback/history read (e.g. after an app restart, when jobs are reported honestly as "app restarted mid-job").
+Agents can delegate headlessly with `spawn_agent`, or launch another agent in a visible chat tab with a durable return contract. Async jobs and returned tab contracts both wake the parent graph automatically.
 
 Useful for: gathering data from multiple sources, batch operations, anything you want fanned out.
 
@@ -18,12 +18,35 @@ Useful for: gathering data from multiple sources, batch operations, anything you
 | `sulla agents/read_agent_conversation` | agents | Temporary read compatibility for pre-migration conversations |
 | `sulla agents/close_agent_conversation` | agents | Temporary close compatibility for pre-migration conversations |
 | `sulla agents/list_agents` | agents | Directory of live named agents you can `<channel:>`-message |
+| `sulla chat/launch_agent_tab` | chat | Open an enabled agent in a visible, background chat tab with a durable return contract |
+| `sulla chat/return_contract` | chat | Validate and return the child tab's structured result, then wake its parent |
+| `sulla chat/message_tab` | chat | Send a parent follow-up to a running or idle child tab |
+| `sulla chat/list_tab_contracts` | chat | List the current parent thread's child contracts and results |
 
 **Important:** the tool registry resolves tools by **name only** — `sulla agents/spawn_agent` and `sulla anything/spawn_agent` also work because the backend ignores the category segment in the URL. But the canonical surfacing in `sulla meta --help` lists `spawn_agent` under `meta`. Use that form for clarity.
 
-**Pattern hierarchy (use the first that fits):**
-1. **`spawn_agent`** — THE delegation primitive. Fire one or many tasks; async results wake your graph automatically with the output injected. Prefer this for everything delegable.
-2. **`<channel:NAME>` tags** — inter-agent MESSAGING (not delegation) to already-running named agents (heartbeat, workbench, mobile-relay); `list_agents` shows who's addressable. Add `wake` to trigger a turn.
+**Pick the surface by visibility:** use `spawn_agent` for a headless worker. Use `launch_agent_tab` when the delegated agent needs a visible transcript, its own Playbook/sidebar artifacts, or room to run its own sub-agents. Use `<channel:NAME>` tags only to message an already-running long-lived agent.
+
+## Visible agent tabs and return contracts
+
+```bash
+sulla chat/launch_agent_tab '{
+  "agentId":"ui-test-manager",
+  "title":"Checkout UI test",
+  "brief":"Test the checkout flow at desktop and mobile widths.",
+  "contract":{"name":"ui-test-issues"}
+}'
+```
+
+The new tab opens in the background by default, stays bound to its backend thread across restart, and shows which parent launched it. `focus:true` is available when focus-stealing is intentional. A parent may have at most five open child contracts; nesting stops at depth two.
+
+The child brief includes its contract id and schema. The child completes the handoff with:
+
+```bash
+sulla chat/return_contract '{"contractId":"...","summary":"Checkout tested","result":{"summary":{"pass":12,"fail":1,"blocked":0,"notRun":0},"issues":[]}}'
+```
+
+Schema mismatch and child-thread ownership errors are reported without closing the contract. A successful return stores the result, shows a result card in the parent, and steers the parent if it is mid-run or starts a new parent turn if it is idle. Parents can use `message_tab` with either `contractId` or `childThreadId`, and `list_tab_contracts` to recover status/results after restart.
 
 ## `spawn_agent`
 
@@ -173,6 +196,7 @@ Returns the live named agents (heartbeat, workbench, mobile-relay, frontends) wi
 | `<channel:workbench>...</channel:workbench>` | Fire-and-forget; reply may come back | Coordinated | Real-time agent-to-agent messaging when the other agent is already running |
 | `sulla meta/execute_workflow` | Async, returns executionId | Fixed pipeline | Deterministic multi-step automation that doesn't need agent reasoning at each step |
 | `spawn_agent(async:false)` | Blocks until done | Synchronous | When you need the result before you can proceed |
+| `launch_agent_tab` | Background visible tab; contract return wakes parent | Durable, multi-turn, visible | Agent needs its own Playbook/sidebar or will manage sub-agents |
 
 **Quick guide:**
 - Need 5 things researched in parallel and you'll synthesize → `spawn_agent` async; the results arrive as your next turn

@@ -20,6 +20,17 @@ export interface BrowserTab {
    * on tabs created after this field was added.
    */
   lastAccessedAt?: number;
+  /** Durable launch metadata for a visible agent-owned chat thread. */
+  agentChat?: {
+    threadId:        string;
+    agentId:         string;
+    agentName:       string;
+    parentThreadId:  string;
+    parentAgentId:   string;
+    parentAgentName: string;
+    contractId:      string;
+    depth:           number;
+  };
 }
 
 export interface ClosedTab {
@@ -59,7 +70,9 @@ function loadPersistedTabs(): BrowserTab[] {
     const seen = new Set<string>();
     const deduped: any[] = [];
     for (const t of noFileEditor) {
-      const key = `${ t?.mode || '' }|${ t?.url || '' }`;
+      const key = t?.mode === 'chat'
+        ? `chat|${ t?.agentChat?.threadId || t?.id || '' }`
+        : `${ t?.mode || '' }|${ t?.url || '' }`;
       if (seen.has(key)) continue;
       seen.add(key);
       deduped.push(t);
@@ -422,16 +435,17 @@ export function useBrowserTabs() {
     decide:       'Decide',
   };
 
-  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode }): BrowserTab {
+  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat'] }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
       id:             generateId(),
       url,
-      title:          MODE_TITLES[mode] || 'New Tab',
+      title:          opts?.title || MODE_TITLES[mode] || 'New Tab',
       favicon:        '',
       loading:        false,
       mode,
       lastAccessedAt: Date.now(),
+      ...(opts?.agentChat ? { agentChat: opts.agentChat } : {}),
     };
 
     tabs.push(tab);

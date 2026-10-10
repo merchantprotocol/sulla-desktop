@@ -3,7 +3,8 @@ import { agentDefinitionService } from './AgentDefinitionService';
 import type { BaseThreadState } from '../nodes/Graph';
 
 export const DEFAULT_ROUTE_AGENT_ID = 'sulla';
-export const DEFAULT_ROUTE_GRAPH_AGENT_ID = 'sulla-desktop';
+export const SULLA_DESKTOP_CHANNEL_ID = 'sulla-desktop';
+export const DEFAULT_ROUTE_GRAPH_AGENT_ID = SULLA_DESKTOP_CHANNEL_ID;
 
 export interface RoutableAgent {
   /** ID used by Reflex examples and shown in routing receipts. */

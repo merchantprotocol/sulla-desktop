@@ -3,7 +3,7 @@
 // and heartbeat channels to the default agent via GraphRegistry.
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
-import { applyThreadAgentRoute, resolveRoutableAgent, type RoutableAgent } from './ChatAgentRouting';
+import { applyThreadAgentRoute, resolveRoutableAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
@@ -16,7 +16,6 @@ import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
 
-const SULLA_DESKTOP_CHANNEL_ID = 'sulla-desktop';
 const WORKBENCH_CHANNEL_ID = 'workbench';
 const HEARTBEAT_CHANNEL_ID = 'heartbeat';
 const CALENDAR_CHANNEL_ID = 'calendar_event';
@@ -226,7 +225,11 @@ export class BackendGraphWebSocketService {
           role:      'user',
           content:   messageContent,
           timestamp: Date.now(),
-          metadata:  { source: 'inject', inputSource: data?.metadata?.inputSource || 'keyboard' },
+          metadata:  {
+            ...data?.metadata,
+            source: data?.metadata?.source || 'inject',
+            inputSource: data?.metadata?.inputSource || 'keyboard',
+          },
         } as any);
         console.log(`[BackendGraphWS] Steered running thread ${ threadId }: ${ content.slice(0, 50) }...`);
         return;
@@ -401,7 +404,11 @@ export class BackendGraphWebSocketService {
         role:      'user',
         content:   messageContent,
         timestamp: Date.now(),
-        metadata:  { source: 'backend', inputSource: inputSource || 'keyboard' },
+        metadata:  {
+          ...metadata,
+          source: metadata?.source || 'backend',
+          inputSource: inputSource || 'keyboard',
+        },
       } as any);
 
       // Resume from current node if the agent was waiting for user input
@@ -440,6 +447,17 @@ export class BackendGraphWebSocketService {
     } finally {
       if (isCurrentRun()) {
         this.activeAborts.delete(abortKey);
+
+        // Keep a durable transcript for tabs that mount after their first run
+        // has already started or completed. The renderer can hydrate this
+        // snapshot before it begins consuming live events.
+        if (state) {
+          try {
+            await saveThreadState(state);
+          } catch (error) {
+            console.error(`[BackendGraphWS] Failed to save thread ${ threadId } after dispatch:`, error);
+          }
+        }
 
         // A steer that landed after the agent's last look at the transcript
         // would otherwise sit unread in an idle thread. Run it as a new turn.

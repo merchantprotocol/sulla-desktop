@@ -36,8 +36,10 @@ import type {
 import type { ChatArtifactChangedEvent, ChatArtifactRecord } from '@pkg/shared/chatArtifacts';
 
 export interface PersonaAdapterOptions {
-  channelId?: string;
-  tabId?:     string;
+  channelId?:          string;
+  tabId?:              string;
+  agentTabContractId?: string;
+  agentTabThreadId?:   string;
 }
 
 export class PersonaAdapter {
@@ -154,6 +156,9 @@ export class PersonaAdapter {
 
     // Pull in any messages that were already restored from localStorage.
     this.syncMessages();
+    if (opts.agentTabContractId && opts.agentTabThreadId) {
+      void this.acknowledgeAndHydrateAgentTab(opts.agentTabContractId, opts.agentTabThreadId);
+    }
 
     // React to the persona's explicit scalar revision. Deep-watching the
     // message array traversed the entire transcript on every stream delta.
@@ -411,6 +416,46 @@ export class PersonaAdapter {
         this.seen.add(b.id);
         this.controller.appendMessage(mapped);
       }
+    }
+  }
+
+  private async acknowledgeAndHydrateAgentTab(contractId: string, threadId: string): Promise<void> {
+    try {
+      const snapshot = await ipcRenderer.invoke('agent-tab:ready', { contractId, threadId });
+      const rawMessages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
+      if (rawMessages.length === 0) return;
+
+      const existing = new Set(this.controller.thread.value.messages.map((message) => {
+        const text = message.kind === 'user' || message.kind === 'sulla' ? message.text : '';
+        return `${ message.kind }|${ text }`;
+      }));
+      let appended = false;
+      rawMessages.forEach((raw, index) => {
+        if (raw?.metadata?._synthetic === true || (raw.role !== 'user' && raw.role !== 'assistant')) return;
+        const text = snapshotContentToString(raw.content);
+        if (!text.trim()) return;
+        const kind = raw.role === 'user' ? 'user' : 'sulla';
+        const signature = `${ kind }|${ text }`;
+        if (existing.has(signature)) return;
+        existing.add(signature);
+        const id = asMessageId(String(raw.id || `agent-tab-snapshot-${ contractId }-${ index }`));
+        const createdAt = Number(raw.timestamp) || Date.now();
+        if (kind === 'user') {
+          this.controller.appendMessage({ id, kind, text, createdAt } satisfies UserMessage);
+        } else {
+          this.controller.appendMessage({
+            id,
+            kind,
+            text,
+            createdAt,
+            model: this.controller.model.value.name,
+          } satisfies SullaMessage);
+        }
+        appended = true;
+      });
+      if (appended) this.controller.persistThread();
+    } catch (error) {
+      console.warn('[PersonaAdapter] Agent-tab readiness acknowledgement failed:', error);
     }
   }
 
@@ -1131,6 +1176,16 @@ export class PersonaAdapter {
 function isMobileRelayChannel(channel: string): boolean {
   const c = (channel || '').toLowerCase();
   return c === 'mobile-relay' || c === 'mobile' || c.startsWith('mobile-');
+}
+
+function snapshotContentToString(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((part): part is { type: string; text: string } =>
+      !!part && typeof part === 'object' && (part as any).type === 'text' && typeof (part as any).text === 'string')
+    .map(part => part.text)
+    .join('\n');
 }
 
 function escapeHtml(value: string): string {
