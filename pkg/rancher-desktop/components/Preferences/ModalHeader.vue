@@ -8,6 +8,9 @@ export default defineComponent({ name: 'preferences-header' });
     <div class="title">
       Preferences
     </div>
+    <div class="preferences-noir-subtitle">
+      Shape how Sulla runs
+    </div>
   </div>
 </template>
 
@@ -25,5 +28,9 @@ export default defineComponent({ name: 'preferences-header' });
 
   .title {
     flex: 1;
+  }
+
+  .preferences-noir-subtitle {
+    display: none;
   }
 </style>

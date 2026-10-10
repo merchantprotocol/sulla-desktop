@@ -18,7 +18,21 @@ export default defineComponent({
       required: true,
     },
   },
-  emits:   ['click'],
+  emits:    ['click'],
+  computed: {
+    noirGlyph(): string {
+      const glyphs: Record<string, string> = {
+        Application:        '◎',
+        Appearance:         '◇',
+        'Virtual Machine':  '▣',
+        WSL:                '▣',
+        'Container Engine': '▤',
+        Kubernetes:         '⌘',
+      };
+
+      return glyphs[this.name] ?? '·';
+    },
+  },
   methods: {
     navClicked() {
       this.$emit('click', this.name);
@@ -31,8 +45,13 @@ export default defineComponent({
   <div
     class="preferences-nav-item"
     :class="{ active }"
+    :aria-current="active ? 'page' : undefined"
     @click="navClicked"
   >
+    <span
+      class="preferences-noir-glyph"
+      aria-hidden="true"
+    >{{ noirGlyph }}</span>
     <slot>Menu Item</slot>
   </div>
 </template>
@@ -59,5 +78,9 @@ export default defineComponent({
     color: var(--accent-primary, var(--primary, #3b82f6));
     border-left-color: var(--accent-primary, var(--primary, #3b82f6));
     font-weight: 500;
+  }
+
+  .preferences-noir-glyph {
+    display: none;
   }
 </style>
