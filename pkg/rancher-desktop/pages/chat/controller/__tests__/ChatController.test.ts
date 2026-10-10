@@ -141,6 +141,15 @@ describe('ChatController — serialize + hydrate', () => {
     expect(b.messages.value.length).toBe(a.messages.value.length);
     expect(b.artifacts.value.list.length).toBe(1);
   });
+
+  it('hydrate keeps the live backend thread id when the stored blob has none', () => {
+    const stored = newController().serialize();
+    const c = newController();
+    c.setBackendThreadId('thread_live');
+    c.hydrate(stored);
+    expect(c.thread.value.id).toBe(stored.thread.id);
+    expect(c.thread.value.backendThreadId).toBe('thread_live');
+  });
 });
 
 describe('ChatController — events', () => {

@@ -756,7 +756,11 @@ export class ChatController {
   }
 
   hydrate(state: ThreadState): void {
-    this.thread.value = state.thread;
+    // The backend thread belongs to this tab's persona, not the stored blob.
+    // DB-restored blobs often lack it; dropping it left per-chat features
+    // (heartbeat, sub-agent cards) unable to find their backend thread.
+    const backendThreadId = this.thread.value.backendThreadId ?? state.thread.backendThreadId;
+    this.thread.value = backendThreadId ? { ...state.thread, backendThreadId } : state.thread;
     // Never rehydrate a non-idle runState across a process restart.
     // The backend (ci.graphRunning via PersonaAdapter.syncRunState) is the
     // authoritative source for whether work is in flight; if we restored

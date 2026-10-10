@@ -1,16 +1,31 @@
 <template>
   <div class="heartbeat-control">
-    <button
-      type="button"
-      class="heartbeat-trigger"
-      :class="{ enabled: status.enabled }"
-      :aria-expanded="open"
-      title="Chat heartbeat"
-      @click="open = !open"
+    <div
+      class="heartbeat-pill"
+      :class="{ enabled: isOn, broken: !!error }"
     >
-      <span aria-hidden="true">♥</span>
-      <span>{{ status.enabled ? countdown : 'off' }}</span>
-    </button>
+      <button
+        type="button"
+        role="switch"
+        class="heartbeat-switch"
+        :aria-checked="isOn"
+        :title="isOn ? 'Turn chat heartbeat off' : 'Turn chat heartbeat on'"
+        @click="toggle"
+      >
+        <span class="track"><span class="thumb" /></span>
+        <span aria-hidden="true">♥</span>
+        <span>{{ label }}</span>
+      </button>
+      <button
+        type="button"
+        class="heartbeat-settings"
+        title="Heartbeat settings"
+        :aria-expanded="open"
+        @click="open = !open"
+      >
+        ⚙
+      </button>
+    </div>
 
     <form
       v-if="open"
@@ -23,7 +38,6 @@
       <label>
         <span>Wake every</span>
         <select v-model="choice">
-          <option value="off">Off</option>
           <option
             v-for="minutes in presets"
             :key="minutes"
@@ -49,19 +63,25 @@
           rows="5"
         />
       </label>
+      <div
+        v-if="error"
+        class="heartbeat-error"
+      >
+        {{ error }}
+      </div>
       <div class="heartbeat-actions">
         <button
           type="button"
           class="off-button"
-          @click="turnOff"
+          @click="open = false"
         >
-          Turn off
+          Cancel
         </button>
         <button
           type="submit"
           class="save-button"
         >
-          Save
+          {{ isOn ? 'Save' : 'Save & turn on' }}
         </button>
       </div>
     </form>
@@ -88,9 +108,13 @@ import type { HeartbeatMessage } from '../../models/Message';
 
 const controller = useChatController();
 const presets = [1, 2, 5, 10, 15, 30, 60];
+const DEFAULT_MINUTES = 5;
 const open = ref(false);
 const now = ref(Date.now());
-const choice = ref('off');
+const choice = ref(String(DEFAULT_MINUTES));
+const error = ref('');
+// Interval the switch restores when turned back on.
+const lastMinutes = ref(controller.heartbeat.value.intervalMinutes ?? DEFAULT_MINUTES);
 const customMinutes = ref(5);
 const draftMessage = ref(DEFAULT_CHAT_HEARTBEAT_MESSAGE);
 const status = ref<ChatHeartbeatStatus>({
@@ -104,6 +128,15 @@ let registeredThreadId = '';
 let clock: ReturnType<typeof setInterval> | null = null;
 
 const backendThreadId = computed(() => controller.thread.value.backendThreadId ?? '');
+// The switch follows the chat's saved config so it flips the moment you
+// click; the label shows what the scheduler in main is actually doing.
+const isOn = computed(() => controller.heartbeat.value.intervalMinutes !== null);
+const label = computed(() => {
+  if (!isOn.value) return 'off';
+  if (error.value) return 'not running';
+  if (!status.value.enabled) return 'starting…';
+  return countdown.value;
+});
 const countdown = computed(() => {
   if (status.value.pending) return 'pending';
   if (!status.value.nextAt) return 'on';
@@ -112,50 +145,75 @@ const countdown = computed(() => {
 });
 
 function syncForm(config: ChatHeartbeatConfig): void {
-  const minutes = config.intervalMinutes;
-  choice.value = minutes === null ? 'off' : presets.includes(minutes) ? String(minutes) : 'custom';
-  if (minutes !== null && !presets.includes(minutes)) customMinutes.value = minutes;
+  const minutes = config.intervalMinutes ?? lastMinutes.value;
+  if (config.intervalMinutes !== null) lastMinutes.value = config.intervalMinutes;
+  choice.value = presets.includes(minutes) ? String(minutes) : 'custom';
+  if (!presets.includes(minutes)) customMinutes.value = minutes;
   draftMessage.value = config.message;
 }
 
-async function register(threadId: string): Promise<void> {
-  if (!threadId) return;
+function errorText(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err ?? '');
+  // A main process started before this feature existed has no handler.
+  if (/no handler registered/i.test(text)) return 'Heartbeat service isn\'t loaded — restart Sulla Desktop.';
+  return text || 'Heartbeat service did not respond.';
+}
+
+async function register(threadId: string): Promise<boolean> {
+  if (!threadId) return false;
   if (registeredThreadId && registeredThreadId !== threadId) {
     await ipcRenderer.invoke('chat-heartbeat:unregister', registeredThreadId).catch(() => undefined);
+    registeredThreadId = '';
   }
-  registeredThreadId = threadId;
-  const result = await ipcRenderer.invoke('chat-heartbeat:register', {
-    threadId,
-    channel: 'sulla-desktop',
-    config:  controller.heartbeat.value,
-    busy:    controller.isRunning.value,
-  });
-  if (result?.success && result.status) status.value = result.status;
-  syncForm(controller.heartbeat.value);
+  try {
+    const result = await ipcRenderer.invoke('chat-heartbeat:register', {
+      threadId,
+      channel: 'sulla-desktop',
+      config:  controller.heartbeat.value,
+      busy:    controller.isRunning.value,
+    });
+    if (!result?.success) throw new Error(result?.error || 'register failed');
+    registeredThreadId = threadId;
+    status.value = result.status;
+    error.value = '';
+    return true;
+  } catch (err) {
+    error.value = errorText(err);
+    return false;
+  } finally {
+    syncForm(controller.heartbeat.value);
+  }
 }
 
 async function apply(config: ChatHeartbeatConfig): Promise<void> {
   const normalized = normalizeChatHeartbeatConfig(config);
   controller.setHeartbeat(normalized);
   syncForm(normalized);
-  if (registeredThreadId) {
-    const result = await ipcRenderer.invoke('chat-heartbeat:set', { threadId: registeredThreadId, config: normalized });
-    if (result?.success && result.status) status.value = result.status;
-  }
   open.value = false;
+  // Register on demand — the chat may not have been registered yet (thread
+  // id arrived late, or the first attempt failed).
+  if (!registeredThreadId && !await register(backendThreadId.value)) {
+    if (!backendThreadId.value) error.value = 'This chat has no backend thread yet — send a message first.';
+    return;
+  }
+  try {
+    const result = await ipcRenderer.invoke('chat-heartbeat:set', { threadId: registeredThreadId, config: normalized });
+    if (!result?.success) throw new Error(result?.error || 'update failed');
+    status.value = result.status;
+    error.value = '';
+  } catch (err) {
+    error.value = errorText(err);
+  }
 }
 
 async function save(): Promise<void> {
-  const intervalMinutes = choice.value === 'off'
-    ? null
-    : choice.value === 'custom'
-      ? Number(customMinutes.value)
-      : Number(choice.value);
+  const intervalMinutes = choice.value === 'custom' ? Number(customMinutes.value) : Number(choice.value);
   await apply({ intervalMinutes, message: draftMessage.value });
 }
 
-async function turnOff(): Promise<void> {
-  await apply({ intervalMinutes: null, message: draftMessage.value });
+async function toggle(): Promise<void> {
+  const message = controller.heartbeat.value.message;
+  await apply({ intervalMinutes: isOn.value ? null : lastMinutes.value, message });
 }
 
 function onStatus(_event: unknown, value: ChatHeartbeatStatus): void {
@@ -203,13 +261,31 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .heartbeat-control { position: relative; margin-right: auto; letter-spacing: normal; text-transform: none; }
-.heartbeat-trigger {
-  display: inline-flex; align-items: center; gap: 6px;
+.heartbeat-pill {
+  display: inline-flex; align-items: center;
   border: 1px solid var(--border-muted); border-radius: 999px;
-  padding: 3px 8px; background: var(--surface-1); color: var(--text-muted);
-  font: inherit; cursor: pointer;
+  background: var(--surface-1); color: var(--text-muted);
 }
-.heartbeat-trigger.enabled { color: var(--accent); border-color: var(--accent-border); background: var(--accent-dim); }
+.heartbeat-pill.enabled { color: var(--accent); border-color: var(--accent-border); background: var(--accent-dim); }
+.heartbeat-pill.broken { color: var(--warning); border-color: var(--warning); }
+.heartbeat-switch, .heartbeat-settings {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.heartbeat-switch { padding: 3px 4px 3px 6px; }
+.heartbeat-settings { padding: 3px 8px 3px 4px; opacity: 0.7; }
+.heartbeat-settings:hover { opacity: 1; }
+.track {
+  position: relative; width: 24px; height: 14px; border-radius: 999px;
+  background: var(--surface-3); border: 1px solid var(--border); transition: background 0.15s;
+}
+.thumb {
+  position: absolute; top: 1px; left: 1px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--text-muted); transition: transform 0.15s, background 0.15s;
+}
+.heartbeat-pill.enabled .track { background: var(--accent); border-color: var(--accent); }
+.heartbeat-pill.enabled .thumb { transform: translateX(10px); background: var(--bg); }
+.heartbeat-error { margin-top: 10px; color: var(--warning); }
 .heartbeat-popover {
   position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 30;
   width: min(360px, 80vw); padding: 14px; border-radius: 12px;
