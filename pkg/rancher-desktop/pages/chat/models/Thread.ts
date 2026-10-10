@@ -6,6 +6,7 @@ import type { QueuedMessage }             from './QueuedMessage';
 import type { PopoverState }              from './Command';
 import type { RunState }                  from './RunState';
 import type { VoiceState }                from './VoiceState';
+import type { ChatHeartbeatConfig }       from '@pkg/shared/chatHeartbeat';
 
 export interface ModelDescriptor {
   id:     string;
@@ -87,4 +88,5 @@ export interface ThreadState {
   sidebar:        SidebarState;
   connection:     ConnectionState;
   model:          ModelDescriptor;
+  heartbeat?:     ChatHeartbeatConfig;
 }

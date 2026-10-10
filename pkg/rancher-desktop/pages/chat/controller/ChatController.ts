@@ -34,6 +34,7 @@ import { idle as runIdle, isRunning }   from '../models/RunState';
 import { popoverClosed, defaultSlashCommands } from '../models/Command';
 import { voiceIdle }                    from '../models/VoiceState';
 import { emptyTokenUsage }               from '../models/Thread';
+import { defaultChatHeartbeatConfig, type ChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
 
 import {
   type MessageId, type ArtifactId, type AttachmentId, type QueuedId, type ThreadId,
@@ -113,6 +114,7 @@ export class ChatController {
   readonly connection:      Ref<ConnectionState>;
   readonly model:           Ref<ModelDescriptor>;
   readonly usage:           Ref<TokenUsage>;
+  readonly heartbeat:       Ref<ChatHeartbeatConfig>;
 
   // Derived views — read-only computed helpers components can consume.
   readonly messages:          ComputedRef<Message[]>;
@@ -160,6 +162,7 @@ export class ChatController {
     this.connection = ref(initial.connection);
     this.model     = ref(initial.model);
     this.usage     = ref(emptyTokenUsage());
+    this.heartbeat = ref(initial.heartbeat ?? defaultChatHeartbeatConfig());
 
     this.messages       = computed(() => this.thread.value.messages);
     this.isRunning      = computed(() => isRunning(this.runState.value));
@@ -189,6 +192,7 @@ export class ChatController {
     this.artifacts.value  = { list: [], activeId: null };
     this.popover.value    = blank.popover;
     this.modals.value     = blank.modals;
+    this.heartbeat.value  = blank.heartbeat ?? defaultChatHeartbeatConfig();
     this.bus.emit({ kind: 'threadHydrated', threadId: this.thread.value.id });
   }
 
@@ -350,6 +354,22 @@ export class ChatController {
     this.bus.emit({ kind: 'messageAppended', threadId: this.thread.value.id, message: m });
   }
 
+  appendHeartbeat(m: Message): void {
+    this.appendMessage(m);
+    this.persist();
+  }
+
+  setHeartbeat(config: ChatHeartbeatConfig): void {
+    this.heartbeat.value = { ...config };
+    this.persist();
+  }
+
+  setBackendThreadId(threadId: string): void {
+    if (!threadId || this.thread.value.backendThreadId === threadId) return;
+    this.thread.value = { ...this.thread.value, backendThreadId: threadId, updatedAt: Date.now() };
+    this.persist();
+  }
+
   updateMessage<T extends Message>(id: MessageId, patch: Partial<T>): void {
     const idx = this.thread.value.messages.findIndex(m => m.id === id);
     if (idx < 0) return;
@@ -447,6 +467,7 @@ export class ChatController {
       activeArtifactId:  null,
       popover:           popoverClosed(),
       modals:            { which: null },
+      heartbeat:         defaultChatHeartbeatConfig(),
     };
   }
 
@@ -707,6 +728,7 @@ export class ChatController {
       sidebar:          this.sidebar.value,
       connection:       this.connection.value,
       model:            this.model.value,
+      heartbeat:        this.heartbeat.value,
     };
     this.bus.emit({ kind: 'threadSerialized', threadId: this.thread.value.id });
     return state;
@@ -729,6 +751,7 @@ export class ChatController {
     this.sidebar.value = state.sidebar;
     this.connection.value = state.connection;
     this.model.value = state.model;
+    this.heartbeat.value = state.heartbeat ?? defaultChatHeartbeatConfig();
     this.bus.emit({ kind: 'threadHydrated', threadId: state.thread.id });
   }
 
@@ -770,6 +793,7 @@ export class ChatController {
       sidebar: { historyOpen: false, fileTreeOpen: false },
       connection: 'online',
       model: DEFAULT_MODEL,
+      heartbeat: defaultChatHeartbeatConfig(),
     };
   }
 }

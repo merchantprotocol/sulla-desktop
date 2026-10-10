@@ -17,6 +17,7 @@ import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
 import { initBookmarksIpc } from './bookmarksIpc';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
+import { initChatHeartbeatIpc } from './chatHeartbeatIpc';
 import { initChatMessagesIpc } from './chatMessagesIpc';
 import { initMessageBusIpc } from './messageBusIpc';
 import { initSullaApprovalEvents } from './sullaApprovalEvents';
@@ -77,6 +78,7 @@ export function initSullaEvents(): void {
   initConversationHistoryIpc();
   initBookmarksIpc();
   initChatMessagesIpc();
+  initChatHeartbeatIpc();
   initClaudeOAuthEvents();
   initOpenAIOAuthEvents();
   initIntegrationOAuthEvents();

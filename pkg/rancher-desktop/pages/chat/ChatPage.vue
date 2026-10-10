@@ -552,8 +552,8 @@ watch(() => controller.thread.value.id, (newId) => {
 // Resets the controller to a fresh thread + tells the adapter to
 // clear its ChatInterface (thread id, queue, persona messages).
 function onNewChatEvent(): void {
-  adapter.newChat();
   controller.newChat();
+  adapter.newChat();
 }
 
 // ─── Fork listener — /fork ─────────────────────────────────────────

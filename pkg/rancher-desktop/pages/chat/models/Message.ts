@@ -22,6 +22,7 @@ export type MessageKind =
   | 'citation'      // grounding sources
   | 'memory'        // memory saved/removed/updated
   | 'proactive'     // Sulla reaching out unprompted
+  | 'heartbeat'     // scheduled wake for this thread
   | 'tts'           // Sulla is currently speaking (transient)
   | 'interim'       // user voice transcript being drafted (transient)
   | 'error'         // error/recovery
@@ -197,6 +198,12 @@ export interface ProactiveMessage extends MessageBase {
   body:     string;         // markdown-ish
 }
 
+export interface HeartbeatMessage extends MessageBase {
+  kind:            'heartbeat';
+  text:            string;
+  intervalMinutes: number;
+}
+
 // ─── TTS (transient speaking indicator) ──────────────────────────
 export interface TtsMessage extends MessageBase {
   kind:       'tts';
@@ -242,6 +249,7 @@ export type Message =
   | CitationMessage
   | MemoryMessage
   | ProactiveMessage
+  | HeartbeatMessage
   | TtsMessage
   | InterimMessage
   | ErrorMessage
