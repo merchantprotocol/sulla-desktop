@@ -28,7 +28,8 @@
           :ref="element => setItemRef(element, idx)"
           type="button"
           :class="['mode-btn', { active: isActive(item, idx) }]"
-          :data-tooltip="item.mode === 'decide' && pending.length ? `Decide · ${pending.length} waiting` : (item.tooltip ?? item.label)"
+          :data-tooltip="item.label"
+          :data-noir-tooltip="item.mode === 'decide' && pending.length ? `Decide · ${pending.length} waiting` : (item.tooltip ?? item.label)"
           :aria-label="item.label"
           :aria-current="isActive(item, idx) ? 'page' : undefined"
           @click="$emit('set-mode', item.mode, item.subTab)"
@@ -67,7 +68,7 @@
             viewBox="0 0 24 24"
             aria-hidden="true"
           >
-            <path d="M18.5 20.5L12 16l-6.5 4.5V5.5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2z" />
+            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
           </svg>
         </span>
         <span class="item-label">Bookmarks</span>
@@ -87,7 +88,18 @@
             aria-hidden="true"
           >
             <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-            <path d="M9 12h6M9 15h4" />
+            <line
+              x1="9"
+              y1="12"
+              x2="15"
+              y2="12"
+            />
+            <line
+              x1="9"
+              y1="15"
+              x2="13"
+              y2="15"
+            />
           </svg>
         </span>
         <span class="item-label">File Explorer</span>
@@ -239,154 +251,114 @@ onBeforeUnmount(() => {
 
 const items: readonly ModeItem[] = Object.freeze([
   {
-    mode: 'decide', label: 'Decide', shortcut: '⌘1', tooltip: 'Decide', icon: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M9 12l2 2 4-4"/></svg>',
+    mode: 'decide', label: 'Decide', shortcut: '⌘1', tooltip: 'Decide', icon: '<svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg>',
   },
   {
-    mode: 'chat', label: 'Chat', shortcut: '⌘2', icon: '<svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z"/></svg>',
+    mode: 'chat', label: 'Chat', shortcut: '⌘2', icon: '<svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
   },
   {
-    mode: 'browser', label: 'Browser', shortcut: '⌘3', icon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M2.5 12h19M12 2.5a14.5 14.5 0 0 1 0 19 14.5 14.5 0 0 1 0-19z"/></svg>',
+    mode: 'browser', label: 'Browser', shortcut: '⌘3', icon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
   },
   {
-    mode: 'agents', label: 'Agents', shortcut: '⌘4', icon: '<svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="19" r="2.6"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>',
+    mode: 'agents', label: 'Agents', shortcut: '⌘4', icon: '<svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
   },
   {
-    mode: 'projects', label: 'Projects', shortcut: '⌘5', icon: '<svg viewBox="0 0 24 24"><rect x="2.5" y="7" width="19" height="13.5" rx="3"/><path d="M8.5 7V5.5a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2V7"/></svg>',
+    mode: 'projects', label: 'Projects', shortcut: '⌘5', icon: '<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>',
   },
   {
-    mode: 'routines', subTab: 'mywork', label: 'Routines', shortcut: '⌘6', groupStart: true, icon: '<svg viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 0 1-14.8 5.7M3.5 12A8.5 8.5 0 0 1 18.3 6.3"/><path d="M19 3v4h-4M5 21v-4h4"/></svg>',
+    mode: 'routines', subTab: 'mywork', label: 'Routines', shortcut: '⌘6', groupStart: true, icon: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3.2-6.8"/><polyline points="21 3.5 21 9 15.5 9"/></svg>',
   },
   {
-    mode: 'secretary', label: 'Secretary', shortcut: '⌘7', tooltip: 'Secretary · ⌘⇧S', icon: '<svg viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></svg>',
+    mode: 'secretary', label: 'Secretary', shortcut: '⌘7', tooltip: 'Secretary · ⌘⇧S', icon: '<svg viewBox="0 0 24 24"><path d="M12 2v4"/><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 1 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>',
   },
   {
-    mode: 'routines', subTab: 'library', label: 'Library', shortcut: '⌘8', icon: '<svg viewBox="0 0 24 24"><path d="M4 4.5h4v15H4zM10 4.5h4v15h-4zM15.5 5.5l3.6-1 3 14.4-3.6 1z"/></svg>',
+    mode: 'routines', subTab: 'library', label: 'Library', shortcut: '⌘8', icon: '<svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
   },
   {
-    mode: 'marketplace', label: 'Marketplace', shortcut: '⌘9', icon: '<svg viewBox="0 0 24 24"><path d="M5 8h14l-1.2 12H6.2z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>',
+    mode: 'marketplace', label: 'Marketplace', shortcut: '⌘9', icon: '<svg viewBox="0 0 24 24"><path d="M3 7l1-4h16l1 4"/><path d="M3 7v13a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V7"/><path d="M3 7h18"/><path d="M8 11a4 4 0 0 0 8 0"/></svg>',
   },
   {
-    mode: 'vault', label: 'Password Vault', shortcut: '⌘0', groupStart: true, icon: '<svg viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="3"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>',
+    mode: 'vault', label: 'Password Vault', shortcut: '⌘0', groupStart: true, icon: '<svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
   },
 ]);
 </script>
 
 <style scoped>
 .mode-rail {
-  --rail-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
-  --rail-standard: cubic-bezier(.22, 1, .36, 1);
-
-  box-sizing: border-box;
-  width: 64px;
+  width: 52px;
   height: 100%;
   display: flex;
-  flex: none;
   flex-direction: column;
-  padding: 40px 10px 10px;
-  overflow: visible;
-  color: var(--read-3, #a9b3c1);
+  align-items: stretch;
+  padding: 40px 0 10px;
   background: rgba(3, 6, 12, .55);
   border-right: 1px solid rgba(168, 192, 220, .08);
   backdrop-filter: blur(10px);
-  transition: width .58s var(--rail-spring);
-  z-index: 20;
+  flex-shrink: 0;
+  gap: 4px;
+  overflow-x: visible;
+  overflow-y: auto;
+  scrollbar-width: none;
 }
 
-.mode-rail.expanded {
-  width: 212px;
-}
+.mode-rail::-webkit-scrollbar { display: none; }
 
 .rail-items,
 .rail-footer {
-  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
 .active-indicator {
-  position: absolute;
-  inset: 0 0 auto;
-  border-radius: 20px;
-  pointer-events: none;
-  opacity: 0;
-  background: linear-gradient(180deg, rgba(80, 150, 179, .30), rgba(80, 150, 179, .14));
-  box-shadow: inset 0 0 0 .5px rgba(106, 176, 204, .5), 0 0 22px rgba(80, 150, 179, .22);
-  transition: transform .58s var(--rail-spring), opacity .12s ease;
-  z-index: 0;
-}
-
-.active-indicator.visible {
-  opacity: 1;
-}
-
-.active-indicator::before {
-  content: '';
-  position: absolute;
-  left: -10px;
-  top: 50%;
-  width: 3px;
-  height: 22px;
-  margin-top: -11px;
-  border-radius: 0 3px 3px 0;
-  background: var(--steel-400, #6ab0cc);
-  box-shadow: 0 0 10px var(--steel-400, #6ab0cc);
+  display: none;
 }
 
 .mode-btn {
   position: relative;
-  z-index: 1;
-  width: 100%;
-  height: 40px;
-  min-height: 40px;
+  margin: 0 6px;
+  padding: 8px 0;
   display: flex;
   align-items: center;
-  gap: 0;
-  padding: 0 12px;
-  overflow: visible;
-  border: 0;
-  border-radius: 20px;
-  color: var(--read-3, #a9b3c1);
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  color: #a9b3c1;
   background: transparent;
   cursor: pointer;
-  white-space: nowrap;
-  user-select: none;
-  transition: color .16s var(--rail-standard), background .16s var(--rail-standard), transform .5s var(--rail-spring);
+  transition: color .2s ease, background .2s ease;
 }
 
 .mode-btn:hover {
-  color: var(--read-2, #dee4ec);
-  background: rgba(80, 150, 179, .10);
-}
-
-.mode-btn:active {
-  transform: scale(.92);
-  transition-duration: .08s;
-}
-
-.mode-btn:focus-visible {
-  outline: 2px solid var(--steel-400, #6ab0cc);
-  outline-offset: 2px;
+  color: #dee4ec;
+  background: rgba(80, 150, 179, .12);
 }
 
 .mode-btn.active {
-  color: #fff;
-}
-
-.expanded .mode-btn {
-  gap: 12px;
-}
-
-.rail-footer .mode-btn.active {
+  color: white;
   background: rgba(80, 150, 179, .14);
 }
 
+.mode-btn.active::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  width: 3px;
+  height: 26px;
+  border-radius: 0 3px 3px 0;
+  background: var(--steel-400);
+  box-shadow: 0 0 10px var(--steel-400);
+  transform: translateY(-50%);
+}
+
 .icon {
-  width: 20px;
-  height: 20px;
-  display: grid;
-  flex: none;
-  place-items: center;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: filter .2s ease, transform .15s ease;
 }
 
 .icon :deep(svg) {
@@ -399,80 +371,33 @@ const items: readonly ModeItem[] = Object.freeze([
   stroke-linejoin: round;
 }
 
+.mode-btn:hover .icon {
+  transform: translateY(-1px);
+}
+
 .mode-btn.active .icon {
-  filter: drop-shadow(0 0 8px rgba(106, 176, 204, .6));
+  filter: drop-shadow(0 0 10px rgba(106, 176, 204, .45));
 }
 
-.item-label {
-  max-width: 0;
-  overflow: hidden;
-  font-size: 13.5px;
-  font-weight: 500;
-  opacity: 0;
-  filter: blur(6px);
-  transform: translateX(-6px);
-  transition: opacity .24s var(--rail-standard), filter .24s var(--rail-standard), transform .48s var(--rail-spring);
-}
-
-.expanded .item-label {
-  max-width: 120px;
-  opacity: 1;
-  filter: blur(0);
-  transform: none;
-}
-
+.item-label,
 .shortcut-hint {
   display: none;
-  margin-left: auto;
-  color: var(--read-5, #484f5a);
-  font-family: var(--mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace);
-  font-size: 10.5px;
-  opacity: 0;
-  transition: opacity .2s ease;
-}
-
-.expanded .shortcut-hint {
-  display: inline;
-  opacity: 1;
 }
 
 .rail-divider {
-  height: 1px;
-  margin: 6px 8px;
-  flex: none;
-  background: rgba(168, 192, 220, .08);
+  display: none;
 }
 
 .decision-badge {
   position: absolute;
-  left: 25px;
-  top: 3px;
-  min-width: 16px;
-  height: 16px;
-  display: grid;
-  place-items: center;
-  padding: 0 4px;
-  border-radius: 8px;
-  color: #fff;
-  background: var(--steel-500, #5096b3);
-  box-shadow: 0 0 8px var(--steel-500, #5096b3), 0 0 0 2px var(--ink-2, #03060c);
+  top: 0;
+  right: 0;
+  padding: 1px 5px;
+  border-radius: 12px;
+  color: white;
+  background: var(--accent, #5096b3);
+  box-shadow: 0 0 8px var(--accent, #5096b3);
   font-size: 10px;
-  font-weight: 650;
-}
-
-.decision-badge::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--steel-400, #6ab0cc);
-  animation: decision-ping 2.2s var(--rail-standard) infinite;
-  z-index: -1;
-}
-
-@keyframes decision-ping {
-  0% { transform: scale(1); opacity: .6; }
-  70%, 100% { transform: scale(2.2); opacity: 0; }
 }
 
 .rail-spacer {
@@ -483,58 +408,265 @@ const items: readonly ModeItem[] = Object.freeze([
 .mode-btn::after {
   content: attr(data-tooltip);
   position: absolute;
-  left: 52px;
+  left: calc(100% + 10px);
   top: 50%;
-  padding: 6px 10px;
+  padding: 5px 10px;
   border: 1px solid rgba(168, 192, 220, .18);
-  border-radius: 8px;
-  color: var(--read-1, #f3f5f8);
+  border-radius: 5px;
+  color: var(--read-1, #e6edf3);
   background: rgba(12, 18, 28, .96);
   box-shadow: 0 6px 22px rgba(0, 0, 0, .55);
-  font-family: var(--mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace);
+  font-family: var(--mono);
   font-size: 11px;
   letter-spacing: .08em;
   white-space: nowrap;
   pointer-events: none;
   opacity: 0;
-  transform: translate(-4px, -50%) scale(.96);
-  transition: opacity .14s var(--rail-standard), transform .3s var(--rail-spring);
+  transform: translateY(-50%) translateX(-4px);
+  transition: opacity .12s ease, transform .12s ease;
   z-index: 1000;
 }
 
-.mode-rail:not(.expanded) .mode-btn:hover::after {
+.mode-btn:hover::after {
   opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.expand-toggle {
+  display: none;
+}
+
+:global(.theme-noir-dark) .mode-rail {
+  --rail-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) .58s;
+  box-sizing: border-box;
+  width: 64px;
+  padding: 40px 10px 10px;
+  overflow: visible;
+  color: #a9b3c1;
+  transition: width var(--rail-spring);
+  z-index: 20;
+}
+
+:global(.theme-noir-dark) .mode-rail.expanded {
+  width: 212px;
+}
+
+:global(.theme-noir-dark) .rail-items,
+:global(.theme-noir-dark) .rail-footer {
+  position: relative;
+}
+
+:global(.theme-noir-dark) .active-indicator {
+  position: absolute;
+  inset: 0 0 auto;
+  display: block;
+  border-radius: 20px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(180deg, rgba(80, 150, 179, .3), rgba(80, 150, 179, .14));
+  box-shadow: inset 0 0 0 .5px rgba(106, 176, 204, .5), 0 0 22px rgba(80, 150, 179, .22);
+  transition: transform var(--rail-spring), opacity .12s ease;
+  z-index: 0;
+}
+
+:global(.theme-noir-dark) .active-indicator.visible {
+  opacity: 1;
+}
+
+:global(.theme-noir-dark) .active-indicator::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  width: 3px;
+  height: 22px;
+  margin-top: -11px;
+  border-radius: 0 3px 3px 0;
+  background: #6ab0cc;
+  box-shadow: 0 0 10px #6ab0cc;
+}
+
+:global(.theme-noir-dark) .mode-btn {
+  width: 100%;
+  height: 40px;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 12px;
+  justify-content: flex-start;
+  gap: 0;
+  overflow: visible;
+  border-radius: 20px;
+  color: #a9b3c1;
+  white-space: nowrap;
+  user-select: none;
+  transition: color .16s cubic-bezier(.22, 1, .36, 1), background .16s cubic-bezier(.22, 1, .36, 1), transform var(--rail-spring);
+  z-index: 1;
+}
+
+:global(.theme-noir-dark) .mode-btn:hover {
+  color: #dee4ec;
+  background: rgba(80, 150, 179, .1);
+}
+
+:global(.theme-noir-dark) .mode-btn:active {
+  transform: scale(.92);
+  transition-duration: .08s;
+}
+
+:global(.theme-noir-dark) .mode-btn:focus-visible {
+  outline: 2px solid #6ab0cc;
+  outline-offset: 2px;
+}
+
+:global(.theme-noir-dark) .mode-btn.active {
+  color: #f3f5f8;
+  background: transparent;
+}
+
+:global(.theme-noir-dark) .mode-btn.active::before {
+  content: none;
+}
+
+:global(.theme-noir-dark) .mode-btn:hover .icon {
+  transform: none;
+}
+
+:global(.theme-noir-dark) .mode-btn.active .icon {
+  filter: drop-shadow(0 0 8px rgba(106, 176, 204, .6));
+}
+
+:global(.theme-noir-dark) .expanded .mode-btn {
+  gap: 12px;
+}
+
+:global(.theme-noir-dark) .rail-footer .mode-btn.active {
+  background: rgba(80, 150, 179, .14);
+}
+
+:global(.theme-noir-dark) .icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+:global(.theme-noir-dark) .item-label {
+  max-width: 0;
+  display: inline;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 500;
+  opacity: 0;
+  filter: blur(6px);
+  transform: translateX(-6px);
+  transition: opacity .24s cubic-bezier(.22, 1, .36, 1), filter .24s cubic-bezier(.22, 1, .36, 1), transform var(--rail-spring);
+}
+
+:global(.theme-noir-dark) .expanded .item-label {
+  max-width: 120px;
+  opacity: 1;
+  filter: blur(0);
+  transform: none;
+}
+
+:global(.theme-noir-dark) .shortcut-hint {
+  margin-left: auto;
+  color: #484f5a;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px;
+  opacity: 0;
+  transition: opacity .2s ease;
+}
+
+:global(.theme-noir-dark) .expanded .shortcut-hint {
+  display: inline;
+  opacity: 1;
+}
+
+:global(.theme-noir-dark) .rail-divider {
+  height: 1px;
+  margin: 6px 8px;
+  display: block;
+  flex: none;
+  background: rgba(168, 192, 220, .08);
+}
+
+:global(.theme-noir-dark) .decision-badge {
+  left: 25px;
+  right: auto;
+  top: 3px;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #5096b3;
+  box-shadow: 0 0 8px #5096b3, 0 0 0 2px #03060c;
+  font-weight: 650;
+}
+
+:global(.theme-noir-dark) .decision-badge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #6ab0cc;
+  animation: decision-ping 2.2s cubic-bezier(.22, 1, .36, 1) infinite;
+  z-index: -1;
+}
+
+@keyframes decision-ping {
+  0% { transform: scale(1); opacity: .6; }
+  70%, 100% { transform: scale(2.2); opacity: 0; }
+}
+
+:global(.theme-noir-dark) .mode-btn::after {
+  content: attr(data-noir-tooltip);
+  left: 52px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: #f3f5f8;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  transform: translate(-4px, -50%) scale(.96);
+  transition: opacity .14s cubic-bezier(.22, 1, .36, 1), transform .3s var(--rail-spring);
+}
+
+:global(.theme-noir-dark) .mode-rail:not(.expanded) .mode-btn:hover::after {
   transform: translate(0, -50%) scale(1);
   transition-delay: .25s;
 }
 
-.expanded .mode-btn::after {
+:global(.theme-noir-dark) .expanded .mode-btn::after {
   display: none;
 }
 
-.expand-icon {
-  transition: transform .48s var(--rail-spring);
+:global(.theme-noir-dark) .expand-toggle {
+  display: flex;
 }
 
-.expanded .expand-icon {
+:global(.theme-noir-dark) .expand-icon {
+  transition: transform var(--rail-spring);
+}
+
+:global(.theme-noir-dark) .expanded .expand-icon {
   transform: scaleX(-1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mode-rail,
-  .active-indicator,
-  .mode-btn,
-  .item-label,
-  .shortcut-hint,
-  .expand-icon {
+  :global(.theme-noir-dark) .mode-rail,
+  :global(.theme-noir-dark) .active-indicator,
+  :global(.theme-noir-dark) .mode-btn,
+  :global(.theme-noir-dark) .item-label,
+  :global(.theme-noir-dark) .shortcut-hint,
+  :global(.theme-noir-dark) .expand-icon {
     transition: none;
   }
 
-  .item-label {
+  :global(.theme-noir-dark) .item-label {
     filter: none;
   }
 
-  .decision-badge::after {
+  :global(.theme-noir-dark) .decision-badge::after {
     animation: none;
   }
 }
