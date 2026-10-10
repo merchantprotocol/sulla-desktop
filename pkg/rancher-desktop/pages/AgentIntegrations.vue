@@ -40,6 +40,7 @@
             <div class="mx-auto grid max-w-6xl md:grid-cols-2 items-center gap-x-8 gap-y-10 px-4 md:px-6 lg:px-8 xl:gap-x-16">
               <div class="relative z-10 md:text-center lg:text-left">
                 <div class="relative">
+                  <span class="integrations-eyebrow">CONNECTED WORKSPACE</span>
                   <p class="inline bg-linear-to-r from-sky-200 via-sky-400 to-sky-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
                     Native Integrations.
                   </p>
@@ -193,8 +194,8 @@
                                   class="flex items-center gap-2"
                                 >
                                   <div
-                                    class="h-2 w-2 rounded-full"
-                                    :class="integration.connected ? 'bg-[#5096b3]' : 'bg-gray-300'"
+                                    class="h-2 w-2 rounded-full integration-status-dot"
+                                    :class="integration.connected ? 'bg-[#5096b3] integration-status-connected' : 'bg-gray-300 integration-status-offline'"
                                   />
                                   <span class="text-xs text-slate-500 dark:text-slate-400">
                                     {{ integration.connected ? 'Connected' : 'Disconnected' }}
@@ -318,8 +319,8 @@
                               class="flex items-center gap-2"
                             >
                               <div
-                                class="h-2 w-2 rounded-full"
-                                :class="integration.connected ? 'bg-[#5096b3]' : 'bg-gray-300'"
+                                class="h-2 w-2 rounded-full integration-status-dot"
+                                :class="integration.connected ? 'bg-[#5096b3] integration-status-connected' : 'bg-gray-300 integration-status-offline'"
                               />
                               <span class="text-xs text-slate-500 dark:text-slate-400">
                                 {{ integration.connected ? 'Connected' : 'Disconnected' }}
@@ -811,5 +812,171 @@ onMounted(async() => {
   -webkit-box-orient: vertical;
   overflow: hidden;
   line-clamp: 2;
+}
+
+.integrations-eyebrow {
+  display: none;
+}
+
+:global(.theme-noir-dark) .page-root {
+  background:
+    radial-gradient(circle at 68% -12%, rgba(80, 150, 179, 0.09), transparent 34%),
+    #01030a;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .integrations-hero,
+:global(.theme-noir-dark) .integrations-body {
+  background: transparent;
+}
+
+:global(.theme-noir-dark) .integrations-hero {
+  border-bottom: 1px solid rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .integrations-hero > div {
+  padding-top: 3rem;
+  padding-bottom: 3rem;
+}
+
+:global(.theme-noir-dark) .integrations-eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: #6ab0cc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .integrations-hero .font-display {
+  background: none;
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 3.15rem;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+
+:global(.theme-noir-dark) .integrations-hero .text-2xl {
+  color: #a9b3c1;
+  font-size: 0.875rem;
+  letter-spacing: 0;
+}
+
+:global(.theme-noir-dark) .integrations-search-input {
+  min-height: 44px;
+  border: 1px solid rgba(168, 192, 220, 0.1);
+  border-radius: 14px;
+  background: rgba(3, 6, 12, 0.68);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025), 0 14px 38px rgba(0, 0, 0, 0.18);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .integrations-search-input:focus {
+  border-color: rgba(106, 176, 204, 0.4);
+  box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.09), 0 16px 42px rgba(0, 0, 0, 0.2);
+}
+
+:global(.theme-noir-dark) .integrations-body nav h3,
+:global(.theme-noir-dark) .integrations-body h3.uppercase {
+  color: #6ab0cc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .sidebar-item-active {
+  position: relative;
+  border: 1px solid rgba(106, 176, 204, 0.22);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.18), rgba(80, 150, 179, 0.05));
+  color: #dee4ec;
+  box-shadow: 0 8px 24px rgba(80, 150, 179, 0.08);
+}
+
+:global(.theme-noir-dark) .sidebar-item-active::before {
+  position: absolute;
+  left: -5px;
+  width: 3px;
+  height: 20px;
+  border-radius: 3px;
+  background: #6ab0cc;
+  box-shadow: 0 0 10px rgba(106, 176, 204, 0.6);
+  content: '';
+}
+
+:global(.theme-noir-dark) .sidebar-item-inactive {
+  color: #7a8291;
+}
+
+:global(.theme-noir-dark) .sidebar-item-inactive:hover {
+  border-radius: 999px;
+  background: rgba(80, 150, 179, 0.06);
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .integration-card {
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  transition: transform 220ms ease, border-color 220ms ease, background 220ms ease, box-shadow 220ms ease;
+}
+
+:global(.theme-noir-dark) .integration-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(106, 176, 204, 0.28);
+  background: rgba(80, 150, 179, 0.07);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+:global(.theme-noir-dark) .integration-icon-bg {
+  border: 1px solid rgba(106, 176, 204, 0.16);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(106, 176, 204, 0.17), rgba(80, 150, 179, 0.035));
+}
+
+:global(.theme-noir-dark) .integration-card h3:not(.uppercase) {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.2rem;
+  font-weight: 500;
+}
+
+:global(.theme-noir-dark) .integration-card p {
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .integration-status-connected {
+  background: #3fb950;
+  box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.09), 0 0 10px rgba(63, 185, 80, 0.55);
+}
+
+:global(.theme-noir-dark) .integration-status-offline {
+  background: #484f5a;
+}
+
+:global(.theme-noir-dark) .integration-tag {
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  background: rgba(3, 6, 12, 0.45);
+  color: #8cacc9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .integration-btn-primary {
+  border: 1px solid rgba(106, 176, 204, 0.3);
+  border-radius: 9px;
+  background: linear-gradient(135deg, #5096b3, #6ab0cc);
+  box-shadow: 0 8px 22px rgba(80, 150, 179, 0.16);
+  color: #01030a;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .integration-card {
+    transition: none;
+  }
 }
 </style>

@@ -10,7 +10,7 @@
 
       <template v-else>
         <!-- Sulla Cloud sign-in card -->
-        <div class="account-card">
+        <div class="account-card account-cloud-card">
           <div class="account-card-header">
             <svg
               viewBox="0 0 24 24"
@@ -328,6 +328,9 @@
             {{ initials }}
           </div>
           <div class="account-hero-info">
+            <p class="account-hero-eyebrow">
+              MY ACCOUNT
+            </p>
             <h1 class="account-name">
               {{ userName || 'Sulla User' }}
             </h1>
@@ -1171,5 +1174,193 @@ onBeforeUnmount(() => {
   color: var(--text-muted, #484f58);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.account-hero-eyebrow {
+  display: none;
+}
+
+:global(.theme-noir-dark) .account-page {
+  overflow: auto;
+  background:
+    radial-gradient(circle at 70% -15%, rgba(80, 150, 179, 0.1), transparent 36%),
+    #01030a;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .account-scroll {
+  display: flex;
+  width: min(100%, 920px);
+  max-width: none;
+  flex-direction: column;
+  padding: 42px 34px 64px;
+}
+
+:global(.theme-noir-dark) .account-hero {
+  order: -2;
+  gap: 22px;
+  padding: 28px 30px;
+  border-color: rgba(106, 176, 204, 0.25);
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.16), rgba(80, 150, 179, 0.025));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 24px 70px rgba(0, 0, 0, 0.24);
+}
+
+:global(.theme-noir-dark) .account-avatar {
+  width: 72px;
+  height: 72px;
+  border: 1px solid rgba(106, 176, 204, 0.32);
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgba(106, 176, 204, 0.5), rgba(80, 150, 179, 0.12));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 14px 40px rgba(80, 150, 179, 0.15);
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.55rem;
+}
+
+:global(.theme-noir-dark) .account-hero-eyebrow {
+  display: block;
+  margin: 0 0 4px;
+  color: #6ab0cc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .account-name {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 2.15rem;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+}
+
+:global(.theme-noir-dark) .account-email {
+  color: #7a8291;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+}
+
+:global(.theme-noir-dark) .account-cloud-card {
+  order: -1;
+}
+
+:global(.theme-noir-dark) .account-card {
+  padding: 24px;
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+:global(.theme-noir-dark) .account-card-header {
+  border-color: rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .account-card-icon {
+  color: #6ab0cc;
+}
+
+:global(.theme-noir-dark) .account-card-title {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.15rem;
+  font-weight: 500;
+}
+
+:global(.theme-noir-dark) .account-label {
+  color: #8cacc9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+}
+
+:global(.theme-noir-dark) .account-input,
+:global(.theme-noir-dark) .account-textarea {
+  min-height: 40px;
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 12px;
+  background: rgba(3, 6, 12, 0.66);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .account-input:focus,
+:global(.theme-noir-dark) .account-textarea:focus {
+  border-color: rgba(106, 176, 204, 0.42);
+  box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.09);
+}
+
+:global(.theme-noir-dark) .account-hint,
+:global(.theme-noir-dark) .account-relay-state {
+  color: #7a8291;
+}
+
+:global(.theme-noir-dark) .account-tabs {
+  max-width: 360px;
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 999px;
+  background: rgba(3, 6, 12, 0.62);
+}
+
+:global(.theme-noir-dark) .account-tab {
+  border-radius: 999px;
+  color: #7a8291;
+}
+
+:global(.theme-noir-dark) .account-tab-active {
+  border: 1px solid rgba(106, 176, 204, 0.25);
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.22), rgba(80, 150, 179, 0.08));
+  box-shadow: 0 6px 18px rgba(80, 150, 179, 0.11);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .account-save-btn {
+  border: 1px solid rgba(106, 176, 204, 0.32);
+  border-radius: 10px;
+  background: linear-gradient(135deg, #5096b3, #6ab0cc);
+  box-shadow: 0 8px 22px rgba(80, 150, 179, 0.18);
+  color: #01030a;
+}
+
+:global(.theme-noir-dark) .account-action-btn {
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 10px;
+  color: #8cacc9;
+}
+
+:global(.theme-noir-dark) .account-action-btn:hover {
+  border-color: rgba(106, 176, 204, 0.28);
+  background: rgba(80, 150, 179, 0.08);
+}
+
+:global(.theme-noir-dark) .account-status-on {
+  box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.09), 0 0 12px rgba(63, 185, 80, 0.58);
+}
+
+:global(.theme-noir-dark) .account-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+:global(.theme-noir-dark) .account-stat {
+  padding: 18px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 14px;
+  background: rgba(3, 6, 12, 0.38);
+}
+
+:global(.theme-noir-dark) .account-stat-value {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.8rem;
+  font-weight: 500;
+}
+
+:global(.theme-noir-dark) .account-stat-label {
+  color: #7a8291;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
 }
 </style>

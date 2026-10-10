@@ -253,4 +253,72 @@ onBeforeUnmount(() => {
 .cc-btn:disabled { opacity: 0.5; cursor: default; }
 .cc-btn-danger { color: var(--text-error, #f85149); }
 .cc-error { color: var(--text-error, #f85149); font-size: 12px; }
+
+:global(.theme-noir-dark) .cc {
+  margin-top: 18px;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .cc-row,
+:global(.theme-noir-dark) .cc-item,
+:global(.theme-noir-dark) .cc-sync {
+  padding: 12px 14px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 12px;
+  background: rgba(3, 6, 12, 0.38);
+}
+
+:global(.theme-noir-dark) .cc-row {
+  justify-content: space-between;
+  margin: 8px 0;
+}
+
+:global(.theme-noir-dark) .cc-label,
+:global(.theme-noir-dark) .cc-item-sub,
+:global(.theme-noir-dark) .cc-hint,
+:global(.theme-noir-dark) .cc-sync-meta {
+  color: #7a8291;
+}
+
+:global(.theme-noir-dark) .cc-title {
+  margin-top: 24px;
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+:global(.theme-noir-dark) .cc-mono,
+:global(.theme-noir-dark) .cc-sync-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+}
+
+:global(.theme-noir-dark) .cc-pill {
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .cc-pill-on {
+  border-color: rgba(63, 185, 80, 0.25);
+  box-shadow: 0 0 12px rgba(63, 185, 80, 0.09);
+}
+
+:global(.theme-noir-dark) .cc-toggle input {
+  width: 38px;
+  height: 22px;
+  flex: 0 0 38px;
+  margin-top: 0;
+  accent-color: #5096b3;
+}
+
+:global(.theme-noir-dark) .cc-btn {
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 9px;
+  background: rgba(168, 192, 220, 0.045);
+  color: #a9b3c1;
+}
 </style>
