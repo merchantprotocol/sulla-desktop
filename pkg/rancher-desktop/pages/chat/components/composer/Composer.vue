@@ -73,9 +73,9 @@
           <div class="composer-tools">
             <ComposerAttach :open="controller.staged.value.length > 0" @pick="onAttach" />
             <HeartbeatControl />
-            <button class="model-btn" type="button" title="Switch agent or model" @click="controller.openModal('model')">
+            <button class="model-btn" type="button" :title="selectionTitle" @click="controller.openModal('model')">
               <span class="model-avatar">{{ modelInitial }}</span>
-              <span class="model-name">{{ controller.model.value.name }}</span>
+              <span class="model-name">{{ selectionLabel }}</span>
               <span class="model-caret">▾</span>
             </button>
             <span class="tool-spacer" />
@@ -152,6 +152,7 @@ import { useChatController } from '../../controller/useChatController';
 import { useCommandPopover } from '../../composables/useCommandPopover';
 import { useArtifactMentions } from '../../composables/useArtifactMentions';
 import { useReflexIntent } from '../../composables/useReflexIntent';
+import { useSelectionLabel } from '../../composables/useSelectionLabel';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
 
@@ -193,7 +194,8 @@ const isNoir = ref(typeof document !== 'undefined' && document.documentElement.c
 let themeObserver: MutationObserver | null = null;
 
 const canSendDraft = computed(() => draft.value.trim().length > 0 || controller.staged.value.length > 0);
-const modelInitial = computed(() => controller.model.value.name.trim().charAt(0).toUpperCase() || 'S');
+const { label: selectionLabel, title: selectionTitle } = useSelectionLabel();
+const modelInitial = computed(() => selectionLabel.value.trim().charAt(0).toUpperCase() || 'S');
 const contextLimit = computed(() => {
   const raw = controller.model.value.ctx.toLowerCase().replace(/\s*ctx\s*/, '');
   const amount = Number.parseFloat(raw);

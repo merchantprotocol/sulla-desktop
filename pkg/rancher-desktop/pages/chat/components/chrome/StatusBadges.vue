@@ -18,7 +18,7 @@
     </div>
     <button class="badge model" type="button" @click="controller.openModal('model')">
       <span class="dot" />
-      <span>{{ controller.model.value.name }} · ⌘K</span>
+      <span>{{ selectionLabel }} · ⌘K</span>
     </button>
   </div>
 </template>
@@ -26,8 +26,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useChatController } from '../../controller/useChatController';
+import { useSelectionLabel } from '../../composables/useSelectionLabel';
 
 const controller = useChatController();
+const { label: selectionLabel } = useSelectionLabel();
 
 const connectionClass = computed(() => {
   const s = controller.connection.value;
