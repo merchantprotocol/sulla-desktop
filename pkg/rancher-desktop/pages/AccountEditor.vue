@@ -23,6 +23,11 @@
 
     <!-- Scrollable content -->
     <div class="editor-scroll">
+      <div class="editor-noir-copy">
+        <p>Vault entry</p>
+        <h1>{{ isEditing ? 'The details behind this connection.' : 'Add a key to your vault.' }}</h1>
+        <span>Secrets stay masked until you choose to reveal them.</span>
+      </div>
       <!-- Loading -->
       <div
         v-if="loading"
@@ -1471,6 +1476,201 @@ watch(() => [props.integrationId, props.accountId], () => {
 .editor-btn-danger:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.editor-noir-copy {
+  display: none;
+}
+
+:global(.theme-noir-dark) .account-editor {
+  background: #01030a;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .editor-header {
+  min-height: 56px;
+  padding: 0 30px;
+  border-bottom-color: rgba(168, 192, 220, 0.08);
+  background: rgba(3, 6, 12, 0.62);
+  backdrop-filter: blur(14px);
+}
+
+:global(.theme-noir-dark) .editor-back-btn {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 17px;
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .editor-back-btn:hover {
+  color: #f3f5f8;
+  background: rgba(80, 150, 179, 0.1);
+}
+
+:global(.theme-noir-dark) .editor-scroll {
+  max-width: 920px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 30px 34px 48px;
+}
+
+:global(.theme-noir-dark) .editor-noir-copy {
+  display: block;
+  margin-bottom: 22px;
+  animation: vault-editor-in 0.35s ease both;
+}
+
+:global(.theme-noir-dark) .editor-noir-copy p {
+  margin: 0 0 7px;
+  color: #6ab0cc;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .editor-noir-copy h1 {
+  margin: 0;
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.18;
+}
+
+:global(.theme-noir-dark) .editor-noir-copy span {
+  display: block;
+  margin-top: 7px;
+  color: #a9b3c1;
+  font-size: 14px;
+}
+
+:global(.theme-noir-dark) .editor-hero {
+  padding: 20px;
+  border-color: rgba(106, 176, 204, 0.25);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.16), rgba(80, 150, 179, 0.03));
+}
+
+:global(.theme-noir-dark) .editor-hero-icon {
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 14px;
+  background: rgba(3, 6, 12, 0.62);
+}
+
+:global(.theme-noir-dark) .editor-hero-title {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 23px;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .editor-hero-subtitle {
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .editor-badge-connected::before {
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #3fb950;
+  box-shadow: 0 0 8px rgba(63, 185, 80, 0.7);
+  content: '';
+}
+
+:global(.theme-noir-dark) .editor-card,
+:global(.theme-noir-dark) .editor-guide {
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.015);
+}
+
+:global(.theme-noir-dark) .editor-card-header {
+  border-bottom-color: rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .editor-card-title {
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .editor-label {
+  color: #7a8291;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+:global(.theme-noir-dark) .editor-input,
+:global(.theme-noir-dark) .editor-select,
+:global(.theme-noir-dark) .editor-select-refresh {
+  min-height: 40px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(3, 6, 12, 0.66);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.12);
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .editor-input:focus,
+:global(.theme-noir-dark) .editor-select:focus {
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.62), 0 0 0 3px rgba(80, 150, 179, 0.1);
+}
+
+:global(.theme-noir-dark) .editor-input-password {
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .editor-gen-btn,
+:global(.theme-noir-dark) .editor-eye-btn,
+:global(.theme-noir-dark) .editor-select-refresh {
+  transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), color 0.18s;
+}
+
+:global(.theme-noir-dark) .editor-gen-btn:active,
+:global(.theme-noir-dark) .editor-eye-btn:active,
+:global(.theme-noir-dark) .editor-select-refresh:active {
+  transform: scale(0.86);
+}
+
+:global(.theme-noir-dark) .editor-btn-primary,
+:global(.theme-noir-dark) .editor-oauth-btn {
+  border-radius: 20px;
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  color: #fff;
+  box-shadow: 0 0 18px rgba(80, 150, 179, 0.28);
+}
+
+:global(.theme-noir-dark) .editor-btn-secondary,
+:global(.theme-noir-dark) .editor-add-btn {
+  border-color: rgba(168, 192, 220, 0.16);
+  border-radius: 20px;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .editor-guide-summary,
+:global(.theme-noir-dark) .editor-guide-content {
+  border-color: rgba(168, 192, 220, 0.08);
+  background: transparent;
+}
+
+@keyframes vault-editor-in {
+  from { opacity: 0; filter: blur(8px); transform: translateY(8px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .editor-noir-copy {
+    animation: none;
+  }
+
+  :global(.theme-noir-dark) .editor-gen-btn,
+  :global(.theme-noir-dark) .editor-eye-btn,
+  :global(.theme-noir-dark) .editor-select-refresh {
+    transition-duration: 0.01ms;
+  }
 }
 
 /* ── Installation guide ── */

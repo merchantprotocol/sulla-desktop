@@ -31,6 +31,11 @@
 
     <!-- Scrollable content -->
     <div class="pwgen-scroll">
+      <div class="pwgen-noir-copy">
+        <p>Password Generator</p>
+        <h1>Create something no one can guess.</h1>
+        <span>Tune the recipe, then copy or use it without exposing anything else in your vault.</span>
+      </div>
       <!-- Password display -->
       <div class="pwgen-display">
         <div class="pwgen-password-box">
@@ -783,5 +788,207 @@ onMounted(regenerate);
 
 .pwgen-select:focus {
   border-color: var(--accent-primary, #38bdf8);
+}
+
+.pwgen-noir-copy {
+  display: none;
+}
+
+:global(.theme-noir-dark) .pwgen {
+  background: #01030a;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .pwgen-header {
+  min-height: 56px;
+  padding: 0 30px;
+  border-bottom-color: rgba(168, 192, 220, 0.08);
+  background: rgba(3, 6, 12, 0.62);
+  backdrop-filter: blur(14px);
+}
+
+:global(.theme-noir-dark) .pwgen-back,
+:global(.theme-noir-dark) .pwgen-use-btn {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 17px;
+  transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), background 0.18s;
+}
+
+:global(.theme-noir-dark) .pwgen-use-btn {
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  color: #fff;
+  box-shadow: 0 0 16px rgba(80, 150, 179, 0.28);
+}
+
+:global(.theme-noir-dark) .pwgen-back:active,
+:global(.theme-noir-dark) .pwgen-use-btn:active {
+  transform: scale(0.94);
+}
+
+:global(.theme-noir-dark) .pwgen-scroll {
+  max-width: 760px;
+  padding: 30px 34px 48px;
+}
+
+:global(.theme-noir-dark) .pwgen-noir-copy {
+  display: block;
+  margin-bottom: 22px;
+  animation: vault-generator-in 0.35s ease both;
+}
+
+:global(.theme-noir-dark) .pwgen-noir-copy p {
+  margin: 0 0 7px;
+  color: #6ab0cc;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .pwgen-noir-copy h1 {
+  margin: 0;
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.18;
+}
+
+:global(.theme-noir-dark) .pwgen-noir-copy span {
+  display: block;
+  margin-top: 7px;
+  color: #a9b3c1;
+  font-size: 14px;
+}
+
+:global(.theme-noir-dark) .pwgen-display {
+  padding: 20px;
+  border-color: rgba(106, 176, 204, 0.25);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.16), rgba(80, 150, 179, 0.03));
+}
+
+:global(.theme-noir-dark) .pwgen-password-box {
+  min-height: 72px;
+  padding: 18px;
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 14px;
+  background: rgba(3, 6, 12, 0.76);
+  color: #dee4ec;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
+}
+
+:global(.theme-noir-dark) .pwgen-action-btn {
+  min-height: 32px;
+  border-color: rgba(168, 192, 220, 0.14);
+  border-radius: 16px;
+  background: rgba(3, 6, 12, 0.45);
+  color: #a9b3c1;
+  transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), border-color 0.18s, color 0.18s;
+}
+
+:global(.theme-noir-dark) .pwgen-action-btn:active {
+  transform: scale(0.92);
+}
+
+:global(.theme-noir-dark) .pwgen-strength-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(168, 192, 220, 0.09);
+}
+
+:global(.theme-noir-dark) .pwgen-strength-fill {
+  background: linear-gradient(90deg, #5096b3, #6ab0cc);
+  box-shadow: 0 0 10px rgba(80, 150, 179, 0.38);
+}
+
+:global(.theme-noir-dark) .pwgen-strength-fill.strength-strong,
+:global(.theme-noir-dark) .pwgen-strength-fill.strength-very-strong {
+  background: linear-gradient(90deg, #5096b3, #3fb950);
+}
+
+:global(.theme-noir-dark) .pwgen-strength-label {
+  color: #a9b3c1;
+  font-family: ui-monospace, 'SF Mono', monospace;
+}
+
+:global(.theme-noir-dark) .pwgen-mode-toggle {
+  gap: 3px;
+  padding: 3px;
+  border: 0;
+  border-radius: 18px;
+  background: rgba(3, 6, 12, 0.64);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.1);
+}
+
+:global(.theme-noir-dark) .pwgen-mode-toggle button {
+  min-height: 32px;
+  padding: 0 16px;
+  border-radius: 16px;
+  color: #7a8291;
+}
+
+:global(.theme-noir-dark) .pwgen-mode-toggle button.active {
+  background: linear-gradient(180deg, rgba(80, 150, 179, 0.32), rgba(80, 150, 179, 0.16));
+  color: #f3f5f8;
+  box-shadow: inset 0 0 0 0.5px rgba(106, 176, 204, 0.55), 0 0 14px rgba(80, 150, 179, 0.25);
+}
+
+:global(.theme-noir-dark) .pwgen-options {
+  padding: 18px 20px;
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.015);
+}
+
+:global(.theme-noir-dark) .pwgen-option-row + .pwgen-option-row {
+  border-top-color: rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .pwgen-option-label,
+:global(.theme-noir-dark) .pwgen-check {
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .pwgen-num-input,
+:global(.theme-noir-dark) .pwgen-select {
+  min-height: 36px;
+  border: 0;
+  border-radius: 11px;
+  background: rgba(3, 6, 12, 0.68);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.12);
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .pwgen-slider {
+  background: rgba(168, 192, 220, 0.12);
+}
+
+:global(.theme-noir-dark) .pwgen-slider::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+  border: 3px solid #070d1a;
+  background: #6ab0cc;
+  box-shadow: 0 0 10px rgba(106, 176, 204, 0.5);
+}
+
+@keyframes vault-generator-in {
+  from { opacity: 0; filter: blur(8px); transform: translateY(8px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .pwgen-noir-copy {
+    animation: none;
+  }
+
+  :global(.theme-noir-dark) .pwgen-back,
+  :global(.theme-noir-dark) .pwgen-use-btn,
+  :global(.theme-noir-dark) .pwgen-action-btn {
+    transition-duration: 0.01ms;
+  }
 }
 </style>

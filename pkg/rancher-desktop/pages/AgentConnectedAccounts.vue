@@ -13,14 +13,23 @@
       <div class="flex w-full flex-col flex-1 accounts-page-wrap">
         <div class="overflow-hidden accounts-hero">
           <div class="py-16 sm:px-2 lg:relative lg:px-0 lg:py-20">
-            <div class="mx-auto grid max-w-6xl md:grid-cols-2 items-center gap-x-8 gap-y-10 px-4 md:px-6 lg:px-8 xl:gap-x-16">
+            <div class="mx-auto grid max-w-6xl md:grid-cols-2 items-center gap-x-8 gap-y-10 px-4 md:px-6 lg:px-8 xl:gap-x-16 vault-noir-head">
               <div class="relative z-10 md:text-center lg:text-left">
                 <div class="relative">
-                  <p class="inline bg-linear-to-r from-indigo-200 via-sky-400 to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
+                  <p class="vault-noir-eyebrow">
+                    Password Vault
+                  </p>
+                  <p class="inline bg-linear-to-r from-indigo-200 via-sky-400 to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent vault-title-default">
                     Password Manager.
                   </p>
-                  <p class="mt-3 text-2xl tracking-tight text-slate-400">
+                  <h1 class="vault-noir-title">
+                    Everything important stays under your key.
+                  </h1>
+                  <p class="mt-3 text-2xl tracking-tight text-slate-400 vault-lead-default">
                     All your connected accounts and saved credentials in one place.
+                  </p>
+                  <p class="vault-noir-lead">
+                    Connected accounts, saved credentials, and AI access — protected in one encrypted place.
                   </p>
                 </div>
               </div>
@@ -89,7 +98,7 @@
         </div>
 
         <div class="flex-1 overflow-auto accounts-body">
-          <div class="mx-auto max-w-7xl px-4 py-6">
+          <div class="mx-auto max-w-7xl px-4 py-6 vault-noir-body-inner">
             <!-- Vault status + Export / Import bar -->
             <div class="flex items-center gap-2 mb-4">
               <div
@@ -206,18 +215,27 @@
             >
               {{ backupSummary }}
             </p>
-            <div class="flex gap-6">
+            <div class="flex gap-6 vault-noir-shell">
               <!-- Filter Sidebar -->
-              <nav class="hidden md:block w-48 shrink-0">
+              <nav class="hidden md:block w-48 shrink-0 vault-noir-nav">
                 <div class="sticky top-6">
                   <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                     Filter by Type
                   </h3>
-                  <ul class="space-y-0.5">
+                  <ul
+                    ref="filterNav"
+                    class="space-y-0.5 vault-noir-nav-list"
+                  >
+                    <span
+                      class="vault-noir-glass"
+                      :style="filterGlassStyle"
+                      aria-hidden="true"
+                    />
                     <li>
                       <button
                         type="button"
-                        class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors"
+                        class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors vault-noir-nav-row"
+                        data-vault-filter="all"
                         :class="activeFilter === null
                           ? 'bg-[#5096b3]/10 text-[#5096b3] font-medium dark:bg-[#5096b3]/10 dark:text-[#6ab0cc]'
                           : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'"
@@ -236,7 +254,8 @@
                     >
                       <button
                         type="button"
-                        class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors"
+                        class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors vault-noir-nav-row"
+                        :data-vault-filter="type"
                         :class="activeFilter === type
                           ? 'bg-[#5096b3]/10 text-[#5096b3] font-medium dark:bg-[#5096b3]/10 dark:text-[#6ab0cc]'
                           : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'"
@@ -281,12 +300,12 @@
                   <div
                     v-for="account in filteredAccounts"
                     :key="`${account.integrationId}-${account.accountId}`"
-                    class="group flex items-center gap-4 rounded-lg px-4 py-3 transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/50"
+                    class="group flex items-center gap-4 rounded-lg px-4 py-3 transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/50 vault-noir-row"
                     @click="openAccount(account)"
                   >
                     <!-- Icon / Type badge -->
                     <div
-                      class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold uppercase"
+                      class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold uppercase vault-noir-tile"
                       :class="typeBadgeClass(account.integrationId)"
                     >
                       {{ typeBadgeLabel(account.integrationId) }}
@@ -299,18 +318,30 @@
                           {{ account.label }}
                         </span>
                         <span
-                          class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                          class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium vault-noir-state"
                           :class="account.connected
                             ? 'bg-[#5096b3]/10 text-[#5096b3] dark:text-[#6ab0cc]'
                             : 'bg-slate-500/10 text-slate-500 dark:text-slate-400'"
                         >
+                          <span class="vault-noir-dot" />
                           {{ account.connected ? 'Connected' : 'Disconnected' }}
                         </span>
                       </div>
-                      <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                      <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate vault-noir-meta">
                         {{ integrationName(account.integrationId) }}
-                        <span v-if="account.connectedAt"> &middot; {{ formatDate(account.connectedAt) }}</span>
+                        <span
+                          v-if="account.connectedAt"
+                          class="vault-date-default"
+                        > &middot; {{ formatDate(account.connectedAt) }}</span>
                       </div>
+                    </div>
+
+                    <div
+                      v-if="account.connectedAt"
+                      class="vault-noir-date"
+                    >
+                      <span>Connected</span>
+                      {{ formatDate(account.connectedAt) }}
                     </div>
 
                     <!-- AI access badge -->
@@ -352,7 +383,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import AgentHeader from './agent/AgentHeader.vue';
@@ -389,6 +420,24 @@ const vaultSecure = ref(false);
 const search = ref('');
 const activeFilter = ref<string | null>(null);
 const flatAccounts = ref<FlatAccount[]>([]);
+const filterNav = ref<HTMLElement | null>(null);
+const filterGlassTop = ref(0);
+const filterGlassHeight = ref(40);
+
+const filterGlassStyle = computed(() => ({
+  height:    `${ filterGlassHeight.value }px`,
+  transform: `translateY(${ filterGlassTop.value }px)`,
+}));
+
+function updateFilterGlass() {
+  const key = activeFilter.value ?? 'all';
+  const row = Array.from(filterNav.value?.querySelectorAll<HTMLElement>('[data-vault-filter]') ?? [])
+    .find(element => element.dataset.vaultFilter === key);
+
+  if (!row) return;
+  filterGlassTop.value = row.offsetTop;
+  filterGlassHeight.value = row.offsetHeight;
+}
 
 const integrationTypes = computed(() => {
   const types = new Set(flatAccounts.value.map(a => a.integrationId));
@@ -586,6 +635,8 @@ function cancelImportSecret() {
 }
 
 onMounted(async() => {
+  window.addEventListener('resize', updateFilterGlass);
+
   // Check if vault encryption is active
   try {
     const isSetUp = await ipcRenderer.invoke('vault:is-setup');
@@ -594,8 +645,17 @@ onMounted(async() => {
   } catch { /* vault IPC not available */ }
   loadBackupSummary();
 
-  loadAccounts();
+  await loadAccounts();
+  await nextTick();
+  updateFilterGlass();
 });
+
+watch([activeFilter, integrationTypes], async() => {
+  await nextTick();
+  updateFilterGlass();
+});
+
+onBeforeUnmount(() => window.removeEventListener('resize', updateFilterGlass));
 </script>
 
 <style scoped>
@@ -617,5 +677,262 @@ onMounted(async() => {
 
 .accounts-btn-primary:hover {
   background: #4485a0;
+}
+
+.vault-noir-eyebrow,
+.vault-noir-title,
+.vault-noir-lead,
+.vault-noir-glass,
+.vault-noir-date,
+.vault-noir-dot {
+  display: none;
+}
+
+:global(.theme-noir-dark) .page-root,
+:global(.theme-noir-dark) .accounts-page-wrap,
+:global(.theme-noir-dark) .accounts-hero,
+:global(.theme-noir-dark) .accounts-body {
+  background: #01030a;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .accounts-hero {
+  flex: 0 0 auto;
+  border-bottom: 1px solid rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .vault-noir-head {
+  max-width: none;
+  min-height: 176px;
+  padding: 30px 34px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 390px);
+}
+
+:global(.theme-noir-dark) .vault-title-default,
+:global(.theme-noir-dark) .vault-lead-default,
+:global(.theme-noir-dark) .vault-date-default {
+  display: none;
+}
+
+:global(.theme-noir-dark) .vault-noir-eyebrow,
+:global(.theme-noir-dark) .vault-noir-title,
+:global(.theme-noir-dark) .vault-noir-lead {
+  display: block;
+}
+
+:global(.theme-noir-dark) .vault-noir-eyebrow {
+  margin: 0 0 8px;
+  color: #6ab0cc;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .vault-noir-title {
+  max-width: 720px;
+  margin: 0;
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(28px, 3vw, 38px);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.12;
+}
+
+:global(.theme-noir-dark) .vault-noir-lead {
+  max-width: 680px;
+  margin: 10px 0 0;
+  color: #a9b3c1;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+:global(.theme-noir-dark) .vault-noir-head input[type="text"] {
+  height: 40px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(3, 6, 12, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.12);
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .vault-noir-head input[type="text"]:focus {
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.58), 0 0 0 3px rgba(80, 150, 179, 0.1);
+}
+
+:global(.theme-noir-dark) .vault-noir-head button {
+  height: 40px;
+  border-radius: 20px;
+  transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), background 0.2s, border-color 0.2s;
+}
+
+:global(.theme-noir-dark) .vault-noir-head button:active {
+  transform: scale(0.96);
+}
+
+:global(.theme-noir-dark) .accounts-btn-primary {
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 18px rgba(80, 150, 179, 0.26);
+}
+
+:global(.theme-noir-dark) .vault-noir-body-inner {
+  max-width: none;
+  padding: 24px 34px 40px;
+}
+
+:global(.theme-noir-dark) .vault-noir-shell {
+  gap: 24px;
+  min-height: 420px;
+}
+
+:global(.theme-noir-dark) .vault-noir-nav {
+  width: 230px;
+  padding: 18px 14px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 20px;
+  background: rgba(3, 6, 12, 0.6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
+  backdrop-filter: blur(14px);
+}
+
+:global(.theme-noir-dark) .vault-noir-nav h3 {
+  margin: 0 10px 12px;
+  color: #7a8291;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .vault-noir-nav-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+:global(.theme-noir-dark) .vault-noir-nav-list > li {
+  position: relative;
+  z-index: 1;
+}
+
+:global(.theme-noir-dark) .vault-noir-glass {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 0;
+  display: block;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(80, 150, 179, 0.3), rgba(80, 150, 179, 0.14));
+  box-shadow: inset 0 0 0 0.5px rgba(106, 176, 204, 0.5), 0 0 22px rgba(80, 150, 179, 0.22);
+  pointer-events: none;
+  transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), height 0.2s;
+}
+
+:global(.theme-noir-dark) .vault-noir-glass::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 3px;
+  height: 22px;
+  border-radius: 0 3px 3px 0;
+  background: #6ab0cc;
+  box-shadow: 0 0 10px rgba(106, 176, 204, 0.72);
+  content: '';
+  transform: translateY(-50%);
+}
+
+:global(.theme-noir-dark) .vault-noir-nav-row {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 20px;
+  color: #a9b3c1;
+  background: transparent !important;
+}
+
+:global(.theme-noir-dark) .vault-noir-nav-row:hover {
+  color: #f3f5f8;
+  background: rgba(80, 150, 179, 0.08) !important;
+}
+
+:global(.theme-noir-dark) .vault-noir-row {
+  min-height: 72px;
+  margin-bottom: 8px;
+  padding: 12px 16px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 16px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.015);
+}
+
+:global(.theme-noir-dark) .vault-noir-row:hover {
+  border-color: rgba(106, 176, 204, 0.22);
+  background: rgba(80, 150, 179, 0.075) !important;
+}
+
+:global(.theme-noir-dark) .vault-noir-tile {
+  border: 1px solid rgba(106, 176, 204, 0.2);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(80, 150, 179, 0.22), rgba(80, 150, 179, 0.07));
+  color: #a8c0dc;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+:global(.theme-noir-dark) .vault-noir-state {
+  gap: 5px;
+  padding: 0;
+  background: transparent !important;
+  color: #a9b3c1 !important;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+:global(.theme-noir-dark) .vault-noir-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3fb950;
+  box-shadow: 0 0 8px rgba(63, 185, 80, 0.72);
+}
+
+:global(.theme-noir-dark) .vault-noir-state.text-slate-500 .vault-noir-dot {
+  background: #484f5a;
+  box-shadow: none;
+}
+
+:global(.theme-noir-dark) .vault-noir-meta,
+:global(.theme-noir-dark) .vault-noir-date {
+  color: #7a8291;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 10.5px;
+}
+
+:global(.theme-noir-dark) .vault-noir-date {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+:global(.theme-noir-dark) .vault-noir-date span {
+  color: #484f5a;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 820px) {
+  :global(.theme-noir-dark) .vault-noir-head {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .vault-noir-glass,
+  :global(.theme-noir-dark) .vault-noir-head button {
+    transition-duration: 0.01ms;
+  }
 }
 </style>
