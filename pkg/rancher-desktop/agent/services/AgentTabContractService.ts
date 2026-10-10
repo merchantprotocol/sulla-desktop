@@ -156,11 +156,19 @@ export class AgentTabContractService {
     contract?: unknown;
     focus?: boolean;
   }): Promise<{ contractId: string; childThreadId: string }> {
+    if (!input.brief.trim()) throw new Error('Agent-tab brief is required and cannot be empty.');
     const childAgent = await resolveRoutableAgent(input.agentId);
     if (!childAgent) throw new Error(`Agent "${ input.agentId }" does not exist, is disabled, or is archived.`);
     const parentAgent = await resolveRoutableAgent(input.parentAgentId);
     const parentName = parentAgent?.name ?? input.parentAgentId;
     const contract = normalizeContract(input.contract);
+    if (contract.schema) {
+      try {
+        new Ajv({ strict: false }).compile(contract.schema);
+      } catch (error) {
+        throw new Error(`Contract schema is invalid: ${ (error as Error).message }`);
+      }
+    }
     const title = input.title?.trim() || childAgent.name;
     const id = randomUUID();
     const childThreadId = nextThreadId();
@@ -277,6 +285,7 @@ export class AgentTabContractService {
   }
 
   async messageChild(parentThreadId: string, input: { contractId?: string; childThreadId?: string; message: string }): Promise<AgentTabContractRow> {
+    if (!input.message.trim()) throw new Error('Message cannot be empty.');
     const selector = input.contractId
       ? ['id = $2', input.contractId]
       : ['child_thread_id = $2', input.childThreadId];
