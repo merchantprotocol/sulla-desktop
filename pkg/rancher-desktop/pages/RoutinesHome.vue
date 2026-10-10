@@ -1133,4 +1133,219 @@ async function onImport() {
 .theme-nord-light .ribbon .c .sig b {
   color: #5e81ac !important;
 }
+
+// Noir is a separate visual mode. These overrides deliberately leave the
+// established Studio presentation untouched in every other theme.
+:global(.theme-noir-dark) .routines-home {
+  --noir-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
+  color: #dee4ec;
+  background:
+    radial-gradient(90% 55% at 12% -8%, rgba(80, 150, 179, 0.15), transparent 58%),
+    radial-gradient(65% 45% at 92% 105%, rgba(80, 150, 179, 0.08), transparent 68%),
+    #01030a;
+}
+
+:global(.theme-noir-dark) .glow.violet,
+:global(.theme-noir-dark) .stars,
+:global(.theme-noir-dark) .bracket {
+  display: none;
+}
+
+:global(.theme-noir-dark) .glow.blue {
+  top: -150px;
+  left: 24%;
+  width: 720px;
+  height: 520px;
+  opacity: 0.42;
+  background: radial-gradient(circle, rgba(80, 150, 179, 0.22), transparent 68%);
+}
+
+:global(.theme-noir-dark) .shell {
+  max-width: 1240px;
+  padding: 30px 38px 48px;
+}
+
+:global(.theme-noir-dark) .topline {
+  gap: 24px;
+  margin-bottom: 38px;
+  padding: 14px 16px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 22px;
+  background: rgba(3, 6, 12, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025), 0 18px 50px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(22px);
+}
+
+:global(.theme-noir-dark) .brand-mark {
+  border-radius: 12px;
+  color: #03060c;
+  background: linear-gradient(135deg, #a8c0dc, #5096b3);
+  box-shadow: 0 0 22px rgba(80, 150, 179, 0.32);
+}
+
+:global(.theme-noir-dark) .brand-name {
+  font-family: 'Playfair Display', Georgia, serif;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .brand-sub {
+  color: #6ab0cc;
+}
+
+:global(.theme-noir-dark) .tabs,
+:global(.theme-noir-dark) .subtabs {
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid rgba(168, 192, 220, 0.1);
+  border-radius: 18px;
+  background: rgba(3, 6, 12, 0.7);
+}
+
+:global(.theme-noir-dark) .subtabs {
+  width: fit-content;
+  margin: -16px auto 28px;
+}
+
+:global(.theme-noir-dark) .tab,
+:global(.theme-noir-dark) .subtab {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 14px;
+  color: #7a8291;
+  letter-spacing: 0.1em;
+  transition: color 0.2s, background 0.35s, box-shadow 0.35s, transform 0.58s var(--noir-spring);
+}
+
+:global(.theme-noir-dark) .tab:hover,
+:global(.theme-noir-dark) .subtab:hover {
+  color: #dee4ec;
+  background: rgba(80, 150, 179, 0.08);
+}
+
+:global(.theme-noir-dark) .tab:active,
+:global(.theme-noir-dark) .subtab:active {
+  transform: scale(0.96);
+}
+
+:global(.theme-noir-dark) .tab.on,
+:global(.theme-noir-dark) .subtab.on {
+  color: #f3f5f8;
+  border: 0;
+  background: linear-gradient(180deg, rgba(80, 150, 179, 0.28), rgba(80, 150, 179, 0.12));
+  box-shadow: inset 0 0 0 0.5px rgba(106, 176, 204, 0.52), 0 0 20px rgba(80, 150, 179, 0.18);
+}
+
+:global(.theme-noir-dark) .tab.import-btn {
+  color: #a8c0dc;
+}
+
+:global(.theme-noir-dark) .hero {
+  max-width: 820px;
+  margin: 0 auto 38px;
+  padding: 30px 28px 36px;
+  border: 0;
+  animation: noir-routines-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
+}
+
+:global(.theme-noir-dark) .kicker {
+  margin-bottom: 12px;
+  color: #6ab0cc;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .kicker .d {
+  background: #6ab0cc;
+  box-shadow: 0 0 10px rgba(106, 176, 204, 0.8);
+}
+
+:global(.theme-noir-dark) .hero h1 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(44px, 6vw, 70px);
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .hero .dek {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .rollup-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+:global(.theme-noir-dark) .rollup-row > div {
+  padding: 14px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 16px;
+  background: rgba(168, 192, 220, 0.035);
+}
+
+:global(.theme-noir-dark) .rollup-row b {
+  font-family: 'Playfair Display', Georgia, serif;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .btn {
+  border-radius: 16px;
+  transition: transform 0.58s var(--noir-spring), border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+
+:global(.theme-noir-dark) .btn:active {
+  transform: scale(0.95);
+}
+
+:global(.theme-noir-dark) .btn.primary,
+:global(.theme-noir-dark) .btn.accent {
+  border-color: rgba(106, 176, 204, 0.48);
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 20px rgba(80, 150, 179, 0.28);
+}
+
+:global(.theme-noir-dark) .closer,
+:global(.theme-noir-dark) .ribbon {
+  border-color: rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .ribbon {
+  margin: 40px 72px 36px;
+  border-radius: 16px;
+  background: rgba(3, 6, 12, 0.62);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.07);
+  backdrop-filter: blur(20px);
+}
+
+@keyframes noir-routines-in {
+  from { opacity: 0; transform: translateY(8px); filter: blur(8px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .routines-home *,
+  :global(.theme-noir-dark) .routines-home *::before,
+  :global(.theme-noir-dark) .routines-home *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (max-width: 900px) {
+  :global(.theme-noir-dark) .topline {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  :global(.theme-noir-dark) .tabs {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  :global(.theme-noir-dark) .rollup-row {
+    grid-template-columns: repeat(2, minmax(110px, 1fr));
+  }
+}
 </style>

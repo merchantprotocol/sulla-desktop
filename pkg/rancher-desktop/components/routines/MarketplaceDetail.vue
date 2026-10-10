@@ -1001,4 +1001,159 @@ h1 {
   margin: 0 0 12px;
   color: var(--steel-200);
 }
+
+:global(.theme-noir-dark) .page {
+  position: fixed;
+  z-index: 90;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(880px, calc(100vw - 72px));
+  overflow-y: auto;
+  padding: 28px 32px 52px;
+  color: #dee4ec;
+  background:
+    radial-gradient(90% 45% at 100% 0%, rgba(80, 150, 179, 0.15), transparent 62%),
+    rgba(3, 6, 12, 0.985);
+  border-left: 1px solid rgba(168, 192, 220, 0.1);
+  box-shadow: -32px 0 80px rgba(0, 0, 0, 0.62), -70vw 0 0 rgba(1, 3, 10, 0.5);
+  backdrop-filter: blur(28px);
+  animation: noir-detail-drawer 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) both;
+}
+
+:global(.theme-noir-dark) .back {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  min-height: 34px;
+  margin-bottom: 18px;
+  border-color: rgba(168, 192, 220, 0.12);
+  border-radius: 17px;
+  color: #a9b3c1;
+  background: rgba(3, 6, 12, 0.74);
+  backdrop-filter: blur(18px);
+}
+
+:global(.theme-noir-dark) .hero {
+  gap: 24px;
+  padding: 24px;
+  border-color: rgba(106, 176, 204, 0.22);
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.16), rgba(80, 150, 179, 0.03));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+:global(.theme-noir-dark) h1 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(38px, 5vw, 56px);
+  font-style: normal;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .tagline {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: normal;
+  color: #a8c0dc;
+}
+
+:global(.theme-noir-dark) .desc {
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .right,
+:global(.theme-noir-dark) .right[class*="kind-"] {
+  border-color: rgba(106, 176, 204, 0.24);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(106, 176, 204, 0.28), rgba(80, 150, 179, 0.08));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 18px 38px rgba(0, 0, 0, 0.24);
+}
+
+:global(.theme-noir-dark) .hero-placeholder {
+  font-family: 'Playfair Display', Georgia, serif;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .btn {
+  border-radius: 18px;
+  transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), filter 0.2s, box-shadow 0.2s;
+}
+
+:global(.theme-noir-dark) .btn:active {
+  transform: scale(0.95);
+}
+
+:global(.theme-noir-dark) .btn.primary {
+  border-color: rgba(106, 176, 204, 0.48);
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 24px rgba(80, 150, 179, 0.3);
+}
+
+:global(.theme-noir-dark) .stats {
+  gap: 10px;
+}
+
+:global(.theme-noir-dark) .stat {
+  padding: 16px;
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 16px;
+  background: rgba(168, 192, 220, 0.035);
+}
+
+:global(.theme-noir-dark) .stat .value {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: normal;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .kind-badge,
+:global(.theme-noir-dark) .chip {
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 9px;
+  color: #a8c0dc;
+  background: rgba(3, 6, 12, 0.54);
+}
+
+:global(.theme-noir-dark) .kind-badge[class*="kind-"] {
+  border-color: rgba(106, 176, 204, 0.24);
+  color: #6ab0cc;
+  background: rgba(80, 150, 179, 0.1);
+}
+
+:global(.theme-noir-dark) .panel,
+:global(.theme-noir-dark) .shot,
+:global(.theme-noir-dark) .block {
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 17px;
+  background: rgba(168, 192, 220, 0.035);
+}
+
+:global(.theme-noir-dark) .section-head {
+  border-left-color: #5096b3 !important;
+}
+
+:global(.theme-noir-dark) .section-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: normal;
+  color: #f3f5f8;
+}
+
+@keyframes noir-detail-drawer {
+  from { opacity: 0; transform: translateX(48px); filter: blur(8px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+@media (max-width: 760px) {
+  :global(.theme-noir-dark) .page {
+    width: calc(100vw - 16px);
+    padding: 20px;
+  }
+
+  :global(.theme-noir-dark) .hero {
+    grid-template-columns: 1fr;
+  }
+
+  :global(.theme-noir-dark) .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
 </style>

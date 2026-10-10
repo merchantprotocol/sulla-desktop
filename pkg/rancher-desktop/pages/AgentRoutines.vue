@@ -4209,4 +4209,132 @@ watch(
   background: rgba(168, 192, 220, 0.14);
   margin: 4px 2px;
 }
+
+:global(.theme-noir-dark) .routines-frame {
+  --violet-200: #a8c0dc;
+  --violet-300: #8cacc9;
+  --violet-400: #6ab0cc;
+  --violet-500: #5096b3;
+  --serif: 'Playfair Display', Georgia, serif;
+  color: #dee4ec;
+  background:
+    radial-gradient(70% 50% at 18% -5%, rgba(80, 150, 179, 0.14), transparent 64%),
+    radial-gradient(70% 50% at 88% 108%, rgba(80, 150, 179, 0.08), transparent 65%),
+    #01030a;
+}
+
+:global(.theme-noir-dark) .glow.violet,
+:global(.theme-noir-dark) .stars,
+:global(.theme-noir-dark) .bracket {
+  display: none;
+}
+
+:global(.theme-noir-dark) .glow.blue {
+  width: 85%;
+  height: 85%;
+  top: 5%;
+  left: 18%;
+  opacity: 0.38;
+  background: radial-gradient(circle, rgba(80, 150, 179, 0.18), transparent 68%);
+}
+
+:global(.theme-noir-dark) .title-block {
+  top: 32px;
+  right: 38px;
+  padding: 15px 18px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 18px;
+  background: rgba(3, 6, 12, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(20px);
+}
+
+:global(.theme-noir-dark) .title-backdrop {
+  display: none;
+}
+
+:global(.theme-noir-dark) .title-kicker {
+  color: #6ab0cc;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .title-kicker::before,
+:global(.theme-noir-dark) .title-kicker .d {
+  background: #6ab0cc;
+}
+
+:global(.theme-noir-dark) .title-main {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: normal;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .title-sub {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-style: normal;
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .stream-backdrop {
+  top: 18px;
+  left: 38px;
+  width: 31%;
+  border: 1px solid rgba(168, 192, 220, 0.07);
+  border-radius: 18px;
+  background: rgba(3, 6, 12, 0.64);
+  mask-image: linear-gradient(180deg, black 0%, black 82%, transparent 100%);
+  backdrop-filter: blur(18px);
+}
+
+:global(.theme-noir-dark) .stream {
+  top: 30px;
+  left: 52px;
+  width: calc(31% - 28px);
+}
+
+:global(.theme-noir-dark) .routines-flow :deep(.vue-flow__controls),
+:global(.theme-noir-dark) .routines-flow :deep(.vue-flow__minimap),
+:global(.theme-noir-dark) .runs-flyout,
+:global(.theme-noir-dark) .routines-ctx {
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 17px;
+  background-color: rgba(3, 6, 12, 0.86);
+  background-image: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025), 0 18px 42px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(22px);
+}
+
+:global(.theme-noir-dark) .routines-fab {
+  border-color: rgba(106, 176, 204, 0.52);
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.36), 0 0 22px rgba(80, 150, 179, 0.3);
+  transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
+}
+
+:global(.theme-noir-dark) .routines-fab.active {
+  background: linear-gradient(180deg, rgba(106, 176, 204, 0.82), rgba(80, 150, 179, 0.64));
+}
+
+:global(.theme-noir-dark) .title-main.editable:hover,
+:global(.theme-noir-dark) .title-sub.editable:hover,
+:global(.theme-noir-dark) .title-main.editable:focus,
+:global(.theme-noir-dark) .title-sub.editable:focus {
+  outline-color: rgba(106, 176, 204, 0.45);
+  background: rgba(80, 150, 179, 0.06);
+}
+
+:global(.theme-noir-dark) .routines-ctx .cm-item:hover,
+:global(.theme-noir-dark) .routines-ctx .cm-item.primary:hover {
+  background: rgba(80, 150, 179, 0.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .routines-frame *,
+  :global(.theme-noir-dark) .routines-frame *::before,
+  :global(.theme-noir-dark) .routines-frame *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 </style>

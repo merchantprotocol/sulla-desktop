@@ -78,4 +78,33 @@ const hasActions = computed(() => !!slots.default);
   gap: 10px;
   justify-content: center;
 }
+
+:global(.theme-noir-dark) .empty-state {
+  padding: 68px 40px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 22px;
+  background:
+    radial-gradient(70% 100% at 50% 115%, rgba(80, 150, 179, 0.12), transparent 70%),
+    rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(18px);
+}
+
+:global(.theme-noir-dark) .kicker {
+  color: #6ab0cc;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: normal;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .message {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  font-style: normal;
+  color: #a9b3c1;
+}
 </style>

@@ -287,4 +287,111 @@ const initials = computed(() => {
   border-color: rgba(168, 192, 220, 0.3);
 }
 .cta .btn.ghost:hover { border-color: var(--steel-300); color: white; }
+
+:global(.theme-noir-dark) .strip {
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  gap: 18px;
+  margin-bottom: 10px;
+  padding: 16px 18px;
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 17px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
+  transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+
+:global(.theme-noir-dark) .strip::before {
+  left: -1px;
+  top: 14px;
+  bottom: 14px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: #5096b3;
+  box-shadow: 0 0 10px rgba(80, 150, 179, 0.6);
+  opacity: 0;
+}
+
+:global(.theme-noir-dark) .strip::after {
+  display: none;
+}
+
+:global(.theme-noir-dark) .strip:hover {
+  border-color: rgba(106, 176, 204, 0.25);
+  background: rgba(80, 150, 179, 0.075);
+  transform: translateY(-2px);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+}
+
+:global(.theme-noir-dark) .strip:hover::before {
+  width: 3px;
+  opacity: 1;
+}
+
+:global(.theme-noir-dark) .icon,
+:global(.theme-noir-dark) .icon[class*="kind-"] {
+  width: 46px;
+  height: 46px;
+  border-color: rgba(106, 176, 204, 0.24);
+  border-radius: 13px;
+  color: #f3f5f8;
+  background: linear-gradient(135deg, rgba(106, 176, 204, 0.3), rgba(80, 150, 179, 0.1));
+}
+
+:global(.theme-noir-dark) .title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 19px;
+  font-style: normal;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .desc {
+  margin-bottom: 7px;
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .kind-badge,
+:global(.theme-noir-dark) .chip {
+  border-color: rgba(168, 192, 220, 0.09);
+  border-radius: 9px;
+  color: #7a8291;
+  background: rgba(3, 6, 12, 0.5);
+}
+
+:global(.theme-noir-dark) .kind-badge[class*="kind-"] {
+  border-color: rgba(106, 176, 204, 0.22);
+  color: #6ab0cc;
+  background: rgba(80, 150, 179, 0.1);
+}
+
+:global(.theme-noir-dark) .cta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  min-width: 260px;
+}
+
+:global(.theme-noir-dark) .cta .btn {
+  border-radius: 16px;
+  transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), border-color 0.2s, background 0.2s;
+}
+
+:global(.theme-noir-dark) .cta .btn:active {
+  transform: scale(0.95);
+}
+
+:global(.theme-noir-dark) .cta .btn.primary {
+  border-color: rgba(106, 176, 204, 0.42);
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 18px rgba(80, 150, 179, 0.2);
+}
+
+@media (max-width: 920px) {
+  :global(.theme-noir-dark) .strip {
+    grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  :global(.theme-noir-dark) .cta {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+}
 </style>

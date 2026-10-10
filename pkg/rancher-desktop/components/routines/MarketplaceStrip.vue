@@ -373,4 +373,127 @@ const installButtonLabel = computed(() => {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+:global(.theme-noir-dark) .strip {
+  display: flex;
+  min-height: 310px;
+  margin: 0;
+  padding: 20px;
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 20px;
+  background:
+    linear-gradient(155deg, rgba(80, 150, 179, 0.075), transparent 42%),
+    rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025), 0 12px 34px rgba(0, 0, 0, 0.18);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), border-color 0.2s, box-shadow 0.2s;
+}
+
+:global(.theme-noir-dark) .strip::before {
+  display: none;
+}
+
+:global(.theme-noir-dark) .strip::after {
+  left: 20px;
+  right: 20px;
+  background: linear-gradient(90deg, transparent, rgba(106, 176, 204, 0.26), transparent);
+}
+
+:global(.theme-noir-dark) .strip:hover {
+  border-color: rgba(106, 176, 204, 0.3);
+  background:
+    linear-gradient(155deg, rgba(80, 150, 179, 0.14), transparent 48%),
+    rgba(168, 192, 220, 0.045);
+  transform: translateY(-5px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 22px 48px rgba(0, 0, 0, 0.34), 0 0 28px rgba(80, 150, 179, 0.1);
+}
+
+:global(.theme-noir-dark) .icon {
+  width: 58px;
+  height: 58px;
+  border-color: rgba(106, 176, 204, 0.3);
+  border-radius: 16px;
+  color: #f3f5f8;
+  background: linear-gradient(135deg, rgba(106, 176, 204, 0.34), rgba(80, 150, 179, 0.12));
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.05), 0 0 24px rgba(80, 150, 179, 0.12);
+}
+
+:global(.theme-noir-dark) .icon[class*="kind-"] {
+  background: linear-gradient(135deg, rgba(106, 176, 204, 0.34), rgba(80, 150, 179, 0.12));
+}
+
+:global(.theme-noir-dark) .body {
+  flex: 1;
+}
+
+:global(.theme-noir-dark) .title {
+  margin: 9px 0 7px;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 24px;
+  font-style: normal;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .tagline,
+:global(.theme-noir-dark) .desc {
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .kind-badge,
+:global(.theme-noir-dark) .chip {
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 9px;
+  color: #a8c0dc;
+  background: rgba(3, 6, 12, 0.52);
+}
+
+:global(.theme-noir-dark) .kind-badge[class*="kind-"] {
+  border-color: rgba(106, 176, 204, 0.22);
+  color: #6ab0cc;
+  background: rgba(80, 150, 179, 0.1);
+}
+
+:global(.theme-noir-dark) .metrics {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: end;
+  gap: 10px;
+  padding-top: 13px;
+  border-top: 1px solid rgba(168, 192, 220, 0.07);
+}
+
+:global(.theme-noir-dark) .metric b {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: normal;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .author {
+  justify-self: start;
+  color: #7a8291;
+}
+
+:global(.theme-noir-dark) .cta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-width: 0;
+}
+
+:global(.theme-noir-dark) .cta .btn {
+  min-height: 34px;
+  border-radius: 17px;
+  transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), filter 0.2s;
+}
+
+:global(.theme-noir-dark) .cta .btn:active {
+  transform: scale(0.95);
+}
+
+:global(.theme-noir-dark) .cta .btn.primary {
+  border-color: rgba(106, 176, 204, 0.45);
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 18px rgba(80, 150, 179, 0.24);
+}
 </style>

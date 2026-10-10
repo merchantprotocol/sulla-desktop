@@ -141,4 +141,15 @@ textarea {
   resize: vertical;
   min-height: 70px;
 }
+
+:global(.theme-noir-dark) .meta-fields {
+  padding: 16px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 17px;
+  background: rgba(168, 192, 220, 0.035);
+}
+:global(.theme-noir-dark) input,
+:global(.theme-noir-dark) textarea { min-height: 40px; border-color: rgba(168, 192, 220, 0.12); border-radius: 12px; color: #f3f5f8; background: rgba(3, 6, 12, 0.68); }
+:global(.theme-noir-dark) input:focus,
+:global(.theme-noir-dark) textarea:focus { border-color: rgba(106, 176, 204, 0.48); box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.1); }
 </style>
