@@ -9,8 +9,8 @@ import { getSupportedProviders, fetchModelsForProvider, clearModelCache } from '
 import { heartbeatPrompt } from '../agent/prompts/heartbeat';
 import { soulPrompt } from '../agent/prompts/soul';
 import { useTheme } from '../composables/useTheme';
-import { WORKER_CONCURRENCY_KEY, DEFAULT_WORKER_CONCURRENCY, isValidWorkerConcurrency, normalizeWorkerConcurrency } from '../shared/workerConcurrency';
 import { REMOTE_PROVIDERS } from '../shared/remoteProviders';
+import { WORKER_CONCURRENCY_KEY, DEFAULT_WORKER_CONCURRENCY, isValidWorkerConcurrency, normalizeWorkerConcurrency } from '../shared/workerConcurrency';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -47,7 +47,10 @@ interface SectionEditRow {
   created_at:       string;
 }
 
-type DiffLine = { type: 'ctx' | 'add' | 'del'; text: string };
+interface DiffLine {
+  type: 'ctx' | 'add' | 'del';
+  text: string;
+}
 
 export default defineComponent({
   name: 'language-model-settings',
@@ -136,7 +139,7 @@ export default defineComponent({
       activationError:        '' as string,
       savingSettings:         false,
       // Guard flag to prevent feedback loop between primaryProvider watcher and IPC handler
-      _suppressProviderWatch: false,
+      suppressProviderWatch: false,
     };
   },
 
@@ -300,7 +303,7 @@ export default defineComponent({
   watch: {
     // Watch for API key changes to automatically load models
     async apiKey(newApiKey: string, oldApiKey: string) {
-      if (newApiKey && newApiKey.trim() && newApiKey !== oldApiKey && this.selectedProvider) {
+      if (newApiKey?.trim() && newApiKey !== oldApiKey && this.selectedProvider) {
         await this.loadRemoteModels();
       }
     },
@@ -365,8 +368,8 @@ export default defineComponent({
     // Watch for primary provider changes — delegate to ModelProviderService
     async primaryProvider(newProvider: string, oldProvider: string) {
       if (!newProvider || newProvider === oldProvider) return;
-      if (this._suppressProviderWatch) {
-        this._suppressProviderWatch = false;
+      if (this.suppressProviderWatch) {
+        this.suppressProviderWatch = false;
         return;
       }
 
@@ -966,10 +969,26 @@ export default defineComponent({
       let i = 0;
       let j = 0;
       while (i < n && j < m) {
-        if (a[i] === b[j]) { out.push({ type: 'ctx', text: a[i] }); i++; j++; } else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ type: 'del', text: a[i] }); i++; } else { out.push({ type: 'add', text: b[j] }); j++; }
+        if (a[i] === b[j]) {
+          out.push({ type: 'ctx', text: a[i] });
+          i++;
+          j++;
+        } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+          out.push({ type: 'del', text: a[i] });
+          i++;
+        } else {
+          out.push({ type: 'add', text: b[j] });
+          j++;
+        }
       }
-      while (i < n) { out.push({ type: 'del', text: a[i] }); i++; }
-      while (j < m) { out.push({ type: 'add', text: b[j] }); j++; }
+      while (i < n) {
+        out.push({ type: 'del', text: a[i] });
+        i++;
+      }
+      while (j < m) {
+        out.push({ type: 'add', text: b[j] });
+        j++;
+      }
       return out;
     },
 
@@ -1044,7 +1063,7 @@ export default defineComponent({
       }
       // Suppress watcher to avoid IPC loop
       if (this.primaryProvider !== state.primaryProvider) {
-        this._suppressProviderWatch = true;
+        this.suppressProviderWatch = true;
         this.primaryProvider = state.primaryProvider;
       }
     },
@@ -1060,7 +1079,7 @@ export default defineComponent({
       this.pendingModel = this.activeModel;
       const newPrimary = data.provider || this.primaryProvider;
       if (this.primaryProvider !== newPrimary) {
-        this._suppressProviderWatch = true;
+        this.suppressProviderWatch = true;
         this.primaryProvider = newPrimary;
       }
     },
@@ -1080,6 +1099,15 @@ export default defineComponent({
     <div class="lm-content">
       <!-- Sidebar navigation -->
       <nav class="lm-nav">
+        <div class="noir-rail-head">
+          <div class="noir-rail-title">Language Model</div>
+          <div class="noir-rail-copy">How Sulla thinks, and on what</div>
+        </div>
+        <div class="noir-rail-items">
+          <span
+            class="noir-rail-marker"
+            :style="{ transform: `translateY(${navItems.findIndex(item => item.id === currentNav) * 44}px)` }"
+          />
         <div
           v-for="item in navItems"
           :key="item.id"
@@ -1087,7 +1115,18 @@ export default defineComponent({
           :class="{ active: currentNav === item.id }"
           @click="navClicked(item.id)"
         >
-          {{ item.name }}
+          <span class="noir-rail-glyph">{{ item.id === 'overview' ? '◎' : item.id === 'models' ? '◇' : item.id === 'system-prompt' ? '¶' : item.id === 'heartbeat' ? '♥' : '▤' }}</span>
+          <span>{{ item.name }}</span>
+          <small
+            v-if="item.id === 'system-prompt' && pendingEdits.length"
+            class="noir-rail-note"
+          >{{ pendingEdits.length }} EDIT{{ pendingEdits.length === 1 ? '' : 'S' }}</small>
+        </div>
+        </div>
+        <div class="noir-rail-foot">
+          <span class="noir-health-dot" />
+          Connected · {{ primaryProvider || 'provider' }}<br>
+          retries {{ remoteRetryCount }} · timeout {{ remoteTimeoutSeconds }}s
         </div>
       </nav>
 
@@ -1098,6 +1137,11 @@ export default defineComponent({
           v-if="currentNav === 'overview'"
           class="tab-content"
         >
+          <div class="noir-page-head">
+            <div class="noir-eyebrow">Overview</div>
+            <div class="noir-headline">Sulla is thinking with {{ activeModel || selectedRemoteModel || 'the active model' }}.</div>
+            <div class="noir-lead">Everything that powers Sulla, on one page.</div>
+          </div>
           <h2>Overview</h2>
           <p class="description">
             View the active AI configuration.
@@ -1115,13 +1159,52 @@ export default defineComponent({
               <span class="config-value">{{ selectedProvider }} / {{ selectedRemoteModel }}</span>
             </div>
           </div>
+
+          <div class="noir-routing-card">
+            <div class="noir-card-title">Active configuration</div>
+            <div class="noir-card-copy">Mode · Remote (API)</div>
+            <div class="noir-route-row">
+              <div class="noir-route-node noir-route-node--primary">
+                <b>Primary</b>
+                <span>{{ primaryProvider }} · {{ activeModel || selectedRemoteModel || 'default' }}</span>
+              </div>
+              <span class="noir-route-arrow">→ falls back to →</span>
+              <div class="noir-route-node">
+                <b>Secondary</b>
+                <span>{{ secondaryProvider }} · {{ secondaryModelId || 'default' }}</span>
+              </div>
+            </div>
+            <div class="noir-route-row">
+              <div class="noir-route-node">
+                <b>Subconscious</b>
+                <span>{{ subconsciousProvider === 'default' ? primaryProvider : subconsciousProvider }} · {{ subconsciousModelId || 'default' }}</span>
+              </div>
+              <div class="noir-route-node">
+                <b>Heartbeat</b>
+                <span>{{ heartbeatProvider === 'default' ? primaryProvider : heartbeatProvider }} · every {{ heartbeatDelayMinutes }} min</span>
+              </div>
+            </div>
+          </div>
+          <div class="noir-stat-grid">
+            <div class="noir-stat-card"><b>{{ remoteRetryCount }}</b><span>RETRIES</span></div>
+            <div class="noir-stat-card"><b>{{ remoteTimeoutSeconds }}s</b><span>TIMEOUT</span></div>
+            <div class="noir-stat-card">
+              <b><span :class="heartbeatEnabled ? 'noir-health-dot' : 'noir-off-dot'" />{{ heartbeatEnabled ? 'On' : 'Off' }}</b>
+              <span>HEARTBEAT</span>
+            </div>
+          </div>
         </div>
 
         <!-- Models Tab -->
         <div
           v-if="currentNav === 'models'"
-          class="tab-content"
+          class="tab-content noir-models-pane"
         >
+          <div class="noir-page-head">
+            <div class="noir-eyebrow">Models</div>
+            <div class="noir-headline">Who answers, who backs up.</div>
+            <div class="noir-lead">Primary handles every chat. Secondary takes over if it fails. Subconscious works quietly in the background.</div>
+          </div>
           <!-- Primary Provider -->
           <div class="setting-group">
             <label class="setting-label">Primary Provider</label>
@@ -1137,6 +1220,16 @@ export default defineComponent({
                 {{ provider.name }}
               </option>
             </select>
+            <div class="noir-segment-row">
+              <label
+                v-for="provider in availableProviders"
+                :key="`primary-${provider.id}`"
+                :class="{ 'is-current': primaryProvider === provider.id }"
+              >
+                <input v-model="primaryProvider" type="radio" :value="provider.id">
+                <span>{{ provider.name }}</span>
+              </label>
+            </div>
             <p class="setting-description">
               The main language model provider used for all agent tasks.
             </p>
@@ -1165,6 +1258,23 @@ export default defineComponent({
                 {{ model.name }}
               </option>
             </select>
+            <div class="noir-choice-rows">
+              <label
+                v-for="model in primaryModels"
+                :key="`primary-model-${model.id}`"
+                :class="{ 'is-current': selectedRemoteModel === model.id }"
+              >
+                <input
+                  v-model="selectedRemoteModel"
+                  type="radio"
+                  :value="model.id"
+                  @change="onPrimaryModelChange"
+                >
+                <span class="noir-choice-ring" />
+                <span>{{ model.name }}<small>{{ model.id }}</small></span>
+                <i v-if="activeModel === model.id">CURRENT</i>
+              </label>
+            </div>
             <p class="setting-description">
               The specific model version to use. "Auto" lets Claude Code pick the best model for each task.
             </p>
@@ -1173,6 +1283,10 @@ export default defineComponent({
           <!-- Secondary (Fallback) Provider -->
           <div class="setting-group">
             <label class="setting-label">Secondary Provider (Fallback)</label>
+            <div class="noir-switch-copy">
+              <span><b>Fallback routing is on</b><small>Takes over automatically when the primary provider fails.</small></span>
+              <span class="noir-readonly-switch"><i /></span>
+            </div>
             <select
               v-model="secondaryProvider"
               class="model-select"
@@ -1185,6 +1299,16 @@ export default defineComponent({
                 {{ provider.name }}
               </option>
             </select>
+            <div class="noir-segment-row">
+              <label
+                v-for="provider in availableProviders"
+                :key="`secondary-${provider.id}`"
+                :class="{ 'is-current': secondaryProvider === provider.id }"
+              >
+                <input v-model="secondaryProvider" type="radio" :value="provider.id">
+                <span>{{ provider.name }}</span>
+              </label>
+            </div>
             <p class="setting-description">
               If the primary provider is inaccessible, the agent falls back to this provider.
             </p>
@@ -1217,6 +1341,31 @@ export default defineComponent({
                 {{ model.name }}
               </option>
             </select>
+            <div class="noir-choice-rows">
+              <label :class="{ 'is-current': secondaryModelId === '' }">
+                <input v-model="secondaryModelId" type="radio" value="">
+                <span class="noir-choice-ring" />
+                <span>Provider default<small>Use the provider's configured model</small></span>
+              </label>
+              <label
+                v-for="tier in ['fast', 'balanced', 'powerful']"
+                :key="`secondary-tier-${tier}`"
+                :class="{ 'is-current': secondaryModelId === tier }"
+              >
+                <input v-model="secondaryModelId" type="radio" :value="tier">
+                <span class="noir-choice-ring" />
+                <span>{{ tier }}<small>Dynamic provider tier</small></span>
+              </label>
+              <label
+                v-for="model in secondaryModels"
+                :key="`secondary-model-${model.id}`"
+                :class="{ 'is-current': secondaryModelId === model.id }"
+              >
+                <input v-model="secondaryModelId" type="radio" :value="model.id">
+                <span class="noir-choice-ring" />
+                <span>{{ model.name }}<small>{{ model.id }}</small></span>
+              </label>
+            </div>
             <p class="setting-description">
               Override which model the secondary provider uses. Leave blank to use the provider's configured default.
             </p>
@@ -1240,6 +1389,20 @@ export default defineComponent({
                 {{ provider.name }}
               </option>
             </select>
+            <div class="noir-segment-row">
+              <label :class="{ 'is-current': subconsciousProvider === 'default' }">
+                <input v-model="subconsciousProvider" type="radio" value="default">
+                <span>Primary</span>
+              </label>
+              <label
+                v-for="provider in availableProviders"
+                :key="`subconscious-${provider.id}`"
+                :class="{ 'is-current': subconsciousProvider === provider.id }"
+              >
+                <input v-model="subconsciousProvider" type="radio" :value="provider.id">
+                <span>{{ provider.name }}</span>
+              </label>
+            </div>
             <p class="setting-description">
               Provider for background agents (memory recall, observation, unstuck research). "Use Primary Provider" mirrors your primary provider above.
             </p>
@@ -1272,6 +1435,31 @@ export default defineComponent({
                 {{ model.name }}
               </option>
             </select>
+            <div class="noir-choice-rows">
+              <label :class="{ 'is-current': subconsciousModelId === '' }">
+                <input v-model="subconsciousModelId" type="radio" value="">
+                <span class="noir-choice-ring" />
+                <span>Provider default<small>Use the provider's configured model</small></span>
+              </label>
+              <label
+                v-for="tier in ['fast', 'balanced', 'powerful']"
+                :key="`subconscious-tier-${tier}`"
+                :class="{ 'is-current': subconsciousModelId === tier }"
+              >
+                <input v-model="subconsciousModelId" type="radio" :value="tier">
+                <span class="noir-choice-ring" />
+                <span>{{ tier }}<small>Dynamic provider tier</small></span>
+              </label>
+              <label
+                v-for="model in subconsciousModels"
+                :key="`subconscious-model-${model.id}`"
+                :class="{ 'is-current': subconsciousModelId === model.id }"
+              >
+                <input v-model="subconsciousModelId" type="radio" :value="model.id">
+                <span class="noir-choice-ring" />
+                <span>{{ model.name }}<small>{{ model.id }}</small></span>
+              </label>
+            </div>
             <p class="setting-description">
               Override the model used by subconscious agents. Tier names (fast/balanced/powerful) are resolved dynamically from the provider's live model list. Avoid slow autonomous models here — memory recall needs a fast chat model.
             </p>
@@ -1294,6 +1482,16 @@ export default defineComponent({
               <strong>Integrations</strong> to add credentials for Grok, OpenAI, Anthropic, etc.
             </p>
           </div>
+          <div class="noir-secret-card">
+            <div>
+              <span>REMOTE API KEY</span>
+              <b>{{ apiKey ? '••••••••••••' : 'Not configured' }}</b>
+            </div>
+            <div>
+              <span>TIMEOUT · RETRIES</span>
+              <b>{{ remoteTimeoutSeconds }}s · {{ remoteRetryCount }}</b>
+            </div>
+          </div>
         </div>
 
         <!-- System Prompt Tab -->
@@ -1301,6 +1499,11 @@ export default defineComponent({
           v-if="currentNav === 'system-prompt'"
           class="tab-content sp-tab"
         >
+          <div class="noir-page-head">
+            <div class="noir-eyebrow">System Prompt</div>
+            <div class="noir-headline">Who Sulla is.</div>
+            <div class="noir-lead">Edit any section. Proposed changes stay staged until you accept them.</div>
+          </div>
           <!-- REVIEW VIEW — a staged AI-proposed edit -->
           <template v-if="reviewingEdit">
             <div class="sp-detail-bar">
@@ -1598,6 +1801,11 @@ export default defineComponent({
           v-if="currentNav === 'heartbeat'"
           class="tab-content"
         >
+          <div class="noir-page-head">
+            <div class="noir-eyebrow">Heartbeat</div>
+            <div class="noir-headline">Sulla's pulse.</div>
+            <div class="noir-lead">When it's on, Sulla wakes up on its own to check progress and move work forward.</div>
+          </div>
           <h2>Heartbeat Settings</h2>
           <p class="description">
             Configure a periodic heartbeat that triggers the agent to check in and review its state.
@@ -1623,7 +1831,7 @@ export default defineComponent({
           </div>
 
           <!-- Delay Setting -->
-          <div class="setting-group">
+          <div class="setting-group noir-dependent" :class="{ 'is-dimmed': !heartbeatEnabled }">
             <label class="setting-label">Heartbeat Interval (minutes)</label>
             <div class="delay-input">
               <input
@@ -1635,17 +1843,28 @@ export default defineComponent({
                 style="width: 120px;"
               >
             </div>
+            <div class="noir-segment-row">
+              <label
+                v-for="minutes in [5, 15, 30, 60]"
+                :key="minutes"
+                :class="{ 'is-current': heartbeatDelayMinutes === minutes }"
+              >
+                <input v-model="heartbeatDelayMinutes" type="radio" :value="minutes" :disabled="!heartbeatEnabled">
+                <span>{{ minutes === 60 ? '1 hr' : `${minutes} min` }}</span>
+              </label>
+            </div>
             <p class="setting-description">
               How often the heartbeat should trigger (1-1440 minutes). Default is 30 minutes.
             </p>
           </div>
 
           <!-- Provider Setting -->
-          <div class="setting-group">
+          <div class="setting-group noir-dependent" :class="{ 'is-dimmed': !heartbeatEnabled }">
             <label class="setting-label">Heartbeat Provider</label>
             <select
               v-model="heartbeatProvider"
               class="model-select"
+              :disabled="!heartbeatEnabled && currentTheme === 'noir-dark'"
             >
               <option value="default">
                 Use Primary Provider
@@ -1664,11 +1883,12 @@ export default defineComponent({
           </div>
 
           <!-- Subconscious Provider Setting -->
-          <div class="setting-group">
+          <div class="setting-group noir-dependent" :class="{ 'is-dimmed': !heartbeatEnabled }">
             <label class="setting-label">Subconscious Provider</label>
             <select
               v-model="subconsciousProvider"
               class="model-select"
+              :disabled="!heartbeatEnabled && currentTheme === 'noir-dark'"
             >
               <option value="default">
                 Use Primary Provider
@@ -1692,6 +1912,11 @@ export default defineComponent({
           v-if="currentNav === 'project-automation'"
           class="tab-content"
         >
+          <div class="noir-page-head">
+            <div class="noir-eyebrow">Project Automation</div>
+            <div class="noir-headline">Work that runs itself.</div>
+            <div class="noir-lead">The dispatcher picks up todo tasks and hands each one to a worker.</div>
+          </div>
           <h2>Project Automation</h2>
           <p class="description">
             Configure the automated Projects dispatcher independently of the Heartbeat agent loop.
@@ -1716,7 +1941,7 @@ export default defineComponent({
             </p>
           </div>
 
-          <div class="setting-group">
+          <div class="setting-group noir-dependent" :class="{ 'is-dimmed': !automatedProjectManagementEnabled }">
             <label class="setting-label" for="dispatcher-worker-limit">Concurrent workers</label>
             <input
               id="dispatcher-worker-limit"
@@ -1728,7 +1953,18 @@ export default defineComponent({
               style="width: 120px;"
               :aria-invalid="!workerConcurrencyValid"
               aria-describedby="dispatcher-worker-limit-help"
+              :disabled="!automatedProjectManagementEnabled && currentTheme === 'noir-dark'"
             >
+            <div class="noir-segment-row">
+              <label
+                v-for="workers in [1, 3, 5, 8]"
+                :key="workers"
+                :class="{ 'is-current': Number(routineConcurrencyTotalLimit) === workers }"
+              >
+                <input v-model="routineConcurrencyTotalLimit" type="radio" :value="workers" :disabled="!automatedProjectManagementEnabled">
+                <span>{{ workers }}</span>
+              </label>
+            </div>
             <p id="dispatcher-worker-limit-help" class="setting-description">
               Maximum concurrent workers shared by execution, review, planning and other automated routines.
               Save to apply to new launches. Lowering this value lets running workers finish before more start.
@@ -2711,6 +2947,640 @@ export default defineComponent({
   }
 }
 
+</style>
+
+<style lang="scss" scoped>
+.noir-rail-head,
+.noir-rail-marker,
+.noir-rail-glyph,
+.noir-rail-note,
+.noir-rail-foot,
+.noir-page-head,
+.noir-routing-card,
+.noir-stat-grid,
+.noir-segment-row,
+.noir-choice-rows,
+.noir-switch-copy,
+.noir-secret-card {
+  display: none;
+}
+
+:global(.theme-noir-dark) .lm-settings {
+  background: #01030a;
+  color: #dee4ec;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+:global(.theme-noir-dark) .lm-header {
+  display: none;
+}
+
+:global(.theme-noir-dark) .lm-nav {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 230px;
+  padding: 24px 14px 16px;
+  border-right: 1px solid rgba(168, 192, 220, 0.08);
+  background: rgba(3, 6, 12, 0.6);
+}
+
+:global(.theme-noir-dark) .noir-rail-head {
+  display: block;
+  padding: 0 10px 24px;
+}
+
+:global(.theme-noir-dark) .noir-rail-title {
+  color: #f3f5f8;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+:global(.theme-noir-dark) .noir-rail-copy {
+  margin-top: 6px;
+  color: #7a8291;
+  font-size: 10.5px;
+}
+
+:global(.theme-noir-dark) .noir-rail-items {
+  position: relative;
+}
+
+:global(.theme-noir-dark) .lm-nav .nav-item {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 40px;
+  margin: 0 0 4px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 20px;
+  color: #a9b3c1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 40px;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+:global(.theme-noir-dark) .lm-nav .nav-item:hover {
+  background: rgba(80, 150, 179, 0.08);
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .lm-nav .nav-item.active {
+  border: 0;
+  background: transparent;
+  color: #f3f5f8;
+  font-weight: 500;
+}
+
+:global(.theme-noir-dark) .noir-rail-marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: 40px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.18), rgba(80, 150, 179, 0.07));
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.23), 0 0 22px rgba(80, 150, 179, 0.08);
+  transition: transform linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) .58s;
+}
+
+:global(.theme-noir-dark) .noir-rail-marker::before {
+  position: absolute;
+  top: 9px;
+  left: -14px;
+  width: 3px;
+  height: 22px;
+  border-radius: 2px;
+  background: #6ab0cc;
+  box-shadow: 0 0 12px #5096b3;
+  content: "";
+}
+
+:global(.theme-noir-dark) .noir-rail-glyph {
+  display: inline-grid;
+  width: 16px;
+  place-items: center;
+  color: #a8c0dc;
+  font-size: 15px;
+}
+
+:global(.theme-noir-dark) .noir-rail-note {
+  display: inline-block;
+  margin-left: auto;
+  color: #e3b341;
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+:global(.theme-noir-dark) .noir-rail-foot {
+  display: block;
+  margin-top: auto;
+  padding: 12px 13px;
+  border-radius: 14px;
+  color: #7a8291;
+  background: rgba(168, 192, 220, 0.025);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+  font-size: 10.5px;
+  line-height: 1.65;
+}
+
+:global(.theme-noir-dark) .noir-health-dot,
+:global(.theme-noir-dark) .noir-off-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #3fb950;
+  box-shadow: 0 0 8px rgba(63, 185, 80, 0.7);
+}
+
+:global(.theme-noir-dark) .noir-off-dot {
+  background: #484f5a;
+  box-shadow: none;
+}
+
+:global(.theme-noir-dark) .lm-body {
+  padding: 30px 34px;
+  background: radial-gradient(circle at 18% 0%, rgba(80, 150, 179, 0.05), transparent 32%), #01030a;
+}
+
+:global(.theme-noir-dark) .tab-content {
+  max-width: 920px;
+  animation: noir-settings-in 340ms ease both;
+}
+
+:global(.theme-noir-dark) .tab-content > h2,
+:global(.theme-noir-dark) .tab-content > .description,
+:global(.theme-noir-dark) .tab-content > .active-model-section {
+  display: none;
+}
+
+:global(.theme-noir-dark) .noir-page-head {
+  display: block;
+  margin-bottom: 22px;
+}
+
+:global(.theme-noir-dark) .noir-eyebrow {
+  margin-bottom: 7px;
+  color: #6ab0cc;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .noir-headline {
+  color: #f3f5f8;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+:global(.theme-noir-dark) .noir-lead {
+  margin-top: 7px;
+  color: #a9b3c1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+:global(.theme-noir-dark) .noir-routing-card {
+  display: block;
+  padding: 22px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.16), rgba(80, 150, 179, 0.03));
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.25), 0 18px 60px rgba(0, 0, 0, 0.22);
+}
+
+:global(.theme-noir-dark) .noir-card-title {
+  color: #f3f5f8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .noir-card-copy {
+  margin-top: 4px;
+  color: #7a8291;
+  font-size: 11px;
+}
+
+:global(.theme-noir-dark) .noir-route-row {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+:global(.theme-noir-dark) .noir-route-node {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 13px 15px;
+  border-radius: 14px;
+  background: rgba(3, 6, 12, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .noir-route-node--primary {
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.38), 0 0 18px rgba(80, 150, 179, 0.12);
+}
+
+:global(.theme-noir-dark) .noir-route-node b {
+  color: #f3f5f8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+:global(.theme-noir-dark) .noir-route-node span,
+:global(.theme-noir-dark) .noir-route-arrow {
+  overflow: hidden;
+  color: #7a8291;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.theme-noir-dark) .noir-route-arrow {
+  align-self: center;
+  color: #6ab0cc;
+}
+
+:global(.theme-noir-dark) .noir-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+
+:global(.theme-noir-dark) .noir-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .noir-stat-card b {
+  color: #f3f5f8;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 26px;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .noir-stat-card > span {
+  color: #7a8291;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+:global(.theme-noir-dark) .setting-group,
+:global(.theme-noir-dark) .info-box,
+:global(.theme-noir-dark) .sp-identity,
+:global(.theme-noir-dark) .sp-list,
+:global(.theme-noir-dark) .sp-generated {
+  margin: 0 0 12px;
+  padding: 18px;
+  border: 0;
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .setting-group--indent {
+  margin-left: 0;
+}
+
+:global(.theme-noir-dark) .setting-label,
+:global(.theme-noir-dark) .form-label {
+  color: #f3f5f8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .setting-description,
+:global(.theme-noir-dark) .description {
+  color: #7a8291;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+:global(.theme-noir-dark) .noir-models-pane .model-select {
+  display: none;
+}
+
+:global(.theme-noir-dark) .noir-segment-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 16px;
+  background: rgba(3, 6, 12, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.1);
+}
+
+:global(.theme-noir-dark) .noir-segment-row label {
+  position: relative;
+  display: grid;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 12px;
+  place-items: center;
+  color: #7a8291;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+:global(.theme-noir-dark) .noir-segment-row label.is-current {
+  color: #f3f5f8;
+  background: linear-gradient(180deg, rgba(80, 150, 179, 0.32), rgba(80, 150, 179, 0.16));
+  box-shadow: inset 0 0 0 0.5px rgba(106, 176, 204, 0.55), 0 0 14px rgba(80, 150, 179, 0.25);
+}
+
+:global(.theme-noir-dark) .noir-segment-row input,
+:global(.theme-noir-dark) .noir-choice-rows input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+:global(.theme-noir-dark) .noir-choice-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+:global(.theme-noir-dark) .noir-choice-rows > label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  color: #dee4ec;
+  background: rgba(3, 6, 12, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.06);
+  cursor: pointer;
+  transition: transform 180ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+:global(.theme-noir-dark) .noir-choice-rows > label:hover {
+  transform: translateX(2px);
+  background: rgba(80, 150, 179, 0.08);
+}
+
+:global(.theme-noir-dark) .noir-choice-rows > label.is-current {
+  background: rgba(80, 150, 179, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.4);
+}
+
+:global(.theme-noir-dark) .noir-choice-rows small {
+  display: block;
+  margin-top: 2px;
+  color: #7a8291;
+  font-size: 10.5px;
+}
+
+:global(.theme-noir-dark) .noir-choice-rows i {
+  margin-left: auto;
+  color: #6ab0cc;
+  font-size: 10px;
+  font-style: normal;
+}
+
+:global(.theme-noir-dark) .noir-choice-ring {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px #484f5a;
+}
+
+:global(.theme-noir-dark) .is-current > .noir-choice-ring {
+  box-shadow: inset 0 0 0 1.5px #6ab0cc;
+}
+
+:global(.theme-noir-dark) .is-current > .noir-choice-ring::after {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: #6ab0cc;
+  box-shadow: 0 0 8px #6ab0cc;
+  content: "";
+}
+
+:global(.theme-noir-dark) .noir-switch-copy {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+:global(.theme-noir-dark) .noir-switch-copy > span:first-child {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+:global(.theme-noir-dark) .noir-switch-copy b {
+  color: #f3f5f8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+:global(.theme-noir-dark) .noir-switch-copy small {
+  color: #7a8291;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:global(.theme-noir-dark) .noir-readonly-switch {
+  position: relative;
+  display: block;
+  width: 46px;
+  height: 26px;
+  flex: none;
+  border-radius: 13px;
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 14px rgba(80, 150, 179, 0.45);
+}
+
+:global(.theme-noir-dark) .noir-readonly-switch i {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+:global(.theme-noir-dark) .noir-secret-card {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .noir-secret-card > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+:global(.theme-noir-dark) .noir-secret-card span {
+  color: #7a8291;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+:global(.theme-noir-dark) .noir-secret-card b {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 12px;
+  color: #a9b3c1;
+  background: rgba(3, 6, 12, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.12);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+:global(.theme-noir-dark) .switch {
+  width: 46px;
+  height: 26px;
+}
+
+:global(.theme-noir-dark) .switch .slider {
+  border-radius: 13px;
+  background: rgba(168, 192, 220, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.14);
+}
+
+:global(.theme-noir-dark) .switch .slider::before {
+  width: 20px;
+  height: 20px;
+  bottom: 3px;
+  border-radius: 50%;
+  background: #dee4ec;
+  transition: transform linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) .58s;
+}
+
+:global(.theme-noir-dark) .switch input:checked + .slider {
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 14px rgba(80, 150, 179, 0.45);
+}
+
+:global(.theme-noir-dark) .switch input:checked + .slider::before {
+  transform: translateX(20px);
+}
+
+:global(.theme-noir-dark) .noir-dependent {
+  transition: opacity 220ms ease;
+}
+
+:global(.theme-noir-dark) .noir-dependent.is-dimmed {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+:global(.theme-noir-dark) .text-input,
+:global(.theme-noir-dark) .model-select,
+:global(.theme-noir-dark) .sp-editor {
+  border: 0;
+  border-radius: 12px;
+  color: #f3f5f8;
+  background: rgba(3, 6, 12, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.12);
+}
+
+:global(.theme-noir-dark) .sp-review-banner,
+:global(.theme-noir-dark) .sp-rationale {
+  border: 0;
+  border-radius: 16px;
+  background: rgba(227, 179, 65, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(227, 179, 65, 0.25);
+}
+
+:global(.theme-noir-dark) .sp-rationale-label {
+  color: #e3b341;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .sp-row {
+  min-height: 52px;
+  border-bottom-color: rgba(168, 192, 220, 0.08);
+  border-radius: 12px;
+}
+
+:global(.theme-noir-dark) .sp-row:hover {
+  background: rgba(80, 150, 179, 0.08);
+}
+
+:global(.theme-noir-dark) .lm-footer {
+  padding: 14px 34px;
+  border: 0;
+  background: linear-gradient(180deg, transparent, rgba(3, 6, 12, 0.94) 42%);
+}
+
+:global(.theme-noir-dark) .btn {
+  min-height: 32px;
+  padding: 0 16px;
+  border-radius: 16px;
+}
+
+:global(.theme-noir-dark) .btn.role-primary,
+:global(.theme-noir-dark) .sp-approve-btn {
+  color: #fff;
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 16px rgba(80, 150, 179, 0.35);
+}
+
+:global(.theme-noir-dark) .btn.role-secondary {
+  color: #dee4ec;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.16);
+}
+
+@keyframes noir-settings-in {
+  from { opacity: 0; filter: blur(8px); transform: translateY(8px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .noir-rail-marker,
+  :global(.theme-noir-dark) .tab-content,
+  :global(.theme-noir-dark) .switch .slider::before,
+  :global(.theme-noir-dark) .noir-choice-rows > label {
+    animation: none;
+    transition: none;
+  }
+}
 </style>
 
 <!-- ─────────────────────────────────────────────────────────────

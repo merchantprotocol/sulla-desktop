@@ -7,10 +7,36 @@
 
     <!-- Body -->
     <div class="settings-body">
+      <div class="noir-computer-head">
+        <div class="noir-computer-eyebrow">
+          Computer Use
+        </div>
+        <div class="noir-computer-headline">
+          Your Mac, with boundaries.
+        </div>
+        <div class="noir-computer-lead">
+          Choose the applications Sulla can control and verify each permission in place.
+        </div>
+      </div>
       <p class="settings-description">
         Control which applications Sulla can interact with on your Mac.
         macOS will also ask for your permission the first time Sulla accesses each app.
       </p>
+
+      <div class="noir-computer-hero">
+        <div>
+          <span class="noir-computer-hero-title">Permission overview</span>
+          <span class="noir-computer-hero-copy">Changes save automatically</span>
+        </div>
+        <div class="noir-computer-stats">
+          <div><b>{{ installedApps.length }}</b><span>INSTALLED</span></div>
+          <div><b>{{ Object.values(enabledApps).filter(Boolean).length }}</b><span>ENABLED</span></div>
+          <div>
+            <b><span :class="healthCheckRunning ? 'noir-computer-warn' : 'noir-computer-ok'" />{{ healthCheckRunning ? 'Checking' : 'Ready' }}</b>
+            <span>PERMISSIONS</span>
+          </div>
+        </div>
+      </div>
 
       <!-- Bulk controls -->
       <div class="settings-controls">
@@ -279,7 +305,7 @@ async function detectInstalledApps() {
 // broadcast `computer-use:settings-changed` whenever they flip a toggle on
 // behalf of the user. Reload the UI so the checkbox state matches disk.
 function onSettingsChanged(): void {
-  void loadSettings();
+  loadSettings().catch(() => undefined);
 }
 
 onMounted(async() => {
@@ -529,6 +555,301 @@ onBeforeUnmount(() => {
   input:disabled + .toggle-slider {
     cursor: not-allowed;
     opacity: 0.5;
+  }
+}
+</style>
+
+<style lang="scss" scoped>
+.noir-computer-head,
+.noir-computer-hero {
+  display: none;
+}
+
+:global(.theme-noir-dark) .computer-use-settings {
+  background: radial-gradient(circle at 18% 0%, rgba(80, 150, 179, 0.05), transparent 32%), #01030a;
+  color: #dee4ec;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+:global(.theme-noir-dark) .settings-header {
+  display: none;
+}
+
+:global(.theme-noir-dark) .settings-body {
+  padding: 30px 34px;
+}
+
+:global(.theme-noir-dark) .noir-computer-head {
+  display: block;
+  max-width: 920px;
+  margin-bottom: 22px;
+  animation: noir-computer-in 340ms ease both;
+}
+
+:global(.theme-noir-dark) .noir-computer-eyebrow {
+  margin-bottom: 7px;
+  color: #6ab0cc;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .noir-computer-headline {
+  color: #f3f5f8;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+:global(.theme-noir-dark) .noir-computer-lead {
+  margin-top: 7px;
+  color: #a9b3c1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+:global(.theme-noir-dark) .settings-description {
+  display: none;
+}
+
+:global(.theme-noir-dark) .noir-computer-hero {
+  display: block;
+  max-width: 920px;
+  margin-bottom: 14px;
+  padding: 22px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.16), rgba(80, 150, 179, 0.03));
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.25), 0 18px 60px rgba(0, 0, 0, 0.22);
+  animation: noir-computer-in 340ms ease both;
+}
+
+:global(.theme-noir-dark) .noir-computer-hero > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+:global(.theme-noir-dark) .noir-computer-hero-title {
+  color: #f3f5f8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .noir-computer-hero-copy {
+  color: #7a8291;
+  font-size: 11px;
+}
+
+:global(.theme-noir-dark) .noir-computer-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 16px;
+}
+
+:global(.theme-noir-dark) .noir-computer-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(3, 6, 12, 0.46);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .noir-computer-stats b {
+  color: #f3f5f8;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .noir-computer-stats > div > span {
+  color: #7a8291;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+:global(.theme-noir-dark) .noir-computer-ok,
+:global(.theme-noir-dark) .noir-computer-warn {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #3fb950;
+  box-shadow: 0 0 8px rgba(63, 185, 80, 0.7);
+}
+
+:global(.theme-noir-dark) .noir-computer-warn {
+  background: #e3b341;
+  box-shadow: 0 0 8px rgba(227, 179, 65, 0.55);
+}
+
+:global(.theme-noir-dark) .settings-controls {
+  max-width: 920px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .action-btn {
+  min-height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 16px;
+  color: #dee4ec;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.16);
+  transition: transform 180ms ease, background 160ms ease;
+}
+
+:global(.theme-noir-dark) .action-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(80, 150, 179, 0.1);
+}
+
+:global(.theme-noir-dark) .action-btn--health {
+  color: #fff;
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 16px rgba(80, 150, 179, 0.35);
+}
+
+:global(.theme-noir-dark) .loading-state {
+  max-width: 920px;
+  padding: 40px;
+  border-radius: 18px;
+  color: #7a8291;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+  text-align: center;
+}
+
+:global(.theme-noir-dark) .app-list {
+  max-width: 920px;
+}
+
+:global(.theme-noir-dark) .app-category {
+  margin-bottom: 14px;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .category-header {
+  margin-bottom: 8px;
+  padding: 0 0 8px;
+  border-bottom-color: rgba(168, 192, 220, 0.08);
+  color: #6ab0cc;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .app-entry {
+  min-height: 58px;
+  margin-bottom: 6px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(3, 6, 12, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.06);
+  transition: transform 180ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+:global(.theme-noir-dark) .app-entry:hover {
+  transform: translateX(2px);
+  background: rgba(80, 150, 179, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.22);
+}
+
+:global(.theme-noir-dark) .app-entry.is-disabled {
+  opacity: 0.4;
+}
+
+:global(.theme-noir-dark) .app-name {
+  color: #f3f5f8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .app-description,
+:global(.theme-noir-dark) .not-installed-label,
+:global(.theme-noir-dark) .denied-hint {
+  color: #7a8291;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 11.5px;
+}
+
+:global(.theme-noir-dark) .permission-badge {
+  border-radius: 10px;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+}
+
+:global(.theme-noir-dark) .permission-badge--granted {
+  color: #9fd8a8;
+  background: rgba(63, 185, 80, 0.1);
+}
+
+:global(.theme-noir-dark) .permission-badge--denied,
+:global(.theme-noir-dark) .permission-badge--error {
+  color: #e7a19c;
+  background: rgba(248, 81, 73, 0.08);
+}
+
+:global(.theme-noir-dark) .permission-badge--checking {
+  color: #a8c0dc;
+  background: rgba(80, 150, 179, 0.12);
+}
+
+:global(.theme-noir-dark) .toggle-switch {
+  width: 46px;
+  height: 26px;
+}
+
+:global(.theme-noir-dark) .toggle-switch .toggle-slider {
+  border-radius: 13px;
+  background: rgba(168, 192, 220, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.14);
+}
+
+:global(.theme-noir-dark) .toggle-switch .toggle-slider::before {
+  width: 20px;
+  height: 20px;
+  bottom: 3px;
+  border-radius: 50%;
+  background: #dee4ec;
+  transition: transform linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) .58s;
+}
+
+:global(.theme-noir-dark) .toggle-switch input:checked + .toggle-slider {
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 14px rgba(80, 150, 179, 0.45);
+}
+
+:global(.theme-noir-dark) .toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(20px);
+}
+
+@keyframes noir-computer-in {
+  from { opacity: 0; filter: blur(8px); transform: translateY(8px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .noir-computer-head,
+  :global(.theme-noir-dark) .noir-computer-hero,
+  :global(.theme-noir-dark) .action-btn,
+  :global(.theme-noir-dark) .app-entry,
+  :global(.theme-noir-dark) .toggle-switch .toggle-slider::before {
+    animation: none;
+    transition: none;
   }
 }
 </style>
