@@ -63,6 +63,7 @@
               'tab-preview': tab.preview,
             },
           ]"
+          :title="tab.preview ? `${tab.label} — preview (double-click to keep open)` : undefined"
           @pointerdown="onPointerDown($event, index)"
           @dragstart.prevent
           @dblclick="tab.browserId && promoteTab(tab.browserId)"
@@ -71,6 +72,7 @@
           @mouseenter="queueTabPeek($event, tab)"
           @mouseleave="hideTabPeek"
         >
+          <span class="tab-accent-bar" />
           <span class="tab-icon">
             <img
               v-if="tab.favicon"
@@ -536,7 +538,7 @@ function queueTabPeek(event: MouseEvent, tab: HeaderTab) {
       left,
       pinned: tab.pinned,
       status: tab.statusLine,
-      title: tab.label,
+      title:  tab.label,
     };
     tabPeekTimer = null;
   }, tab.pinned ? 250 : 500);
@@ -926,16 +928,16 @@ const allTabsById = computed(() => {
 
     map.set(id, {
       id,
-      label:     bt.title || 'New Tab',
-      route:     `/Browser/${ bt.id }`,
-      isActive:  route.path === `/Browser/${ bt.id }`,
-      favicon:   bt.favicon,
-      iconPath:  MODE_ICON_PATHS[bt.mode],
-      mode:      bt.mode,
-      closeable: isTabCloseable(pinned),
-      browserId: bt.id,
-      native:    isPill,
-      preview:   previewTabId.value === bt.id,
+      label:      bt.title || 'New Tab',
+      route:      `/Browser/${ bt.id }`,
+      isActive:   route.path === `/Browser/${ bt.id }`,
+      favicon:    bt.favicon,
+      iconPath:   MODE_ICON_PATHS[bt.mode],
+      mode:       bt.mode,
+      closeable:  isTabCloseable(pinned),
+      browserId:  bt.id,
+      native:     isPill,
+      preview:    previewTabId.value === bt.id,
       pinned,
       working,
       statusLine: previewTabId.value === bt.id ? `preview · ${ statusLine }` : statusLine,
@@ -1675,9 +1677,50 @@ function handleTabContextMenuAction(
   background-color: var(--bg-surface-hover);
 }
 
+.tab-active-indicator,
+.tab-working-streak,
+.tab-peek {
+  display: none;
+}
+
+/* Pinning is functional in every theme. Keep its default treatment compact
+   and deliberately plain so it fits the existing tab strip. */
+.tab-pinned {
+  min-width: 36px;
+  max-width: 36px;
+  flex-basis: 36px;
+  justify-content: center;
+  gap: 0;
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.tab-pinned .tab-label {
+  display: none;
+}
+
+.tab-pinned-boundary {
+  margin-left: 10px;
+}
+
+.tab-pinned-boundary::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 25%;
+  width: 1px;
+  height: 50%;
+  background: var(--border-default);
+  pointer-events: none;
+}
+
+.tab-active-indicator + .tab-item.tab-inactive::before {
+  display: none;
+}
+
 /* Arc-style titlebar tabs. Kept under .app-titlebar to avoid the theme files'
    global .tab selectors. */
-.app-titlebar .tab-scroll-wrapper {
+:global(.theme-noir-dark) .app-titlebar .tab-scroll-wrapper {
   --tab-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 
   align-items: center;
@@ -1689,7 +1732,7 @@ function handleTabContextMenuAction(
   backdrop-filter: blur(10px);
 }
 
-.app-titlebar .tab-scroll-container {
+:global(.theme-noir-dark) .app-titlebar .tab-scroll-container {
   align-items: center;
   gap: 4px;
   height: 40px;
@@ -1698,8 +1741,9 @@ function handleTabContextMenuAction(
   scroll-behavior: smooth;
 }
 
-.app-titlebar .tab-active-indicator {
+:global(.theme-noir-dark) .app-titlebar .tab-active-indicator {
   position: absolute;
+  display: block;
   top: 1px;
   left: 0;
   height: 34px;
@@ -1711,7 +1755,7 @@ function handleTabContextMenuAction(
   transition: transform .58s var(--tab-spring), width .58s var(--tab-spring), opacity .2s;
 }
 
-.app-titlebar .tab-active-indicator::after {
+:global(.theme-noir-dark) .app-titlebar .tab-active-indicator::after {
   content: '';
   position: absolute;
   left: 50%;
@@ -1724,7 +1768,7 @@ function handleTabContextMenuAction(
   box-shadow: 0 0 10px #6ab0cc;
 }
 
-.app-titlebar .tab-item {
+:global(.theme-noir-dark) .app-titlebar .tab-item {
   width: 136px;
   min-width: 112px;
   max-width: 176px;
@@ -1742,18 +1786,18 @@ function handleTabContextMenuAction(
   transition: color .16s cubic-bezier(.22, 1, .36, 1), background .16s cubic-bezier(.22, 1, .36, 1), transform .5s var(--tab-spring), width .58s var(--tab-spring), min-width .58s var(--tab-spring), opacity .3s, padding .58s var(--tab-spring);
 }
 
-.app-titlebar .tab-item:hover {
+:global(.theme-noir-dark) .app-titlebar .tab-item:hover {
   color: var(--read-2, #dee4ec);
   background: rgba(80, 150, 179, .09);
 }
 
-.app-titlebar .tab-item:active {
+:global(.theme-noir-dark) .app-titlebar .tab-item:active {
   transform: scale(.95);
   transition: transform .08s;
 }
 
-.app-titlebar .tab-active,
-.app-titlebar .tab-active-native {
+:global(.theme-noir-dark) .app-titlebar .tab-active,
+:global(.theme-noir-dark) .app-titlebar .tab-active-native {
   color: var(--read-1, #f3f5f8);
   background: transparent;
   border: 0;
@@ -1761,13 +1805,17 @@ function handleTabContextMenuAction(
   font-weight: 500;
 }
 
-.app-titlebar .tab-active::before,
-.app-titlebar .tab-active::after,
-.app-titlebar .tab-inactive::before {
+:global(.theme-noir-dark) .app-titlebar .tab-accent-bar {
   display: none;
 }
 
-.app-titlebar .tab-pinned {
+:global(.theme-noir-dark) .app-titlebar .tab-active::before,
+:global(.theme-noir-dark) .app-titlebar .tab-active::after,
+:global(.theme-noir-dark) .app-titlebar .tab-inactive::before {
+  display: none;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-pinned {
   width: 36px;
   min-width: 36px;
   max-width: 36px;
@@ -1777,15 +1825,15 @@ function handleTabContextMenuAction(
   padding: 0;
 }
 
-.app-titlebar .tab-pinned .tab-label {
+:global(.theme-noir-dark) .app-titlebar .tab-pinned .tab-label {
   display: none;
 }
 
-.app-titlebar .tab-pinned-boundary {
+:global(.theme-noir-dark) .app-titlebar .tab-pinned-boundary {
   margin-left: 18px;
 }
 
-.app-titlebar .tab-pinned-boundary::before {
+:global(.theme-noir-dark) .app-titlebar .tab-pinned-boundary::before {
   content: '';
   display: block;
   position: absolute;
@@ -1797,30 +1845,30 @@ function handleTabContextMenuAction(
   pointer-events: none;
 }
 
-.app-titlebar .tab-preview {
+:global(.theme-noir-dark) .app-titlebar .tab-preview {
   box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .12);
 }
 
-.app-titlebar .tab-icon {
+:global(.theme-noir-dark) .app-titlebar .tab-icon {
   position: relative;
   width: 16px;
   height: 16px;
   opacity: .85;
 }
 
-.app-titlebar .tab-favicon-img,
-.app-titlebar .tab-favicon-svg {
+:global(.theme-noir-dark) .app-titlebar .tab-favicon-img,
+:global(.theme-noir-dark) .app-titlebar .tab-favicon-svg {
   width: 16px;
   height: 16px;
 }
 
-.app-titlebar .tab-active .tab-icon,
-.app-titlebar .tab-active-native .tab-icon {
+:global(.theme-noir-dark) .app-titlebar .tab-active .tab-icon,
+:global(.theme-noir-dark) .app-titlebar .tab-active-native .tab-icon {
   color: var(--read-1, #f3f5f8);
   filter: drop-shadow(0 0 6px rgba(106, 176, 204, .7));
 }
 
-.app-titlebar .tab-working .tab-icon::after {
+:global(.theme-noir-dark) .app-titlebar .tab-working .tab-icon::after {
   content: '';
   position: absolute;
   inset: -4px;
@@ -1830,8 +1878,9 @@ function handleTabContextMenuAction(
   animation: tab-working-spin 1s linear infinite;
 }
 
-.app-titlebar .tab-working-streak {
+:global(.theme-noir-dark) .app-titlebar .tab-working-streak {
   position: absolute;
+  display: block;
   left: 14px;
   right: 14px;
   bottom: 3px;
@@ -1841,7 +1890,7 @@ function handleTabContextMenuAction(
   pointer-events: none;
 }
 
-.app-titlebar .tab-working-streak::after {
+:global(.theme-noir-dark) .app-titlebar .tab-working-streak::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -1859,7 +1908,7 @@ function handleTabContextMenuAction(
   to { transform: translateX(260%); }
 }
 
-.app-titlebar .tab-close {
+:global(.theme-noir-dark) .app-titlebar .tab-close {
   width: 18px;
   height: 18px;
   margin-left: auto;
@@ -1870,17 +1919,17 @@ function handleTabContextMenuAction(
   transition: opacity .16s, transform .4s var(--tab-spring), background .16s, color .16s;
 }
 
-.app-titlebar .tab-item:hover .tab-close {
+:global(.theme-noir-dark) .app-titlebar .tab-item:hover .tab-close {
   opacity: 1;
   transform: scale(1);
 }
 
-.app-titlebar .tab-close:hover {
+:global(.theme-noir-dark) .app-titlebar .tab-close:hover {
   color: var(--read-1, #f3f5f8);
   background: rgba(168, 192, 220, .14);
 }
 
-.app-titlebar .tab-new {
+:global(.theme-noir-dark) .app-titlebar .tab-new {
   width: 34px;
   height: 34px;
   padding: 0;
@@ -1890,36 +1939,37 @@ function handleTabContextMenuAction(
   transition: background .16s, color .16s, transform .5s var(--tab-spring);
 }
 
-.app-titlebar .tab-new svg {
+:global(.theme-noir-dark) .app-titlebar .tab-new svg {
   transition: transform .5s var(--tab-spring);
 }
 
-.app-titlebar .tab-new:hover {
+:global(.theme-noir-dark) .app-titlebar .tab-new:hover {
   color: var(--read-1, #f3f5f8);
   background: rgba(80, 150, 179, .12);
 }
 
-.app-titlebar .tab-new:hover svg {
+:global(.theme-noir-dark) .app-titlebar .tab-new:hover svg {
   transform: rotate(90deg);
 }
 
-.app-titlebar .tab-new:active {
+:global(.theme-noir-dark) .app-titlebar .tab-new:active {
   transform: scale(.88);
 }
 
-.app-titlebar .tab-scroll-chevron {
+:global(.theme-noir-dark) .app-titlebar .tab-scroll-chevron {
   width: 24px;
   color: var(--read-3, #a9b3c1);
   border-radius: 12px;
 }
 
-.app-titlebar .tab-scroll-chevron:hover {
+:global(.theme-noir-dark) .app-titlebar .tab-scroll-chevron:hover {
   color: var(--read-1, #f3f5f8);
   background: rgba(80, 150, 179, .1);
 }
 
-.app-titlebar .tab-peek {
+:global(.theme-noir-dark) .app-titlebar .tab-peek {
   position: absolute;
+  display: block;
   top: 46px;
   width: 240px;
   padding: 12px;
@@ -1933,18 +1983,18 @@ function handleTabContextMenuAction(
   animation: tab-peek-in .4s var(--tab-spring) both;
 }
 
-.app-titlebar .tab-peek-title,
-.app-titlebar .tab-peek-status {
+:global(.theme-noir-dark) .app-titlebar .tab-peek-title,
+:global(.theme-noir-dark) .app-titlebar .tab-peek-status {
   display: block;
 }
 
-.app-titlebar .tab-peek-title {
+:global(.theme-noir-dark) .app-titlebar .tab-peek-title {
   margin-bottom: 4px;
   font-size: 12.5px;
   font-weight: 600;
 }
 
-.app-titlebar .tab-peek-status {
+:global(.theme-noir-dark) .app-titlebar .tab-peek-status {
   overflow: hidden;
   color: var(--read-4, #7a8291);
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
@@ -1953,7 +2003,7 @@ function handleTabContextMenuAction(
   white-space: nowrap;
 }
 
-.app-titlebar .tab-tooltip {
+:global(.theme-noir-dark) .app-titlebar .tab-tooltip {
   width: auto;
   max-width: 240px;
   padding: 6px 10px;
@@ -1970,18 +2020,18 @@ function handleTabContextMenuAction(
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app-titlebar .tab-active-indicator,
-  .app-titlebar .tab-item,
-  .app-titlebar .tab-close,
-  .app-titlebar .tab-new,
-  .app-titlebar .tab-new svg,
-  .app-titlebar .tab-peek {
+  :global(.theme-noir-dark) .app-titlebar .tab-active-indicator,
+  :global(.theme-noir-dark) .app-titlebar .tab-item,
+  :global(.theme-noir-dark) .app-titlebar .tab-close,
+  :global(.theme-noir-dark) .app-titlebar .tab-new,
+  :global(.theme-noir-dark) .app-titlebar .tab-new svg,
+  :global(.theme-noir-dark) .app-titlebar .tab-peek {
     animation: none;
     transition-duration: 0s;
   }
 
-  .app-titlebar .tab-working .tab-icon::after,
-  .app-titlebar .tab-working-streak::after {
+  :global(.theme-noir-dark) .app-titlebar .tab-working .tab-icon::after,
+  :global(.theme-noir-dark) .app-titlebar .tab-working-streak::after {
     animation: none;
   }
 }
@@ -1989,7 +2039,7 @@ function handleTabContextMenuAction(
 
 <style>
 /* Phase 8: Tab animations — unscoped because TransitionGroup generates elements */
-.tab-anim-enter-from {
+.theme-noir-dark .tab-anim-enter-from {
   opacity: 0;
   width: 0;
   min-width: 0;
@@ -1999,29 +2049,29 @@ function handleTabContextMenuAction(
   overflow: hidden;
 }
 
-.tab-anim-enter-active {
+.theme-noir-dark .tab-anim-enter-active {
   overflow: hidden;
   transition: opacity .3s, width .58s var(--tab-spring), min-width .58s var(--tab-spring), max-width .58s var(--tab-spring), padding .58s var(--tab-spring);
 }
 
-.tab-anim-enter-to {
+.theme-noir-dark .tab-anim-enter-to {
   opacity: 1;
   width: 136px;
   max-width: 176px;
 }
 
-.tab-anim-leave-from {
+.theme-noir-dark .tab-anim-leave-from {
   opacity: 1;
   width: 136px;
   max-width: 176px;
 }
 
-.tab-anim-leave-active {
+.theme-noir-dark .tab-anim-leave-active {
   overflow: hidden;
   transition: opacity .3s, width .58s var(--tab-spring), min-width .58s var(--tab-spring), max-width .58s var(--tab-spring), padding .58s var(--tab-spring);
 }
 
-.tab-anim-leave-to {
+.theme-noir-dark .tab-anim-leave-to {
   opacity: 0;
   width: 0;
   min-width: 0;
@@ -2031,14 +2081,14 @@ function handleTabContextMenuAction(
   overflow: hidden;
 }
 
-.tab-anim-move {
+.theme-noir-dark .tab-anim-move {
   transition: transform .58s var(--tab-spring);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tab-anim-enter-active,
-  .tab-anim-leave-active,
-  .tab-anim-move {
+  .theme-noir-dark .tab-anim-enter-active,
+  .theme-noir-dark .tab-anim-leave-active,
+  .theme-noir-dark .tab-anim-move {
     transition-duration: 0s;
   }
 }
