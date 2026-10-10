@@ -780,3 +780,60 @@ export default defineComponent({
     text-align: center;
   }
 </style>
+
+<style lang="scss" scoped>
+:global(.theme-noir-dark) .updates-root {
+  background: radial-gradient(70% 55% at 50% 42%, rgba(80, 150, 179, .11), transparent 70%), #01030a;
+  color: #dee4ec;
+}
+:global(.theme-noir-dark) .updates-window { padding: 30px 36px 22px; }
+:global(.theme-noir-dark) .updates-header,
+:global(.theme-noir-dark) .updates-footer { border-color: rgba(168, 192, 220, .08); }
+:global(.theme-noir-dark) .updates-icon {
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(106, 176, 204, .2), rgba(80, 150, 179, .04));
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, .28), 0 0 24px rgba(80, 150, 179, .18);
+}
+:global(.theme-noir-dark) .updates-title { color: #f3f5f8; font-size: 22px; letter-spacing: -.01em; }
+:global(.theme-noir-dark) .updates-subtitle { color: #6ab0cc; }
+:global(.theme-noir-dark) .state-block {
+  max-width: 500px;
+  padding: 30px;
+  border-radius: 22px;
+  background: rgba(168, 192, 220, .035);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .09), 0 28px 70px rgba(0, 0, 0, .28);
+  animation: updates-noir-enter .48s cubic-bezier(.22, 1, .36, 1) both;
+}
+:global(.theme-noir-dark) .state-headline { color: #f3f5f8; font-size: 30px; letter-spacing: -.02em; }
+:global(.theme-noir-dark) .state-sub { color: #a9b3c1; }
+:global(.theme-noir-dark) .btn-primary,
+:global(.theme-noir-dark) .btn-secondary { border-radius: 999px; padding: 10px 20px; transition: transform .45s cubic-bezier(.22, 1, .36, 1), box-shadow .2s, background .2s; }
+:global(.theme-noir-dark) .btn-primary { color: #01030a; box-shadow: 0 0 20px rgba(80, 150, 179, .26), inset 0 1px rgba(255, 255, 255, .2); }
+:global(.theme-noir-dark) .btn-primary:hover:not(:disabled),
+:global(.theme-noir-dark) .btn-secondary:hover { transform: translateY(-2px); }
+:global(.theme-noir-dark) .btn-secondary { border-color: rgba(168, 192, 220, .14); color: #a9b3c1; background: rgba(3, 6, 12, .4); }
+:global(.theme-noir-dark) .release-notes,
+:global(.theme-noir-dark) .dev-notice { border: 0; border-radius: 16px; background: rgba(3, 6, 12, .58); box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .08); }
+:global(.theme-noir-dark) .progress-bar { height: 9px; border: 0; border-radius: 9px; background: rgba(3, 6, 12, .72); box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .1); }
+:global(.theme-noir-dark) .progress-fill { position: relative; overflow: hidden; border-radius: inherit; }
+:global(.theme-noir-dark) .progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 25%, rgba(243, 245, 248, .58) 50%, transparent 75%);
+  transform: translateX(-100%);
+  animation: updates-noir-shimmer 1.7s ease-in-out infinite;
+}
+:global(.theme-noir-dark) .info-badge { color: #6ab0cc; background: rgba(80, 150, 179, .1); border-color: rgba(106, 176, 204, .28); }
+:global(.theme-noir-dark) .footer-version { color: #484f5a; }
+@keyframes updates-noir-enter { from { opacity: 0; transform: translateY(8px); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes updates-noir-shimmer { to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .state-block,
+  :global(.theme-noir-dark) .progress-fill::after,
+  :global(.theme-noir-dark) .spinner { animation: none; }
+  :global(.theme-noir-dark) .btn-primary,
+  :global(.theme-noir-dark) .btn-secondary { transition: none; }
+}
+</style>
