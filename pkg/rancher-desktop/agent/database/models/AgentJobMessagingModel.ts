@@ -155,6 +155,48 @@ export class AgentJobMessagingModel {
     const target = await this.taskForThread(threadId);
     if (!target || target.jobStatus !== 'running' || !['queued', 'running'].includes(target.taskStatus)) return null;
 
+    return this.insertCheckin(target, input);
+  }
+
+  /**
+   * Append a check-in using the worker identity stamped by spawn_agent.
+   * The task index is only accepted when its persisted threadId matches the
+   * caller's bound graph thread, so a session cannot report for a sibling task.
+   */
+  static async appendCheckinForTask(jobId: string, taskIndex: number, threadId: string, input: {
+    step: string;
+    summary: string;
+    filesTouched?: string[];
+    blockers?: string[];
+    percent?: number;
+  }): Promise<{ target: AgentJobTaskTarget; checkin: AgentJobCheckin } | null> {
+    const rows = await postgresClient.query<any>(
+      `SELECT j.job_id, j.status AS job_status, j.parent_channel, j.parent_thread_id,
+              task.ordinality - 1 AS task_index,
+              task.value->>'status' AS task_status,
+              task.value->>'threadId' AS thread_id
+         FROM agent_jobs j
+         CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY AS task(value, ordinality)
+        WHERE j.job_id = $1
+          AND task.ordinality - 1 = $2
+          AND task.value->>'threadId' = $3
+        LIMIT 1`,
+      [jobId, taskIndex, threadId],
+    );
+    const target = rows?.[0] ? rowToTarget(rows[0]) : null;
+    if (!target || target.jobStatus !== 'running' || !['queued', 'running'].includes(target.taskStatus)) return null;
+
+    return this.insertCheckin(target, input);
+  }
+
+  private static async insertCheckin(target: AgentJobTaskTarget, input: {
+    step: string;
+    summary: string;
+    filesTouched?: string[];
+    blockers?: string[];
+    percent?: number;
+  }): Promise<{ target: AgentJobTaskTarget; checkin: AgentJobCheckin }> {
+
     const rows = await postgresClient.query<any>(
       `INSERT INTO agent_job_checkins
          (job_id, task_index, step, summary, files_touched, blockers, percent)

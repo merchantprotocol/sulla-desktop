@@ -197,6 +197,13 @@ export class SpawnAgentWorker extends BaseTool {
         // Mark as sub-agent. Spawned agents do real delegated work — primary
         // model chain, not the subconscious observer slot.
         subState.metadata.isSubAgent = true;
+        // Bind the durable job identity into the server-owned graph state.
+        // CLI calls use this state through the tool session; report_progress
+        // can therefore identify the task without trusting caller input.
+        if (activityJobId) {
+          subState.metadata.spawnAgentJobId = activityJobId;
+          subState.metadata.spawnAgentTaskIndex = index;
+        }
         subState.metadata.modelSlot = 'primary';
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;

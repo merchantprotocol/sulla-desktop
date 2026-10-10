@@ -7,7 +7,10 @@ export class ReportProgressWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const threadId = (this.state as any)?.metadata?.threadId;
-    if (!(this.state as any)?.metadata?.isSubAgent || typeof threadId !== 'string' || !threadId) {
+    const metadata = (this.state as any)?.metadata;
+    const jobId = typeof metadata?.spawnAgentJobId === 'string' ? metadata.spawnAgentJobId : '';
+    const taskIndex = metadata?.spawnAgentTaskIndex;
+    if (!metadata?.isSubAgent || typeof threadId !== 'string' || !threadId || !jobId || !Number.isInteger(taskIndex) || taskIndex < 0) {
       return {
         successBoolean: false,
         responseString: 'report_progress is only available inside a running spawn_agent worker task.',
@@ -23,7 +26,7 @@ export class ReportProgressWorker extends BaseTool {
       return { successBoolean: false, responseString: 'percent must be between 0 and 100.' };
     }
 
-    const result = await AgentJobMessagingModel.appendCheckin(threadId, {
+    const result = await AgentJobMessagingModel.appendCheckinForTask(jobId, taskIndex, threadId, {
       step,
       summary,
       filesTouched: Array.isArray(input.filesTouched) ? input.filesTouched.map(String) : [],

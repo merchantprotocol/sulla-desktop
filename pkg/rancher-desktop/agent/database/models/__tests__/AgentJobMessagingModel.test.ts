@@ -36,4 +36,20 @@ describe('AgentJobMessagingModel', () => {
     expect(String(query.mock.calls[1][0])).toContain('INSERT INTO agent_job_checkins');
     expect(query.mock.calls[1][1]).toEqual(expect.arrayContaining(['agent-job-1', 0, 'review', 'Diff checked']));
   });
+
+  it('requires the stamped job task to own the bound worker thread', async() => {
+    const query = jest.spyOn(postgresClient, 'query').mockResolvedValueOnce([] as any);
+
+    const result = await AgentJobMessagingModel.appendCheckinForTask(
+      'agent-job-1',
+      0,
+      'sibling-thread',
+      { step: 'review', summary: 'Must be rejected' },
+    );
+
+    expect(result).toBeNull();
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(String(query.mock.calls[0][0])).toContain("task.value->>'threadId' = $3");
+    expect(query.mock.calls[0][1]).toEqual(['agent-job-1', 0, 'sibling-thread']);
+  });
 });
