@@ -18,6 +18,13 @@
         @click.stop="controller.closeArtifact(a.id)"
       >✕</button>
     </div>
+    <button
+      class="collapse"
+      type="button"
+      title="Collapse artifacts"
+      aria-label="Collapse artifacts panel"
+      @click="emit('collapse')"
+    >›</button>
   </div>
 </template>
 
@@ -26,6 +33,7 @@ import { computed } from 'vue';
 import { useChatController } from '../../controller/useChatController';
 import type { ArtifactKind } from '../../models/Artifact';
 
+const emit = defineEmits<{ collapse: [] }>();
 const controller = useChatController();
 const artifacts = computed(() => controller.artifacts.value.list);
 const activeId  = computed(() => controller.artifacts.value.activeId);
@@ -70,4 +78,11 @@ function iconFor(kind: ArtifactKind): string {
   animation: chat-pulse 1.5s infinite;
 }
 .atab .done-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.collapse {
+  margin-left: auto; align-self: center; flex: 0 0 auto;
+  padding: 0 7px; border: none; border-radius: 6px;
+  background: transparent; color: var(--read-3);
+  font-size: 16px; line-height: 22px; cursor: pointer;
+}
+.collapse:hover { color: var(--steel-100); background: rgba(80, 150, 179, 0.08); }
 </style>

@@ -13,7 +13,7 @@
       messages. The transcript replaces it once a conversation begins.
 -->
 <template>
-  <div class="chat-root" :class="{ 'artifact-open': hasArtifact, 'history-open': historyOpen, 'file-tree-open': fileTreeOpen, 'artifact-expanded': artifactExpanded, 'subagents-open': subAgentRailVisible }">
+  <div class="chat-root" :class="{ 'artifact-open': hasArtifact && !artifactCollapsed, 'history-open': historyOpen, 'file-tree-open': fileTreeOpen, 'artifact-expanded': artifactExpanded, 'subagents-open': subAgentRailVisible && !subAgentsCollapsed }">
     <Canvas />
 
     <div class="shell">
@@ -36,6 +36,8 @@
 
       <SubAgentRail
         :parent-thread-id="subAgentParentThreadId"
+        :collapsed="subAgentsCollapsed"
+        @toggle-collapse="subAgentsCollapsed = !subAgentsCollapsed"
         @open="openSubAgentConversation"
         @visibility="subAgentRailVisible = $event"
       />
@@ -69,7 +71,10 @@
         <Composer />
       </main>
 
-      <ArtifactSidebar />
+      <ArtifactSidebar
+        :collapsed="artifactCollapsed"
+        @toggle-collapse="artifactCollapsed = !artifactCollapsed"
+      />
     </div>
 
     <SubAgentDrawer :target="subAgentTarget" @close="subAgentTarget = null" />
@@ -295,6 +300,18 @@ provide('chat:navigate-url', (url: string) => emit('navigate-url', url));
 // persona and responses flow back into the controller.
 const adapter = new PersonaAdapter(controller, { tabId: props.tabId });
 const subAgentRailVisible = ref(false);
+
+// Side panels can be tucked away to a tab on the edge; the choice
+// sticks across tabs and restarts.
+const COLLAPSE_KEY = 'sulla.chat.collapsedPanels';
+function readCollapsed(): { subagents?: boolean; artifact?: boolean } {
+  try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}') } catch { return {} }
+}
+const subAgentsCollapsed = ref(!!readCollapsed().subagents);
+const artifactCollapsed  = ref(!!readCollapsed().artifact);
+watch([subAgentsCollapsed, artifactCollapsed], ([subagents, artifact]) => {
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify({ subagents, artifact })) } catch { /* storage full/unavailable */ }
+});
 const subAgentTarget = ref<SubAgentConversationTarget | null>(null);
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
 
@@ -774,7 +791,9 @@ onBeforeUnmount(() => {
   z-index: 7;
 }
 .chat-root.history-open .shell :deep(.subagent-rail),
-.chat-root.file-tree-open .shell :deep(.subagent-rail) { left: 260px; }
+.chat-root.file-tree-open .shell :deep(.subagent-rail),
+.chat-root.history-open .shell :deep(.subagent-rail-tab),
+.chat-root.file-tree-open .shell :deep(.subagent-rail-tab) { left: 260px; }
 .shell :deep(.artifact) {
   position: absolute;
   top: 0; bottom: 0; right: 0;
@@ -783,7 +802,8 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1200px) {
-  .shell :deep(.subagent-rail) { display: none; }
+  .shell :deep(.subagent-rail),
+  .shell :deep(.subagent-rail-tab) { display: none; }
   .chat-root.subagents-open .main { left: 0; }
   .chat-root.subagents-open.history-open .main,
   .chat-root.subagents-open.file-tree-open .main { left: 260px; }
