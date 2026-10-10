@@ -93,6 +93,13 @@ describe('ChatArtifactService', () => {
     expect(await service.history('thread-1', artifact.id)).toHaveLength(1);
   });
 
+  test('inserts edit replacements literally, without $-pattern expansion', async() => {
+    const { artifact } = await service.create('thread-1', { name: 'Plan', content: '- [ ] price' });
+    const edited = await service.edit('thread-1', artifact.id, [{ find: '- [ ] price', replace: '- [x] price $& $1 $$' }]);
+
+    expect(edited.content).toBe('- [x] price $& $1 $$');
+  });
+
   test('rejects stale expectedVersion writes', async() => {
     const { artifact } = await service.create('thread-1', { name: 'Plan', content: 'v1' });
     await service.update('thread-1', artifact.id, { content: 'v2', expectedVersion: 1 });

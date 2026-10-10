@@ -163,7 +163,8 @@ export class ChatArtifactService {
         if (matches !== 1) {
           throw new Error(`Edit ${ index + 1 } must match exactly once, but matched ${ matches } time(s). No changes were saved.`);
         }
-        content = content.replace(find, String(edit.replace ?? ''));
+        // split/join, not replace(): a string replacement would expand `$&`, `$1`, etc.
+        content = content.split(find).join(String(edit.replace ?? ''));
       }
 
       return { content };

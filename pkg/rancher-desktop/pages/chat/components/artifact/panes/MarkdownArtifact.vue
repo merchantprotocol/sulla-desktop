@@ -47,6 +47,11 @@ async function onCheckboxChange(event: Event): Promise<void> {
       content,
       expectedVersion: props.artifact.version,
     });
+  } catch (err) {
+    // Usually a version conflict (the agent edited the plan at the same
+    // moment). Put the box back so it matches what's actually saved.
+    checkbox.checked = !checkbox.checked;
+    console.warn('[MarkdownArtifact] checkbox save failed:', err);
   } finally {
     saving.value = false;
   }
