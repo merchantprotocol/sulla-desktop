@@ -4,6 +4,7 @@ import { up as up_0104, down as down_0104 } from './0104_add_agent_job_ui_state'
 import { up as up_0105, down as down_0105 } from './0105_expand_agent_definitions';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
+import { up as up_0108, down as down_0108 } from './0108_create_agent_job_messages_and_checkins';
 import { up as up_0098, down as down_0098 } from './0098_create_decisions';
 import { up as up_0099, down as down_0099 } from './0099_create_browser_bookmarks';
 import { up as up_0100, down as down_0100 } from './0100_create_reflex_engine';
@@ -189,4 +190,5 @@ export const migrationsRegistry = [
   { name: '0105_expand_agent_definitions', up: up_0105, down: down_0105 },
   { name: '0106_create_chat_artifacts', up: up_0106, down: down_0106 },
   { name: '0107_create_work_file_claims', up: up_0107, down: down_0107 },
+  { name: '0108_create_agent_job_messages_and_checkins', up: up_0108, down: down_0108 },
 ] as const;

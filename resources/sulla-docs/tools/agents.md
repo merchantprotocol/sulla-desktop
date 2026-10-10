@@ -9,7 +9,9 @@ Useful for: gathering data from multiple sources, batch operations, anything you
 | Tool | Canonical category | Purpose |
 |------|--------------------|---------|
 | `sulla meta/spawn_agent` | meta | Launch one or more sub-agents (fire-and-forget or blocking) |
-| `sulla agents/check_agent_jobs` | agents | Fallback/history read of async jobs (results normally arrive via parent-graph wake) |
+| `sulla agents/check_agent_jobs` | agents | Inspect job/task status, elapsed time, worker check-ins, and queued-message counts |
+| `sulla agents/send_job_message` | agents | Persist and send new direction to a running worker task |
+| `sulla agents/report_progress` | agents | Worker-only milestone/check-in tool, bound to the current job task |
 | `sulla agents/stop_agent_job` | agents | Kill switch — cancel a running async job |
 | `sulla agents/start_agent_conversation` | agents | Deprecated compatibility shim; launches one async `spawn_agent` job |
 | `sulla agents/send_agent_message` | agents | Deprecated; returns guidance to use `spawn_agent` / `check_agent_jobs` |
@@ -54,37 +56,75 @@ sulla meta/spawn_agent '{
 sulla agents/check_agent_jobs '{"jobId":"job_..."}'
 ```
 
-**Possible responses:**
+Every response includes a `tasks` array. Each task reports its own status and
+elapsed time, its latest check-in, the last three check-ins, and the count of
+orchestrator messages still waiting for a model-call boundary:
 ```jsonc
-// Still running:
 {
-  "jobId":     "job_...",
-  "status":    "running",
-  "taskCount": 3,
-  "elapsed":   "45s",
-  "message":   "..."
-}
-
-// Done:
-{
-  "jobId":  "job_...",
-  "status": "completed",
-  "results": [
+  "jobId": "agent-job-...",
+  "status": "running",
+  "tasks": [
     {
-      "label":   "research",
-      "status":  "completed" | "blocked" | "error",
-      "output":  "...the sub-agent's final summary or last message...",
-      "threadId":"..."
-    },
-    ...
-  ]
+      "taskIndex": 0,
+      "label": "research",
+      "status": "running",
+      "elapsed": "45s",
+      "latestCheckin": {
+        "step": "implementation",
+        "summary": "Message persistence is wired",
+        "files": ["pkg/.../AgentJobMessagingModel.ts"],
+        "blockers": [],
+        "percent": 60,
+        "time": "2026-10-10T17:42:00.000Z"
+      },
+      "undeliveredOrchestratorMessages": 0,
+      "checkins": []
+    }
+  ],
+  "results": []
 }
-
-// Failed:
-{ "jobId":"job_...", "status":"failed", "error":"..." }
 ```
 
 **Important:** `status: "blocked"` means the sub-agent emitted `<AGENT_BLOCKED>` — read the `output` for the unblock_requirement. It didn't fail, it's waiting for input.
+
+## `send_job_message` — steer a spawned worker
+
+```bash
+sulla agents/send_job_message '{
+  "jobId":"agent-job-...",
+  "taskIndex":0,
+  "message":"Stop touching the shared registry; keep this additive."
+}'
+```
+
+`taskIndex` is optional. When omitted, the message is copied to every queued or
+running task in the job. Each copy is stored in `agent_job_messages` before
+delivery. A live Claude or Codex CLI turn takes it through the existing steer
+channel; otherwise it is added to the next model call as a user message headed
+`[Message from orchestrator]`. `delivered_at` is recorded only when a live turn
+accepts it or when the next prompt boundary consumes it.
+
+The result reports which task indexes were targeted, how many took the message
+live, and how many are queued for their next boundary.
+
+## `report_progress` — worker check-ins
+
+Spawned workers receive a short instruction to call `report_progress` at each
+milestone and at least every five minutes during longer work:
+
+```jsonc
+{
+  "step": "implementation",
+  "summary": "Added durable message delivery and started status aggregation",
+  "filesTouched": ["pkg/.../AgentJobMessagingModel.ts"],
+  "blockers": [],
+  "percent": 60
+}
+```
+
+The tool does not accept a job ID. It resolves the current worker's graph
+thread to the matching `agent_jobs.tasks[].threadId`, so a worker cannot post a
+check-in against another job. Calls outside a running spawned task fail.
 
 ## `stop_agent_job` — kill switch
 
@@ -96,19 +136,18 @@ Cancels a running async job (misfired, duplicated, or no longer needed). Fires t
 
 ## Deprecated conversation compatibility
 
-`conversationRunner` and the synchronous multi-turn lifecycle are retired. `start_agent_conversation` remains for compatibility but now launches one async `spawn_agent` job and returns `jobId` plus a `conversationId` alias. Results wake the parent graph normally.
+`conversationRunner` and the old conversation lifecycle are retired. `start_agent_conversation` remains for compatibility but now launches one async `spawn_agent` job and returns `jobId` plus a `conversationId` alias. Results wake the parent graph normally. Use `send_job_message` for follow-up direction on a live job.
 
 ```bash
 # Compatibility launch — returns jobId + conversationId alias immediately
 sulla agents/start_agent_conversation '{"prompt":"Draft a migration plan for X","agentId":"code-researcher","label":"migration"}'
 # → { "conversationId":"agent-job-...", "jobId":"agent-job-...", "status":"running", "deprecated":true }
 
-# Follow-ups intentionally fail with migration guidance
-sulla agents/send_agent_message '{"conversationId":"conv-...","message":"Now account for the FK on table Y"}'
-# → error directing the caller to spawn_agent / check_agent_jobs
+# Old conversation follow-ups still fail; target the returned job instead
+sulla agents/send_job_message '{"jobId":"agent-job-...","message":"Now account for the FK on table Y"}'
 ```
 
-`read_agent_conversation` and `close_agent_conversation` remain temporarily so an already-open pre-migration conversation can be inspected or released during a rolling upgrade. New work does not create conversation-registry entries. If iterative worker dialogue is needed later, it requires a separate `continue_agent_job` lifecycle rather than pretending async jobs retain live conversation state.
+`read_agent_conversation` and `close_agent_conversation` remain temporarily so an already-open pre-migration conversation can be inspected or released during a rolling upgrade. New work does not create conversation-registry entries; job messages are turn-boundary direction, not a second persistent conversation transcript.
 
 ## `list_agents` — directory of live named agents
 
