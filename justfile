@@ -87,14 +87,21 @@ build-mac: build
     echo "DMG built in dist/"
     just install-mac
 
-# Install the built app to /Applications (without rebuilding)
+# Install the built app to /Applications (without rebuilding).
+# Never re-sign the copy: electron-builder already signed dist/ with the
+# Developer ID, hardened runtime and packaging/entitlements.mac.plist. An
+# ad-hoc re-sign pins macOS privacy grants (Screen Recording, Microphone)
+# to that one build's hash, so every install silently loses them.
 install-mac:
     #!/bin/sh
     set -e
-    if [ ! -d "dist/mac-arm64/Sulla Desktop.app" ]; then
+    APP="dist/mac-arm64/Sulla Desktop.app"
+    if [ ! -d "$APP" ]; then
         echo "No build found. Run 'just build-mac' first."
         exit 1
     fi
+    # Refuse before touching the running app if the build isn't properly signed
+    just verify-mac-signing "$APP"
     # Quit the running app and wait for it to fully exit
     osascript -e 'quit app "Sulla Desktop"' 2>/dev/null || true
     sleep 2
@@ -107,20 +114,38 @@ install-mac:
             sudo rm -rf "/Applications/Sulla Desktop.app"
     fi
     # Copy using ditto (preserves symlinks, resource forks, HFS metadata)
-    ditto "dist/mac-arm64/Sulla Desktop.app" "/Applications/Sulla Desktop.app"
+    ditto "$APP" "/Applications/Sulla Desktop.app"
     xattr -rd com.apple.quarantine "/Applications/Sulla Desktop.app" 2>/dev/null || true
-    # Ad-hoc sign with entitlements (required for screen capture, mic, camera with hardened runtime)
-    ENT="packaging/entitlements.mac.plist"
-    if [ -f "$ENT" ]; then
-        echo "Signing helpers with entitlements..."
-        codesign --force --sign - --entitlements "$ENT" "/Applications/Sulla Desktop.app/Contents/Frameworks/Sulla Desktop Helper.app" 2>/dev/null || true
-        codesign --force --sign - --entitlements "$ENT" "/Applications/Sulla Desktop.app/Contents/Frameworks/Sulla Desktop Helper (Renderer).app" 2>/dev/null || true
-        codesign --force --sign - --entitlements "$ENT" "/Applications/Sulla Desktop.app/Contents/Frameworks/Sulla Desktop Helper (Plugin).app" 2>/dev/null || true
-        codesign --force --sign - --entitlements "$ENT" "/Applications/Sulla Desktop.app/Contents/Frameworks/Sulla Desktop Helper (GPU).app" 2>/dev/null || true
-        codesign --force --sign - --entitlements "$ENT" "/Applications/Sulla Desktop.app"
-        echo "Signed with entitlements"
-    fi
+    just verify-mac-signing "/Applications/Sulla Desktop.app"
     echo "Installed to /Applications/Sulla Desktop.app"
+
+# Check a Sulla Desktop.app is Developer ID signed (not ad-hoc) with hardened
+# runtime and the mic entitlement, so macOS privacy grants survive updates.
+verify-mac-signing app="dist/mac-arm64/Sulla Desktop.app":
+    #!/bin/sh
+    set -e
+    APP="{{app}}"
+    if ! codesign --verify --deep --strict "$APP" 2>/dev/null; then
+        echo "✗ $APP: signature is missing or broken."
+        exit 1
+    fi
+    INFO=$(codesign -dv --verbose=4 "$APP" 2>&1)
+    TEAM=$(echo "$INFO" | sed -n 's/^TeamIdentifier=//p')
+    if echo "$INFO" | grep -q '^Signature=adhoc' || [ -z "$TEAM" ] || [ "$TEAM" = "not set" ]; then
+        echo "✗ $APP is ad-hoc signed. macOS will forget Screen Recording and"
+        echo "  Microphone approvals on every install. Package with the"
+        echo "  'Developer ID Application' certificate in the login keychain."
+        exit 1
+    fi
+    if ! echo "$INFO" | grep -q 'flags=.*runtime'; then
+        echo "✗ $APP: hardened runtime is off."
+        exit 1
+    fi
+    if ! codesign -d --entitlements - "$APP" 2>/dev/null | grep -q 'com.apple.security.device.audio-input'; then
+        echo "✗ $APP: missing the microphone entitlement."
+        exit 1
+    fi
+    echo "✓ $APP signed by team $TEAM (hardened runtime, entitlements present)"
 
 # Stop Sulla Desktop, remove from Applications, and eject the DMG
 uninstall-mac:
