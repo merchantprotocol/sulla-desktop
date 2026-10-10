@@ -436,44 +436,54 @@ const items: readonly ModeItem[] = Object.freeze([
   display: none;
 }
 
-:global(.theme-noir-dark) .mode-rail {
+:global(.theme-noir) .mode-rail {
   --rail-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) .58s;
   box-sizing: border-box;
   width: 64px;
   padding: 40px 10px 10px;
   overflow: visible;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
   transition: width var(--rail-spring);
   z-index: 20;
 }
 
-:global(.theme-noir-dark) .mode-rail.expanded {
+:global(.theme-noir) .mode-rail.expanded {
   width: 212px;
 }
 
-:global(.theme-noir-dark) .rail-items,
-:global(.theme-noir-dark) .rail-footer {
+:global(.theme-noir) .rail-items,
+:global(.theme-noir) .rail-footer {
   position: relative;
 }
 
-:global(.theme-noir-dark) .active-indicator {
+:global(.theme-noir) .active-indicator {
   position: absolute;
   inset: 0 0 auto;
   display: block;
   border-radius: 20px;
   pointer-events: none;
   opacity: 0;
-  background: linear-gradient(180deg, rgba(80, 150, 179, .3), rgba(80, 150, 179, .14));
-  box-shadow: inset 0 0 0 .5px rgba(106, 176, 204, .5), 0 0 22px rgba(80, 150, 179, .22);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 30%, transparent), color-mix(in srgb, var(--nx-accent) 14%, transparent));
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--nx-accent-2) 50%, transparent), 0 0 22px color-mix(in srgb, var(--nx-accent) 22%, transparent);
   transition: transform var(--rail-spring), opacity .12s ease;
   z-index: 0;
 }
 
-:global(.theme-noir-dark) .active-indicator.visible {
+:global(.theme-noir-light) .mode-rail {
+  background: color-mix(in srgb, var(--nx-surface) 60%, transparent);
+  border-right-color: var(--nx-hair);
+}
+
+:global(.theme-noir-light) .active-indicator {
+  background: var(--nx-indicator-bg);
+  box-shadow: inset 0 0 0 1px var(--nx-indicator-edge), 0 6px 16px color-mix(in srgb, var(--nx-accent-2) 22%, transparent);
+}
+
+:global(.theme-noir) .active-indicator.visible {
   opacity: 1;
 }
 
-:global(.theme-noir-dark) .active-indicator::before {
+:global(.theme-noir) .active-indicator::before {
   content: '';
   position: absolute;
   left: -10px;
@@ -482,11 +492,11 @@ const items: readonly ModeItem[] = Object.freeze([
   height: 22px;
   margin-top: -11px;
   border-radius: 0 3px 3px 0;
-  background: #6ab0cc;
-  box-shadow: 0 0 10px #6ab0cc;
+  background: var(--nx-accent-2);
+  box-shadow: 0 0 10px var(--nx-accent-2);
 }
 
-:global(.theme-noir-dark) .mode-btn {
+:global(.theme-noir) .mode-btn {
   width: 100%;
   height: 40px;
   min-height: 40px;
@@ -496,60 +506,60 @@ const items: readonly ModeItem[] = Object.freeze([
   gap: 0;
   overflow: visible;
   border-radius: 20px;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
   white-space: nowrap;
   user-select: none;
   transition: color .16s cubic-bezier(.22, 1, .36, 1), background .16s cubic-bezier(.22, 1, .36, 1), transform var(--rail-spring);
   z-index: 1;
 }
 
-:global(.theme-noir-dark) .mode-btn:hover {
-  color: #dee4ec;
-  background: rgba(80, 150, 179, .1);
+:global(.theme-noir) .mode-btn:hover {
+  color: var(--nx-read-2);
+  background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir-dark) .mode-btn:active {
+:global(.theme-noir) .mode-btn:active {
   transform: scale(.92);
   transition-duration: .08s;
 }
 
-:global(.theme-noir-dark) .mode-btn:focus-visible {
-  outline: 2px solid #6ab0cc;
+:global(.theme-noir) .mode-btn:focus-visible {
+  outline: 2px solid var(--nx-accent-2);
   outline-offset: 2px;
 }
 
-:global(.theme-noir-dark) .mode-btn.active {
-  color: #f3f5f8;
+:global(.theme-noir) .mode-btn.active {
+  color: var(--nx-read-1);
   background: transparent;
 }
 
-:global(.theme-noir-dark) .mode-btn.active::before {
+:global(.theme-noir) .mode-btn.active::before {
   content: none;
 }
 
-:global(.theme-noir-dark) .mode-btn:hover .icon {
+:global(.theme-noir) .mode-btn:hover .icon {
   transform: none;
 }
 
-:global(.theme-noir-dark) .mode-btn.active .icon {
-  filter: drop-shadow(0 0 8px rgba(106, 176, 204, .6));
+:global(.theme-noir) .mode-btn.active .icon {
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--nx-accent-2) 60%, transparent));
 }
 
-:global(.theme-noir-dark) .expanded .mode-btn {
+:global(.theme-noir) .expanded .mode-btn {
   gap: 12px;
 }
 
-:global(.theme-noir-dark) .rail-footer .mode-btn.active {
-  background: rgba(80, 150, 179, .14);
+:global(.theme-noir) .rail-footer .mode-btn.active {
+  background: color-mix(in srgb, var(--nx-accent) 14%, transparent);
 }
 
-:global(.theme-noir-dark) .icon {
+:global(.theme-noir) .icon {
   width: 20px;
   height: 20px;
   flex: none;
 }
 
-:global(.theme-noir-dark) .item-label {
+:global(.theme-noir) .item-label {
   max-width: 0;
   display: inline;
   overflow: hidden;
@@ -561,36 +571,36 @@ const items: readonly ModeItem[] = Object.freeze([
   transition: opacity .24s cubic-bezier(.22, 1, .36, 1), filter .24s cubic-bezier(.22, 1, .36, 1), transform var(--rail-spring);
 }
 
-:global(.theme-noir-dark) .expanded .item-label {
+:global(.theme-noir) .expanded .item-label {
   max-width: 120px;
   opacity: 1;
   filter: blur(0);
   transform: none;
 }
 
-:global(.theme-noir-dark) .shortcut-hint {
+:global(.theme-noir) .shortcut-hint {
   margin-left: auto;
-  color: #484f5a;
+  color: var(--nx-read-5);
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
   opacity: 0;
   transition: opacity .2s ease;
 }
 
-:global(.theme-noir-dark) .expanded .shortcut-hint {
+:global(.theme-noir) .expanded .shortcut-hint {
   display: inline;
   opacity: 1;
 }
 
-:global(.theme-noir-dark) .rail-divider {
+:global(.theme-noir) .rail-divider {
   height: 1px;
   margin: 6px 8px;
   display: block;
   flex: none;
-  background: rgba(168, 192, 220, .08);
+  background: var(--nx-hair);
 }
 
-:global(.theme-noir-dark) .decision-badge {
+:global(.theme-noir) .decision-badge {
   left: 25px;
   right: auto;
   top: 3px;
@@ -600,17 +610,17 @@ const items: readonly ModeItem[] = Object.freeze([
   place-items: center;
   padding: 0 4px;
   border-radius: 8px;
-  background: #5096b3;
-  box-shadow: 0 0 8px #5096b3, 0 0 0 2px #03060c;
+  background: var(--nx-accent);
+  box-shadow: 0 0 8px var(--nx-accent), 0 0 0 2px var(--bg-surface-alt);
   font-weight: 650;
 }
 
-:global(.theme-noir-dark) .decision-badge::after {
+:global(.theme-noir) .decision-badge::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: #6ab0cc;
+  background: var(--nx-accent-2);
   animation: decision-ping 2.2s cubic-bezier(.22, 1, .36, 1) infinite;
   z-index: -1;
 }
@@ -620,53 +630,53 @@ const items: readonly ModeItem[] = Object.freeze([
   70%, 100% { transform: scale(2.2); opacity: 0; }
 }
 
-:global(.theme-noir-dark) .mode-btn::after {
+:global(.theme-noir) .mode-btn::after {
   content: attr(data-noir-tooltip);
   left: 52px;
   padding: 6px 10px;
   border-radius: 8px;
-  color: #f3f5f8;
+  color: var(--nx-read-1);
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   transform: translate(-4px, -50%) scale(.96);
   transition: opacity .14s cubic-bezier(.22, 1, .36, 1), transform .3s var(--rail-spring);
 }
 
-:global(.theme-noir-dark) .mode-rail:not(.expanded) .mode-btn:hover::after {
+:global(.theme-noir) .mode-rail:not(.expanded) .mode-btn:hover::after {
   transform: translate(0, -50%) scale(1);
   transition-delay: .25s;
 }
 
-:global(.theme-noir-dark) .expanded .mode-btn::after {
+:global(.theme-noir) .expanded .mode-btn::after {
   display: none;
 }
 
-:global(.theme-noir-dark) .expand-toggle {
+:global(.theme-noir) .expand-toggle {
   display: flex;
 }
 
-:global(.theme-noir-dark) .expand-icon {
+:global(.theme-noir) .expand-icon {
   transition: transform var(--rail-spring);
 }
 
-:global(.theme-noir-dark) .expanded .expand-icon {
+:global(.theme-noir) .expanded .expand-icon {
   transform: scaleX(-1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .mode-rail,
-  :global(.theme-noir-dark) .active-indicator,
-  :global(.theme-noir-dark) .mode-btn,
-  :global(.theme-noir-dark) .item-label,
-  :global(.theme-noir-dark) .shortcut-hint,
-  :global(.theme-noir-dark) .expand-icon {
+  :global(.theme-noir) .mode-rail,
+  :global(.theme-noir) .active-indicator,
+  :global(.theme-noir) .mode-btn,
+  :global(.theme-noir) .item-label,
+  :global(.theme-noir) .shortcut-hint,
+  :global(.theme-noir) .expand-icon {
     transition: none;
   }
 
-  :global(.theme-noir-dark) .item-label {
+  :global(.theme-noir) .item-label {
     filter: none;
   }
 
-  :global(.theme-noir-dark) .decision-badge::after {
+  :global(.theme-noir) .decision-badge::after {
     animation: none;
   }
 }
