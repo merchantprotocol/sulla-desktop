@@ -726,3 +726,51 @@ export default defineComponent({
   border-radius: 3px;
 }
 </style>
+
+<style scoped>
+:global(.theme-noir-dark) .file-tree-sidebar {
+  background: rgba(3, 6, 12, 0.74);
+  color: #dee4ec;
+  border-right: 1px solid rgba(168, 192, 220, 0.08);
+  font-family: ui-monospace, 'SF Mono', monospace;
+  backdrop-filter: blur(18px);
+}
+
+:global(.theme-noir-dark) .file-tree-header {
+  height: 44px;
+  padding: 0 10px 0 14px;
+  color: #6ab0cc;
+  background: rgba(3, 6, 12, 0.5);
+  border-color: rgba(168, 192, 220, 0.08);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+}
+
+:global(.theme-noir-dark) .action-btn {
+  width: 28px;
+  height: 28px;
+  color: #7a8291;
+  border-radius: 14px;
+  transition: background 0.16s, color 0.16s, transform 0.4s cubic-bezier(.22, 1, .36, 1);
+}
+
+:global(.theme-noir-dark) .action-btn:hover {
+  color: #f3f5f8;
+  background: rgba(80, 150, 179, 0.12);
+  transform: translateY(-1px);
+}
+
+:global(.theme-noir-dark) .file-tree-scroll { padding: 7px 6px; }
+:global(.theme-noir-dark) .file-tree-scroll::-webkit-scrollbar-thumb {
+  background: rgba(168, 192, 220, 0.14);
+}
+
+:global(.theme-noir-dark) .file-tree-loading {
+  color: #7a8291;
+  font-family: ui-monospace, 'SF Mono', monospace;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .action-btn { transition-duration: 0.01ms; }
+}
+</style>

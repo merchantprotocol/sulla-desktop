@@ -264,3 +264,62 @@ export default defineComponent({
   overflow: hidden;
 }
 </style>
+
+<style scoped>
+:global(.theme-noir-dark) .file-editor-root {
+  background: #01030a;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .file-editor-bar {
+  height: 44px;
+  padding: 0 14px;
+  gap: 9px;
+  background: rgba(3, 6, 12, 0.78);
+  border-color: rgba(168, 192, 220, 0.08);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+  backdrop-filter: blur(18px);
+}
+
+:global(.theme-noir-dark) .file-editor-name {
+  color: #f3f5f8;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .dirty-dot {
+  color: #e3b341;
+  text-shadow: 0 0 8px rgba(227, 179, 65, 0.7);
+}
+
+:global(.theme-noir-dark) .file-editor-path {
+  color: #7a8291;
+  font-family: ui-monospace, 'SF Mono', monospace;
+}
+
+:global(.theme-noir-dark) .save-btn {
+  height: 30px;
+  padding: 0 14px;
+  color: #dee4ec;
+  background: rgba(168, 192, 220, 0.05);
+  border-color: rgba(168, 192, 220, 0.12);
+  border-radius: 15px;
+  transition: transform 0.45s cubic-bezier(.22, 1, .36, 1), background 0.16s, border-color 0.16s;
+}
+
+:global(.theme-noir-dark) .save-btn:hover:not(:disabled) {
+  color: #f3f5f8;
+  background: linear-gradient(180deg, rgba(80, 150, 179, 0.32), rgba(80, 150, 179, 0.16));
+  border-color: rgba(106, 176, 204, 0.5);
+  transform: translateY(-1px);
+}
+
+:global(.theme-noir-dark) .file-editor-error {
+  color: #f08b86;
+  background: rgba(248, 81, 73, 0.06);
+  border-color: rgba(248, 81, 73, 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .save-btn { transition-duration: 0.01ms; }
+}
+</style>

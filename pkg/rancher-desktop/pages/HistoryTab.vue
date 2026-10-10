@@ -10,10 +10,10 @@
           <div class="mx-auto max-w-6xl px-4 md:px-6 lg:px-8">
             <div class="flex items-center justify-between gap-8">
               <div>
-                <p class="inline bg-linear-to-r from-indigo-500 via-sky-500 to-indigo-500 dark:from-indigo-200 dark:via-sky-400 dark:to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
+                <p class="history-title inline bg-linear-to-r from-indigo-500 via-sky-500 to-indigo-500 dark:from-indigo-200 dark:via-sky-400 dark:to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
                   History.
                 </p>
-                <p class="mt-3 text-2xl tracking-tight text-slate-500 dark:text-slate-400">
+                <p class="history-lede mt-3 text-2xl tracking-tight text-slate-500 dark:text-slate-400">
                   Your conversations and browsing activity.
                 </p>
               </div>
@@ -32,7 +32,7 @@
                     v-model="searchQuery"
                     type="text"
                     placeholder="Search history..."
-                    class="h-10 w-64 rounded-lg bg-white/95 pr-4 pl-10 text-sm text-slate-900 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-300/50 dark:bg-slate-800/75 dark:text-slate-100 dark:ring-white/5 dark:ring-inset"
+                    class="history-query h-10 w-64 rounded-lg bg-white/95 pr-4 pl-10 text-sm text-slate-900 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-300/50 dark:bg-slate-800/75 dark:text-slate-100 dark:ring-white/5 dark:ring-inset"
                     @input="debouncedSearch"
                   >
                 </div>
@@ -40,7 +40,7 @@
                 <!-- Filter -->
                 <select
                   v-model="filterType"
-                  class="h-10 rounded-lg bg-white border border-slate-300 px-3 text-sm text-slate-700 dark:bg-slate-800/75 dark:text-slate-100 dark:ring-1 dark:ring-white/5 dark:border-none focus:outline-none focus:ring-2 focus:ring-sky-300/50"
+                  class="history-filter h-10 rounded-lg bg-white border border-slate-300 px-3 text-sm text-slate-700 dark:bg-slate-800/75 dark:text-slate-100 dark:ring-1 dark:ring-white/5 dark:border-none focus:outline-none focus:ring-2 focus:ring-sky-300/50"
                   @change="loadHistory"
                 >
                   <option value="">
@@ -60,7 +60,7 @@
                 <!-- Clear History -->
                 <button
                   type="button"
-                  class="h-10 px-4 rounded-lg border border-red-300 hover:border-red-400 text-red-600 hover:text-red-700 dark:border-red-800/50 dark:hover:border-red-600 dark:text-red-400 dark:hover:text-red-300 text-sm font-medium transition-colors"
+                  class="history-clear h-10 px-4 rounded-lg border border-red-300 hover:border-red-400 text-red-600 hover:text-red-700 dark:border-red-800/50 dark:hover:border-red-600 dark:text-red-400 dark:hover:text-red-300 text-sm font-medium transition-colors"
                   @click="showClearConfirm = true"
                 >
                   Clear History
@@ -237,7 +237,7 @@
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 dark:bg-black/60"
         @click.self="showClearConfirm = false"
       >
-        <div class="bg-white dark:bg-slate-800 rounded-xl p-6 w-96 shadow-2xl border border-slate-200 dark:border-slate-700">
+        <div class="history-dialog bg-white dark:bg-slate-800 rounded-xl p-6 w-96 shadow-2xl border border-slate-200 dark:border-slate-700">
           <h3 class="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-2">
             Clear History
           </h3>
@@ -505,5 +505,94 @@ onUnmounted(() => {
 
 .history-page.dark .history-entry:hover {
   background: rgba(255, 255, 255, 0.03);
+}
+</style>
+
+<style scoped>
+:global(.theme-noir-dark) .history-page {
+  background: radial-gradient(90% 60% at 0% 0%, rgba(80, 150, 179, 0.1), transparent 58%), #01030a;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .history-header {
+  background: rgba(3, 6, 12, 0.52);
+  border-bottom: 1px solid rgba(168, 192, 220, 0.08);
+  backdrop-filter: blur(18px);
+}
+
+:global(.theme-noir-dark) .history-header > div { padding-top: 34px; padding-bottom: 30px; }
+:global(.theme-noir-dark) .history-title {
+  color: #f3f5f8;
+  background: none;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+:global(.theme-noir-dark) .history-lede {
+  margin-top: 7px;
+  color: #a9b3c1;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+:global(.theme-noir-dark) .history-query,
+:global(.theme-noir-dark) .history-filter {
+  height: 40px;
+  color: #dee4ec;
+  background: rgba(3, 6, 12, 0.68);
+  border: 1px solid rgba(168, 192, 220, 0.12);
+  border-radius: 12px;
+  box-shadow: none;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 12px;
+}
+
+:global(.theme-noir-dark) .history-query:focus,
+:global(.theme-noir-dark) .history-filter:focus {
+  border-color: rgba(106, 176, 204, 0.58);
+  box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.12);
+}
+
+:global(.theme-noir-dark) .history-clear {
+  border-color: rgba(248, 81, 73, 0.28);
+  border-radius: 12px;
+  color: #f08b86;
+  background: rgba(248, 81, 73, 0.04);
+}
+
+:global(.theme-noir-dark) .history-entry {
+  min-height: 52px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(168, 192, 220, 0.06);
+  border-radius: 14px;
+  background: rgba(168, 192, 220, 0.025);
+  transition: transform 0.35s cubic-bezier(.22, 1, .36, 1), background 0.16s, border-color 0.16s;
+}
+
+:global(.theme-noir-dark) .history-entry:hover {
+  background: rgba(80, 150, 179, 0.09);
+  border-color: rgba(106, 176, 204, 0.2);
+  transform: translateX(2px);
+}
+
+:global(.theme-noir-dark) .history-entry p:first-child { color: #dee4ec; }
+:global(.theme-noir-dark) .history-entry p:nth-child(2) {
+  color: #7a8291;
+  font-family: ui-monospace, 'SF Mono', monospace;
+}
+
+:global(.theme-noir-dark) .history-dialog {
+  color: #dee4ec;
+  background: rgba(7, 13, 26, 0.96);
+  border-color: rgba(168, 192, 220, 0.12);
+  border-radius: 20px;
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(168, 192, 220, 0.04);
+  backdrop-filter: blur(20px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .history-entry { transition-duration: 0.01ms; }
 }
 </style>

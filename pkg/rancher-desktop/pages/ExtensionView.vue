@@ -15,7 +15,7 @@
         ref="iframeRef"
         :src="extensionContentUrl"
         scrolling="no"
-        class="w-full border-0"
+        class="extension-frame w-full border-0"
         style="height: 100vh; overflow: hidden;"
         @load="onIframeLoad"
       />
@@ -23,17 +23,17 @@
       <!-- Embedded Mode -->
       <div
         v-else-if="extensionDisplayMode === 'embedded'"
-        class="w-full flex-1"
+        class="extension-embedded w-full flex-1"
         v-html="extensionContentHtml"
       />
 
       <!-- Loading State -->
       <div
         v-else
-        class="flex h-64 items-center justify-center"
+        class="extension-loading flex h-64 items-center justify-center"
       >
         <div class="text-center">
-          <div class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" />
+          <div class="extension-spinner mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" />
           <p class="text-sm text-slate-600 dark:text-slate-400">
             Loading {{ extensionMetadata?.title || 'extension' }} details...
           </p>
@@ -115,5 +115,44 @@ onMounted(async() => {
 .page-root {
   background: var(--bg-page);
   color: var(--text-primary);
+}
+</style>
+
+<style scoped>
+:global(.theme-noir-dark) .page-root {
+  background: radial-gradient(100% 55% at 0% 0%, rgba(80, 150, 179, 0.09), transparent 58%), #01030a;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .extension-frame,
+:global(.theme-noir-dark) .extension-embedded {
+  background: rgba(3, 6, 12, 0.6);
+  border-top: 1px solid rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .extension-loading {
+  margin: 30px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 20px;
+  color: #a9b3c1;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.02);
+  animation: noir-extension-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
+}
+
+:global(.theme-noir-dark) .extension-loading p { color: #a9b3c1; }
+:global(.theme-noir-dark) .extension-spinner {
+  border-color: rgba(168, 192, 220, 0.12);
+  border-top-color: #6ab0cc;
+  box-shadow: 0 0 18px rgba(80, 150, 179, 0.22);
+}
+
+@keyframes noir-extension-in {
+  from { opacity: 0; transform: translateY(8px); filter: blur(8px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .extension-loading { animation: none; }
 }
 </style>

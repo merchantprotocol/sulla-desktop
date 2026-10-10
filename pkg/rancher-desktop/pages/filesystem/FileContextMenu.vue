@@ -493,3 +493,45 @@ export default defineComponent({
   color: var(--text-secondary);
 }
 </style>
+
+<style scoped>
+:global(.theme-noir-dark) .context-menu {
+  min-width: 200px;
+  padding: 6px;
+  color: #dee4ec;
+  background: rgba(7, 13, 26, 0.97);
+  border-color: rgba(168, 192, 220, 0.15);
+  border-radius: 16px;
+  box-shadow: 0 20px 54px rgba(0, 0, 0, 0.62), inset 0 0 0 1px rgba(168, 192, 220, 0.025);
+  backdrop-filter: blur(20px);
+  font-family: ui-monospace, 'SF Mono', monospace;
+}
+
+:global(.theme-noir-dark) .context-menu-item {
+  min-height: 34px;
+  padding: 7px 10px;
+  color: #a9b3c1;
+  border-radius: 10px;
+  transition: color 0.14s, background 0.14s, transform 0.35s cubic-bezier(.22, 1, .36, 1);
+}
+
+:global(.theme-noir-dark) .context-menu-item:hover {
+  color: #f3f5f8;
+  background: rgba(80, 150, 179, 0.14);
+  transform: translateX(2px);
+}
+
+:global(.theme-noir-dark) .context-menu-shortcut { color: #484f5a; }
+:global(.theme-noir-dark) .context-menu-sep { background: rgba(168, 192, 220, 0.08); }
+:global(.theme-noir-dark) .context-menu-subheader {
+  color: #6ab0cc;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .context-menu-item { transition-duration: 0.01ms; }
+}
+</style>
