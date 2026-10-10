@@ -157,6 +157,8 @@ const props = defineProps<{
   tabId?: string;
   /** Optional override model id on first boot. */
   initialModelId?: string;
+  /** Agent persona preselected by launch_agent_tab. */
+  initialAgentId?: string;
   /** Whether this tab is the currently visible tab. Suppresses keyboard
    *  shortcut handlers on background (visibility:hidden) tabs. */
   isActive?: boolean;
@@ -236,6 +238,9 @@ async function hydrateFromDbBackup(id: ThreadId): Promise<void> {
 }
 
 const controller = initController();
+if (props.initialAgentId && !controller.thread.value.agentId) {
+  controller.selectForChat(controller.model.value, controller.thread.value.providerId ?? null, props.initialAgentId);
+}
 
 // ─── Shared model selector (source of truth for selected model) ───
 // AgentModelSelectorController talks to the main-process ModelProviderService

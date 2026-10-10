@@ -231,10 +231,21 @@
 
     <!-- Chat mode: independent chat session per tab -->
     <template v-else-if="tabMode === 'chat'">
-      <div class="flex-1 min-h-0 overflow-hidden">
+      <div class="flex-1 min-h-0 overflow-hidden relative">
+        <button
+          v-if="agentChat"
+          class="agent-chat-origin"
+          type="button"
+          :title="`Return to ${agentChat.parentAgentName}`"
+          @click="navigateToAgentParent"
+        >
+          <span aria-hidden="true">↩</span>
+          Launched by {{ agentChat.parentAgentName }}
+        </button>
         <BrowserTabChat
           :tab-id="props.tabId"
           :is-active="props.isVisible"
+          :initial-agent-id="agentChat?.agentId"
           @set-mode="onSetMode"
           @navigate-url="onNavigateUrl"
         />
@@ -401,6 +412,13 @@ const { showOverlay } = useStartupProgress();
 
 const tabMode = computed<BrowserTabMode>(() => getTab(props.tabId)?.mode || 'welcome');
 const tabContent = computed(() => getTab(props.tabId)?.content || '');
+const agentChat = computed(() => getTab(props.tabId)?.agentChat);
+
+function navigateToAgentParent(): void {
+  const parentThreadId = agentChat.value?.parentThreadId;
+  if (!parentThreadId) return;
+  window.dispatchEvent(new CustomEvent('sulla:navigate-agent-parent', { detail: { parentThreadId } }));
+}
 
 function onSetMode(mode: BrowserTabMode | string, subTab?: 'mywork' | 'library' | 'marketplace' | string) {
   // Narrow the mode string to a known BrowserTabMode. Unknown values
@@ -1178,6 +1196,31 @@ onUnmounted(() => {
      x/y position (right below the toolbar). */
   flex: 0 0 0px;
   overflow: hidden;
+}
+
+.agent-chat-origin {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  z-index: 12;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid var(--nx-border-subtle, var(--border-default));
+  border-radius: 999px;
+  background: var(--nx-surface-raised, var(--bg-surface));
+  color: var(--nx-text-secondary, var(--text-secondary));
+  font-family: var(--nx-font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.agent-chat-origin:hover {
+  color: var(--nx-accent, var(--accent-primary));
+  border-color: var(--nx-accent, var(--accent-primary));
 }
 
 /* Theme-aware scrollbar styling for overflow-auto containers */

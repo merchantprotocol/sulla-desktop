@@ -226,7 +226,11 @@ export class BackendGraphWebSocketService {
           role:      'user',
           content:   messageContent,
           timestamp: Date.now(),
-          metadata:  { source: 'inject', inputSource: data?.metadata?.inputSource || 'keyboard' },
+          metadata:  {
+            ...data?.metadata,
+            source: data?.metadata?.source || 'inject',
+            inputSource: data?.metadata?.inputSource || 'keyboard',
+          },
         } as any);
         console.log(`[BackendGraphWS] Steered running thread ${ threadId }: ${ content.slice(0, 50) }...`);
         return;
@@ -401,7 +405,11 @@ export class BackendGraphWebSocketService {
         role:      'user',
         content:   messageContent,
         timestamp: Date.now(),
-        metadata:  { source: 'backend', inputSource: inputSource || 'keyboard' },
+        metadata:  {
+          ...metadata,
+          source: metadata?.source || 'backend',
+          inputSource: inputSource || 'keyboard',
+        },
       } as any);
 
       // Resume from current node if the agent was waiting for user input

@@ -7,6 +7,61 @@ const artifactTarget: Record<string, any> = {
 
 export const chatToolManifests: ToolManifest[] = [
   {
+    name:        'launch_agent_tab',
+    description: 'Launch an enabled agent in its own visible chat tab with a durable return contract. Use this instead of spawn_agent when the agent needs its own visible Playbook/sidebar or will run its own sub-agents.',
+    category:    'chat',
+    schemaDef:   {
+      agentId: { type: 'string', description: 'Enabled agent persona slug.' },
+      brief:   { type: 'string', description: 'Complete task brief for the child agent.' },
+      title:   { type: 'string', optional: true, description: 'Visible child tab title.' },
+      contract: {
+        type: 'object', optional: true, description: 'Return contract. Use {name:"ui-test-issues"} for the built-in UI test issue schema.',
+        properties: {
+          name:        { type: 'string', description: 'Contract name or built-in preset name.' },
+          description: { type: 'string', optional: true, description: 'What the returned result represents.' },
+          schema:      { type: 'object', optional: true, description: 'JSON Schema for the expected result.' },
+        },
+      },
+      focus: { type: 'boolean', optional: true, default: false, description: 'Focus the new tab. Defaults to false so the parent composer keeps focus.' },
+    },
+    operationTypes: ['create', 'execute'],
+    loader:         () => import('./launch_agent_tab'),
+  },
+  {
+    name:        'return_contract',
+    description: 'Return a completed agent-tab contract to its parent chat. Only the child thread that owns the contract may call this; schema mismatches are rejected.',
+    category:    'chat',
+    schemaDef:   {
+      contractId: { type: 'string', description: 'Contract id supplied in the launch brief.' },
+      result:     { type: 'object', description: 'Structured contract result.' },
+      summary:    { type: 'string', optional: true, description: 'Short human-readable summary.' },
+    },
+    operationTypes: ['update', 'execute'],
+    loader:         () => import('./return_contract'),
+  },
+  {
+    name:        'message_tab',
+    description: 'Send a follow-up message from a parent chat to one of its open child agent tabs. Steers a running child or starts a new turn when idle.',
+    category:    'chat',
+    schemaDef:   {
+      contractId:   { type: 'string', optional: true, description: 'Contract id to address.' },
+      childThreadId: { type: 'string', optional: true, description: 'Child backend thread id to address.' },
+      message:      { type: 'string', description: 'Follow-up message for the child agent.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./message_tab'),
+  },
+  {
+    name:        'list_tab_contracts',
+    description: 'List this parent chat\'s child agent-tab contracts, including status and returned results.',
+    category:    'chat',
+    schemaDef:   {
+      status: { type: 'enum', enum: ['open', 'returned', 'cancelled'], optional: true, description: 'Optional status filter.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./list_tab_contracts'),
+  },
+  {
     name:        'route_agent',
     description: 'Select an enabled agent persona for a chat. Reflex uses this as a training target for first-message routing; it is not executed by the normal mid-chat Reflex action engine.',
     category:    'chat',

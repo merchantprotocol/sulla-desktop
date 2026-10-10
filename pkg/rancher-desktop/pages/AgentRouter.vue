@@ -362,6 +362,32 @@ function onAgentCommand(_event: any, args: any) {
   if (!args?.command) return;
 
   switch (args.command) {
+  case 'open-agent-chat-tab': {
+    const threadId = typeof args.threadId === 'string' ? args.threadId.trim() : '';
+    const agentId = typeof args.agentId === 'string' ? args.agentId.trim() : '';
+    const contractId = typeof args.contractId === 'string' ? args.contractId.trim() : '';
+    if (!threadId || !agentId || !contractId) break;
+
+    const existing = browserTabs.find(t => t.mode === 'chat' && t.agentChat?.contractId === contractId);
+    const tab = existing ?? createTab('about:blank', {
+      mode: 'chat',
+      title: typeof args.title === 'string' && args.title.trim() ? args.title.trim() : (args.agentName || agentId),
+      agentChat: {
+        threadId,
+        agentId,
+        agentName: String(args.agentName || agentId),
+        parentThreadId: String(args.parentThreadId || ''),
+        parentAgentId: String(args.parentAgentId || ''),
+        parentAgentName: String(args.parentAgentName || args.parentAgentId || 'parent agent'),
+        contractId,
+        depth: Number(args.depth || 1),
+      },
+    });
+
+    localStorage.setItem(`chat_threadId_sulla-desktop_${ tab.id }`, threadId);
+    if (args.focus === true) router.push(`/Browser/${ tab.id }`);
+    break;
+  }
   case 'new-chat-tab': {
     const tab = createTab('about:blank', { mode: 'chat' });
 
@@ -503,6 +529,15 @@ function onNavigateTab(ev: Event) {
   if (tabId) router.push(`/Browser/${ tabId }`);
 }
 
+function onNavigateAgentParent(ev: Event) {
+  const parentThreadId = (ev as CustomEvent<{ parentThreadId: string }>).detail?.parentThreadId;
+  if (!parentThreadId) return;
+  const parent = browserTabs.find(tab =>
+    tab.mode === 'chat' && localStorage.getItem(`chat_threadId_sulla-desktop_${ tab.id }`) === parentThreadId,
+  );
+  if (parent) router.push(`/Browser/${ parent.id }`);
+}
+
 function onHistoryNavigate(_event: any, ...args: any[]) {
   const entry = args[0] as { id: string; type: string; url?: string; title?: string; tab_id?: string; thread_id?: string };
   if (!entry) return;
@@ -525,6 +560,7 @@ onMounted(async() => {
   // Register sub-tab change listener
   window.addEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
   window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
+  window.addEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
   window.addEventListener('sulla:file-tree-state-changed', onFileTreeStateChanged as EventListener);
   window.addEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
   window.addEventListener('keydown', onBookmarksShortcut);
@@ -581,6 +617,7 @@ onUnmounted(() => {
   }
   window.removeEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
   window.removeEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
+  window.removeEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
   window.removeEventListener('sulla:file-tree-state-changed', onFileTreeStateChanged as EventListener);
   window.removeEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
   window.removeEventListener('keydown', onBookmarksShortcut);
