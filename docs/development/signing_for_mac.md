@@ -78,6 +78,20 @@ needed for production signing.
 
 [Apple Documentation]: https://developer.apple.com/help/account/create-certificates/create-developer-id-certificates
 
+### Packaging a macOS build
+
+`yarn package` refuses to create a macOS package unless a valid **Developer ID
+Application** identity is available. On a developer Mac, install the
+certificate in the login keychain; if more than one signing identity is
+available, set `CSC_NAME` to the exact Developer ID Application identity name.
+CI supplies `CSC_LINK` and `CSC_KEY_PASSWORD` from GitHub Actions secrets.
+
+The package workflow requires the certificate and Apple notarization credentials
+for every macOS package run. It verifies the app signature, bundle identifier,
+Apple Team ID, notarization ticket, and Gatekeeper assessment before uploading
+the ZIP. Missing credentials or a failed check stops the macOS artifact from
+being published.
+
 ### Generate a test certificate
 
 If a real certificate from Apple is unavailable, it is possible to generate a
