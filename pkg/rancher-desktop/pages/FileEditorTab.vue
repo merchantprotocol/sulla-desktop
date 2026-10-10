@@ -266,60 +266,60 @@ export default defineComponent({
 </style>
 
 <style scoped>
-:global(.theme-noir-dark) .file-editor-root {
-  background: #01030a;
-  color: #dee4ec;
+:global(.theme-noir) .file-editor-root {
+  background: var(--nx-paper);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .file-editor-bar {
+:global(.theme-noir) .file-editor-bar {
   height: 44px;
   padding: 0 14px;
   gap: 9px;
-  background: rgba(3, 6, 12, 0.78);
-  border-color: rgba(168, 192, 220, 0.08);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+  background: color-mix(in srgb, var(--bg-surface-alt) 78%, transparent);
+  border-color: var(--nx-hair);
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--shadow) 17.7778%, transparent);
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir-dark) .file-editor-name {
-  color: #f3f5f8;
+:global(.theme-noir) .file-editor-name {
+  color: var(--nx-read-1);
   font-weight: 600;
 }
 
-:global(.theme-noir-dark) .dirty-dot {
-  color: #e3b341;
-  text-shadow: 0 0 8px rgba(227, 179, 65, 0.7);
+:global(.theme-noir) .dirty-dot {
+  color: var(--nx-warning);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--nx-warning) 70%, transparent);
 }
 
-:global(.theme-noir-dark) .file-editor-path {
-  color: #7a8291;
+:global(.theme-noir) .file-editor-path {
+  color: var(--nx-read-4);
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
-:global(.theme-noir-dark) .save-btn {
+:global(.theme-noir) .save-btn {
   height: 30px;
   padding: 0 14px;
-  color: #dee4ec;
-  background: rgba(168, 192, 220, 0.05);
-  border-color: rgba(168, 192, 220, 0.12);
+  color: var(--nx-read-2);
+  background: color-mix(in srgb, var(--nx-hair-strong) 31.25%, transparent);
+  border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   border-radius: 15px;
   transition: transform 0.45s cubic-bezier(.22, 1, .36, 1), background 0.16s, border-color 0.16s;
 }
 
-:global(.theme-noir-dark) .save-btn:hover:not(:disabled) {
-  color: #f3f5f8;
-  background: linear-gradient(180deg, rgba(80, 150, 179, 0.32), rgba(80, 150, 179, 0.16));
-  border-color: rgba(106, 176, 204, 0.5);
+:global(.theme-noir) .save-btn:hover:not(:disabled) {
+  color: var(--nx-read-1);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 32%, transparent), color-mix(in srgb, var(--nx-accent) 16%, transparent));
+  border-color: color-mix(in srgb, var(--nx-accent-2) 50%, transparent);
   transform: translateY(-1px);
 }
 
-:global(.theme-noir-dark) .file-editor-error {
-  color: #f08b86;
-  background: rgba(248, 81, 73, 0.06);
-  border-color: rgba(248, 81, 73, 0.22);
+:global(.theme-noir) .file-editor-error {
+  color: var(--nx-danger);
+  background: color-mix(in srgb, var(--nx-danger) 6%, transparent);
+  border-color: color-mix(in srgb, var(--nx-danger) 22%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .save-btn { transition-duration: 0.01ms; }
+  :global(.theme-noir) .save-btn { transition-duration: 0.01ms; }
 }
 </style>

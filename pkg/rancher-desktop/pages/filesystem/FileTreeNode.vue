@@ -292,31 +292,31 @@ export default defineComponent({
 </style>
 
 <style scoped>
-:global(.theme-noir-dark) .file-tree-row {
+:global(.theme-noir) .file-tree-row {
   position: relative;
   height: 30px;
   margin-bottom: 2px;
   border-radius: 8px;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
   transition: color 0.14s, background 0.14s, transform 0.4s cubic-bezier(.22, 1, .36, 1);
 }
 
-:global(.theme-noir-dark) .file-tree-row:hover {
-  color: #dee4ec;
-  background: rgba(80, 150, 179, 0.08);
+:global(.theme-noir) .file-tree-row:hover {
+  color: var(--nx-read-2);
+  background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
   transform: translateX(2px);
 }
 
-:global(.theme-noir-dark) .file-tree-row.is-selected,
-:global(.theme-noir-dark) .file-tree-row.is-highlighted {
-  color: #f3f5f8;
-  background: linear-gradient(90deg, rgba(80, 150, 179, 0.22), rgba(80, 150, 179, 0.08));
+:global(.theme-noir) .file-tree-row.is-selected,
+:global(.theme-noir) .file-tree-row.is-highlighted {
+  color: var(--nx-read-1);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--nx-accent) 22%, transparent), color-mix(in srgb, var(--nx-accent) 8%, transparent));
   border-left: 0;
-  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.24);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 24%, transparent);
 }
 
-:global(.theme-noir-dark) .file-tree-row.is-selected::before,
-:global(.theme-noir-dark) .file-tree-row.is-highlighted::before {
+:global(.theme-noir) .file-tree-row.is-selected::before,
+:global(.theme-noir) .file-tree-row.is-highlighted::before {
   content: '';
   position: absolute;
   left: -6px;
@@ -324,22 +324,22 @@ export default defineComponent({
   bottom: 5px;
   width: 3px;
   border-radius: 0 3px 3px 0;
-  background: #6ab0cc;
-  box-shadow: 0 0 10px rgba(106, 176, 204, 0.8);
+  background: var(--nx-accent-2);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent-2) 80%, transparent);
 }
 
-:global(.theme-noir-dark) .node-label {
+:global(.theme-noir) .node-label {
   color: inherit;
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 11.5px;
   line-height: 30px;
 }
 
-:global(.theme-noir-dark) .node-icon { color: #8cacc9; }
-:global(.theme-noir-dark) .icon-file,
-:global(.theme-noir-dark) .chevron { color: #7a8291; }
+:global(.theme-noir) .node-icon { color: var(--text-info); }
+:global(.theme-noir) .icon-file,
+:global(.theme-noir) .chevron { color: var(--nx-read-4); }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .file-tree-row { transition-duration: 0.01ms; }
+  :global(.theme-noir) .file-tree-row { transition-duration: 0.01ms; }
 }
 </style>

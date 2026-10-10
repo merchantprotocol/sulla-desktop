@@ -216,163 +216,167 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) });
 </style>
 
 <style scoped>
-:global(body.theme-noir-dark) {
-  background: #01030a;
-  color: #dee4ec;
+:global(body.theme-noir) {
+  background: var(--nx-paper);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) main {
+:global(.theme-noir) main {
   min-height: 100vh;
   padding: 34px 38px 42px;
-  background: radial-gradient(90% 60% at 0% 0%, rgba(80, 150, 179, 0.1), transparent 58%), #01030a;
+  background: radial-gradient(90% 60% at 0% 0%, color-mix(in srgb, var(--nx-accent) 10%, transparent), transparent 58%), var(--nx-paper);
 }
 
-:global(.theme-noir-dark) header {
+:global(.theme-noir) header {
   padding-bottom: 4px;
   animation: noir-process-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
 }
 
-:global(.theme-noir-dark) h1 {
-  color: #f3f5f8;
+:global(.theme-noir) h1 {
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 32px;
   font-weight: 600;
   letter-spacing: -0.02em;
 }
 
-:global(.theme-noir-dark) .eyebrow {
-  color: #6ab0cc;
+:global(.theme-noir) .eyebrow {
+  color: var(--nx-accent-2);
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 10.5px;
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir-dark) .muted,
-:global(.theme-noir-dark) small { color: #7a8291; }
-:global(.theme-noir-dark) .status {
+:global(.theme-noir) .muted,
+:global(.theme-noir) small { color: var(--nx-read-4); }
+:global(.theme-noir) .status {
   margin: 20px 0 14px;
   padding: 10px 12px;
-  color: #a9b3c1;
-  background: rgba(168, 192, 220, 0.025);
-  border: 1px solid rgba(168, 192, 220, 0.06);
+  color: var(--nx-read-3);
+  background: color-mix(in srgb, var(--nx-hair-strong) 15.625%, transparent);
+  border: 1px solid color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent);
   border-radius: 12px;
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
-:global(.theme-noir-dark) .dot {
-  background: #3fb950;
-  box-shadow: 0 0 8px rgba(63, 185, 80, 0.7);
+:global(.theme-noir) .dot {
+  background: var(--nx-success);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--nx-success) 70%, transparent);
 }
-:global(.theme-noir-dark) .dot.stale {
-  background: #e3b341;
-  box-shadow: 0 0 8px rgba(227, 179, 65, 0.6);
+:global(.theme-noir) .dot.stale {
+  background: var(--nx-warning);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--nx-warning) 60%, transparent);
 }
 
-:global(.theme-noir-dark) .cards { gap: 12px; }
-:global(.theme-noir-dark) article,
-:global(.theme-noir-dark) .notice,
-:global(.theme-noir-dark) details {
-  background: rgba(168, 192, 220, 0.035);
-  border-color: rgba(168, 192, 220, 0.08);
+:global(.theme-noir) .cards { gap: 12px; }
+:global(.theme-noir) article,
+:global(.theme-noir) .notice,
+:global(.theme-noir) details {
+  background: color-mix(in srgb, var(--nx-hair-strong) 21.875%, transparent);
+  border-color: var(--nx-hair);
   border-radius: 18px;
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.02);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 12.5%, transparent);
 }
 
-:global(.theme-noir-dark) article:first-child {
-  background: linear-gradient(135deg, rgba(80, 150, 179, 0.16), rgba(80, 150, 179, 0.03));
-  border-color: rgba(106, 176, 204, 0.25);
+:global(.theme-noir) article:first-child {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 16%, transparent), color-mix(in srgb, var(--nx-accent) 3%, transparent));
+  border-color: color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
 }
 
-:global(.theme-noir-dark) article h2 {
-  color: #a9b3c1;
+:global(.theme-noir) article h2 {
+  color: var(--nx-read-3);
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
-:global(.theme-noir-dark) article strong {
-  color: #f3f5f8;
+:global(.theme-noir) article strong {
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 27px;
 }
 
-:global(.theme-noir-dark) progress { accent-color: #5096b3; }
-:global(.theme-noir-dark) .notice.warning { border-color: rgba(227, 179, 65, 0.35); }
-:global(.theme-noir-dark) .notice.error { border-color: rgba(248, 81, 73, 0.35); }
+:global(.theme-noir) progress { accent-color: var(--nx-accent); }
+:global(.theme-noir) .notice.warning { border-color: color-mix(in srgb, var(--nx-warning) 35%, transparent); }
+:global(.theme-noir) .notice.error { border-color: color-mix(in srgb, var(--nx-danger) 35%, transparent); }
 
-:global(.theme-noir-dark) input,
-:global(.theme-noir-dark) select,
-:global(.theme-noir-dark) button {
-  color: #dee4ec;
-  background: rgba(3, 6, 12, 0.68);
-  border-color: rgba(168, 192, 220, 0.12);
+:global(.theme-noir) input,
+:global(.theme-noir) select,
+:global(.theme-noir) button {
+  color: var(--nx-read-2);
+  background: color-mix(in srgb, var(--bg-surface-alt) 68%, transparent);
+  border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   border-radius: 12px;
 }
 
-:global(.theme-noir-dark) button { transition: background 0.16s, border-color 0.16s, transform 0.4s cubic-bezier(.22, 1, .36, 1); }
-:global(.theme-noir-dark) button:hover:not(:disabled) {
-  background: rgba(80, 150, 179, 0.14);
-  border-color: rgba(106, 176, 204, 0.35);
+:global(.theme-noir) button { transition: background 0.16s, border-color 0.16s, transform 0.4s cubic-bezier(.22, 1, .36, 1); }
+:global(.theme-noir) button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--nx-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--nx-accent-2) 35%, transparent);
   transform: translateY(-1px);
 }
 
-:global(.theme-noir-dark) .processes {
+:global(.theme-noir) .processes {
   max-height: 440px;
   padding: 0 8px 8px;
-  border-color: rgba(168, 192, 220, 0.08);
+  border-color: var(--nx-hair);
   border-radius: 16px;
-  background: rgba(3, 6, 12, 0.42);
+  background: color-mix(in srgb, var(--bg-surface-alt) 42%, transparent);
 }
 
-:global(.theme-noir-dark) table { border-collapse: separate; border-spacing: 0 5px; }
-:global(.theme-noir-dark) th {
+:global(.theme-noir) table { border-collapse: separate; border-spacing: 0 5px; }
+:global(.theme-noir) th {
   top: 0;
-  color: #7a8291;
-  background: rgba(3, 6, 12, 0.96);
+  color: var(--nx-read-4);
+  background: color-mix(in srgb, var(--bg-surface-alt) 96%, transparent);
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-:global(.theme-noir-dark) td {
+:global(.theme-noir) td {
   padding: 11px 12px;
-  color: #a9b3c1;
-  background: rgba(168, 192, 220, 0.028);
-  border-top: 1px solid rgba(168, 192, 220, 0.06);
-  border-bottom: 1px solid rgba(168, 192, 220, 0.06);
+  color: var(--nx-read-3);
+  background: color-mix(in srgb, var(--nx-hair-strong) 17.5%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent);
   transition: background 0.15s;
 }
 
-:global(.theme-noir-dark) tbody tr:hover td { background: rgba(80, 150, 179, 0.08); }
-:global(.theme-noir-dark) td:first-child { border-left: 1px solid rgba(168, 192, 220, 0.06); border-radius: 11px 0 0 11px; }
-:global(.theme-noir-dark) td:last-child { border-right: 1px solid rgba(168, 192, 220, 0.06); border-radius: 0 11px 11px 0; }
-:global(.theme-noir-dark) .process-name { color: #dee4ec; }
-:global(.theme-noir-dark) .metric-cell {
+:global(.theme-noir) tbody tr:hover td { background: color-mix(in srgb, var(--nx-accent) 8%, transparent); }
+:global(.theme-noir) td:first-child { border-left: 1px solid color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent); border-radius: 11px 0 0 11px; }
+:global(.theme-noir) td:last-child { border-right: 1px solid color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent); border-radius: 0 11px 11px 0; }
+:global(.theme-noir) .process-name { color: var(--nx-read-2); }
+:global(.theme-noir) .metric-cell {
   color: #a8c0dc;
   font-family: ui-monospace, 'SF Mono', monospace;
   font-variant-numeric: tabular-nums;
 }
 
 .process-state-dot { display: none; }
-:global(.theme-noir-dark) .process-state-dot {
+:global(.theme-noir) .process-state-dot {
   display: inline-block;
   width: 6px;
   height: 6px;
   margin-right: 7px;
   border-radius: 50%;
-  background: #484f5a;
+  background: var(--nx-read-5);
 }
-:global(.theme-noir-dark) .process-state-dot.state-r { background: #3fb950; box-shadow: 0 0 7px rgba(63, 185, 80, 0.65); }
-:global(.theme-noir-dark) .process-state-dot.state-d,
-:global(.theme-noir-dark) .process-state-dot.state-t { background: #e3b341; box-shadow: 0 0 7px rgba(227, 179, 65, 0.55); }
-:global(.theme-noir-dark) .process-state-dot.state-z { background: #f85149; box-shadow: 0 0 7px rgba(248, 81, 73, 0.55); }
+:global(.theme-noir) .process-state-dot.state-r { background: var(--nx-success); box-shadow: 0 0 7px color-mix(in srgb, var(--nx-success) 65%, transparent); }
+:global(.theme-noir) .process-state-dot.state-d,
+:global(.theme-noir) .process-state-dot.state-t { background: var(--nx-warning); box-shadow: 0 0 7px color-mix(in srgb, var(--nx-warning) 55%, transparent); }
+:global(.theme-noir) .process-state-dot.state-z { background: var(--nx-danger); box-shadow: 0 0 7px color-mix(in srgb, var(--nx-danger) 55%, transparent); }
 
-:global(.theme-noir-dark) .actions { opacity: 0; transition: opacity 0.15s; }
-:global(.theme-noir-dark) tbody tr:hover .actions { opacity: 1; }
-:global(.theme-noir-dark) .filesystem code,
-:global(.theme-noir-dark) .filesystem span { color: #a8c0dc; font-family: ui-monospace, 'SF Mono', monospace; }
+:global(.theme-noir) .actions { opacity: 0; transition: opacity 0.15s; }
+:global(.theme-noir) tbody tr:hover .actions { opacity: 1; }
+:global(.theme-noir) .filesystem code,
+:global(.theme-noir) .filesystem span { color: #a8c0dc; font-family: ui-monospace, 'SF Mono', monospace; }
+
+:global(.theme-noir-light) .metric-cell,
+:global(.theme-noir-light) .filesystem code,
+:global(.theme-noir-light) .filesystem span { color: var(--nx-accent-2); }
 
 @keyframes noir-process-in {
   from { opacity: 0; transform: translateY(8px); filter: blur(8px); }
@@ -380,7 +384,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) });
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) header { animation: none; }
-  :global(.theme-noir-dark) button { transition-duration: 0.01ms; }
+  :global(.theme-noir) header { animation: none; }
+  :global(.theme-noir) button { transition-duration: 0.01ms; }
 }
 </style>

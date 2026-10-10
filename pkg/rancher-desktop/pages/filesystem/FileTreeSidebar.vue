@@ -728,49 +728,49 @@ export default defineComponent({
 </style>
 
 <style scoped>
-:global(.theme-noir-dark) .file-tree-sidebar {
-  background: rgba(3, 6, 12, 0.74);
-  color: #dee4ec;
-  border-right: 1px solid rgba(168, 192, 220, 0.08);
+:global(.theme-noir) .file-tree-sidebar {
+  background: color-mix(in srgb, var(--bg-surface-alt) 74%, transparent);
+  color: var(--nx-read-2);
+  border-right: 1px solid var(--nx-hair);
   font-family: ui-monospace, 'SF Mono', monospace;
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir-dark) .file-tree-header {
+:global(.theme-noir) .file-tree-header {
   height: 44px;
   padding: 0 10px 0 14px;
-  color: #6ab0cc;
-  background: rgba(3, 6, 12, 0.5);
-  border-color: rgba(168, 192, 220, 0.08);
+  color: var(--nx-accent-2);
+  background: color-mix(in srgb, var(--bg-surface-alt) 50%, transparent);
+  border-color: var(--nx-hair);
   font-size: 10px;
   letter-spacing: 0.16em;
 }
 
-:global(.theme-noir-dark) .action-btn {
+:global(.theme-noir) .action-btn {
   width: 28px;
   height: 28px;
-  color: #7a8291;
+  color: var(--nx-read-4);
   border-radius: 14px;
   transition: background 0.16s, color 0.16s, transform 0.4s cubic-bezier(.22, 1, .36, 1);
 }
 
-:global(.theme-noir-dark) .action-btn:hover {
-  color: #f3f5f8;
-  background: rgba(80, 150, 179, 0.12);
+:global(.theme-noir) .action-btn:hover {
+  color: var(--nx-read-1);
+  background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
   transform: translateY(-1px);
 }
 
-:global(.theme-noir-dark) .file-tree-scroll { padding: 7px 6px; }
-:global(.theme-noir-dark) .file-tree-scroll::-webkit-scrollbar-thumb {
-  background: rgba(168, 192, 220, 0.14);
+:global(.theme-noir) .file-tree-scroll { padding: 7px 6px; }
+:global(.theme-noir) .file-tree-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--nx-hair-strong) 87.5%, transparent);
 }
 
-:global(.theme-noir-dark) .file-tree-loading {
-  color: #7a8291;
+:global(.theme-noir) .file-tree-loading {
+  color: var(--nx-read-4);
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .action-btn { transition-duration: 0.01ms; }
+  :global(.theme-noir) .action-btn { transition-duration: 0.01ms; }
 }
 </style>

@@ -119,32 +119,32 @@ onMounted(async() => {
 </style>
 
 <style scoped>
-:global(.theme-noir-dark) .page-root {
-  background: radial-gradient(100% 55% at 0% 0%, rgba(80, 150, 179, 0.09), transparent 58%), #01030a;
-  color: #dee4ec;
+:global(.theme-noir) .page-root {
+  background: radial-gradient(100% 55% at 0% 0%, color-mix(in srgb, var(--nx-accent) 9%, transparent), transparent 58%), var(--nx-paper);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .extension-frame,
-:global(.theme-noir-dark) .extension-embedded {
-  background: rgba(3, 6, 12, 0.6);
-  border-top: 1px solid rgba(168, 192, 220, 0.08);
+:global(.theme-noir) .extension-frame,
+:global(.theme-noir) .extension-embedded {
+  background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
+  border-top: 1px solid var(--nx-hair);
 }
 
-:global(.theme-noir-dark) .extension-loading {
+:global(.theme-noir) .extension-loading {
   margin: 30px;
-  border: 1px solid rgba(168, 192, 220, 0.08);
+  border: 1px solid var(--nx-hair);
   border-radius: 20px;
-  color: #a9b3c1;
-  background: rgba(168, 192, 220, 0.035);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.02);
+  color: var(--nx-read-3);
+  background: color-mix(in srgb, var(--nx-hair-strong) 21.875%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 12.5%, transparent);
   animation: noir-extension-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
 }
 
-:global(.theme-noir-dark) .extension-loading p { color: #a9b3c1; }
-:global(.theme-noir-dark) .extension-spinner {
-  border-color: rgba(168, 192, 220, 0.12);
-  border-top-color: #6ab0cc;
-  box-shadow: 0 0 18px rgba(80, 150, 179, 0.22);
+:global(.theme-noir) .extension-loading p { color: var(--nx-read-3); }
+:global(.theme-noir) .extension-spinner {
+  border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
+  border-top-color: var(--nx-accent-2);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 22%, transparent);
 }
 
 @keyframes noir-extension-in {
@@ -153,6 +153,6 @@ onMounted(async() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .extension-loading { animation: none; }
+  :global(.theme-noir) .extension-loading { animation: none; }
 }
 </style>

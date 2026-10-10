@@ -58,41 +58,41 @@ export default defineComponent({
 </style>
 
 <style scoped>
-:global(.theme-noir-dark) .terminal-tab {
+:global(.theme-noir) .terminal-tab {
   display: flex;
   flex-direction: column;
   padding: 0;
-  background: #01030a;
+  background: var(--nx-paper);
 }
 
-:global(.theme-noir-dark) .terminal-chrome {
+:global(.theme-noir) .terminal-chrome {
   display: flex;
   align-items: center;
   gap: 8px;
   height: 42px;
   padding: 0 14px;
   flex: none;
-  color: #a9b3c1;
-  background: rgba(3, 6, 12, 0.76);
-  border-bottom: 1px solid rgba(168, 192, 220, 0.08);
+  color: var(--nx-read-3);
+  background: color-mix(in srgb, var(--bg-surface-alt) 76%, transparent);
+  border-bottom: 1px solid var(--nx-hair);
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 11px;
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir-dark) .terminal-status-dot {
+:global(.theme-noir) .terminal-status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #3fb950;
-  box-shadow: 0 0 8px rgba(63, 185, 80, 0.7);
+  background: var(--nx-success);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--nx-success) 70%, transparent);
 }
 
-:global(.theme-noir-dark) .terminal-title { color: #f3f5f8; font-weight: 600; }
-:global(.theme-noir-dark) .terminal-session { margin-left: auto; color: #7a8291; }
-:global(.theme-noir-dark) .terminal-tab > :deep(.terminal-wrapper) {
+:global(.theme-noir) .terminal-title { color: var(--nx-read-1); font-weight: 600; }
+:global(.theme-noir) .terminal-session { margin-left: auto; color: var(--nx-read-4); }
+:global(.theme-noir) .terminal-tab > :deep(.terminal-wrapper) {
   min-height: 0;
   padding: 9px 10px 7px;
-  background: #03060c;
+  background: var(--bg-surface-alt);
 }
 </style>
