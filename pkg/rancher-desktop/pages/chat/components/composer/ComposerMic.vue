@@ -5,7 +5,13 @@
     type="button"
     :title="live ? 'Stop recording' : 'Start voice input (⌘/)'"
     @click="$emit('toggle')"
-  >{{ live ? '■' : '◉' }}</button>
+  >
+    <span class="classic-mic">{{ live ? '■' : '◉' }}</span>
+    <svg class="noir-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v4M9 21h6" />
+    </svg>
+  </button>
 </template>
 
 <script setup lang="ts">
@@ -31,5 +37,24 @@ defineEmits<{ (e: 'toggle'): void }>();
 .mic-btn.live {
   background: var(--steel-500); border-color: var(--steel-400);
   color: white; animation: chat-pulse-glow 1.6s ease-in-out infinite;
+}
+.noir-mic { display: none; width: 17px; height: 17px; }
+:global(.theme-noir-dark) .mic-btn {
+  width: 34px; height: 34px; border: 0; color: #a9b3c1; background: transparent;
+  transition: background 0.16s, color 0.16s, box-shadow 0.16s;
+}
+:global(.theme-noir-dark) .classic-mic { display: none; }
+:global(.theme-noir-dark) .noir-mic { display: block; }
+:global(.theme-noir-dark) .mic-btn:hover { border: 0; color: #f3f5f8; background: rgba(80, 150, 179, 0.12); box-shadow: none; }
+:global(.theme-noir-dark) .mic-btn.live {
+  color: #f3f5f8; background: rgba(80, 150, 179, 0.3); border: 0;
+  animation: noir-mic-pulse 1.6s cubic-bezier(.22, 1, .36, 1) infinite;
+}
+@keyframes noir-mic-pulse {
+  from { box-shadow: 0 0 0 0 rgba(106, 176, 204, 0.45); }
+  to { box-shadow: 0 0 0 12px rgba(106, 176, 204, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .mic-btn.live { animation: none; }
 }
 </style>

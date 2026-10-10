@@ -17,72 +17,118 @@
   <div class="composer-wrap" ref="wrapEl">
     <div class="composer-inner">
       <RunControls />
-      <QueueStrip />
-      <AttachmentTray />
       <CommandPopover @choose="choosePopoverItem" />
 
-      <!-- Live intent: what Reflex would run for this draft right now. -->
-      <div
-        v-if="reflexChip"
-        :class="['reflex-intent', reflexChip.kind]"
-        role="status"
-        aria-live="polite"
-      >
-        <button
-          v-if="reflexChip.kind === 'suggest'"
-          type="button"
-          class="reflex-intent-btn"
-          title="Run instantly with Reflex (Tab) — Esc to dismiss"
-          @mousedown.prevent
-          @click="acceptReflexIntent"
-        >
-          <span class="bolt">⚡</span>{{ reflexChip.text }}<kbd>⇥</kbd>
-        </button>
-        <span v-else><span class="bolt">{{ reflexChip.kind === 'done' ? '⚡' : '!' }}</span>{{ reflexChip.text }}</span>
-      </div>
+      <div class="composer-card">
+        <div class="composer-top">
+          <QueueStrip />
+          <AttachmentTray />
 
-      <div :class="['composer', { recording: isRecording }]">
-        <span class="glyph">—</span>
+          <!-- Live intent: what Reflex would run for this draft right now. -->
+          <div
+            v-if="reflexChip"
+            :class="['reflex-intent', reflexChip.kind]"
+            role="status"
+            aria-live="polite"
+          >
+            <button
+              v-if="reflexChip.kind === 'suggest'"
+              type="button"
+              class="reflex-intent-btn"
+              title="Run instantly with Reflex (Tab) — Esc to dismiss"
+              @mousedown.prevent
+              @click="acceptReflexIntent"
+            >
+              <span class="bolt">⚡</span>{{ reflexChip.text }}<kbd>⇥</kbd>
+            </button>
+            <span v-else><span class="bolt">{{ reflexChip.kind === 'done' ? '⚡' : '!' }}</span>{{ reflexChip.text }}</span>
+          </div>
+        </div>
 
-        <!-- Text mode -->
-        <ComposerInput
-          v-if="!isRecording"
-          ref="inputRef"
-          :model-value="draft"
-          :placeholder="placeholder"
-          @update:modelValue="draft = $event"
-          @send="onSend"
-          @keydown="onKeydown"
-        />
+        <div :class="['composer', { recording: isRecording }]">
+          <span class="glyph">—</span>
 
-        <!-- Voice mode -->
-        <ComposerVoicePanel
-          v-else
-          :started-at="recStartedAt"
-          :level="recLevel"
-          :speaking="recSpeaking"
-          :ptt="recPtt"
-          :finishing="recFinishing"
-          @stop="stopVoice(true)"
-        />
+          <!-- Text mode -->
+          <ComposerInput
+            v-if="!isRecording"
+            ref="inputRef"
+            :model-value="draft"
+            :placeholder="placeholder"
+            @update:modelValue="draft = $event"
+            @send="onSend"
+            @keydown="onKeydown"
+          />
 
-        <ComposerAttach @pick="onAttach" />
-        <input
-          ref="fileInputRef"
-          type="file"
-          multiple
-          class="hidden-file-input"
-          @change="onFilesSelected"
-        >
-        <ComposerMic :live="isRecording" @toggle="toggleVoice" />
+          <!-- Voice mode -->
+          <ComposerVoicePanel
+            v-else
+            :started-at="recStartedAt"
+            :level="recLevel"
+            :speaking="recSpeaking"
+            :ptt="recPtt"
+            :finishing="recFinishing"
+            @stop="stopVoice(true)"
+          />
+
+          <div class="composer-tools">
+            <ComposerAttach :open="controller.staged.value.length > 0" @pick="onAttach" />
+            <button class="context-btn" type="button" title="Add context" @click="addContext">@</button>
+            <button class="model-btn" type="button" title="Switch agent or model" @click="controller.openModal('model')">
+              <span class="model-avatar">{{ modelInitial }}</span>
+              <span class="model-name">{{ controller.model.value.name }}</span>
+              <span class="model-caret">▾</span>
+            </button>
+            <span class="tool-spacer" />
+            <button class="usage-meter" type="button" title="Context usage" @click="controller.openModal('tokens')">
+              <span class="usage-ring" :style="{ '--usage': `${usagePercent}%` }" />
+              <span>{{ usagePercent }}%</span>
+            </button>
+            <ComposerMic :live="isRecording" @toggle="toggleVoice" />
+            <ComposerSend
+              :running="controller.isRunning.value"
+              :can-send="canSendDraft"
+              @send="onSend(draft)"
+            />
+          </div>
+
+          <input
+            ref="fileInputRef"
+            type="file"
+            multiple
+            class="hidden-file-input"
+            @change="onFilesSelected"
+          >
+        </div>
       </div>
 
       <div class="hints">
         <HeartbeatControl />
-        <span><kbd>⏎</kbd> send</span>
-        <span><kbd>hold ␣</kbd> talk</span>
-        <span><kbd>⌘/</kbd> voice</span>
-        <span><kbd>?</kbd> help</span>
+        <div class="classic-guide">
+          <span><kbd>⏎</kbd> send</span>
+          <span><kbd>hold ␣</kbd> talk</span>
+          <span><kbd>⌘/</kbd> voice</span>
+          <span><kbd>?</kbd> help</span>
+        </div>
+        <div class="noir-guide">
+          <template v-if="isRecording">
+            <span><kbd>⌘/</kbd> stop listening</span>
+          </template>
+          <template v-else-if="controller.popover.value.open">
+            <span><kbd>↑↓</kbd> choose</span>
+            <span><kbd>⏎</kbd> run</span>
+            <span><kbd>esc</kbd> close</span>
+          </template>
+          <template v-else-if="draft.trim()">
+            <span><kbd>⏎</kbd> send</span>
+            <span><kbd>⇧⏎</kbd> new line</span>
+            <span><kbd>Tab</kbd> run with Reflex</span>
+          </template>
+          <template v-else>
+            <span><kbd>/</kbd> commands</span>
+            <span><kbd>@</kbd> context</span>
+            <span><kbd>⌘/</kbd> voice</span>
+          </template>
+        </div>
       </div>
     </div>
   </div>
@@ -95,6 +141,7 @@ import ComposerInput      from './ComposerInput.vue';
 import ComposerMic        from './ComposerMic.vue';
 import ComposerAttach     from './ComposerAttach.vue';
 import ComposerVoicePanel from './ComposerVoicePanel.vue';
+import ComposerSend       from './ComposerSend.vue';
 import AttachmentTray     from './AttachmentTray.vue';
 import QueueStrip         from './QueueStrip.vue';
 import RunControls        from './RunControls.vue';
@@ -138,10 +185,34 @@ const fileInputRef = ref<HTMLInputElement | null>(null);
 
 // ─── Placeholder + keyboard hints ──────────────────────────────────
 const placeholder = computed(() => {
+  if (isNoir.value) return 'Ask Sulla anything…';
   return controller.isRunning.value
     ? 'send while Sulla is working — queued'
     : 'reply — /  for commands · @ for context · drop files to attach';
 });
+const isNoir = ref(typeof document !== 'undefined' && document.documentElement.classList.contains('theme-noir-dark'));
+let themeObserver: MutationObserver | null = null;
+
+const canSendDraft = computed(() => draft.value.trim().length > 0 || controller.staged.value.length > 0);
+const modelInitial = computed(() => controller.model.value.name.trim().charAt(0).toUpperCase() || 'S');
+const contextLimit = computed(() => {
+  const raw = controller.model.value.ctx.toLowerCase().replace(/\s*ctx\s*/, '');
+  const amount = Number.parseFloat(raw);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  if (raw.endsWith('m')) return amount * 1_000_000;
+  if (raw.endsWith('k')) return amount * 1_000;
+  return amount;
+});
+const usagePercent = computed(() => {
+  if (!contextLimit.value) return 0;
+  return Math.min(100, Math.round((controller.usage.value.totalTokens / contextLimit.value) * 100));
+});
+
+function addContext(): void {
+  const suffix = draft.value && !draft.value.endsWith(' ') ? ' @' : '@';
+  draft.value += suffix;
+  nextTick(() => inputRef.value?.focus());
+}
 
 // ─── Voice state bridge ────────────────────────────────────────────
 const isRecording  = computed(() => controller.voice.value.phase === 'recording');
@@ -371,6 +442,7 @@ function stopVoice(commit: boolean): void {
 }
 
 onBeforeUnmount(() => {
+  themeObserver?.disconnect();
   voiceAdapter.dispose();
   reflexIntent.dispose();
   window.removeEventListener('chat:quote', onQuoteFromTurn as EventListener);
@@ -416,6 +488,10 @@ async function prefillFirstRunStarter(): Promise<void> {
 }
 
 onMounted(() => {
+  themeObserver = new MutationObserver(() => {
+    isNoir.value = document.documentElement.classList.contains('theme-noir-dark');
+  });
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   window.addEventListener('chat:quote', onQuoteFromTurn as EventListener);
   prefillFirstRunStarter().catch(() => { /* logged inside */ });
   // Warm the artifact mention cache so the first `@` keystroke has data.
@@ -436,6 +512,8 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   position: relative;
 }
 .chat-root.artifact-open .composer-inner { max-width: 720px; }
+.composer-card, .composer-top, .composer-tools, .classic-guide { display: contents; }
+.context-btn, .model-btn, .usage-meter, .tool-spacer, .noir-guide { display: none; }
 
 .composer {
   display: flex; align-items: baseline; gap: 18px;
@@ -506,5 +584,196 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 
 .hidden-file-input {
   display: none;
+}
+
+/* Noir is a visual skin over the existing controller and keyboard behavior. */
+:global(.theme-noir-dark) .composer-wrap {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 0 20px 14px;
+}
+:global(.theme-noir-dark) .composer-inner {
+  max-width: 760px;
+}
+:global(.theme-noir-dark) .chat-root.artifact-open .composer-wrap { left: 0; right: 0; }
+:global(.theme-noir-dark) .chat-root.artifact-open .composer-inner { max-width: 760px; }
+:global(.theme-noir-dark) .composer-card {
+  display: block;
+  position: relative;
+  border-radius: 22px;
+  background: rgba(3, 6, 12, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.14), 0 16px 44px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(22px) saturate(135%);
+  transition: box-shadow 0.3s cubic-bezier(.22, 1, .36, 1),
+    transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
+}
+:global(.theme-noir-dark) .composer-card:focus-within {
+  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.55),
+    0 0 0 4px rgba(80, 150, 179, 0.12), 0 0 44px rgba(80, 150, 179, 0.16),
+    0 20px 56px rgba(0, 0, 0, 0.5);
+}
+:global(.theme-noir-dark) .composer-top {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 10px;
+}
+:global(.theme-noir-dark) .reflex-intent {
+  position: static;
+  width: max-content;
+  margin: 10px 0 0;
+  color: #dee4ec;
+  font-family: var(--font-body);
+  font-size: 12px;
+  letter-spacing: 0;
+  animation: noir-reflex-in 0.42s cubic-bezier(.22, 1, .36, 1) both;
+}
+:global(.theme-noir-dark) .reflex-intent-btn,
+:global(.theme-noir-dark) .reflex-intent > span {
+  height: 28px;
+  padding: 0 6px 0 10px;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(80, 150, 179, 0.18), rgba(80, 150, 179, 0.04));
+  box-shadow: inset 0 0 0 0.5px rgba(106, 176, 204, 0.35);
+}
+:global(.theme-noir-dark) .reflex-intent kbd {
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 6px;
+  color: #f3f5f8;
+  background: rgba(168, 192, 220, 0.12);
+  font-size: 10.5px;
+}
+@keyframes noir-reflex-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+:global(.theme-noir-dark) .composer {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-height: 102px;
+  padding: 0;
+  flex-wrap: wrap;
+  border: 0;
+  box-shadow: none;
+}
+:global(.theme-noir-dark) .composer:focus-within,
+:global(.theme-noir-dark) .composer.recording { border: 0; box-shadow: none; }
+:global(.theme-noir-dark) .glyph { display: none; }
+:global(.theme-noir-dark) .composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 52px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid rgba(168, 192, 220, 0.07);
+}
+:global(.theme-noir-dark) .context-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #a9b3c1;
+  background: transparent;
+  font: 600 15px var(--mono);
+  cursor: pointer;
+}
+:global(.theme-noir-dark) .context-btn:hover { color: #f3f5f8; background: rgba(80, 150, 179, 0.12); }
+:global(.theme-noir-dark) .model-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  max-width: 190px;
+  margin: 0 4px;
+  padding: 0 10px 0 3px;
+  border: 0;
+  border-radius: 15px;
+  color: #dee4ec;
+  background: rgba(168, 192, 220, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.1);
+  font: 500 12.5px var(--font-body);
+  cursor: pointer;
+}
+:global(.theme-noir-dark) .model-btn:hover { background: rgba(80, 150, 179, 0.14); }
+:global(.theme-noir-dark) .model-avatar {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 50%;
+  color: #03060c;
+  background: linear-gradient(135deg, #a8c0dc, #5096b3);
+  font-size: 11px;
+  font-weight: 700;
+}
+:global(.theme-noir-dark) .model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:global(.theme-noir-dark) .model-caret { color: #7a8291; font-size: 9px; }
+:global(.theme-noir-dark) .tool-spacer { display: block; flex: 1; }
+:global(.theme-noir-dark) .usage-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  color: #7a8291;
+  background: transparent;
+  font: 11px var(--mono);
+  cursor: pointer;
+}
+:global(.theme-noir-dark) .usage-ring {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: conic-gradient(#6ab0cc 0 var(--usage), rgba(168, 192, 220, 0.12) var(--usage) 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+}
+:global(.theme-noir-dark) .hints {
+  position: relative;
+  justify-content: center;
+  min-height: 14px;
+  margin-top: 9px;
+  gap: 0;
+  color: #484f5a;
+  font-size: 10.5px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+:global(.theme-noir-dark) .classic-guide { display: none; }
+:global(.theme-noir-dark) .noir-guide { display: flex; gap: 4px; }
+:global(.theme-noir-dark) .noir-guide span::before { display: none; }
+:global(.theme-noir-dark) .hints kbd {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: #a9b3c1;
+  background: transparent;
+  font-size: inherit;
+  font-weight: 500;
+}
+:global(.theme-noir-dark) .noir-guide span:not(:last-child)::after { content: " ·"; color: #484f5a; }
+:global(.theme-noir-dark) .hints :deep(.heartbeat-control) {
+  position: absolute;
+  right: 88px;
+  bottom: 23px;
+  z-index: 4;
+  margin: 0;
+}
+
+@media (max-width: 680px) {
+  :global(.theme-noir-dark) .composer-wrap { padding-right: 10px; padding-left: 10px; }
+  :global(.theme-noir-dark) .model-name, :global(.theme-noir-dark) .usage-meter > span:last-child { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .composer-card,
+  :global(.theme-noir-dark) .reflex-intent { animation: none; transition: none; }
 }
 </style>
