@@ -2,9 +2,9 @@ import { ref, computed, onMounted, watch } from 'vue';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
-export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark' | 'protocol-light';
+export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark' | 'protocol-light' | 'noir-dark';
 
-export type ThemeScheme = 'default' | 'ocean' | 'nord' | 'protocol';
+export type ThemeScheme = 'default' | 'ocean' | 'nord' | 'protocol' | 'noir';
 
 export interface ThemeOption {
   id:     ThemeName;
@@ -27,8 +27,9 @@ export const availableThemes: ThemeOption[] = [
   { id: 'ocean-dark', scheme: 'ocean', mode: 'dark', label: 'Ocean Dark', isDark: true },
   { id: 'nord-light', scheme: 'nord', mode: 'light', label: 'Nord Light', isDark: false },
   { id: 'nord-dark', scheme: 'nord', mode: 'dark', label: 'Nord Dark', isDark: true },
-  { id: 'protocol-dark',  scheme: 'protocol', mode: 'dark',  label: 'Protocol Dark',  isDark: true },
+  { id: 'protocol-dark', scheme: 'protocol', mode: 'dark', label: 'Protocol Dark', isDark: true },
   { id: 'protocol-light', scheme: 'protocol', mode: 'light', label: 'Protocol Light', isDark: false },
+  { id: 'noir-dark', scheme: 'noir', mode: 'dark', label: 'Noir', isDark: true },
 ];
 
 export const themeGroups: ThemeGroup[] = [
@@ -36,6 +37,7 @@ export const themeGroups: ThemeGroup[] = [
   { scheme: 'ocean', label: 'Ocean', themes: availableThemes.filter(t => t.scheme === 'ocean') },
   { scheme: 'nord', label: 'Nord', themes: availableThemes.filter(t => t.scheme === 'nord') },
   { scheme: 'protocol', label: 'Protocol', themes: availableThemes.filter(t => t.scheme === 'protocol') },
+  { scheme: 'noir', label: 'Noir', themes: availableThemes.filter(t => t.scheme === 'noir') },
 ];
 
 const validThemeIds = new Set<string>(availableThemes.map(t => t.id));

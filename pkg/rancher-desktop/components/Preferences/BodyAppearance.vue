@@ -210,6 +210,11 @@ export default defineComponent({
   background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #5096b3 100%);
 }
 
+.preview-noir-dark {
+  background:
+    linear-gradient(135deg, #01030a 0%, #03060c 38%, #070d1a 68%, #5096b3 100%);
+}
+
 .theme-card-label {
   display: flex;
   align-items: center;
