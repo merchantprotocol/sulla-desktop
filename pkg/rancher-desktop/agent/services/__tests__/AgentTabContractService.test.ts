@@ -95,6 +95,9 @@ describe('contract return validation', () => {
     queryOne.mockResolvedValueOnce(row).mockResolvedValueOnce({ ...row, status: 'returned', result });
     await expect(new AgentTabContractService().returnContract('child-thread', row.id, result)).resolves.toMatchObject({ status: 'returned' });
     expect(String(queryOne.mock.calls[1][0])).toContain("status = 'open'");
-    expect(send.mock.calls.some(([channel, message]) => channel === 'sulla-desktop' && message.type === 'inject_message' && message.data.threadId === 'parent-thread')).toBe(true);
+    expect(send.mock.calls.some((call) => {
+      const [channel, message] = call as [string, any];
+      return channel === 'sulla-desktop' && message.type === 'inject_message' && message.data.threadId === 'parent-thread';
+    })).toBe(true);
   });
 });
