@@ -38,6 +38,10 @@ const props = defineProps<{ html: string }>();
 
 const hostEl = ref<HTMLDivElement | null>(null);
 let shadow: ShadowRoot | null = null;
+// Last markup written to the shadow root. Rewriting innerHTML tears down
+// every node, which wipes interactive state (checked tabs, open details,
+// hover) — so skip the write when nothing visible would change.
+let lastMarkup = '';
 
 // Agent-facing token aliases. These names are what the system prompt
 // promises agents ( --bg, --surface-1..3, --text, --green, --font-* ) —
@@ -147,9 +151,13 @@ function render(html: string): void {
   // Mirror color-scheme so browser built-ins (scrollbars, inputs) match the active theme.
   if (hostEl.value) hostEl.value.style.colorScheme = isLight ? 'light' : 'dark';
 
-  shadow.innerHTML = themeClass
+  const markup = themeClass
     ? `<div class="${ themeClass }">${ safe }</div>`
     : safe;
+
+  if (markup === lastMarkup) return;
+  lastMarkup = markup;
+  shadow.innerHTML = markup;
 }
 
 onMounted(() => {
