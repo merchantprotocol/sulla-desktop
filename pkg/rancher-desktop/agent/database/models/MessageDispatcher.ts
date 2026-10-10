@@ -370,6 +370,37 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
+  // UI-only parent ↔ sub-agent exchange. This arrives as chat_message so it
+  // persists with the transcript, but it is never added to graph state.
+  if (kindRaw === 'sub_agent_exchange') {
+    const exchange = data?.subAgentExchange && typeof data.subAgentExchange === 'object'
+      ? data.subAgentExchange
+      : null;
+    if (!exchange || !['to_agent', 'from_agent'].includes(exchange.direction)) return;
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_sub_agent_exchange_${ exchange.jobId || exchange.taskIndex || '' }`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'sub_agent_exchange',
+      content:   String(exchange.summary ?? ''),
+      subAgentExchange: {
+        direction: exchange.direction,
+        agentId: String(exchange.agentId ?? 'sub-agent'),
+        label: String(exchange.label ?? exchange.agentId ?? 'Sub-agent'),
+        summary: String(exchange.summary ?? ''),
+        detail: String(exchange.detail ?? ''),
+        status: ['running', 'done', 'failed', 'stopped'].includes(exchange.status) ? exchange.status : 'running',
+        jobId: typeof exchange.jobId === 'string' ? exchange.jobId : undefined,
+        taskIndex: typeof exchange.taskIndex === 'number' ? exchange.taskIndex : undefined,
+        conversationId: typeof exchange.conversationId === 'string' ? exchange.conversationId : undefined,
+        native: exchange.native === true,
+      },
+    });
+    return;
+  }
+
   // File patch: ClaudeCodeService → BaseNode.onFilePatch emitted a unified
   // diff after an Edit/Write tool_use inside Claude's inner agent loop.
   // Content is empty by design — payload is on `data.filePatch`. PersonaAdapter

@@ -33,6 +33,7 @@
 
 import { isObserverSpawn } from './claudeToolPolicy';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
+import { emitSubAgentExchange } from '../tools/agents/jobExchange';
 
 /** One finished background task, ready to hand to the graph. */
 export interface BackgroundTaskNotice {
@@ -219,11 +220,21 @@ type SendFn = (channel: string, message: any) => Promise<unknown> | unknown;
  */
 export class BackgroundCompletionDelivery {
   private readonly pending = new Map<string, PendingEntry>();
+  private readonly send: SendFn;
+  private readonly now: () => number;
+  private readonly emitExchange: typeof emitSubAgentExchange;
 
   constructor(
-    private readonly send: SendFn = (channel, message) => getWebSocketClientService().send(channel, message),
-    private readonly now: () => number = Date.now,
-  ) {}
+    send?: SendFn,
+    now: () => number = Date.now,
+    emitExchange?: typeof emitSubAgentExchange,
+  ) {
+    this.send = send ?? ((channel, message) => getWebSocketClientService().send(channel, message));
+    this.now = now;
+    // Unit callers inject a transport to test wake delivery in isolation.
+    // Production uses the real UI exchange emitter unless one is injected.
+    this.emitExchange = emitExchange ?? (send ? async() => undefined : emitSubAgentExchange);
+  }
 
   deliver(convId: string, target: WakeTarget | null, notices: BackgroundTaskNotice[]): void {
     if (notices.length === 0) return;
@@ -278,6 +289,17 @@ export class BackgroundCompletionDelivery {
   }
 
   private wake(convId: string, target: WakeTarget, notices: BackgroundTaskNotice[]): void {
+    for (const notice of notices) {
+      this.emitExchange(target.channel, target.threadId, {
+        direction: 'from_agent',
+        agentId: 'claude-code',
+        label: `Background task ${ notice.taskId }`,
+        summary: notice.summary,
+        detail: notice.followUpText || notice.summary,
+        status: notice.status.toLowerCase().includes('fail') ? 'failed' : 'done',
+        native: true,
+      }).catch(() => undefined);
+    }
     const payload = {
       type: 'user_message',
       data: {

@@ -1,12 +1,13 @@
 import { BaseTool, ToolResponse } from '../base';
 import { extractAgentTurnOutcome } from './agentTurnOutcome';
-import { abortJob, createJob, completeJob, deleteJob, failJob, getJobAbortSignal, markCompletionDelivered } from './jobRegistry';
-import { getWebSocketClientService } from '../../services/WebSocketClientService';
-import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
+import { emitSubAgentExchange } from './jobExchange';
+import { abortJob, createJob, completeJob, deleteJob, failJob, getJobAbortSignal, markCompletionDelivered, updateJobTask } from './jobRegistry';
 import { combineAborts } from '../../services/AbortService';
+import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
+import { getWebSocketClientService } from '../../services/WebSocketClientService';
 import { findAgentDir } from '../../utils/sullaPaths';
 
-import type { AgentJobResult } from './jobRegistry';
+import type { AgentJobResult, AgentJobTask } from './jobRegistry';
 
 const MAX_DEPTH = 3;
 const MAX_TASKS = 10;
@@ -117,6 +118,15 @@ export class SpawnAgentWorker extends BaseTool {
     // the parent graph with their results when they finish, so an orchestrator
     // that fired-and-forgot doesn't sit thinking its sub-agents "died".
     const parentThreadId: string | undefined = (this.state as any)?.metadata?.threadId;
+    const jobTasks: AgentJobTask[] = tasks.map((task, index) => {
+      const agentId = taskAgentSelector(task) || parentChannel;
+      return {
+        agentId,
+        label:  task.label || agentId || `task-${ index }`,
+        prompt: task.prompt,
+        status: 'queued',
+      };
+    });
 
     // Abort signal for THIS async job (set once the job is created below).
     // Threaded into each sub-agent so stop_agent_job(jobId) can cancel them.
@@ -135,7 +145,7 @@ export class SpawnAgentWorker extends BaseTool {
     }
     let ownershipJob: Awaited<ReturnType<typeof createJob>> | undefined;
     if (Object.keys(assignees).length > 0) {
-      ownershipJob = await createJob(tasks.length, parentChannel, parentThreadId);
+      ownershipJob = await createJob(jobTasks, parentChannel, parentThreadId);
       const { WorkTaskOwnershipModel } = await import('../../database/models/WorkTaskOwnershipModel');
       let refusal: string | undefined;
       try {
@@ -159,6 +169,21 @@ export class SpawnAgentWorker extends BaseTool {
       const label = task.label || selector || `task-${ index }`;
       const agentConfigChannel = selector || parentChannel;
       const threadId = `spawn-agent-${ label.replace(/\s+/g, '-').toLowerCase() }-${ Date.now() }-${ index }`;
+
+      if (activityJobId) {
+        await updateJobTask(activityJobId, index, { status: 'running', threadId, startedAt: Date.now() });
+        await emitSubAgentExchange(parentChannel, parentThreadId, {
+          direction: 'to_agent',
+          agentId: selector || parentChannel,
+          label,
+          summary: `Started ${ label }`,
+          detail: task.prompt,
+          status: 'running',
+          jobId: activityJobId,
+          taskIndex: index,
+          conversationId: threadId,
+        });
+      }
 
       try {
         const { graph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(
@@ -214,17 +239,48 @@ export class SpawnAgentWorker extends BaseTool {
         // Canonical blocked-branch + output-fallback chain for spawned jobs.
         const { status, text } = extractAgentTurnOutcome(finalState);
 
-        return {
+        const result: AgentJobResult = {
           label,
           status,
           output: text,
           threadId,
         };
+        if (activityJobId) {
+          await updateJobTask(activityJobId, index, { status, threadId, finishedAt: Date.now() });
+          await emitSubAgentExchange(parentChannel, parentThreadId, {
+            direction: 'from_agent',
+            agentId: selector || parentChannel,
+            label,
+            summary: status === 'completed' ? `${ label } finished` : `${ label } is ${ status }`,
+            detail: text,
+            status: status === 'completed' ? 'done' : 'failed',
+            jobId: activityJobId,
+            taskIndex: index,
+            conversationId: threadId,
+          });
+        }
+        return result;
       } catch (err) {
+        const output = `Error: ${ (err as Error).message }`;
+        const stopped = jobAbortSignal?.aborted === true;
+        if (activityJobId) {
+          await updateJobTask(activityJobId, index, { status: stopped ? 'stopped' : 'error', threadId, finishedAt: Date.now() });
+          await emitSubAgentExchange(parentChannel, parentThreadId, {
+            direction: 'from_agent',
+            agentId: selector || parentChannel,
+            label,
+            summary: stopped ? `${ label } was stopped` : `${ label } failed`,
+            detail: output,
+            status: stopped ? 'stopped' : 'failed',
+            jobId: activityJobId,
+            taskIndex: index,
+            conversationId: threadId,
+          });
+        }
         return {
           label,
           status:   'error',
-          output:   `Error: ${ (err as Error).message }`,
+          output,
           threadId,
         };
       } finally {
@@ -275,7 +331,7 @@ export class SpawnAgentWorker extends BaseTool {
 
     // ── Async mode: fire and forget ─────────────────────────────
     if (async_) {
-      const job = ownershipJob ?? await createJob(tasks.length, parentChannel, parentThreadId);
+      const job = ownershipJob ?? await createJob(jobTasks, parentChannel, parentThreadId);
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
       jobAbortSignal = getJobAbortSignal(job.jobId);
@@ -331,31 +387,30 @@ export class SpawnAgentWorker extends BaseTool {
     }
 
     // ── Sync mode: block until complete ─────────────────────────
+    // Sync launches need a durable job too: otherwise the rail and exchange
+    // components would only exist for fire-and-forget work.
+    const syncJob = ownershipJob ?? await createJob(jobTasks, parentChannel, parentThreadId);
     let stopDeadRunWatch: (() => void) | undefined;
-    if (ownershipJob) {
-      const jobId = ownershipJob.jobId;
-      jobAbortSignal = getJobAbortSignal(jobId);
-      activityJobId = jobId;
-      // Stopping a dead job hands its tasks back even if the hung call never returns.
-      stopDeadRunWatch = watchForDeadRun(jobId, (reason) => {
-        if (abortJob(jobId) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } dead run: ${ reason }; job stopped`);
-      });
-    }
+    const jobId = syncJob.jobId;
+    jobAbortSignal = getJobAbortSignal(jobId);
+    activityJobId = jobId;
+    // Stopping a dead job hands its tasks back even if the hung call never returns.
+    stopDeadRunWatch = watchForDeadRun(jobId, (reason) => {
+      if (abortJob(jobId) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } dead run: ${ reason }; job stopped`);
+    });
     let results: AgentJobResult[];
     try {
       results = await executeAll();
     } catch (err) {
-      if (ownershipJob) failJob(ownershipJob.jobId, (err as Error).message);
+      failJob(syncJob.jobId, (err as Error).message);
       throw err;
     } finally {
       stopDeadRunWatch?.();
     }
-    if (ownershipJob) {
-      // The caller is reading the results right here; only the ownership
-      // record needs settling, not a background wake.
-      await completeJob(ownershipJob.jobId, results);
-      await markCompletionDelivered(ownershipJob.jobId);
-    }
+    // The caller is reading the results right here; only the durable display /
+    // ownership record needs settling, not a background wake.
+    await completeJob(syncJob.jobId, results);
+    await markCompletionDelivered(syncJob.jobId);
 
     const allSuccess = results.every(r => r.status === 'completed');
 

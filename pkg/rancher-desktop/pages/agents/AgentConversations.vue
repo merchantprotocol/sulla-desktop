@@ -15,7 +15,7 @@
         class="conv-back"
         @click="$emit('close')"
       >
-        ← All agents
+        {{ conversationId ? '← Close' : '← All agents' }}
       </button>
       <div class="min-w-0">
         <p class="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
@@ -29,7 +29,7 @@
 
     <div class="flex flex-1 min-h-0">
       <!-- Conversation list -->
-      <aside class="conv-list flex-shrink-0 overflow-auto">
+      <aside v-if="!conversationId" class="conv-list flex-shrink-0 overflow-auto">
         <p
           v-if="listLoading && !conversations.length"
           class="px-4 py-6 text-xs text-slate-500"
@@ -178,16 +178,17 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue';
 
+import type { AgentConversationDetail, AgentConversationSummary } from '@pkg/main/agentsIpc';
 import { renderMarkdown } from '@pkg/pages/chat/messages/markdown';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-
-import type { AgentConversationDetail, AgentConversationSummary } from '@pkg/main/agentsIpc';
 
 const props = defineProps<{
   channel:   string;
   agentName: string;
   /** Bumped by the parent's poll timer; triggers a refresh. */
   tick:      number;
+  /** Opens a single known conversation without the agent-wide list. */
+  conversationId?: string;
 }>();
 
 defineEmits<{ close: [] }>();
@@ -198,7 +199,7 @@ const CLIP_CHARS = 1200;
 const conversations = ref<AgentConversationSummary[]>([]);
 const hasMore = ref(false);
 const listLoading = ref(false);
-const selectedId = ref<string | null>(null);
+const selectedId = ref<string | null>(props.conversationId ?? null);
 const detail = ref<AgentConversationDetail | null>(null);
 const detailLoading = ref(false);
 const expanded = ref(new Set<number>());
@@ -315,13 +316,25 @@ function formatClock(iso: string): string {
 }
 
 watch(() => props.channel, () => {
+  if (props.conversationId) return;
   conversations.value = [];
   selectedId.value = null;
   detail.value = null;
   refreshList();
 });
 
+watch(() => props.conversationId, (id) => {
+  selectedId.value = id ?? null;
+  detail.value = null;
+  expanded.value = new Set();
+  if (id) loadDetail(); else refreshList();
+});
+
 watch(() => props.tick, async() => {
+  if (props.conversationId) {
+    await loadDetail();
+    return;
+  }
   await refreshList();
   // Re-read the open log only when the index says it moved — many rows stay
   // 'active' long after their agent finished, and logs can be large.
@@ -330,7 +343,7 @@ watch(() => props.tick, async() => {
   if (detail.value && current && current.lastActiveAt !== detail.value.lastActiveAt) loadDetail();
 });
 
-onMounted(refreshList);
+onMounted(() => props.conversationId ? loadDetail() : refreshList());
 </script>
 
 <style scoped>

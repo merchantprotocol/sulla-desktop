@@ -78,6 +78,19 @@ export interface AgentConversationDetail {
   missingLog:   boolean;
 }
 
+export interface ThreadAgentCard {
+  jobId:          string;
+  taskIndex:      number;
+  agentId:        string;
+  label:          string;
+  status:         'running' | 'done' | 'failed' | 'stopped';
+  createdAt:      number;
+  finishedAt:     number | null;
+  conversationId?: string;
+  lastActivity:   string;
+  lastActivityAt: number;
+}
+
 const MAX_CONVERSATION_PAGE = 200;
 
 // First-prompt previews never change once written, and the list is re-read on
@@ -157,6 +170,80 @@ export function initAgentsIpc(): void {
       ...log,
     };
   });
+
+  ipcMain.handle('agents:thread-jobs', async(_event, parentThreadId: string): Promise<ThreadAgentCard[]> => {
+    if (!parentThreadId || typeof parentThreadId !== 'string') return [];
+    return fetchThreadAgentCards(parentThreadId);
+  });
+
+  ipcMain.handle('agents:dismiss-thread-job', async(_event, jobId: string, parentThreadId: string, taskIndex: number): Promise<boolean> => {
+    if (!jobId || !parentThreadId || typeof jobId !== 'string' || typeof parentThreadId !== 'string' || !Number.isInteger(taskIndex)) return false;
+    const { dismissJobTask } = await import('@pkg/agent/tools/agents/jobRegistry');
+    return dismissJobTask(jobId, parentThreadId, taskIndex);
+  });
+}
+
+export async function fetchThreadAgentCards(parentThreadId: string): Promise<ThreadAgentCard[]> {
+  const [{ getJobsForParentThread }, { ConversationHistoryModel }, { resolveSullaLogsDir }, { RunActivity }] = await Promise.all([
+    import('@pkg/agent/tools/agents/jobRegistry'),
+    import('@pkg/agent/database/models/ConversationHistoryModel'),
+    import('@pkg/agent/utils/sullaPaths'),
+    import('@pkg/agent/services/RunActivity'),
+  ]);
+  const jobs = await getJobsForParentThread(parentThreadId);
+  const logsDir = resolveSullaLogsDir();
+  const cards = await Promise.all(jobs.flatMap(job => job.tasks.map(async(task, taskIndex): Promise<ThreadAgentCard | null> => {
+    if (task.dismissed) return null;
+    let lastActivity = task.status === 'queued' ? 'Waiting to start' : 'Starting…';
+    let lastActivityAt = RunActivity.lastActivityAt(job.jobId) ?? task.startedAt ?? job.createdAt;
+
+    if (task.threadId) {
+      const row = await ConversationHistoryModel.getById(task.threadId);
+      if (row) {
+        const log = await readConversationLog(row.log_file, logsDir);
+        const latest = log.entries.at(-1);
+        if (latest) {
+          const text = latest.text.replace(/\s+/g, ' ').trim();
+          lastActivity = latest.kind === 'tool'
+            ? `${ latest.toolName || 'Tool' }: ${ text || 'running' }`
+            : text || lastActivity;
+          const ts = new Date(latest.ts).getTime();
+          if (Number.isFinite(ts)) lastActivityAt = ts;
+        }
+      }
+    }
+
+    const taskStatus = toCardStatus(task.status, job.status);
+    if (taskStatus === 'done' && lastActivity === 'Starting…') lastActivity = 'Finished';
+    if (taskStatus === 'failed' && job.error) lastActivity = job.error;
+
+    return {
+      jobId: job.jobId,
+      taskIndex,
+      agentId: task.agentId,
+      label: task.label,
+      status: taskStatus,
+      createdAt: task.startedAt ?? job.createdAt,
+      finishedAt: task.finishedAt ?? job.finishedAt,
+      conversationId: task.threadId,
+      lastActivity: clipLine(lastActivity),
+      lastActivityAt,
+    };
+  })));
+
+  return cards.filter((card): card is ThreadAgentCard => card !== null)
+    .sort((a, b) => a.createdAt - b.createdAt || a.taskIndex - b.taskIndex);
+}
+
+function clipLine(text: string, max = 180): string {
+  return text.length > max ? `${ text.slice(0, max) }…` : text;
+}
+
+function toCardStatus(taskStatus: string, jobStatus: string): ThreadAgentCard['status'] {
+  if (taskStatus === 'completed') return 'done';
+  if (taskStatus === 'error' || taskStatus === 'blocked' || jobStatus === 'failed') return 'failed';
+  if (taskStatus === 'stopped' || jobStatus === 'stopped') return 'stopped';
+  return 'running';
 }
 
 /** pg returns TIMESTAMPTZ as Date; normalise to an ISO string for IPC. */

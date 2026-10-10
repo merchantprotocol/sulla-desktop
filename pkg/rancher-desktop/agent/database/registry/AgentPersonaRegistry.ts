@@ -10,7 +10,7 @@ export interface ChatMessage {
   threadId?: string;
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
-  kind?:     'text' | 'tool' | 'tool_approval' | 'tool_question' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive';
+  kind?:     'text' | 'tool' | 'tool_approval' | 'tool_question' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'sub_agent_exchange' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive';
   image?: {
     dataUrl:      string;
     alt?:         string;
@@ -57,6 +57,18 @@ export interface ChatMessage {
     latestThinking?: string;
     output?:         string;
     error?:          string;
+  };
+  subAgentExchange?: {
+    direction:       'to_agent' | 'from_agent';
+    agentId:         string;
+    label:           string;
+    summary:         string;
+    detail:          string;
+    status:          'running' | 'done' | 'failed' | 'stopped';
+    jobId?:          string;
+    taskIndex?:      number;
+    conversationId?: string;
+    native?:         boolean;
   };
   /**
    * Proactive card — Sulla reaching out unprompted (workflow finished,

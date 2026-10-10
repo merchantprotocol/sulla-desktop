@@ -19,6 +19,7 @@ export type MessageKind =
   | 'patch'
   | 'channel'       // message from another agent (Heartbeat, Workbench, Mobile)
   | 'subagent'      // sub-agent activity
+  | 'subagent_exchange' // compact parent ↔ sub-agent handoff
   | 'citation'      // grounding sources
   | 'memory'        // memory saved/removed/updated
   | 'proactive'     // Sulla reaching out unprompted
@@ -171,6 +172,20 @@ export interface SubAgentMessage extends MessageBase {
   steps:   readonly { tag: string; text: string }[];
 }
 
+export interface SubAgentExchangeMessage extends MessageBase {
+  kind:            'subagent_exchange';
+  direction:       'to_agent' | 'from_agent';
+  agentId:         string;
+  label:           string;
+  summary:         string;
+  detail:          string;
+  status:          'running' | 'done' | 'failed' | 'stopped';
+  jobId?:          string;
+  taskIndex?:      number;
+  conversationId?: string;
+  native?:         boolean;
+}
+
 // ─── Citations ────────────────────────────────────────────────────
 export interface CitationMessage extends MessageBase {
   kind:    'citation';
@@ -246,6 +261,7 @@ export type Message =
   | PatchMessage
   | ChannelMessage
   | SubAgentMessage
+  | SubAgentExchangeMessage
   | CitationMessage
   | MemoryMessage
   | ProactiveMessage
