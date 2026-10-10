@@ -25,6 +25,15 @@ export class MarketplaceListLocalWorker extends BaseTool {
     let total = 0;
 
     for (const kind of kinds) {
+      if (kind === 'agent') {
+        const { agentDefinitionService } = await import('../../services/AgentDefinitionService');
+        const agents = (await agentDefinitionService.list()).filter(agent => agent.status !== 'archive');
+        total += agents.length;
+        blocks.push(agents.length === 0
+          ? '### agent (0)\n  Database — empty'
+          : `### agent (${ agents.length })\n  Database\n${ agents.map(agent => `  - ${ agent.slug } (${ agent.source_kind })`).join('\n') }`);
+        continue;
+      }
       const layout = KIND_LAYOUTS[kind];
       const root = layout.rootDir();
       const items: { slug: string; manifestExists: boolean }[] = [];

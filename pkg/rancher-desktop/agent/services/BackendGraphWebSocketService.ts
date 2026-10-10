@@ -128,7 +128,7 @@ export class BackendGraphWebSocketService {
     this.registerAgent(MOBILE_RELAY_CHANNEL_ID, 'Sulla (Mobile)', 'Chat routed from paired mobile device').catch(err =>
       console.warn('[BackendGraphWS] Failed to register mobile-relay agent:', err));
 
-    // Subscribe to any custom agent channels from ~/sulla/agents/
+    // Subscribe to every enabled custom-agent channel stored in Postgres.
     this.subscribeToAgentChannels().catch(err =>
       console.warn('[BackendGraphWS] Failed to subscribe to agent channels:', err));
 
@@ -153,22 +153,12 @@ export class BackendGraphWebSocketService {
     this.subscribedChannels.add(channelId);
   }
 
-  /**
-   * Scan ~/sulla/agents/ and subscribe to each agent's channel.
-   */
+  /** Subscribe to every enabled DB-backed agent channel. */
   private async subscribeToAgentChannels(): Promise<void> {
     try {
-      const { resolveAllAgentsDirs } = await import('../utils/sullaPaths');
-      const fs = await import('fs');
-
-      for (const agentsRoot of resolveAllAgentsDirs()) {
-        if (!fs.existsSync(agentsRoot)) continue;
-
-        const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
-        for (const entry of entries) {
-          if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-          this.subscribeToChannel(entry.name);
-        }
+      const { agentDefinitionService } = await import('./AgentDefinitionService');
+      for (const agent of await agentDefinitionService.list()) {
+        if (agent.enabled && agent.status !== 'archive') this.subscribeToChannel(agent.slug);
       }
     } catch (err) {
       console.error('[BackendGraphWS] Error scanning agent channels:', err);
@@ -289,6 +279,18 @@ export class BackendGraphWebSocketService {
       const result = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
       const graph = result.graph;
       state = result.state;
+
+      // Model choices from the chat picker are scoped to this thread state;
+      // they never mutate ModelProviderService or global settings.
+      const providerId = typeof metadata?.providerId === 'string' ? metadata.providerId : '';
+      const modelId = typeof metadata?.modelId === 'string' ? metadata.modelId : '';
+      if (providerId || modelId) {
+        state.metadata.agent = {
+          ...(state.metadata.agent ?? {}),
+          ...(providerId ? { provider: providerId } : {}),
+          ...(modelId ? { model: modelId } : {}),
+        };
+      }
 
       // Notify frontend of the threadId so it can maintain the conversation
       if (isNewThread) {

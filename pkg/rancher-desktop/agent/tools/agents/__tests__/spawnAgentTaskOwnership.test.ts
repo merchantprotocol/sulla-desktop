@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 // Agent path resolution imports Electron; ownership tests exercise the worker in Node.
 jest.unstable_mockModule('../../../utils/sullaPaths', () => ({ findAgentDir: jest.fn() }));
+jest.unstable_mockModule('../../../services/AgentDefinitionService', () => ({
+  agentDefinitionService: { findBySlug: jest.fn(() => Promise.resolve({ slug: 'sulla-desktop' })) },
+}));
 
 jest.unstable_mockModule('../../../services/GraphRegistry', () => ({
   GraphRegistry: { getOrCreateAgentGraph: jest.fn(), delete: jest.fn() },

@@ -16,6 +16,17 @@
 
 import { reactive, ref, computed, type Ref, type ComputedRef } from 'vue';
 
+import { EventBus, type ChatEvent, type Unsubscribe, type VoiceCommand } from './events';
+import { nextRunState, type RunEvent } from './runStateMachine';
+import { popoverClosed, defaultSlashCommands } from '../models/Command';
+import { idle as runIdle, isRunning } from '../models/RunState';
+import { emptyTokenUsage } from '../models/Thread';
+import { voiceIdle } from '../models/VoiceState';
+import {
+  type MessageId, type ArtifactId, type AttachmentId, type QueuedId, type ThreadId,
+  newMessageId, newArtifactId, newThreadId, newQueuedId, newTurnId,
+} from '../types/chat';
+
 import type {
   Artifact, ArtifactKind, WorkflowPayload, HtmlPayload, CodePayload,
   Attachment,
@@ -30,19 +41,7 @@ import type {
   VoiceState,
 } from '../models';
 
-import { idle as runIdle, isRunning }   from '../models/RunState';
-import { popoverClosed, defaultSlashCommands } from '../models/Command';
-import { voiceIdle }                    from '../models/VoiceState';
-import { emptyTokenUsage }               from '../models/Thread';
 import { defaultChatHeartbeatConfig, type ChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
-
-import {
-  type MessageId, type ArtifactId, type AttachmentId, type QueuedId, type ThreadId,
-  newMessageId, newArtifactId, newThreadId, newQueuedId, newTurnId,
-} from '../types/chat';
-
-import { nextRunState, type RunEvent } from './runStateMachine';
-import { EventBus, type ChatEvent, type Unsubscribe, type VoiceCommand } from './events';
 
 // ─── Defaults ─────────────────────────────────────────────────────
 const DEFAULT_MODEL: ModelDescriptor = {
@@ -54,11 +53,11 @@ export interface ChatControllerOptions {
   /** Initial snapshot — if provided, the controller hydrates from it. */
   hydrateFrom?: ThreadState;
   /** Controls how new messages are persisted. Omit to skip persistence. */
-  persister?: ThreadPersister;
+  persister?:   ThreadPersister;
   /** WS channel this thread lives on (e.g. 'sulla-desktop'). */
-  channelId?: string;
+  channelId?:   string;
   /** Per-tab scoping key; used in persister. */
-  tabId?: string;
+  tabId?:       string;
   /**
    * When set, `send()` fully delegates to this handler instead of
    * performing the default optimistic local append + runState transition.
@@ -102,26 +101,26 @@ export interface ThreadPersister {
 // ─── Controller ───────────────────────────────────────────────────
 export class ChatController {
   // ─── Reactive state — THE SINGLE SOURCE OF TRUTH ───────────────
-  readonly thread:          Ref<Thread>;
-  readonly runState:        Ref<RunState>;
-  readonly queue:           Ref<QueuedMessage[]>;
-  readonly staged:          Ref<Attachment[]>;
-  readonly voice:           Ref<VoiceState>;
-  readonly artifacts:       Ref<{ list: Artifact[]; activeId: ArtifactId | null }>;
-  readonly popover:         Ref<PopoverState>;
-  readonly modals:          Ref<ModalState>;
-  readonly sidebar:         Ref<SidebarState>;
-  readonly connection:      Ref<ConnectionState>;
-  readonly model:           Ref<ModelDescriptor>;
-  readonly usage:           Ref<TokenUsage>;
-  readonly heartbeat:       Ref<ChatHeartbeatConfig>;
+  readonly thread:     Ref<Thread>;
+  readonly runState:   Ref<RunState>;
+  readonly queue:      Ref<QueuedMessage[]>;
+  readonly staged:     Ref<Attachment[]>;
+  readonly voice:      Ref<VoiceState>;
+  readonly artifacts:  Ref<{ list: Artifact[]; activeId: ArtifactId | null }>;
+  readonly popover:    Ref<PopoverState>;
+  readonly modals:     Ref<ModalState>;
+  readonly sidebar:    Ref<SidebarState>;
+  readonly connection: Ref<ConnectionState>;
+  readonly model:      Ref<ModelDescriptor>;
+  readonly usage:      Ref<TokenUsage>;
+  readonly heartbeat:  Ref<ChatHeartbeatConfig>;
 
   // Derived views — read-only computed helpers components can consume.
-  readonly messages:          ComputedRef<Message[]>;
-  readonly isRunning:         ComputedRef<boolean>;
-  readonly hasQueue:          ComputedRef<boolean>;
-  readonly activeArtifact:    ComputedRef<Artifact | null>;
-  readonly canSend:           ComputedRef<boolean>;
+  readonly messages:       ComputedRef<Message[]>;
+  readonly isRunning:      ComputedRef<boolean>;
+  readonly hasQueue:       ComputedRef<boolean>;
+  readonly activeArtifact: ComputedRef<Artifact | null>;
+  readonly canSend:        ComputedRef<boolean>;
 
   // Events
   private readonly bus = new EventBus<ChatEvent>();
@@ -130,43 +129,43 @@ export class ChatController {
   private readonly persister?: ThreadPersister;
   private readonly channelId:  string;
   private readonly tabId?:     string;
-  private sendHandler?:     SendHandler;
-  private injectHandler?:   InjectHandler;
-  private stopHandler?:     () => void;
-  private continueHandler?: () => void;
+  private sendHandler?:        SendHandler;
+  private injectHandler?:      InjectHandler;
+  private stopHandler?:        () => void;
+  private continueHandler?:    () => void;
 
   // Internal timers (voice interim, thinking tick, etc.) — kept as refs
   // on the instance so dispose() can clear them.
   private timers = new Set<ReturnType<typeof setInterval>>();
 
   constructor(opts: ChatControllerOptions = {}) {
-    this.persister   = opts.persister;
-    this.channelId   = opts.channelId ?? 'sulla-desktop';
-    this.tabId       = opts.tabId;
+    this.persister = opts.persister;
+    this.channelId = opts.channelId ?? 'sulla-desktop';
+    this.tabId = opts.tabId;
     this.sendHandler = opts.sendHandler;
 
     const initial: ThreadState = opts.hydrateFrom ?? this.fresh();
 
-    this.thread    = ref(initial.thread);
+    this.thread = ref(initial.thread);
     // Never resurrect a non-idle runState from a persisted snapshot (process
     // restart left it stuck on 'thinking' etc.). The backend drives
     // runState live; an idle start is always correct.
-    this.runState  = ref(runIdle());
-    this.queue     = ref([...initial.queue]);
-    this.staged    = ref([...initial.staged]);
-    this.voice     = ref(initial.voice);
+    this.runState = ref(runIdle());
+    this.queue = ref([...initial.queue]);
+    this.staged = ref([...initial.staged]);
+    this.voice = ref(initial.voice);
     this.artifacts = ref({ list: [...initial.artifacts], activeId: initial.activeArtifactId });
-    this.popover   = ref(initial.popover);
-    this.modals    = ref(initial.modals);
-    this.sidebar   = ref(initial.sidebar);
+    this.popover = ref(initial.popover);
+    this.modals = ref(initial.modals);
+    this.sidebar = ref(initial.sidebar);
     this.connection = ref(initial.connection);
-    this.model     = ref(initial.model);
-    this.usage     = ref(emptyTokenUsage());
+    this.model = ref(initial.model);
+    this.usage = ref(emptyTokenUsage());
     this.heartbeat = ref(initial.heartbeat ?? defaultChatHeartbeatConfig());
 
-    this.messages       = computed(() => this.thread.value.messages);
-    this.isRunning      = computed(() => isRunning(this.runState.value));
-    this.hasQueue       = computed(() => this.queue.value.length > 0);
+    this.messages = computed(() => this.thread.value.messages);
+    this.isRunning = computed(() => isRunning(this.runState.value));
+    this.hasQueue = computed(() => this.queue.value.length > 0);
     this.activeArtifact = computed(() => {
       const id = this.artifacts.value.activeId;
       return id ? (this.artifacts.value.list.find(a => a.id === id) ?? null) : null;
@@ -184,15 +183,15 @@ export class ChatController {
    */
   newChat(): void {
     const blank = this.fresh();
-    this.thread.value     = blank.thread;
-    this.runState.value   = blank.runState;
-    this.queue.value      = [];
-    this.staged.value     = [];
-    this.voice.value      = blank.voice;
-    this.artifacts.value  = { list: [], activeId: null };
-    this.popover.value    = blank.popover;
-    this.modals.value     = blank.modals;
-    this.heartbeat.value  = blank.heartbeat ?? defaultChatHeartbeatConfig();
+    this.thread.value = blank.thread;
+    this.runState.value = blank.runState;
+    this.queue.value = [];
+    this.staged.value = [];
+    this.voice.value = blank.voice;
+    this.artifacts.value = { list: [], activeId: null };
+    this.popover.value = blank.popover;
+    this.modals.value = blank.modals;
+    this.heartbeat.value = blank.heartbeat ?? defaultChatHeartbeatConfig();
     this.bus.emit({ kind: 'threadHydrated', threadId: this.thread.value.id });
   }
 
@@ -205,7 +204,7 @@ export class ChatController {
 
   // ─── Send / queue ────────────────────────────────────────────────
   send(text: string, attachments: Attachment[] = [], opts: SendOptions = {}): void {
-    if (isRunning(this.runState.value)) { this.queueMessage(text, attachments, opts); return; }
+    if (isRunning(this.runState.value)) { this.queueMessage(text, attachments, opts); return }
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
 
@@ -215,16 +214,16 @@ export class ChatController {
     if (this.sendHandler) {
       this.staged.value = [];
       this.autoTitleFromFirstUserMessage(trimmed);
-      void this.sendHandler(trimmed || '(attached)', attachments, opts);
+      this.sendHandler(trimmed || '(attached)', attachments, opts);
       return;
     }
 
     const userMsg: UserMessage = {
-      id: newMessageId(),
-      kind: 'user',
-      createdAt: Date.now(),
-      turnId: newTurnId(),
-      text: trimmed,
+      id:          newMessageId(),
+      kind:        'user',
+      createdAt:   Date.now(),
+      turnId:      newTurnId(),
+      text:        trimmed,
       attachments: attachments.map(a => ({ id: a.id, name: a.name, size: a.size, kind: a.kind })),
     };
     this.appendMessage(userMsg);
@@ -254,10 +253,10 @@ export class ChatController {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
     const q: QueuedMessage = {
-      id: newQueuedId(),
-      text: trimmed,
+      id:          newQueuedId(),
+      text:        trimmed,
       attachments: [...attachments],
-      queuedAt: Date.now(),
+      queuedAt:    Date.now(),
       ...(opts.inputSource ? { inputSource: opts.inputSource } : {}),
     };
     this.queue.value = [...this.queue.value, q];
@@ -279,7 +278,7 @@ export class ChatController {
     // send path will just re-queue it cleanly).
     if (this.injectHandler && isRunning(this.runState.value)) {
       this.autoTitleFromFirstUserMessage(q.text);
-      void this.injectHandler(q.text, [...q.attachments]);
+      this.injectHandler(q.text, [...q.attachments]);
       return;
     }
     this.send(q.text, [...q.attachments], { inputSource: q.inputSource });
@@ -316,8 +315,8 @@ export class ChatController {
     // "ask_user_question never showed up" (the card is scrolled off /
     // overwritten by the next turn).
     const hasPendingGate = this.thread.value.messages.some((m) => {
-      if (m.kind === 'tool_question') return (m as ToolQuestionMessage).status === 'pending';
-      if (m.kind === 'tool_approval') return (m as ToolApprovalMessage).decision === 'pending';
+      if (m.kind === 'tool_question') return (m).status === 'pending';
+      if (m.kind === 'tool_approval') return (m).decision === 'pending';
       return false;
     });
     if (hasPendingGate) return;
@@ -340,7 +339,7 @@ export class ChatController {
 
   /** Adapter hook — set after construction so backend stop/continue flow through. */
   setRunHandlers(handlers: { onStop?: () => void; onContinue?: () => void }): void {
-    this.stopHandler     = handlers.onStop;
+    this.stopHandler = handlers.onStop;
     this.continueHandler = handlers.onContinue;
   }
 
@@ -390,7 +389,7 @@ export class ChatController {
 
   editMessage(id: MessageId, text: string): void {
     const msg = this.thread.value.messages.find(m => m.id === id);
-    if (!msg || msg.kind !== 'user') return;
+    if (msg?.kind !== 'user') return;
     this.updateMessage<UserMessage>(id, { text });
     // (Re-running from this point is the caller's responsibility.)
   }
@@ -398,7 +397,7 @@ export class ChatController {
   regenerate(fromId: MessageId): void {
     // Find the last user message at-or-before fromId and re-send from there.
     const msgs = this.thread.value.messages;
-    const idx  = msgs.findIndex(m => m.id === fromId);
+    const idx = msgs.findIndex(m => m.id === fromId);
     if (idx < 0) return;
     let userIdx = idx;
     while (userIdx >= 0 && msgs[userIdx].kind !== 'user') userIdx--;
@@ -406,7 +405,7 @@ export class ChatController {
     const user = msgs[userIdx] as UserMessage;
     this.thread.value = {
       ...this.thread.value,
-      messages: msgs.slice(0, userIdx + 1),
+      messages:  msgs.slice(0, userIdx + 1),
       updatedAt: Date.now(),
     };
     this.transitionRun({ type: 'send', messageId: user.id });
@@ -474,15 +473,17 @@ export class ChatController {
   // ─── Patch actions ──────────────────────────────────────────────
   applyPatch(id: MessageId): void {
     const msg = this.thread.value.messages.find(m => m.id === id);
-    if (!msg || msg.kind !== 'patch') return;
+    if (msg?.kind !== 'patch') return;
     this.updateMessage<PatchMessage>(id, { state: 'applied' });
     this.bus.emit({ kind: 'patchApplied', threadId: this.thread.value.id, messageId: id });
   }
+
   rejectPatch(id: MessageId): void {
     const msg = this.thread.value.messages.find(m => m.id === id);
-    if (!msg || msg.kind !== 'patch') return;
+    if (msg?.kind !== 'patch') return;
     this.updateMessage<PatchMessage>(id, { state: 'rejected' });
   }
+
   /**
    * Ask the main process to revert a post-hoc patch (undo the Edit/Write that
    * produced it) and flip the PatchMessage to 'rejected' on success.
@@ -491,7 +492,7 @@ export class ChatController {
    */
   async revertPatch(id: MessageId, revertMeta: PatchRevertMeta): Promise<void> {
     const msg = this.thread.value.messages.find(m => m.id === id);
-    if (!msg || msg.kind !== 'patch') return;
+    if (msg?.kind !== 'patch') return;
 
     // Dynamic import avoids pulling electron/ipcRenderer into the main
     // controller module — keeps the unit tests (which run without Electron)
@@ -515,13 +516,15 @@ export class ChatController {
   approveTool(id: MessageId, note?: string): void {
     this.resolveToolApproval(id, 'approved', note);
   }
+
   denyTool(id: MessageId, note?: string): void {
     this.resolveToolApproval(id, 'denied', note);
   }
+
   private resolveToolApproval(id: MessageId, decision: 'approved' | 'denied', note?: string): void {
     const msg = this.thread.value.messages.find(m => m.id === id);
-    if (!msg || msg.kind !== 'tool_approval') return;
-    const approvalMsg = msg as ToolApprovalMessage;
+    if (msg?.kind !== 'tool_approval') return;
+    const approvalMsg = msg;
     if (!approvalMsg.approvalId) {
       this.updateMessage<ToolApprovalMessage>(id, { decision });
       this.transitionRun({ type: 'approvalResolved' });
@@ -545,8 +548,8 @@ export class ChatController {
   // approval round-trip; the controller stays transport-free.
   answerQuestion(id: MessageId, answers: ToolQuestionAnswerItem[]): void {
     const msg = this.thread.value.messages.find(m => m.id === id);
-    if (!msg || msg.kind !== 'tool_question') return;
-    const qMsg = msg as ToolQuestionMessage;
+    if (msg?.kind !== 'tool_question') return;
+    const qMsg = msg;
     if (qMsg.status !== 'pending') return;
     if (!qMsg.questionId) {
       this.updateMessage<ToolQuestionMessage>(id, { status: 'answered', answers });
@@ -567,9 +570,11 @@ export class ChatController {
   stageAttachment(a: Attachment): void {
     this.staged.value = [...this.staged.value, a];
   }
+
   unstageAttachment(id: AttachmentId): void {
     this.staged.value = this.staged.value.filter(a => a.id !== id);
   }
+
   clearStagedAttachments(): void {
     this.staged.value = [];
   }
@@ -587,13 +592,15 @@ export class ChatController {
 
   setVoice(v: VoiceState): void {
     this.voice.value = v;
-    if (v.phase === 'recording')   this.bus.emit({ kind: 'voiceStarted', threadId: this.thread.value.id });
-    if (v.phase === 'playing')     this.bus.emit({ kind: 'ttsStarted', threadId: this.thread.value.id, messageId: v.refId });
+    if (v.phase === 'recording') this.bus.emit({ kind: 'voiceStarted', threadId: this.thread.value.id });
+    if (v.phase === 'playing') this.bus.emit({ kind: 'ttsStarted', threadId: this.thread.value.id, messageId: v.refId });
   }
-  stopVoice(commit: boolean = true): void {
+
+  stopVoice(commit = true): void {
     this.voice.value = voiceIdle();
     this.bus.emit({ kind: 'voiceStopped', threadId: this.thread.value.id, committed: commit });
   }
+
   stopTTS(messageId?: MessageId): void {
     const v = this.voice.value;
     if (v.phase === 'playing') {
@@ -628,10 +635,12 @@ export class ChatController {
     this.bus.emit({ kind: 'artifactOpened', threadId: this.thread.value.id, artifactId: artifact.id });
     return artifact.id;
   }
+
   switchArtifact(id: ArtifactId): void {
     if (!this.artifacts.value.list.some(a => a.id === id)) return;
     this.artifacts.value = { ...this.artifacts.value, activeId: id };
   }
+
   closeArtifact(id: ArtifactId): void {
     const list = this.artifacts.value.list.filter(a => a.id !== id);
     const activeId = this.artifacts.value.activeId === id
@@ -640,6 +649,7 @@ export class ChatController {
     this.artifacts.value = { list, activeId };
     this.bus.emit({ kind: 'artifactClosed', threadId: this.thread.value.id, artifactId: id });
   }
+
   updateArtifact(id: ArtifactId, patch: Partial<Artifact>): void {
     const list = this.artifacts.value.list.map(a =>
       a.id === id ? { ...a, ...patch, updatedAt: Date.now() } : a,
@@ -651,12 +661,15 @@ export class ChatController {
   openModal(which: ModalState['which']): void {
     this.modals.value = { which };
   }
+
   closeModal(): void {
     this.modals.value = { which: null };
   }
+
   toggleHistory(): void {
     this.sidebar.value = { ...this.sidebar.value, historyOpen: !this.sidebar.value.historyOpen };
   }
+
   toggleFileTree(): void {
     this.sidebar.value = { ...this.sidebar.value, fileTreeOpen: !this.sidebar.value.fileTreeOpen };
   }
@@ -665,6 +678,12 @@ export class ChatController {
   switchModel(model: ModelDescriptor): void {
     this.model.value = model;
     this.bus.emit({ kind: 'modelSwitched', threadId: this.thread.value.id, modelId: model.id });
+  }
+
+  selectForChat(model: ModelDescriptor, providerId: string | null, agentId: string | null = null): void {
+    this.thread.value = { ...this.thread.value, providerId, agentId, updatedAt: Date.now() };
+    this.switchModel(model);
+    this.persist();
   }
 
   // ─── Title ──────────────────────────────────────────────────────
@@ -678,12 +697,14 @@ export class ChatController {
   showPopover(mode: 'slash' | 'mention', query: string, items: readonly (SlashCommand | MentionTarget)[]): void {
     this.popover.value = { open: true, mode, items, selected: 0, query };
   }
+
   movePopoverSelection(delta: 1 | -1): void {
     const p = this.popover.value;
     if (!p.open) return;
     const next = Math.max(0, Math.min(p.items.length - 1, p.selected + delta));
     this.popover.value = { ...p, selected: next };
   }
+
   hidePopover(): void {
     this.popover.value = popoverClosed();
   }
@@ -703,7 +724,7 @@ export class ChatController {
   // ─── Run-state transitions (the ONLY way runState changes) ──────
   transitionRun(ev: RunEvent): void {
     const from = this.runState.value;
-    const to   = nextRunState(from, ev);
+    const to = nextRunState(from, ev);
     if (to === from) return;
     this.runState.value = to;
     this.bus.emit({ kind: 'runStateChanged', threadId: this.thread.value.id, from, to });
@@ -758,8 +779,7 @@ export class ChatController {
   // ─── Helpers ────────────────────────────────────────────────────
   private persist(): void {
     if (!this.persister) return;
-    try { this.persister.save(this.serialize()); }
-    catch (e) { console.error('[ChatController] persist failed:', e); }
+    try { this.persister.save(this.serialize()) } catch (e) { console.error('[ChatController] persist failed:', e) }
   }
 
   private autoTitleFromFirstUserMessage(text: string): void {
@@ -782,26 +802,26 @@ export class ChatController {
     };
     return {
       thread,
-      runState: runIdle(),
-      queue: [],
-      staged: [],
-      voice: voiceIdle(),
-      artifacts: [],
+      runState:         runIdle(),
+      queue:            [],
+      staged:           [],
+      voice:            voiceIdle(),
+      artifacts:        [],
       activeArtifactId: null,
-      popover: popoverClosed(),
-      modals: { which: null },
-      sidebar: { historyOpen: false, fileTreeOpen: false },
-      connection: 'online',
-      model: DEFAULT_MODEL,
-      heartbeat: defaultChatHeartbeatConfig(),
+      popover:          popoverClosed(),
+      modals:           { which: null },
+      sidebar:          { historyOpen: false, fileTreeOpen: false },
+      connection:       'online',
+      model:            DEFAULT_MODEL,
+      heartbeat:        defaultChatHeartbeatConfig(),
     };
   }
 }
 
 function defaultArtifactName(kind: ArtifactKind): string {
   switch (kind) {
-    case 'workflow': return 'Workflow';
-    case 'html':     return 'HTML Artifact';
-    case 'code':     return 'Code';
+  case 'workflow': return 'Workflow';
+  case 'html': return 'HTML Artifact';
+  case 'code': return 'Code';
   }
 }

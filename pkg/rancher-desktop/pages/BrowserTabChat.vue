@@ -511,6 +511,7 @@ const modelName = ref('');
 const modelMode = ref<'local' | 'remote'>('remote');
 const systemReady = ref(true);
 const isRunning = computed<boolean>(() => true);
+const chatSelection = ref<Record<string, string>>({});
 
 const modelSelector = new AgentModelSelectorController({
   systemReady,
@@ -518,6 +519,9 @@ const modelSelector = new AgentModelSelectorController({
   modelName,
   modelMode,
   isRunning,
+  onSelectForChat: ({ providerId, modelId, agentId }) => {
+    chatSelection.value = { providerId, modelId, ...(agentId ? { agentId } : {}) };
+  },
 });
 
 // Onboarding card visibility — each card hides once its identity file exists
@@ -598,7 +602,7 @@ const send = (metadata?: Record<string, unknown>) => {
     showGoalsOnboarding.value = false;
     showBusinessOnboarding.value = false;
   }
-  chatController.send(metadata);
+  chatController.send({ ...chatSelection.value, ...metadata });
 };
 
 const sendWithAttachments = () => {
@@ -613,7 +617,7 @@ const sendWithAttachments = () => {
     showBusinessOnboarding.value = false;
   }
   const attachments = composerRef.value?.consumeAttachments?.() || [];
-  chatController.send(undefined, attachments.length > 0 ? attachments : undefined);
+  chatController.send(chatSelection.value, attachments.length > 0 ? attachments : undefined);
 };
 const stop = () => {
   console.log(`[BrowserTabChat:stop] clicked — graphRunning=${ graphRunning.value }, ttsPlaying=${ isTTSPlaying.value }, recording=${ isRecording.value }`);

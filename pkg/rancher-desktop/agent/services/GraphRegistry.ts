@@ -1,6 +1,3 @@
-import * as fs from 'fs';
-import * as path from 'path';
-
 import {
   knowledgeAssociationRoleForAgentId,
   knowledgeAssociationToolsFor,
@@ -18,8 +15,8 @@ import { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
 import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
 import { REFLEX_TRAINER_PROMPT, REFLEX_TRAINER_TOOLS } from '../reflex/reflexTrainerPolicy';
 import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
-import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
+import { agentDefinitionService } from './AgentDefinitionService';
 
 export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
 export { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
@@ -1098,13 +1095,30 @@ export const GraphRegistry = {
     state: AgentGraphState;
   }> {
     if (registry.has(threadId)) {
-      console.log(`[GraphRegistry] getOrCreate() — cache HIT for threadId="${ threadId }"`);
-      return Promise.resolve(registry.get(threadId)!);
+      const cached = registry.get(threadId)!;
+      if (String((cached.state.metadata as any).agentId || cached.state.metadata.wsChannel) === wsChannel) {
+        console.log(`[GraphRegistry] getOrCreate() — cache HIT for threadId="${ threadId }"`);
+        return Promise.resolve(cached as { graph: Graph<AgentGraphState>; state: AgentGraphState });
+      }
+      console.log(`[GraphRegistry] getOrCreate() — agent changed for threadId="${ threadId }"; rebuilding prompt state`);
+      const graph = createAgentGraph();
+      const state = await buildAgentState(wsChannel, threadId, options);
+      state.messages = [...cached.state.messages] as any;
+      registry.set(threadId, { graph, state });
+      return { graph, state };
     }
 
     // Try to restore from ThreadStateStore (Redis / in-memory fallback)
     const saved = await loadThreadState(threadId);
     if (saved) {
+      const savedAgentId = String((saved.metadata as any).agentId || saved.metadata.wsChannel);
+      if (savedAgentId !== wsChannel) {
+        const graph = createAgentGraph();
+        const state = await buildAgentState(wsChannel, threadId, options);
+        state.messages = [...saved.messages] as any;
+        registry.set(threadId, { graph, state });
+        return { graph, state };
+      }
       console.log(`[GraphRegistry] getOrCreate() — restored from ThreadStateStore for threadId="${ threadId }", messages=${ saved.messages.length }`);
       const graph = createAgentGraph();
       // Ensure wsChannel is current (may have changed)
@@ -1596,24 +1610,13 @@ export async function getDefaultAgentId(): Promise<string> {
     return id;
   }
 
-  // If no setting yet, check if chat-controller exists
-  if (findAgentDir(DEFAULT_AGENT_FALLBACK)) {
-    console.log(`[GraphRegistry] getDefaultAgentId() — no setting, using fallback dir: "${ DEFAULT_AGENT_FALLBACK }"`);
+  if (await agentDefinitionService.findBySlug(DEFAULT_AGENT_FALLBACK)) {
+    console.log(`[GraphRegistry] getDefaultAgentId() — no setting, using DB fallback: "${ DEFAULT_AGENT_FALLBACK }"`);
     return DEFAULT_AGENT_FALLBACK;
   }
 
-  // Last resort: pick the first agent directory that exists
-  for (const agentsRoot of resolveAllAgentsDirs()) {
-    console.log(`[GraphRegistry] getDefaultAgentId() — scanning agents root: "${ agentsRoot }"`);
-    if (fs.existsSync(agentsRoot)) {
-      const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
-      const firstAgent = entries.find(e => e.isDirectory());
-      if (firstAgent) {
-        console.log(`[GraphRegistry] getDefaultAgentId() — picked first agent dir: "${ firstAgent.name }"`);
-        return firstAgent.name;
-      }
-    }
-  }
+  const firstAgent = (await agentDefinitionService.list()).find(agent => agent.enabled && agent.status !== 'archive');
+  if (firstAgent) return firstAgent.slug;
 
   console.log(`[GraphRegistry] getDefaultAgentId() — no agents found, hard fallback: "${ DEFAULT_AGENT_FALLBACK }"`);
   return DEFAULT_AGENT_FALLBACK;
@@ -1829,11 +1832,7 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
   return state;
 }
 
-/**
- * Load agent configuration from ~/sulla/agents/{agentId}/
- * Reads config.yaml for config and compiles all .md files into a single prompt.
- * Returns undefined if agent directory doesn't exist.
- */
+/** Load a runnable agent exclusively from its canonical DB definition. */
 async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metadata']['agent']> {
   console.log(`[GraphRegistry] loadAgentConfig() — agentId="${ agentId }"`);
   if (!agentId) {
@@ -1848,52 +1847,28 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
     return undefined;
   }
 
-  const agentDir = findAgentDir(agentId);
-  if (!agentDir) {
-    console.log(`[GraphRegistry] loadAgentConfig() — agent dir not found for: ${ agentId }`);
-    return undefined;
-  }
-
-  const yamlPath = path.join(agentDir, 'config.yaml');
-  if (!fs.existsSync(yamlPath)) {
-    console.log(`[GraphRegistry] loadAgentConfig() — config.yaml not found: ${ yamlPath }`);
-    return undefined;
-  }
-  console.log(`[GraphRegistry] loadAgentConfig() — found agent at ${ agentDir }`);
-
   try {
-    const yaml = await import('yaml');
-    const parsed = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
-
-    // Compile all .md files into a single prompt (no variable substitution)
-    const entries = fs.readdirSync(agentDir, { withFileTypes: true });
-    const mdFiles = entries
-      .filter(e => e.isFile() && e.name.endsWith('.md') && e.name !== 'environment.md')
-      .sort((a, b) => {
-        // soul.md first, then alphabetical
-        const order = (name: string) => name === 'soul.md' ? 0 : 1;
-        return order(a.name) - order(b.name) || a.name.localeCompare(b.name);
-      });
-
-    const sections: string[] = [];
-    for (const file of mdFiles) {
-      const content = fs.readFileSync(path.join(agentDir, file.name), 'utf-8').trim();
-      if (content) {
-        sections.push(content);
-      }
-    }
+    const definition = await agentDefinitionService.findBySlug(agentId);
+    if (!definition || !definition.enabled || definition.status === 'archive') return undefined;
+    const parsed = definition.config;
+    const sections = Object.entries(definition.prompt_files)
+      .filter(([name, content]) => name.endsWith('.md') && name !== 'environment.md' && String(content).trim())
+      .sort(([a], [b]) => (a === 'soul.md' ? -1 : b === 'soul.md' ? 1 : a.localeCompare(b)))
+      .map(([, content]) => String(content).trim());
+    if (!sections.length && definition.prompt_content) sections.push(definition.prompt_content);
 
     return {
-      name:         parsed.name || agentId,
-      description:  parsed.description || '',
+      ...parsed,
+      name:         definition.name || agentId,
+      description:  definition.description || '',
       type:         parsed.type || 'worker',
-      skills:       parsed.skills || [],
-      tools:        parsed.tools || [],
+      skills:       definition.skill_refs,
+      tools:        definition.allowed_tools,
       integrations: parsed.integrations || [],
       prompt:       sections.length > 0 ? sections.join('\n\n') : undefined,
       excludeSoul:  parsed.excludeSoul === true,
-      model:        typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model.trim() : undefined,
-      provider:     typeof parsed.provider === 'string' && parsed.provider.trim() ? parsed.provider.trim() : undefined,
+      model:        definition.model || undefined,
+      provider:     definition.provider || undefined,
     };
   } catch (err) {
     console.error(`[GraphRegistry] Failed to load agent config for ${ agentId }:`, err);

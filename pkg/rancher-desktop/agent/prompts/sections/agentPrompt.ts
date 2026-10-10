@@ -1,18 +1,16 @@
 /**
- * Agent Prompt Section — Agent-specific .md files from config directory.
+ * Agent Prompt Section — Agent-specific prompt content from Postgres.
  * Priority: 90
  * Modes: full, minimal
  *
- * Loads non-section-override .md files from ~/sulla/agents/{agentId}/
- * and injects them as a single section. Files matching registered section
- * IDs are handled as overrides by the builder, not here.
+ * Injects the generic prompt content persisted with an agent definition.
+ * Registered section IDs remain separate builder overrides.
  */
 import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 
 export function buildAgentPromptSection(ctx: PromptBuildContext): PromptSection | null {
-  // The agent prompt content is loaded by loadAgentPromptFiles() and split
-  // into section overrides vs generic prompt content. The generic prompt
-  // content (non-override files) is passed via agentConfig.prompt.
+  // The database loader splits registered section overrides from generic
+  // prompt content and passes the latter via agentConfig.prompt.
   const agentPrompt = ctx.agentConfig?.prompt;
   if (!agentPrompt?.trim()) return null;
 

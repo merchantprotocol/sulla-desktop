@@ -61,6 +61,82 @@
         class="flex-1 overflow-auto"
       >
         <div class="mx-auto max-w-6xl px-4 py-6 space-y-8">
+          <section>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="section-label !mb-0">
+                Custom agents <span class="section-count">{{ definitions.length }}</span>
+              </h3>
+              <div class="flex gap-2">
+                <input
+                  ref="manifestInput"
+                  class="hidden"
+                  type="file"
+                  accept="application/json,.json"
+                  @change="importManifest"
+                >
+                <button
+                  class="agent-link"
+                  type="button"
+                  @click="manifestInput?.click()"
+                >
+                  Import manifest
+                </button>
+                <button
+                  class="agent-action"
+                  type="button"
+                  @click="openCreate"
+                >
+                  New agent
+                </button>
+              </div>
+            </div>
+            <div class="agents-card rounded-lg overflow-hidden">
+              <div
+                v-if="!definitions.length"
+                class="px-4 py-5 text-slate-500"
+              >
+                No custom agents yet.
+              </div>
+              <div
+                v-for="agent in definitions"
+                :key="agent.id"
+                class="agents-row flex items-center gap-4 px-4 py-3 border-b border-slate-200/10"
+              >
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm text-slate-800 dark:text-slate-200 truncate">
+                    {{ agent.name }}
+                  </p>
+                  <p class="text-xs text-slate-500 truncate">
+                    {{ agent.description || 'No description' }}
+                  </p>
+                </div>
+                <span class="text-xs font-mono text-slate-500">{{ agent.model || 'default model' }}</span>
+                <span class="badge">{{ agent.sourceKind === 'marketplace' ? `Marketplace ${agent.marketplaceVersion || ''}` : 'Local' }}</span>
+                <button
+                  class="agent-link"
+                  type="button"
+                  @click="exportManifest(agent)"
+                >
+                  Export
+                </button>
+                <button
+                  class="agent-link"
+                  type="button"
+                  @click="openEdit(agent)"
+                >
+                  Edit
+                </button>
+                <button
+                  class="agent-link text-red-400"
+                  type="button"
+                  @click="removeDefinition(agent)"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </section>
+
           <!-- Loading state -->
           <div
             v-if="loading"
@@ -122,7 +198,7 @@
                   class="agents-row group flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer"
                   role="button"
                   tabindex="0"
-                  :title="`View ${ agent.name } conversations`"
+                  :title="`View ${agent.name} conversations`"
                   @click="openAgent(agent)"
                   @keydown.enter="openAgent(agent)"
                 >
@@ -141,7 +217,9 @@
                     </p>
                     <p class="text-xs text-slate-500 dark:text-slate-500 truncate mt-0.5">
                       <span class="font-mono">{{ agent.channel }}</span>
-                      <template v-if="agent.statusNote"> · {{ agent.statusNote }}</template>
+                      <template v-if="agent.statusNote">
+                        · {{ agent.statusNote }}
+                      </template>
                     </p>
                   </div>
                   <span class="flex-shrink-0 text-xs text-slate-500 dark:text-slate-600 text-right">
@@ -172,7 +250,7 @@
               >
                 <div
                   v-for="routine in data.routines"
-                  :key="`${ routine.workflowId }:${ routine.nodeId }`"
+                  :key="`${routine.workflowId}:${routine.nodeId}`"
                   class="agents-row flex items-center gap-3 px-4 py-3 rounded-lg"
                 >
                   <span class="flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full bg-purple-400" />
@@ -223,7 +301,9 @@
                     </p>
                     <p class="text-xs text-slate-500 dark:text-slate-500 truncate mt-0.5">
                       {{ job.status }} · {{ job.taskCount }} task{{ job.taskCount === 1 ? '' : 's' }}
-                      <template v-if="job.error"> · <span class="text-red-500 dark:text-red-400">{{ job.error }}</span></template>
+                      <template v-if="job.error">
+                        · <span class="text-red-500 dark:text-red-400">{{ job.error }}</span>
+                      </template>
                     </p>
                   </div>
                   <span class="flex-shrink-0 text-xs text-slate-500 dark:text-slate-600">
@@ -242,6 +322,64 @@
         </div>
       </div>
     </div>
+
+    <div
+      v-if="editing"
+      class="agent-modal-backdrop"
+      @click.self="editing = null"
+    >
+      <form
+        class="agent-modal"
+        @submit.prevent="saveDefinition"
+      >
+        <h2 class="text-xl text-slate-100">
+          {{ editing.id ? 'Edit agent' : 'Create agent' }}
+        </h2>
+        <label>Name<input
+          v-model="editing.name"
+          required
+        ></label>
+        <label v-if="!editing.id">Slug<input
+          v-model="editing.slug"
+          required
+          pattern="[a-z0-9][a-z0-9-]*"
+        ></label>
+        <label>Description<input v-model="editing.description"></label>
+        <label>Model
+          <select
+            v-model="editing.modelKey"
+            required
+          >
+            <option
+              v-for="model in availableModels"
+              :key="`${model.providerId}:${model.modelId}`"
+              :value="`${model.providerId}:${model.modelId}`"
+            >{{ model.providerName }} · {{ model.label }}</option>
+          </select>
+        </label>
+        <label>Prompt<textarea
+          v-model="editing.prompt"
+          required
+          rows="12"
+        /></label>
+        <div class="flex justify-end gap-2">
+          <button
+            class="agent-link"
+            type="button"
+            @click="editing = null"
+          >
+            Cancel
+          </button>
+          <button
+            class="agent-action"
+            type="submit"
+            :disabled="saving"
+          >
+            {{ saving ? 'Saving…' : 'Save' }}
+          </button>
+        </div>
+      </form>
+    </div>
   </div>
 </template>
 
@@ -249,10 +387,9 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 
 import { useTheme } from '@pkg/composables/useTheme';
+import type { AgentDefinitionResponse, AgentsListResponse } from '@pkg/main/agentsIpc';
 import AgentConversations from '@pkg/pages/agents/AgentConversations.vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-
-import type { AgentsListResponse } from '@pkg/main/agentsIpc';
 
 const POLL_MS = 3_000;
 
@@ -263,6 +400,11 @@ const polling = ref(true);
 const data = ref<AgentsListResponse>({
   agents: [], heartbeat: null, jobs: [], routines: [],
 });
+const definitions = ref<AgentDefinitionResponse[]>([]);
+const availableModels = ref<{ providerId: string; providerName: string; modelId: string; label: string }[]>([]);
+const saving = ref(false);
+const manifestInput = ref<HTMLInputElement | null>(null);
+const editing = ref<null | { id?: string; slug: string; name: string; description: string; modelKey: string; prompt: string }>(null);
 
 const selectedAgent = ref<{ channel: string; name: string } | null>(null);
 // Bumped every poll so the open conversation view refreshes on the same beat.
@@ -289,6 +431,79 @@ async function loadAgents() {
   } finally {
     loading.value = false;
   }
+}
+
+async function loadDefinitions() {
+  definitions.value = await ipcRenderer.invoke('agent-definitions:list');
+}
+
+async function loadModels() {
+  const providers = await ipcRenderer.invoke('model-provider:get-providers');
+  const groups = await Promise.all(providers.filter(p => p.connected !== false).map(async provider => ({
+    provider,
+    models: await ipcRenderer.invoke('model-provider:get-models', provider.id),
+  })));
+  availableModels.value = groups.flatMap(({ provider, models }) => models.map(model => ({
+    providerId: provider.id, providerName: provider.name, modelId: model.id, label: model.name,
+  })));
+}
+
+function openCreate() {
+  const first = availableModels.value[0];
+  editing.value = { slug: '', name: '', description: '', modelKey: first ? `${ first.providerId }:${ first.modelId }` : '', prompt: '' };
+}
+
+function openEdit(agent: AgentDefinitionResponse) {
+  editing.value = {
+    id:          agent.id,
+    slug:        agent.slug,
+    name:        agent.name,
+    description: agent.description,
+    modelKey:    agent.provider && agent.model ? `${ agent.provider }:${ agent.model }` : '',
+    prompt:      agent.prompt,
+  };
+}
+
+async function saveDefinition() {
+  if (!editing.value) return;
+  saving.value = true;
+  try {
+    const split = editing.value.modelKey.indexOf(':');
+    const provider = split >= 0 ? editing.value.modelKey.slice(0, split) : '';
+    const model = split >= 0 ? editing.value.modelKey.slice(split + 1) : editing.value.modelKey;
+    const payload = { name: editing.value.name, description: editing.value.description, provider, model, prompt: editing.value.prompt };
+    if (editing.value.id) await ipcRenderer.invoke('agent-definitions:update', editing.value.id, payload);
+    else await ipcRenderer.invoke('agent-definitions:create', { ...payload, slug: editing.value.slug });
+    editing.value = null;
+    await loadDefinitions();
+  } finally { saving.value = false }
+}
+
+async function removeDefinition(agent: AgentDefinitionResponse) {
+  if (!window.confirm(`Delete ${ agent.name }? Existing filesystem files, if any, will be left untouched.`)) return;
+  await ipcRenderer.invoke('agent-definitions:delete', agent.id);
+  await loadDefinitions();
+}
+
+async function exportManifest(agent: AgentDefinitionResponse) {
+  const manifest = await ipcRenderer.invoke('agent-definitions:export', agent.slug);
+  const blob = new Blob([`${ JSON.stringify(manifest, null, 2) }\n`], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${ agent.slug }.agent.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importManifest(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  const manifest = JSON.parse(await file.text());
+  await ipcRenderer.invoke('agent-definitions:import', manifest);
+  await loadDefinitions();
 }
 
 // ── Formatting helpers ──
@@ -358,6 +573,7 @@ const heartbeatDot = computed(() => {
 
 onMounted(() => {
   loadAgents();
+  Promise.all([loadDefinitions(), loadModels()]).catch(error => console.warn('[Agents] Failed to load definitions or models:', error));
   pollTimer = setInterval(loadAgents, POLL_MS);
 });
 
@@ -427,6 +643,14 @@ onUnmounted(() => {
 .agents-page.dark .agents-row:hover {
   background: rgba(255, 255, 255, 0.03);
 }
+
+.agent-action, .agent-link { border-radius: .5rem; padding: .45rem .75rem; font-size: .75rem; }
+.agent-action { background: var(--accent, #5096b3); color: white; }
+.agent-link { color: var(--text-link, #5096b3); }
+.agent-modal-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0,0,0,.68); }
+.agent-modal { width: min(680px, calc(100vw - 2rem)); display: grid; gap: 1rem; padding: 1.5rem; border: 1px solid var(--border-default); border-radius: .75rem; background: var(--bg-surface); }
+.agent-modal label { display: grid; gap: .4rem; color: var(--text-muted); font-size: .75rem; }
+.agent-modal input, .agent-modal select, .agent-modal textarea { width: 100%; border: 1px solid var(--border-default); border-radius: .5rem; padding: .65rem; background: var(--bg-page); color: var(--text-primary); }
 
 .badge {
   display: inline-block;
