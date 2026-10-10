@@ -33,30 +33,44 @@
         name="tab-anim"
         class="tab-scroll-container"
         @wheel.prevent="onTabWheel"
+        @after-enter="updateActiveIndicator"
+        @after-leave="updateActiveIndicator"
       >
+        <span
+          key="active-tab-indicator"
+          class="tab-active-indicator"
+          :style="activeIndicatorStyle"
+          aria-hidden="true"
+        />
         <router-link
           v-for="(tab, index) in orderedTabs"
           :key="tab.id"
           :to="tab.route"
           draggable="false"
           class="tab-item text-sm md:text-base"
+          :data-active="tab.isActive ? 'true' : undefined"
           :class="[
-            tab.mode ? `tab-mode-${ tab.mode }` : '',
+            tab.mode ? `tab-mode-${tab.mode}` : '',
             {
               'tab-native': tab.native,
               'tab-active': tab.isActive && !tab.native,
               'tab-active-native': tab.isActive && tab.native,
               'tab-inactive': !tab.isActive,
+              'tab-pinned': tab.pinned,
+              'tab-pinned-boundary': !tab.pinned && index === pinnedTabCount && pinnedTabCount > 0,
+              'tab-working': tab.working,
               'tab-pointer-dragging': dragState !== null && dragState.originIndex === index,
               'tab-preview': tab.preview,
             },
           ]"
+          :title="tab.preview ? `${tab.label} — preview (double-click to keep open)` : undefined"
           @pointerdown="onPointerDown($event, index)"
           @dragstart.prevent
-          :title="tab.preview ? `${ tab.label } — preview (double-click to keep open)` : undefined"
           @dblclick="tab.browserId && promoteTab(tab.browserId)"
           @auxclick.prevent="onAuxClick($event, tab)"
           @contextmenu.prevent="onTabContextMenu($event, tab, index)"
+          @mouseenter="queueTabPeek($event, tab)"
+          @mouseleave="hideTabPeek"
         >
           <span class="tab-accent-bar" />
           <span class="tab-icon">
@@ -100,6 +114,11 @@
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
           </button>
+          <span
+            v-if="tab.working"
+            class="tab-working-streak"
+            aria-hidden="true"
+          />
         </router-link>
       </TransitionGroup>
       <button
@@ -137,6 +156,20 @@
           <path d="M12 5v14M5 12h14" />
         </svg>
       </button>
+      <div
+        v-if="tabPeek"
+        class="tab-peek"
+        :class="{ 'tab-tooltip': tabPeek.pinned }"
+        :style="{ left: `${tabPeek.left}px` }"
+      >
+        <template v-if="tabPeek.pinned">
+          {{ tabPeek.title }} · pinned
+        </template>
+        <template v-else>
+          <span class="tab-peek-title">{{ tabPeek.title }}</span>
+          <span class="tab-peek-status">{{ tabPeek.status }}</span>
+        </template>
+      </div>
     </div>
     <div class="relative flex shrink-0 justify-end items-center gap-4 pb-2">
       <div
@@ -376,6 +409,14 @@
 
 <script lang="ts">
 import { ref, computed, nextTick, onActivated, onMounted, onUnmounted, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+
+import { isTabCloseable, measureActiveTabIndicator } from './tabStrip';
+
+import { getExtensionService } from '@pkg/agent';
+import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
+import { orderPinnedFirst, useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 // Every page and every browser tab mounts its own AgentHeader, so there is one
 // tab strip per page. They share a single scroll offset so switching tabs
@@ -384,13 +425,6 @@ let sharedTabScrollLeft = 0;
 </script>
 
 <script setup lang="ts">
-import { useRoute, useRouter } from 'vue-router';
-
-import { getExtensionService } from '@pkg/agent';
-import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
-import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-
 // Module-level state: shared across all AgentHeader instances (one per keep-alive'd page)
 const knownAssetIds = ref(new Set<string>());
 
@@ -401,6 +435,19 @@ let _ipcMountCount = 0;
 let _onTabCtxAction:  ((...args: any[]) => void) | null = null;
 let _onMoreAction:    ((...args: any[]) => void) | null = null;
 let _onMoreFetchHist: ((...args: any[]) => void) | null = null;
+const workingTabIds = ref(new Set<string>());
+let _workingMountCount = 0;
+
+function _onChatRunning(event: Event) {
+  const { tabId, running } = (event as CustomEvent<{ tabId?: string; running?: boolean }>).detail ?? {};
+
+  if (!tabId) return;
+  const next = new Set(workingTabIds.value);
+
+  if (running) next.add(tabId);
+  else next.delete(tabId);
+  workingTabIds.value = next;
+}
 
 function _tabCtxBridge(...args: any[]) { _onTabCtxAction?.(...args) }
 function _moreBridge(...args: any[]) { _onMoreAction?.(...args) }
@@ -412,6 +459,7 @@ function _mountIpcListeners() {
     ipcRenderer.on('more-menu:selected' as any, _moreBridge as any);
     ipcRenderer.on('more-menu:fetch-history' as any, _moreHistBridge as any);
   }
+  if (_workingMountCount++ === 0) window.addEventListener('sulla:chat-running', _onChatRunning);
 }
 
 function _unmountIpcListeners() {
@@ -423,6 +471,10 @@ function _unmountIpcListeners() {
     _onTabCtxAction = null;
     _onMoreAction = null;
     _onMoreFetchHist = null;
+  }
+  if (--_workingMountCount <= 0) {
+    _workingMountCount = 0;
+    window.removeEventListener('sulla:chat-running', _onChatRunning);
   }
 }
 
@@ -439,7 +491,11 @@ interface HistoryRecord {
 
 const extensionService = getExtensionService();
 const router = useRouter();
-const { tabs: browserTabs, closedTabs, tabOrder, previewTabId, createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab, reorderTabs, promoteTab } = useBrowserTabs();
+const {
+  tabs: browserTabs, closedTabs, tabOrder, previewTabId, pinnedTabIds,
+  createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab,
+  reorderTabs, promoteTab, isTabPinned, setTabPinned, prunePinnedTabs,
+} = useBrowserTabs();
 
 defineProps<{
   isDark:         boolean;
@@ -457,6 +513,36 @@ const extensionMenuItems = computed(() => extensionService.getHeaderMenuItems())
 
 const route = useRoute();
 const isMobileMenuOpen = ref(false);
+const tabPeek = ref<{ left: number; pinned: boolean; status: string; title: string } | null>(null);
+let tabPeekTimer: ReturnType<typeof setTimeout> | null = null;
+
+function hideTabPeek() {
+  if (tabPeekTimer) clearTimeout(tabPeekTimer);
+  tabPeekTimer = null;
+  tabPeek.value = null;
+}
+
+function queueTabPeek(event: MouseEvent, tab: HeaderTab) {
+  hideTabPeek();
+  const target = event.currentTarget as HTMLElement;
+  const wrapper = target.closest<HTMLElement>('.tab-scroll-wrapper');
+  if (!wrapper) return;
+  const targetRect = target.getBoundingClientRect();
+  const wrapperRect = wrapper.getBoundingClientRect();
+  const width = tab.pinned ? 180 : 240;
+  const desiredLeft = targetRect.left - wrapperRect.left + (targetRect.width - width) / 2;
+  const left = Math.max(0, Math.min(desiredLeft, wrapperRect.width - width));
+
+  tabPeekTimer = setTimeout(() => {
+    tabPeek.value = {
+      left,
+      pinned: tab.pinned,
+      status: tab.statusLine,
+      title:  tab.label,
+    };
+    tabPeekTimer = null;
+  }, tab.pinned ? 250 : 500);
+}
 
 // On initial load, ensure at least one tab exists and handle route recovery
 {
@@ -544,6 +630,11 @@ function handleNavigateTab(event: Event) {
 const tabScrollContainer = ref<InstanceType<typeof import('vue').TransitionGroup> | null>(null);
 const canScrollLeft = ref(false);
 const canScrollRight = ref(false);
+const activeIndicatorStyle = ref({
+  opacity:   '0',
+  transform: 'translateX(0px)',
+  width:     '0px',
+});
 let scrollObserver: ResizeObserver | null = null;
 
 function getScrollEl(): HTMLElement | null {
@@ -557,6 +648,23 @@ function updateScrollButtons() {
   canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
 }
 
+function updateActiveIndicator() {
+  const el = getScrollEl();
+  if (!el) return;
+  const metrics = measureActiveTabIndicator(el);
+
+  if (!metrics) {
+    activeIndicatorStyle.value = { ...activeIndicatorStyle.value, opacity: '0' };
+    return;
+  }
+
+  activeIndicatorStyle.value = {
+    opacity:   '1',
+    transform: `translateX(${ metrics.x }px)`,
+    width:     `${ metrics.width }px`,
+  };
+}
+
 /** Hidden strips (inactive browser tabs, kept-alive pages) must not drive the shared offset. */
 function isStripVisible(el: HTMLElement): boolean {
   return el.clientWidth > 0 && getComputedStyle(el).visibility !== 'hidden';
@@ -567,6 +675,7 @@ function onTabStripScroll() {
   if (!el) return;
   if (isStripVisible(el)) sharedTabScrollLeft = el.scrollLeft;
   updateScrollButtons();
+  updateActiveIndicator();
 }
 
 /**
@@ -593,6 +702,7 @@ function syncTabStrip() {
   el.scrollTo({ left, behavior: 'instant' });
   sharedTabScrollLeft = el.scrollLeft;
   updateScrollButtons();
+  updateActiveIndicator();
 }
 
 function scrollTabsLeft() {
@@ -610,6 +720,7 @@ function onTabWheel(e: WheelEvent) {
   if (el) {
     el.scrollLeft += e.deltaY !== 0 ? e.deltaY : e.deltaX;
     updateScrollButtons();
+    updateActiveIndicator();
   }
 }
 
@@ -627,7 +738,10 @@ onMounted(() => {
   // Set up ResizeObserver for scroll chevron visibility
   const el = getScrollEl();
   if (el) {
-    scrollObserver = new ResizeObserver(() => updateScrollButtons());
+    scrollObserver = new ResizeObserver(() => {
+      updateScrollButtons();
+      updateActiveIndicator();
+    });
     scrollObserver.observe(el);
     el.addEventListener('scroll', onTabStripScroll, { passive: true });
     updateScrollButtons();
@@ -636,6 +750,7 @@ onMounted(() => {
 });
 onActivated(() => nextTick(syncTabStrip));
 onUnmounted(() => {
+  hideTabPeek();
   window.removeEventListener('keydown', handleKeyboardShortcuts);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
   _unmountIpcListeners();
@@ -745,6 +860,9 @@ interface HeaderTab {
   label:      string;
   route:      string;
   isActive:   boolean;
+  pinned:     boolean;
+  working:    boolean;
+  statusLine: string;
   native?:    boolean;
   favicon?:   string;
   iconPath?:  string;
@@ -786,7 +904,13 @@ const allTabsById = computed(() => {
     const id = `ext-${ item.link }`;
 
     map.set(id, {
-      id, label: item.title, route: item.link, isActive: route.path === item.link,
+      id,
+      label:      item.title,
+      route:      item.link,
+      isActive:   route.path === item.link,
+      pinned:     isTabPinned(id),
+      working:    false,
+      statusLine: item.link,
     });
   }
 
@@ -796,19 +920,27 @@ const allTabsById = computed(() => {
   for (const bt of browserTabs) {
     const id = `browser-${ bt.id }`;
     const isPill = pillModes.has(bt.mode);
+    const pinned = isTabPinned(id);
+    const working = bt.mode === 'chat' && workingTabIds.value.has(bt.id);
+    const statusLine = bt.mode === 'chat'
+      ? `chat · ${ working ? 'Sulla is working' : 'ready' }`
+      : bt.url === 'about:blank' ? bt.mode : bt.url;
 
     map.set(id, {
       id,
-      label:     bt.title || 'New Tab',
-      route:     `/Browser/${ bt.id }`,
-      isActive:  route.path === `/Browser/${ bt.id }`,
-      favicon:   bt.favicon,
-      iconPath:  MODE_ICON_PATHS[bt.mode],
-      mode:      bt.mode,
-      closeable: true,
-      browserId: bt.id,
-      native:    isPill,
-      preview:   previewTabId.value === bt.id,
+      label:      bt.title || 'New Tab',
+      route:      `/Browser/${ bt.id }`,
+      isActive:   route.path === `/Browser/${ bt.id }`,
+      favicon:    bt.favicon,
+      iconPath:   MODE_ICON_PATHS[bt.mode],
+      mode:       bt.mode,
+      closeable:  isTabCloseable(pinned),
+      browserId:  bt.id,
+      native:     isPill,
+      preview:    previewTabId.value === bt.id,
+      pinned,
+      working,
+      statusLine: previewTabId.value === bt.id ? `preview · ${ statusLine }` : statusLine,
     });
   }
 
@@ -838,8 +970,12 @@ const orderedTabs = computed(() => {
     }
   }
 
-  return result;
+  const orderedIds = orderPinnedFirst(result.map(tab => tab.id), pinnedTabIds.value);
+
+  return orderedIds.map(id => map.get(id)!).filter(Boolean);
 });
+
+const pinnedTabCount = computed(() => orderedTabs.value.filter(tab => tab.pinned).length);
 
 // Keep tabOrder in sync when tabs are added/removed
 watch(
@@ -856,15 +992,25 @@ watch(
         filtered.push(id);
       }
     }
-    tabOrder.value = filtered;
+    tabOrder.value = orderPinnedFirst(filtered, pinnedTabIds.value);
+    prunePinnedTabs(currentIds);
   },
   { immediate: true },
 );
 
 // Update chevrons when tabs change
 watch(() => orderedTabs.value.length, () => {
-  nextTick(updateScrollButtons);
+  nextTick(() => {
+    updateScrollButtons();
+    updateActiveIndicator();
+  });
 });
+
+watch(
+  () => orderedTabs.value.map(tab => `${ tab.id }:${ tab.isActive }:${ tab.pinned }`).join('|'),
+  () => nextTick(updateActiveIndicator),
+  { flush: 'post' },
+);
 
 // The newly active tab's strip becomes visible after the parent re-renders;
 // carry the scroll offset over and keep the focused tab in view.
@@ -947,7 +1093,7 @@ function onPointerDown(e: PointerEvent, index: number) {
   dragState.value = state;
 
   const onMove = (me: PointerEvent) => {
-    if (!dragState.value || me.pointerId !== dragState.value.pointerId) return;
+    if (me.pointerId !== dragState.value?.pointerId) return;
 
     const dx = me.clientX - dragState.value.startX;
 
@@ -962,7 +1108,7 @@ function onPointerDown(e: PointerEvent, index: number) {
     const container = getScrollEl();
     if (!container) return;
 
-    const children = Array.from(container.children) as HTMLElement[];
+    const children = Array.from(container.querySelectorAll<HTMLElement>('.tab-item'));
 
     // Find the dragged element's CURRENT index in the DOM after any previous
     // reorders — don't trust the stored currentIndex which can be stale when
@@ -979,7 +1125,7 @@ function onPointerDown(e: PointerEvent, index: number) {
 
     let targetIndex = children.length - 1;
     for (let i = 0; i < children.length; i++) {
-      const center = (children[i] as HTMLElement).offsetLeft + (children[i] as HTMLElement).offsetWidth / 2;
+      const center = children[i].offsetLeft + children[i].offsetWidth / 2;
       if (pointerX < center) {
         targetIndex = i;
         break;
@@ -1038,7 +1184,7 @@ function onAuxClick(e: MouseEvent, tab: HeaderTab) {
 
 function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
   // Build the list of menu items for this tab
-  const items: string[] = [];
+  const items: string[] = [tab.pinned ? 'unpin' : 'pin', '---'];
 
   if (tab.closeable) items.push('close');
   items.push('closeOther', 'closeRight');
@@ -1060,6 +1206,7 @@ function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
       browserId: tab.browserId || null,
       route:     tab.route,
       closeable: tab.closeable || false,
+      pinned:    tab.pinned,
       index,
     },
   });
@@ -1074,20 +1221,29 @@ function handleTabContextMenuAction(
   const tabId = tabData.id as string;
   const browserId = tabData.browserId as string | null;
   const tabRoute = tabData.route as string;
-  const closeable = tabData.closeable as boolean;
-  const index = tabData.index as number;
 
   // Resolve the full HeaderTab from orderedTabs (it may have changed since the menu was opened)
   const headerTab = orderedTabs.value.find(t => t.id === tabId);
+  const index = orderedTabs.value.findIndex(t => t.id === tabId);
 
   switch (action) {
+  case 'pin':
+    setTabPinned(tabId, true);
+    break;
+
+  case 'unpin':
+    setTabPinned(tabId, false);
+    break;
+
   case 'close':
-    if (headerTab && closeable) closeAnyTab(headerTab);
+    if (headerTab?.closeable) closeAnyTab(headerTab);
     break;
 
   case 'closeOther':
     for (const bt of [...browserTabs]) {
-      if (`browser-${ bt.id }` !== tabId) closeBrowserTab(bt.id);
+      const id = `browser-${ bt.id }`;
+
+      if (id !== tabId && !isTabPinned(id)) closeBrowserTab(bt.id);
     }
     break;
 
@@ -1113,27 +1269,16 @@ function handleTabContextMenuAction(
     break;
 
   case 'moveStart': {
-    // Use tabId to find position in tabOrder (index from orderedTabs may differ)
-    const ids = [...tabOrder.value];
-    const orderIdx = ids.indexOf(tabId);
-
-    if (orderIdx <= 0) break;
-    const [moved] = ids.splice(orderIdx, 1);
-
-    ids.unshift(moved);
-    tabOrder.value = ids;
+    if (!headerTab || index < 0) break;
+    reorderTabs(index, headerTab.pinned ? 0 : pinnedTabCount.value);
     break;
   }
 
   case 'moveEnd': {
-    const ids = [...tabOrder.value];
-    const orderIdx = ids.indexOf(tabId);
+    if (!headerTab || index < 0) break;
+    const target = headerTab.pinned ? pinnedTabCount.value - 1 : orderedTabs.value.length - 1;
 
-    if (orderIdx < 0 || orderIdx >= ids.length - 1) break;
-    const [moved] = ids.splice(orderIdx, 1);
-
-    ids.push(moved);
-    tabOrder.value = ids;
+    reorderTabs(index, target);
     break;
   }
 
@@ -1154,6 +1299,7 @@ function handleTabContextMenuAction(
           ta.style.opacity = '0';
           document.body.appendChild(ta);
           ta.select();
+          // eslint-disable-next-line @typescript-eslint/no-deprecated -- Electron fallback when Clipboard API is unavailable.
           document.execCommand('copy');
           document.body.removeChild(ta);
         });
@@ -1530,47 +1676,421 @@ function handleTabContextMenuAction(
   color: var(--text-primary);
   background-color: var(--bg-surface-hover);
 }
+
+.tab-active-indicator,
+.tab-working-streak,
+.tab-peek {
+  display: none;
+}
+
+/* Pinning is functional in every theme. Keep its default treatment compact
+   and deliberately plain so it fits the existing tab strip. */
+.tab-pinned {
+  min-width: 36px;
+  max-width: 36px;
+  flex-basis: 36px;
+  justify-content: center;
+  gap: 0;
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.tab-pinned .tab-label {
+  display: none;
+}
+
+.tab-pinned-boundary {
+  margin-left: 10px;
+}
+
+.tab-pinned-boundary::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 25%;
+  width: 1px;
+  height: 50%;
+  background: var(--border-default);
+  pointer-events: none;
+}
+
+.tab-active-indicator + .tab-item.tab-inactive::before {
+  display: none;
+}
+
+/* Arc-style titlebar tabs. Kept under .app-titlebar to avoid the theme files'
+   global .tab selectors. */
+:global(.theme-noir-dark) .app-titlebar .tab-scroll-wrapper {
+  --tab-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
+
+  align-items: center;
+  height: 43px;
+  padding: 3px 5px 5px;
+  margin-left: 14px;
+  background: rgba(3, 6, 12, .55);
+  border-bottom: 1px solid rgba(168, 192, 220, .08);
+  backdrop-filter: blur(10px);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-scroll-container {
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-active-indicator {
+  position: absolute;
+  display: block;
+  top: 1px;
+  left: 0;
+  height: 34px;
+  border-radius: 17px;
+  background: linear-gradient(180deg, rgba(80, 150, 179, .28), rgba(80, 150, 179, .12));
+  box-shadow: inset 0 0 0 .5px rgba(106, 176, 204, .5), inset 0 1px 0 rgba(232, 240, 247, .07), 0 0 22px rgba(80, 150, 179, .2);
+  pointer-events: none;
+  z-index: 0;
+  transition: transform .58s var(--tab-spring), width .58s var(--tab-spring), opacity .2s;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-active-indicator::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 22px;
+  height: 3px;
+  margin-left: -11px;
+  border-radius: 3px 3px 0 0;
+  background: #6ab0cc;
+  box-shadow: 0 0 10px #6ab0cc;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-item {
+  width: 136px;
+  min-width: 112px;
+  max-width: 176px;
+  height: 34px;
+  flex: 0 1 136px;
+  gap: 9px;
+  padding: 0 8px 0 12px;
+  border: 0;
+  border-radius: 17px;
+  color: var(--read-3, #a9b3c1);
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 500;
+  z-index: 1;
+  transition: color .16s cubic-bezier(.22, 1, .36, 1), background .16s cubic-bezier(.22, 1, .36, 1), transform .5s var(--tab-spring), width .58s var(--tab-spring), min-width .58s var(--tab-spring), opacity .3s, padding .58s var(--tab-spring);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-item:hover {
+  color: var(--read-2, #dee4ec);
+  background: rgba(80, 150, 179, .09);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-item:active {
+  transform: scale(.95);
+  transition: transform .08s;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-active,
+:global(.theme-noir-dark) .app-titlebar .tab-active-native {
+  color: var(--read-1, #f3f5f8);
+  background: transparent;
+  border: 0;
+  border-radius: 17px;
+  font-weight: 500;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-accent-bar {
+  display: none;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-active::before,
+:global(.theme-noir-dark) .app-titlebar .tab-active::after,
+:global(.theme-noir-dark) .app-titlebar .tab-inactive::before {
+  display: none;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-pinned {
+  width: 36px;
+  min-width: 36px;
+  max-width: 36px;
+  flex-basis: 36px;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-pinned .tab-label {
+  display: none;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-pinned-boundary {
+  margin-left: 18px;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-pinned-boundary::before {
+  content: '';
+  display: block;
+  position: absolute;
+  left: -10px;
+  top: 8px;
+  width: 1px;
+  height: 18px;
+  background: rgba(168, 192, 220, .16);
+  pointer-events: none;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-preview {
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .12);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-icon {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  opacity: .85;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-favicon-img,
+:global(.theme-noir-dark) .app-titlebar .tab-favicon-svg {
+  width: 16px;
+  height: 16px;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-active .tab-icon,
+:global(.theme-noir-dark) .app-titlebar .tab-active-native .tab-icon {
+  color: var(--read-1, #f3f5f8);
+  filter: drop-shadow(0 0 6px rgba(106, 176, 204, .7));
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-working .tab-icon::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0 55%, #6ab0cc 85%, transparent);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), #000 calc(100% - 1.5px));
+  animation: tab-working-spin 1s linear infinite;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-working-streak {
+  position: absolute;
+  display: block;
+  left: 14px;
+  right: 14px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-working-streak::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, #6ab0cc, transparent);
+  animation: tab-working-streak 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
+}
+
+@keyframes tab-working-spin {
+  to { transform: rotate(1turn); }
+}
+
+@keyframes tab-working-streak {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(260%); }
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-close {
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  border-radius: 9px;
+  color: var(--read-4, #7a8291);
+  opacity: 0;
+  transform: scale(.6);
+  transition: opacity .16s, transform .4s var(--tab-spring), background .16s, color .16s;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-item:hover .tab-close {
+  opacity: 1;
+  transform: scale(1);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-close:hover {
+  color: var(--read-1, #f3f5f8);
+  background: rgba(168, 192, 220, .14);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-new {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  margin-left: 4px;
+  border-radius: 17px;
+  color: var(--read-3, #a9b3c1);
+  transition: background .16s, color .16s, transform .5s var(--tab-spring);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-new svg {
+  transition: transform .5s var(--tab-spring);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-new:hover {
+  color: var(--read-1, #f3f5f8);
+  background: rgba(80, 150, 179, .12);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-new:hover svg {
+  transform: rotate(90deg);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-new:active {
+  transform: scale(.88);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-scroll-chevron {
+  width: 24px;
+  color: var(--read-3, #a9b3c1);
+  border-radius: 12px;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-scroll-chevron:hover {
+  color: var(--read-1, #f3f5f8);
+  background: rgba(80, 150, 179, .1);
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-peek {
+  position: absolute;
+  display: block;
+  top: 46px;
+  width: 240px;
+  padding: 12px;
+  border: 1px solid rgba(168, 192, 220, .16);
+  border-radius: 14px;
+  color: var(--read-1, #f3f5f8);
+  background: rgba(12, 18, 28, .97);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .6);
+  pointer-events: none;
+  z-index: 20;
+  animation: tab-peek-in .4s var(--tab-spring) both;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-peek-title,
+:global(.theme-noir-dark) .app-titlebar .tab-peek-status {
+  display: block;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-peek-title {
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-peek-status {
+  overflow: hidden;
+  color: var(--read-4, #7a8291);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.theme-noir-dark) .app-titlebar .tab-tooltip {
+  width: auto;
+  max-width: 240px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  letter-spacing: .08em;
+  white-space: nowrap;
+}
+
+@keyframes tab-peek-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.97); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .app-titlebar .tab-active-indicator,
+  :global(.theme-noir-dark) .app-titlebar .tab-item,
+  :global(.theme-noir-dark) .app-titlebar .tab-close,
+  :global(.theme-noir-dark) .app-titlebar .tab-new,
+  :global(.theme-noir-dark) .app-titlebar .tab-new svg,
+  :global(.theme-noir-dark) .app-titlebar .tab-peek {
+    animation: none;
+    transition-duration: 0s;
+  }
+
+  :global(.theme-noir-dark) .app-titlebar .tab-working .tab-icon::after,
+  :global(.theme-noir-dark) .app-titlebar .tab-working-streak::after {
+    animation: none;
+  }
+}
 </style>
 
 <style>
 /* Phase 8: Tab animations — unscoped because TransitionGroup generates elements */
-.tab-anim-enter-from {
+.theme-noir-dark .tab-anim-enter-from {
   opacity: 0;
+  width: 0;
+  min-width: 0;
   max-width: 0;
   padding-left: 0;
   padding-right: 0;
   overflow: hidden;
 }
 
-.tab-anim-enter-active {
-  transition: opacity 200ms ease, max-width 200ms ease, padding 200ms ease;
+.theme-noir-dark .tab-anim-enter-active {
+  overflow: hidden;
+  transition: opacity .3s, width .58s var(--tab-spring), min-width .58s var(--tab-spring), max-width .58s var(--tab-spring), padding .58s var(--tab-spring);
 }
 
-.tab-anim-enter-to {
+.theme-noir-dark .tab-anim-enter-to {
   opacity: 1;
-  max-width: 220px;
+  width: 136px;
+  max-width: 176px;
 }
 
-.tab-anim-leave-from {
+.theme-noir-dark .tab-anim-leave-from {
   opacity: 1;
-  max-width: 220px;
+  width: 136px;
+  max-width: 176px;
 }
 
-.tab-anim-leave-active {
-  transition: opacity 150ms ease, max-width 150ms ease, padding 150ms ease;
-  position: absolute;
+.theme-noir-dark .tab-anim-leave-active {
+  overflow: hidden;
+  transition: opacity .3s, width .58s var(--tab-spring), min-width .58s var(--tab-spring), max-width .58s var(--tab-spring), padding .58s var(--tab-spring);
 }
 
-.tab-anim-leave-to {
+.theme-noir-dark .tab-anim-leave-to {
   opacity: 0;
+  width: 0;
+  min-width: 0;
   max-width: 0;
   padding-left: 0;
   padding-right: 0;
   overflow: hidden;
 }
 
-.tab-anim-move {
-  transition: transform 200ms ease;
+.theme-noir-dark .tab-anim-move {
+  transition: transform .58s var(--tab-spring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-noir-dark .tab-anim-enter-active,
+  .theme-noir-dark .tab-anim-leave-active,
+  .theme-noir-dark .tab-anim-move {
+    transition-duration: 0s;
+  }
 }
 
 </style>
