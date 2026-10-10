@@ -1,13 +1,22 @@
 <!-- Sub-agent activity card. Expands to show its step list. -->
 <template>
-  <div :class="['subagent', statusClass, { open }]" @click="open = !open">
+  <div
+    :class="['subagent', statusClass, { open }]"
+    @click="open = !open"
+  >
     <div class="head">
       <span class="spin" />
       <span class="name">{{ msg.name }}</span>
       <span class="desc">{{ msg.desc }}</span>
       <span class="ts">{{ timeLabel }}</span>
+      <span class="status-label">{{ statusLabel }}</span>
       <span class="chev">▸</span>
     </div>
+    <span
+      v-if="msg.status === 'running'"
+      class="progress-track"
+      aria-hidden="true"
+    ><span /></span>
     <div class="detail">
       <div
         v-for="(s, idx) in msg.steps"
@@ -23,16 +32,18 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+
 import type { SubAgentMessage } from '../../models/Message';
 
 const props = defineProps<{ msg: SubAgentMessage }>();
 const open = ref(false);
 
 const statusClass = computed(() => props.msg.status === 'done' ? 'done' : props.msg.status === 'error' ? 'err' : 'running');
+const statusLabel = computed(() => props.msg.status === 'done' ? 'Done' : props.msg.status === 'error' ? 'Failed' : 'Running');
 
 const timeLabel = computed(() => {
   const d = new Date(props.msg.createdAt);
-  return `${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${ d.getHours() % 12 || 12 }:${ String(d.getMinutes()).padStart(2, '0') }`;
 });
 </script>
 
@@ -87,4 +98,6 @@ const timeLabel = computed(() => {
 }
 .subagent.err { background: rgba(252,165,165,0.04); border-color: rgba(252,165,165,0.22); }
 .subagent.err .head { color: var(--err); }
+.status-label,
+.progress-track { display: none; }
 </style>

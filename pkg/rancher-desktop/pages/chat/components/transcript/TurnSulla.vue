@@ -17,7 +17,10 @@
     class="chat-turn sulla chat-fade-in"
     @contextmenu.prevent="onContextMenu"
   >
-    <span class="chat-role">Sulla · {{ timeLabel }}</span>
+    <span class="chat-role"><span
+      class="noir-avatar"
+      aria-hidden="true"
+    >S</span>Sulla · {{ timeLabel }}</span>
     <IsolatedHtml
       v-if="isHtmlDocument"
       class="chat-body"
@@ -114,3 +117,9 @@ function onNewChat(): void {
   window.dispatchEvent(new CustomEvent('chat:new-chat'));
 }
 </script>
+
+<style scoped>
+.noir-avatar {
+  display: none;
+}
+</style>

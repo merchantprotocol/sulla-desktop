@@ -15,8 +15,15 @@
   >
     <div class="head">
       <template v-if="msg.completed">
-        <span v-if="!open" class="summary">{{ msg.summary || 'Thought for a moment' }}</span>
-        <span v-else class="label">{{ msg.thoughts.length }} thoughts</span>
+        <span class="noir-summary">Thought for {{ elapsedLabel }}</span>
+        <span
+          v-if="!open"
+          class="summary"
+        >{{ msg.summary || 'Thought for a moment' }}</span>
+        <span
+          v-else
+          class="label"
+        >{{ msg.thoughts.length }} thoughts</span>
         <span class="elapsed">{{ msg.thoughts.length }} thoughts · {{ elapsedLabel }}</span>
         <span class="chev">▸</span>
       </template>
@@ -27,7 +34,10 @@
     </div>
 
     <!-- Live stream: show last 3 thoughts with fade -->
-    <div v-if="!msg.completed" class="stream">
+    <div
+      v-if="!msg.completed"
+      class="stream"
+    >
       <div
         v-for="(t, idx) in visibleLive"
         :key="idx"
@@ -40,7 +50,12 @@
     <!-- Expanded: numbered list -->
     <div class="expanded">
       <ol>
-        <li v-for="(t, idx) in msg.thoughts" :key="idx">{{ t }}</li>
+        <li
+          v-for="(t, idx) in msg.thoughts"
+          :key="idx"
+        >
+          {{ t }}
+        </li>
       </ol>
     </div>
   </div>
@@ -48,6 +63,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue';
+
 import type { ThinkingMessage } from '../../models/Message';
 
 const props = defineProps<{ msg: ThinkingMessage }>();
@@ -71,10 +87,10 @@ const tick = ref(0);
 let interval: ReturnType<typeof setInterval> | null = null;
 function startTicking(): void {
   if (interval) return;
-  interval = setInterval(() => { tick.value++; }, 100);
+  interval = setInterval(() => { tick.value++ }, 100);
 }
 function stopTicking(): void {
-  if (interval) { clearInterval(interval); interval = null; }
+  if (interval) { clearInterval(interval); interval = null }
 }
 onMounted(() => {
   if (!props.msg.completed) startTicking();
@@ -86,10 +102,9 @@ watch(() => props.msg.completed, (isDone) => {
 onBeforeUnmount(stopTicking);
 
 const elapsedLabel = computed(() => {
-  void tick.value;  // subscribe to the interval while live
   const end = props.msg.completed
     ? (props.msg.completedAt ?? props.msg.startedAt)
-    : Date.now();
+    : Date.now() + tick.value * 0; // subscribe to the interval while live
   const secs = Math.max(0, (end - props.msg.startedAt) / 1000);
   return `${ secs.toFixed(1) }s`;
 });
@@ -134,6 +149,7 @@ const elapsedLabel = computed(() => {
 }
 .head .chev { color: var(--read-4); transition: transform 0.25s ease; }
 .thinking.open .head .chev { transform: rotate(90deg); }
+.noir-summary { display: none; }
 
 .stream {
   max-height: 80px; overflow: hidden;

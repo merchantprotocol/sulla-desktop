@@ -14,8 +14,15 @@
     @contextmenu.prevent="onContextMenu"
   >
     <span class="chat-role">You · {{ timeLabel }}</span>
-    <div v-if="msg.attachments?.length" class="attachments">
-      <span v-for="att in msg.attachments" :key="att.id" class="att-chip">
+    <div
+      v-if="msg.attachments?.length"
+      class="attachments"
+    >
+      <span
+        v-for="att in msg.attachments"
+        :key="att.id"
+        class="att-chip"
+      >
         <span class="ic">{{ iconFor(att.kind) }}</span>
         <span class="name">{{ att.name }}</span>
         <span class="size">{{ att.size }}</span>
@@ -23,7 +30,13 @@
     </div>
 
     <div class="body-wrap">
-      <div class="chat-body" :class="{ 'is-editing': editing }">{{ msg.text }}</div>
+      <div
+        class="chat-body"
+        :class="{ 'is-editing': editing }"
+      >
+        {{ msg.text }}
+      </div>
+      <small class="noir-time">{{ timeLabel }}</small>
       <EditOverlay
         v-if="editing"
         :message-id="msg.id"
@@ -40,21 +53,26 @@
       @copy="copy"
     />
 
-    <ChatContextMenu ref="ctxMenu" @new-chat="onNewChat" />
+    <ChatContextMenu
+      ref="ctxMenu"
+      @new-chat="onNewChat"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import type { UserMessage } from '../../models/Message';
-import TurnActions from './TurnActions.vue';
+
 import EditOverlay from './EditOverlay.vue';
+import TurnActions from './TurnActions.vue';
 import ChatContextMenu from '../../ChatContextMenu.vue';
 import { useChatController } from '../../controller/useChatController';
 
+import type { UserMessage } from '../../models/Message';
+
 const props = defineProps<{ msg: UserMessage }>();
 // Retained so existing parents that listen to @edit continue to compile.
-defineEmits<{ (e: 'edit'): void }>();
+defineEmits<(e: 'edit') => void>();
 
 const controller = useChatController();
 
@@ -64,7 +82,7 @@ const ctxMenu = ref<InstanceType<typeof ChatContextMenu> | null>(null);
 
 const timeLabel = computed(() => {
   const d = new Date(props.msg.createdAt);
-  return `${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${ d.getHours() % 12 || 12 }:${ String(d.getMinutes()).padStart(2, '0') }`;
 });
 
 function iconFor(kind: string): string {
@@ -72,7 +90,7 @@ function iconFor(kind: string): string {
 }
 
 function copy(): void {
-  void navigator.clipboard?.writeText(props.msg.text);
+  navigator.clipboard?.writeText(props.msg.text).catch(() => undefined);
 }
 
 function onSaveEdit(payload: { id: string; text: string }): void {
@@ -103,6 +121,7 @@ function onNewChat(): void {
   pointer-events: none;
   user-select: none;
 }
+.noir-time { display: none; }
 .attachments {
   display: flex; gap: 8px; flex-wrap: wrap;
   justify-content: flex-end; margin-bottom: 12px;
