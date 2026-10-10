@@ -5,14 +5,14 @@
   >
     <button
       type="button"
-      class="heartbeat-pill"
-      :class="{ enabled: isOn, broken: !!error }"
-      title="Chat heartbeat"
+      class="heartbeat-heart"
+      :class="{ enabled: isOn }"
+      :title="`Chat heartbeat — ${label}`"
+      :aria-label="`Chat heartbeat: ${label}`"
       :aria-expanded="open"
       @click="open = !open"
     >
-      <span aria-hidden="true">♥</span>
-      <span>{{ label }}</span>
+      ♥
     </button>
 
     <form
@@ -170,7 +170,8 @@ async function register(threadId: string): Promise<boolean> {
     const result = await ipcRenderer.invoke('chat-heartbeat:register', {
       threadId,
       channel: 'sulla-desktop',
-      config:  controller.heartbeat.value,
+      // Plain copy — IPC can't structured-clone Vue's reactive proxy.
+      config:  normalizeChatHeartbeatConfig(controller.heartbeat.value),
       busy:    controller.isRunning.value,
     });
     if (!result?.success) throw new Error(result?.error || 'register failed');
@@ -279,14 +280,20 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .heartbeat-control { position: relative; margin-right: auto; letter-spacing: normal; text-transform: none; }
-.heartbeat-pill {
-  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
-  border: 1px solid var(--border-muted); border-radius: 999px;
-  background: var(--surface-1); color: var(--text-muted); font: inherit; cursor: pointer;
+/* Just a heart: grey when off, red and slowly beating when on. */
+.heartbeat-heart {
+  padding: 0 2px; border: 0; background: transparent; font-size: 16px; line-height: 1;
+  color: var(--text-dim); opacity: 0.6; cursor: pointer;
 }
-.heartbeat-pill:hover { color: var(--text); }
-.heartbeat-pill.enabled { color: var(--accent); border-color: var(--accent-border); background: var(--accent-dim); }
-.heartbeat-pill.broken { color: var(--warning); border-color: var(--warning); }
+.heartbeat-heart:hover { opacity: 1; }
+.heartbeat-heart.enabled { color: var(--danger); opacity: 1; animation: heartbeat-blink 2.4s ease-in-out infinite; }
+@keyframes heartbeat-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .heartbeat-heart.enabled { animation: none; }
+}
 .heartbeat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .heartbeat-switch {
   display: inline-flex; align-items: center; gap: 8px; padding: 2px 0;
