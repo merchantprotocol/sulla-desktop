@@ -101,7 +101,6 @@ import { ThreadRegistry }        from './controller/ThreadRegistry';
 import {
   ChatControllerKey, ThreadRegistryKey, ModelSelectorKey,
 } from './controller/useChatController';
-import { findModel }             from './services/ModelRegistry';
 
 import { LocalStoragePersister } from './services/LocalStoragePersister';
 import { PersonaAdapter }        from './services/PersonaAdapter';
@@ -238,26 +237,10 @@ const modelSelector   = new AgentModelSelectorController({
   isRunning:   _modelIsRunning,
   modelName:   _modelName,
   modelMode:   _modelMode,
+  selection:   controller.model,
+  select:      selection => controller.switchModel(selection),
 });
 modelSelector.start();
-
-// Mirror the selector's active model into ChatController.model so the
-// status badge, PersonaAdapter payload, and anything else reading
-// `controller.model.value.name` stays in lockstep with what the backend
-// is actually using. findModel() returns a descriptor when the id is in
-// the registry; otherwise we synthesize a minimal descriptor so the UI
-// still reflects whatever label the backend says is active.
-watch(
-  [modelSelector.activeModelId, modelSelector.activeModelLabel],
-  ([id, label]) => {
-    if (!id) return;
-    const known = findModel(id);
-    controller.switchModel(known ?? {
-      id, name: label || id, tier: 'hosted', ctx: '',
-    });
-  },
-  { immediate: true },
-);
 
 // Provide so every descendant can call `useChatController()`.
 provide(ChatControllerKey, controller);

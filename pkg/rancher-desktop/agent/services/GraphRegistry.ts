@@ -1829,6 +1829,31 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
   return state;
 }
 
+/** Apply one chat's selection to a cached graph without changing defaults. */
+export async function applyChatSelectionToState(
+  state: AgentGraphState,
+  channelId: string,
+  selection: { agentId?: string; modelId?: string; providerId?: string },
+): Promise<void> {
+  const selectedAgentId = selection.agentId?.trim() || channelId;
+  const model = selection.modelId?.trim() || '';
+  const provider = selection.providerId?.trim() || '';
+  const loaded = await loadAgentConfig(selectedAgentId);
+
+  state.metadata.agentId = selectedAgentId;
+  state.metadata.agent = loaded;
+
+  if (model || provider) {
+    state.metadata.agent = {
+      ...loaded,
+      ...(model ? { model } : {}),
+      ...(provider ? { provider } : {}),
+    };
+  }
+
+  if (model) state.metadata.llmModel = model;
+}
+
 /**
  * Load agent configuration from ~/sulla/agents/{agentId}/
  * Reads config.yaml for config and compiles all .md files into a single prompt.

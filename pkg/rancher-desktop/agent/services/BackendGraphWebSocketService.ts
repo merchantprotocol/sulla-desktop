@@ -3,7 +3,7 @@
 // and heartbeat channels to the default agent via GraphRegistry.
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
-import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
+import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId, applyChatSelectionToState } from './GraphRegistry';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
@@ -289,6 +289,16 @@ export class BackendGraphWebSocketService {
       const result = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
       const graph = result.graph;
       state = result.state;
+
+      const selectedModelId = typeof metadata?.modelId === 'string' ? metadata.modelId : undefined;
+      const selectedProviderId = typeof metadata?.providerId === 'string' ? metadata.providerId : undefined;
+      if (overrideAgentId || selectedModelId || selectedProviderId) {
+        await applyChatSelectionToState(state, channelId, {
+          agentId:   overrideAgentId,
+          modelId:   selectedModelId,
+          providerId: selectedProviderId,
+        });
+      }
 
       // Notify frontend of the threadId so it can maintain the conversation
       if (isNewThread) {

@@ -438,7 +438,10 @@ export interface IpcMainInvokeEvents {
   'git-diff':                      (dirPath: string, file: string, staged: boolean) => string;
   'git-show-head':                 (dirPath: string, file: string) => string;
   'git-show-staged':               (dirPath: string, file: string) => string;
-  'agents-list':                   () => { id: string; name: string; description: string; type: string; templateId: string; path: string }[];
+  'agents-list':                   () => import('@pkg/main/customAgentDefinitions').CustomAgentSummary[];
+  'agents-get':                    (agentId: string) => import('@pkg/main/customAgentDefinitions').CustomAgentDefinition | null;
+  'agents-create':                 (input: import('@pkg/main/customAgentDefinitions').CustomAgentInput) => import('@pkg/main/customAgentDefinitions').CustomAgentDefinition;
+  'agents-update':                 (agentId: string, input: import('@pkg/main/customAgentDefinitions').CustomAgentInput) => import('@pkg/main/customAgentDefinitions').CustomAgentDefinition;
   'agents:list':                   () => import('@pkg/main/agentsIpc').AgentsListResponse;
   'agents:conversations':          (channel: string, limit?: number, offset?: number) => import('@pkg/main/agentsIpc').AgentConversationSummary[];
   'agents:conversation':           (id: string) => import('@pkg/main/agentsIpc').AgentConversationDetail | null;

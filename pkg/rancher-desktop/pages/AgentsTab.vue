@@ -70,6 +70,63 @@
           </div>
 
           <template v-else>
+            <section>
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="section-label !mb-0">
+                  Custom agents
+                  <span class="section-count">{{ customAgents.length }}</span>
+                </h3>
+                <button
+                  type="button"
+                  class="rounded-md bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500"
+                  @click="openCreateAgent"
+                >
+                  New agent
+                </button>
+              </div>
+              <div
+                v-if="customAgents.length"
+                class="space-y-1"
+              >
+                <div
+                  v-for="agent in customAgents"
+                  :key="agent.id"
+                  class="agents-row group flex items-center gap-3 px-4 py-3 rounded-lg"
+                >
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm text-slate-800 dark:text-slate-200 truncate">
+                      {{ agent.name }}
+                    </p>
+                    <p class="text-xs text-slate-500 dark:text-slate-500 truncate mt-0.5">
+                      {{ agent.model || 'Uses default model' }}<template v-if="agent.description">
+                        · {{ agent.description }}
+                      </template>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="agent-action"
+                    @click="openEditAgent(agent.id)"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    class="agent-action text-red-500 dark:text-red-400"
+                    @click="deleteAgent(agent)"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+              <p
+                v-else
+                class="text-sm text-slate-500 dark:text-slate-500 px-1"
+              >
+                No custom agents yet.
+              </p>
+            </section>
+
             <!-- ── Heartbeat ── -->
             <section>
               <h3 class="section-label">
@@ -242,6 +299,89 @@
         </div>
       </div>
     </div>
+
+    <div
+      v-if="agentEditor.open"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6"
+      @click.self="closeAgentEditor"
+    >
+      <form
+        class="w-full max-w-2xl rounded-xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+        @submit.prevent="saveAgent"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            {{ agentEditor.id ? 'Edit agent' : 'New agent' }}
+          </h2>
+          <button
+            type="button"
+            class="agent-action"
+            @click="closeAgentEditor"
+          >
+            Close
+          </button>
+        </div>
+
+        <label class="agent-field">
+          <span>Name</span>
+          <input
+            v-model="agentEditor.name"
+            required
+            class="agent-input"
+          >
+        </label>
+
+        <label class="agent-field">
+          <span>Model</span>
+          <select
+            v-model="agentEditor.modelKey"
+            required
+            class="agent-input"
+          >
+            <option
+              v-for="model in modelOptions"
+              :key="`${model.providerId}:${model.id}`"
+              :value="`${model.providerId}:${model.id}`"
+            >
+              {{ model.providerName }} · {{ model.name }}
+            </option>
+          </select>
+        </label>
+
+        <label class="agent-field">
+          <span>Prompt</span>
+          <textarea
+            v-model="agentEditor.prompt"
+            rows="14"
+            class="agent-input font-mono text-xs resize-y"
+          />
+        </label>
+
+        <p
+          v-if="agentEditor.error"
+          class="mt-3 text-sm text-red-500"
+        >
+          {{ agentEditor.error }}
+        </p>
+
+        <div class="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+            @click="closeAgentEditor"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-60"
+            :disabled="agentEditor.saving"
+          >
+            {{ agentEditor.saving ? 'Saving…' : 'Save agent' }}
+          </button>
+        </div>
+      </form>
+    </div>
   </div>
 </template>
 
@@ -249,10 +389,10 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 
 import { useTheme } from '@pkg/composables/useTheme';
+import type { AgentsListResponse } from '@pkg/main/agentsIpc';
+import type { CustomAgentSummary } from '@pkg/main/customAgentDefinitions';
 import AgentConversations from '@pkg/pages/agents/AgentConversations.vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-
-import type { AgentsListResponse } from '@pkg/main/agentsIpc';
 
 const POLL_MS = 3_000;
 
@@ -262,6 +402,12 @@ const loading = ref(true);
 const polling = ref(true);
 const data = ref<AgentsListResponse>({
   agents: [], heartbeat: null, jobs: [], routines: [],
+});
+const customAgents = ref<CustomAgentSummary[]>([]);
+const modelOptions = ref<{ id: string; name: string; providerId: string; providerName: string }[]>([]);
+const defaultProviderId = ref('');
+const agentEditor = ref({
+  open: false, id: '', name: '', modelKey: '', prompt: '', saving: false, error: '',
 });
 
 const selectedAgent = ref<{ channel: string; name: string } | null>(null);
@@ -281,7 +427,13 @@ async function loadAgents() {
   // The roster isn't visible while an agent's conversations are open.
   if (selectedAgent.value) return;
   try {
-    data.value = await ipcRenderer.invoke('agents:list' as any);
+    const [runtime, custom] = await Promise.all([
+      ipcRenderer.invoke('agents:list' as any),
+      ipcRenderer.invoke('agents-list'),
+    ]);
+
+    data.value = runtime;
+    customAgents.value = custom;
     polling.value = true;
   } catch {
     // Leave the last snapshot in place; flag that the refresh failed.
@@ -289,6 +441,104 @@ async function loadAgents() {
   } finally {
     loading.value = false;
   }
+}
+
+async function loadModelOptions() {
+  const [providers, state] = await Promise.all([
+    ipcRenderer.invoke('model-provider:get-providers'),
+    ipcRenderer.invoke('model-provider:get-state'),
+  ]);
+
+  defaultProviderId.value = state.primaryProvider;
+  const connected = providers.filter((provider: { connected?: boolean }) => provider.connected !== false);
+  const groups = await Promise.all(connected.map(async(provider: { id: string; name: string }) => {
+    const models = await ipcRenderer.invoke('model-provider:get-models', provider.id);
+
+    return models.map((model: { id: string; name: string }) => ({
+      id:           model.id,
+      name:         model.name,
+      providerId:   provider.id,
+      providerName: provider.name,
+    }));
+  }));
+
+  modelOptions.value = groups.flat();
+}
+
+async function openCreateAgent() {
+  await loadModelOptions();
+  const first = modelOptions.value[0];
+
+  agentEditor.value = {
+    open:     true,
+    id:       '',
+    name:     '',
+    modelKey: first ? `${ first.providerId }:${ first.id }` : '',
+    prompt:   '',
+    saving:   false,
+    error:    '',
+  };
+}
+
+async function openEditAgent(id: string) {
+  const [agent] = await Promise.all([
+    ipcRenderer.invoke('agents-get', id),
+    loadModelOptions(),
+  ]);
+
+  if (!agent) return;
+  const providerId = agent.provider || modelOptions.value.find(model => model.id === agent.model)?.providerId || '';
+  const editableProviderId = providerId || defaultProviderId.value;
+  if (editableProviderId) {
+    modelOptions.value = modelOptions.value.filter(model => model.providerId === editableProviderId);
+  }
+  if (agent.model && !modelOptions.value.some(model => model.id === agent.model && model.providerId === providerId)) {
+    modelOptions.value.unshift({
+      id: agent.model, name: agent.model, providerId, providerName: providerId || 'Current',
+    });
+  }
+  agentEditor.value = {
+    open:     true,
+    id:       agent.id,
+    name:     agent.name,
+    modelKey: `${ providerId }:${ agent.model }`,
+    prompt:   agent.prompt,
+    saving:   false,
+    error:    '',
+  };
+}
+
+function closeAgentEditor() {
+  agentEditor.value.open = false;
+}
+
+async function saveAgent() {
+  const editor = agentEditor.value;
+  const separator = editor.modelKey.indexOf(':');
+  const provider = separator >= 0 ? editor.modelKey.slice(0, separator) : '';
+  const model = separator >= 0 ? editor.modelKey.slice(separator + 1) : editor.modelKey;
+
+  editor.saving = true;
+  editor.error = '';
+  try {
+    if (editor.id) {
+      await ipcRenderer.invoke('agents-update', editor.id, { name: editor.name, model, prompt: editor.prompt });
+    } else {
+      await ipcRenderer.invoke('agents-create', { name: editor.name, model, prompt: editor.prompt, provider });
+    }
+    customAgents.value = await ipcRenderer.invoke('agents-list');
+    closeAgentEditor();
+  } catch (err: any) {
+    editor.error = err?.message || String(err);
+  } finally {
+    editor.saving = false;
+  }
+}
+
+async function deleteAgent(agent: CustomAgentSummary) {
+  if (!window.confirm(`Delete ${ agent.name }? This removes its config and prompt files.`)) return;
+  await ipcRenderer.invoke('agents-delete', agent.id);
+  customAgents.value = await ipcRenderer.invoke('agents-list');
 }
 
 // ── Formatting helpers ──
@@ -444,5 +694,40 @@ onUnmounted(() => {
 .badge-type {
   color: #6aa9c4;
   background: rgba(106, 169, 196, 0.14);
+}
+
+.agent-action {
+  font-size: 0.75rem;
+  color: #64748b;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+}
+
+.agent-action:hover {
+  background: rgba(100, 116, 139, 0.12);
+}
+
+.agent-field {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.agent-input {
+  width: 100%;
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: inherit;
+  padding: 0.65rem 0.75rem;
+  outline: none;
+}
+
+.agent-input:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px #38bdf8;
 }
 </style>

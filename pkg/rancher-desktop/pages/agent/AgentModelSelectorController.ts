@@ -3,14 +3,16 @@
  *
  * All provider/model state lives in the main process (ModelProviderService).
  * This controller only:
- * - Reads state via IPC on startup
- * - Sends mutations via IPC when the user selects a model
- * - Listens for state-changed broadcasts to keep the UI in sync
+ * - Reads defaults via IPC when a new chat starts
+ * - Stores later selections in that chat's serialized controller state
+ * - Reads the provider model catalog and custom-agent definitions
  */
 
 import { computed, ref } from 'vue';
 
 import { integrations } from '@pkg/agent/integrations/catalog';
+import type { CustomAgentSummary } from '@pkg/main/customAgentDefinitions';
+import type { ModelDescriptor } from '@pkg/pages/chat/models';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { ComputedRef, Ref } from 'vue';
@@ -44,6 +46,7 @@ export class AgentModelSelectorController {
 
   /** Grouped providers with their models */
   readonly providerGroups = ref<ProviderGroup[]>([]);
+  readonly customAgents = ref<CustomAgentSummary[]>([]);
 
   readonly loadingProviders = ref(false);
 
@@ -57,10 +60,15 @@ export class AgentModelSelectorController {
 
     modelName: Ref<string>;
     modelMode: Ref<'remote'>;
+    selection: Ref<ModelDescriptor>;
+    select:    (selection: ModelDescriptor) => void;
   }) {
     this.activeModelLabel = computed(() => {
-      const provider = this.activePrimaryProvider.value;
-      const model = this.activeModelId.value;
+      const selection = this.deps.selection.value;
+
+      if (selection.agentId) return selection.name;
+      const provider = selection.providerId || this.activePrimaryProvider.value;
+      const model = selection.modelId || selection.id || this.activeModelId.value;
 
       if (model) {
         return model;
@@ -76,16 +84,11 @@ export class AgentModelSelectorController {
 
   async start(): Promise<void> {
     document.addEventListener('mousedown', this.handleDocumentClick);
-    ipcRenderer.on('model-provider:state-changed', this.handleStateChanged);
-    // Legacy listener for backward compat with windows not yet migrated
-    ipcRenderer.on('model-changed', this.handleLegacyModelChanged);
     await this.loadActiveSettings();
   }
 
   dispose(): void {
     document.removeEventListener('mousedown', this.handleDocumentClick);
-    ipcRenderer.removeListener('model-provider:state-changed', this.handleStateChanged);
-    ipcRenderer.removeListener('model-changed', this.handleLegacyModelChanged);
   }
 
   get showModelMenuValue(): boolean {
@@ -102,6 +105,10 @@ export class AgentModelSelectorController {
 
   get loadingProvidersValue(): boolean {
     return this.loadingProviders.value;
+  }
+
+  get customAgentsValue(): CustomAgentSummary[] {
+    return this.customAgents.value;
   }
 
   async toggleModelMenu(): Promise<void> {
@@ -127,18 +134,38 @@ export class AgentModelSelectorController {
   }
 
   /**
-   * Select a model — delegates to ModelProviderService via IPC.
-   * The service writes to DB and broadcasts state-changed.
+   * Select a model for this chat only. Global defaults are managed in Settings.
    */
-  async selectModel(option: ModelOption): Promise<void> {
+  selectModel(option: ModelOption): void {
     try {
-      const newState = await ipcRenderer.invoke('model-provider:select-model', option.providerId, option.modelId);
-
-      this.applyState(newState);
+      this.deps.select({
+        id:         option.modelId,
+        modelId:    option.modelId,
+        providerId: option.providerId,
+        name:       option.modelLabel,
+        tier:       'hosted',
+        ctx:        '',
+      });
+      this.activePrimaryProvider.value = option.providerId;
+      this.activeModelId.value = option.modelId;
+      this.deps.modelName.value = option.modelId;
       this.updateActiveFlags(option.providerId, option.modelId);
     } finally {
       this.showModelMenu.value = false;
     }
+  }
+
+  selectAgent(agent: CustomAgentSummary): void {
+    this.deps.select({
+      id:         `agent:${ agent.id }`,
+      name:       agent.name,
+      tier:       'hosted',
+      ctx:        '',
+      agentId:    agent.id,
+      modelId:    agent.model || undefined,
+      providerId: agent.provider || undefined,
+    });
+    this.showModelMenu.value = false;
   }
 
   // ─── Internal ──────────────────────────────────────────────────
@@ -159,12 +186,17 @@ export class AgentModelSelectorController {
     this.loadingProviders.value = true;
 
     try {
-      const providers = await ipcRenderer.invoke('model-provider:get-providers');
+      const [providers, agents] = await Promise.all([
+        ipcRenderer.invoke('model-provider:get-providers'),
+        ipcRenderer.invoke('agents-list'),
+      ]);
+      this.customAgents.value = agents;
       const groups: ProviderGroup[] = [];
 
       for (const provider of providers) {
         if (provider.connected === false) continue;
-        const isActive = this.activePrimaryProvider.value === provider.id;
+        const isActive = !this.deps.selection.value.agentId &&
+          (this.deps.selection.value.providerId || this.activePrimaryProvider.value) === provider.id;
 
         const group: ProviderGroup = {
           providerId:       provider.id,
@@ -198,7 +230,7 @@ export class AgentModelSelectorController {
         modelId:          m.id,
         modelLabel:       m.name,
         isActiveProvider: isActive,
-        isActiveModel:    isActive && m.id === this.activeModelId.value,
+        isActiveModel:    isActive && m.id === (this.deps.selection.value.modelId || this.deps.selection.value.id),
       }));
       group.loading = false;
 
@@ -216,6 +248,16 @@ export class AgentModelSelectorController {
     this.activeModelId.value = state.activeModelId;
     this.deps.modelName.value = state.activeModelId;
     this.deps.modelMode.value = 'remote';
+    if (!this.deps.selection.value.providerId && !this.deps.selection.value.agentId) {
+      this.deps.select({
+        id:         state.activeModelId,
+        modelId:    state.activeModelId,
+        providerId: state.primaryProvider,
+        name:       state.activeModelId,
+        tier:       'hosted',
+        ctx:        '',
+      });
+    }
   }
 
   private updateActiveFlags(providerId: string, modelId: string): void {
@@ -229,29 +271,6 @@ export class AgentModelSelectorController {
       })),
     }));
   }
-
-  // ─── Event handlers ────────────────────────────────────────────
-
-  private readonly handleStateChanged = (
-    _event: Electron.IpcRendererEvent,
-    state: { primaryProvider: string; activeModelId: string; modelMode?: string },
-  ) => {
-    this.applyState(state);
-    this.updateActiveFlags(state.primaryProvider, state.activeModelId);
-  };
-
-  /** Backward-compat listener for legacy model-changed events */
-  private readonly handleLegacyModelChanged = (
-    _event: Electron.IpcRendererEvent,
-    data: { model: string; type: string; provider?: string },
-  ) => {
-    const providerId = (data as any).provider || 'grok';
-    this.applyState({
-      primaryProvider: providerId,
-      activeModelId:   data.model,
-    });
-    this.updateActiveFlags(providerId, data.model);
-  };
 
   private readonly handleDocumentClick = (ev: MouseEvent) => {
     if (!this.showModelMenu.value) {

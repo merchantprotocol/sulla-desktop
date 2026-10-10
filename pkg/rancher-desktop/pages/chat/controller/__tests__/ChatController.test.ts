@@ -131,6 +131,21 @@ describe('ChatController — serialize + hydrate', () => {
     expect(b.messages.value.length).toBe(a.messages.value.length);
     expect(b.artifacts.value.list.length).toBe(1);
   });
+
+  it('keeps a model or custom-agent selection scoped to one chat', () => {
+    const first = newController();
+    const second = newController();
+    const secondBefore = second.model.value;
+
+    first.switchModel({
+      id: 'agent:careful-worker', name: 'Careful Worker', tier: 'hosted', ctx: '',
+      agentId: 'careful-worker', providerId: 'codex', modelId: 'gpt-6-sol',
+    });
+
+    expect(first.model.value.agentId).toBe('careful-worker');
+    expect(second.model.value).toEqual(secondBefore);
+    expect(new ChatController({ hydrateFrom: first.serialize() }).model.value).toEqual(first.model.value);
+  });
 });
 
 describe('ChatController — events', () => {

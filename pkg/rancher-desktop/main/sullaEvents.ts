@@ -34,6 +34,7 @@ import { initSullaRoutineTemplateEvents } from './sullaRoutineTemplateEvents';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
 import { initWorkItemsEvents } from './workItemsEvents';
 import { initSullaRecipeDockerEvents } from './sullaRecipeDockerEvents';
+import { CustomAgentDefinitions } from './customAgentDefinitions';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -297,38 +298,23 @@ export function initSullaEvents(): void {
 
 
   ipcMainProxy.handle('agents-list', async() => {
-    const yaml = require('yaml');
-    const agentsDir = path.join(getSullaHomeDir(), 'agents');
+    return new CustomAgentDefinitions(path.join(getSullaHomeDir(), 'agents')).list();
+  });
 
-    if (!fs.existsSync(agentsDir)) return [];
+  ipcMainProxy.handle('agents-get', async(_event: any, agentId: string) => {
+    return new CustomAgentDefinitions(path.join(getSullaHomeDir(), 'agents')).get(agentId);
+  });
 
-    const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
-    const agents: { id: string; name: string; description: string; type: string; templateId: string; path: string }[] = [];
+  ipcMainProxy.handle('agents-create', async(_event: any, input: { name: string; model: string; prompt: string; provider?: string }) => {
+    return new CustomAgentDefinitions(path.join(getSullaHomeDir(), 'agents')).create(input);
+  });
 
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-      const agentDir = path.join(agentsDir, entry.name);
-      const yamlPath = path.join(agentDir, 'config.yaml');
+  ipcMainProxy.handle('agents-update', async(_event: any, agentId: string, input: { name: string; model: string; prompt: string }) => {
+    return new CustomAgentDefinitions(path.join(getSullaHomeDir(), 'agents')).update(agentId, input);
+  });
 
-      if (!fs.existsSync(yamlPath)) continue;
-      try {
-        const content = fs.readFileSync(yamlPath, 'utf-8');
-        const parsed = yaml.parse(content) || {};
-
-        agents.push({
-          id:          entry.name,
-          name:        parsed.name || entry.name,
-          description: parsed.description || '',
-          type:        parsed.type || 'worker',
-          templateId:  parsed.templateId || 'glass-core',
-          path:        agentDir,
-        });
-      } catch (err) {
-        console.warn(`[Sulla] Failed to parse config.yaml in ${ entry.name }:`, err);
-      }
-    }
-
-    return agents;
+  ipcMainProxy.handle('agents-delete', async(_event: any, agentId: string) => {
+    return new CustomAgentDefinitions(path.join(getSullaHomeDir(), 'agents')).delete(agentId);
   });
 
   ipcMainProxy.handle('tools-list-by-category', async() => {

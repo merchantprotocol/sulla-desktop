@@ -239,8 +239,11 @@ export class PersonaAdapter {
       .filter(Boolean) as Promise<{ mediaType: string; base64: string }>[];
 
     const resolved = await Promise.all(mapped);
-    // Spoken turns are tagged so the backend answers in voice mode (<speak> → TTS).
-    await this.ci.send(inputSource ? { inputSource } : undefined, resolved.length ? resolved : undefined);
+    // The selection rides with every turn and is scoped by the backend thread.
+    // It never calls the global model settings mutation.
+    const metadata = this.selectionMetadata();
+    if (inputSource) metadata.inputSource = inputSource;
+    await this.ci.send(metadata, resolved.length ? resolved : undefined);
   }
 
   /**
@@ -255,7 +258,17 @@ export class PersonaAdapter {
       .filter(Boolean) as Promise<{ mediaType: string; base64: string }>[];
 
     const resolved = await Promise.all(mapped);
-    await this.ci.injectMessage(text, resolved.length ? resolved : undefined);
+    await this.ci.injectMessage(text, resolved.length ? resolved : undefined, this.selectionMetadata());
+  }
+
+  private selectionMetadata(): Record<string, string> {
+    const selection = this.controller.model.value;
+    const metadata: Record<string, string> = {};
+
+    if (selection.agentId) metadata.agentId = selection.agentId;
+    if (selection.modelId || (!selection.agentId && selection.id)) metadata.modelId = selection.modelId || selection.id;
+    if (selection.providerId) metadata.providerId = selection.providerId;
+    return metadata;
   }
 
   stop(): void { this.ci.stop(); }

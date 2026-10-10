@@ -644,6 +644,7 @@ export class ChatController {
   switchModel(model: ModelDescriptor): void {
     this.model.value = model;
     this.bus.emit({ kind: 'modelSwitched', threadId: this.thread.value.id, modelId: model.id });
+    this.persist();
   }
 
   // ─── Title ──────────────────────────────────────────────────────

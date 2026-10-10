@@ -12,6 +12,11 @@ export interface ModelDescriptor {
   name:   string;
   tier:   'hosted' | 'local';
   ctx:    string;     // "1M ctx" | "200K ctx"
+  /** Provider/model routing captured for this chat. Never writes global defaults. */
+  providerId?: string;
+  modelId?:    string;
+  /** Custom agent slug when this chat uses ~/sulla/agents/<slug>. */
+  agentId?:    string;
 }
 
 export type ConnectionState = 'online' | 'degraded' | 'offline';

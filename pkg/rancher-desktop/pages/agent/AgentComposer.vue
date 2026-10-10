@@ -201,11 +201,36 @@
               </div>
 
               <div
-                v-if="modelSelector.providerGroupsValue.length === 0 && !modelSelector.loadingProvidersValue"
+                v-if="modelSelector.providerGroupsValue.length === 0 && modelSelector.customAgentsValue.length === 0 && !modelSelector.loadingProvidersValue"
                 class="px-3 py-2 text-sm text-content-secondary"
               >
-                No providers connected
+                No models or custom agents available
               </div>
+
+              <template v-if="modelSelector.customAgentsValue.length">
+                <div class="flex items-center gap-2 px-3 py-2">
+                  <div class="text-xs font-semibold tracking-wide text-content-secondary">
+                    Custom agents
+                  </div>
+                </div>
+                <button
+                  v-for="agent in modelSelector.customAgentsValue"
+                  :key="`agent-${agent.id}`"
+                  type="button"
+                  class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-content hover:bg-surface-hover"
+                  @click="modelSelector.selectAgent(agent)"
+                >
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate">{{ agent.name }}</span>
+                    <span class="block truncate text-xs text-content-muted">{{ agent.model || 'Default model' }}</span>
+                  </span>
+                  <span
+                    v-if="modelSelector.activeModelLabelValue === agent.name"
+                    class="shrink-0 text-xs font-semibold text-content-secondary"
+                  >Active</span>
+                </button>
+                <div class="border-t border-edge" />
+              </template>
 
               <template
                 v-for="(group, gIdx) in modelSelector.providerGroupsValue"
