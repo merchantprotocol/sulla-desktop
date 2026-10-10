@@ -1,6 +1,6 @@
 # Sulla Tools — GitHub / Git
 
-**53 tools** — local git on the shared Mac filesystem, plus the GitHub REST/GraphQL API. All authenticated by the vault PAT.
+**58 tools** — local git on the shared Mac filesystem, plus the GitHub REST/GraphQL API. All authenticated by the vault PAT.
 
 ## Authentication
 
@@ -10,7 +10,7 @@ Local git tools take `absolutePath` — the repo path (or **any path inside it**
 
 ---
 
-## Local git (13)
+## Local git (14)
 | Tool | Purpose |
 |------|---------|
 | `git_status` | Working-tree status: branch, staged/unstaged/untracked. |
@@ -18,6 +18,7 @@ Local git tools take `absolutePath` — the repo path (or **any path inside it**
 | `git_commit` | Stage + commit (`message`; optional `files[]`, else stages all). |
 | `git_push` | Push to remote (PAT injected). `remote` default `origin`, `branch` default current. |
 | `git_pull` | Pull from remote. |
+| `git_fetch` | Authenticated fetch without touching the working tree; optional `branch` and `prune`. Returns changed remote-tracking refs. |
 | `git_branch` | Create / switch / delete / list branches. |
 | `git_checkout` | Restore files from a commit/branch, or discard changes. |
 | `git_log` | Commit history (`limit`). |
@@ -30,7 +31,20 @@ Local git tools take `absolutePath` — the repo path (or **any path inside it**
 ```bash
 sulla github/git_push '{"absolutePath":"/Users/jonathonbyrdziak/Sites/sulla/sulla-desktop","branch":"my-branch"}'
 sulla github/git_commit '{"absolutePath":"/path/to/repo","message":"feat: X","files":["docs/README.md"]}'
+sulla github/git_fetch '{"absolutePath":"/path/to/repo","remote":"origin","branch":"main","prune":true}'
 ```
+
+## Per-worker file claims (3)
+
+`github_claim_files`, `github_release_files`, and `github_list_claims` coordinate workers editing linked worktrees. Repository identity comes from Git's common directory, so claims created in one worktree are visible from every worktree of that repository.
+
+```bash
+sulla github/claim_files '{"absolutePath":"/path/to/worktree","paths":["pkg/example/**","docs/readme.md"],"ownerLabel":"worker-2","jobId":"agent-job-123"}'
+sulla github/list_claims '{"absolutePath":"/path/to/another-worktree"}'
+sulla github/release_files '{"absolutePath":"/path/to/worktree","ownerLabel":"worker-2"}'
+```
+
+Claims are advisory: `git_status`, `git_add`, and `git_commit` append a clear warning when changed files match a claim from another worktree, but never block the operation. Release claims manually when the worker finishes. Automatic job-completion release is not currently wired.
 
 ## Repositories & refs (10)
 `github_init`, `github_add_remote`, `github_create_repo`, `github_get_repo`, `github_list_repos`, `github_delete_repo` (destructive), `github_fork_repo`, `github_list_branches`, `github_create_ref` (create a remote branch/tag at a SHA or another branch's tip), `github_delete_ref` (delete a remote branch/tag).
@@ -48,8 +62,12 @@ sulla github/git_commit '{"absolutePath":"/path/to/repo","message":"feat: X","fi
 sulla github/github_create_pr '{"owner":"merchantprotocol","repo":"sulla-desktop","title":"feat: X","head":"feature/x","base":"main","draft":true}'
 ```
 
-## Releases & CI (3)
-`github_create_release` (cuts the release + git tag), `github_check_runs` (CI status for a ref — is it green?), `github_trigger_workflow_run` (manual `workflow_dispatch`).
+## Releases & CI (4)
+`github_create_release` (cuts the release + git tag), `github_check_runs` (CI status for a ref — is it green?), `github_ci_logs` (failure annotations plus bounded Actions job-log excerpts for a `runId`, `jobId`, or `ref`), `github_trigger_workflow_run` (manual `workflow_dispatch`).
+
+```bash
+sulla github/ci_logs '{"owner":"merchantprotocol","repo":"sulla-desktop","ref":"main","failedOnly":true,"maxLines":300}'
+```
 
 ## Projects V2 boards (3, GraphQL)
 `github_list_projects` (board node ids + fields + single-select options), `github_add_issue_to_project`, `github_set_project_field` (most often the Status single-select).
