@@ -11,7 +11,7 @@ describe('ChatHeartbeatScheduler', () => {
   beforeEach(() => { jest.useFakeTimers() });
   afterEach(() => { jest.useRealTimers() });
 
-  it('never injects while the target thread is running and delivers its held beat on idle', async() => {
+  it('never pings a running graph and restarts the full countdown once it stops', async() => {
     const busy = new Map([['thread-a', true]]);
     const deliver = jest.fn<(channel: string, threadId: string, message: string, intervalMinutes: number) => Promise<boolean>>(() => Promise.resolve(true));
     const scheduler = new ChatHeartbeatScheduler({
@@ -27,18 +27,45 @@ describe('ChatHeartbeatScheduler', () => {
     await jest.advanceTimersByTimeAsync(60_000);
 
     expect(deliver).not.toHaveBeenCalled();
-    expect(scheduler.status('thread-a')?.pending).toBe(true);
+    expect(scheduler.status('thread-a')?.paused).toBe(true);
+    expect(scheduler.status('thread-a')?.nextAt).toBeNull();
 
     busy.set('thread-a', false);
     scheduler.updateBusy('thread-a', false);
     await Promise.resolve();
 
+    // Stopping does not fire a queued beat — the idle countdown starts over.
+    expect(deliver).not.toHaveBeenCalled();
+    expect(scheduler.status('thread-a')?.paused).toBe(false);
+    expect(scheduler.status('thread-a')?.nextAt).not.toBeNull();
+
+    await jest.advanceTimersByTimeAsync(60_000);
     expect(deliver).toHaveBeenCalledTimes(1);
     expect(deliver).toHaveBeenCalledWith('sulla-desktop', 'thread-a', DEFAULT_CHAT_HEARTBEAT_MESSAGE, 1);
-    expect(scheduler.status('thread-a')?.pending).toBe(false);
   });
 
-  it('keeps at most one pending beat while a thread stays busy', async() => {
+  it('pauses the countdown as soon as the renderer reports the graph running', async() => {
+    const deliver = jest.fn<(channel: string, threadId: string, message: string, intervalMinutes: number) => Promise<boolean>>(() => Promise.resolve(true));
+    const scheduler = new ChatHeartbeatScheduler({ isGraphBusy: () => false, deliver });
+
+    scheduler.register({
+      threadId: 'thread-a',
+      channel:  'sulla-desktop',
+      config:   { intervalMinutes: 1, message: 'tick' },
+    });
+    await jest.advanceTimersByTimeAsync(45_000);
+    scheduler.updateBusy('thread-a', true);
+    await jest.advanceTimersByTimeAsync(5 * 60_000);
+    expect(deliver).not.toHaveBeenCalled();
+
+    scheduler.updateBusy('thread-a', false);
+    await jest.advanceTimersByTimeAsync(59_000);
+    expect(deliver).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumes on its own when the graph stops without a renderer signal', async() => {
     let busy = true;
     const deliver = jest.fn<(channel: string, threadId: string, message: string, intervalMinutes: number) => Promise<boolean>>(() => Promise.resolve(true));
     const scheduler = new ChatHeartbeatScheduler({ isGraphBusy: () => busy, deliver });
@@ -49,12 +76,13 @@ describe('ChatHeartbeatScheduler', () => {
       config:   { intervalMinutes: 1, message: 'tick' },
     });
     await jest.advanceTimersByTimeAsync(5 * 60_000);
-    expect(scheduler.status('thread-a')?.pending).toBe(true);
-    expect(deliver).not.toHaveBeenCalled();
+    expect(scheduler.status('thread-a')?.paused).toBe(true);
 
     busy = false;
-    scheduler.updateBusy('thread-a', false);
-    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(scheduler.status('thread-a')?.paused).toBe(false);
+    expect(deliver).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(60_000);
     expect(deliver).toHaveBeenCalledTimes(1);
   });
 
@@ -71,8 +99,8 @@ describe('ChatHeartbeatScheduler', () => {
 
     await jest.advanceTimersByTimeAsync(60_000);
     expect(deliver).not.toHaveBeenCalled();
-    expect(scheduler.status('thread-a')?.pending).toBe(true);
-    expect(scheduler.status('thread-b')?.pending).toBe(false);
+    expect(scheduler.status('thread-a')?.paused).toBe(true);
+    expect(scheduler.status('thread-b')?.paused).toBe(false);
 
     await jest.advanceTimersByTimeAsync(60_000);
     expect(deliver).toHaveBeenCalledTimes(1);
