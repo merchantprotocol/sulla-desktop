@@ -782,22 +782,22 @@ export default defineComponent({
 </style>
 
 <style lang="scss" scoped>
-:global(.theme-noir) .updates-root {
+.theme-noir .updates-root {
   background: radial-gradient(70% 55% at 50% 42%, color-mix(in srgb, var(--nx-accent) 909.0909%, transparent), transparent 70%), var(--nx-paper);
   color: var(--nx-read-2);
 }
-:global(.theme-noir) .updates-window { padding: 30px 36px 22px; }
-:global(.theme-noir) .updates-header,
-:global(.theme-noir) .updates-footer { border-color: var(--nx-hair); }
-:global(.theme-noir) .updates-icon {
+.theme-noir .updates-window { padding: 30px 36px 22px; }
+.theme-noir .updates-header,
+.theme-noir .updates-footer { border-color: var(--nx-hair); }
+.theme-noir .updates-icon {
   border: 0;
   border-radius: 14px;
   background: linear-gradient(145deg, color-mix(in srgb, var(--nx-accent-2) 500%, transparent), color-mix(in srgb, var(--nx-accent) 2500%, transparent));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 357.1429%, transparent), 0 0 24px color-mix(in srgb, var(--nx-accent) 555.5556%, transparent);
 }
-:global(.theme-noir) .updates-title { color: var(--nx-read-1); font-size: 22px; letter-spacing: -.01em; }
-:global(.theme-noir) .updates-subtitle { color: var(--nx-accent-2); }
-:global(.theme-noir) .state-block {
+.theme-noir .updates-title { color: var(--nx-read-1); font-size: 22px; letter-spacing: -.01em; }
+.theme-noir .updates-subtitle { color: var(--nx-accent-2); }
+.theme-noir .state-block {
   max-width: 500px;
   padding: 30px;
   border-radius: 22px;
@@ -805,19 +805,19 @@ export default defineComponent({
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 177.7778%, transparent), 0 28px 70px color-mix(in srgb, var(--shadow) 321.4286%, transparent);
   animation: updates-noir-enter .48s cubic-bezier(.22, 1, .36, 1) both;
 }
-:global(.theme-noir) .state-headline { color: var(--nx-read-1); font-size: 30px; letter-spacing: -.02em; }
-:global(.theme-noir) .state-sub { color: var(--nx-read-3); }
-:global(.theme-noir) .btn-primary,
-:global(.theme-noir) .btn-secondary { border-radius: 999px; padding: 10px 20px; transition: transform .45s cubic-bezier(.22, 1, .36, 1), box-shadow .2s, background .2s; }
-:global(.theme-noir) .btn-primary { color: var(--nx-paper); box-shadow: 0 0 20px color-mix(in srgb, var(--nx-accent) 384.6154%, transparent), inset 0 1px color-mix(in srgb, var(--text-on-accent) 500%, transparent); }
-:global(.theme-noir) .btn-primary:hover:not(:disabled),
-:global(.theme-noir) .btn-secondary:hover { transform: translateY(-2px); }
-:global(.theme-noir) .btn-secondary { border-color: color-mix(in srgb, var(--nx-hair-strong) 114.2857%, transparent); color: var(--nx-read-3); background: color-mix(in srgb, var(--bg-surface-alt) 250%, transparent); }
-:global(.theme-noir) .release-notes,
-:global(.theme-noir) .dev-notice { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--bg-surface-alt) 172.4138%, transparent); box-shadow: inset 0 0 0 1px var(--nx-hair); }
-:global(.theme-noir) .progress-bar { height: 9px; border: 0; border-radius: 9px; background: color-mix(in srgb, var(--bg-surface-alt) 138.8889%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 160%, transparent); }
-:global(.theme-noir) .progress-fill { position: relative; overflow: hidden; border-radius: inherit; }
-:global(.theme-noir) .progress-fill::after {
+.theme-noir .state-headline { color: var(--nx-read-1); font-size: 30px; letter-spacing: -.02em; }
+.theme-noir .state-sub { color: var(--nx-read-3); }
+.theme-noir .btn-primary,
+.theme-noir .btn-secondary { border-radius: 999px; padding: 10px 20px; transition: transform .45s cubic-bezier(.22, 1, .36, 1), box-shadow .2s, background .2s; }
+.theme-noir .btn-primary { color: var(--nx-paper); box-shadow: 0 0 20px color-mix(in srgb, var(--nx-accent) 384.6154%, transparent), inset 0 1px color-mix(in srgb, var(--text-on-accent) 500%, transparent); }
+.theme-noir .btn-primary:hover:not(:disabled),
+.theme-noir .btn-secondary:hover { transform: translateY(-2px); }
+.theme-noir .btn-secondary { border-color: color-mix(in srgb, var(--nx-hair-strong) 114.2857%, transparent); color: var(--nx-read-3); background: color-mix(in srgb, var(--bg-surface-alt) 250%, transparent); }
+.theme-noir .release-notes,
+.theme-noir .dev-notice { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--bg-surface-alt) 172.4138%, transparent); box-shadow: inset 0 0 0 1px var(--nx-hair); }
+.theme-noir .progress-bar { height: 9px; border: 0; border-radius: 9px; background: color-mix(in srgb, var(--bg-surface-alt) 138.8889%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 160%, transparent); }
+.theme-noir .progress-fill { position: relative; overflow: hidden; border-radius: inherit; }
+.theme-noir .progress-fill::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -825,15 +825,15 @@ export default defineComponent({
   transform: translateX(-100%);
   animation: updates-noir-shimmer 1.7s ease-in-out infinite;
 }
-:global(.theme-noir) .info-badge { color: var(--nx-accent-2); background: color-mix(in srgb, var(--nx-accent) 1000%, transparent); border-color: color-mix(in srgb, var(--nx-accent-2) 357.1429%, transparent); }
-:global(.theme-noir) .footer-version { color: var(--nx-read-5); }
+.theme-noir .info-badge { color: var(--nx-accent-2); background: color-mix(in srgb, var(--nx-accent) 1000%, transparent); border-color: color-mix(in srgb, var(--nx-accent-2) 357.1429%, transparent); }
+.theme-noir .footer-version { color: var(--nx-read-5); }
 @keyframes updates-noir-enter { from { opacity: 0; transform: translateY(8px); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @keyframes updates-noir-shimmer { to { transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .state-block,
-  :global(.theme-noir) .progress-fill::after,
-  :global(.theme-noir) .spinner { animation: none; }
-  :global(.theme-noir) .btn-primary,
-  :global(.theme-noir) .btn-secondary { transition: none; }
+  .theme-noir .state-block,
+  .theme-noir .progress-fill::after,
+  .theme-noir .spinner { animation: none; }
+  .theme-noir .btn-primary,
+  .theme-noir .btn-secondary { transition: none; }
 }
 </style>

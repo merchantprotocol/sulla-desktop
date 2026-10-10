@@ -194,29 +194,29 @@ h1 {
 </style>
 
 <style scoped>
-:global(.theme-noir) .labs-page {
+.theme-noir .labs-page {
   padding: 34px 38px;
   background:
     radial-gradient(90% 65% at 8% 0%, color-mix(in srgb, var(--nx-accent) 12%, transparent), transparent 58%),
     var(--nx-paper);
 }
 
-:global(.theme-noir) .labs-header {
+.theme-noir .labs-header {
   margin-bottom: 28px;
   animation: noir-labs-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
 }
 
-:global(.theme-noir) .labs-title-row {
+.theme-noir .labs-title-row {
   align-items: baseline;
   gap: 10px;
   margin-bottom: 6px;
 }
 
-:global(.theme-noir) .labs-icon {
+.theme-noir .labs-icon {
   display: none;
 }
 
-:global(.theme-noir) h1 {
+.theme-noir h1 {
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 32px;
@@ -224,20 +224,20 @@ h1 {
   letter-spacing: -0.02em;
 }
 
-:global(.theme-noir) .labs-badge {
+.theme-noir .labs-badge {
   color: var(--nx-accent-2);
   background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
   border-color: color-mix(in srgb, var(--nx-accent-2) 28%, transparent);
   border-radius: 9px;
 }
 
-:global(.theme-noir) .labs-subtitle {
+.theme-noir .labs-subtitle {
   color: var(--nx-read-3);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
 }
 
-:global(.theme-noir) .labs-card {
+.theme-noir .labs-card {
   padding: 20px;
   border-color: var(--nx-hair);
   border-radius: 18px;
@@ -246,13 +246,13 @@ h1 {
   transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), border-color 0.2s ease, background 0.2s ease;
 }
 
-:global(.theme-noir) .labs-card:hover {
+.theme-noir .labs-card:hover {
   border-color: color-mix(in srgb, var(--nx-accent-2) 35%, transparent);
   background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 14%, transparent), color-mix(in srgb, var(--nx-accent) 3.5%, transparent));
   transform: translateY(-3px);
 }
 
-:global(.theme-noir) .card-icon {
+.theme-noir .card-icon {
   width: 48px;
   height: 48px;
   color: var(--nx-accent-2);
@@ -262,16 +262,16 @@ h1 {
   box-shadow: 0 0 24px color-mix(in srgb, var(--nx-accent) 12%, transparent);
 }
 
-:global(.theme-noir) .card-body h3 {
+.theme-noir .card-body h3 {
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 19px;
 }
 
-:global(.theme-noir) .card-body p { color: var(--nx-read-3); }
-:global(.theme-noir) .card-footer { border-color: var(--nx-hair); }
-:global(.theme-noir) .card-status,
-:global(.theme-noir) .card-footer svg { color: var(--nx-accent-2); }
+.theme-noir .card-body p { color: var(--nx-read-3); }
+.theme-noir .card-footer { border-color: var(--nx-hair); }
+.theme-noir .card-status,
+.theme-noir .card-footer svg { color: var(--nx-accent-2); }
 
 @keyframes noir-labs-in {
   from { opacity: 0; transform: translateY(8px); filter: blur(8px); }
@@ -279,7 +279,7 @@ h1 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .labs-header { animation: none; }
-  :global(.theme-noir) .labs-card { transition-duration: 0.01ms; }
+  .theme-noir .labs-header { animation: none; }
+  .theme-noir .labs-card { transition-duration: 0.01ms; }
 }
 </style>

@@ -237,13 +237,13 @@ onUnmounted(() => {
   }
 }
 
-:global(.theme-noir) .frw-container {
+.theme-noir .frw-container {
   --fr-wait-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   background: transparent;
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .frw-container::before {
+.theme-noir .frw-container::before {
   content: "FINISHING";
   display: block;
   margin-top: 5px;
@@ -254,7 +254,7 @@ onUnmounted(() => {
   color: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .frw-container > .frw-title {
+.theme-noir .frw-container > .frw-title {
   max-width: 650px;
   margin: 7px 0 8px;
   font-family: "Playfair Display", Georgia, serif;
@@ -265,55 +265,55 @@ onUnmounted(() => {
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .frw-subtitle {
+.theme-noir .frw-subtitle {
   font-size: 14px;
   line-height: 1.6;
   color: var(--nx-read-3);
 }
 
-:global(.theme-noir) .frw-signin,
-:global(.theme-noir) .frw-progress-box {
+.theme-noir .frw-signin,
+.theme-noir .frw-progress-box {
   border-radius: 18px;
   background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
   box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
 
-:global(.theme-noir) .frw-signin {
+.theme-noir .frw-signin {
   background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 14%, transparent), color-mix(in srgb, var(--nx-accent) 2.5%, transparent));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 22%, transparent);
 }
 
-:global(.theme-noir) .frw-signin h4,
-:global(.theme-noir) .frw-progress-box h4 {
+.theme-noir .frw-signin h4,
+.theme-noir .frw-progress-box h4 {
   color: var(--nx-read-1);
   font-weight: 600;
 }
 
-:global(.theme-noir) .frw-muted {
+.theme-noir .frw-muted {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
   line-height: 1.6;
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .frw-progress-track {
+.theme-noir .frw-progress-track {
   height: 5px;
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .7);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 7%, transparent);
 }
 
-:global(.theme-noir) .frw-progress-bar {
+.theme-noir .frw-progress-bar {
   height: 5px;
   background: linear-gradient(90deg, var(--nx-accent), var(--nx-accent-2));
   box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 52%, transparent);
   transition: width .58s var(--fr-wait-spring);
 }
 
-:global(.theme-noir) .frw-success { color: var(--nx-success); }
-:global(.theme-noir) .frw-error { color: rgb(from var(--nx-danger) calc(r - 4) calc(g + 82) calc(b + 86)); }
+.theme-noir .frw-success { color: var(--nx-success); }
+.theme-noir .frw-error { color: rgb(from var(--nx-danger) calc(r - 4) calc(g + 82) calc(b + 86)); }
 
-:global(.theme-noir) .frw-btn-accent,
-:global(.theme-noir) .frw-btn-secondary {
+.theme-noir .frw-btn-accent,
+.theme-noir .frw-btn-secondary {
   min-height: 36px;
   padding-inline: 16px;
   border-radius: 18px;
@@ -321,25 +321,25 @@ onUnmounted(() => {
   transition: transform .58s var(--fr-wait-spring), box-shadow .2s ease;
 }
 
-:global(.theme-noir) .frw-btn-accent {
+.theme-noir .frw-btn-accent {
   color: #fff;
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 34%, transparent);
 }
 
-:global(.theme-noir) .frw-btn-secondary {
+.theme-noir .frw-btn-secondary {
   color: var(--nx-read-2);
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .5);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
 }
 
-:global(.theme-noir) .frw-btn-accent:active,
-:global(.theme-noir) .frw-btn-secondary:active { transform: scale(.95); }
+.theme-noir .frw-btn-accent:active,
+.theme-noir .frw-btn-secondary:active { transform: scale(.95); }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .frw-progress-bar,
-  :global(.theme-noir) .frw-btn-accent,
-  :global(.theme-noir) .frw-btn-secondary {
+  .theme-noir .frw-progress-bar,
+  .theme-noir .frw-btn-accent,
+  .theme-noir .frw-btn-secondary {
     transition-duration: .01ms;
   }
 }

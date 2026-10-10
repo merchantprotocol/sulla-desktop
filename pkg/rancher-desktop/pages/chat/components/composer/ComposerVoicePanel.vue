@@ -142,19 +142,19 @@ const speaking = computed(() => props.speaking === true);
   background: var(--steel-500); color: white;
   box-shadow: 0 0 14px rgba(106, 176, 204, 0.35);
 }
-:global(.theme-noir) .voice-ui {
+.theme-noir .voice-ui {
   flex: 0 0 100%; height: 54px; gap: 14px; padding: 0 18px;
   animation: noir-voice-in 0.4s cubic-bezier(.22, 1, .36, 1) both;
 }
-:global(.theme-noir) .label {
+.theme-noir .label {
   color: var(--nx-read-1); font-family: var(--font-body); font-size: 14px;
   letter-spacing: 0; text-transform: none; font-weight: 500;
 }
-:global(.theme-noir) .label::before { display: none; }
-:global(.theme-noir) .timer { color: var(--nx-read-4); font: 10.5px var(--mono); }
-:global(.theme-noir) .waveform { order: -1; flex: 0 0 96px; height: 28px; gap: 3px; opacity: 0.55; }
-:global(.theme-noir) .waveform span { width: 3px; border-radius: 2px; background: var(--nx-accent-2); box-shadow: 0 0 6px color-mix(in srgb, var(--nx-accent-2) 60%, transparent); }
-:global(.theme-noir) .stop-rec { color: var(--nx-read-3); border-color: var(--nx-hair-strong); }
+.theme-noir .label::before { display: none; }
+.theme-noir .timer { color: var(--nx-read-4); font: 10.5px var(--mono); }
+.theme-noir .waveform { order: -1; flex: 0 0 96px; height: 28px; gap: 3px; opacity: 0.55; }
+.theme-noir .waveform span { width: 3px; border-radius: 2px; background: var(--nx-accent-2); box-shadow: 0 0 6px color-mix(in srgb, var(--nx-accent-2) 60%, transparent); }
+.theme-noir .stop-rec { color: var(--nx-read-3); border-color: var(--nx-hair-strong); }
 @keyframes noir-voice-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { :global(.theme-noir) .voice-ui { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .theme-noir .voice-ui { animation: none; } }
 </style>

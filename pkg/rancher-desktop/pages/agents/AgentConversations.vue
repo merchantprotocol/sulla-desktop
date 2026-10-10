@@ -447,47 +447,47 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
   list-style: revert;
 }
 
-:global(.theme-noir) .conv-root {
+.theme-noir .conv-root {
   background:
     radial-gradient(circle at 80% 0%, color-mix(in srgb, var(--nx-accent) 7%, transparent), transparent 32%),
     var(--nx-paper);
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .conv-toolbar {
+.theme-noir .conv-toolbar {
   min-height: 72px;
   border-color: var(--nx-hair);
   background: color-mix(in srgb, var(--bg-surface-alt) 68%, transparent);
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir) .conv-toolbar p:first-of-type {
+.theme-noir .conv-toolbar p:first-of-type {
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 1.15rem;
 }
 
-:global(.theme-noir) .conv-toolbar p:last-of-type {
+.theme-noir .conv-toolbar p:last-of-type {
   color: var(--nx-read-4);
   font-size: 0.65rem;
   letter-spacing: 0.08em;
 }
 
-:global(.theme-noir) .conv-back {
+.theme-noir .conv-back {
   border: 1px solid var(--nx-hair);
   border-radius: 999px;
   background: color-mix(in srgb, var(--nx-hair-strong) 21.875%, transparent);
   color: var(--text-info);
 }
 
-:global(.theme-noir) .conv-list {
+.theme-noir .conv-list {
   width: 350px;
   padding: 14px;
   border-color: var(--nx-hair);
   background: color-mix(in srgb, var(--bg-surface-alt) 45%, transparent);
 }
 
-:global(.theme-noir) .conv-item {
+.theme-noir .conv-item {
   margin-bottom: 8px;
   border: 1px solid var(--nx-hair);
   border-radius: 14px;
@@ -495,19 +495,19 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
   transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
 }
 
-:global(.theme-noir) .conv-item:hover,
-:global(.theme-noir) .conv-item-active {
+.theme-noir .conv-item:hover,
+.theme-noir .conv-item-active {
   transform: translateX(3px);
   border-color: color-mix(in srgb, var(--nx-accent-2) 24%, transparent);
   background: color-mix(in srgb, var(--nx-accent) 8.5%, transparent);
 }
 
-:global(.theme-noir) .conv-preview {
+.theme-noir .conv-preview {
   color: var(--nx-read-3);
   line-height: 1.5;
 }
 
-:global(.theme-noir) .conv-event {
+.theme-noir .conv-event {
   color: var(--nx-read-5);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.64rem;
@@ -515,7 +515,7 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
   text-transform: uppercase;
 }
 
-:global(.theme-noir) .conv-tool {
+.theme-noir .conv-tool {
   padding: 11px 14px;
   border: 1px solid var(--nx-hair);
   border-left: 3px solid var(--nx-accent);
@@ -523,23 +523,23 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
   background: color-mix(in srgb, var(--bg-surface-alt) 72%, transparent);
 }
 
-:global(.theme-noir) .conv-msg {
+.theme-noir .conv-msg {
   border: 1px solid var(--nx-hair);
   border-radius: 16px;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
 }
 
-:global(.theme-noir) .conv-msg-user {
+.theme-noir .conv-msg-user {
   margin-left: clamp(2rem, 14vw, 12rem);
   background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 16%, transparent), color-mix(in srgb, var(--nx-accent) 6%, transparent));
 }
 
-:global(.theme-noir) .conv-msg-assistant {
+.theme-noir .conv-msg-assistant {
   margin-right: clamp(1rem, 8vw, 7rem);
   background: color-mix(in srgb, var(--nx-hair-strong) 20%, transparent);
 }
 
-:global(.theme-noir) .conv-msg > p:first-child {
+.theme-noir .conv-msg > p:first-child {
   color: var(--nx-read-4);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
@@ -547,13 +547,13 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
   text-transform: uppercase;
 }
 
-:global(.theme-noir) .conv-markdown :deep(pre) {
+.theme-noir .conv-markdown :deep(pre) {
   border: 1px solid var(--nx-hair);
   background: color-mix(in srgb, var(--nx-paper) 72%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .conv-item {
+  .theme-noir .conv-item {
     transition: none;
   }
 }

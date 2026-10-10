@@ -630,7 +630,7 @@ onBeforeUnmount(() => {
   margin-top: -2px;
 }
 
-:global(.theme-noir) .account-card {
+.theme-noir .account-card {
   padding: 24px;
   border-color: var(--nx-hair);
   border-radius: 18px;
@@ -639,29 +639,29 @@ onBeforeUnmount(() => {
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .account-card-header {
+.theme-noir .account-card-header {
   border-color: var(--nx-hair);
 }
 
-:global(.theme-noir) .account-card-title {
+.theme-noir .account-card-title {
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 1.15rem;
   font-weight: 500;
 }
 
-:global(.theme-noir) .account-card-icon {
+.theme-noir .account-card-icon {
   color: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .account-label {
+.theme-noir .account-label {
   color: var(--text-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.12em;
 }
 
-:global(.theme-noir) .account-input {
+.theme-noir .account-input {
   min-height: 40px;
   border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
   border-radius: 12px;
@@ -669,41 +669,41 @@ onBeforeUnmount(() => {
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .account-input:focus {
+.theme-noir .account-input:focus {
   border-color: color-mix(in srgb, var(--nx-accent-2) 42%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 9%, transparent);
 }
 
-:global(.theme-noir) .account-hint,
-:global(.theme-noir) .account-relay-state {
+.theme-noir .account-hint,
+.theme-noir .account-relay-state {
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .account-tabs {
+.theme-noir .account-tabs {
   border-color: var(--nx-hair);
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-surface-alt) 62%, transparent);
 }
 
-:global(.theme-noir) .account-tab {
+.theme-noir .account-tab {
   border-radius: 999px;
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .account-tab-active {
+.theme-noir .account-tab-active {
   border: 1px solid color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
   background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 22%, transparent), color-mix(in srgb, var(--nx-accent) 8%, transparent));
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .account-save-btn {
+.theme-noir .account-save-btn {
   border-radius: 10px;
   background: linear-gradient(135deg, var(--nx-accent), var(--nx-accent-2));
   box-shadow: 0 8px 22px color-mix(in srgb, var(--nx-accent) 18%, transparent);
   color: var(--nx-paper);
 }
 
-:global(.theme-noir) .account-action-btn {
+.theme-noir .account-action-btn {
   border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
   border-radius: 10px;
   color: var(--text-info);

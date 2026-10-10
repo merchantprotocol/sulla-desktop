@@ -294,12 +294,12 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .heartbeat-heart.enabled { animation: none; }
 }
-:global(.theme-noir) .heartbeat-heart {
+.theme-noir .heartbeat-heart {
   display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
   border-radius: 50%; color: var(--nx-read-4); opacity: 1; font-size: 15px;
 }
-:global(.theme-noir) .heartbeat-heart:hover { color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 12%, transparent); }
-:global(.theme-noir) .heartbeat-heart.enabled {
+.theme-noir .heartbeat-heart:hover { color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 12%, transparent); }
+.theme-noir .heartbeat-heart.enabled {
   color: var(--nx-accent-2); text-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent-2) 70%, transparent);
   animation: noir-heartbeat 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
 }
@@ -308,13 +308,13 @@ onBeforeUnmount(() => {
   15% { transform: scale(1.22); }
   28% { transform: scale(1.08); }
 }
-:global(.theme-noir) .heartbeat-popover {
+.theme-noir .heartbeat-popover {
   right: 0; left: auto; bottom: calc(100% + 12px); border-color: var(--nx-hair-strong);
   border-radius: 18px; color: var(--nx-read-2); background: rgba(12, 18, 28, 0.98);
 }
-:global(.theme-noir-light) .heartbeat-popover { background: color-mix(in srgb, var(--nx-surface) 98%, transparent); }
+.theme-noir-light .heartbeat-popover { background: color-mix(in srgb, var(--nx-surface) 98%, transparent); }
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .heartbeat-heart.enabled { animation: none; }
+  .theme-noir .heartbeat-heart.enabled { animation: none; }
 }
 .heartbeat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .heartbeat-switch {

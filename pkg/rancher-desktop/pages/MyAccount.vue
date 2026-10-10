@@ -1180,7 +1180,7 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-:global(.theme-noir) .account-page {
+.theme-noir .account-page {
   overflow: auto;
   background:
     radial-gradient(circle at 70% -15%, color-mix(in srgb, var(--nx-accent) 10%, transparent), transparent 36%),
@@ -1188,7 +1188,7 @@ onBeforeUnmount(() => {
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .account-scroll {
+.theme-noir .account-scroll {
   display: flex;
   width: min(100%, 920px);
   max-width: none;
@@ -1196,7 +1196,7 @@ onBeforeUnmount(() => {
   padding: 42px 34px 64px;
 }
 
-:global(.theme-noir) .account-hero {
+.theme-noir .account-hero {
   order: -2;
   gap: 22px;
   padding: 28px 30px;
@@ -1206,7 +1206,7 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 4.5%, transparent), 0 24px 70px color-mix(in srgb, var(--shadow) 26.6667%, transparent);
 }
 
-:global(.theme-noir) .account-avatar {
+.theme-noir .account-avatar {
   width: 72px;
   height: 72px;
   border: 1px solid color-mix(in srgb, var(--nx-accent-2) 32%, transparent);
@@ -1218,7 +1218,7 @@ onBeforeUnmount(() => {
   font-size: 1.55rem;
 }
 
-:global(.theme-noir) .account-hero-eyebrow {
+.theme-noir .account-hero-eyebrow {
   display: block;
   margin: 0 0 4px;
   color: var(--nx-accent-2);
@@ -1227,7 +1227,7 @@ onBeforeUnmount(() => {
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir) .account-name {
+.theme-noir .account-name {
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 2.15rem;
@@ -1235,17 +1235,17 @@ onBeforeUnmount(() => {
   letter-spacing: -0.035em;
 }
 
-:global(.theme-noir) .account-email {
+.theme-noir .account-email {
   color: var(--nx-read-4);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
 }
 
-:global(.theme-noir) .account-cloud-card {
+.theme-noir .account-cloud-card {
   order: -1;
 }
 
-:global(.theme-noir) .account-card {
+.theme-noir .account-card {
   padding: 24px;
   border-color: var(--nx-hair);
   border-radius: 18px;
@@ -1253,30 +1253,30 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
 }
 
-:global(.theme-noir) .account-card-header {
+.theme-noir .account-card-header {
   border-color: var(--nx-hair);
 }
 
-:global(.theme-noir) .account-card-icon {
+.theme-noir .account-card-icon {
   color: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .account-card-title {
+.theme-noir .account-card-title {
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 1.15rem;
   font-weight: 500;
 }
 
-:global(.theme-noir) .account-label {
+.theme-noir .account-label {
   color: var(--text-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.12em;
 }
 
-:global(.theme-noir) .account-input,
-:global(.theme-noir) .account-textarea {
+.theme-noir .account-input,
+.theme-noir .account-textarea {
   min-height: 40px;
   border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
   border-radius: 12px;
@@ -1284,37 +1284,37 @@ onBeforeUnmount(() => {
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .account-input:focus,
-:global(.theme-noir) .account-textarea:focus {
+.theme-noir .account-input:focus,
+.theme-noir .account-textarea:focus {
   border-color: color-mix(in srgb, var(--nx-accent-2) 42%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 9%, transparent);
 }
 
-:global(.theme-noir) .account-hint,
-:global(.theme-noir) .account-relay-state {
+.theme-noir .account-hint,
+.theme-noir .account-relay-state {
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .account-tabs {
+.theme-noir .account-tabs {
   max-width: 360px;
   border-color: var(--nx-hair);
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-surface-alt) 62%, transparent);
 }
 
-:global(.theme-noir) .account-tab {
+.theme-noir .account-tab {
   border-radius: 999px;
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .account-tab-active {
+.theme-noir .account-tab-active {
   border: 1px solid color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
   background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 22%, transparent), color-mix(in srgb, var(--nx-accent) 8%, transparent));
   box-shadow: 0 6px 18px color-mix(in srgb, var(--nx-accent) 11%, transparent);
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .account-save-btn {
+.theme-noir .account-save-btn {
   border: 1px solid color-mix(in srgb, var(--nx-accent-2) 32%, transparent);
   border-radius: 10px;
   background: linear-gradient(135deg, var(--nx-accent), var(--nx-accent-2));
@@ -1322,42 +1322,42 @@ onBeforeUnmount(() => {
   color: var(--nx-paper);
 }
 
-:global(.theme-noir) .account-action-btn {
+.theme-noir .account-action-btn {
   border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
   border-radius: 10px;
   color: var(--text-info);
 }
 
-:global(.theme-noir) .account-action-btn:hover {
+.theme-noir .account-action-btn:hover {
   border-color: color-mix(in srgb, var(--nx-accent-2) 28%, transparent);
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir) .account-status-on {
+.theme-noir .account-status-on {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-success) 9%, transparent), 0 0 12px color-mix(in srgb, var(--nx-success) 58%, transparent);
 }
 
-:global(.theme-noir) .account-stats {
+.theme-noir .account-stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-:global(.theme-noir) .account-stat {
+.theme-noir .account-stat {
   padding: 18px;
   border: 1px solid var(--nx-hair);
   border-radius: 14px;
   background: color-mix(in srgb, var(--bg-surface-alt) 38%, transparent);
 }
 
-:global(.theme-noir) .account-stat-value {
+.theme-noir .account-stat-value {
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 1.8rem;
   font-weight: 500;
 }
 
-:global(.theme-noir) .account-stat-label {
+.theme-noir .account-stat-label {
   color: var(--nx-read-4);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.6rem;

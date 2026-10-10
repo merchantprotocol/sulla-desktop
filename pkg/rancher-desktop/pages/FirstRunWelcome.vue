@@ -660,19 +660,19 @@ input:hover, select:hover {
   background-color: var(--bg-surface-alt);
 }
 
-:global(.theme-noir) .heading-text,
-:global(.theme-noir) .secondary-text,
-:global(.theme-noir) .label-text {
+.theme-noir .heading-text,
+.theme-noir .secondary-text,
+.theme-noir .label-text {
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .max-w-lg.mx-0.p-6 {
+.theme-noir .max-w-lg.mx-0.p-6 {
   --fr-account-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .max-w-lg.mx-0.p-6 > form::before,
-:global(.theme-noir) .max-w-lg.mx-0.p-6 > div::before {
+.theme-noir .max-w-lg.mx-0.p-6 > form::before,
+.theme-noir .max-w-lg.mx-0.p-6 > div::before {
   content: "ACCOUNT & VAULT";
   display: block;
   margin-top: 5px;
@@ -683,7 +683,7 @@ input:hover, select:hover {
   color: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .max-w-lg.mx-0.p-6 h2 {
+.theme-noir .max-w-lg.mx-0.p-6 h2 {
   margin: 7px 0 8px;
   font-family: "Playfair Display", Georgia, serif;
   font-size: 34px;
@@ -693,13 +693,13 @@ input:hover, select:hover {
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .secondary-text {
+.theme-noir .secondary-text {
   font-size: 14px;
   line-height: 1.6;
   color: var(--nx-read-3);
 }
 
-:global(.theme-noir) .max-w-lg.mx-0.p-6 :deep(fieldset) {
+.theme-noir .max-w-lg.mx-0.p-6 :deep(fieldset) {
   padding: 14px 16px 4px;
   border-color: var(--nx-hair);
   border-radius: 18px;
@@ -707,7 +707,7 @@ input:hover, select:hover {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 4%, transparent);
 }
 
-:global(.theme-noir) .max-w-lg.mx-0.p-6 :deep(legend) {
+.theme-noir .max-w-lg.mx-0.p-6 :deep(legend) {
   padding: 0 7px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10px;
@@ -717,7 +717,7 @@ input:hover, select:hover {
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .max-w-lg.mx-0.p-6 label:not(.flex) {
+.theme-noir .max-w-lg.mx-0.p-6 label:not(.flex) {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10px;
   font-weight: 500;
@@ -726,7 +726,7 @@ input:hover, select:hover {
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .form-input {
+.theme-noir .form-input {
   min-height: 40px;
   padding: 0 13px;
   border-color: transparent;
@@ -738,25 +738,25 @@ input:hover, select:hover {
   transition: box-shadow .2s ease, background .2s ease;
 }
 
-:global(.theme-noir) .form-input:hover {
+.theme-noir .form-input:hover {
   border-color: transparent;
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .72);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 20%, transparent);
 }
 
-:global(.theme-noir) .form-input:focus {
+.theme-noir .form-input:focus {
   border-color: transparent;
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .78);
   box-shadow: inset 0 0 0 1px var(--nx-accent-2), 0 0 0 3px color-mix(in srgb, var(--nx-accent) 18%, transparent), 0 0 18px color-mix(in srgb, var(--nx-accent) 12%, transparent);
 }
 
-:global(.theme-noir) .form-input.input-error {
+.theme-noir .form-input.input-error {
   box-shadow: inset 0 0 0 1px var(--nx-danger), 0 0 0 3px color-mix(in srgb, var(--nx-danger) 10%, transparent);
 }
 
-:global(.theme-noir) .error-text { color: rgb(from var(--nx-danger) calc(r - 4) calc(g + 82) calc(b + 86)); }
+.theme-noir .error-text { color: rgb(from var(--nx-danger) calc(r - 4) calc(g + 82) calc(b + 86)); }
 
-:global(.theme-noir) .max-w-lg.mx-0.p-6 input[type="checkbox"] {
+.theme-noir .max-w-lg.mx-0.p-6 input[type="checkbox"] {
   width: 38px;
   height: 22px;
   flex: none;
@@ -769,7 +769,7 @@ input:hover, select:hover {
   cursor: pointer;
 }
 
-:global(.theme-noir) .max-w-lg.mx-0.p-6 input[type="checkbox"]::after {
+.theme-noir .max-w-lg.mx-0.p-6 input[type="checkbox"]::after {
   content: "";
   display: block;
   width: 16px;
@@ -781,29 +781,29 @@ input:hover, select:hover {
   transition: transform .58s var(--fr-account-spring), background .2s ease;
 }
 
-:global(.theme-noir) .max-w-lg.mx-0.p-6 input[type="checkbox"]:checked {
+.theme-noir .max-w-lg.mx-0.p-6 input[type="checkbox"]:checked {
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 42%, transparent);
 }
 
-:global(.theme-noir) .max-w-lg.mx-0.p-6 input[type="checkbox"]:checked::after {
+.theme-noir .max-w-lg.mx-0.p-6 input[type="checkbox"]:checked::after {
   transform: translateX(16px);
   background: #fff;
 }
 
-:global(.theme-noir) .recovery-key-box {
+.theme-noir .recovery-key-box {
   border: 0;
   border-radius: 16px;
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .62);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 30%, transparent), 0 0 28px color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir) .recovery-key-box code {
+.theme-noir .recovery-key-box code {
   color: rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16));
   text-shadow: 0 0 12px color-mix(in srgb, var(--nx-accent-2) 28%, transparent);
 }
 
-:global(.theme-noir) .btn-primary {
+.theme-noir .btn-primary {
   min-height: 40px;
   padding-inline: 20px;
   border-radius: 20px;
@@ -813,14 +813,14 @@ input:hover, select:hover {
   transition: transform .58s var(--fr-account-spring), box-shadow .2s ease;
 }
 
-:global(.theme-noir) .btn-primary:hover {
+.theme-noir .btn-primary:hover {
   background: linear-gradient(180deg, rgb(from var(--nx-accent-2) calc(r + 8) calc(g + 10) calc(b + 9)), var(--nx-accent));
   box-shadow: 0 0 24px color-mix(in srgb, var(--nx-accent) 48%, transparent);
 }
 
-:global(.theme-noir) .btn-primary:active { transform: scale(.95); }
+.theme-noir .btn-primary:active { transform: scale(.95); }
 
-:global(.theme-noir) .btn-back {
+.theme-noir .btn-back {
   min-height: 40px;
   padding-inline: 18px;
   border-radius: 20px;
@@ -829,7 +829,7 @@ input:hover, select:hover {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
 }
 
-:global(.theme-noir) .link-btn {
+.theme-noir .link-btn {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
   color: rgb(from var(--nx-accent-2) calc(r + 34) calc(g - 4) calc(b - 3));
@@ -837,14 +837,14 @@ input:hover, select:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .max-w-lg.mx-0.p-6 input[type="checkbox"]::after,
-  :global(.theme-noir) .btn-primary {
+  .theme-noir .max-w-lg.mx-0.p-6 input[type="checkbox"]::after,
+  .theme-noir .btn-primary {
     transition-duration: .01ms;
   }
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-:global(.theme-noir-light) .max-w-lg.mx-0.p-6 input[type="checkbox"]::after {
+.theme-noir-light .max-w-lg.mx-0.p-6 input[type="checkbox"]::after {
   box-shadow: 0 2px 6px color-mix(in srgb, var(--nx-ink) 14%, transparent);
 }
 </style>

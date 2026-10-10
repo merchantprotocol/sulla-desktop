@@ -495,7 +495,7 @@ export default defineComponent({
 </style>
 
 <style scoped>
-:global(.theme-noir) .context-menu {
+.theme-noir .context-menu {
   min-width: 200px;
   padding: 6px;
   color: var(--nx-read-2);
@@ -507,7 +507,7 @@ export default defineComponent({
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
-:global(.theme-noir) .context-menu-item {
+.theme-noir .context-menu-item {
   min-height: 34px;
   padding: 7px 10px;
   color: var(--nx-read-3);
@@ -515,15 +515,15 @@ export default defineComponent({
   transition: color 0.14s, background 0.14s, transform 0.35s cubic-bezier(.22, 1, .36, 1);
 }
 
-:global(.theme-noir) .context-menu-item:hover {
+.theme-noir .context-menu-item:hover {
   color: var(--nx-read-1);
   background: color-mix(in srgb, var(--nx-accent) 14%, transparent);
   transform: translateX(2px);
 }
 
-:global(.theme-noir) .context-menu-shortcut { color: var(--nx-read-5); }
-:global(.theme-noir) .context-menu-sep { background: var(--nx-hair); }
-:global(.theme-noir) .context-menu-subheader {
+.theme-noir .context-menu-shortcut { color: var(--nx-read-5); }
+.theme-noir .context-menu-sep { background: var(--nx-hair); }
+.theme-noir .context-menu-subheader {
   color: var(--nx-accent-2);
   font-size: 9.5px;
   font-weight: 500;
@@ -532,6 +532,6 @@ export default defineComponent({
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .context-menu-item { transition-duration: 0.01ms; }
+  .theme-noir .context-menu-item { transition-duration: 0.01ms; }
 }
 </style>

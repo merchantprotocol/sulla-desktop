@@ -414,17 +414,17 @@ input:focus, textarea:focus, select:focus {
   resize: vertical;
 }
 
-:global(.theme-noir) .section {
+.theme-noir .section {
   padding: 16px;
   border: 1px solid var(--nx-hair);
   border-radius: 17px;
   background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
 }
-:global(.theme-noir) .section h4 { color: var(--nx-accent-2); letter-spacing: 0.14em; }
-:global(.theme-noir) input,
-:global(.theme-noir) select,
-:global(.theme-noir) textarea { min-height: 40px; border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent); border-radius: 12px; color: var(--nx-read-1); background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.68); }
-:global(.theme-noir) input:focus,
-:global(.theme-noir) select:focus,
-:global(.theme-noir) textarea:focus { border-color: color-mix(in srgb, var(--nx-accent-2) 48%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 10%, transparent); }
+.theme-noir .section h4 { color: var(--nx-accent-2); letter-spacing: 0.14em; }
+.theme-noir input,
+.theme-noir select,
+.theme-noir textarea { min-height: 40px; border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent); border-radius: 12px; color: var(--nx-read-1); background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.68); }
+.theme-noir input:focus,
+.theme-noir select:focus,
+.theme-noir textarea:focus { border-color: color-mix(in srgb, var(--nx-accent-2) 48%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 10%, transparent); }
 </style>

@@ -39,14 +39,14 @@ defineEmits<{ (e: 'toggle'): void }>();
   color: white; animation: chat-pulse-glow 1.6s ease-in-out infinite;
 }
 .noir-mic { display: none; width: 17px; height: 17px; }
-:global(.theme-noir) .mic-btn {
+.theme-noir .mic-btn {
   width: 34px; height: 34px; border: 0; color: var(--nx-read-3); background: transparent;
   transition: background 0.16s, color 0.16s, box-shadow 0.16s;
 }
-:global(.theme-noir) .classic-mic { display: none; }
-:global(.theme-noir) .noir-mic { display: block; }
-:global(.theme-noir) .mic-btn:hover { border: 0; color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 12%, transparent); box-shadow: none; }
-:global(.theme-noir) .mic-btn.live {
+.theme-noir .classic-mic { display: none; }
+.theme-noir .noir-mic { display: block; }
+.theme-noir .mic-btn:hover { border: 0; color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 12%, transparent); box-shadow: none; }
+.theme-noir .mic-btn.live {
   color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 30%, transparent); border: 0;
   animation: noir-mic-pulse 1.6s cubic-bezier(.22, 1, .36, 1) infinite;
 }
@@ -55,6 +55,6 @@ defineEmits<{ (e: 'toggle'): void }>();
   to { box-shadow: 0 0 0 12px color-mix(in srgb, var(--nx-accent-2) 0%, transparent); }
 }
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .mic-btn.live { animation: none; }
+  .theme-noir .mic-btn.live { animation: none; }
 }
 </style>

@@ -1136,7 +1136,7 @@ async function onImport() {
 
 // Noir is a separate visual mode. These overrides deliberately leave the
 // established Studio presentation untouched in every other theme.
-:global(.theme-noir) .routines-home {
+.theme-noir .routines-home {
   --noir-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
   color: var(--nx-read-2);
   background:
@@ -1145,13 +1145,13 @@ async function onImport() {
     var(--nx-paper);
 }
 
-:global(.theme-noir) .glow.violet,
-:global(.theme-noir) .stars,
-:global(.theme-noir) .bracket {
+.theme-noir .glow.violet,
+.theme-noir .stars,
+.theme-noir .bracket {
   display: none;
 }
 
-:global(.theme-noir) .glow.blue {
+.theme-noir .glow.blue {
   top: -150px;
   left: 24%;
   width: 720px;
@@ -1160,12 +1160,12 @@ async function onImport() {
   background: radial-gradient(circle, color-mix(in srgb, var(--nx-accent) 22%, transparent), transparent 68%);
 }
 
-:global(.theme-noir) .shell {
+.theme-noir .shell {
   max-width: 1240px;
   padding: 30px 38px 48px;
 }
 
-:global(.theme-noir) .topline {
+.theme-noir .topline {
   gap: 24px;
   margin-bottom: 38px;
   padding: 14px 16px;
@@ -1176,28 +1176,28 @@ async function onImport() {
   backdrop-filter: blur(22px);
 }
 
-:global(.theme-noir) .brand-mark {
+.theme-noir .brand-mark {
   border-radius: 12px;
   color: #03060c;
   background: linear-gradient(135deg, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)), var(--nx-accent));
   box-shadow: 0 0 22px color-mix(in srgb, var(--nx-accent) 32%, transparent);
 }
 
-:global(.theme-noir-light) .brand-mark {
+.theme-noir-light .brand-mark {
   color: #fff;
 }
 
-:global(.theme-noir) .brand-name {
+.theme-noir .brand-name {
   font-family: 'Playfair Display', Georgia, serif;
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .brand-sub {
+.theme-noir .brand-sub {
   color: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .tabs,
-:global(.theme-noir) .subtabs {
+.theme-noir .tabs,
+.theme-noir .subtabs {
   gap: 3px;
   padding: 4px;
   border: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
@@ -1205,13 +1205,13 @@ async function onImport() {
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.7);
 }
 
-:global(.theme-noir) .subtabs {
+.theme-noir .subtabs {
   width: fit-content;
   margin: -16px auto 28px;
 }
 
-:global(.theme-noir) .tab,
-:global(.theme-noir) .subtab {
+.theme-noir .tab,
+.theme-noir .subtab {
   min-height: 32px;
   padding: 0 14px;
   border: 0;
@@ -1221,30 +1221,30 @@ async function onImport() {
   transition: color 0.2s, background 0.35s, box-shadow 0.35s, transform 0.58s var(--noir-spring);
 }
 
-:global(.theme-noir) .tab:hover,
-:global(.theme-noir) .subtab:hover {
+.theme-noir .tab:hover,
+.theme-noir .subtab:hover {
   color: var(--nx-read-2);
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir) .tab:active,
-:global(.theme-noir) .subtab:active {
+.theme-noir .tab:active,
+.theme-noir .subtab:active {
   transform: scale(0.96);
 }
 
-:global(.theme-noir) .tab.on,
-:global(.theme-noir) .subtab.on {
+.theme-noir .tab.on,
+.theme-noir .subtab.on {
   color: var(--nx-read-1);
   border: 0;
   background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--nx-accent-2) 52%, transparent), 0 0 20px color-mix(in srgb, var(--nx-accent) 18%, transparent);
 }
 
-:global(.theme-noir) .tab.import-btn {
+.theme-noir .tab.import-btn {
   color: rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16));
 }
 
-:global(.theme-noir) .hero {
+.theme-noir .hero {
   max-width: 820px;
   margin: 0 auto 38px;
   padding: 30px 28px 36px;
@@ -1252,69 +1252,69 @@ async function onImport() {
   animation: noir-routines-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
 }
 
-:global(.theme-noir) .kicker {
+.theme-noir .kicker {
   margin-bottom: 12px;
   color: var(--nx-accent-2);
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir) .kicker .d {
+.theme-noir .kicker .d {
   background: var(--nx-accent-2);
   box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent-2) 80%, transparent);
 }
 
-:global(.theme-noir) .hero h1 {
+.theme-noir .hero h1 {
   font-family: 'Playfair Display', Georgia, serif;
   font-size: clamp(44px, 6vw, 70px);
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .hero .dek {
+.theme-noir .hero .dek {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   color: var(--nx-read-3);
 }
 
-:global(.theme-noir) .rollup-row {
+.theme-noir .rollup-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(110px, 1fr));
   gap: 10px;
 }
 
-:global(.theme-noir) .rollup-row > div {
+.theme-noir .rollup-row > div {
   padding: 14px;
   border: 1px solid var(--nx-hair);
   border-radius: 16px;
   background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
 }
 
-:global(.theme-noir) .rollup-row b {
+.theme-noir .rollup-row b {
   font-family: 'Playfair Display', Georgia, serif;
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .btn {
+.theme-noir .btn {
   border-radius: 16px;
   transition: transform 0.58s var(--noir-spring), border-color 0.2s, background 0.2s, box-shadow 0.2s;
 }
 
-:global(.theme-noir) .btn:active {
+.theme-noir .btn:active {
   transform: scale(0.95);
 }
 
-:global(.theme-noir) .btn.primary,
-:global(.theme-noir) .btn.accent {
+.theme-noir .btn.primary,
+.theme-noir .btn.accent {
   border-color: color-mix(in srgb, var(--nx-accent-2) 48%, transparent);
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   box-shadow: 0 0 20px color-mix(in srgb, var(--nx-accent) 28%, transparent);
 }
 
-:global(.theme-noir) .closer,
-:global(.theme-noir) .ribbon {
+.theme-noir .closer,
+.theme-noir .ribbon {
   border-color: var(--nx-hair);
 }
 
-:global(.theme-noir) .ribbon {
+.theme-noir .ribbon {
   margin: 40px 72px 36px;
   border-radius: 16px;
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.62);
@@ -1328,9 +1328,9 @@ async function onImport() {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .routines-home *,
-  :global(.theme-noir) .routines-home *::before,
-  :global(.theme-noir) .routines-home *::after {
+  .theme-noir .routines-home *,
+  .theme-noir .routines-home *::before,
+  .theme-noir .routines-home *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
@@ -1338,23 +1338,23 @@ async function onImport() {
 }
 
 @media (max-width: 900px) {
-  :global(.theme-noir) .topline {
+  .theme-noir .topline {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  :global(.theme-noir) .tabs {
+  .theme-noir .tabs {
     width: 100%;
     overflow-x: auto;
   }
 
-  :global(.theme-noir) .rollup-row {
+  .theme-noir .rollup-row {
     grid-template-columns: repeat(2, minmax(110px, 1fr));
   }
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-:global(.theme-noir-light) .topline {
+.theme-noir-light .topline {
   box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025), 0 18px 50px color-mix(in srgb, var(--nx-ink) 8%, transparent);
 }
 </style>

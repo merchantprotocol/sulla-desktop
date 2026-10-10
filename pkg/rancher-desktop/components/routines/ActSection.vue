@@ -56,30 +56,30 @@ defineProps<{
   text-transform: uppercase;
 }
 
-:global(.theme-noir) .act {
+.theme-noir .act {
   margin-bottom: 14px;
 }
 
-:global(.theme-noir) .head {
+.theme-noir .head {
   gap: 12px;
   margin: 34px 0 14px;
   padding: 0 4px 11px;
   border-color: var(--nx-hair);
 }
 
-:global(.theme-noir) .num {
+.theme-noir .num {
   color: var(--nx-accent-2);
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir) .title {
+.theme-noir .title {
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 25px;
   font-style: normal;
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .count {
+.theme-noir .count {
   color: var(--nx-read-4);
 }
 </style>

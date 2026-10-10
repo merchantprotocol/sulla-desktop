@@ -722,19 +722,19 @@ onUnmounted(() => {
   gap: 1rem;
 }
 
-:global(.theme-noir) .agents-page {
+.theme-noir .agents-page {
   background:
     radial-gradient(circle at 72% -10%, color-mix(in srgb, var(--nx-accent) 9%, transparent), transparent 35%),
     var(--nx-paper);
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .agents-header {
+.theme-noir .agents-header {
   background: transparent;
   border-bottom: 1px solid var(--nx-hair);
 }
 
-:global(.theme-noir) .agents-header .font-display {
+.theme-noir .agents-header .font-display {
   background: none;
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
@@ -743,36 +743,36 @@ onUnmounted(() => {
   letter-spacing: -0.035em;
 }
 
-:global(.theme-noir) .agents-header .text-2xl {
+.theme-noir .agents-header .text-2xl {
   color: var(--nx-read-3);
   font-size: 0.875rem;
   letter-spacing: 0;
 }
 
-:global(.theme-noir) .section-label {
+.theme-noir .section-label {
   color: var(--nx-accent-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.66rem;
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir) .section-count,
-:global(.theme-noir) .badge {
+.theme-noir .section-count,
+.theme-noir .badge {
   border: 1px solid var(--nx-hair);
   background: color-mix(in srgb, var(--nx-hair-strong) 31.25%, transparent);
   color: var(--text-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-:global(.theme-noir) .agents-card {
+.theme-noir .agents-card {
   display: grid;
   gap: 0.65rem;
   overflow: visible;
   background: transparent;
 }
 
-:global(.theme-noir) .agents-card.agents-row,
-:global(.theme-noir) .agents-row {
+.theme-noir .agents-card.agents-row,
+.theme-noir .agents-row {
   position: relative;
   border: 1px solid var(--nx-hair);
   border-radius: 18px;
@@ -781,13 +781,13 @@ onUnmounted(() => {
   transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
 }
 
-:global(.theme-noir) .agents-row:hover {
+.theme-noir .agents-row:hover {
   transform: translateY(-2px);
   border-color: color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
   background: color-mix(in srgb, var(--nx-accent) 7.5%, transparent);
 }
 
-:global(.theme-noir) .agent-avatar-tile {
+.theme-noir .agent-avatar-tile {
   position: relative;
   display: grid;
   width: 42px;
@@ -804,7 +804,7 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-:global(.theme-noir) .agent-live-dot {
+.theme-noir .agent-live-dot {
   position: absolute;
   right: -3px;
   bottom: -3px;
@@ -814,12 +814,12 @@ onUnmounted(() => {
   border-radius: 50%;
 }
 
-:global(.theme-noir) .agent-live-dot-running {
+.theme-noir .agent-live-dot-running {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-success) 10%, transparent), 0 0 10px color-mix(in srgb, var(--nx-success) 65%, transparent);
   animation: agent-live-pulse 1.8s ease-in-out infinite;
 }
 
-:global(.theme-noir) .agent-action {
+.theme-noir .agent-action {
   border: 1px solid color-mix(in srgb, var(--nx-accent-2) 32%, transparent);
   background: linear-gradient(135deg, var(--nx-accent), var(--nx-accent-2));
   box-shadow: 0 8px 24px color-mix(in srgb, var(--nx-accent) 18%, transparent);
@@ -827,22 +827,22 @@ onUnmounted(() => {
   font-weight: 650;
 }
 
-:global(.theme-noir) .agent-link {
+.theme-noir .agent-link {
   color: var(--text-info);
 }
 
-:global(.theme-noir) .agent-link:hover {
+.theme-noir .agent-link:hover {
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .agent-modal-backdrop {
+.theme-noir .agent-modal-backdrop {
   padding: 2rem;
   background: color-mix(in srgb, var(--nx-paper) 78%, transparent);
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir) .agent-modal {
+.theme-noir .agent-modal {
   grid-template-columns: 230px minmax(0, 1fr);
   gap: 0;
   width: min(900px, calc(100vw - 4rem));
@@ -855,7 +855,7 @@ onUnmounted(() => {
   box-shadow: 0 28px 90px color-mix(in srgb, var(--shadow) 64.4444%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 3.5%, transparent);
 }
 
-:global(.theme-noir) .agent-modal-nav {
+.theme-noir .agent-modal-nav {
   display: flex;
   flex-direction: column;
   padding: 30px 18px;
@@ -863,7 +863,7 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
 }
 
-:global(.theme-noir) .agent-modal-nav h2 {
+.theme-noir .agent-modal-nav h2 {
   margin: 6px 8px 4px;
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
@@ -871,15 +871,15 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-:global(.theme-noir) .agent-modal-nav > p:not(.agent-modal-kicker) {
+.theme-noir .agent-modal-nav > p:not(.agent-modal-kicker) {
   margin: 0 8px 28px;
   color: var(--nx-read-4);
   font-size: 0.7rem;
   line-height: 1.5;
 }
 
-:global(.theme-noir) .agent-modal-kicker,
-:global(.theme-noir) .agent-modal-heading > p {
+.theme-noir .agent-modal-kicker,
+.theme-noir .agent-modal-heading > p {
   margin: 0 8px;
   color: var(--nx-accent-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -887,7 +887,7 @@ onUnmounted(() => {
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir) .agent-modal-nav-item {
+.theme-noir .agent-modal-nav-item {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -899,20 +899,20 @@ onUnmounted(() => {
   font-size: 0.8rem;
 }
 
-:global(.theme-noir) .agent-modal-nav-item span {
+.theme-noir .agent-modal-nav-item span {
   color: var(--nx-read-5);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
 }
 
-:global(.theme-noir) .agent-modal-nav-current {
+.theme-noir .agent-modal-nav-current {
   border: 1px solid color-mix(in srgb, var(--nx-accent-2) 22%, transparent);
   background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 18%, transparent), color-mix(in srgb, var(--nx-accent) 6%, transparent));
   color: var(--nx-read-2);
   box-shadow: 0 8px 28px color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir) .agent-modal-nav-state {
+.theme-noir .agent-modal-nav-state {
   margin-top: auto;
   padding: 12px;
   border: 1px solid var(--nx-hair);
@@ -922,7 +922,7 @@ onUnmounted(() => {
   font-size: 0.65rem;
 }
 
-:global(.theme-noir) .agent-modal-nav-state span {
+.theme-noir .agent-modal-nav-state span {
   display: inline-block;
   width: 7px;
   height: 7px;
@@ -932,7 +932,7 @@ onUnmounted(() => {
   box-shadow: 0 0 8px color-mix(in srgb, var(--nx-warning) 45%, transparent);
 }
 
-:global(.theme-noir) .agent-modal-content {
+.theme-noir .agent-modal-content {
   display: grid;
   gap: 1rem;
   overflow: auto;
@@ -940,15 +940,15 @@ onUnmounted(() => {
   animation: agent-section-in 360ms ease both;
 }
 
-:global(.theme-noir) .agent-modal-legacy-title {
+.theme-noir .agent-modal-legacy-title {
   display: none;
 }
 
-:global(.theme-noir) .agent-modal-heading {
+.theme-noir .agent-modal-heading {
   display: block;
 }
 
-:global(.theme-noir) .agent-modal-heading h3 {
+.theme-noir .agent-modal-heading h3 {
   margin: 5px 0;
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
@@ -957,12 +957,12 @@ onUnmounted(() => {
   letter-spacing: -0.025em;
 }
 
-:global(.theme-noir) .agent-modal-heading span {
+.theme-noir .agent-modal-heading span {
   color: var(--nx-read-4);
   font-size: 0.78rem;
 }
 
-:global(.theme-noir) .agent-modal label {
+.theme-noir .agent-modal label {
   color: var(--text-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
@@ -970,9 +970,9 @@ onUnmounted(() => {
   text-transform: uppercase;
 }
 
-:global(.theme-noir) .agent-modal input,
-:global(.theme-noir) .agent-modal select,
-:global(.theme-noir) .agent-modal textarea {
+.theme-noir .agent-modal input,
+.theme-noir .agent-modal select,
+.theme-noir .agent-modal textarea {
   border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-surface-alt) 66%, transparent);
@@ -982,15 +982,15 @@ onUnmounted(() => {
   text-transform: none;
 }
 
-:global(.theme-noir) .agent-modal input:focus,
-:global(.theme-noir) .agent-modal select:focus,
-:global(.theme-noir) .agent-modal textarea:focus {
+.theme-noir .agent-modal input:focus,
+.theme-noir .agent-modal select:focus,
+.theme-noir .agent-modal textarea:focus {
   border-color: color-mix(in srgb, var(--nx-accent-2) 42%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 9%, transparent);
   outline: none;
 }
 
-:global(.theme-noir) .agent-modal-actions {
+.theme-noir .agent-modal-actions {
   position: sticky;
   bottom: -30px;
   margin: 0 -34px -30px;
@@ -1010,12 +1010,12 @@ onUnmounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .agent-live-dot-running,
-  :global(.theme-noir) .agent-modal-content {
+  .theme-noir .agent-live-dot-running,
+  .theme-noir .agent-modal-content {
     animation: none;
   }
 
-  :global(.theme-noir) .agents-row {
+  .theme-noir .agents-row {
     transition: none;
   }
 }

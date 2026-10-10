@@ -916,13 +916,13 @@ function formatRelative(ts: string): string {
 .stat-tile.kind-functions { border-left-color: #06b6d4; }
 .stat-tile.kind-recipes   { border-left-color: #c026d3; }
 
-:global(.theme-noir) .library {
+.theme-noir .library {
   display: block;
   margin-top: 0;
   animation: noir-library-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
 }
 
-:global(.theme-noir) .rail {
+.theme-noir .rail {
   position: relative;
   top: auto;
   display: flex;
@@ -937,7 +937,7 @@ function formatRelative(ts: string): string {
   backdrop-filter: blur(20px);
 }
 
-:global(.theme-noir) .rail-head {
+.theme-noir .rail-head {
   margin: 0 auto 0 2px;
   padding: 0 8px;
   font-family: 'Playfair Display', Georgia, serif;
@@ -948,7 +948,7 @@ function formatRelative(ts: string): string {
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .rail-nav {
+.theme-noir .rail-nav {
   flex-direction: row;
   gap: 2px;
   padding: 4px;
@@ -957,12 +957,12 @@ function formatRelative(ts: string): string {
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.72);
 }
 
-:global(.theme-noir) .rail-divider,
-:global(.theme-noir) .rail-footer {
+.theme-noir .rail-divider,
+.theme-noir .rail-footer {
   display: none;
 }
 
-:global(.theme-noir) .rail-item {
+.theme-noir .rail-item {
   display: flex;
   gap: 7px;
   min-height: 30px;
@@ -975,40 +975,40 @@ function formatRelative(ts: string): string {
   transition: color 0.2s, background 0.3s, box-shadow 0.3s, transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 }
 
-:global(.theme-noir) .rail-item:hover {
+.theme-noir .rail-item:hover {
   color: var(--nx-read-2);
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir) .rail-item.on {
+.theme-noir .rail-item.on {
   color: var(--nx-read-1);
   border: 0;
   background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--nx-accent-2) 50%, transparent), 0 0 16px color-mix(in srgb, var(--nx-accent) 18%, transparent);
 }
 
-:global(.theme-noir) .rail-item .dot {
+.theme-noir .rail-item .dot {
   width: 6px;
   height: 6px;
   background: var(--nx-accent);
   box-shadow: 0 0 7px color-mix(in srgb, var(--nx-accent) 50%, transparent);
 }
 
-:global(.theme-noir) .rail-item .count {
+.theme-noir .rail-item .count {
   padding: 0;
   min-width: auto;
   color: var(--nx-read-4);
   background: transparent;
 }
 
-:global(.theme-noir) .content-head h3 {
+.theme-noir .content-head h3 {
   font-family: 'Playfair Display', Georgia, serif;
   font-style: normal;
   font-size: 30px;
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .search-box {
+.theme-noir .search-box {
   min-height: 42px;
   padding: 0 14px;
   border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
@@ -1016,17 +1016,17 @@ function formatRelative(ts: string): string {
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.65);
 }
 
-:global(.theme-noir) .search-box:focus-within {
+.theme-noir .search-box:focus-within {
   border-color: color-mix(in srgb, var(--nx-accent-2) 45%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 10%, transparent), 0 0 18px color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir) .stats {
+.theme-noir .stats {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 
-:global(.theme-noir) .stat-tile {
+.theme-noir .stat-tile {
   padding: 16px;
   border: 1px solid var(--nx-hair);
   border-radius: 16px;
@@ -1034,34 +1034,34 @@ function formatRelative(ts: string): string {
   transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), border-color 0.2s, background 0.2s;
 }
 
-:global(.theme-noir) .stat-tile[class*="kind-"] {
+.theme-noir .stat-tile[class*="kind-"] {
   border-left: 1px solid var(--nx-hair);
 }
 
-:global(.theme-noir) .stat-tile:hover {
+.theme-noir .stat-tile:hover {
   border-color: color-mix(in srgb, var(--nx-accent-2) 28%, transparent);
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
   transform: translateY(-3px);
 }
 
-:global(.theme-noir) .stat-tile .stat-value {
+.theme-noir .stat-tile .stat-value {
   font-family: 'Playfair Display', Georgia, serif;
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .draft-row,
-:global(.theme-noir) .status,
-:global(.theme-noir) .banner {
+.theme-noir .draft-row,
+.theme-noir .status,
+.theme-noir .banner {
   border-color: var(--nx-hair);
   border-radius: 16px;
   background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
 }
 
-:global(.theme-noir) .draft-row {
+.theme-noir .draft-row {
   transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), border-color 0.2s, background 0.2s;
 }
 
-:global(.theme-noir) .draft-row:hover {
+.theme-noir .draft-row:hover {
   border-color: color-mix(in srgb, var(--nx-accent-2) 28%, transparent);
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
   transform: translateY(-2px);
@@ -1073,16 +1073,16 @@ function formatRelative(ts: string): string {
 }
 
 @media (max-width: 1040px) {
-  :global(.theme-noir) .rail {
+  .theme-noir .rail {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  :global(.theme-noir) .rail-head {
+  .theme-noir .rail-head {
     margin-bottom: 4px;
   }
 
-  :global(.theme-noir) .rail-nav {
+  .theme-noir .rail-nav {
     flex-wrap: wrap;
   }
 }

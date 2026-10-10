@@ -4210,7 +4210,7 @@ watch(
   margin: 4px 2px;
 }
 
-:global(.theme-noir) .routines-frame {
+.theme-noir .routines-frame {
   --violet-200: rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16));
   --violet-300: rgb(from var(--nx-accent-2) calc(r + 34) calc(g - 4) calc(b - 3));
   --violet-400: var(--nx-accent-2);
@@ -4223,13 +4223,13 @@ watch(
     var(--nx-paper);
 }
 
-:global(.theme-noir) .glow.violet,
-:global(.theme-noir) .stars,
-:global(.theme-noir) .bracket {
+.theme-noir .glow.violet,
+.theme-noir .stars,
+.theme-noir .bracket {
   display: none;
 }
 
-:global(.theme-noir) .glow.blue {
+.theme-noir .glow.blue {
   width: 85%;
   height: 85%;
   top: 5%;
@@ -4238,7 +4238,7 @@ watch(
   background: radial-gradient(circle, color-mix(in srgb, var(--nx-accent) 18%, transparent), transparent 68%);
 }
 
-:global(.theme-noir) .title-block {
+.theme-noir .title-block {
   top: 32px;
   right: 38px;
   padding: 15px 18px;
@@ -4249,33 +4249,33 @@ watch(
   backdrop-filter: blur(20px);
 }
 
-:global(.theme-noir) .title-backdrop {
+.theme-noir .title-backdrop {
   display: none;
 }
 
-:global(.theme-noir) .title-kicker {
+.theme-noir .title-kicker {
   color: var(--nx-accent-2);
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir) .title-kicker::before,
-:global(.theme-noir) .title-kicker .d {
+.theme-noir .title-kicker::before,
+.theme-noir .title-kicker .d {
   background: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .title-main {
+.theme-noir .title-main {
   font-family: 'Playfair Display', Georgia, serif;
   font-style: normal;
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .title-sub {
+.theme-noir .title-sub {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-style: normal;
   color: var(--nx-read-3);
 }
 
-:global(.theme-noir) .stream-backdrop {
+.theme-noir .stream-backdrop {
   top: 18px;
   left: 38px;
   width: 31%;
@@ -4286,16 +4286,16 @@ watch(
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir) .stream {
+.theme-noir .stream {
   top: 30px;
   left: 52px;
   width: calc(31% - 28px);
 }
 
-:global(.theme-noir) .routines-flow :deep(.vue-flow__controls),
-:global(.theme-noir) .routines-flow :deep(.vue-flow__minimap),
-:global(.theme-noir) .runs-flyout,
-:global(.theme-noir) .routines-ctx {
+.theme-noir .routines-flow :deep(.vue-flow__controls),
+.theme-noir .routines-flow :deep(.vue-flow__minimap),
+.theme-noir .runs-flyout,
+.theme-noir .routines-ctx {
   border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
   border-radius: 17px;
   background-color: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.86);
@@ -4304,34 +4304,34 @@ watch(
   backdrop-filter: blur(22px);
 }
 
-:global(.theme-noir) .routines-fab {
+.theme-noir .routines-fab {
   border-color: color-mix(in srgb, var(--nx-accent-2) 52%, transparent);
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.36), 0 0 22px color-mix(in srgb, var(--nx-accent) 30%, transparent);
   transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 }
 
-:global(.theme-noir) .routines-fab.active {
+.theme-noir .routines-fab.active {
   background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent-2) 82%, transparent), color-mix(in srgb, var(--nx-accent) 64%, transparent));
 }
 
-:global(.theme-noir) .title-main.editable:hover,
-:global(.theme-noir) .title-sub.editable:hover,
-:global(.theme-noir) .title-main.editable:focus,
-:global(.theme-noir) .title-sub.editable:focus {
+.theme-noir .title-main.editable:hover,
+.theme-noir .title-sub.editable:hover,
+.theme-noir .title-main.editable:focus,
+.theme-noir .title-sub.editable:focus {
   outline-color: color-mix(in srgb, var(--nx-accent-2) 45%, transparent);
   background: color-mix(in srgb, var(--nx-accent) 6%, transparent);
 }
 
-:global(.theme-noir) .routines-ctx .cm-item:hover,
-:global(.theme-noir) .routines-ctx .cm-item.primary:hover {
+.theme-noir .routines-ctx .cm-item:hover,
+.theme-noir .routines-ctx .cm-item.primary:hover {
   background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .routines-frame *,
-  :global(.theme-noir) .routines-frame *::before,
-  :global(.theme-noir) .routines-frame *::after {
+  .theme-noir .routines-frame *,
+  .theme-noir .routines-frame *::before,
+  .theme-noir .routines-frame *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
@@ -4339,13 +4339,13 @@ watch(
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-:global(.theme-noir-light) .routines-flow :deep(.vue-flow__controls),
-:global(.theme-noir-light) .routines-flow :deep(.vue-flow__minimap),
-:global(.theme-noir-light) .runs-flyout,
-:global(.theme-noir-light) .routines-ctx {
+.theme-noir-light .routines-flow :deep(.vue-flow__controls),
+.theme-noir-light .routines-flow :deep(.vue-flow__minimap),
+.theme-noir-light .runs-flyout,
+.theme-noir-light .routines-ctx {
   box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025), 0 18px 42px color-mix(in srgb, var(--nx-ink) 14%, transparent);
 }
-:global(.theme-noir-light) .routines-fab {
+.theme-noir-light .routines-fab {
   box-shadow: 0 10px 28px color-mix(in srgb, var(--nx-ink) 14%, transparent), 0 0 22px color-mix(in srgb, var(--nx-accent) 30%, transparent);
 }
 </style>

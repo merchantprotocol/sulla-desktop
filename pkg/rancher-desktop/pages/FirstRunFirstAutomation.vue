@@ -332,12 +332,12 @@ async function skip() {
   .ffa-grid { grid-template-columns: 1fr 1fr; }
 }
 
-:global(.theme-noir) .ffa {
+.theme-noir .ffa {
   --ffa-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .ffa form::before {
+.theme-noir .ffa form::before {
   content: "FIRST AUTOMATION";
   display: block;
   margin-top: 5px;
@@ -348,7 +348,7 @@ async function skip() {
   color: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .ffa-title {
+.theme-noir .ffa-title {
   max-width: 690px;
   margin: 7px 0 8px;
   font-family: "Playfair Display", Georgia, serif;
@@ -360,16 +360,16 @@ async function skip() {
   text-wrap: balance;
 }
 
-:global(.theme-noir) .ffa-lead {
+.theme-noir .ffa-lead {
   margin-bottom: 20px;
   font-size: 14px;
   line-height: 1.6;
   color: var(--nx-read-3);
 }
 
-:global(.theme-noir) .ffa-grid { gap: 8px; }
+.theme-noir .ffa-grid { gap: 8px; }
 
-:global(.theme-noir) .ffa-option {
+.theme-noir .ffa-option {
   position: relative;
   min-height: 146px;
   gap: 5px;
@@ -382,7 +382,7 @@ async function skip() {
   transition: transform .58s var(--ffa-spring), background .2s ease, box-shadow .25s ease;
 }
 
-:global(.theme-noir) .ffa-option::after {
+.theme-noir .ffa-option::after {
   content: "";
   position: absolute;
   top: 14px;
@@ -395,37 +395,37 @@ async function skip() {
   transition: background .2s ease, box-shadow .2s ease, transform .58s var(--ffa-spring);
 }
 
-:global(.theme-noir) .ffa-option:hover {
+.theme-noir .ffa-option:hover {
   transform: translateY(-2px);
   border-color: transparent;
   background: color-mix(in srgb, var(--nx-accent) 7%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 14px 28px rgba(0, 0, 0, .16);
 }
 
-:global(.theme-noir) .ffa-option.is-selected {
+.theme-noir .ffa-option.is-selected {
   border-color: transparent;
   background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 42%, transparent), 0 0 22px color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir) .ffa-option.is-selected::after {
+.theme-noir .ffa-option.is-selected::after {
   background: radial-gradient(circle, var(--nx-accent-2) 0 33%, transparent 37% 100%);
   box-shadow: inset 0 0 0 1.5px var(--nx-accent-2), 0 0 8px color-mix(in srgb, var(--nx-accent-2) 70%, transparent);
   transform: scale(1.04);
 }
 
-:global(.theme-noir) .ffa-option b {
+.theme-noir .ffa-option b {
   color: var(--nx-read-1);
   font-size: 14px;
   font-weight: 600;
 }
 
-:global(.theme-noir) .ffa-icon {
+.theme-noir .ffa-icon {
   font-size: 21px;
   filter: grayscale(.2) saturate(.75);
 }
 
-:global(.theme-noir) .ffa-when {
+.theme-noir .ffa-when {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 9.5px;
   font-weight: 500;
@@ -433,13 +433,13 @@ async function skip() {
   color: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .ffa-desc {
+.theme-noir .ffa-desc {
   font-size: 12px;
   line-height: 1.45;
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .ffa-custom {
+.theme-noir .ffa-custom {
   margin-top: 10px;
   padding: 13px 15px;
   border: 0;
@@ -449,13 +449,13 @@ async function skip() {
   transition: box-shadow .22s ease, background .22s ease;
 }
 
-:global(.theme-noir) .ffa-custom.is-selected {
+.theme-noir .ffa-custom.is-selected {
   border: 0;
   background: color-mix(in srgb, var(--nx-accent) 6%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 42%, transparent), 0 0 18px color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir) .ffa-custom-label {
+.theme-noir .ffa-custom-label {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10px;
   font-weight: 500;
@@ -464,28 +464,28 @@ async function skip() {
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .ffa-custom textarea {
+.theme-noir .ffa-custom textarea {
   min-height: 68px;
   color: var(--nx-read-2);
   caret-color: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .ffa-custom textarea::placeholder { color: var(--nx-read-5); }
+.theme-noir .ffa-custom textarea::placeholder { color: var(--nx-read-5); }
 
-:global(.theme-noir) .ffa-error { color: rgb(from var(--nx-danger) calc(r - 4) calc(g + 82) calc(b + 86)); }
+.theme-noir .ffa-error { color: rgb(from var(--nx-danger) calc(r - 4) calc(g + 82) calc(b + 86)); }
 
-:global(.theme-noir) .ffa-back,
-:global(.theme-noir) .ffa-skip {
+.theme-noir .ffa-back,
+.theme-noir .ffa-skip {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
   font-weight: 500;
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .ffa-back:hover,
-:global(.theme-noir) .ffa-skip:hover { color: var(--nx-read-2); }
+.theme-noir .ffa-back:hover,
+.theme-noir .ffa-skip:hover { color: var(--nx-read-2); }
 
-:global(.theme-noir) .ffa-btn {
+.theme-noir .ffa-btn {
   min-height: 40px;
   padding: 0 20px;
   border-radius: 20px;
@@ -497,19 +497,19 @@ async function skip() {
   transition: transform .58s var(--ffa-spring), box-shadow .2s ease;
 }
 
-:global(.theme-noir) .ffa-btn:not(:disabled):hover { box-shadow: 0 0 24px color-mix(in srgb, var(--nx-accent) 48%, transparent); }
-:global(.theme-noir) .ffa-btn:not(:disabled):active { transform: scale(.95); }
+.theme-noir .ffa-btn:not(:disabled):hover { box-shadow: 0 0 24px color-mix(in srgb, var(--nx-accent) 48%, transparent); }
+.theme-noir .ffa-btn:not(:disabled):active { transform: scale(.95); }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .ffa-option,
-  :global(.theme-noir) .ffa-option::after,
-  :global(.theme-noir) .ffa-btn {
+  .theme-noir .ffa-option,
+  .theme-noir .ffa-option::after,
+  .theme-noir .ffa-btn {
     transition-duration: .01ms;
   }
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-:global(.theme-noir-light) .ffa-option:hover {
+.theme-noir-light .ffa-option:hover {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 14px 28px color-mix(in srgb, var(--nx-ink) 8%, transparent);
 }
 </style>

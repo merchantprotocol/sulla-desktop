@@ -1482,12 +1482,12 @@ watch(() => [props.integrationId, props.accountId], () => {
   display: none;
 }
 
-:global(.theme-noir) .account-editor {
+.theme-noir .account-editor {
   background: var(--nx-paper);
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .editor-header {
+.theme-noir .editor-header {
   min-height: 56px;
   padding: 0 30px;
   border-bottom-color: var(--nx-hair);
@@ -1495,32 +1495,32 @@ watch(() => [props.integrationId, props.accountId], () => {
   backdrop-filter: blur(14px);
 }
 
-:global(.theme-noir) .editor-back-btn {
+.theme-noir .editor-back-btn {
   height: 34px;
   padding: 0 14px;
   border-radius: 17px;
   color: var(--nx-read-3);
 }
 
-:global(.theme-noir) .editor-back-btn:hover {
+.theme-noir .editor-back-btn:hover {
   color: var(--nx-read-1);
   background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir) .editor-scroll {
+.theme-noir .editor-scroll {
   max-width: 920px;
   width: 100%;
   margin: 0 auto;
   padding: 30px 34px 48px;
 }
 
-:global(.theme-noir) .editor-noir-copy {
+.theme-noir .editor-noir-copy {
   display: block;
   margin-bottom: 22px;
   animation: vault-editor-in 0.35s ease both;
 }
 
-:global(.theme-noir) .editor-noir-copy p {
+.theme-noir .editor-noir-copy p {
   margin: 0 0 7px;
   color: var(--nx-accent-2);
   font-family: ui-monospace, 'SF Mono', monospace;
@@ -1529,7 +1529,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   text-transform: uppercase;
 }
 
-:global(.theme-noir) .editor-noir-copy h1 {
+.theme-noir .editor-noir-copy h1 {
   margin: 0;
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
@@ -1539,38 +1539,38 @@ watch(() => [props.integrationId, props.accountId], () => {
   line-height: 1.18;
 }
 
-:global(.theme-noir) .editor-noir-copy span {
+.theme-noir .editor-noir-copy span {
   display: block;
   margin-top: 7px;
   color: var(--nx-read-3);
   font-size: 14px;
 }
 
-:global(.theme-noir) .editor-hero {
+.theme-noir .editor-hero {
   padding: 20px;
   border-color: color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
   border-radius: 20px;
   background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 16%, transparent), color-mix(in srgb, var(--nx-accent) 3%, transparent));
 }
 
-:global(.theme-noir) .editor-hero-icon {
+.theme-noir .editor-hero-icon {
   border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
   border-radius: 14px;
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.62);
 }
 
-:global(.theme-noir) .editor-hero-title {
+.theme-noir .editor-hero-title {
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 23px;
   font-weight: 600;
 }
 
-:global(.theme-noir) .editor-hero-subtitle {
+.theme-noir .editor-hero-subtitle {
   color: var(--nx-read-3);
 }
 
-:global(.theme-noir) .editor-badge-connected::before {
+.theme-noir .editor-badge-connected::before {
   width: 6px;
   height: 6px;
   margin-right: 6px;
@@ -1580,32 +1580,32 @@ watch(() => [props.integrationId, props.accountId], () => {
   content: '';
 }
 
-:global(.theme-noir) .editor-card,
-:global(.theme-noir) .editor-guide {
+.theme-noir .editor-card,
+.theme-noir .editor-guide {
   border-color: var(--nx-hair);
   border-radius: 18px;
   background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
   box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.015);
 }
 
-:global(.theme-noir) .editor-card-header {
+.theme-noir .editor-card-header {
   border-bottom-color: var(--nx-hair);
 }
 
-:global(.theme-noir) .editor-card-title {
+.theme-noir .editor-card-title {
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .editor-label {
+.theme-noir .editor-label {
   color: var(--nx-read-4);
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 10px;
   letter-spacing: 0.12em;
 }
 
-:global(.theme-noir) .editor-input,
-:global(.theme-noir) .editor-select,
-:global(.theme-noir) .editor-select-refresh {
+.theme-noir .editor-input,
+.theme-noir .editor-select,
+.theme-noir .editor-select-refresh {
   min-height: 40px;
   border: 0;
   border-radius: 12px;
@@ -1614,44 +1614,44 @@ watch(() => [props.integrationId, props.accountId], () => {
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .editor-input:focus,
-:global(.theme-noir) .editor-select:focus {
+.theme-noir .editor-input:focus,
+.theme-noir .editor-select:focus {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 62%, transparent), 0 0 0 3px color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir) .editor-input-password {
+.theme-noir .editor-input-password {
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir) .editor-gen-btn,
-:global(.theme-noir) .editor-eye-btn,
-:global(.theme-noir) .editor-select-refresh {
+.theme-noir .editor-gen-btn,
+.theme-noir .editor-eye-btn,
+.theme-noir .editor-select-refresh {
   transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), color 0.18s;
 }
 
-:global(.theme-noir) .editor-gen-btn:active,
-:global(.theme-noir) .editor-eye-btn:active,
-:global(.theme-noir) .editor-select-refresh:active {
+.theme-noir .editor-gen-btn:active,
+.theme-noir .editor-eye-btn:active,
+.theme-noir .editor-select-refresh:active {
   transform: scale(0.86);
 }
 
-:global(.theme-noir) .editor-btn-primary,
-:global(.theme-noir) .editor-oauth-btn {
+.theme-noir .editor-btn-primary,
+.theme-noir .editor-oauth-btn {
   border-radius: 20px;
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   color: #fff;
   box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 28%, transparent);
 }
 
-:global(.theme-noir) .editor-btn-secondary,
-:global(.theme-noir) .editor-add-btn {
+.theme-noir .editor-btn-secondary,
+.theme-noir .editor-add-btn {
   border-color: var(--nx-hair-strong);
   border-radius: 20px;
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .editor-guide-summary,
-:global(.theme-noir) .editor-guide-content {
+.theme-noir .editor-guide-summary,
+.theme-noir .editor-guide-content {
   border-color: var(--nx-hair);
   background: transparent;
 }
@@ -1662,13 +1662,13 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .editor-noir-copy {
+  .theme-noir .editor-noir-copy {
     animation: none;
   }
 
-  :global(.theme-noir) .editor-gen-btn,
-  :global(.theme-noir) .editor-eye-btn,
-  :global(.theme-noir) .editor-select-refresh {
+  .theme-noir .editor-gen-btn,
+  .theme-noir .editor-eye-btn,
+  .theme-noir .editor-select-refresh {
     transition-duration: 0.01ms;
   }
 }

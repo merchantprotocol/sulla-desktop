@@ -55,13 +55,13 @@ const visible      = computed(() => showStop.value || showContinue.value);
 .run-controls .continue::before {
   content: "▸"; color: var(--steel-400); font-size: 13px;
 }
-:global(.theme-noir) .run-controls .stop { display: none; }
-:global(.theme-noir) .run-controls {
+.theme-noir .run-controls .stop { display: none; }
+.theme-noir .run-controls {
   top: auto; right: 56px; bottom: 28px; z-index: 5;
 }
-:global(.theme-noir) .run-controls .continue {
+.theme-noir .run-controls .continue {
   padding: 6px 10px; border-color: var(--nx-hair-strong);
   color: var(--nx-read-3); background: rgba(12, 18, 28, 0.9);
 }
-:global(.theme-noir-light) .run-controls .continue { background: color-mix(in srgb, var(--nx-surface) 90%, transparent); }
+.theme-noir-light .run-controls .continue { background: color-mix(in srgb, var(--nx-surface) 90%, transparent); }
 </style>

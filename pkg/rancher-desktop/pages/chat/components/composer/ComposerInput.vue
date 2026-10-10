@@ -84,7 +84,7 @@ defineExpose({ el: taRef, focus: () => taRef.value?.focus() });
   font-style: italic !important;
   font-size: 18px !important;
 }
-:global(.theme-noir) .input {
+.theme-noir .input {
   flex: 0 0 100%;
   width: 100%; min-height: 54px; max-height: 160px;
   margin: 0 !important; padding: 15px 18px 10px !important;
@@ -94,7 +94,7 @@ defineExpose({ el: taRef, focus: () => taRef.value?.focus() });
   font-style: normal !important; line-height: 1.45; letter-spacing: -0.005em;
   caret-color: var(--nx-accent-2);
 }
-:global(.theme-noir) .input::placeholder {
+.theme-noir .input::placeholder {
   color: var(--nx-read-4) !important; opacity: 1;
   font-family: var(--font-body) !important; font-size: 15.5px !important; font-style: normal !important;
 }

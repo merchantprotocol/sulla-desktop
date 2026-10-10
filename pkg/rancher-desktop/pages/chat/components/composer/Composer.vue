@@ -587,18 +587,18 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 
 /* Noir is a visual skin over the existing controller and keyboard behavior. */
-:global(.theme-noir) .composer-wrap {
+.theme-noir .composer-wrap {
   bottom: 0;
   left: 0;
   right: 0;
   padding: 0 20px 14px;
 }
-:global(.theme-noir) .composer-inner {
+.theme-noir .composer-inner {
   max-width: 760px;
 }
-:global(.theme-noir) .chat-root.artifact-open .composer-wrap { left: 0; right: 0; }
-:global(.theme-noir) .chat-root.artifact-open .composer-inner { max-width: 760px; }
-:global(.theme-noir) .composer-card {
+.theme-noir .chat-root.artifact-open .composer-wrap { left: 0; right: 0; }
+.theme-noir .chat-root.artifact-open .composer-inner { max-width: 760px; }
+.theme-noir .composer-card {
   display: block;
   position: relative;
   border-radius: 22px;
@@ -608,26 +608,26 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   transition: box-shadow 0.3s cubic-bezier(.22, 1, .36, 1),
     transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 }
-:global(.theme-noir) .composer-card:focus-within {
+.theme-noir .composer-card:focus-within {
   transform: translateY(-2px);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 55%, transparent),
     0 0 0 4px color-mix(in srgb, var(--nx-accent) 12%, transparent), 0 0 44px color-mix(in srgb, var(--nx-accent) 16%, transparent),
     0 20px 56px rgba(0, 0, 0, 0.5);
 }
-:global(.theme-noir-light) .composer-card {
+.theme-noir-light .composer-card {
   background: color-mix(in srgb, var(--nx-surface) 90%, transparent);
   box-shadow: inset 0 0 0 1px var(--nx-hair-strong), var(--nx-shadow-lg);
 }
-:global(.theme-noir-light) .composer-card:focus-within {
+.theme-noir-light .composer-card:focus-within {
   box-shadow: inset 0 0 0 1px var(--nx-indicator-edge), 0 0 0 4px color-mix(in srgb, var(--nx-accent) 12%, transparent), var(--nx-shadow-lg);
 }
-:global(.theme-noir) .composer-top {
+.theme-noir .composer-top {
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 0 10px;
 }
-:global(.theme-noir) .reflex-intent {
+.theme-noir .reflex-intent {
   position: static;
   width: max-content;
   margin: 10px 0 0;
@@ -637,8 +637,8 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   letter-spacing: 0;
   animation: noir-reflex-in 0.42s cubic-bezier(.22, 1, .36, 1) both;
 }
-:global(.theme-noir) .reflex-intent-btn,
-:global(.theme-noir) .reflex-intent > span {
+.theme-noir .reflex-intent-btn,
+.theme-noir .reflex-intent > span {
   height: 28px;
   padding: 0 6px 0 10px;
   border: 0;
@@ -646,7 +646,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   background: linear-gradient(90deg, color-mix(in srgb, var(--nx-accent) 18%, transparent), color-mix(in srgb, var(--nx-accent) 4%, transparent));
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--nx-accent-2) 35%, transparent);
 }
-:global(.theme-noir) .reflex-intent kbd {
+.theme-noir .reflex-intent kbd {
   padding: 2px 7px;
   border: 0;
   border-radius: 6px;
@@ -655,7 +655,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   font-size: 10.5px;
 }
 @keyframes noir-reflex-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-:global(.theme-noir) .composer {
+.theme-noir .composer {
   display: flex;
   align-items: stretch;
   gap: 0;
@@ -665,10 +665,10 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   border: 0;
   box-shadow: none;
 }
-:global(.theme-noir) .composer:focus-within,
-:global(.theme-noir) .composer.recording { border: 0; box-shadow: none; }
-:global(.theme-noir) .glyph { display: none; }
-:global(.theme-noir) .composer-tools {
+.theme-noir .composer:focus-within,
+.theme-noir .composer.recording { border: 0; box-shadow: none; }
+.theme-noir .glyph { display: none; }
+.theme-noir .composer-tools {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -677,7 +677,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   padding: 6px 8px 8px;
   border-top: 1px solid color-mix(in srgb, var(--nx-hair-strong) 43.75%, transparent);
 }
-:global(.theme-noir) .context-btn {
+.theme-noir .context-btn {
   display: grid;
   place-items: center;
   width: 34px;
@@ -690,8 +690,8 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   font: 600 15px var(--mono);
   cursor: pointer;
 }
-:global(.theme-noir) .context-btn:hover { color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 12%, transparent); }
-:global(.theme-noir) .model-btn {
+.theme-noir .context-btn:hover { color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 12%, transparent); }
+.theme-noir .model-btn {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -707,8 +707,8 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   font: 500 12.5px var(--font-body);
   cursor: pointer;
 }
-:global(.theme-noir) .model-btn:hover { background: color-mix(in srgb, var(--nx-accent) 14%, transparent); }
-:global(.theme-noir) .model-avatar {
+.theme-noir .model-btn:hover { background: color-mix(in srgb, var(--nx-accent) 14%, transparent); }
+.theme-noir .model-avatar {
   display: grid;
   place-items: center;
   width: 24px;
@@ -720,10 +720,10 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   font-size: 11px;
   font-weight: 700;
 }
-:global(.theme-noir) .model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:global(.theme-noir) .model-caret { color: var(--nx-read-4); font-size: 9px; }
-:global(.theme-noir) .tool-spacer { display: block; flex: 1; }
-:global(.theme-noir) .usage-meter {
+.theme-noir .model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.theme-noir .model-caret { color: var(--nx-read-4); font-size: 9px; }
+.theme-noir .tool-spacer { display: block; flex: 1; }
+.theme-noir .usage-meter {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -734,7 +734,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   font: 11px var(--mono);
   cursor: pointer;
 }
-:global(.theme-noir) .usage-ring {
+.theme-noir .usage-ring {
   width: 18px;
   height: 18px;
   border-radius: 50%;
@@ -742,7 +742,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
   mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
 }
-:global(.theme-noir) .hints {
+.theme-noir .hints {
   position: relative;
   justify-content: center;
   min-height: 14px;
@@ -753,10 +753,10 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   letter-spacing: 0;
   text-transform: none;
 }
-:global(.theme-noir) .classic-guide { display: none; }
-:global(.theme-noir) .noir-guide { display: flex; gap: 4px; }
-:global(.theme-noir) .noir-guide span::before { display: none; }
-:global(.theme-noir) .hints kbd {
+.theme-noir .classic-guide { display: none; }
+.theme-noir .noir-guide { display: flex; gap: 4px; }
+.theme-noir .noir-guide span::before { display: none; }
+.theme-noir .hints kbd {
   margin: 0;
   padding: 0;
   border: 0;
@@ -765,8 +765,8 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   font-size: inherit;
   font-weight: 500;
 }
-:global(.theme-noir) .noir-guide span:not(:last-child)::after { content: " ·"; color: var(--nx-read-5); }
-:global(.theme-noir) .hints :deep(.heartbeat-control) {
+.theme-noir .noir-guide span:not(:last-child)::after { content: " ·"; color: var(--nx-read-5); }
+.theme-noir .hints :deep(.heartbeat-control) {
   position: absolute;
   right: 88px;
   bottom: 23px;
@@ -775,12 +775,12 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 
 @media (max-width: 680px) {
-  :global(.theme-noir) .composer-wrap { padding-right: 10px; padding-left: 10px; }
-  :global(.theme-noir) .model-name, :global(.theme-noir) .usage-meter > span:last-child { display: none; }
+  .theme-noir .composer-wrap { padding-right: 10px; padding-left: 10px; }
+  .theme-noir .model-name, .theme-noir .usage-meter > span:last-child { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .composer-card,
-  :global(.theme-noir) .reflex-intent { animation: none; transition: none; }
+  .theme-noir .composer-card,
+  .theme-noir .reflex-intent { animation: none; transition: none; }
 }
 </style>

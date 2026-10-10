@@ -323,7 +323,7 @@ function toggleMode() {
   80% { transform: translateX(1px); }
 }
 
-:global(.theme-noir) .vault-unlock-screen {
+.theme-noir .vault-unlock-screen {
   --vault-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   overflow: hidden;
   background:
@@ -332,7 +332,7 @@ function toggleMode() {
     var(--nx-paper);
 }
 
-:global(.theme-noir) .vault-unlock-screen::before {
+.theme-noir .vault-unlock-screen::before {
   content: "";
   position: absolute;
   inset: -25%;
@@ -340,7 +340,7 @@ function toggleMode() {
   background: radial-gradient(circle at center, transparent 0 32%, color-mix(in srgb, var(--nx-paper) 30%, transparent) 58%, color-mix(in srgb, var(--nx-paper) 88%, transparent) 100%);
 }
 
-:global(.theme-noir) .vault-unlock-card {
+.theme-noir .vault-unlock-card {
   position: relative;
   max-width: 400px;
   padding: 36px 34px 28px;
@@ -352,11 +352,11 @@ function toggleMode() {
   backdrop-filter: blur(24px);
 }
 
-:global(.theme-noir) .vault-unlock-card:has(.vault-unlock-error) {
+.theme-noir .vault-unlock-card:has(.vault-unlock-error) {
   animation: vault-noir-shake .58s var(--vault-spring) both;
 }
 
-:global(.theme-noir) .vault-unlock-icon {
+.theme-noir .vault-unlock-icon {
   width: 72px;
   height: 72px;
   margin-bottom: 19px;
@@ -366,13 +366,13 @@ function toggleMode() {
   box-shadow: inset 0 0 0 .5px rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / .25), 0 0 22px color-mix(in srgb, var(--nx-accent) 44%, transparent), 0 0 64px color-mix(in srgb, var(--nx-accent) 20%, transparent);
 }
 
-:global(.theme-noir-light) .vault-unlock-icon {
+.theme-noir-light .vault-unlock-icon {
   color: #fff;
 }
 
-:global(.theme-noir) .vault-unlock-icon svg { display: none; }
+.theme-noir .vault-unlock-icon svg { display: none; }
 
-:global(.theme-noir) .vault-unlock-mark {
+.theme-noir .vault-unlock-mark {
   display: block;
   font-family: "Playfair Display", Georgia, serif;
   font-size: 32px;
@@ -381,7 +381,7 @@ function toggleMode() {
   text-shadow: 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / .18);
 }
 
-:global(.theme-noir) .vault-unlock-title {
+.theme-noir .vault-unlock-title {
   margin-bottom: 4px;
   font-family: "Playfair Display", Georgia, serif;
   font-size: 34px;
@@ -392,15 +392,15 @@ function toggleMode() {
   text-shadow: 0 0 28px color-mix(in srgb, var(--nx-accent) 16%, transparent);
 }
 
-:global(.theme-noir) .vault-unlock-subtitle {
+.theme-noir .vault-unlock-subtitle {
   margin-bottom: 23px;
   font-size: 13.5px;
   color: var(--nx-read-3);
 }
 
-:global(.theme-noir) .vault-unlock-form { gap: 10px; }
+.theme-noir .vault-unlock-form { gap: 10px; }
 
-:global(.theme-noir) .vault-unlock-input {
+.theme-noir .vault-unlock-input {
   height: 44px;
   padding: 0 14px;
   border: 0;
@@ -414,34 +414,34 @@ function toggleMode() {
   transition: box-shadow .22s ease, background .22s ease;
 }
 
-:global(.theme-noir) .vault-unlock-input:hover {
+.theme-noir .vault-unlock-input:hover {
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .78);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 20%, transparent);
 }
 
-:global(.theme-noir) .vault-unlock-input:focus {
+.theme-noir .vault-unlock-input:focus {
   border-color: transparent;
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .86);
   box-shadow: inset 0 0 0 1px var(--nx-accent-2), 0 0 0 3px color-mix(in srgb, var(--nx-accent) 20%, transparent), 0 0 22px color-mix(in srgb, var(--nx-accent) 16%, transparent);
 }
 
-:global(.theme-noir) .vault-unlock-input-error,
-:global(.theme-noir) .vault-unlock-input-error:focus {
+.theme-noir .vault-unlock-input-error,
+.theme-noir .vault-unlock-input-error:focus {
   box-shadow: inset 0 0 0 1px var(--nx-danger), 0 0 0 3px color-mix(in srgb, var(--nx-danger) 10%, transparent);
 }
 
-:global(.theme-noir) .vault-unlock-input::placeholder {
+.theme-noir .vault-unlock-input::placeholder {
   color: var(--nx-read-5);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-:global(.theme-noir) .vault-unlock-error {
+.theme-noir .vault-unlock-error {
   color: rgb(from var(--nx-danger) calc(r - 4) calc(g + 82) calc(b + 86));
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
 }
 
-:global(.theme-noir) .vault-unlock-btn {
+.theme-noir .vault-unlock-btn {
   height: 42px;
   padding: 0 18px;
   border-radius: 21px;
@@ -451,14 +451,14 @@ function toggleMode() {
   transition: transform .58s var(--vault-spring), box-shadow .2s ease, opacity .2s ease;
 }
 
-:global(.theme-noir) .vault-unlock-btn:hover:not(:disabled) {
+.theme-noir .vault-unlock-btn:hover:not(:disabled) {
   background: linear-gradient(180deg, rgb(from var(--nx-accent-2) calc(r + 8) calc(g + 10) calc(b + 9)), var(--nx-accent));
   box-shadow: inset 0 0 0 .5px rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / .22), 0 0 28px color-mix(in srgb, var(--nx-accent) 50%, transparent);
 }
 
-:global(.theme-noir) .vault-unlock-btn:active:not(:disabled) { transform: scale(.96); }
+.theme-noir .vault-unlock-btn:active:not(:disabled) { transform: scale(.96); }
 
-:global(.theme-noir) .vault-unlock-toggle {
+.theme-noir .vault-unlock-toggle {
   margin-top: 17px;
   color: rgb(from var(--nx-accent-2) calc(r + 34) calc(g - 4) calc(b - 3));
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
@@ -466,9 +466,9 @@ function toggleMode() {
   text-decoration: none;
 }
 
-:global(.theme-noir) .vault-unlock-toggle:hover { color: var(--nx-read-2); }
+.theme-noir .vault-unlock-toggle:hover { color: var(--nx-read-2); }
 
-:global(.theme-noir) .vault-unlock-hint {
+.theme-noir .vault-unlock-hint {
   display: block;
   margin: 12px 0 0;
   color: var(--nx-read-5);
@@ -478,12 +478,12 @@ function toggleMode() {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .vault-unlock-card:has(.vault-unlock-error) { animation: none; }
-  :global(.theme-noir) .vault-unlock-btn { transition-duration: .01ms; }
+  .theme-noir .vault-unlock-card:has(.vault-unlock-error) { animation: none; }
+  .theme-noir .vault-unlock-btn { transition-duration: .01ms; }
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-:global(.theme-noir-light) .vault-unlock-card {
+.theme-noir-light .vault-unlock-card {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent), 0 30px 80px color-mix(in srgb, var(--nx-ink) 14%, transparent), 0 0 70px color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 </style>

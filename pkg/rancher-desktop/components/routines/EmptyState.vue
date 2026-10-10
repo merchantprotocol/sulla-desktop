@@ -79,7 +79,7 @@ const hasActions = computed(() => !!slots.default);
   justify-content: center;
 }
 
-:global(.theme-noir) .empty-state {
+.theme-noir .empty-state {
   padding: 68px 40px;
   border: 1px solid var(--nx-hair);
   border-radius: 22px;
@@ -90,18 +90,18 @@ const hasActions = computed(() => !!slots.default);
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir) .kicker {
+.theme-noir .kicker {
   color: var(--nx-accent-2);
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir) .title {
+.theme-noir .title {
   font-family: 'Playfair Display', Georgia, serif;
   font-style: normal;
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .message {
+.theme-noir .message {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   font-style: normal;

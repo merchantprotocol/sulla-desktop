@@ -2965,17 +2965,17 @@ export default defineComponent({
   display: none;
 }
 
-:global(.theme-noir) .lm-settings {
+.theme-noir .lm-settings {
   background: var(--nx-paper);
   color: var(--nx-read-2);
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-:global(.theme-noir) .lm-header {
+.theme-noir .lm-header {
   display: none;
 }
 
-:global(.theme-noir) .lm-nav {
+.theme-noir .lm-nav {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -2985,12 +2985,12 @@ export default defineComponent({
   background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
 }
 
-:global(.theme-noir) .noir-rail-head {
+.theme-noir .noir-rail-head {
   display: block;
   padding: 0 10px 24px;
 }
 
-:global(.theme-noir) .noir-rail-title {
+.theme-noir .noir-rail-title {
   color: var(--nx-read-1);
   font-family: "Playfair Display", Georgia, serif;
   font-size: 21px;
@@ -2998,17 +2998,17 @@ export default defineComponent({
   line-height: 1.1;
 }
 
-:global(.theme-noir) .noir-rail-copy {
+.theme-noir .noir-rail-copy {
   margin-top: 6px;
   color: var(--nx-read-4);
   font-size: 10.5px;
 }
 
-:global(.theme-noir) .noir-rail-items {
+.theme-noir .noir-rail-items {
   position: relative;
 }
 
-:global(.theme-noir) .lm-nav .nav-item {
+.theme-noir .lm-nav .nav-item {
   position: relative;
   z-index: 1;
   display: flex;
@@ -3027,19 +3027,19 @@ export default defineComponent({
   transition: color 160ms ease, background 160ms ease;
 }
 
-:global(.theme-noir) .lm-nav .nav-item:hover {
+.theme-noir .lm-nav .nav-item:hover {
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .lm-nav .nav-item.active {
+.theme-noir .lm-nav .nav-item.active {
   border: 0;
   background: transparent;
   color: var(--nx-read-1);
   font-weight: 500;
 }
 
-:global(.theme-noir) .noir-rail-marker {
+.theme-noir .noir-rail-marker {
   position: absolute;
   top: 0;
   left: 0;
@@ -3052,7 +3052,7 @@ export default defineComponent({
   transition: transform linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) .58s;
 }
 
-:global(.theme-noir) .noir-rail-marker::before {
+.theme-noir .noir-rail-marker::before {
   position: absolute;
   top: 9px;
   left: -14px;
@@ -3064,7 +3064,7 @@ export default defineComponent({
   content: "";
 }
 
-:global(.theme-noir) .noir-rail-glyph {
+.theme-noir .noir-rail-glyph {
   display: inline-grid;
   width: 16px;
   place-items: center;
@@ -3072,7 +3072,7 @@ export default defineComponent({
   font-size: 15px;
 }
 
-:global(.theme-noir) .noir-rail-note {
+.theme-noir .noir-rail-note {
   display: inline-block;
   margin-left: auto;
   color: var(--nx-warning);
@@ -3081,7 +3081,7 @@ export default defineComponent({
   letter-spacing: 0.08em;
 }
 
-:global(.theme-noir) .noir-rail-foot {
+.theme-noir .noir-rail-foot {
   display: block;
   margin-top: auto;
   padding: 12px 13px;
@@ -3093,8 +3093,8 @@ export default defineComponent({
   line-height: 1.65;
 }
 
-:global(.theme-noir) .noir-health-dot,
-:global(.theme-noir) .noir-off-dot {
+.theme-noir .noir-health-dot,
+.theme-noir .noir-off-dot {
   display: inline-block;
   width: 7px;
   height: 7px;
@@ -3104,33 +3104,33 @@ export default defineComponent({
   box-shadow: 0 0 8px color-mix(in srgb, var(--nx-success) 70%, transparent);
 }
 
-:global(.theme-noir) .noir-off-dot {
+.theme-noir .noir-off-dot {
   background: var(--nx-read-5);
   box-shadow: none;
 }
 
-:global(.theme-noir) .lm-body {
+.theme-noir .lm-body {
   padding: 30px 34px;
   background: radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--nx-accent) 5%, transparent), transparent 32%), var(--nx-paper);
 }
 
-:global(.theme-noir) .tab-content {
+.theme-noir .tab-content {
   max-width: 920px;
   animation: noir-settings-in 340ms ease both;
 }
 
-:global(.theme-noir) .tab-content > h2,
-:global(.theme-noir) .tab-content > .description,
-:global(.theme-noir) .tab-content > .active-model-section {
+.theme-noir .tab-content > h2,
+.theme-noir .tab-content > .description,
+.theme-noir .tab-content > .active-model-section {
   display: none;
 }
 
-:global(.theme-noir) .noir-page-head {
+.theme-noir .noir-page-head {
   display: block;
   margin-bottom: 22px;
 }
 
-:global(.theme-noir) .noir-eyebrow {
+.theme-noir .noir-eyebrow {
   margin-bottom: 7px;
   color: var(--nx-accent-2);
   font-size: 10.5px;
@@ -3138,7 +3138,7 @@ export default defineComponent({
   text-transform: uppercase;
 }
 
-:global(.theme-noir) .noir-headline {
+.theme-noir .noir-headline {
   color: var(--nx-read-1);
   font-family: "Playfair Display", Georgia, serif;
   font-size: 30px;
@@ -3146,14 +3146,14 @@ export default defineComponent({
   line-height: 1.15;
 }
 
-:global(.theme-noir) .noir-lead {
+.theme-noir .noir-lead {
   margin-top: 7px;
   color: var(--nx-read-3);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
 }
 
-:global(.theme-noir) .noir-routing-card {
+.theme-noir .noir-routing-card {
   display: block;
   padding: 22px;
   border-radius: 20px;
@@ -3161,27 +3161,27 @@ export default defineComponent({
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 25%, transparent), 0 18px 60px rgba(0, 0, 0, 0.22);
 }
 
-:global(.theme-noir) .noir-card-title {
+.theme-noir .noir-card-title {
   color: var(--nx-read-1);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
   font-weight: 600;
 }
 
-:global(.theme-noir) .noir-card-copy {
+.theme-noir .noir-card-copy {
   margin-top: 4px;
   color: var(--nx-read-4);
   font-size: 11px;
 }
 
-:global(.theme-noir) .noir-route-row {
+.theme-noir .noir-route-row {
   display: flex;
   align-items: stretch;
   gap: 12px;
   margin-top: 14px;
 }
 
-:global(.theme-noir) .noir-route-node {
+.theme-noir .noir-route-node {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -3193,18 +3193,18 @@ export default defineComponent({
   box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
 
-:global(.theme-noir) .noir-route-node--primary {
+.theme-noir .noir-route-node--primary {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 38%, transparent), 0 0 18px color-mix(in srgb, var(--nx-accent) 12%, transparent);
 }
 
-:global(.theme-noir) .noir-route-node b {
+.theme-noir .noir-route-node b {
   color: var(--nx-read-1);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 13px;
 }
 
-:global(.theme-noir) .noir-route-node span,
-:global(.theme-noir) .noir-route-arrow {
+.theme-noir .noir-route-node span,
+.theme-noir .noir-route-arrow {
   overflow: hidden;
   color: var(--nx-read-4);
   font-size: 10.5px;
@@ -3212,19 +3212,19 @@ export default defineComponent({
   white-space: nowrap;
 }
 
-:global(.theme-noir) .noir-route-arrow {
+.theme-noir .noir-route-arrow {
   align-self: center;
   color: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .noir-stat-grid {
+.theme-noir .noir-stat-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   margin-top: 12px;
 }
 
-:global(.theme-noir) .noir-stat-card {
+.theme-noir .noir-stat-card {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -3234,24 +3234,24 @@ export default defineComponent({
   box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
 
-:global(.theme-noir) .noir-stat-card b {
+.theme-noir .noir-stat-card b {
   color: var(--nx-read-1);
   font-family: "Playfair Display", Georgia, serif;
   font-size: 26px;
   font-weight: 600;
 }
 
-:global(.theme-noir) .noir-stat-card > span {
+.theme-noir .noir-stat-card > span {
   color: var(--nx-read-4);
   font-size: 10px;
   letter-spacing: 0.1em;
 }
 
-:global(.theme-noir) .setting-group,
-:global(.theme-noir) .info-box,
-:global(.theme-noir) .sp-identity,
-:global(.theme-noir) .sp-list,
-:global(.theme-noir) .sp-generated {
+.theme-noir .setting-group,
+.theme-noir .info-box,
+.theme-noir .sp-identity,
+.theme-noir .sp-list,
+.theme-noir .sp-generated {
   margin: 0 0 12px;
   padding: 18px;
   border: 0;
@@ -3260,31 +3260,31 @@ export default defineComponent({
   box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
 
-:global(.theme-noir) .setting-group--indent {
+.theme-noir .setting-group--indent {
   margin-left: 0;
 }
 
-:global(.theme-noir) .setting-label,
-:global(.theme-noir) .form-label {
+.theme-noir .setting-label,
+.theme-noir .form-label {
   color: var(--nx-read-1);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
   font-weight: 600;
 }
 
-:global(.theme-noir) .setting-description,
-:global(.theme-noir) .description {
+.theme-noir .setting-description,
+.theme-noir .description {
   color: var(--nx-read-4);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 12.5px;
   line-height: 1.55;
 }
 
-:global(.theme-noir) .noir-models-pane .model-select {
+.theme-noir .noir-models-pane .model-select {
   display: none;
 }
 
-:global(.theme-noir) .noir-segment-row {
+.theme-noir .noir-segment-row {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -3294,7 +3294,7 @@ export default defineComponent({
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
 }
 
-:global(.theme-noir) .noir-segment-row label {
+.theme-noir .noir-segment-row label {
   position: relative;
   display: grid;
   height: 30px;
@@ -3307,14 +3307,14 @@ export default defineComponent({
   cursor: pointer;
 }
 
-:global(.theme-noir) .noir-segment-row label.is-current {
+.theme-noir .noir-segment-row label.is-current {
   color: var(--nx-read-1);
   background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 32%, transparent), color-mix(in srgb, var(--nx-accent) 16%, transparent));
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--nx-accent-2) 55%, transparent), 0 0 14px color-mix(in srgb, var(--nx-accent) 25%, transparent);
 }
 
-:global(.theme-noir) .noir-segment-row input,
-:global(.theme-noir) .noir-choice-rows input {
+.theme-noir .noir-segment-row input,
+.theme-noir .noir-choice-rows input {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -3322,13 +3322,13 @@ export default defineComponent({
   pointer-events: none;
 }
 
-:global(.theme-noir) .noir-choice-rows {
+.theme-noir .noir-choice-rows {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-:global(.theme-noir) .noir-choice-rows > label {
+.theme-noir .noir-choice-rows > label {
   position: relative;
   display: flex;
   align-items: center;
@@ -3343,31 +3343,31 @@ export default defineComponent({
   transition: transform 180ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 
-:global(.theme-noir) .noir-choice-rows > label:hover {
+.theme-noir .noir-choice-rows > label:hover {
   transform: translateX(2px);
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir) .noir-choice-rows > label.is-current {
+.theme-noir .noir-choice-rows > label.is-current {
   background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 40%, transparent);
 }
 
-:global(.theme-noir) .noir-choice-rows small {
+.theme-noir .noir-choice-rows small {
   display: block;
   margin-top: 2px;
   color: var(--nx-read-4);
   font-size: 10.5px;
 }
 
-:global(.theme-noir) .noir-choice-rows i {
+.theme-noir .noir-choice-rows i {
   margin-left: auto;
   color: var(--nx-accent-2);
   font-size: 10px;
   font-style: normal;
 }
 
-:global(.theme-noir) .noir-choice-ring {
+.theme-noir .noir-choice-ring {
   position: relative;
   width: 16px;
   height: 16px;
@@ -3376,11 +3376,11 @@ export default defineComponent({
   box-shadow: inset 0 0 0 1.5px var(--nx-read-5);
 }
 
-:global(.theme-noir) .is-current > .noir-choice-ring {
+.theme-noir .is-current > .noir-choice-ring {
   box-shadow: inset 0 0 0 1.5px var(--nx-accent-2);
 }
 
-:global(.theme-noir) .is-current > .noir-choice-ring::after {
+.theme-noir .is-current > .noir-choice-ring::after {
   position: absolute;
   inset: 4px;
   border-radius: 50%;
@@ -3389,32 +3389,32 @@ export default defineComponent({
   content: "";
 }
 
-:global(.theme-noir) .noir-switch-copy {
+.theme-noir .noir-switch-copy {
   display: flex;
   align-items: center;
   gap: 14px;
   margin-bottom: 14px;
 }
 
-:global(.theme-noir) .noir-switch-copy > span:first-child {
+.theme-noir .noir-switch-copy > span:first-child {
   display: flex;
   flex: 1;
   flex-direction: column;
   gap: 3px;
 }
 
-:global(.theme-noir) .noir-switch-copy b {
+.theme-noir .noir-switch-copy b {
   color: var(--nx-read-1);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 13px;
 }
 
-:global(.theme-noir) .noir-switch-copy small {
+.theme-noir .noir-switch-copy small {
   color: var(--nx-read-4);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-:global(.theme-noir) .noir-readonly-switch {
+.theme-noir .noir-readonly-switch {
   position: relative;
   display: block;
   width: 46px;
@@ -3425,7 +3425,7 @@ export default defineComponent({
   box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 45%, transparent);
 }
 
-:global(.theme-noir) .noir-readonly-switch i {
+.theme-noir .noir-readonly-switch i {
   position: absolute;
   top: 3px;
   right: 3px;
@@ -3436,7 +3436,7 @@ export default defineComponent({
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 }
 
-:global(.theme-noir) .noir-secret-card {
+.theme-noir .noir-secret-card {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
@@ -3446,19 +3446,19 @@ export default defineComponent({
   box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
 
-:global(.theme-noir) .noir-secret-card > div {
+.theme-noir .noir-secret-card > div {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-:global(.theme-noir) .noir-secret-card span {
+.theme-noir .noir-secret-card span {
   color: var(--nx-read-4);
   font-size: 10px;
   letter-spacing: 0.12em;
 }
 
-:global(.theme-noir) .noir-secret-card b {
+.theme-noir .noir-secret-card b {
   display: flex;
   align-items: center;
   min-height: 40px;
@@ -3471,18 +3471,18 @@ export default defineComponent({
   font-weight: 400;
 }
 
-:global(.theme-noir) .switch {
+.theme-noir .switch {
   width: 46px;
   height: 26px;
 }
 
-:global(.theme-noir) .switch .slider {
+.theme-noir .switch .slider {
   border-radius: 13px;
   background: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 87.5%, transparent);
 }
 
-:global(.theme-noir) .switch .slider::before {
+.theme-noir .switch .slider::before {
   width: 20px;
   height: 20px;
   bottom: 3px;
@@ -3491,27 +3491,27 @@ export default defineComponent({
   transition: transform linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) .58s;
 }
 
-:global(.theme-noir) .switch input:checked + .slider {
+.theme-noir .switch input:checked + .slider {
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 45%, transparent);
 }
 
-:global(.theme-noir) .switch input:checked + .slider::before {
+.theme-noir .switch input:checked + .slider::before {
   transform: translateX(20px);
 }
 
-:global(.theme-noir) .noir-dependent {
+.theme-noir .noir-dependent {
   transition: opacity 220ms ease;
 }
 
-:global(.theme-noir) .noir-dependent.is-dimmed {
+.theme-noir .noir-dependent.is-dimmed {
   opacity: 0.4;
   pointer-events: none;
 }
 
-:global(.theme-noir) .text-input,
-:global(.theme-noir) .model-select,
-:global(.theme-noir) .sp-editor {
+.theme-noir .text-input,
+.theme-noir .model-select,
+.theme-noir .sp-editor {
   border: 0;
   border-radius: 12px;
   color: var(--nx-read-1);
@@ -3519,65 +3519,65 @@ export default defineComponent({
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
 }
 
-:global(.theme-noir) .sp-review-banner,
-:global(.theme-noir) .sp-rationale {
+.theme-noir .sp-review-banner,
+.theme-noir .sp-rationale {
   border: 0;
   border-radius: 16px;
   background: color-mix(in srgb, var(--nx-warning) 5%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-warning) 25%, transparent);
 }
 
-:global(.theme-noir) .sp-rationale-label {
+.theme-noir .sp-rationale-label {
   color: var(--nx-warning);
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir) .sp-row {
+.theme-noir .sp-row {
   min-height: 52px;
   border-bottom-color: var(--nx-hair);
   border-radius: 12px;
 }
 
-:global(.theme-noir) .sp-row:hover {
+.theme-noir .sp-row:hover {
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir) .lm-footer {
+.theme-noir .lm-footer {
   padding: 14px 34px;
   border: 0;
   background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--bg-surface-alt) 94%, transparent) 42%);
 }
 
-:global(.theme-noir) .btn {
+.theme-noir .btn {
   min-height: 32px;
   padding: 0 16px;
   border-radius: 16px;
 }
 
-:global(.theme-noir) .btn.role-primary,
-:global(.theme-noir) .sp-approve-btn {
+.theme-noir .btn.role-primary,
+.theme-noir .sp-approve-btn {
   color: #fff;
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   box-shadow: 0 0 16px color-mix(in srgb, var(--nx-accent) 35%, transparent);
 }
 
-:global(.theme-noir) .btn.role-secondary {
+.theme-noir .btn.role-secondary {
   color: var(--nx-read-2);
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--nx-hair-strong);
 }
 
-:global(.theme-noir-light) .noir-rail-glyph {
+.theme-noir-light .noir-rail-glyph {
   color: var(--nx-accent);
 }
 
-:global(.theme-noir-light) .noir-routing-card {
+.theme-noir-light .noir-routing-card {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 25%, transparent),
     0 18px 60px color-mix(in srgb, var(--nx-ink) 10%, transparent);
 }
 
-:global(.theme-noir-light) .noir-readonly-switch i,
-:global(.theme-noir-light) .switch .slider::before {
+.theme-noir-light .noir-readonly-switch i,
+.theme-noir-light .switch .slider::before {
   box-shadow: 0 2px 6px color-mix(in srgb, var(--nx-ink) 14%, transparent);
 }
 
@@ -3587,10 +3587,10 @@ export default defineComponent({
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .noir-rail-marker,
-  :global(.theme-noir) .tab-content,
-  :global(.theme-noir) .switch .slider::before,
-  :global(.theme-noir) .noir-choice-rows > label {
+  .theme-noir .noir-rail-marker,
+  .theme-noir .tab-content,
+  .theme-noir .switch .slider::before,
+  .theme-noir .noir-choice-rows > label {
     animation: none;
     transition: none;
   }
