@@ -13,7 +13,7 @@ export default defineComponent({
   name: 'preferences-body-appearance',
   data() {
     return {
-      selectedTheme: localStorage.getItem(THEME_STORAGE_KEY) || 'protocol-dark',
+      selectedTheme: localStorage.getItem(THEME_STORAGE_KEY) || 'noir-dark',
       themeGroups,
     };
   },
@@ -208,6 +208,16 @@ export default defineComponent({
 
 .preview-protocol-dark {
   background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #5096b3 100%);
+}
+
+.preview-noir-dark {
+  background:
+    linear-gradient(135deg, #01030a 0%, #03060c 38%, #070d1a 68%, #5096b3 100%);
+}
+
+.preview-noir-light {
+  background:
+    linear-gradient(135deg, #f4f7fb 0%, #ffffff 42%, #6ab0cc 72%, #3a7fa0 100%);
 }
 
 .theme-card-label {

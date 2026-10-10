@@ -2,9 +2,9 @@ import { ref, computed, onMounted, watch } from 'vue';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
-export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark' | 'protocol-light';
+export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark' | 'protocol-light' | 'noir-dark' | 'noir-light';
 
-export type ThemeScheme = 'default' | 'ocean' | 'nord' | 'protocol';
+export type ThemeScheme = 'default' | 'ocean' | 'nord' | 'protocol' | 'noir';
 
 export interface ThemeOption {
   id:     ThemeName;
@@ -27,8 +27,10 @@ export const availableThemes: ThemeOption[] = [
   { id: 'ocean-dark', scheme: 'ocean', mode: 'dark', label: 'Ocean Dark', isDark: true },
   { id: 'nord-light', scheme: 'nord', mode: 'light', label: 'Nord Light', isDark: false },
   { id: 'nord-dark', scheme: 'nord', mode: 'dark', label: 'Nord Dark', isDark: true },
-  { id: 'protocol-dark',  scheme: 'protocol', mode: 'dark',  label: 'Protocol Dark',  isDark: true },
+  { id: 'protocol-dark', scheme: 'protocol', mode: 'dark', label: 'Protocol Dark', isDark: true },
   { id: 'protocol-light', scheme: 'protocol', mode: 'light', label: 'Protocol Light', isDark: false },
+  { id: 'noir-dark', scheme: 'noir', mode: 'dark', label: 'Noir Dark', isDark: true },
+  { id: 'noir-light', scheme: 'noir', mode: 'light', label: 'Noir Light', isDark: false },
 ];
 
 export const themeGroups: ThemeGroup[] = [
@@ -36,6 +38,7 @@ export const themeGroups: ThemeGroup[] = [
   { scheme: 'ocean', label: 'Ocean', themes: availableThemes.filter(t => t.scheme === 'ocean') },
   { scheme: 'nord', label: 'Nord', themes: availableThemes.filter(t => t.scheme === 'nord') },
   { scheme: 'protocol', label: 'Protocol', themes: availableThemes.filter(t => t.scheme === 'protocol') },
+  { scheme: 'noir', label: 'Noir', themes: availableThemes.filter(t => t.scheme === 'noir') },
 ];
 
 const validThemeIds = new Set<string>(availableThemes.map(t => t.id));
@@ -64,18 +67,25 @@ function migrateLegacyTheme(value: unknown): ThemeName | null {
 const THEME_SETTING_KEY = 'theme';
 const THEME_STORAGE_KEY = 'agentTheme';
 
+/** Theme used when nothing has been saved yet (fresh installs). */
+export const DEFAULT_THEME: ThemeName = 'noir-dark';
+
 // Shared reactive state across all composable instances in the same window
-const currentTheme = ref<ThemeName>('protocol-dark');
+const currentTheme = ref<ThemeName>(DEFAULT_THEME);
 let initialized = false;
 
 function applyThemeClass(theme: ThemeName): void {
   const root = document.documentElement;
   // Remove all theme classes
   availableThemes.forEach(t => root.classList.remove(`theme-${ t.id }`));
+  root.classList.remove('theme-noir');
   // Add current theme class
   root.classList.add(`theme-${ theme }`);
   // Toggle Tailwind dark class for backward compatibility
   const themeInfo = availableThemes.find(t => t.id === theme);
+  if (themeInfo?.scheme === 'noir') {
+    root.classList.add('theme-noir');
+  }
   if (themeInfo?.isDark) {
     root.classList.add('dark');
   } else {
@@ -108,7 +118,7 @@ async function loadThemeFromSettings(): Promise<ThemeName> {
   }
 
   // Final fallback
-  return 'protocol-dark';
+  return DEFAULT_THEME;
 }
 
 async function persistTheme(theme: ThemeName): Promise<void> {

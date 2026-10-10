@@ -1,0 +1,1345 @@
+/* ------------------------------------------------------------------ */
+/*  Noir Dark theme — deep ink surfaces, steel accents, fine hairlines */
+/*  Shared --nx-* contract: paper/surfaces, five reading levels,       */
+/*  hairlines, accents/glow, indicator chrome, shadow, and statuses.   */
+/* ------------------------------------------------------------------ */
+.theme-noir-dark {
+  /* Shared Noir component tokens */
+  --nx-paper: #01030a;
+  --nx-surface: #070d1a;
+  --nx-glass: rgba(7, 13, 26, 0.75);
+  --nx-ink: #f3f5f8;
+  --nx-read-1: #f3f5f8;
+  --nx-read-2: #dee4ec;
+  --nx-read-3: #a9b3c1;
+  --nx-read-4: #7a8291;
+  --nx-read-5: #484f5a;
+  --nx-hair: rgba(168, 192, 220, 0.08);
+  --nx-hair-strong: rgba(168, 192, 220, 0.16);
+  --nx-accent: #5096b3;
+  --nx-accent-2: #6ab0cc;
+  --nx-glow: rgba(80, 150, 179, 0.4);
+  --nx-indicator-bg: #070d1a;
+  --nx-indicator-edge: rgba(80, 150, 179, 0.45);
+  --nx-shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --nx-success: #3fb950;
+  --nx-warning: #e3b341;
+  --nx-danger: #f85149;
+
+  /* Typography tokens */
+  --fs-display:  30px;
+  --fs-heading:  18px;
+  --fs-body:     14px;
+  --fs-body-sm:  12px;
+  --fs-caption:  10px;
+  --fs-code:     13px;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Roboto Mono', monospace;
+  --font-display: 'Playfair Display', serif;
+  --spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) .58s;
+
+  /* Backgrounds — noir terminal palette (design guide gray ramp) */
+  --body-bg: #01030a;            /* Override legacy token so body/wrapper match */
+  --bg-page: #01030a;            /* Level 0 — deepest page background */
+  --bg-surface: #070d1a;         /* Level 100 — cards, panels, sidebar */
+  --bg-surface-alt: #03060c;     /* Level 200 — nested panels, terminal bars */
+  --bg-surface-hover: #070d1a;   /* Level 300 — hover, active, elevated */
+  --bg-elevated: #070d1a;        /* Level 300 — modals, dropdowns, popovers */
+  --bg-header: rgba(1, 3, 10, 0.85);
+  --bg-input: #01030a;           /* Level 0 — recessed inputs, inset feel */
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+
+  /* Text — design guide gray ramp hierarchy */
+  --text-primary: #f3f5f8;       /* Level 900 — headings, key values */
+  --text-secondary: #dee4ec;     /* Level 800 — body text */
+  --text-muted: #a9b3c1;         /* Level 700 — captions, labels */
+  --text-dim: #7a8291;           /* Level 600 — disabled, tertiary */
+  --text-link: #5096b3;
+  --text-on-accent: #f3f5f8;
+  --text-success: #3fb950;
+  --text-error: #f85149;
+  --text-warning: #e3b341;
+  --text-info: #8cacc9;
+
+  /* Borders */
+  --border-default: rgba(168, 192, 220, 0.08);
+  --border-strong: #484f5a;
+  --border-subtle: rgba(168, 192, 220, 0.08);
+
+  /* Semantic Backgrounds */
+  --bg-primary: #01030a;
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.12);
+  --bg-success: rgba(63, 185, 80, 0.18);
+  --bg-error: rgba(248, 81, 73, 0.18);
+  --bg-warning: rgba(227, 179, 65, 0.18);
+  --bg-info: rgba(140, 172, 201, 0.18);
+  --bg-accent: rgba(140, 172, 201, 0.18);
+
+  /* Accent — steel blue (buttons, links, indicators only) */
+  --accent-primary: #5096b3;
+  --accent-primary-hover: #6ab0cc;
+  --accent: var(--accent-primary);
+  --accent-hover: rgba(80, 150, 179, 0.08);
+  --accent-dim: rgba(80, 150, 179, 0.12);
+  --accent-border: rgba(80, 150, 179, 0.45);
+  --text-accent: #8cacc9;
+
+  /* Semantic Borders */
+  --border-success: rgba(63, 185, 80, 0.4);
+  --border-error: rgba(248, 81, 73, 0.4);
+  --border-warning: rgba(227, 179, 65, 0.4);
+  --border-info: rgba(140, 172, 201, 0.4);
+  --border-accent: rgba(80, 150, 179, 0.5);
+  --border-focus: rgba(80, 150, 179, 0.5);
+
+  /* Glow system */
+  --brand-glow: rgba(80, 150, 179, 0.4);
+  --brand-glow-soft: rgba(80, 150, 179, 0.15);
+  --brand-glow-strong: rgba(80, 150, 179, 0.6);
+
+  /* Status */
+  --status-success: #3fb950;
+  --status-info: #8cacc9;
+  --status-warning: #e3b341;
+  --status-error: #f85149;
+
+  /* Shadows — inset top-edge highlight for depth on dark backgrounds */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --ring-color: rgba(80, 150, 179, 0.5);
+
+  /* Editor */
+  --editor-bg: #01030a;
+  --editor-border: rgba(168, 192, 220, 0.08);
+  --editor-btn-color: #a9b3c1;
+  --editor-btn-hover: rgba(255, 255, 255, 0.10);
+  --editor-separator: rgba(168, 192, 220, 0.08);
+
+  /* Terminal */
+  --terminal-bg: #01030a;
+  --terminal-fg: #f3f5f8;
+  --terminal-cursor: #5096b3;
+  --terminal-selection-bg: rgba(80, 150, 179, 0.3);
+  --terminal-selection-fg: #f3f5f8;
+
+  /* Terminal traffic light dots */
+  --terminal-dot-red: #f85149;
+  --terminal-dot-yellow: #e3b341;
+  --terminal-dot-green: #3fb950;
+
+  /* Scrollbar */
+  --scrollbar-thumb: #5096b3;
+  --scrollbar-track: #01030a;
+
+  /* Default Colors */
+  --default: #070d1a;
+  --default-text: #a9b3c1;
+  --default-hover-bg: #070d1a;
+  --default-hover-text: #f3f5f8;
+  --default-active-bg: #01030a;
+  --default-active-text: #f3f5f8;
+  --default-border: rgba(168, 192, 220, 0.08);
+  --default-banner-bg: rgba(7, 13, 26, 0.15);
+  --default-light-bg: rgba(7, 13, 26, 0.05);
+
+  /* Muted */
+  --muted: #a9b3c1;
+
+  /* Body */
+  --body-text: #f3f5f8;
+
+  /* Scrollbar Dropdown */
+  --scrollbar-thumb-dropdown: rgba(168, 192, 220, 0.08);
+
+  /* Header */
+  --header-bg: #01030a;
+  --header-border: rgba(168, 192, 220, 0.08);
+  --header-btn-bg: #070d1a;
+  --header-btn-text: #f3f5f8;
+  --header-border-size: 1px;
+
+  /* Footer */
+  --footer-bg: #01030a;
+  --footer-border: rgba(168, 192, 220, 0.08);
+
+  /* Nav */
+  --nav-width: 230px;
+  --nav-bg: #01030a;
+  --nav-active: rgba(80, 150, 179, 0.15);
+  --nav-border: rgba(168, 192, 220, 0.08);
+  --nav-hover: #070d1a;
+  --nav-expander-hover: rgba(80, 150, 179, 0.08);
+  --nav-border-size: 1px;
+
+  /* Disabled */
+  --disabled-bg: #484f5a;
+  --disabled-text: #dee4ec;
+
+  /* Box & Borders */
+  --box-bg: #01030a;
+  --subtle-border: rgba(168, 192, 220, 0.08);
+  --border: rgba(168, 192, 220, 0.08);
+
+  /* Top Menu */
+  --topmenu-bg: #01030a;
+  --topmenu-text: #f3f5f8;
+  --topmost-border: rgba(168, 192, 220, 0.08);
+  --topmost-shadow: #070d1a;
+  --topmost-light-hover: rgba(168, 192, 220, 0.08);
+
+  /* Accent Button */
+  --accent-btn: rgba(80, 150, 179, 0.15);
+  --accent-btn-hover: #5096b3;
+  --accent-btn-hover-text: #f3f5f8;
+
+  /* Modal */
+  --modal-bg: #070d1a;
+  --modal-border: rgba(168, 192, 220, 0.08);
+  --overlay-bg: rgba(0, 0, 0, 0.75);
+  --shadow: rgba(0, 0, 0, 0.9);
+
+  /* Checkbox */
+  --checkbox-tick: #f3f5f8;
+  --checkbox-border: rgba(168, 192, 220, 0.08);
+  --checkbox-tick-disabled: #dee4ec;
+  --checkbox-disabled-bg: #484f5a;
+  --checkbox-tick-locked: #01030a;
+  --checkbox-locked-bg: #dee4ec;
+  --checkbox-ticked-bg: #5096b3;
+  --checkbox-locked-border: #dee4ec;
+  --checkbox-locked-shadow: #dee4ec;
+
+  /* Dropdown */
+  --dropdown-bg: rgba(168, 192, 220, 0.08);
+  --dropdown-border: #a9b3c1;
+  --dropdown-divider: #a9b3c1;
+  --dropdown-text: #5096b3;
+  --dropdown-active-text: #f3f5f8;
+  --dropdown-active-bg: #5096b3;
+  --dropdown-hover-text: #f3f5f8;
+  --dropdown-hover-bg: #5096b3;
+  --dropdown-disabled-bg: #484f5a;
+  --dropdown-disabled-text: #a9b3c1;
+  --dropdown-locked-text: #f3f5f8;
+
+  /* Input */
+  --input-text: #f3f5f8;
+  --input-label: #dee4ec;
+  --input-placeholder: #a9b3c1;
+  --input-border: var(--border);
+  --input-bg: var(--body-bg);
+  --input-bg-accent: #070d1a;
+  --input-hover-bg: var(--box-bg);
+  --input-focus-bg: var(--box-bg);
+  --input-disabled-text: #dee4ec;
+  --input-disabled-label: #a9b3c1;
+  --input-disabled-bg: #484f5a;
+  --input-disabled-border: rgba(168, 192, 220, 0.08);
+  --input-disabled-placeholder: #484f5a;
+  --input-addon-bg: #070d1a;
+  --input-locked-text: #f3f5f8;
+
+  /* Radio */
+  --radio-locked-bg: var(--body-bg);
+  --radio-locked-shadow: var(--body-bg);
+
+  /* Progress */
+  --progress-bg: rgba(168, 192, 220, 0.08);
+  --progress-divider: #f3f5f8;
+
+  /* Sortable Table */
+  --sortable-table-bg: #03060c;
+  --sortable-table-row-bg: #070d1a;
+  --sortable-table-header-bg: #01030a;
+  --sortable-table-accent-bg: #070d1a;
+  --sortable-table-accent-alt: #070d1a;
+  --sortable-table-top-divider: var(--border);
+  --sortable-table-hover-bg: #01030a;
+  --sortable-table-selected-bg: rgba(80, 150, 179, 0.15);
+  --sortable-table-group-label: #dee4ec;
+
+  /* Tag */
+  --tag-primary: #f3f5f8;
+  --tag-bg: rgba(168, 192, 220, 0.08);
+
+  /* Popover */
+  --popover-bg: var(--body-bg);
+  --popover-border: var(--border);
+  --popover-text: var(--body-text);
+
+  /* Tooltip */
+  --tooltip-bg: rgba(168, 192, 220, 0.08);
+  --tooltip-border: #f3f5f8;
+  --tooltip-text: var(--body-text);
+  --tooltip-text-warning: var(--body-text);
+
+  /* Icon */
+  --icon-circle: rgba(168, 192, 220, 0.08);
+
+  /* Tabbed */
+  --tabbed-border: rgba(168, 192, 220, 0.08);
+  --tabbed-sidebar-bg: #01030a;
+  --tabbed-container-bg: #070d1a;
+
+  /* YAML Editor */
+  --yaml-editor-bg: #01030a;
+
+  /* Diff */
+  --diff-border: var(--border);
+  --diff-header-bg: var(--nav-bg);
+  --diff-header-border: var(--border);
+  --diff-header: rgba(1, 3, 10, 0.3);
+  --diff-linenum-bg: var(--nav-bg);
+  --diff-linenum: var(--muted);
+  --diff-linenum-border: var(--border);
+  --diff-line-ins-bg: var(--status-success);
+  --diff-line-del-bg: rgba(248, 81, 73, 0.75);
+  --diff-del-bg: rgba(248, 81, 73, 0.3);
+  --diff-del-border: #f85149;
+  --diff-ins-bg: rgba(63, 185, 80, 0.3);
+  --diff-ins-border: rgba(63, 185, 80, 0.5);
+  --diff-chg-ins: rgba(63, 185, 80, 0.25);
+  --diff-chg-del: rgba(227, 179, 65, 0.5);
+  --diff-empty-placeholder: #01030a;
+
+  /* Window Manager */
+  --wm-tabs-bg: rgba(168, 192, 220, 0.08);
+  --wm-tab-bg: #01030a;
+  --wm-closer-hover-bg: rgba(168, 192, 220, 0.08);
+  --wm-tab-active-bg: #070d1a;
+  --wm-title-bg: #01030a;
+  --wm-title-border: rgba(168, 192, 220, 0.08);
+  --wm-body-bg: #01030a;
+  --wm-border: rgba(168, 192, 220, 0.08);
+
+  /* Glance */
+  --glance-divider: rgba(168, 192, 220, 0.08);
+
+  /* Resource Gauge */
+  --resource-gauge-back-circle: 48, 55, 66, 0.5;
+
+  /* Simple Box */
+  --simple-box-bg: #01030a;
+  --simple-box-border: rgba(168, 192, 220, 0.08);
+  --simple-box-divider: rgba(168, 192, 220, 0.08);
+  --simple-box-shadow: rgba(0, 0, 0, 0.15);
+
+  /* Terminal (additional) */
+  --terminal-selection: #5096b3;
+
+  /* Logs */
+  --logs-bg: var(--wm-body-bg);
+  --logs-highlight: var(--wm-body-bg);
+  --logs-highlight-bg: var(--status-warning);
+  --logs-text: var(--body-text);
+
+  /* Gauge */
+  --gauge-divider: rgba(255, 255, 255, 0.3);
+  --gauge-success-primary: 63, 185, 80;
+  --gauge-success-secondary: 150, 247, 180;
+  --gauge-warning-primary: 227, 179, 65;
+  --gauge-warning-secondary: 126, 95, 18;
+  --gauge-error-primary: 248, 81, 73;
+  --gauge-error-secondary: 120, 45, 42;
+
+  /* Product */
+  --product-icon: #dee4ec;
+  --product-icon-active: #f3f5f8;
+
+  /* Button */
+  --button-icon: rgba(168, 192, 220, 0.08);
+  --button-icon-bg: #f3f5f8;
+
+  /* Border Utilities */
+  --border-width: 1px;
+  --border-radius: 4px;
+  --border-radius-md: 6px;
+  --border-radius-lg: 8px;
+  --outline: var(--accent-primary);
+  --outline-width: 1px;
+
+  /* ─── Sulla component tokens (recipe panel, library, labs, chat UI) ── */
+  --bg: #01030a;
+  --surface-1: #070d1a;
+  --surface-2: #03060c;
+  --surface-3: #070d1a;
+  --text: #f3f5f8;
+  --border-muted: rgba(168, 192, 220, 0.08);
+  --green: #3fb950;
+  --green-bright: #3fb950;
+  --green-glow: rgba(63, 185, 80, 0.5);
+  --info: #8cacc9;
+  --success: #3fb950;
+  --warning: #e3b341;
+  --danger: #f85149;
+}
+
+/* ================================================================== */
+/*  COMPONENT OVERRIDES — only active when .theme-noir-dark       */
+/* ================================================================== */
+
+/* ── Global: Font smoothing & selection ── */
+.theme-noir-dark {
+  -webkit-font-smoothing: antialiased;
+}
+
+.theme-noir-dark ::selection {
+  background: rgba(80, 150, 179, 0.3);
+  color: #f3f5f8;
+}
+
+
+/* ── Global scrollbar ── */
+.theme-noir-dark ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.theme-noir-dark ::-webkit-scrollbar-track {
+  background: #01030a;
+}
+
+.theme-noir-dark ::-webkit-scrollbar-thumb {
+  background: #5096b3;
+  border-radius: 3px;
+}
+
+.theme-noir-dark ::-webkit-scrollbar-thumb:hover {
+  background: #5096b3;
+}
+
+/* ── Title bar: draggable region for macOS hiddenInset ── */
+.theme-noir-dark .app-titlebar {
+  -webkit-app-region: drag;
+}
+
+.theme-noir-dark .app-titlebar a,
+.theme-noir-dark .app-titlebar button,
+.theme-noir-dark .app-titlebar nav {
+  -webkit-app-region: no-drag;
+}
+
+
+/* ── Header: noir nav with backdrop blur ── */
+.theme-noir-dark header {
+  background: #01030a !important;
+}
+
+.theme-noir-dark header nav a {
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ── Page background ── */
+.theme-noir-dark .page-root {
+  background: #01030a;
+  color: #f3f5f8;
+}
+
+/* ── Composer input: Terminal look ── */
+
+/* Replace blue gradient glow lines with steel blue */
+.theme-noir-dark .bg-linear-to-r.from-sky-300\/0,
+.theme-noir-dark .bg-linear-to-r.from-blue-400\/0,
+.theme-noir-dark [class*="from-sky-300"],
+.theme-noir-dark [class*="from-blue-400"] {
+  background-image: none !important;
+  background: linear-gradient(to right, transparent, #5096b3, transparent) !important;
+  opacity: 0.7;
+}
+
+/* Composer panel: terminal border with glow on focus */
+.theme-noir-dark .bg-surface.ring-1.ring-edge {
+  background: #01030a !important;
+  border: 1px solid var(--border-default);
+  box-shadow: 0 0 0 0 transparent;
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.theme-noir-dark .bg-surface.ring-1.ring-edge:focus-within {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 15px rgba(80, 150, 179, 0.2), 0 0 30px rgba(80, 150, 179, 0.1);
+}
+
+/* Textarea: monospace terminal font, white text, bright glowing cursor */
+.theme-noir-dark textarea {
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-body);
+  color: #f3f5f8 !important;
+  caret-color: #a8c0dc;
+}
+
+.theme-noir-dark textarea::placeholder {
+  color: var(--text-secondary) !important;
+  font-family: var(--font-mono) !important;
+}
+
+/* Send button: steel blue */
+.theme-noir-dark .bg-content.text-page {
+  background: #5096b3 !important;
+  color: #f3f5f8 !important;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.theme-noir-dark .bg-content.text-page:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 15px rgba(80, 150, 179, 0.4);
+  transform: translateY(-1px);
+}
+
+/* ── User message bubbles: blue tinted with white text ── */
+.theme-noir-dark .bg-surface-alt.ring-1.ring-edge-subtle {
+  background: rgba(80, 150, 179, 0.1) !important;
+  border: 1px solid var(--brand-glow-soft) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  --tw-ring-opacity: 0;
+  max-width: 80%;
+  margin-left: auto;
+  padding: 10px 16px !important;
+  overflow-wrap: break-word;
+}
+
+.theme-noir-dark .bg-surface-alt.ring-1.ring-edge-subtle .text-content {
+  color: #f3f5f8 !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-body) !important;
+  font-weight: 400;
+  line-height: 24.48px !important;
+}
+
+/* ── Assistant messages: prose with steel blue accents ── */
+.theme-noir-dark .prose {
+  color: #dee4ec !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-body) !important;
+  font-weight: 400;
+  line-height: 23.12px !important;
+}
+
+.theme-noir-dark .prose h1,
+.theme-noir-dark .prose h2,
+.theme-noir-dark .prose h3,
+.theme-noir-dark .prose h4 {
+  color: #f3f5f8;
+}
+
+.theme-noir-dark .prose a {
+  color: #5096b3 !important;
+  text-decoration: none;
+  transition: color 0.3s, text-shadow 0.3s;
+}
+
+.theme-noir-dark .prose a:hover {
+  color: #f3f5f8 !important;
+  text-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
+}
+
+.theme-noir-dark .prose code {
+  background: rgba(80, 150, 179, 0.08);
+  color: #6ab0cc;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  padding: 0.2rem 0.5rem;
+  font-size: var(--fs-code);
+  font-family: var(--font-mono);
+}
+
+.theme-noir-dark .prose pre {
+  background: #03060c;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 1.5rem 1.75rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+  line-height: 1.8;
+  color: #dee4ec;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.theme-noir-dark .prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+}
+
+.theme-noir-dark .prose strong {
+  color: #f3f5f8;
+}
+
+.theme-noir-dark .prose blockquote {
+  border-left: 3px solid var(--accent-primary);
+  padding: 1.5rem 0 1.5rem 1.5rem;
+  font-style: italic;
+  color: #dee4ec;
+  box-shadow: -4px 0 20px rgba(80, 150, 179, 0.15);
+}
+
+.theme-noir-dark .prose hr {
+  border-color: var(--border-default);
+}
+
+.theme-noir-dark .prose table th {
+  background: #03060c;
+  color: #5096b3;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  letter-spacing: 0.08em;
+  border-bottom: 2px solid var(--accent-primary);
+}
+
+.theme-noir-dark .prose table td {
+  color: #dee4ec;
+  border-color: var(--border-default);
+}
+
+.theme-noir-dark .prose table tr:hover {
+  background: #03060c;
+}
+
+/* ── "Thinking..." indicator: subtle, no flashy gradient ── */
+.theme-noir-dark [class*="border-indigo"],
+.theme-noir-dark [class*="border-cyan"],
+.theme-noir-dark [class*="border-sky"] {
+  border-color: var(--brand-glow-soft) !important;
+}
+
+.theme-noir-dark [class*="color-indigo"],
+.theme-noir-dark [class*="color-cyan"],
+.theme-noir-dark [class*="color-sky"] {
+  --color-indigo-400: rgba(80, 150, 179, 0.3);
+  --color-cyan-400: rgba(80, 150, 179, 0.2);
+  --color-sky-500: rgba(80, 150, 179, 0.3);
+  --color-sky-50: #070d1a;
+}
+
+/* Kill the flashy gradient border on "Thinking..." — replace with simple muted border */
+.theme-noir-dark .absolute.-inset-px[style*="border-box"],
+.theme-noir-dark [style*="linear-gradient"] .absolute.-inset-px {
+  background: none !important;
+  border: 1px solid var(--brand-glow-soft) !important;
+  border-radius: 12px;
+}
+
+/* The thinking text itself */
+.theme-noir-dark .absolute.-inset-px + .relative {
+  color: #7a8291 !important;
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  font-style: italic;
+}
+
+/* Thinking bubble content: muted, subtle */
+.theme-noir-dark .thinking-bubble {
+  opacity: 0.6;
+}
+
+.theme-noir-dark .thinking-bubble-content {
+  color: #7a8291 !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-body-sm) !important;
+}
+
+/* Override the Tailwind dark:prose-invert slate coloring — two-class specificity beats dark:text-slate-400 */
+.theme-noir-dark .prose.prose-slate {
+  color: #dee4ec !important;
+}
+
+/* ── Sulla assistant avatar & name ── */
+.theme-noir-dark .sulla-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(80, 150, 179, 0.12);
+  border: 1px solid var(--brand-glow-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #5096b3;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  font-weight: 700;
+}
+
+.theme-noir-dark .sulla-name {
+  color: #5096b3;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* ── Tool cards: terminal aesthetic ── */
+.theme-noir-dark .tool-card-cc {
+  background: #070d1a;             /* Level 100 — visible on Level 0 page */
+  border-color: var(--border-default);
+  font-family: var(--font-mono);
+  box-shadow: var(--shadow-sm);
+}
+
+.theme-noir-dark .tool-card-cc-header:hover {
+  background: rgba(80, 150, 179, 0.08);
+}
+
+.theme-noir-dark .tool-card-cc-name {
+  color: #5096b3;
+}
+
+/* IN label + command text: terminal green */
+.theme-noir-dark .tool-card-cc-cmd:has(.tool-card-cc-cmd-text:not(.tool-card-cc-exit)) .tool-card-cc-cmd-label {
+  color: #3fb950;
+}
+
+.theme-noir-dark .tool-card-cc-cmd-text:not(.tool-card-cc-exit) {
+  color: #3fb950;
+}
+
+/* OUT label + exit code: muted gray */
+.theme-noir-dark .tool-card-cc-cmd:has(.tool-card-cc-exit) .tool-card-cc-cmd-label {
+  color: #7a8291;
+}
+
+.theme-noir-dark .tool-card-cc-exit.success {
+  color: #7a8291 !important;
+}
+
+.theme-noir-dark .tool-card-cc-exit.failed {
+  color: #f85149 !important;
+}
+
+.theme-noir-dark .tool-card-cc-output pre {
+  color: #a9b3c1;
+}
+
+/* ── Channel messages: steel blue instead of indigo ── */
+.theme-noir-dark [class*="border-indigo-200"],
+.theme-noir-dark [class*="border-indigo-800"] {
+  border-color: var(--brand-glow-soft) !important;
+}
+
+.theme-noir-dark [class*="bg-indigo-50"],
+.theme-noir-dark [class*="bg-indigo-950"] {
+  background: rgba(80, 150, 179, 0.04) !important;
+}
+
+.theme-noir-dark [class*="bg-indigo-100"],
+.theme-noir-dark [class*="bg-indigo-900"] {
+  background: rgba(80, 150, 179, 0.12) !important;
+}
+
+.theme-noir-dark [class*="text-indigo-700"],
+.theme-noir-dark [class*="text-indigo-300"] {
+  color: #5096b3 !important;
+}
+
+/* ── "Primary" badge on model selector ── */
+.theme-noir-dark .bg-sky-100,
+.theme-noir-dark [class*="bg-sky-100"] {
+  background: rgba(80, 150, 179, 0.12) !important;
+}
+
+.theme-noir-dark [class*="bg-sky-900"] {
+  background: rgba(80, 150, 179, 0.15) !important;
+}
+
+.theme-noir-dark .text-sky-700,
+.theme-noir-dark [class*="text-sky-700"] {
+  color: #5096b3 !important;
+}
+
+.theme-noir-dark .text-sky-400,
+.theme-noir-dark [class*="text-sky-400"] {
+  color: #5096b3 !important;
+}
+
+/* ── Composer bottom bar: edge-to-edge terminal input ── */
+.theme-noir-dark .border-t.border-edge.bg-page\/80 {
+  background: #01030a !important;
+  backdrop-filter: none;
+  border-color: var(--border-default) !important;
+  padding-top: 0 !important;
+}
+
+/* Strip all wrapper padding/margins so input goes edge-to-edge */
+.theme-noir-dark .border-t.border-edge.bg-page\/80 > div {
+  max-width: none !important;
+  padding: 0 !important;
+}
+
+.theme-noir-dark .border-t.border-edge.bg-page\/80 > div > div {
+  max-width: none !important;
+  padding: 0 !important;
+}
+
+.theme-noir-dark .border-t.border-edge.bg-page\/80 .pb-3 {
+  padding-bottom: 0 !important;
+}
+
+/* The composer form: full width, no margin */
+.theme-noir-dark .border-t.border-edge.bg-page\/80 .group\/composer {
+  margin: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+}
+
+/* The composer panel: flat, no rounded corners, no ring, edge-to-edge */
+.theme-noir-dark .border-t.border-edge.bg-page\/80 .bg-surface.ring-1.ring-edge {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: #01030a !important;
+  --tw-ring-opacity: 0;
+}
+
+/* Remove the gradient glow lines inside the fixed bottom bar */
+.theme-noir-dark .border-t.border-edge.bg-page\/80 [class*="from-sky-300"],
+.theme-noir-dark .border-t.border-edge.bg-page\/80 [class*="from-blue-400"] {
+  display: none !important;
+}
+
+/* ── Continue button ── */
+.theme-noir-dark .bg-content.text-page.shadow-sm {
+  background: #5096b3 !important;
+  color: #f3f5f8 !important;
+}
+
+.theme-noir-dark .bg-content.text-page.shadow-sm:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 12px rgba(80, 150, 179, 0.3);
+}
+
+/* ── Links ── */
+.theme-noir-dark a {
+  transition: color 0.3s, text-shadow 0.3s;
+}
+
+.theme-noir-dark a:not([class]):hover {
+  text-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
+}
+
+/* ── Stroke colors: replace slate with muted gray ── */
+.theme-noir-dark .stroke-slate-500 {
+  stroke: #7a8291;
+}
+
+/* ── Ring overrides for focus states ── */
+.theme-noir-dark .ring-black\/5 {
+  --tw-ring-color: var(--brand-glow-soft);
+}
+
+.theme-noir-dark .shadow-black\/5 {
+  --tw-shadow-color: rgba(0, 0, 0, 0.3);
+}
+
+/* ── Model selector menu ── */
+.theme-noir-dark .agent-model-selector-menu {
+  background: #01030a;
+  border-color: var(--border-default);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(80, 150, 179, 0.05);
+}
+
+/* ── Audio player ── */
+.theme-noir-dark .sulla-audio-player {
+  background: #01030a;
+  border-color: var(--border-default);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Calendar Page — Noir overrides
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Page root background override (scoped styles use #01030a) */
+.theme-noir-dark .page-root,
+.theme-noir-dark .page-root.dark {
+  background: #01030a !important;  /* Level 0 — deepest, cards/panels at Level 100 pop */
+  color: #f3f5f8 !important;
+}
+
+/* "Add Event" button: steel blue instead of indigo */
+.theme-noir-dark .bg-indigo-600 {
+  background: #5096b3 !important;
+}
+
+.theme-noir-dark .bg-indigo-600:hover,
+.theme-noir-dark .hover\:bg-indigo-700:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 12px rgba(80, 150, 179, 0.3);
+}
+
+/* Focus rings: steel blue instead of indigo */
+.theme-noir-dark .focus\:border-indigo-500:focus {
+  border-color: var(--accent-primary) !important;
+}
+
+.theme-noir-dark .focus\:ring-indigo-500:focus {
+  --tw-ring-color: rgba(80, 150, 179, 0.4) !important;
+}
+
+/* ── Modals: terminal aesthetic ── */
+.theme-noir-dark .dark\:bg-neutral-900 {
+  background: #01030a !important;
+}
+
+.theme-noir-dark .dark\:bg-neutral-800 {
+  background: #01030a !important;
+}
+
+.theme-noir-dark .dark\:border-white\/10 {
+  border-color: var(--border-default) !important;
+}
+
+.theme-noir-dark .dark\:text-white {
+  color: #f3f5f8 !important;
+}
+
+.theme-noir-dark .dark\:text-neutral-300 {
+  color: #a9b3c1 !important;
+}
+
+.theme-noir-dark .dark\:text-neutral-400 {
+  color: #7a8291 !important;
+}
+
+.theme-noir-dark .dark\:text-neutral-500 {
+  color: #484f5a !important;
+}
+
+.theme-noir-dark .dark\:hover\:bg-neutral-700:hover {
+  background: #070d1a !important;
+}
+
+.theme-noir-dark .dark\:hover\:bg-neutral-800:hover {
+  background: #01030a !important;
+}
+
+.theme-noir-dark .dark\:hover\:text-neutral-300:hover {
+  color: #a9b3c1 !important;
+}
+
+/* Delete button in edit modal */
+.theme-noir-dark .dark\:border-red-900 {
+  border-color: var(--border-error) !important;
+}
+
+.theme-noir-dark .dark\:bg-red-950 {
+  background: rgba(248, 81, 73, 0.08) !important;
+}
+
+.theme-noir-dark .dark\:text-red-400 {
+  color: #f85149 !important;
+}
+
+.theme-noir-dark .dark\:hover\:bg-red-900:hover {
+  background: rgba(248, 81, 73, 0.15) !important;
+}
+
+/* Modal inputs: terminal font */
+.theme-noir-dark .fixed.inset-0.z-50 input,
+.theme-noir-dark .fixed.inset-0.z-50 textarea {
+  font-family: var(--font-mono) !important;
+  background: #01030a !important;
+  color: #f3f5f8 !important;
+  border-color: var(--border-default) !important;
+}
+
+.theme-noir-dark .fixed.inset-0.z-50 input:focus,
+.theme-noir-dark .fixed.inset-0.z-50 textarea:focus {
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 10px var(--brand-glow-soft);
+}
+
+.theme-noir-dark .fixed.inset-0.z-50 label {
+  font-family: var(--font-mono);
+  color: #a9b3c1 !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: var(--fs-body-sm) !important;
+}
+
+.theme-noir-dark .fixed.inset-0.z-50 h2 {
+  font-family: var(--font-mono);
+  color: #5096b3 !important;
+  letter-spacing: 0.05em;
+}
+
+/* Modal container: terminal style */
+.theme-noir-dark .fixed.inset-0.z-50 > .rounded-2xl {
+  background: #01030a !important;
+  border: 1px solid var(--border-default) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 20px rgba(80, 150, 179, 0.05) !important;
+}
+
+/* ── ScheduleX CSS variable overrides: kill purple, use steel blue ── */
+.theme-noir-dark .sx__calendar-wrapper {
+  --sx-color-primary: #5096b3 !important;
+  --sx-color-on-primary: #f3f5f8 !important;
+  --sx-color-primary-container: rgba(80, 150, 179, 0.15) !important;
+  --sx-color-on-primary-container: #f3f5f8 !important;
+  --sx-color-secondary: #a9b3c1 !important;
+  --sx-color-on-secondary: #f3f5f8 !important;
+  --sx-color-secondary-container: #070d1a !important;
+  --sx-color-on-secondary-container: #f3f5f8 !important;
+  --sx-color-surface: #01030a !important;
+  --sx-color-surface-dim: #01030a !important;
+  --sx-color-surface-bright: #070d1a !important;
+  --sx-color-on-surface: #f3f5f8 !important;
+  --sx-color-surface-container: #01030a !important;
+  --sx-color-surface-container-low: #01030a !important;
+  --sx-color-surface-container-high: #070d1a !important;
+  --sx-color-background: #01030a !important;
+  --sx-color-on-background: #f3f5f8 !important;
+  --sx-color-outline: var(--border-default) !important;
+  --sx-color-outline-variant: var(--border-subtle) !important;
+  --sx-color-surface-tint: #5096b3 !important;
+  --sx-color-neutral: #a9b3c1 !important;
+  --sx-color-neutral-variant: #7a8291 !important;
+  --sx-internal-color-text: #f3f5f8 !important;
+  --sx-internal-color-gray-ripple-background: #070d1a !important;
+  --sx-internal-color-light-gray: #01030a !important;
+}
+
+/* ── ScheduleX calendar widget: dark terminal look ── */
+.theme-noir-dark .sx__calendar-wrapper,
+.theme-noir-dark .sx__view-container,
+.theme-noir-dark .sx__month-grid-wrapper,
+.theme-noir-dark .sx__week-grid,
+.theme-noir-dark .sx__day-grid {
+  background: #01030a !important;
+  color: #f3f5f8 !important;
+  font-family: var(--font-mono) !important;
+}
+
+/* Calendar header/toolbar */
+.theme-noir-dark .sx__calendar-header {
+  background: #01030a !important;
+  border-color: var(--border-default) !important;
+  font-family: var(--font-mono) !important;
+}
+
+.theme-noir-dark .sx__calendar-header button {
+  color: #a9b3c1 !important;
+}
+
+.theme-noir-dark .sx__calendar-header button:hover {
+  color: #f3f5f8 !important;
+  background: rgba(80, 150, 179, 0.08) !important;
+}
+
+.theme-noir-dark .sx__calendar-header .sx__date-input {
+  color: #f3f5f8 !important;
+}
+
+/* Calendar grid lines */
+.theme-noir-dark .sx__month-grid-day,
+.theme-noir-dark .sx__week-grid__day,
+.theme-noir-dark .sx__day-grid__day {
+  border-color: var(--border-default) !important;
+}
+
+.theme-noir-dark .sx__month-grid-cell {
+  border-color: var(--border-subtle) !important;
+}
+
+/* Day numbers */
+.theme-noir-dark .sx__month-grid-day__header-date {
+  color: #a9b3c1 !important;
+}
+
+.theme-noir-dark .sx__month-grid-day__header-date--is-today {
+  background: #5096b3 !important;
+  color: #f3f5f8 !important;
+}
+
+/* Week/day time column */
+.theme-noir-dark .sx__time-grid-hour {
+  border-color: var(--border-subtle) !important;
+  color: #7a8291 !important;
+}
+
+/* Events in calendar */
+.theme-noir-dark .sx__event {
+  background: rgba(80, 150, 179, 0.15) !important;
+  border-left: 3px solid var(--accent-primary) !important;
+  color: #f3f5f8 !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--fs-body-sm) !important;
+}
+
+.theme-noir-dark .sx__event:hover {
+  background: rgba(80, 150, 179, 0.25) !important;
+}
+
+/* View switcher tabs */
+.theme-noir-dark .sx__view-selection button {
+  color: #7a8291 !important;
+  font-family: var(--font-mono) !important;
+}
+
+.theme-noir-dark .sx__view-selection button.sx__view-selection-item--is-selected,
+.theme-noir-dark .sx__view-selection button:hover {
+  color: #5096b3 !important;
+}
+
+/* Today button */
+.theme-noir-dark .sx__today-button {
+  color: #5096b3 !important;
+  border-color: var(--border-default) !important;
+  font-family: var(--font-mono) !important;
+}
+
+.theme-noir-dark .sx__today-button:hover {
+  background: rgba(80, 150, 179, 0.08) !important;
+}
+
+/* Forward/back navigation arrows */
+.theme-noir-dark .sx__chevron-wrapper svg {
+  color: #a9b3c1 !important;
+  fill: #a9b3c1 !important;
+}
+
+/* Day names row */
+.theme-noir-dark .sx__month-grid-day__header-day-name,
+.theme-noir-dark .sx__week-grid__day-name {
+  color: #7a8291 !important;
+  font-family: var(--font-mono) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Month agenda items */
+.theme-noir-dark .sx__month-agenda-day {
+  border-color: var(--border-subtle) !important;
+}
+
+.theme-noir-dark .sx__month-agenda-event {
+  background: rgba(80, 150, 179, 0.08) !important;
+  border-color: var(--border-default) !important;
+  color: #f3f5f8 !important;
+}
+
+/* Current time indicator */
+.theme-noir-dark .sx__current-time-indicator {
+  background: #5096b3 !important;
+}
+
+/* Date picker inputs: match terminal */
+.theme-noir-dark input[type="date"],
+.theme-noir-dark input[type="time"] {
+  color-scheme: dark;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Integrations Page — Noir overrides
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Hero section background with gradient fade to page bg */
+.theme-noir-dark .bg-slate-900 {
+  background: #01030a !important;
+}
+
+/* Hero title gradient: steel blue instead of indigo */
+.theme-noir-dark .from-indigo-200.via-sky-400.to-indigo-200,
+.theme-noir-dark [class*="from-indigo-200"] {
+  background-image: linear-gradient(to right, #5096b3, #a8c0dc, #5096b3) !important;
+}
+
+/* Search input */
+.theme-noir-dark .dark\:bg-slate-800\/75 {
+  background: #01030a !important;
+}
+
+.theme-noir-dark .dark\:ring-white\/5 {
+  --tw-ring-color: var(--border-default) !important;
+}
+
+/* Category sidebar */
+.theme-noir-dark .dark\:text-slate-500 {
+  color: #484f5a !important;
+}
+
+.theme-noir-dark .dark\:text-slate-400 {
+  color: #a9b3c1 !important;
+}
+
+.theme-noir-dark .dark\:text-slate-200 {
+  color: #f3f5f8 !important;
+}
+
+.theme-noir-dark .dark\:text-slate-300 {
+  color: #a9b3c1 !important;
+}
+
+.theme-noir-dark .dark\:text-slate-100 {
+  color: #f3f5f8 !important;
+}
+
+/* Active category: steel blue instead of sky */
+.theme-noir-dark .dark\:bg-sky-400\/10 {
+  background: rgba(80, 150, 179, 0.1) !important;
+}
+
+.theme-noir-dark .dark\:text-sky-400 {
+  color: #5096b3 !important;
+}
+
+/* Sidebar hover states */
+.theme-noir-dark .dark\:hover\:bg-slate-800:hover {
+  background: #070d1a !important;
+}
+
+.theme-noir-dark .dark\:hover\:text-slate-200:hover {
+  color: #f3f5f8 !important;
+}
+
+/* Integration cards */
+.theme-noir-dark .dark\:bg-slate-800 {
+  background: #070d1a !important;
+}
+
+.theme-noir-dark .dark\:border-gray-700 {
+  border-color: var(--border-default) !important;
+}
+
+.theme-noir-dark .dark\:hover\:border-gray-600:hover {
+  border-color: var(--brand-glow-soft) !important;
+}
+
+/* Card icon container */
+.theme-noir-dark .dark\:bg-slate-700 {
+  background: #070d1a !important;
+}
+
+/* Category badge */
+.theme-noir-dark .dark\:text-slate-200 {
+  color: #a9b3c1 !important;
+}
+
+/* Connect/Manage buttons: steel blue */
+.theme-noir-dark .bg-blue-600 {
+  background: #5096b3 !important;
+}
+
+.theme-noir-dark .bg-blue-600:hover,
+.theme-noir-dark .hover\:bg-blue-700:hover {
+  background: #5096b3 !important;
+  box-shadow: 0 0 10px rgba(80, 150, 179, 0.2);
+}
+
+/* Beta badge */
+.theme-noir-dark .bg-blue-500 {
+  background: #5096b3 !important;
+}
+
+/* Coming soon badge */
+.theme-noir-dark .bg-gray-400 {
+  background: #484f5a !important;
+}
+
+.theme-noir-dark .bg-gray-500 {
+  background: #484f5a !important;
+}
+
+.theme-noir-dark .hover\:bg-gray-600:hover {
+  background: #7a8291 !important;
+}
+
+/* Disconnect/Manage (red) button */
+.theme-noir-dark .bg-red-600 {
+  background: #f85149 !important;
+}
+
+.theme-noir-dark .hover\:bg-red-700:hover {
+  background: #f85149 !important;
+}
+
+/* Mobile category select */
+.theme-noir-dark .dark\:border-slate-700 {
+  border-color: var(--border-default) !important;
+}
+
+/* Connected status dot */
+.theme-noir-dark .bg-green-500 {
+  background: #8cacc9 !important;
+}
+
+.theme-noir-dark .bg-gray-300 {
+  background: #484f5a !important;
+}
+
+/* All text on integrations page: terminal font */
+.theme-noir-dark .page-root h3,
+.theme-noir-dark .page-root nav button,
+.theme-noir-dark .page-root nav h3 {
+  font-family: var(--font-mono);
+}
+
+/* Fill colors for search icon */
+.theme-noir-dark .dark\:fill-slate-500 {
+  fill: #484f5a !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Shared page chrome — Noir overrides
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Top-level page root (used by AccountEditor, LanguageModelSettings, etc.) */
+.theme-noir-dark .page-root,
+.theme-noir-dark .page-root.dark {
+  background: #01030a !important;
+  color: #f3f5f8 !important;
+}
+
+/* Breadcrumb header used by AccountEditor / LanguageModelSettings */
+.theme-noir-dark .editor-header,
+.theme-noir-dark .editor-header.dark {
+  background: #01030a !important;
+  border-bottom-color: var(--border-default) !important;
+  color: #7a8291 !important;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+}
+
+/* Empty-state block (EmptyState.vue, routines EmptyState) */
+.theme-noir-dark .empty-state {
+  color: #7a8291 !important;
+}
+
+.theme-noir-dark .empty-hint {
+  color: #7a8291 !important;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+}
+
+/* Loading spinner */
+.theme-noir-dark .loading-spinner {
+  border-color: var(--brand-glow-soft) !important;
+  border-top-color: var(--accent-primary) !important;
+}
+
+/* Panel depth shadow + hover lift */
+.theme-noir-dark .panel {
+  box-shadow: var(--shadow-sm);
+}
+
+.theme-noir-dark .panel:hover {
+  border-color: var(--border-strong) !important;
+  box-shadow: var(--shadow-md);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-noir-dark *,
+  .theme-noir-dark *::before,
+  .theme-noir-dark *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
