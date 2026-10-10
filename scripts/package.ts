@@ -36,21 +36,22 @@ class Builder {
       return;
     }
 
-    const explicitIdentity = process.env.CSC_NAME?.trim();
+    // electron-builder rejects a CSC_NAME that carries the certificate-type
+    // prefix and picks the right type itself, so compare and pin bare names.
+    const prefix = 'Developer ID Application:';
+    const bareName = (name: string) => name.startsWith(prefix) ? name.slice(prefix.length).trim() : name;
+    const explicitIdentity = process.env.CSC_NAME?.trim() ? bareName(process.env.CSC_NAME.trim()) : undefined;
 
     if (!explicitIdentity && process.env.CSC_IDENTITY_AUTO_DISCOVERY?.toLowerCase() === 'false') {
       throw new Error('Mac packaging requires CSC_LINK, CSC_NAME, or enabled keychain identity auto-discovery.');
-    }
-
-    if (explicitIdentity && !explicitIdentity.startsWith('Developer ID Application:')) {
-      throw new Error('Mac packaging requires a Developer ID Application identity; CSC_NAME is not one.');
     }
 
     const { stdout } = await spawnFile('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], { stdio: 'pipe' });
     const identities = stdout.split('\n').filter(line => line.includes('"Developer ID Application:'));
     const identityNames = [...new Set(identities
       .map(line => line.match(/"([^"]+)"\s*$/)?.[1])
-      .filter((name): name is string => Boolean(name)))];
+      .filter((name): name is string => Boolean(name))
+      .map(bareName))];
 
     if (!identityNames.length) {
       throw new Error(
