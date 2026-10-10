@@ -53,13 +53,19 @@
             ref="transcriptEl"
             class="fr-card"
           >
-            <component
-              :is="steps[currentStep]"
-              :startup-controller="startupController"
-              :show-back="currentStep > 0"
-              @next="next"
-              @back="back"
-            />
+            <Transition
+              name="fr-pane"
+              mode="out-in"
+            >
+              <component
+                :is="steps[currentStep]"
+                :key="currentStep"
+                :startup-controller="startupController"
+                :show-back="currentStep > 0"
+                @next="next"
+                @back="back"
+              />
+            </Transition>
           </div>
         </div>
       </div>
@@ -283,4 +289,136 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 }
 
 .fr-card :deep(> div) { max-width: none; }
+
+/* Noir is opt-in: the first-run window uses the saved theme when one exists,
+ * while a fresh install keeps useTheme's existing Protocol Dark fallback. */
+:global(.theme-noir-dark) .page-root {
+  --fr-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
+  background:
+    radial-gradient(90% 64% at 50% -8%, rgba(80, 150, 179, .18), transparent 60%),
+    radial-gradient(52% 44% at 0% 100%, rgba(80, 150, 179, .08), transparent 72%),
+    #01030a;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .fr-steps {
+  gap: 6px;
+  padding: 13px 22px;
+  border-color: rgba(168, 192, 220, .08);
+  background: rgba(3, 6, 12, .48);
+  backdrop-filter: blur(16px);
+}
+
+:global(.theme-noir-dark) .fr-step {
+  position: relative;
+  height: 34px;
+  gap: 8px;
+  padding: 0 13px 0 8px;
+  border-radius: 17px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: .045em;
+  color: #7a8291;
+  transition: color .2s ease, background .58s var(--fr-spring), box-shadow .58s var(--fr-spring), transform .58s var(--fr-spring);
+}
+
+:global(.theme-noir-dark) .fr-step.is-active {
+  color: #f3f5f8;
+  background: linear-gradient(180deg, rgba(80, 150, 179, .28), rgba(80, 150, 179, .12));
+  box-shadow: inset 0 0 0 .5px rgba(106, 176, 204, .5), 0 0 20px rgba(80, 150, 179, .18);
+}
+
+:global(.theme-noir-dark) .fr-step.is-active::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 8px;
+  width: 3px;
+  height: 18px;
+  border-radius: 3px;
+  background: #6ab0cc;
+  box-shadow: 0 0 10px rgba(106, 176, 204, .9);
+}
+
+:global(.theme-noir-dark) .fr-step.is-done { color: #a9b3c1; }
+
+:global(.theme-noir-dark) .fr-step-n {
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #7a8291;
+  background: rgba(168, 192, 220, .08);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .08);
+}
+
+:global(.theme-noir-dark) .fr-step.is-active .fr-step-n,
+:global(.theme-noir-dark) .fr-step.is-done .fr-step-n {
+  color: #f3f5f8;
+  background: rgba(80, 150, 179, .24);
+  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, .45), 0 0 10px rgba(80, 150, 179, .2);
+}
+
+:global(.theme-noir-dark) .fr-setup {
+  padding: 9px 24px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 10.5px;
+  color: #7a8291;
+  background: rgba(3, 6, 12, .34);
+  border-bottom: 1px solid rgba(168, 192, 220, .06);
+}
+
+:global(.theme-noir-dark) .fr-setup-track {
+  height: 4px;
+  background: rgba(168, 192, 220, .1);
+}
+
+:global(.theme-noir-dark) .fr-setup-bar {
+  background: linear-gradient(90deg, #5096b3, #6ab0cc);
+  box-shadow: 0 0 10px rgba(80, 150, 179, .5);
+}
+
+:global(.theme-noir-dark) .fr-stage {
+  align-items: center;
+  padding: 34px 28px 58px;
+}
+
+:global(.theme-noir-dark) .fr-card {
+  max-width: 820px;
+  padding: 12px 22px 22px;
+  border-color: rgba(168, 192, 220, .08);
+  border-radius: 24px;
+  background:
+    linear-gradient(145deg, rgba(168, 192, 220, .045), rgba(168, 192, 220, .018)),
+    rgba(7, 13, 26, .78);
+  box-shadow: inset 0 0 0 .5px rgba(168, 192, 220, .08), 0 30px 80px rgba(0, 0, 0, .48), 0 0 70px rgba(80, 150, 179, .06);
+  backdrop-filter: blur(22px);
+}
+
+:global(.theme-noir-dark) .fr-pane-enter-active,
+:global(.theme-noir-dark) .fr-pane-leave-active {
+  transition: opacity .34s ease, transform .58s var(--fr-spring), filter .34s ease;
+}
+
+:global(.theme-noir-dark) .fr-pane-enter-from {
+  opacity: 0;
+  transform: translateY(10px) scale(.985);
+  filter: blur(8px);
+}
+
+:global(.theme-noir-dark) .fr-pane-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(.99);
+  filter: blur(5px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .fr-step,
+  :global(.theme-noir-dark) .fr-pane-enter-active,
+  :global(.theme-noir-dark) .fr-pane-leave-active {
+    transition-duration: .01ms;
+  }
+}
 </style>
