@@ -62,10 +62,29 @@ jobs:
     - uses: ./.github/actions/yarn-install
       timeout-minutes: 20
     - run: yarn build
-    # When signing secrets are set, electron-builder picks them up from
-    # these env vars and produces a Developer-ID-signed + notarized build
-    # on macOS. Missing secrets = unsigned build (no error thrown); the
-    # existing sign-mac / sign-win test-signing jobs handle CI verification.
+    # electron-builder silently skips macOS signing if the certificate is
+    # missing. Fail before packaging so no unsigned ZIP can be uploaded or
+    # attached to a release. These credentials are required for both tag and
+    # manual package builds.
+    - name: Require macOS signing and notarization credentials
+      if: matrix.platform == 'mac'
+      env:
+        CSC_LINK: ${{ secrets.CSC_LINK }}
+        CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        APPLE_ID: ${{ secrets.APPLE_ID }}
+        APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      run: |
+        missing=()
+        for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+          if [[ -z "${!name}" ]]; then
+            missing+=("$name")
+          fi
+        done
+        if (( ${#missing[@]} > 0 )); then
+          echo "::error::Refusing unsigned macOS package; missing required signing configuration: ${missing[*]}"
+          exit 1
+        fi
     - run: yarn package
       env:
         CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -73,6 +92,34 @@ jobs:
         APPLE_ID: ${{ secrets.APPLE_ID }}
         APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    - name: Verify macOS signature and notarization
+      if: matrix.platform == 'mac'
+      env:
+        APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        archives=(dist/Sulla-Desktop-*-mac.zip)
+        if (( ${#archives[@]} == 0 )); then
+          echo "::error::No macOS ZIP was produced."
+          exit 1
+        fi
+        for archive in "${archives[@]}"; do
+          app_dir="$(mktemp -d)"
+          ditto -x -k "$archive" "$app_dir"
+          app="$app_dir/Sulla Desktop.app"
+          if [[ ! -d "$app" ]]; then
+            echo "::error::Expected Sulla Desktop.app in $archive"
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app"
+          details="$(codesign --display --verbose=4 "$app" 2>&1)"
+          grep -Fq 'Identifier=io.sulla.desktop' <<<"$details"
+          grep -Fq "TeamIdentifier=$APPLE_TEAM_ID" <<<"$details"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose "$app"
+          rm -rf "$app_dir"
+        done
     # DMG upload removed — see packaging/electron-builder.yml mac.target
     # for context. We ship a signed+notarized ZIP instead, which works.
     - name: Upload mac zip

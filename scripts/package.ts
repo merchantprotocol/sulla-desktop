@@ -24,6 +24,54 @@ import { spawnFile } from '@pkg/utils/childProcess';
 import { ReadWrite } from '@pkg/utils/typeUtils';
 
 class Builder {
+  protected async verifyMacSigningIdentity() {
+    if (process.platform !== 'darwin') {
+      return;
+    }
+
+    // CI imports its Developer ID certificate from CSC_LINK when electron-builder
+    // packages the app. On a developer Mac, fail before packaging if keychain
+    // auto-discovery would otherwise silently produce an unsigned app.
+    if (process.env.CSC_LINK?.trim()) {
+      return;
+    }
+
+    const explicitIdentity = process.env.CSC_NAME?.trim();
+
+    if (!explicitIdentity && process.env.CSC_IDENTITY_AUTO_DISCOVERY?.toLowerCase() === 'false') {
+      throw new Error('Mac packaging requires CSC_LINK, CSC_NAME, or enabled keychain identity auto-discovery.');
+    }
+
+    if (explicitIdentity && !explicitIdentity.startsWith('Developer ID Application:')) {
+      throw new Error('Mac packaging requires a Developer ID Application identity; CSC_NAME is not one.');
+    }
+
+    const { stdout } = await spawnFile('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], { stdio: 'pipe' });
+    const identities = stdout.split('\n').filter(line => line.includes('"Developer ID Application:'));
+    const identityNames = [...new Set(identities
+      .map(line => line.match(/"([^"]+)"\s*$/)?.[1])
+      .filter((name): name is string => Boolean(name)))];
+
+    if (!identityNames.length) {
+      throw new Error(
+        'Mac packaging requires a Developer ID Application certificate. Install it in the login keychain or set CSC_LINK (and CSC_KEY_PASSWORD when needed).',
+      );
+    }
+
+    if (explicitIdentity && !identityNames.includes(explicitIdentity)) {
+      throw new Error(`CSC_NAME does not match a valid Developer ID Application identity in the keychain: ${ explicitIdentity }`);
+    }
+
+    if (!explicitIdentity && identityNames.length > 1) {
+      throw new Error('Multiple Developer ID Application identities are installed. Set CSC_NAME to the identity that should sign every build.');
+    }
+
+    // Pin keychain auto-discovery to the sole valid Developer ID identity so
+    // subsequent builds keep the same signing requirement for macOS privacy grants.
+    process.env.CSC_NAME = explicitIdentity ?? identityNames[0];
+    log.info('Found a valid Developer ID Application identity for macOS packaging.');
+  }
+
   async replaceInFile(srcFile: string, pattern: string | RegExp, replacement: string, dstFile?: string) {
     dstFile = dstFile || srcFile;
     await fs.promises.stat(srcFile);
@@ -153,6 +201,8 @@ class Builder {
 
   async package(): Promise<CliOptions> {
     log.info('Packaging...');
+
+    await this.verifyMacSigningIdentity();
 
     // Build the electron builder configuration to include the version data.
     // The version is sourced from package.json, which the CI workflow stamps
