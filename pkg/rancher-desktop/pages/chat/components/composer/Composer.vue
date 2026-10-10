@@ -78,6 +78,7 @@
       </div>
 
       <div class="hints">
+        <HeartbeatControl />
         <span><kbd>⏎</kbd> send</span>
         <span><kbd>hold ␣</kbd> talk</span>
         <span><kbd>⌘/</kbd> voice</span>
@@ -97,6 +98,7 @@ import ComposerVoicePanel from './ComposerVoicePanel.vue';
 import AttachmentTray     from './AttachmentTray.vue';
 import QueueStrip         from './QueueStrip.vue';
 import RunControls        from './RunControls.vue';
+import HeartbeatControl   from './HeartbeatControl.vue';
 import CommandPopover     from './CommandPopover.vue';
 
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';

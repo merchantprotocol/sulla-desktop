@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'ledger', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'pg', 'project', 'projects', 'rdctl', 'redis', 'reflex', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'chat', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'ledger', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'pg', 'project', 'projects', 'rdctl', 'redis', 'reflex', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -62,6 +62,7 @@ export class ToolRegistry {
     bridge:             'Bidirectional communication bridge between the heartbeat (autonomous background agent) and the frontend (human-facing chat). Send messages, read messages, update and read human presence state.',
     browser:            'Open/close tabs, read page content, click + fill forms, screenshot, exec JS, inspect cookies/history, background browsing, and desktop notifications. Open returns the page snapshot inline so you do not need a second call.',
     calendar:           'Tools for managing calendar events.',
+    chat:               'Controls scoped to the current chat thread, including its independent heartbeat.',
     docker:             'Tools for Docker container management.',
     extensions:         'Tools for browsing the extension marketplace catalog, listing installed extensions, installing new extensions, and uninstalling extensions. Extensions are Docker Compose stacks managed by Sulla Desktop.',
     fs:                 'File system operations tools for creating, reading, writing, moving, copying, and deleting files/directories.',

@@ -86,6 +86,7 @@ export class PersonaAdapter {
     opts: PersonaAdapterOptions = {},
   ) {
     this.ci = new ChatInterface(opts.channelId ?? 'sulla-desktop', opts.tabId);
+    this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
     this.hasSentMessage = this.ci.hasMessages;
 
     // Tell the controller to delegate send/stop/continue to us.
@@ -262,6 +263,7 @@ export class PersonaAdapter {
   continueRun(): void { this.ci.continueRun(); }
   newChat(): void {
     this.ci.newChat();
+    this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
     this.seen.clear();
     this.firstSeenAt.clear();
     this.firstCompletedAt.clear();

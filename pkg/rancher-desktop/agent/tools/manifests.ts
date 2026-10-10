@@ -8,6 +8,7 @@ import { bridgeToolManifests } from './bridge/manifests';
 import { browserToolManifests } from './browser/manifests';
 import { calendarToolManifests } from './calendar/manifests';
 import { captureToolManifests } from './capture/manifests';
+import { chatToolManifests } from './chat/manifests';
 import { dockerToolManifests } from './docker/manifests';
 import { episodicToolManifests } from './episodic/manifests';
 import { extensionsToolManifests } from './extensions/manifests';
@@ -41,6 +42,7 @@ toolRegistry.registerManifests([
   ...bridgeToolManifests,
   ...browserToolManifests,
   ...calendarToolManifests,
+  ...chatToolManifests,
   ...captureToolManifests,
   ...dockerToolManifests,
   ...extensionsToolManifests,

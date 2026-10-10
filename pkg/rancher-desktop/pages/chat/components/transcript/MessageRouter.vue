@@ -27,6 +27,7 @@
   <CitationRow     v-else-if="msg.kind === 'citation'"  :msg="msg" />
   <MemoryNote      v-else-if="msg.kind === 'memory'"    :msg="msg" />
   <ProactiveCard   v-else-if="msg.kind === 'proactive'" :msg="msg" />
+  <HeartbeatMessage v-else-if="msg.kind === 'heartbeat'" :msg="msg" />
   <TtsIndicator    v-else-if="msg.kind === 'tts'"       :msg="msg" />
   <ErrorCard       v-else-if="msg.kind === 'error'"     :msg="msg" />
   <div v-else />
@@ -50,6 +51,7 @@ import SubAgentBubble  from '../subagent/SubAgentBubble.vue';
 import CitationRow     from '../citation/CitationRow.vue';
 import MemoryNote      from '../memory/MemoryNote.vue';
 import ProactiveCard   from '../proactive/ProactiveCard.vue';
+import HeartbeatMessage from '../heartbeat/HeartbeatMessage.vue';
 import TtsIndicator    from './TtsIndicator.vue';
 import ErrorCard       from './ErrorCard.vue';
 
