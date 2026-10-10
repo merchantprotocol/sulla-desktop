@@ -342,25 +342,25 @@ export default {
   display: none;
 }
 
-.theme-noir-dark .docker-dashboard-shell {
-  --docker-hairline: rgba(168, 192, 220, 0.08);
-  --docker-steel: #5096b3;
-  --docker-steel-bright: #6ab0cc;
-  --docker-read: #f3f5f8;
-  --docker-read-soft: #a9b3c1;
-  --docker-read-dim: #7a8291;
+.theme-noir .docker-dashboard-shell {
+  --docker-hairline: var(--nx-hair);
+  --docker-steel: var(--nx-accent);
+  --docker-steel-bright: var(--nx-accent-2);
+  --docker-read: var(--nx-read-1);
+  --docker-read-soft: var(--nx-read-3);
+  --docker-read-dim: var(--nx-read-4);
   grid-template:
     "nav        title"
     "nav        body" 1fr
     "status-bar status-bar"
     / 230px 1fr;
-  background: radial-gradient(110% 60% at 0% 0%, rgba(80, 150, 179, 0.12), transparent 55%), #070d1a;
+  background: radial-gradient(110% 60% at 0% 0%, color-mix(in srgb, var(--nx-accent) 12%, transparent), transparent 55%), var(--nx-surface);
 
   > .title {
     min-height: 52px;
     padding: 10px 34px;
     border-color: var(--docker-hairline);
-    background: rgba(3, 6, 12, 0.28);
+    background: color-mix(in srgb, var(--bg-surface-alt) 28%, transparent);
 
     .title-top {
       justify-content: flex-end;
@@ -385,7 +385,7 @@ export default {
     padding: 0 34px 30px;
     background: transparent;
     scrollbar-width: thin;
-    scrollbar-color: rgba(168, 192, 220, 0.15) transparent;
+    scrollbar-color: color-mix(in srgb, var(--nx-hair-strong) 93.75%, transparent) transparent;
   }
 
   .main-preferences > div {
@@ -438,10 +438,10 @@ export default {
   select,
   input[type="number"] {
     min-height: 40px;
-    border: 1px solid rgba(168, 192, 220, 0.12);
+    border: 1px solid color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
     border-radius: 12px;
     color: var(--docker-read);
-    background: rgba(3, 6, 12, 0.6);
+    background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
     box-shadow: none;
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   }
@@ -469,14 +469,14 @@ export default {
     tbody tr:not(.group-row):not(.no-rows):not(.no-results) {
       height: 44px;
       border: 0;
-      color: #dee4ec;
-      background: rgba(168, 192, 220, 0.035);
+      color: var(--nx-read-2);
+      background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
       box-shadow: inset 0 0 0 1px var(--docker-hairline);
       transition: background .16s, box-shadow .2s, transform .3s cubic-bezier(.22, 1, .36, 1);
 
       &:hover {
-        background: rgba(80, 150, 179, 0.08);
-        box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.2);
+        background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent);
         transform: translateX(2px);
 
         .actions,
@@ -527,7 +527,7 @@ export default {
       padding: 46px 20px;
       border-radius: 18px;
       color: var(--docker-read-soft);
-      background: rgba(168, 192, 220, 0.025);
+      background: color-mix(in srgb, var(--nx-hair) 31.25%, transparent);
       box-shadow: inset 0 0 0 1px var(--docker-hairline);
       font-family: 'Playfair Display', Georgia, serif;
       font-size: 20px;
@@ -554,9 +554,9 @@ export default {
   }
 
   .btn.role-primary {
-    border-color: rgba(106, 176, 204, 0.5);
-    background: linear-gradient(180deg, #6ab0cc, #5096b3);
-    box-shadow: 0 0 16px rgba(80, 150, 179, 0.22);
+    border-color: color-mix(in srgb, var(--nx-accent-2) 50%, transparent);
+    background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
+    box-shadow: 0 0 16px color-mix(in srgb, var(--nx-accent) 22%, transparent);
   }
 
   .containersTable .port-container,
@@ -583,7 +583,7 @@ export default {
   .general > div,
   .diagnostics > .status {
     border-radius: 18px;
-    background: rgba(168, 192, 220, 0.035);
+    background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
     box-shadow: inset 0 0 0 1px var(--docker-hairline);
   }
 
@@ -604,7 +604,7 @@ export default {
   .volume-files {
     border-color: var(--docker-hairline);
     border-radius: 18px;
-    background: rgba(168, 192, 220, 0.035);
+    background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
     box-shadow: inset 0 0 0 1px var(--docker-hairline);
   }
 
@@ -624,12 +624,21 @@ export default {
   }
 
   .diagnostics .item-results::first-letter {
-    color: #f85149;
+    color: var(--nx-danger);
   }
 
   .status-bar {
     border-color: var(--docker-hairline);
-    background: rgba(3, 6, 12, 0.75);
+    background: color-mix(in srgb, var(--bg-surface-alt) 75%, transparent);
+  }
+}
+
+.theme-noir-light .docker-dashboard-shell {
+  .containersTable .port-container,
+  .imagesTable td:nth-child(3),
+  .imagesTable td:nth-child(4),
+  .listen-port-p {
+    color: var(--nx-accent);
   }
 }
 
@@ -647,7 +656,7 @@ export default {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir-dark .docker-dashboard-shell {
+  .theme-noir .docker-dashboard-shell {
     .main-preferences > div,
     .docker-page-intro,
     table.sortable-table tbody tr {

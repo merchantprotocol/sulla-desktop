@@ -146,13 +146,13 @@ export default {
   display: none;
 }
 
-:global(.theme-noir-dark) .general-noir-intro {
+:global(.theme-noir) .general-noir-intro {
   display: block;
   margin-bottom: 10px;
 
   .general-noir-eyebrow {
     margin-bottom: 6px;
-    color: #6ab0cc;
+    color: var(--nx-accent-2);
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 10.5px;
     letter-spacing: .14em;
@@ -161,7 +161,7 @@ export default {
 
   h1 {
     margin: 0 0 6px;
-    color: #f3f5f8;
+    color: var(--nx-read-1);
     font-family: 'Playfair Display', Georgia, serif;
     font-size: 30px;
     font-weight: 600;
@@ -170,20 +170,20 @@ export default {
 
   p {
     margin: 0 0 14px;
-    color: #a9b3c1;
+    color: var(--nx-read-3);
     font-size: 14px;
   }
 }
 
-:global(.theme-noir-dark) .general > div:not(.general-noir-intro),
-:global(.theme-noir-dark) .general > .network-status {
+:global(.theme-noir) .general > div:not(.general-noir-intro),
+:global(.theme-noir) .general > .network-status {
   padding: 18px;
   border-radius: 18px;
-  background: rgba(168, 192, 220, .035);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .08);
+  background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
+  box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
 
-:global(.theme-noir-dark) .general > hr {
+:global(.theme-noir) .general > hr {
   display: none;
 }
 </style>
