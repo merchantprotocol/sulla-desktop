@@ -1180,15 +1180,15 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-:global(.theme-noir-dark) .account-page {
+:global(.theme-noir) .account-page {
   overflow: auto;
   background:
-    radial-gradient(circle at 70% -15%, rgba(80, 150, 179, 0.1), transparent 36%),
-    #01030a;
-  color: #dee4ec;
+    radial-gradient(circle at 70% -15%, color-mix(in srgb, var(--nx-accent) 10%, transparent), transparent 36%),
+    var(--nx-paper);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .account-scroll {
+:global(.theme-noir) .account-scroll {
   display: flex;
   width: min(100%, 920px);
   max-width: none;
@@ -1196,169 +1196,169 @@ onBeforeUnmount(() => {
   padding: 42px 34px 64px;
 }
 
-:global(.theme-noir-dark) .account-hero {
+:global(.theme-noir) .account-hero {
   order: -2;
   gap: 22px;
   padding: 28px 30px;
-  border-color: rgba(106, 176, 204, 0.25);
+  border-color: color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
   border-radius: 22px;
-  background: linear-gradient(135deg, rgba(80, 150, 179, 0.16), rgba(80, 150, 179, 0.025));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 24px 70px rgba(0, 0, 0, 0.24);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 16%, transparent), color-mix(in srgb, var(--nx-accent) 2.5%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 4.5%, transparent), 0 24px 70px color-mix(in srgb, var(--shadow) 26.6667%, transparent);
 }
 
-:global(.theme-noir-dark) .account-avatar {
+:global(.theme-noir) .account-avatar {
   width: 72px;
   height: 72px;
-  border: 1px solid rgba(106, 176, 204, 0.32);
+  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 32%, transparent);
   border-radius: 20px;
-  background: linear-gradient(145deg, rgba(106, 176, 204, 0.5), rgba(80, 150, 179, 0.12));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 14px 40px rgba(80, 150, 179, 0.15);
-  color: #f3f5f8;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--nx-accent-2) 50%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 12%, transparent), 0 14px 40px color-mix(in srgb, var(--nx-accent) 15%, transparent);
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 1.55rem;
 }
 
-:global(.theme-noir-dark) .account-hero-eyebrow {
+:global(.theme-noir) .account-hero-eyebrow {
   display: block;
   margin: 0 0 4px;
-  color: #6ab0cc;
+  color: var(--nx-accent-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.64rem;
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir-dark) .account-name {
-  color: #f3f5f8;
+:global(.theme-noir) .account-name {
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 2.15rem;
   font-weight: 500;
   letter-spacing: -0.035em;
 }
 
-:global(.theme-noir-dark) .account-email {
-  color: #7a8291;
+:global(.theme-noir) .account-email {
+  color: var(--nx-read-4);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
 }
 
-:global(.theme-noir-dark) .account-cloud-card {
+:global(.theme-noir) .account-cloud-card {
   order: -1;
 }
 
-:global(.theme-noir-dark) .account-card {
+:global(.theme-noir) .account-card {
   padding: 24px;
-  border-color: rgba(168, 192, 220, 0.08);
+  border-color: var(--nx-hair);
   border-radius: 18px;
-  background: rgba(168, 192, 220, 0.035);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  background: color-mix(in srgb, var(--nx-hair-strong) 21.875%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
 }
 
-:global(.theme-noir-dark) .account-card-header {
-  border-color: rgba(168, 192, 220, 0.08);
+:global(.theme-noir) .account-card-header {
+  border-color: var(--nx-hair);
 }
 
-:global(.theme-noir-dark) .account-card-icon {
-  color: #6ab0cc;
+:global(.theme-noir) .account-card-icon {
+  color: var(--nx-accent-2);
 }
 
-:global(.theme-noir-dark) .account-card-title {
-  color: #f3f5f8;
+:global(.theme-noir) .account-card-title {
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 1.15rem;
   font-weight: 500;
 }
 
-:global(.theme-noir-dark) .account-label {
-  color: #8cacc9;
+:global(.theme-noir) .account-label {
+  color: var(--text-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.12em;
 }
 
-:global(.theme-noir-dark) .account-input,
-:global(.theme-noir-dark) .account-textarea {
+:global(.theme-noir) .account-input,
+:global(.theme-noir) .account-textarea {
   min-height: 40px;
-  border-color: rgba(168, 192, 220, 0.1);
+  border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
   border-radius: 12px;
-  background: rgba(3, 6, 12, 0.66);
-  color: #dee4ec;
+  background: color-mix(in srgb, var(--bg-surface-alt) 66%, transparent);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .account-input:focus,
-:global(.theme-noir-dark) .account-textarea:focus {
-  border-color: rgba(106, 176, 204, 0.42);
-  box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.09);
+:global(.theme-noir) .account-input:focus,
+:global(.theme-noir) .account-textarea:focus {
+  border-color: color-mix(in srgb, var(--nx-accent-2) 42%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 9%, transparent);
 }
 
-:global(.theme-noir-dark) .account-hint,
-:global(.theme-noir-dark) .account-relay-state {
-  color: #7a8291;
+:global(.theme-noir) .account-hint,
+:global(.theme-noir) .account-relay-state {
+  color: var(--nx-read-4);
 }
 
-:global(.theme-noir-dark) .account-tabs {
+:global(.theme-noir) .account-tabs {
   max-width: 360px;
-  border-color: rgba(168, 192, 220, 0.08);
+  border-color: var(--nx-hair);
   border-radius: 999px;
-  background: rgba(3, 6, 12, 0.62);
+  background: color-mix(in srgb, var(--bg-surface-alt) 62%, transparent);
 }
 
-:global(.theme-noir-dark) .account-tab {
+:global(.theme-noir) .account-tab {
   border-radius: 999px;
-  color: #7a8291;
+  color: var(--nx-read-4);
 }
 
-:global(.theme-noir-dark) .account-tab-active {
-  border: 1px solid rgba(106, 176, 204, 0.25);
-  background: linear-gradient(135deg, rgba(80, 150, 179, 0.22), rgba(80, 150, 179, 0.08));
-  box-shadow: 0 6px 18px rgba(80, 150, 179, 0.11);
-  color: #dee4ec;
+:global(.theme-noir) .account-tab-active {
+  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 22%, transparent), color-mix(in srgb, var(--nx-accent) 8%, transparent));
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--nx-accent) 11%, transparent);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .account-save-btn {
-  border: 1px solid rgba(106, 176, 204, 0.32);
+:global(.theme-noir) .account-save-btn {
+  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 32%, transparent);
   border-radius: 10px;
-  background: linear-gradient(135deg, #5096b3, #6ab0cc);
-  box-shadow: 0 8px 22px rgba(80, 150, 179, 0.18);
-  color: #01030a;
+  background: linear-gradient(135deg, var(--nx-accent), var(--nx-accent-2));
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--nx-accent) 18%, transparent);
+  color: var(--nx-paper);
 }
 
-:global(.theme-noir-dark) .account-action-btn {
-  border-color: rgba(168, 192, 220, 0.1);
+:global(.theme-noir) .account-action-btn {
+  border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
   border-radius: 10px;
-  color: #8cacc9;
+  color: var(--text-info);
 }
 
-:global(.theme-noir-dark) .account-action-btn:hover {
-  border-color: rgba(106, 176, 204, 0.28);
-  background: rgba(80, 150, 179, 0.08);
+:global(.theme-noir) .account-action-btn:hover {
+  border-color: color-mix(in srgb, var(--nx-accent-2) 28%, transparent);
+  background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir-dark) .account-status-on {
-  box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.09), 0 0 12px rgba(63, 185, 80, 0.58);
+:global(.theme-noir) .account-status-on {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-success) 9%, transparent), 0 0 12px color-mix(in srgb, var(--nx-success) 58%, transparent);
 }
 
-:global(.theme-noir-dark) .account-stats {
+:global(.theme-noir) .account-stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-:global(.theme-noir-dark) .account-stat {
+:global(.theme-noir) .account-stat {
   padding: 18px;
-  border: 1px solid rgba(168, 192, 220, 0.08);
+  border: 1px solid var(--nx-hair);
   border-radius: 14px;
-  background: rgba(3, 6, 12, 0.38);
+  background: color-mix(in srgb, var(--bg-surface-alt) 38%, transparent);
 }
 
-:global(.theme-noir-dark) .account-stat-value {
-  color: #f3f5f8;
+:global(.theme-noir) .account-stat-value {
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 1.8rem;
   font-weight: 500;
 }
 
-:global(.theme-noir-dark) .account-stat-label {
-  color: #7a8291;
+:global(.theme-noir) .account-stat-label {
+  color: var(--nx-read-4);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.6rem;
   letter-spacing: 0.12em;

@@ -495,36 +495,36 @@ export default defineComponent({
 </style>
 
 <style scoped>
-:global(.theme-noir-dark) .context-menu {
+:global(.theme-noir) .context-menu {
   min-width: 200px;
   padding: 6px;
-  color: #dee4ec;
-  background: rgba(7, 13, 26, 0.97);
-  border-color: rgba(168, 192, 220, 0.15);
+  color: var(--nx-read-2);
+  background: color-mix(in srgb, var(--nx-surface) 97%, transparent);
+  border-color: color-mix(in srgb, var(--nx-hair-strong) 93.75%, transparent);
   border-radius: 16px;
-  box-shadow: 0 20px 54px rgba(0, 0, 0, 0.62), inset 0 0 0 1px rgba(168, 192, 220, 0.025);
+  box-shadow: 0 20px 54px color-mix(in srgb, var(--shadow) 68.8889%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 15.625%, transparent);
   backdrop-filter: blur(20px);
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
-:global(.theme-noir-dark) .context-menu-item {
+:global(.theme-noir) .context-menu-item {
   min-height: 34px;
   padding: 7px 10px;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
   border-radius: 10px;
   transition: color 0.14s, background 0.14s, transform 0.35s cubic-bezier(.22, 1, .36, 1);
 }
 
-:global(.theme-noir-dark) .context-menu-item:hover {
-  color: #f3f5f8;
-  background: rgba(80, 150, 179, 0.14);
+:global(.theme-noir) .context-menu-item:hover {
+  color: var(--nx-read-1);
+  background: color-mix(in srgb, var(--nx-accent) 14%, transparent);
   transform: translateX(2px);
 }
 
-:global(.theme-noir-dark) .context-menu-shortcut { color: #484f5a; }
-:global(.theme-noir-dark) .context-menu-sep { background: rgba(168, 192, 220, 0.08); }
-:global(.theme-noir-dark) .context-menu-subheader {
-  color: #6ab0cc;
+:global(.theme-noir) .context-menu-shortcut { color: var(--nx-read-5); }
+:global(.theme-noir) .context-menu-sep { background: var(--nx-hair); }
+:global(.theme-noir) .context-menu-subheader {
+  color: var(--nx-accent-2);
   font-size: 9.5px;
   font-weight: 500;
   letter-spacing: 0.12em;
@@ -532,6 +532,6 @@ export default defineComponent({
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .context-menu-item { transition-duration: 0.01ms; }
+  :global(.theme-noir) .context-menu-item { transition-duration: 0.01ms; }
 }
 </style>

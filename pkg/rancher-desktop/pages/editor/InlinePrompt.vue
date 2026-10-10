@@ -167,43 +167,43 @@ defineExpose({ show });
 </style>
 
 <style scoped>
-:global(.theme-noir-dark) .inline-prompt-overlay {
-  background: rgba(1, 3, 10, 0.7);
+:global(.theme-noir) .inline-prompt-overlay {
+  background: color-mix(in srgb, var(--nx-paper) 70%, transparent);
   backdrop-filter: blur(8px);
 }
 
-:global(.theme-noir-dark) .inline-prompt-dialog {
+:global(.theme-noir) .inline-prompt-dialog {
   width: 360px;
   padding: 18px;
   gap: 14px;
-  background: rgba(7, 13, 26, 0.96);
-  border: 1px solid rgba(168, 192, 220, 0.12);
+  background: color-mix(in srgb, var(--nx-surface) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   border-radius: 18px;
-  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.64), inset 0 0 0 1px rgba(168, 192, 220, 0.025);
+  box-shadow: 0 28px 80px color-mix(in srgb, var(--shadow) 71.1111%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 15.625%, transparent);
   animation: noir-prompt-in 0.42s cubic-bezier(.22, 1, .36, 1) both;
 }
 
-:global(.theme-noir-dark) .inline-prompt-title {
-  color: #f3f5f8;
+:global(.theme-noir) .inline-prompt-title {
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 18px;
 }
 
-:global(.theme-noir-dark) .inline-prompt-input {
+:global(.theme-noir) .inline-prompt-input {
   height: 40px;
-  color: #dee4ec;
-  background: rgba(1, 3, 10, 0.72);
-  border-color: rgba(168, 192, 220, 0.12);
+  color: var(--nx-read-2);
+  background: color-mix(in srgb, var(--nx-paper) 72%, transparent);
+  border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   border-radius: 12px;
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
-:global(.theme-noir-dark) .inline-prompt-input:focus {
-  border-color: rgba(106, 176, 204, 0.55);
-  box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.12);
+:global(.theme-noir) .inline-prompt-input:focus {
+  border-color: color-mix(in srgb, var(--nx-accent-2) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 12%, transparent);
 }
 
-:global(.theme-noir-dark) .inline-prompt-btn {
+:global(.theme-noir) .inline-prompt-btn {
   min-width: 74px;
   height: 32px;
   padding: 0 14px;
@@ -211,19 +211,19 @@ defineExpose({ show });
   transition: transform 0.42s cubic-bezier(.22, 1, .36, 1);
 }
 
-:global(.theme-noir-dark) .inline-prompt-btn.cancel {
-  color: #a9b3c1;
-  background: rgba(168, 192, 220, 0.06);
-  border: 1px solid rgba(168, 192, 220, 0.1);
+:global(.theme-noir) .inline-prompt-btn.cancel {
+  color: var(--nx-read-3);
+  background: color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
 }
 
-:global(.theme-noir-dark) .inline-prompt-btn.confirm {
-  color: #fff;
-  background: linear-gradient(180deg, #6ab0cc, #5096b3);
-  box-shadow: 0 0 16px rgba(80, 150, 179, 0.35);
+:global(.theme-noir) .inline-prompt-btn.confirm {
+  color: var(--text-on-accent);
+  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
+  box-shadow: 0 0 16px color-mix(in srgb, var(--nx-accent) 35%, transparent);
 }
 
-:global(.theme-noir-dark) .inline-prompt-btn:active { transform: scale(0.94); }
+:global(.theme-noir) .inline-prompt-btn:active { transform: scale(0.94); }
 
 @keyframes noir-prompt-in {
   from { opacity: 0; transform: translateY(8px); filter: blur(8px); }
@@ -231,7 +231,7 @@ defineExpose({ show });
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .inline-prompt-dialog { animation: none; }
-  :global(.theme-noir-dark) .inline-prompt-btn { transition-duration: 0.01ms; }
+  :global(.theme-noir) .inline-prompt-dialog { animation: none; }
+  :global(.theme-noir) .inline-prompt-btn { transition-duration: 0.01ms; }
 }
 </style>

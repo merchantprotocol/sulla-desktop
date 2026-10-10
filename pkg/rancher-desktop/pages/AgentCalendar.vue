@@ -764,161 +764,161 @@ const deleteEvent = async() => {
   display: none;
 }
 
-:global(.theme-noir-dark) .page-root {
+:global(.theme-noir) .page-root {
   background:
-    radial-gradient(circle at 72% -12%, rgba(80, 150, 179, 0.09), transparent 35%),
-    #01030a;
-  color: #dee4ec;
+    radial-gradient(circle at 72% -12%, color-mix(in srgb, var(--nx-accent) 9%, transparent), transparent 35%),
+    var(--nx-paper);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .calendar-toolbar {
+:global(.theme-noir) .calendar-toolbar {
   justify-content: space-between;
   padding: 24px 30px 18px;
-  border-bottom: 1px solid rgba(168, 192, 220, 0.08);
+  border-bottom: 1px solid var(--nx-hair);
 }
 
-:global(.theme-noir-dark) .calendar-heading {
+:global(.theme-noir) .calendar-heading {
   display: block;
 }
 
-:global(.theme-noir-dark) .calendar-heading span {
-  color: #6ab0cc;
+:global(.theme-noir) .calendar-heading span {
+  color: var(--nx-accent-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir-dark) .calendar-heading h1 {
+:global(.theme-noir) .calendar-heading h1 {
   margin: 3px 0 0;
-  color: #f3f5f8;
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 1.85rem;
   font-weight: 500;
   letter-spacing: -0.03em;
 }
 
-:global(.theme-noir-dark) .calendar-toolbar > button {
-  border-color: rgba(106, 176, 204, 0.3);
-  background: linear-gradient(135deg, #5096b3, #6ab0cc);
-  box-shadow: 0 8px 24px rgba(80, 150, 179, 0.18);
-  color: #01030a;
+:global(.theme-noir) .calendar-toolbar > button {
+  border-color: color-mix(in srgb, var(--nx-accent-2) 30%, transparent);
+  background: linear-gradient(135deg, var(--nx-accent), var(--nx-accent-2));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--nx-accent) 18%, transparent);
+  color: var(--nx-paper);
 }
 
-:global(.theme-noir-dark) .page-root :deep(.sx__calendar-wrapper),
-:global(.theme-noir-dark) .page-root :deep(.sx__calendar),
-:global(.theme-noir-dark) .page-root :deep(.sx__view-container),
-:global(.theme-noir-dark) .page-root :deep(.sx__month-grid-wrapper),
-:global(.theme-noir-dark) .page-root :deep(.sx__week-grid),
-:global(.theme-noir-dark) .page-root :deep(.sx__day-grid) {
+:global(.theme-noir) .page-root :deep(.sx__calendar-wrapper),
+:global(.theme-noir) .page-root :deep(.sx__calendar),
+:global(.theme-noir) .page-root :deep(.sx__view-container),
+:global(.theme-noir) .page-root :deep(.sx__month-grid-wrapper),
+:global(.theme-noir) .page-root :deep(.sx__week-grid),
+:global(.theme-noir) .page-root :deep(.sx__day-grid) {
   background: transparent;
 }
 
-:global(.theme-noir-dark) .page-root :deep(.sx__calendar-wrapper) {
+:global(.theme-noir) .page-root :deep(.sx__calendar-wrapper) {
   margin: 18px 24px 24px;
   overflow: hidden;
-  border: 1px solid rgba(168, 192, 220, 0.09);
+  border: 1px solid color-mix(in srgb, var(--nx-hair-strong) 56.25%, transparent);
   border-radius: 20px;
-  background: rgba(7, 13, 26, 0.56);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025), 0 24px 70px rgba(0, 0, 0, 0.24);
+  background: color-mix(in srgb, var(--nx-surface) 56%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent), 0 24px 70px color-mix(in srgb, var(--shadow) 26.6667%, transparent);
 }
 
-:global(.theme-noir-dark) .page-root :deep(.sx__calendar-header) {
-  border-color: rgba(168, 192, 220, 0.08);
-  background: rgba(3, 6, 12, 0.56);
-  color: #dee4ec;
+:global(.theme-noir) .page-root :deep(.sx__calendar-header) {
+  border-color: var(--nx-hair);
+  background: color-mix(in srgb, var(--bg-surface-alt) 56%, transparent);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .page-root :deep(.sx__range-heading) {
-  color: #f3f5f8;
+:global(.theme-noir) .page-root :deep(.sx__range-heading) {
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-weight: 500;
 }
 
-:global(.theme-noir-dark) .page-root :deep(.sx__button),
-:global(.theme-noir-dark) .page-root :deep(.sx__date-input),
-:global(.theme-noir-dark) .page-root :deep(.sx__view-selection) {
-  border-color: rgba(168, 192, 220, 0.09);
+:global(.theme-noir) .page-root :deep(.sx__button),
+:global(.theme-noir) .page-root :deep(.sx__date-input),
+:global(.theme-noir) .page-root :deep(.sx__view-selection) {
+  border-color: color-mix(in srgb, var(--nx-hair-strong) 56.25%, transparent);
   border-radius: 10px;
-  background: rgba(168, 192, 220, 0.035);
-  color: #a9b3c1;
+  background: color-mix(in srgb, var(--nx-hair-strong) 21.875%, transparent);
+  color: var(--nx-read-3);
 }
 
-:global(.theme-noir-dark) .page-root :deep(.sx__month-grid-day),
-:global(.theme-noir-dark) .page-root :deep(.sx__date-grid-cell),
-:global(.theme-noir-dark) .page-root :deep(.sx__time-grid-day),
-:global(.theme-noir-dark) .page-root :deep(.sx__month-grid-day__header) {
-  border-color: rgba(168, 192, 220, 0.075);
+:global(.theme-noir) .page-root :deep(.sx__month-grid-day),
+:global(.theme-noir) .page-root :deep(.sx__date-grid-cell),
+:global(.theme-noir) .page-root :deep(.sx__time-grid-day),
+:global(.theme-noir) .page-root :deep(.sx__month-grid-day__header) {
+  border-color: color-mix(in srgb, var(--nx-hair-strong) 46.875%, transparent);
   background: transparent;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
 }
 
-:global(.theme-noir-dark) .page-root :deep(.sx__month-grid-day__header-day-name),
-:global(.theme-noir-dark) .page-root :deep(.sx__month-agenda-day-name) {
-  color: #7a8291;
+:global(.theme-noir) .page-root :deep(.sx__month-grid-day__header-day-name),
+:global(.theme-noir) .page-root :deep(.sx__month-agenda-day-name) {
+  color: var(--nx-read-4);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.6rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-:global(.theme-noir-dark) .page-root :deep(.sx__is-today .sx__month-grid-day__header-date),
-:global(.theme-noir-dark) .page-root :deep(.sx__date-picker__day--today) {
-  border: 1px solid #6ab0cc;
+:global(.theme-noir) .page-root :deep(.sx__is-today .sx__month-grid-day__header-date),
+:global(.theme-noir) .page-root :deep(.sx__date-picker__day--today) {
+  border: 1px solid var(--nx-accent-2);
   border-radius: 999px;
-  background: rgba(80, 150, 179, 0.12);
-  box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.08), 0 0 14px rgba(80, 150, 179, 0.2);
-  color: #dee4ec;
+  background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 8%, transparent), 0 0 14px color-mix(in srgb, var(--nx-accent) 20%, transparent);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .page-root :deep(.sx__month-grid-event),
-:global(.theme-noir-dark) .page-root :deep(.sx__time-grid-event),
-:global(.theme-noir-dark) .page-root :deep(.sx__date-grid-event),
-:global(.theme-noir-dark) .page-root :deep(.sx__month-agenda-event),
-:global(.theme-noir-dark) .page-root :deep(.sx__list-event) {
-  border: 1px solid rgba(106, 176, 204, 0.24);
+:global(.theme-noir) .page-root :deep(.sx__month-grid-event),
+:global(.theme-noir) .page-root :deep(.sx__time-grid-event),
+:global(.theme-noir) .page-root :deep(.sx__date-grid-event),
+:global(.theme-noir) .page-root :deep(.sx__month-agenda-event),
+:global(.theme-noir) .page-root :deep(.sx__list-event) {
+  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 24%, transparent);
   border-radius: 8px;
-  background: linear-gradient(135deg, rgba(80, 150, 179, 0.22), rgba(80, 150, 179, 0.08));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 5px 16px rgba(0, 0, 0, 0.18);
-  color: #dee4ec;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 22%, transparent), color-mix(in srgb, var(--nx-accent) 8%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 4%, transparent), 0 5px 16px color-mix(in srgb, var(--shadow) 20%, transparent);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .page-root :deep(.sx__current-time-indicator) {
-  border-color: #6ab0cc;
+:global(.theme-noir) .page-root :deep(.sx__current-time-indicator) {
+  border-color: var(--nx-accent-2);
 }
 
-:global(.theme-noir-dark) .calendar-modal-panel {
-  border-color: rgba(168, 192, 220, 0.1);
-  background: rgba(7, 13, 26, 0.97);
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+:global(.theme-noir) .calendar-modal-panel {
+  border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
+  background: color-mix(in srgb, var(--nx-surface) 97%, transparent);
+  box-shadow: 0 28px 90px color-mix(in srgb, var(--shadow) 66.6667%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 3.5%, transparent);
   backdrop-filter: blur(20px);
 }
 
-:global(.theme-noir-dark) .calendar-modal-panel h2 {
-  color: #f3f5f8;
+:global(.theme-noir) .calendar-modal-panel h2 {
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 1.5rem;
   font-weight: 500;
 }
 
-:global(.theme-noir-dark) .calendar-modal-panel label {
-  color: #8cacc9;
+:global(.theme-noir) .calendar-modal-panel label {
+  color: var(--text-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
-:global(.theme-noir-dark) .calendar-modal-panel input,
-:global(.theme-noir-dark) .calendar-modal-panel textarea {
-  border-color: rgba(168, 192, 220, 0.1);
+:global(.theme-noir) .calendar-modal-panel input,
+:global(.theme-noir) .calendar-modal-panel textarea {
+  border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
   border-radius: 12px;
-  background: rgba(3, 6, 12, 0.68);
-  color: #dee4ec;
+  background: color-mix(in srgb, var(--bg-surface-alt) 68%, transparent);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .calendar-modal-panel button.bg-indigo-600 {
-  border: 1px solid rgba(106, 176, 204, 0.3);
-  background: linear-gradient(135deg, #5096b3, #6ab0cc);
-  color: #01030a;
+:global(.theme-noir) .calendar-modal-panel button.bg-indigo-600 {
+  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 30%, transparent);
+  background: linear-gradient(135deg, var(--nx-accent), var(--nx-accent-2));
+  color: var(--nx-paper);
 }
 </style>

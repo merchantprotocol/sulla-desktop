@@ -236,62 +236,63 @@ onUnmounted(() => {
 </style>
 
 <style scoped>
-:global(.theme-noir-dark) .sulla-startup-overlay {
-  background: radial-gradient(circle at 50% 42%, rgba(80, 150, 179, .12), transparent 32%), rgba(1, 3, 10, .92);
+:global(.theme-noir) .sulla-startup-overlay {
+  background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), transparent 32%), color-mix(in srgb, var(--nx-paper) 108.6957%, transparent);
   backdrop-filter: blur(22px);
 }
-:global(.theme-noir-dark) .sulla-startup-card {
+:global(.theme-noir) .sulla-startup-card {
   max-width: 30rem;
   padding: 34px;
   border: 0;
   border-radius: 22px;
-  background: rgba(7, 13, 26, .76);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .1), 0 0 70px rgba(80, 150, 179, .12), 0 30px 80px rgba(0, 0, 0, .55);
+  background: color-mix(in srgb, var(--nx-surface) 131.5789%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 160%, transparent), 0 0 70px color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), 0 30px 80px color-mix(in srgb, var(--shadow) 163.6364%, transparent);
   animation: startup-noir-enter .5s cubic-bezier(.22, 1, .36, 1) both;
 }
-:global(.theme-noir-dark) .sulla-startup-accent { display: none; }
-:global(.theme-noir-dark) .sulla-startup-header { flex-direction: column; text-align: center; gap: 14px; margin-bottom: 22px; }
-:global(.theme-noir-dark) .sulla-startup-icon {
+:global(.theme-noir) .sulla-startup-accent { display: none; }
+:global(.theme-noir) .sulla-startup-header { flex-direction: column; text-align: center; gap: 14px; margin-bottom: 22px; }
+:global(.theme-noir) .sulla-startup-icon {
   width: 58px;
   height: 58px;
   border-radius: 18px;
   color: #a8c0dc;
-  background: linear-gradient(145deg, rgba(106, 176, 204, .22), rgba(80, 150, 179, .06));
-  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, .34), 0 0 34px rgba(80, 150, 179, .35);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--nx-accent-2) 454.5455%, transparent), color-mix(in srgb, var(--nx-accent) 1666.6667%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 294.1176%, transparent), 0 0 34px color-mix(in srgb, var(--nx-accent) 285.7143%, transparent);
 }
-:global(.theme-noir-dark) .sulla-startup-icon svg { width: 26px; height: 26px; }
-:global(.theme-noir-dark) .sulla-startup-title { font-family: 'Playfair Display', Georgia, serif; font-size: 27px; color: #f3f5f8; }
-:global(.theme-noir-dark) .sulla-startup-subtitle,
-:global(.theme-noir-dark) .sulla-startup-download-status,
-:global(.theme-noir-dark) .sulla-startup-percent { color: #7a8291; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; }
-:global(.theme-noir-dark) .sulla-startup-download { border: 0; border-radius: 14px; background: rgba(168, 192, 220, .035); box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .08); }
-:global(.theme-noir-dark) .sulla-startup-track {
+:global(.theme-noir) .sulla-startup-icon svg { width: 26px; height: 26px; }
+:global(.theme-noir-light) .sulla-startup-icon { color: var(--nx-accent-2); }
+:global(.theme-noir) .sulla-startup-title { font-family: 'Playfair Display', Georgia, serif; font-size: 27px; color: var(--nx-read-1); }
+:global(.theme-noir) .sulla-startup-subtitle,
+:global(.theme-noir) .sulla-startup-download-status,
+:global(.theme-noir) .sulla-startup-percent { color: var(--nx-read-4); font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; }
+:global(.theme-noir) .sulla-startup-download { border: 0; border-radius: 14px; background: color-mix(in srgb, var(--nx-hair-strong) 457.1429%, transparent); box-shadow: inset 0 0 0 1px var(--nx-hair); }
+:global(.theme-noir) .sulla-startup-track {
   position: relative;
   height: 8px;
   border-radius: 8px;
-  background: rgba(3, 6, 12, .78);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .1), 0 0 22px rgba(80, 150, 179, .08);
+  background: color-mix(in srgb, var(--bg-surface-alt) 128.2051%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 160%, transparent), 0 0 22px color-mix(in srgb, var(--nx-accent) 1250%, transparent);
 }
-:global(.theme-noir-dark) .sulla-startup-fill {
+:global(.theme-noir) .sulla-startup-fill {
   position: relative;
   overflow: hidden;
   border-radius: inherit;
-  background: linear-gradient(90deg, #5096b3, #6ab0cc);
-  box-shadow: 0 0 14px rgba(106, 176, 204, .5);
+  background: linear-gradient(90deg, var(--nx-accent), var(--nx-accent-2));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent-2) 200%, transparent);
 }
-:global(.theme-noir-dark) .sulla-startup-fill::after {
+:global(.theme-noir) .sulla-startup-fill::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(105deg, transparent 25%, rgba(243, 245, 248, .6) 50%, transparent 75%);
+  background: linear-gradient(105deg, transparent 25%, color-mix(in srgb, var(--nx-read-1) 166.6667%, transparent) 50%, transparent 75%);
   transform: translateX(-100%);
   animation: startup-noir-shimmer 1.7s ease-in-out infinite;
 }
 @keyframes startup-noir-enter { from { opacity: 0; transform: translateY(8px) scale(.98); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @keyframes startup-noir-shimmer { to { transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .sulla-startup-card,
-  :global(.theme-noir-dark) .sulla-startup-fill::after,
-  :global(.theme-noir-dark) .sulla-progress-indeterminate { animation: none; }
+  :global(.theme-noir) .sulla-startup-card,
+  :global(.theme-noir) .sulla-startup-fill::after,
+  :global(.theme-noir) .sulla-progress-indeterminate { animation: none; }
 }
 </style>
