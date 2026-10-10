@@ -629,4 +629,83 @@ onBeforeUnmount(() => {
   height: 16px;
   margin-top: -2px;
 }
+
+:global(.theme-noir-dark) .account-card {
+  padding: 24px;
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .account-card-header {
+  border-color: rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .account-card-title {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.15rem;
+  font-weight: 500;
+}
+
+:global(.theme-noir-dark) .account-card-icon {
+  color: #6ab0cc;
+}
+
+:global(.theme-noir-dark) .account-label {
+  color: #8cacc9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+}
+
+:global(.theme-noir-dark) .account-input {
+  min-height: 40px;
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 12px;
+  background: rgba(3, 6, 12, 0.66);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .account-input:focus {
+  border-color: rgba(106, 176, 204, 0.42);
+  box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.09);
+}
+
+:global(.theme-noir-dark) .account-hint,
+:global(.theme-noir-dark) .account-relay-state {
+  color: #7a8291;
+}
+
+:global(.theme-noir-dark) .account-tabs {
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 999px;
+  background: rgba(3, 6, 12, 0.62);
+}
+
+:global(.theme-noir-dark) .account-tab {
+  border-radius: 999px;
+  color: #7a8291;
+}
+
+:global(.theme-noir-dark) .account-tab-active {
+  border: 1px solid rgba(106, 176, 204, 0.25);
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.22), rgba(80, 150, 179, 0.08));
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .account-save-btn {
+  border-radius: 10px;
+  background: linear-gradient(135deg, #5096b3, #6ab0cc);
+  box-shadow: 0 8px 22px rgba(80, 150, 179, 0.18);
+  color: #01030a;
+}
+
+:global(.theme-noir-dark) .account-action-btn {
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 10px;
+  color: #8cacc9;
+}
 </style>

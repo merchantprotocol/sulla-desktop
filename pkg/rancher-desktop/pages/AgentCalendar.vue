@@ -10,7 +10,11 @@
         :toggle-theme="toggleTheme"
       />
 
-      <div class="flex items-center justify-end px-4 py-3">
+      <div class="flex items-center justify-end px-4 py-3 calendar-toolbar">
+        <div class="calendar-heading">
+          <span>YOUR TIME</span>
+          <h1>Make room for what matters.</h1>
+        </div>
         <button
           type="button"
           class="flex h-10 items-center gap-2 rounded-full border border-black/10 bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
@@ -44,7 +48,7 @@
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       @click.self="closeModal"
     >
-      <div class="w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-neutral-900">
+      <div class="w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-neutral-900 calendar-modal-panel">
         <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">
           Add Event
         </h2>
@@ -135,7 +139,7 @@
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       @click.self="showEventInfoModal = false"
     >
-      <div class="w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-neutral-900">
+      <div class="w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-neutral-900 calendar-modal-panel">
         <div class="flex items-start justify-between">
           <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">
             {{ selectedEvent.title }}
@@ -258,7 +262,7 @@
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       @click.self="closeEditModal"
     >
-      <div class="w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-neutral-900">
+      <div class="w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-neutral-900 calendar-modal-panel">
         <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">
           Edit Event
         </h2>
@@ -355,8 +359,6 @@
 </template>
 
 <script setup lang="ts">
-import { useTheme } from '@pkg/composables/useTheme';
-
 import { createCalendar, createViewMonthGrid, createViewMonthAgenda, createViewWeek, createViewDay } from '@schedule-x/calendar';
 import { createEventsServicePlugin } from '@schedule-x/events-service';
 import { ScheduleXCalendar } from '@schedule-x/vue';
@@ -367,6 +369,7 @@ import AgentHeader from './agent/AgentHeader.vue';
 import '@schedule-x/theme-default/dist/index.css';
 import 'temporal-polyfill/global';
 import { CalendarEvent } from '@pkg/agent/database/models/CalendarEvent';
+import { useTheme } from '@pkg/composables/useTheme';
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false }); // new model
 
@@ -755,5 +758,167 @@ const deleteEvent = async() => {
 .page-root.dark :deep(.sx__week-grid),
 .page-root.dark :deep(.sx__day-grid) {
   background: var(--bg-page, #0f172a);
+}
+
+.calendar-heading {
+  display: none;
+}
+
+:global(.theme-noir-dark) .page-root {
+  background:
+    radial-gradient(circle at 72% -12%, rgba(80, 150, 179, 0.09), transparent 35%),
+    #01030a;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .calendar-toolbar {
+  justify-content: space-between;
+  padding: 24px 30px 18px;
+  border-bottom: 1px solid rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .calendar-heading {
+  display: block;
+}
+
+:global(.theme-noir-dark) .calendar-heading span {
+  color: #6ab0cc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .calendar-heading h1 {
+  margin: 3px 0 0;
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.85rem;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+:global(.theme-noir-dark) .calendar-toolbar > button {
+  border-color: rgba(106, 176, 204, 0.3);
+  background: linear-gradient(135deg, #5096b3, #6ab0cc);
+  box-shadow: 0 8px 24px rgba(80, 150, 179, 0.18);
+  color: #01030a;
+}
+
+:global(.theme-noir-dark) .page-root :deep(.sx__calendar-wrapper),
+:global(.theme-noir-dark) .page-root :deep(.sx__calendar),
+:global(.theme-noir-dark) .page-root :deep(.sx__view-container),
+:global(.theme-noir-dark) .page-root :deep(.sx__month-grid-wrapper),
+:global(.theme-noir-dark) .page-root :deep(.sx__week-grid),
+:global(.theme-noir-dark) .page-root :deep(.sx__day-grid) {
+  background: transparent;
+}
+
+:global(.theme-noir-dark) .page-root :deep(.sx__calendar-wrapper) {
+  margin: 18px 24px 24px;
+  overflow: hidden;
+  border: 1px solid rgba(168, 192, 220, 0.09);
+  border-radius: 20px;
+  background: rgba(7, 13, 26, 0.56);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025), 0 24px 70px rgba(0, 0, 0, 0.24);
+}
+
+:global(.theme-noir-dark) .page-root :deep(.sx__calendar-header) {
+  border-color: rgba(168, 192, 220, 0.08);
+  background: rgba(3, 6, 12, 0.56);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .page-root :deep(.sx__range-heading) {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 500;
+}
+
+:global(.theme-noir-dark) .page-root :deep(.sx__button),
+:global(.theme-noir-dark) .page-root :deep(.sx__date-input),
+:global(.theme-noir-dark) .page-root :deep(.sx__view-selection) {
+  border-color: rgba(168, 192, 220, 0.09);
+  border-radius: 10px;
+  background: rgba(168, 192, 220, 0.035);
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .page-root :deep(.sx__month-grid-day),
+:global(.theme-noir-dark) .page-root :deep(.sx__date-grid-cell),
+:global(.theme-noir-dark) .page-root :deep(.sx__time-grid-day),
+:global(.theme-noir-dark) .page-root :deep(.sx__month-grid-day__header) {
+  border-color: rgba(168, 192, 220, 0.075);
+  background: transparent;
+  color: #a9b3c1;
+}
+
+:global(.theme-noir-dark) .page-root :deep(.sx__month-grid-day__header-day-name),
+:global(.theme-noir-dark) .page-root :deep(.sx__month-agenda-day-name) {
+  color: #7a8291;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .page-root :deep(.sx__is-today .sx__month-grid-day__header-date),
+:global(.theme-noir-dark) .page-root :deep(.sx__date-picker__day--today) {
+  border: 1px solid #6ab0cc;
+  border-radius: 999px;
+  background: rgba(80, 150, 179, 0.12);
+  box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.08), 0 0 14px rgba(80, 150, 179, 0.2);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .page-root :deep(.sx__month-grid-event),
+:global(.theme-noir-dark) .page-root :deep(.sx__time-grid-event),
+:global(.theme-noir-dark) .page-root :deep(.sx__date-grid-event),
+:global(.theme-noir-dark) .page-root :deep(.sx__month-agenda-event),
+:global(.theme-noir-dark) .page-root :deep(.sx__list-event) {
+  border: 1px solid rgba(106, 176, 204, 0.24);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.22), rgba(80, 150, 179, 0.08));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 5px 16px rgba(0, 0, 0, 0.18);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .page-root :deep(.sx__current-time-indicator) {
+  border-color: #6ab0cc;
+}
+
+:global(.theme-noir-dark) .calendar-modal-panel {
+  border-color: rgba(168, 192, 220, 0.1);
+  background: rgba(7, 13, 26, 0.97);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(20px);
+}
+
+:global(.theme-noir-dark) .calendar-modal-panel h2 {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.5rem;
+  font-weight: 500;
+}
+
+:global(.theme-noir-dark) .calendar-modal-panel label {
+  color: #8cacc9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .calendar-modal-panel input,
+:global(.theme-noir-dark) .calendar-modal-panel textarea {
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 12px;
+  background: rgba(3, 6, 12, 0.68);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .calendar-modal-panel button.bg-indigo-600 {
+  border: 1px solid rgba(106, 176, 204, 0.3);
+  background: linear-gradient(135deg, #5096b3, #6ab0cc);
+  color: #01030a;
 }
 </style>

@@ -102,6 +102,12 @@
                 :key="agent.id"
                 class="agents-row flex items-center gap-4 px-4 py-3 border-b border-slate-200/10"
               >
+                <div
+                  class="agent-avatar-tile"
+                  aria-hidden="true"
+                >
+                  {{ agent.name.slice(0, 1).toUpperCase() }}
+                </div>
                 <div class="flex-1 min-w-0">
                   <p class="text-sm text-slate-800 dark:text-slate-200 truncate">
                     {{ agent.name }}
@@ -202,10 +208,16 @@
                   @click="openAgent(agent)"
                   @keydown.enter="openAgent(agent)"
                 >
-                  <span
-                    class="flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full"
-                    :class="statusDot(agent.status)"
-                  />
+                  <div
+                    class="agent-avatar-tile agent-avatar-live"
+                    aria-hidden="true"
+                  >
+                    {{ agent.name.slice(0, 1).toUpperCase() }}
+                    <span
+                      class="agent-live-dot"
+                      :class="[statusDot(agent.status), { 'agent-live-dot-running': agent.status === 'running' }]"
+                    />
+                  </div>
                   <div class="flex-1 min-w-0">
                     <p class="text-sm text-slate-800 dark:text-slate-200 truncate flex items-center gap-2">
                       {{ agent.name }}
@@ -332,51 +344,80 @@
         class="agent-modal"
         @submit.prevent="saveDefinition"
       >
-        <h2 class="text-xl text-slate-100">
-          {{ editing.id ? 'Edit agent' : 'Create agent' }}
-        </h2>
-        <label>Name<input
-          v-model="editing.name"
-          required
-        ></label>
-        <label v-if="!editing.id">Slug<input
-          v-model="editing.slug"
-          required
-          pattern="[a-z0-9][a-z0-9-]*"
-        ></label>
-        <label>Description<input v-model="editing.description"></label>
-        <label>Model
-          <select
-            v-model="editing.modelKey"
+        <aside
+          class="agent-modal-nav"
+          aria-hidden="true"
+        >
+          <p class="agent-modal-kicker">
+            AGENT STUDIO
+          </p>
+          <h2>{{ editing.id ? 'Edit agent' : 'Create agent' }}</h2>
+          <p>Shape how this agent introduces itself, thinks, and responds.</p>
+          <div class="agent-modal-nav-item agent-modal-nav-current">
+            <span>01</span>Identity
+          </div>
+          <div class="agent-modal-nav-item">
+            <span>02</span>Model
+          </div>
+          <div class="agent-modal-nav-item">
+            <span>03</span>Instructions
+          </div>
+          <div class="agent-modal-nav-state">
+            <span /> Draft configuration
+          </div>
+        </aside>
+        <div class="agent-modal-content">
+          <h2 class="agent-modal-legacy-title text-xl text-slate-100">
+            {{ editing.id ? 'Edit agent' : 'Create agent' }}
+          </h2>
+          <div class="agent-modal-heading">
+            <p>AGENT PROFILE</p>
+            <h3>Give this agent a clear point of view.</h3>
+            <span>Identity, model, and instructions stay exactly where you save them today.</span>
+          </div>
+          <label>Name<input
+            v-model="editing.name"
             required
-          >
-            <option
-              v-for="model in availableModels"
-              :key="`${model.providerId}:${model.modelId}`"
-              :value="`${model.providerId}:${model.modelId}`"
-            >{{ model.providerName }} · {{ model.label }}</option>
-          </select>
-        </label>
-        <label>Prompt<textarea
-          v-model="editing.prompt"
-          required
-          rows="12"
-        /></label>
-        <div class="flex justify-end gap-2">
-          <button
-            class="agent-link"
-            type="button"
-            @click="editing = null"
-          >
-            Cancel
-          </button>
-          <button
-            class="agent-action"
-            type="submit"
-            :disabled="saving"
-          >
-            {{ saving ? 'Saving…' : 'Save' }}
-          </button>
+          ></label>
+          <label v-if="!editing.id">Slug<input
+            v-model="editing.slug"
+            required
+            pattern="[a-z0-9][a-z0-9-]*"
+          ></label>
+          <label>Description<input v-model="editing.description"></label>
+          <label>Model
+            <select
+              v-model="editing.modelKey"
+              required
+            >
+              <option
+                v-for="model in availableModels"
+                :key="`${model.providerId}:${model.modelId}`"
+                :value="`${model.providerId}:${model.modelId}`"
+              >{{ model.providerName }} · {{ model.label }}</option>
+            </select>
+          </label>
+          <label>Prompt<textarea
+            v-model="editing.prompt"
+            required
+            rows="12"
+          /></label>
+          <div class="agent-modal-actions flex justify-end gap-2">
+            <button
+              class="agent-link"
+              type="button"
+              @click="editing = null"
+            >
+              Cancel
+            </button>
+            <button
+              class="agent-action"
+              type="submit"
+              :disabled="saving"
+            >
+              {{ saving ? 'Saving…' : 'Save' }}
+            </button>
+          </div>
         </div>
       </form>
     </div>
@@ -668,5 +709,314 @@ onUnmounted(() => {
 .badge-type {
   color: #6aa9c4;
   background: rgba(106, 169, 196, 0.14);
+}
+
+.agent-avatar-tile,
+.agent-modal-nav,
+.agent-modal-heading {
+  display: none;
+}
+
+.agent-modal-content {
+  display: grid;
+  gap: 1rem;
+}
+
+:global(.theme-noir-dark) .agents-page {
+  background:
+    radial-gradient(circle at 72% -10%, rgba(80, 150, 179, 0.09), transparent 35%),
+    #01030a;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .agents-header {
+  background: transparent;
+  border-bottom: 1px solid rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .agents-header .font-display {
+  background: none;
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 3.25rem;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+
+:global(.theme-noir-dark) .agents-header .text-2xl {
+  color: #a9b3c1;
+  font-size: 0.875rem;
+  letter-spacing: 0;
+}
+
+:global(.theme-noir-dark) .section-label {
+  color: #6ab0cc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .section-count,
+:global(.theme-noir-dark) .badge {
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  background: rgba(168, 192, 220, 0.05);
+  color: #8cacc9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+:global(.theme-noir-dark) .agents-card {
+  display: grid;
+  gap: 0.65rem;
+  overflow: visible;
+  background: transparent;
+}
+
+:global(.theme-noir-dark) .agents-card.agents-row,
+:global(.theme-noir-dark) .agents-row {
+  position: relative;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 18px;
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+:global(.theme-noir-dark) .agents-row:hover {
+  transform: translateY(-2px);
+  border-color: rgba(106, 176, 204, 0.25);
+  background: rgba(80, 150, 179, 0.075);
+}
+
+:global(.theme-noir-dark) .agent-avatar-tile {
+  position: relative;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  place-items: center;
+  border: 1px solid rgba(106, 176, 204, 0.24);
+  border-radius: 13px;
+  background: linear-gradient(145deg, rgba(106, 176, 204, 0.26), rgba(80, 150, 179, 0.07));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 30px rgba(1, 3, 10, 0.35);
+  color: #dee4ec;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .agent-live-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #070d1a;
+  border-radius: 50%;
+}
+
+:global(.theme-noir-dark) .agent-live-dot-running {
+  box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.1), 0 0 10px rgba(63, 185, 80, 0.65);
+  animation: agent-live-pulse 1.8s ease-in-out infinite;
+}
+
+:global(.theme-noir-dark) .agent-action {
+  border: 1px solid rgba(106, 176, 204, 0.32);
+  background: linear-gradient(135deg, #5096b3, #6ab0cc);
+  box-shadow: 0 8px 24px rgba(80, 150, 179, 0.18);
+  color: #01030a;
+  font-weight: 650;
+}
+
+:global(.theme-noir-dark) .agent-link {
+  color: #8cacc9;
+}
+
+:global(.theme-noir-dark) .agent-link:hover {
+  background: rgba(80, 150, 179, 0.08);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .agent-modal-backdrop {
+  padding: 2rem;
+  background: rgba(1, 3, 10, 0.78);
+  backdrop-filter: blur(18px);
+}
+
+:global(.theme-noir-dark) .agent-modal {
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 0;
+  width: min(900px, calc(100vw - 4rem));
+  max-height: min(760px, calc(100vh - 4rem));
+  overflow: hidden;
+  padding: 0;
+  border-color: rgba(168, 192, 220, 0.11);
+  border-radius: 24px;
+  background: rgba(7, 13, 26, 0.96);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+:global(.theme-noir-dark) .agent-modal-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 30px 18px;
+  border-right: 1px solid rgba(168, 192, 220, 0.08);
+  background: rgba(3, 6, 12, 0.6);
+}
+
+:global(.theme-noir-dark) .agent-modal-nav h2 {
+  margin: 6px 8px 4px;
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .agent-modal-nav > p:not(.agent-modal-kicker) {
+  margin: 0 8px 28px;
+  color: #7a8291;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+:global(.theme-noir-dark) .agent-modal-kicker,
+:global(.theme-noir-dark) .agent-modal-heading > p {
+  margin: 0 8px;
+  color: #6ab0cc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .agent-modal-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  margin-bottom: 4px;
+  padding: 0 14px;
+  border-radius: 20px;
+  color: #7a8291;
+  font-size: 0.8rem;
+}
+
+:global(.theme-noir-dark) .agent-modal-nav-item span {
+  color: #484f5a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+}
+
+:global(.theme-noir-dark) .agent-modal-nav-current {
+  border: 1px solid rgba(106, 176, 204, 0.22);
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.18), rgba(80, 150, 179, 0.06));
+  color: #dee4ec;
+  box-shadow: 0 8px 28px rgba(80, 150, 179, 0.08);
+}
+
+:global(.theme-noir-dark) .agent-modal-nav-state {
+  margin-top: auto;
+  padding: 12px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 14px;
+  color: #7a8291;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.65rem;
+}
+
+:global(.theme-noir-dark) .agent-modal-nav-state span {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #e3b341;
+  box-shadow: 0 0 8px rgba(227, 179, 65, 0.45);
+}
+
+:global(.theme-noir-dark) .agent-modal-content {
+  display: grid;
+  gap: 1rem;
+  overflow: auto;
+  padding: 30px 34px;
+  animation: agent-section-in 360ms ease both;
+}
+
+:global(.theme-noir-dark) .agent-modal-legacy-title {
+  display: none;
+}
+
+:global(.theme-noir-dark) .agent-modal-heading {
+  display: block;
+}
+
+:global(.theme-noir-dark) .agent-modal-heading h3 {
+  margin: 5px 0;
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.8rem;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+
+:global(.theme-noir-dark) .agent-modal-heading span {
+  color: #7a8291;
+  font-size: 0.78rem;
+}
+
+:global(.theme-noir-dark) .agent-modal label {
+  color: #8cacc9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+:global(.theme-noir-dark) .agent-modal input,
+:global(.theme-noir-dark) .agent-modal select,
+:global(.theme-noir-dark) .agent-modal textarea {
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 12px;
+  background: rgba(3, 6, 12, 0.66);
+  color: #dee4ec;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+:global(.theme-noir-dark) .agent-modal input:focus,
+:global(.theme-noir-dark) .agent-modal select:focus,
+:global(.theme-noir-dark) .agent-modal textarea:focus {
+  border-color: rgba(106, 176, 204, 0.42);
+  box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.09);
+  outline: none;
+}
+
+:global(.theme-noir-dark) .agent-modal-actions {
+  position: sticky;
+  bottom: -30px;
+  margin: 0 -34px -30px;
+  padding: 16px 34px;
+  border-top: 1px solid rgba(168, 192, 220, 0.08);
+  background: rgba(3, 6, 12, 0.9);
+  backdrop-filter: blur(18px);
+}
+
+@keyframes agent-live-pulse {
+  50% { opacity: 0.62; transform: scale(0.82); }
+}
+
+@keyframes agent-section-in {
+  from { opacity: 0; filter: blur(8px); transform: translateY(8px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .agent-live-dot-running,
+  :global(.theme-noir-dark) .agent-modal-content {
+    animation: none;
+  }
+
+  :global(.theme-noir-dark) .agents-row {
+    transition: none;
+  }
 }
 </style>

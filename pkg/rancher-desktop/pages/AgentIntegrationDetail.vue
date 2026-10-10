@@ -10,10 +10,10 @@
         :toggle-theme="toggleTheme"
       />
 
-      <div class="flex-1 overflow-auto">
-        <div class="mx-auto max-w-6xl px-4 py-8">
+      <div class="flex-1 overflow-auto integration-detail-scroll">
+        <div class="mx-auto max-w-6xl px-4 py-8 integration-detail-frame">
           <!-- Navigation -->
-          <div class="mb-6 flex items-center gap-4">
+          <div class="mb-6 flex items-center gap-4 integration-detail-nav">
             <button
               class="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
               @click="embedded ? $emit('back') : $router.push('/Integrations')"
@@ -61,11 +61,32 @@
               </svg>
               Back to Vault
             </button>
+            <div
+              class="integration-detail-nav-copy"
+              aria-hidden="true"
+            >
+              <p>INTEGRATION</p>
+              <h2>{{ integration?.name || 'Connection' }}</h2>
+              <span>Configure access without changing how credentials are stored.</span>
+              <div class="integration-detail-nav-item integration-detail-nav-current">
+                <b>01</b>Overview
+              </div>
+              <div class="integration-detail-nav-item">
+                <b>02</b>Connection
+              </div>
+              <div class="integration-detail-nav-item">
+                <b>03</b>Setup guide
+              </div>
+              <div class="integration-detail-nav-state">
+                <i :class="integration?.connected ? 'integration-detail-state-on' : ''" />
+                {{ integration?.connected ? 'Connected' : 'Not connected' }}
+              </div>
+            </div>
           </div>
 
           <div
             v-if="integration"
-            class="grid grid-cols-1 gap-8 lg:grid-cols-2"
+            class="grid grid-cols-1 gap-8 lg:grid-cols-2 integration-detail-main"
           >
             <!-- Main Content -->
             <div class="lg:col-span-2 space-y-8">
@@ -201,8 +222,8 @@
                     </span>
                     <div class="flex items-center gap-2">
                       <div
-                        class="h-2 w-2 rounded-full"
-                        :class="integration.connected ? 'bg-sky-500' : 'bg-gray-300'"
+                        class="h-2 w-2 rounded-full integration-detail-status-dot"
+                        :class="integration.connected ? 'bg-sky-500 integration-detail-status-on' : 'bg-gray-300'"
                       />
                       <span class="text-xs text-slate-500 dark:text-slate-400">
                         {{ integration.connected
@@ -1597,5 +1618,247 @@ onMounted(async() => {
 .overflow-auto::-webkit-scrollbar-corner,
 .overflow-y-auto::-webkit-scrollbar-corner {
   background: var(--bg-surface);
+}
+
+.integration-detail-nav-copy {
+  display: none;
+}
+
+:global(.theme-noir-dark) .page-root {
+  background:
+    radial-gradient(circle at 75% -10%, rgba(80, 150, 179, 0.09), transparent 34%),
+    #01030a;
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .integration-detail-scroll {
+  padding: 20px;
+}
+
+:global(.theme-noir-dark) .integration-detail-frame {
+  display: grid;
+  width: min(100%, 1220px);
+  max-width: none;
+  min-height: calc(100% - 4px);
+  grid-template-columns: 230px minmax(0, 1fr);
+  align-items: start;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(168, 192, 220, 0.09);
+  border-radius: 24px;
+  background: rgba(7, 13, 26, 0.68);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+:global(.theme-noir-dark) .integration-detail-nav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  min-height: calc(100vh - 120px);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin: 0;
+  padding: 26px 18px;
+  border-right: 1px solid rgba(168, 192, 220, 0.08);
+  background: rgba(3, 6, 12, 0.56);
+}
+
+:global(.theme-noir-dark) .integration-detail-nav > button {
+  justify-content: flex-start;
+  padding: 8px 10px;
+  border-radius: 10px;
+  color: #7a8291;
+  font-size: 0.7rem;
+}
+
+:global(.theme-noir-dark) .integration-detail-nav > button:hover {
+  background: rgba(80, 150, 179, 0.07);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .integration-detail-nav-copy {
+  display: flex;
+  min-height: 430px;
+  flex: 1;
+  flex-direction: column;
+}
+
+:global(.theme-noir-dark) .integration-detail-nav-copy > p {
+  margin: 20px 10px 4px;
+  color: #6ab0cc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .integration-detail-nav-copy > h2 {
+  margin: 0 10px 5px;
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+:global(.theme-noir-dark) .integration-detail-nav-copy > span {
+  margin: 0 10px 25px;
+  color: #7a8291;
+  font-size: 0.69rem;
+  line-height: 1.5;
+}
+
+:global(.theme-noir-dark) .integration-detail-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  margin-bottom: 4px;
+  padding: 0 14px;
+  border-radius: 20px;
+  color: #7a8291;
+  font-size: 0.8rem;
+}
+
+:global(.theme-noir-dark) .integration-detail-nav-item b {
+  color: #484f5a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6rem;
+  font-weight: 500;
+}
+
+:global(.theme-noir-dark) .integration-detail-nav-current {
+  position: relative;
+  border: 1px solid rgba(106, 176, 204, 0.22);
+  background: linear-gradient(135deg, rgba(80, 150, 179, 0.18), rgba(80, 150, 179, 0.05));
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .integration-detail-nav-current::before {
+  position: absolute;
+  left: -5px;
+  width: 3px;
+  height: 22px;
+  border-radius: 3px;
+  background: #6ab0cc;
+  box-shadow: 0 0 10px rgba(106, 176, 204, 0.62);
+  content: '';
+}
+
+:global(.theme-noir-dark) .integration-detail-nav-state {
+  margin-top: auto;
+  padding: 12px;
+  border: 1px solid rgba(168, 192, 220, 0.08);
+  border-radius: 14px;
+  color: #7a8291;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.64rem;
+}
+
+:global(.theme-noir-dark) .integration-detail-nav-state i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #484f5a;
+}
+
+:global(.theme-noir-dark) .integration-detail-nav-state .integration-detail-state-on {
+  background: #3fb950;
+  box-shadow: 0 0 9px rgba(63, 185, 80, 0.62);
+}
+
+:global(.theme-noir-dark) .integration-detail-main {
+  grid-column: 2;
+  padding: 30px 34px 46px;
+  animation: integration-detail-in 360ms ease both;
+}
+
+:global(.theme-noir-dark) .integration-detail-main h1 {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 2.25rem;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+}
+
+:global(.theme-noir-dark) .integration-detail-main h2,
+:global(.theme-noir-dark) .integration-detail-main h3,
+:global(.theme-noir-dark) .integration-detail-main h4 {
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .integration-detail-main > div > div.flex.items-start.gap-6 > div:first-child {
+  border: 1px solid rgba(106, 176, 204, 0.2);
+  background: linear-gradient(145deg, rgba(106, 176, 204, 0.17), rgba(80, 150, 179, 0.035));
+}
+
+:global(.theme-noir-dark) .integration-detail-main .rounded-xl.border,
+:global(.theme-noir-dark) .integration-detail-main .rounded-lg.border {
+  border-color: rgba(168, 192, 220, 0.08);
+  background: rgba(168, 192, 220, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+:global(.theme-noir-dark) .integration-detail-main input,
+:global(.theme-noir-dark) .integration-detail-main select,
+:global(.theme-noir-dark) .integration-detail-main textarea {
+  min-height: 40px;
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 12px;
+  background: rgba(3, 6, 12, 0.68);
+  color: #dee4ec;
+}
+
+:global(.theme-noir-dark) .integration-detail-main input:focus,
+:global(.theme-noir-dark) .integration-detail-main select:focus,
+:global(.theme-noir-dark) .integration-detail-main textarea:focus {
+  border-color: rgba(106, 176, 204, 0.42);
+  box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.09);
+  outline: none;
+}
+
+:global(.theme-noir-dark) .integration-detail-main button.bg-blue-600 {
+  border: 1px solid rgba(106, 176, 204, 0.3);
+  background: linear-gradient(135deg, #5096b3, #6ab0cc);
+  box-shadow: 0 8px 22px rgba(80, 150, 179, 0.16);
+  color: #01030a;
+}
+
+:global(.theme-noir-dark) .integration-detail-status-on {
+  background: #3fb950;
+  box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.09), 0 0 10px rgba(63, 185, 80, 0.55);
+}
+
+@keyframes integration-detail-in {
+  from { opacity: 0; filter: blur(8px); transform: translateY(8px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@media (max-width: 900px) {
+  :global(.theme-noir-dark) .integration-detail-frame {
+    grid-template-columns: 1fr;
+  }
+
+  :global(.theme-noir-dark) .integration-detail-nav {
+    position: static;
+    min-height: auto;
+    border-right: 0;
+    border-bottom: 1px solid rgba(168, 192, 220, 0.08);
+  }
+
+  :global(.theme-noir-dark) .integration-detail-nav-copy {
+    display: none;
+  }
+
+  :global(.theme-noir-dark) .integration-detail-main {
+    grid-column: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .integration-detail-main {
+    animation: none;
+  }
 }
 </style>
