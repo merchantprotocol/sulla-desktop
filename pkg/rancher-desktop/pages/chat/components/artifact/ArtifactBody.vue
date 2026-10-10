@@ -7,6 +7,7 @@
       <WorkflowArtifact v-if="artifact.kind === 'workflow'" :payload="payload as WorkflowPayload" />
       <HtmlArtifact     v-else-if="artifact.kind === 'html'"  :payload="payload as HtmlPayload" />
       <CodeArtifact     v-else-if="artifact.kind === 'code'"  :payload="payload as CodePayload" />
+      <MarkdownArtifact v-else-if="artifact.kind === 'markdown'" :artifact="artifact as Artifact & { payload: MarkdownPayload }" />
       <div v-else class="empty">No content for this artifact.</div>
     </div>
   </div>
@@ -14,17 +15,18 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { Artifact, WorkflowPayload, HtmlPayload, CodePayload } from '../../models/Artifact';
+import type { Artifact, WorkflowPayload, HtmlPayload, CodePayload, MarkdownPayload } from '../../models/Artifact';
 
 import WorkflowArtifact from './panes/WorkflowArtifact.vue';
 import HtmlArtifact     from './panes/HtmlArtifact.vue';
 import CodeArtifact     from './panes/CodeArtifact.vue';
+import MarkdownArtifact from './panes/MarkdownArtifact.vue';
 
 const props = defineProps<{ artifact: Artifact }>();
 
 const payload = computed(() => props.artifact.payload ?? placeholderPayload(props.artifact.kind));
 
-function placeholderPayload(kind: Artifact['kind']): WorkflowPayload | HtmlPayload | CodePayload {
+function placeholderPayload(kind: Artifact['kind']): WorkflowPayload | HtmlPayload | CodePayload | MarkdownPayload {
   if (kind === 'workflow') {
     return {
       nodes: [
@@ -43,6 +45,7 @@ function placeholderPayload(kind: Artifact['kind']): WorkflowPayload | HtmlPaylo
   if (kind === 'html') {
     return { html: '<!doctype html><html><body style="background:#0d1117;color:#e6edf3;font-family:sans-serif;padding:24px"><h1>Blank HTML artifact</h1><p>Nothing to show yet.</p></body></html>' };
   }
+  if (kind === 'markdown') return { markdown: '' };
   return { path: 'placeholder.ts', language: 'typescript', lines: [{ n: 1, text: '// empty', op: 'context' }] };
 }
 </script>

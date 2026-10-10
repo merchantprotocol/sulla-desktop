@@ -1,7 +1,7 @@
 import type { ArtifactId } from '../types/chat';
 
 /** Kind dictates which pane renders it inside ArtifactSidebar. */
-export type ArtifactKind = 'workflow' | 'html' | 'code';
+export type ArtifactKind = 'workflow' | 'html' | 'code' | 'markdown';
 
 export type ArtifactStatus = 'working' | 'done' | 'error' | 'viewing' | 'editing';
 
@@ -12,6 +12,10 @@ export interface Artifact {
   status:    ArtifactStatus;
   createdAt: number;
   updatedAt: number;
+  /** DB-backed artifacts carry these fields; transcript HTML/workflow artifacts remain transient. */
+  persistent?: boolean;
+  threadId?:   string;
+  version?:    number;
   /** Free-form payload; each pane interprets its own. See below for typed variants. */
   payload?:  unknown;
 }
@@ -84,6 +88,11 @@ export interface HtmlPayload {
   description?: string;
 }
 
+// ─── Markdown payload ─────────────────────────────────────────────
+export interface MarkdownPayload {
+  markdown: string;
+}
+
 // ─── Code payload ─────────────────────────────────────────────────
 export interface CodePayload {
   path:     string;
@@ -104,3 +113,5 @@ export const isHtml = (a: Artifact): a is Artifact & { payload: HtmlPayload } =>
   a.kind === 'html';
 export const isCode = (a: Artifact): a is Artifact & { payload: CodePayload } =>
   a.kind === 'code';
+export const isMarkdown = (a: Artifact): a is Artifact & { payload: MarkdownPayload } =>
+  a.kind === 'markdown';

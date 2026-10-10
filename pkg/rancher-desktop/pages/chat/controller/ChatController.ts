@@ -657,6 +657,37 @@ export class ChatController {
     this.artifacts.value = { ...this.artifacts.value, list };
   }
 
+  /** Reconcile a DB-backed artifact without emitting open/close intents back to main. */
+  syncArtifact(artifact: Artifact, focus = false): void {
+    const existing = this.artifacts.value.list.some(item => item.id === artifact.id);
+    const list = existing
+      ? this.artifacts.value.list.map(item => item.id === artifact.id ? artifact : item)
+      : [...this.artifacts.value.list, artifact];
+    this.artifacts.value = {
+      list,
+      activeId: focus || !existing ? artifact.id : this.artifacts.value.activeId,
+    };
+  }
+
+  /** Replace only DB-backed tabs; transient HTML/workflow reply tabs are untouched. */
+  syncPersistentArtifacts(artifacts: Artifact[]): void {
+    const transient = this.artifacts.value.list.filter(item => !item.persistent);
+    const list = [...transient, ...artifacts];
+    const activeId = list.some(item => item.id === this.artifacts.value.activeId)
+      ? this.artifacts.value.activeId
+      : (artifacts[0]?.id ?? transient[0]?.id ?? null);
+    this.artifacts.value = { list, activeId };
+  }
+
+  /** Remove a DB-backed tab after a main-process close/delete push, without another close IPC. */
+  removeSyncedArtifact(id: ArtifactId): void {
+    const list = this.artifacts.value.list.filter(item => item.id !== id);
+    const activeId = this.artifacts.value.activeId === id
+      ? (list[0]?.id ?? null)
+      : this.artifacts.value.activeId;
+    this.artifacts.value = { list, activeId };
+  }
+
   // ─── Modals & sidebar ───────────────────────────────────────────
   openModal(which: ModalState['which']): void {
     this.modals.value = { which };
@@ -827,5 +858,6 @@ function defaultArtifactName(kind: ArtifactKind): string {
   case 'workflow': return 'Workflow';
   case 'html': return 'HTML Artifact';
   case 'code': return 'Code';
+  case 'markdown': return 'Markdown';
   }
 }

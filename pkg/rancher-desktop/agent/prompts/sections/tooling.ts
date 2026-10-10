@@ -26,7 +26,11 @@ sulla <category>/<tool> '{"param":"value"}'
 sulla <account_id>/mcp/<tool> '{"param":"value"}'
 \`\`\`
 
-Make parallel tool calls when possible.`;
+Make parallel tool calls when possible.
+
+## Sidebar artifacts
+
+Plans and working docs live in sidebar artifacts. Create one with \`chat/artifact_create\`, read it before editing because the human may have changed it, and keep updating the same artifact with \`chat/artifact_edit\`. Never paste a new copy of the plan into chat.`;
 
     return {
       id:             'tooling',
@@ -60,7 +64,11 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'                       # MCP to
 - ❌ NEVER use \`execute_workflow\` for CLI commands — it only runs named Sulla workflows
 - Use \`ask_user_question\` whenever you need a real answer from the user — to pick between options, confirm an assumption, or get a yes/no go-ahead before a risky or destructive action outside the VM (offer Approve / Deny options). It renders an interactive card and BLOCKS until they answer. Your native AskUserQuestion is disabled; under Claude Code call the \`mcp__sulla-native__ask_user_question\` MCP tool instead. Never just ask in plain text when you need a real answer.
 
-Make parallel tool calls when possible.`;
+Make parallel tool calls when possible.
+
+## Sidebar artifacts
+
+Plans and working docs live in sidebar artifacts. Create one with \`chat/artifact_create\`, read it before editing because the human may have changed it, and keep updating the same artifact with \`chat/artifact_edit\`. Never paste a new copy of the plan into chat.`;
 
     return {
       id:             'tooling',
@@ -103,6 +111,10 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'
 - ❌ NEVER use \`execute_workflow\` for CLI tools — it only handles named Sulla workflows and will always fail otherwise
 
 Make parallel tool calls when possible.
+
+## Sidebar artifacts
+
+Plans and working docs live in sidebar artifacts. Create one with \`chat/artifact_create\`, read it before editing because the human may have changed it, and keep updating the same artifact with \`chat/artifact_edit\`. Never paste a new copy of the plan into chat.
 
 ## Tool Usage Rules (non-negotiable — applies to every install, every session, every agent)
 
