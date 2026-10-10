@@ -194,6 +194,11 @@ export class CodexService extends BaseLanguageModel {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
     const codexArgs = ['codex', 'exec'];
+    // Sulla workers need their graph-bound SULLA_TOOL_SESSION to survive
+    // Codex's shell environment filtering. Keep this process-local so the
+    // user's shared ~/.codex/config.toml remains unchanged; Codex still
+    // applies its KEY/SECRET/TOKEN exclusions when inheriting the shell.
+    codexArgs.push('-c', shq('shell_environment_policy.inherit=all'));
     if (p.existingSession) {
       codexArgs.push('resume', shq(p.existingSession));
     }
