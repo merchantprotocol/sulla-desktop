@@ -66,7 +66,8 @@ function activate(): void {
   cursor: pointer;
   transform: scale(1.05);
 }
-:global(.theme-noir-light) .composer-send.ready {
+.theme-noir-light .composer-send.ready {
+  color: #fff;
   box-shadow: 0 6px 16px color-mix(in srgb, var(--nx-accent) 35%, transparent);
 }
 .theme-noir .composer-send.running {
