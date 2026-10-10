@@ -17,7 +17,7 @@ export class GitHubClaimFilesWorker extends BaseTool {
 
     try {
       const resolved = await resolveRepository(absolutePath);
-      const paths = [...new Set(input.paths.map((item: string) => normalizeClaimGlob(item)))];
+      const paths = [...new Set<string>(input.paths.map((item: string) => normalizeClaimGlob(item)))];
       const existing = await WorkFileClaimModel.listActive(resolved.repoRoot);
       const conflicts = existing.filter(claim =>
         claim.worktree_path !== resolved.worktreePath && paths.includes(claim.path_glob));
