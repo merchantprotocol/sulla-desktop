@@ -565,21 +565,21 @@ input:hover, select:hover {
   color: var(--text-muted, #64748b);
 }
 
-:global(.theme-noir-dark) .frw {
+:global(.theme-noir) .frw {
   --frw-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
-  color: #dee4ec;
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .frw-eyebrow {
+:global(.theme-noir) .frw-eyebrow {
   margin-top: 5px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: .14em;
-  color: #6ab0cc;
+  color: var(--nx-accent-2);
 }
 
-:global(.theme-noir-dark) .frw-title {
+:global(.theme-noir) .frw-title {
   max-width: 650px;
   margin: 9px 0 12px;
   font-family: "Playfair Display", Georgia, serif;
@@ -587,48 +587,48 @@ input:hover, select:hover {
   line-height: 1.02;
   font-weight: 600;
   letter-spacing: -.025em;
-  color: #f3f5f8;
+  color: var(--nx-read-1);
   text-wrap: balance;
-  text-shadow: 0 0 34px rgba(80, 150, 179, .18);
+  text-shadow: 0 0 34px color-mix(in srgb, var(--nx-accent) 18%, transparent);
 }
 
-:global(.theme-noir-dark) .frw-lead {
+:global(.theme-noir) .frw-lead {
   max-width: 680px;
   font-size: 15px;
   line-height: 1.65;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
 }
 
-:global(.theme-noir-dark) .frw-how {
+:global(.theme-noir) .frw-how {
   gap: 10px;
   margin: 26px 0 18px;
 }
 
-:global(.theme-noir-dark) .frw-how > div {
+:global(.theme-noir) .frw-how > div {
   min-height: 142px;
   gap: 6px;
   padding: 16px;
   border-color: transparent;
   border-radius: 18px;
-  background: rgba(168, 192, 220, .035);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .08);
-  color: #7a8291;
+  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--nx-hair);
+  color: var(--nx-read-4);
   transition: transform .58s var(--frw-spring), background .22s ease, box-shadow .22s ease;
 }
 
-:global(.theme-noir-dark) .frw-how > div:hover {
+:global(.theme-noir) .frw-how > div:hover {
   transform: translateY(-3px);
-  background: rgba(80, 150, 179, .07);
-  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, .2), 0 16px 34px rgba(0, 0, 0, .18);
+  background: color-mix(in srgb, var(--nx-accent) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 16px 34px rgba(0, 0, 0, .18);
 }
 
-:global(.theme-noir-dark) .frw-how b {
-  color: #f3f5f8;
+:global(.theme-noir) .frw-how b {
+  color: var(--nx-read-1);
   font-size: 14px;
   font-weight: 600;
 }
 
-:global(.theme-noir-dark) .frw-num {
+:global(.theme-noir) .frw-num {
   width: 28px;
   height: 28px;
   margin-bottom: 6px;
@@ -636,26 +636,26 @@ input:hover, select:hover {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
   font-weight: 500;
-  color: #a8c0dc;
-  background: linear-gradient(180deg, rgba(80, 150, 179, .28), rgba(80, 150, 179, .12));
-  box-shadow: inset 0 0 0 .5px rgba(106, 176, 204, .45), 0 0 16px rgba(80, 150, 179, .15);
+  color: rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--nx-accent-2) 45%, transparent), 0 0 16px color-mix(in srgb, var(--nx-accent) 15%, transparent);
 }
 
-:global(.theme-noir-dark) .frw-resources {
+:global(.theme-noir) .frw-resources {
   padding: 16px 18px;
   border: 0;
   border-radius: 18px;
-  background: linear-gradient(135deg, rgba(80, 150, 179, .16), rgba(80, 150, 179, .03));
-  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, .25);
-  color: #7a8291;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 16%, transparent), color-mix(in srgb, var(--nx-accent) 3%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
+  color: var(--nx-read-4);
 }
 
-:global(.theme-noir-dark) .frw-resources b {
-  color: #f3f5f8;
+:global(.theme-noir) .frw-resources b {
+  color: var(--nx-read-1);
   font-weight: 600;
 }
 
-:global(.theme-noir-dark) .frw-link {
+:global(.theme-noir) .frw-link {
   height: 30px;
   padding: 0 13px;
   border-radius: 15px;
@@ -663,45 +663,45 @@ input:hover, select:hover {
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: .06em;
-  color: #dee4ec;
-  background: rgba(3, 6, 12, .45);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .12);
+  color: var(--nx-read-2);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .45);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-:global(.theme-noir-dark) .frw-link:active { transform: scale(.94); }
+:global(.theme-noir) .frw-link:active { transform: scale(.94); }
 
-:global(.theme-noir-dark) .fr-fieldset {
+:global(.theme-noir) .fr-fieldset {
   margin-top: 14px;
   padding: 14px 16px;
-  border-color: rgba(168, 192, 220, .08);
+  border-color: var(--nx-hair);
   border-radius: 18px;
-  background: rgba(168, 192, 220, .035);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .05);
-  color: #dee4ec;
+  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 5%, transparent);
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .frw :deep(.vue-slider-rail) {
+:global(.theme-noir) .frw :deep(.vue-slider-rail) {
   height: 5px;
   border-radius: 3px;
-  background: rgba(3, 6, 12, .7);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .08);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .7);
+  box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
 
-:global(.theme-noir-dark) .frw :deep(.vue-slider-process) {
-  background: linear-gradient(90deg, #5096b3, #6ab0cc);
-  box-shadow: 0 0 10px rgba(80, 150, 179, .45);
+:global(.theme-noir) .frw :deep(.vue-slider-process) {
+  background: linear-gradient(90deg, var(--nx-accent), var(--nx-accent-2));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent) 45%, transparent);
 }
 
-:global(.theme-noir-dark) .frw :deep(.vue-slider-dot-handle) {
-  background: #dee4ec;
-  box-shadow: inset 0 0 0 2px #6ab0cc, 0 0 14px rgba(80, 150, 179, .55);
+:global(.theme-noir) .frw :deep(.vue-slider-dot-handle) {
+  background: var(--nx-read-2);
+  box-shadow: inset 0 0 0 2px var(--nx-accent-2), 0 0 14px color-mix(in srgb, var(--nx-accent) 55%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-:global(.theme-noir-dark) .frw :deep(.vue-slider-dot-handle:active) { transform: scale(1.14); }
+:global(.theme-noir) .frw :deep(.vue-slider-dot-handle:active) { transform: scale(1.14); }
 
-:global(.theme-noir-dark) .frw input[type="checkbox"] {
+:global(.theme-noir) .frw input[type="checkbox"] {
   width: 38px;
   height: 22px;
   flex: none;
@@ -709,69 +709,77 @@ input:hover, select:hover {
   appearance: none;
   border: 0;
   border-radius: 11px;
-  background: rgba(168, 192, 220, .12);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .14);
+  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 14%, transparent);
   cursor: pointer;
   transition: background .25s ease, box-shadow .25s ease;
 }
 
-:global(.theme-noir-dark) .frw input[type="checkbox"]::after {
+:global(.theme-noir) .frw input[type="checkbox"]::after {
   content: "";
   display: block;
   width: 16px;
   height: 16px;
   margin: 3px;
   border-radius: 50%;
-  background: #dee4ec;
+  background: var(--nx-read-2);
   box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
   transition: transform .58s var(--frw-spring), background .2s ease;
 }
 
-:global(.theme-noir-dark) .frw input[type="checkbox"]:checked {
-  background: linear-gradient(180deg, #6ab0cc, #5096b3);
-  box-shadow: 0 0 14px rgba(80, 150, 179, .4);
+:global(.theme-noir) .frw input[type="checkbox"]:checked {
+  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 40%, transparent);
 }
 
-:global(.theme-noir-dark) .frw input[type="checkbox"]:checked::after {
+:global(.theme-noir) .frw input[type="checkbox"]:checked::after {
   transform: translateX(16px);
   background: #fff;
 }
 
-:global(.theme-noir-dark) .frw-muted { color: #7a8291; }
+:global(.theme-noir) .frw-muted { color: var(--nx-read-4); }
 
-:global(.theme-noir-dark) .frw-actions { margin-top: 22px; }
+:global(.theme-noir) .frw-actions { margin-top: 22px; }
 
-:global(.theme-noir-dark) .frw-btn {
+:global(.theme-noir) .frw-btn {
   min-height: 42px;
   padding: 0 22px;
   border-radius: 21px;
   font-size: 14px;
   font-weight: 600;
   color: #fff;
-  background: linear-gradient(180deg, #6ab0cc, #5096b3);
-  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .18), 0 0 22px rgba(80, 150, 179, .34);
+  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
+  box-shadow: inset 0 0 0 .5px rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / .18), 0 0 22px color-mix(in srgb, var(--nx-accent) 34%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-:global(.theme-noir-dark) .frw-btn:hover {
+:global(.theme-noir) .frw-btn:hover {
   filter: none;
-  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .22), 0 0 28px rgba(80, 150, 179, .48);
+  box-shadow: inset 0 0 0 .5px rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / .22), 0 0 28px color-mix(in srgb, var(--nx-accent) 48%, transparent);
 }
 
-:global(.theme-noir-dark) .frw-btn:active { transform: scale(.95); }
+:global(.theme-noir) .frw-btn:active { transform: scale(.95); }
 
-:global(.theme-noir-dark) .frw-trust {
+:global(.theme-noir) .frw-trust {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
-  color: #7a8291;
+  color: var(--nx-read-4);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .frw-how > div,
-  :global(.theme-noir-dark) .frw-link,
-  :global(.theme-noir-dark) .frw input[type="checkbox"]::after,
-  :global(.theme-noir-dark) .frw-btn {
+  :global(.theme-noir) .frw-how > div,
+  :global(.theme-noir) .frw-link,
+  :global(.theme-noir) .frw input[type="checkbox"]::after,
+  :global(.theme-noir) .frw-btn {
     transition-duration: .01ms;
   }
+}
+
+/* Noir Light softens dark-only elevation shadows for paper surfaces. */
+:global(.theme-noir-light) .frw-how > div:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 16px 34px color-mix(in srgb, var(--nx-ink) 8%, transparent);
+}
+:global(.theme-noir-light) .frw input[type="checkbox"]::after {
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--nx-ink) 14%, transparent);
 }
 </style>

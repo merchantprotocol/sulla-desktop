@@ -1136,111 +1136,115 @@ async function onImport() {
 
 // Noir is a separate visual mode. These overrides deliberately leave the
 // established Studio presentation untouched in every other theme.
-:global(.theme-noir-dark) .routines-home {
+:global(.theme-noir) .routines-home {
   --noir-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
-  color: #dee4ec;
+  color: var(--nx-read-2);
   background:
-    radial-gradient(90% 55% at 12% -8%, rgba(80, 150, 179, 0.15), transparent 58%),
-    radial-gradient(65% 45% at 92% 105%, rgba(80, 150, 179, 0.08), transparent 68%),
-    #01030a;
+    radial-gradient(90% 55% at 12% -8%, color-mix(in srgb, var(--nx-accent) 15%, transparent), transparent 58%),
+    radial-gradient(65% 45% at 92% 105%, color-mix(in srgb, var(--nx-accent) 8%, transparent), transparent 68%),
+    var(--nx-paper);
 }
 
-:global(.theme-noir-dark) .glow.violet,
-:global(.theme-noir-dark) .stars,
-:global(.theme-noir-dark) .bracket {
+:global(.theme-noir) .glow.violet,
+:global(.theme-noir) .stars,
+:global(.theme-noir) .bracket {
   display: none;
 }
 
-:global(.theme-noir-dark) .glow.blue {
+:global(.theme-noir) .glow.blue {
   top: -150px;
   left: 24%;
   width: 720px;
   height: 520px;
   opacity: 0.42;
-  background: radial-gradient(circle, rgba(80, 150, 179, 0.22), transparent 68%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--nx-accent) 22%, transparent), transparent 68%);
 }
 
-:global(.theme-noir-dark) .shell {
+:global(.theme-noir) .shell {
   max-width: 1240px;
   padding: 30px 38px 48px;
 }
 
-:global(.theme-noir-dark) .topline {
+:global(.theme-noir) .topline {
   gap: 24px;
   margin-bottom: 38px;
   padding: 14px 16px;
-  border: 1px solid rgba(168, 192, 220, 0.08);
+  border: 1px solid var(--nx-hair);
   border-radius: 22px;
-  background: rgba(3, 6, 12, 0.62);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025), 0 18px 50px rgba(0, 0, 0, 0.25);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.62);
+  box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025), 0 18px 50px rgba(0, 0, 0, 0.25);
   backdrop-filter: blur(22px);
 }
 
-:global(.theme-noir-dark) .brand-mark {
+:global(.theme-noir) .brand-mark {
   border-radius: 12px;
   color: #03060c;
-  background: linear-gradient(135deg, #a8c0dc, #5096b3);
-  box-shadow: 0 0 22px rgba(80, 150, 179, 0.32);
+  background: linear-gradient(135deg, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)), var(--nx-accent));
+  box-shadow: 0 0 22px color-mix(in srgb, var(--nx-accent) 32%, transparent);
 }
 
-:global(.theme-noir-dark) .brand-name {
+:global(.theme-noir-light) .brand-mark {
+  color: #fff;
+}
+
+:global(.theme-noir) .brand-name {
   font-family: 'Playfair Display', Georgia, serif;
-  color: #f3f5f8;
+  color: var(--nx-read-1);
 }
 
-:global(.theme-noir-dark) .brand-sub {
-  color: #6ab0cc;
+:global(.theme-noir) .brand-sub {
+  color: var(--nx-accent-2);
 }
 
-:global(.theme-noir-dark) .tabs,
-:global(.theme-noir-dark) .subtabs {
+:global(.theme-noir) .tabs,
+:global(.theme-noir) .subtabs {
   gap: 3px;
   padding: 4px;
-  border: 1px solid rgba(168, 192, 220, 0.1);
+  border: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
   border-radius: 18px;
-  background: rgba(3, 6, 12, 0.7);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.7);
 }
 
-:global(.theme-noir-dark) .subtabs {
+:global(.theme-noir) .subtabs {
   width: fit-content;
   margin: -16px auto 28px;
 }
 
-:global(.theme-noir-dark) .tab,
-:global(.theme-noir-dark) .subtab {
+:global(.theme-noir) .tab,
+:global(.theme-noir) .subtab {
   min-height: 32px;
   padding: 0 14px;
   border: 0;
   border-radius: 14px;
-  color: #7a8291;
+  color: var(--nx-read-4);
   letter-spacing: 0.1em;
   transition: color 0.2s, background 0.35s, box-shadow 0.35s, transform 0.58s var(--noir-spring);
 }
 
-:global(.theme-noir-dark) .tab:hover,
-:global(.theme-noir-dark) .subtab:hover {
-  color: #dee4ec;
-  background: rgba(80, 150, 179, 0.08);
+:global(.theme-noir) .tab:hover,
+:global(.theme-noir) .subtab:hover {
+  color: var(--nx-read-2);
+  background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir-dark) .tab:active,
-:global(.theme-noir-dark) .subtab:active {
+:global(.theme-noir) .tab:active,
+:global(.theme-noir) .subtab:active {
   transform: scale(0.96);
 }
 
-:global(.theme-noir-dark) .tab.on,
-:global(.theme-noir-dark) .subtab.on {
-  color: #f3f5f8;
+:global(.theme-noir) .tab.on,
+:global(.theme-noir) .subtab.on {
+  color: var(--nx-read-1);
   border: 0;
-  background: linear-gradient(180deg, rgba(80, 150, 179, 0.28), rgba(80, 150, 179, 0.12));
-  box-shadow: inset 0 0 0 0.5px rgba(106, 176, 204, 0.52), 0 0 20px rgba(80, 150, 179, 0.18);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--nx-accent-2) 52%, transparent), 0 0 20px color-mix(in srgb, var(--nx-accent) 18%, transparent);
 }
 
-:global(.theme-noir-dark) .tab.import-btn {
-  color: #a8c0dc;
+:global(.theme-noir) .tab.import-btn {
+  color: rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16));
 }
 
-:global(.theme-noir-dark) .hero {
+:global(.theme-noir) .hero {
   max-width: 820px;
   margin: 0 auto 38px;
   padding: 30px 28px 36px;
@@ -1248,73 +1252,73 @@ async function onImport() {
   animation: noir-routines-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
 }
 
-:global(.theme-noir-dark) .kicker {
+:global(.theme-noir) .kicker {
   margin-bottom: 12px;
-  color: #6ab0cc;
+  color: var(--nx-accent-2);
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir-dark) .kicker .d {
-  background: #6ab0cc;
-  box-shadow: 0 0 10px rgba(106, 176, 204, 0.8);
+:global(.theme-noir) .kicker .d {
+  background: var(--nx-accent-2);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent-2) 80%, transparent);
 }
 
-:global(.theme-noir-dark) .hero h1 {
+:global(.theme-noir) .hero h1 {
   font-family: 'Playfair Display', Georgia, serif;
   font-size: clamp(44px, 6vw, 70px);
-  color: #f3f5f8;
+  color: var(--nx-read-1);
 }
 
-:global(.theme-noir-dark) .hero .dek {
+:global(.theme-noir) .hero .dek {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
 }
 
-:global(.theme-noir-dark) .rollup-row {
+:global(.theme-noir) .rollup-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(110px, 1fr));
   gap: 10px;
 }
 
-:global(.theme-noir-dark) .rollup-row > div {
+:global(.theme-noir) .rollup-row > div {
   padding: 14px;
-  border: 1px solid rgba(168, 192, 220, 0.08);
+  border: 1px solid var(--nx-hair);
   border-radius: 16px;
-  background: rgba(168, 192, 220, 0.035);
+  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
 }
 
-:global(.theme-noir-dark) .rollup-row b {
+:global(.theme-noir) .rollup-row b {
   font-family: 'Playfair Display', Georgia, serif;
-  color: #f3f5f8;
+  color: var(--nx-read-1);
 }
 
-:global(.theme-noir-dark) .btn {
+:global(.theme-noir) .btn {
   border-radius: 16px;
   transition: transform 0.58s var(--noir-spring), border-color 0.2s, background 0.2s, box-shadow 0.2s;
 }
 
-:global(.theme-noir-dark) .btn:active {
+:global(.theme-noir) .btn:active {
   transform: scale(0.95);
 }
 
-:global(.theme-noir-dark) .btn.primary,
-:global(.theme-noir-dark) .btn.accent {
-  border-color: rgba(106, 176, 204, 0.48);
-  background: linear-gradient(180deg, #6ab0cc, #5096b3);
-  box-shadow: 0 0 20px rgba(80, 150, 179, 0.28);
+:global(.theme-noir) .btn.primary,
+:global(.theme-noir) .btn.accent {
+  border-color: color-mix(in srgb, var(--nx-accent-2) 48%, transparent);
+  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
+  box-shadow: 0 0 20px color-mix(in srgb, var(--nx-accent) 28%, transparent);
 }
 
-:global(.theme-noir-dark) .closer,
-:global(.theme-noir-dark) .ribbon {
-  border-color: rgba(168, 192, 220, 0.08);
+:global(.theme-noir) .closer,
+:global(.theme-noir) .ribbon {
+  border-color: var(--nx-hair);
 }
 
-:global(.theme-noir-dark) .ribbon {
+:global(.theme-noir) .ribbon {
   margin: 40px 72px 36px;
   border-radius: 16px;
-  background: rgba(3, 6, 12, 0.62);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.07);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.62);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 7%, transparent);
   backdrop-filter: blur(20px);
 }
 
@@ -1324,9 +1328,9 @@ async function onImport() {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .routines-home *,
-  :global(.theme-noir-dark) .routines-home *::before,
-  :global(.theme-noir-dark) .routines-home *::after {
+  :global(.theme-noir) .routines-home *,
+  :global(.theme-noir) .routines-home *::before,
+  :global(.theme-noir) .routines-home *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
@@ -1334,18 +1338,23 @@ async function onImport() {
 }
 
 @media (max-width: 900px) {
-  :global(.theme-noir-dark) .topline {
+  :global(.theme-noir) .topline {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  :global(.theme-noir-dark) .tabs {
+  :global(.theme-noir) .tabs {
     width: 100%;
     overflow-x: auto;
   }
 
-  :global(.theme-noir-dark) .rollup-row {
+  :global(.theme-noir) .rollup-row {
     grid-template-columns: repeat(2, minmax(110px, 1fr));
   }
+}
+
+/* Noir Light softens dark-only elevation shadows for paper surfaces. */
+:global(.theme-noir-light) .topline {
+  box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025), 0 18px 50px color-mix(in srgb, var(--nx-ink) 8%, transparent);
 }
 </style>

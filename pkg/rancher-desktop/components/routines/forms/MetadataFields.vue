@@ -142,14 +142,14 @@ textarea {
   min-height: 70px;
 }
 
-:global(.theme-noir-dark) .meta-fields {
+:global(.theme-noir) .meta-fields {
   padding: 16px;
-  border: 1px solid rgba(168, 192, 220, 0.08);
+  border: 1px solid var(--nx-hair);
   border-radius: 17px;
-  background: rgba(168, 192, 220, 0.035);
+  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
 }
-:global(.theme-noir-dark) input,
-:global(.theme-noir-dark) textarea { min-height: 40px; border-color: rgba(168, 192, 220, 0.12); border-radius: 12px; color: #f3f5f8; background: rgba(3, 6, 12, 0.68); }
-:global(.theme-noir-dark) input:focus,
-:global(.theme-noir-dark) textarea:focus { border-color: rgba(106, 176, 204, 0.48); box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.1); }
+:global(.theme-noir) input,
+:global(.theme-noir) textarea { min-height: 40px; border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent); border-radius: 12px; color: var(--nx-read-1); background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.68); }
+:global(.theme-noir) input:focus,
+:global(.theme-noir) textarea:focus { border-color: color-mix(in srgb, var(--nx-accent-2) 48%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 10%, transparent); }
 </style>

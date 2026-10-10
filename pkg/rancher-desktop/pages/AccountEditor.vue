@@ -1482,56 +1482,56 @@ watch(() => [props.integrationId, props.accountId], () => {
   display: none;
 }
 
-:global(.theme-noir-dark) .account-editor {
-  background: #01030a;
-  color: #f3f5f8;
+:global(.theme-noir) .account-editor {
+  background: var(--nx-paper);
+  color: var(--nx-read-1);
 }
 
-:global(.theme-noir-dark) .editor-header {
+:global(.theme-noir) .editor-header {
   min-height: 56px;
   padding: 0 30px;
-  border-bottom-color: rgba(168, 192, 220, 0.08);
-  background: rgba(3, 6, 12, 0.62);
+  border-bottom-color: var(--nx-hair);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.62);
   backdrop-filter: blur(14px);
 }
 
-:global(.theme-noir-dark) .editor-back-btn {
+:global(.theme-noir) .editor-back-btn {
   height: 34px;
   padding: 0 14px;
   border-radius: 17px;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
 }
 
-:global(.theme-noir-dark) .editor-back-btn:hover {
-  color: #f3f5f8;
-  background: rgba(80, 150, 179, 0.1);
+:global(.theme-noir) .editor-back-btn:hover {
+  color: var(--nx-read-1);
+  background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir-dark) .editor-scroll {
+:global(.theme-noir) .editor-scroll {
   max-width: 920px;
   width: 100%;
   margin: 0 auto;
   padding: 30px 34px 48px;
 }
 
-:global(.theme-noir-dark) .editor-noir-copy {
+:global(.theme-noir) .editor-noir-copy {
   display: block;
   margin-bottom: 22px;
   animation: vault-editor-in 0.35s ease both;
 }
 
-:global(.theme-noir-dark) .editor-noir-copy p {
+:global(.theme-noir) .editor-noir-copy p {
   margin: 0 0 7px;
-  color: #6ab0cc;
+  color: var(--nx-accent-2);
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 10.5px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
-:global(.theme-noir-dark) .editor-noir-copy h1 {
+:global(.theme-noir) .editor-noir-copy h1 {
   margin: 0;
-  color: #f3f5f8;
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 30px;
   font-weight: 600;
@@ -1539,120 +1539,120 @@ watch(() => [props.integrationId, props.accountId], () => {
   line-height: 1.18;
 }
 
-:global(.theme-noir-dark) .editor-noir-copy span {
+:global(.theme-noir) .editor-noir-copy span {
   display: block;
   margin-top: 7px;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
   font-size: 14px;
 }
 
-:global(.theme-noir-dark) .editor-hero {
+:global(.theme-noir) .editor-hero {
   padding: 20px;
-  border-color: rgba(106, 176, 204, 0.25);
+  border-color: color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
   border-radius: 20px;
-  background: linear-gradient(135deg, rgba(80, 150, 179, 0.16), rgba(80, 150, 179, 0.03));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 16%, transparent), color-mix(in srgb, var(--nx-accent) 3%, transparent));
 }
 
-:global(.theme-noir-dark) .editor-hero-icon {
-  border-color: rgba(168, 192, 220, 0.1);
+:global(.theme-noir) .editor-hero-icon {
+  border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
   border-radius: 14px;
-  background: rgba(3, 6, 12, 0.62);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.62);
 }
 
-:global(.theme-noir-dark) .editor-hero-title {
-  color: #f3f5f8;
+:global(.theme-noir) .editor-hero-title {
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 23px;
   font-weight: 600;
 }
 
-:global(.theme-noir-dark) .editor-hero-subtitle {
-  color: #a9b3c1;
+:global(.theme-noir) .editor-hero-subtitle {
+  color: var(--nx-read-3);
 }
 
-:global(.theme-noir-dark) .editor-badge-connected::before {
+:global(.theme-noir) .editor-badge-connected::before {
   width: 6px;
   height: 6px;
   margin-right: 6px;
   border-radius: 50%;
-  background: #3fb950;
-  box-shadow: 0 0 8px rgba(63, 185, 80, 0.7);
+  background: var(--nx-success);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--nx-success) 70%, transparent);
   content: '';
 }
 
-:global(.theme-noir-dark) .editor-card,
-:global(.theme-noir-dark) .editor-guide {
-  border-color: rgba(168, 192, 220, 0.08);
+:global(.theme-noir) .editor-card,
+:global(.theme-noir) .editor-guide {
+  border-color: var(--nx-hair);
   border-radius: 18px;
-  background: rgba(168, 192, 220, 0.035);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.015);
+  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.015);
 }
 
-:global(.theme-noir-dark) .editor-card-header {
-  border-bottom-color: rgba(168, 192, 220, 0.08);
+:global(.theme-noir) .editor-card-header {
+  border-bottom-color: var(--nx-hair);
 }
 
-:global(.theme-noir-dark) .editor-card-title {
-  color: #dee4ec;
+:global(.theme-noir) .editor-card-title {
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .editor-label {
-  color: #7a8291;
+:global(.theme-noir) .editor-label {
+  color: var(--nx-read-4);
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 10px;
   letter-spacing: 0.12em;
 }
 
-:global(.theme-noir-dark) .editor-input,
-:global(.theme-noir-dark) .editor-select,
-:global(.theme-noir-dark) .editor-select-refresh {
+:global(.theme-noir) .editor-input,
+:global(.theme-noir) .editor-select,
+:global(.theme-noir) .editor-select-refresh {
   min-height: 40px;
   border: 0;
   border-radius: 12px;
-  background: rgba(3, 6, 12, 0.66);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.12);
-  color: #f3f5f8;
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.66);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
+  color: var(--nx-read-1);
 }
 
-:global(.theme-noir-dark) .editor-input:focus,
-:global(.theme-noir-dark) .editor-select:focus {
-  box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.62), 0 0 0 3px rgba(80, 150, 179, 0.1);
+:global(.theme-noir) .editor-input:focus,
+:global(.theme-noir) .editor-select:focus {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 62%, transparent), 0 0 0 3px color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir-dark) .editor-input-password {
+:global(.theme-noir) .editor-input-password {
   letter-spacing: 0.14em;
 }
 
-:global(.theme-noir-dark) .editor-gen-btn,
-:global(.theme-noir-dark) .editor-eye-btn,
-:global(.theme-noir-dark) .editor-select-refresh {
+:global(.theme-noir) .editor-gen-btn,
+:global(.theme-noir) .editor-eye-btn,
+:global(.theme-noir) .editor-select-refresh {
   transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), color 0.18s;
 }
 
-:global(.theme-noir-dark) .editor-gen-btn:active,
-:global(.theme-noir-dark) .editor-eye-btn:active,
-:global(.theme-noir-dark) .editor-select-refresh:active {
+:global(.theme-noir) .editor-gen-btn:active,
+:global(.theme-noir) .editor-eye-btn:active,
+:global(.theme-noir) .editor-select-refresh:active {
   transform: scale(0.86);
 }
 
-:global(.theme-noir-dark) .editor-btn-primary,
-:global(.theme-noir-dark) .editor-oauth-btn {
+:global(.theme-noir) .editor-btn-primary,
+:global(.theme-noir) .editor-oauth-btn {
   border-radius: 20px;
-  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   color: #fff;
-  box-shadow: 0 0 18px rgba(80, 150, 179, 0.28);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 28%, transparent);
 }
 
-:global(.theme-noir-dark) .editor-btn-secondary,
-:global(.theme-noir-dark) .editor-add-btn {
-  border-color: rgba(168, 192, 220, 0.16);
+:global(.theme-noir) .editor-btn-secondary,
+:global(.theme-noir) .editor-add-btn {
+  border-color: var(--nx-hair-strong);
   border-radius: 20px;
-  color: #dee4ec;
+  color: var(--nx-read-2);
 }
 
-:global(.theme-noir-dark) .editor-guide-summary,
-:global(.theme-noir-dark) .editor-guide-content {
-  border-color: rgba(168, 192, 220, 0.08);
+:global(.theme-noir) .editor-guide-summary,
+:global(.theme-noir) .editor-guide-content {
+  border-color: var(--nx-hair);
   background: transparent;
 }
 
@@ -1662,13 +1662,13 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .editor-noir-copy {
+  :global(.theme-noir) .editor-noir-copy {
     animation: none;
   }
 
-  :global(.theme-noir-dark) .editor-gen-btn,
-  :global(.theme-noir-dark) .editor-eye-btn,
-  :global(.theme-noir-dark) .editor-select-refresh {
+  :global(.theme-noir) .editor-gen-btn,
+  :global(.theme-noir) .editor-eye-btn,
+  :global(.theme-noir) .editor-select-refresh {
     transition-duration: 0.01ms;
   }
 }
