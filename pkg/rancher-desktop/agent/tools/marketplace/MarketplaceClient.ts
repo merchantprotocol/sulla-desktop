@@ -139,7 +139,7 @@ export class MarketplaceClient {
     };
   }
 
-  async publish(kind: ArtifactKind, sourceDir: string, slug: string, version?: string) {
+  async publish(kind: ArtifactKind, sourceDir: string | undefined, slug: string, version?: string) {
     const { publishLocalArtifact } = await import('@pkg/main/marketplace/publish');
 
     return await publishLocalArtifact({
@@ -172,7 +172,7 @@ export class MarketplaceClient {
 
 async function listInstalledSafe() {
   try {
-    return (await installer()).listInstalled();
+    return await (await installer()).listInstalledIncludingAgents();
   } catch {
     return [];
   }

@@ -32,6 +32,7 @@ export interface PublishResult {
   bundle_status: 'uploaded';
   bundle_size:   number;
   status:        'pending';
+  warnings?:     string[];
 }
 
 /** Where a local artifact of this kind lives, keyed by folder name. */
@@ -60,20 +61,56 @@ export function zipDirectory(sourceDir: string, slug: string, zipPath: string): 
 
 export async function publishLocalArtifact(args: {
   kind:       MarketplaceKind;
-  sourceDir:  string;
+  sourceDir?: string;
   slug:       string;
   overrides?: PublishOverrides;
 }): Promise<PublishResult> {
   const { kind, sourceDir, slug, overrides } = args;
+  let effectiveSourceDir = sourceDir ?? '';
+  let agentStagingDir: string | null = null;
+  const warnings: string[] = [];
 
-  if (!fs.existsSync(sourceDir) || !fs.statSync(sourceDir).isDirectory()) {
-    throw new Error(`bundle source does not exist: ${ sourceDir }`);
+  if (kind === 'agent') {
+    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+    const agent = await agentDefinitionService.findBySlug(slug);
+
+    if (!agent) throw new Error(`Agent not found in the database: ${ slug }`);
+    const manifest = agentDefinitionService.toManifest(agent);
+    const serialized = `${ JSON.stringify(manifest, null, 2) }\n`;
+    const secret = findAgentSecret(serialized);
+
+    if (secret) {
+      throw new Error(`agent.json contains a possible ${ secret } secret. Remove credentials from the agent before publishing.`);
+    }
+    if (hasAbsoluteHomePath(manifest.spec.prompt)) {
+      warnings.push('The agent prompt contains an absolute home-directory path. It may not work on other machines.');
+    }
+
+    agentStagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-agent-publish-'));
+    try {
+      effectiveSourceDir = path.join(agentStagingDir, slug);
+      fs.mkdirSync(effectiveSourceDir, { recursive: true });
+      fs.writeFileSync(path.join(effectiveSourceDir, 'agent.json'), serialized, 'utf8');
+      fs.writeFileSync(
+        path.join(effectiveSourceDir, 'README.md'),
+        `# ${ manifest.metadata.title }\n\n${ manifest.metadata.description || 'Sulla database-backed custom agent.' }\n`,
+        'utf8',
+      );
+    } catch (err) {
+      fs.rmSync(agentStagingDir, { recursive: true, force: true });
+      throw err;
+    }
+  }
+
+  if (!fs.existsSync(effectiveSourceDir) || !fs.statSync(effectiveSourceDir).isDirectory()) {
+    throw new Error(`bundle source does not exist: ${ effectiveSourceDir }`);
   }
 
   let manifest: Record<string, unknown>;
   try {
-    manifest = buildManifest(kind, { slug, bundleRoot: sourceDir, overrides });
+    manifest = buildManifest(kind, { slug, bundleRoot: effectiveSourceDir, overrides });
   } catch (err) {
+    if (agentStagingDir) fs.rmSync(agentStagingDir, { recursive: true, force: true });
     throw new Error(`manifest build failed: ${ err instanceof Error ? err.message : String(err) }`);
   }
 
@@ -81,12 +118,12 @@ export async function publishLocalArtifact(args: {
   const zipPath = path.join(tmpdir, `${ slug }.zip`);
 
   try {
-    await zipDirectory(sourceDir, slug, zipPath);
+    await zipDirectory(effectiveSourceDir, slug, zipPath);
 
     const meta = (manifest.metadata ?? {}) as Record<string, unknown>;
     const submit = await submitManifest({
       kind,
-      name:        String(meta.name ?? slug),
+      name:        String(meta.name ?? meta.title ?? slug),
       description: String(meta.description ?? ''),
       version:     String(meta.version ?? '1.0.0'),
       tags:        Array.isArray(meta.tags) ? meta.tags as string[] : [],
@@ -100,8 +137,27 @@ export async function publishLocalArtifact(args: {
       bundle_status: upload.bundle_status,
       bundle_size:   upload.bundle_size,
       status:        upload.status,
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   } finally {
     fs.rmSync(tmpdir, { recursive: true, force: true });
+    if (agentStagingDir) fs.rmSync(agentStagingDir, { recursive: true, force: true });
   }
+}
+
+const AGENT_SECRET_PATTERNS: { label: string; pattern: RegExp }[] = [
+  { label: 'Anthropic API key', pattern: /\bsk-ant-[A-Za-z0-9_-]{10,}/ },
+  { label: 'OpenAI API key', pattern: /\bsk-[A-Za-z0-9_-]{10,}/ },
+  { label: 'GitHub token', pattern: /\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/ },
+  { label: 'AWS access key', pattern: /\bAKIA[A-Z0-9]{16}\b/ },
+  { label: 'Slack token', pattern: /\bxox[bp]-[A-Za-z0-9-]{10,}/ },
+  { label: 'private key', pattern: /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/ },
+];
+
+export function findAgentSecret(agentJson: string): string | null {
+  return AGENT_SECRET_PATTERNS.find(candidate => candidate.pattern.test(agentJson))?.label ?? null;
+}
+
+export function hasAbsoluteHomePath(prompt: string): boolean {
+  return /(?:\/Users\/[^/\s]+\/|\/home\/[^/\s]+\/)/.test(prompt);
 }

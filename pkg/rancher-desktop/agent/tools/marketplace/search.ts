@@ -23,10 +23,6 @@ export class MarketplaceSearchWorker extends BaseTool {
     if (kindRaw && !kind) {
       return { successBoolean: false, responseString: `Invalid kind "${ kindRaw }". Must be one of: ${ KINDS_HELP }.` };
     }
-    if (kind === 'agent') {
-      return { successBoolean: false, responseString: 'Agents aren\'t distributed through the marketplace. Marketplace kinds: skill, function, routine, recipe, integration.' };
-    }
-
     try {
       const { listings, total } = await getMarketplaceClient().search({
         query:    typeof input.query === 'string' ? input.query : undefined,

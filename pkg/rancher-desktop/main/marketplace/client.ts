@@ -43,7 +43,7 @@ const API_BASE = MARKETPLACE_API_BASE;
 // Kept minimal — we only type what our callers consume. The marketplace
 // agent is authoritative for the full schemas (see docs/marketplace/).
 
-export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
 
 export interface MarketplaceTemplateDetail {
   id:                   string;
