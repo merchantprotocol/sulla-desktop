@@ -21,6 +21,7 @@ import { initChatHeartbeatIpc } from './chatHeartbeatIpc';
 import { initChatArtifactsIpc } from './chatArtifactsIpc';
 import { initChatMessagesIpc } from './chatMessagesIpc';
 import { initMessageBusIpc } from './messageBusIpc';
+import { initAgentTabContractIpc } from './agentTabContractIpc';
 import { initSullaApprovalEvents } from './sullaApprovalEvents';
 import { initSullaBundleEvents } from './sullaBundleEvents';
 import { initSullaFunctionEvents } from './sullaFunctionEvents';
@@ -74,6 +75,7 @@ function assertInsideUserHome(targetPath: string): string {
  */
 export function initSullaEvents(): void {
   initMessageBusIpc();
+  initAgentTabContractIpc();
   initTabsIpc();
   initAgentsIpc();
   initConversationHistoryIpc();

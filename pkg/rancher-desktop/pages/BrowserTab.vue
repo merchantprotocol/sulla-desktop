@@ -246,6 +246,8 @@
           :tab-id="props.tabId"
           :is-active="props.isVisible"
           :initial-agent-id="agentChat?.agentId"
+          :agent-tab-contract-id="agentChat?.contractId"
+          :agent-tab-thread-id="agentChat?.threadId"
           @set-mode="onSetMode"
           @navigate-url="onNavigateUrl"
         />

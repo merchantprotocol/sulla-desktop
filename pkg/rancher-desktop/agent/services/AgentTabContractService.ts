@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import Ajv from 'ajv';
 
 import { postgresClient } from '../database/PostgresClient';
-import { nextThreadId } from './GraphRegistry';
-import { resolveRoutableAgent } from './ChatAgentRouting';
+import { GraphRegistry, nextThreadId } from './GraphRegistry';
+import { applyThreadAgentRoute, resolveRoutableAgent, SULLA_DESKTOP_CHANNEL_ID } from './ChatAgentRouting';
 import { getWebSocketClientService } from './WebSocketClientService';
+import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 
 import { getWindow } from '@pkg/window';
 
@@ -80,6 +81,47 @@ const PRESETS: Record<string, AgentTabContractSpec> = {
     schema:      UI_TEST_ISSUES_SCHEMA,
   },
 };
+
+const READINESS_TIMEOUT_MS = 10_000;
+const readinessWaiters = new Map<string, { threadId: string; finish: (ready: boolean) => void }>();
+
+function waitForRenderer(contractId: string, threadId: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ready: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      readinessWaiters.delete(contractId);
+      resolve(ready);
+    };
+    const timer = setTimeout(() => finish(false), READINESS_TIMEOUT_MS);
+
+    readinessWaiters.set(contractId, { threadId, finish });
+  });
+}
+
+export function acknowledgeAgentTabReady(contractId: string, threadId: string): boolean {
+  const waiter = readinessWaiters.get(contractId);
+  if (!waiter || waiter.threadId !== threadId) return false;
+  waiter.finish(true);
+  return true;
+}
+
+export function cancelAgentTabReadiness(contractId: string): void {
+  readinessWaiters.get(contractId)?.finish(false);
+}
+
+export async function getAgentTabThreadSnapshot(contractId: string, threadId: string): Promise<{ messages: any[] }> {
+  const contract = await postgresClient.queryOne<Pick<AgentTabContractRow, 'child_thread_id'>>(
+    'SELECT child_thread_id FROM agent_tab_contracts WHERE id = $1',
+    [contractId],
+  );
+  if (!contract || contract.child_thread_id !== threadId) return { messages: [] };
+
+  const state = GraphRegistry.get(threadId)?.state ?? await loadThreadState(threadId);
+  return { messages: Array.isArray(state?.messages) ? state.messages : [] };
+}
 
 function normalizeContract(input: unknown): AgentTabContractSpec {
   if (!input || typeof input !== 'object') return { name: 'result' };
@@ -164,7 +206,7 @@ export class AgentTabContractService {
     const contract = normalizeContract(input.contract);
     if (contract.schema) {
       try {
-        new Ajv({ strict: false }).compile(contract.schema);
+        new Ajv().compile(contract.schema);
       } catch (error) {
         throw new Error(`Contract schema is invalid: ${ (error as Error).message }`);
       }
@@ -198,6 +240,16 @@ export class AgentTabContractService {
       return nextDepth;
     });
 
+    try {
+      const { state } = await GraphRegistry.getOrCreateAgentGraph(childAgent.graphAgentId, childThreadId);
+      applyThreadAgentRoute(state, childAgent);
+      await saveThreadState(state);
+    } catch (error) {
+      await postgresClient.query(`UPDATE agent_tab_contracts SET status = 'cancelled' WHERE id = $1`, [id]);
+      throw error;
+    }
+
+    const rendererReady = waitForRenderer(id, childThreadId);
     const opened = sendAgentCommand({
       command: 'open-agent-chat-tab',
       threadId: childThreadId,
@@ -212,15 +264,19 @@ export class AgentTabContractService {
       focus: input.focus === true,
     });
     if (!opened) {
+      cancelAgentTabReadiness(id);
       await postgresClient.query(`UPDATE agent_tab_contracts SET status = 'cancelled' WHERE id = $1`, [id]);
       throw new Error('Sulla Desktop renderer is not available, so the agent tab could not be opened.');
     }
 
     const prompt = buildChildPrompt(parentName, id, input.brief, contract);
-    // Give the renderer one event-loop turn to create and subscribe the visible tab.
-    await new Promise(resolve => setTimeout(resolve, 50));
-    emitProactive(input.parentChannel, childThreadId, `Launched by ${ parentName }`, prompt);
-    await getWebSocketClientService().send(input.parentChannel, {
+    // Hidden tabs mount today, so this normally resolves as soon as their
+    // desktop-channel adapter subscribes. If renderer startup takes longer,
+    // dispatch after the timeout; the tab hydrates from the saved backend
+    // thread snapshot when it eventually mounts.
+    await rendererReady;
+    emitProactive(SULLA_DESKTOP_CHANNEL_ID, childThreadId, `Launched by ${ parentName }`, prompt);
+    await getWebSocketClientService().send(SULLA_DESKTOP_CHANNEL_ID, {
       type: 'user_message',
       data: {
         threadId: childThreadId,
@@ -244,7 +300,7 @@ export class AgentTabContractService {
     if (contract.status !== 'open') throw new Error(`Contract "${ contractId }" is already ${ contract.status }.`);
 
     if (contract.contract_spec.schema) {
-      const ajv = new Ajv({ allErrors: true, strict: false });
+      const ajv = new Ajv({ allErrors: true });
       let validate: ReturnType<Ajv['compile']>;
       try {
         validate = ajv.compile(contract.contract_spec.schema);
@@ -267,13 +323,14 @@ export class AgentTabContractService {
 
     const body = formatContractResult(updated, result, summary);
     emitProactive(updated.parent_channel, updated.parent_thread_id, `${ updated.title } returned ${ updated.contract_spec.name }`, body);
-    emitProactive(updated.parent_channel, updated.child_thread_id, 'Contract returned', `Returned ${ updated.contract_spec.name } to the parent chat.`);
+    emitProactive(SULLA_DESKTOP_CHANNEL_ID, updated.child_thread_id, 'Contract returned', `Returned ${ updated.contract_spec.name } to the parent chat.`);
     await getWebSocketClientService().send(updated.parent_channel, {
       type: 'inject_message',
       data: {
         threadId: updated.parent_thread_id,
         content: `[agent-tab contract ${ updated.id } returned by ${ updated.child_agent_id }]\n\n${ body }\n\nStructured result:\n${ JSON.stringify(result, null, 2) }`,
         metadata: {
+          agentId: updated.parent_agent_id,
           source: 'agent_tab_contract',
           inputSource: 'system',
           contractId: updated.id,
@@ -295,12 +352,17 @@ export class AgentTabContractService {
     );
     if (!contract) throw new Error('No matching child contract owned by this parent chat was found.');
     if (contract.status !== 'open') throw new Error(`Contract "${ contract.id }" is ${ contract.status }; it no longer accepts parent messages.`);
-    await getWebSocketClientService().send(contract.parent_channel, {
+    await getWebSocketClientService().send(SULLA_DESKTOP_CHANNEL_ID, {
       type: 'inject_message',
       data: {
         threadId: contract.child_thread_id,
         content: `[Message from parent agent]\n${ input.message }`,
-        metadata: { source: 'agent_tab_parent_message', inputSource: 'system', contractId: contract.id },
+        metadata: {
+          agentId: contract.child_agent_id,
+          source: 'agent_tab_parent_message',
+          inputSource: 'system',
+          contractId: contract.id,
+        },
       },
     });
     return contract;

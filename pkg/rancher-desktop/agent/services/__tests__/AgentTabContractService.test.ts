@@ -7,13 +7,28 @@ const transaction = jest.fn<any>();
 const clientQuery = jest.fn<any>();
 const send = jest.fn<any>();
 const webContentsSend = jest.fn<any>();
+const applyThreadAgentRoute = jest.fn<any>();
+const saveThreadState = jest.fn<any>();
+const childState = { messages: [], metadata: { threadId: 'thread_child', agentId: 'child' } } as any;
 
 jest.unstable_mockModule('../../database/PostgresClient', () => ({
   postgresClient: { query, queryOne, transaction },
 }));
-jest.unstable_mockModule('../GraphRegistry', () => ({ nextThreadId: () => 'thread_child' }));
+jest.unstable_mockModule('../GraphRegistry', () => ({
+  nextThreadId: () => 'thread_child',
+  GraphRegistry: {
+    get: jest.fn(() => undefined),
+    getOrCreateAgentGraph: jest.fn(async() => ({ state: childState, graph: {} })),
+  },
+}));
 jest.unstable_mockModule('../ChatAgentRouting', () => ({
   resolveRoutableAgent: async(id: string) => ({ agentId: id, graphAgentId: id, name: id === 'parent' ? 'Parent' : 'Child' }),
+  applyThreadAgentRoute,
+  SULLA_DESKTOP_CHANNEL_ID: 'sulla-desktop',
+}));
+jest.unstable_mockModule('../../nodes/ThreadStateStore', () => ({
+  loadThreadState: jest.fn(async() => null),
+  saveThreadState,
 }));
 jest.unstable_mockModule('../WebSocketClientService', () => ({
   getWebSocketClientService: () => ({ send }),
@@ -26,9 +41,10 @@ jest.unstable_mockModule('@pkg/window', () => ({
 
 let AgentTabContractService: typeof import('../AgentTabContractService').AgentTabContractService;
 let UI_TEST_ISSUES_SCHEMA: Record<string, unknown>;
+let acknowledgeAgentTabReady: typeof import('../AgentTabContractService').acknowledgeAgentTabReady;
 
 beforeAll(async() => {
-  ({ AgentTabContractService, UI_TEST_ISSUES_SCHEMA } = await import('../AgentTabContractService'));
+  ({ AgentTabContractService, UI_TEST_ISSUES_SCHEMA, acknowledgeAgentTabReady } = await import('../AgentTabContractService'));
 });
 
 beforeEach(() => {
@@ -36,6 +52,10 @@ beforeEach(() => {
   transaction.mockImplementation((callback: any) => callback({ query: clientQuery }));
   send.mockResolvedValue(true);
   query.mockResolvedValue([]);
+  saveThreadState.mockResolvedValue(undefined);
+  webContentsSend.mockImplementation((_event: unknown, payload: any) => {
+    acknowledgeAgentTabReady(String(payload.contractId), String(payload.threadId));
+  });
 });
 
 describe('agent-tab launch guardrails', () => {
@@ -63,9 +83,47 @@ describe('agent-tab launch guardrails', () => {
   });
 });
 
+describe('agent-tab identity and desktop delivery', () => {
+  it('persists the child route before dispatching its first turn', async() => {
+    clientQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await new AgentTabContractService().launch({
+      parentThreadId: 'parent-thread', parentChannel: 'workbench', parentAgentId: 'parent',
+      agentId: 'child', brief: 'work',
+    });
+
+    expect(applyThreadAgentRoute).toHaveBeenCalledWith(childState, expect.objectContaining({ graphAgentId: 'child' }));
+    expect(saveThreadState).toHaveBeenCalledWith(childState);
+    const dispatch = send.mock.calls.find((call) => (call as [string, any])[1].type === 'user_message') as [string, any] | undefined;
+    expect(dispatch?.[0]).toBe('sulla-desktop');
+    expect(dispatch?.[1].data.metadata.agentId).toBe('child');
+  });
+
+  it('messages an idle child on the desktop channel with its sticky agent id', async() => {
+    queryOne.mockResolvedValueOnce({
+      id: 'contract-1', parent_thread_id: 'parent-thread', parent_channel: 'workbench', parent_agent_id: 'parent',
+      child_thread_id: 'child-thread', child_agent_id: 'child', status: 'open',
+    });
+
+    await new AgentTabContractService().messageChild('parent-thread', { contractId: 'contract-1', message: 'continue' });
+
+    expect(send).toHaveBeenCalledWith('sulla-desktop', expect.objectContaining({
+      type: 'inject_message',
+      data: expect.objectContaining({
+        threadId: 'child-thread',
+        metadata: expect.objectContaining({ agentId: 'child' }),
+      }),
+    }));
+  });
+});
+
 describe('contract return validation', () => {
   const makeRow = () => ({
-    id: 'contract-1', parent_thread_id: 'parent-thread', parent_channel: 'sulla-desktop', parent_agent_id: 'parent',
+    id: 'contract-1', parent_thread_id: 'parent-thread', parent_channel: 'workbench', parent_agent_id: 'parent',
     child_thread_id: 'child-thread', child_agent_id: 'child', title: 'UI test', brief: 'test',
     contract_spec: { name: 'ui-test-issues', schema: UI_TEST_ISSUES_SCHEMA },
     status: 'open', result: null, depth: 1, created_at: 'now', returned_at: null,
@@ -97,7 +155,12 @@ describe('contract return validation', () => {
     expect(String(queryOne.mock.calls[1][0])).toContain("status = 'open'");
     expect(send.mock.calls.some((call) => {
       const [channel, message] = call as [string, any];
-      return channel === 'sulla-desktop' && message.type === 'inject_message' && message.data.threadId === 'parent-thread';
+      return channel === 'workbench' && message.type === 'inject_message' && message.data.threadId === 'parent-thread' &&
+        message.data.metadata.agentId === 'parent';
+    })).toBe(true);
+    expect(send.mock.calls.some((call) => {
+      const [channel, message] = call as [string, any];
+      return channel === 'sulla-desktop' && message.type === 'chat_message' && message.data.threadId === 'child-thread';
     })).toBe(true);
   });
 });

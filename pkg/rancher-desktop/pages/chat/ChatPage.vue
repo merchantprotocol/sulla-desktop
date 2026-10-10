@@ -159,6 +159,9 @@ const props = defineProps<{
   initialModelId?: string;
   /** Agent persona preselected by launch_agent_tab. */
   initialAgentId?: string;
+  /** Contract metadata used to acknowledge and hydrate an agent-owned tab. */
+  agentTabContractId?: string;
+  agentTabThreadId?:   string;
   /** Whether this tab is the currently visible tab. Suppresses keyboard
    *  shortcut handlers on background (visibility:hidden) tabs. */
   isActive?: boolean;
@@ -303,7 +306,11 @@ provide('chat:navigate-url', (url: string) => emit('navigate-url', url));
 // Each tab gets its own adapter+persona. The adapter registers itself
 // as the controller's sendHandler, so user sends flow through the
 // persona and responses flow back into the controller.
-const adapter = new PersonaAdapter(controller, { tabId: props.tabId });
+const adapter = new PersonaAdapter(controller, {
+  tabId:              props.tabId,
+  agentTabContractId: props.agentTabContractId,
+  agentTabThreadId:   props.agentTabThreadId,
+});
 const subAgentRailVisible = ref(false);
 
 // Side panels can be tucked away to a tab on the edge; the choice

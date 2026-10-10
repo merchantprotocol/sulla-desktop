@@ -353,6 +353,11 @@ export class ChatController {
     this.bus.emit({ kind: 'messageAppended', threadId: this.thread.value.id, message: m });
   }
 
+  /** Persist a completed batch append, such as backend-thread hydration. */
+  persistThread(): void {
+    this.persist();
+  }
+
   appendHeartbeat(m: Message): void {
     this.appendMessage(m);
     this.persist();

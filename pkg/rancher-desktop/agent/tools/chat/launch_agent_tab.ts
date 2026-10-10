@@ -8,7 +8,9 @@ export class LaunchAgentTabWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const parentThreadId = String(this.state?.metadata?.threadId ?? '').trim();
     const parentChannel = String(this.state?.metadata?.wsChannel ?? '').trim();
-    const parentAgentId = String(this.state?.metadata?.agentId ?? parentChannel).trim();
+    const parentAgentId = String(
+      (this.state?.metadata as any)?.routedAgentId ?? this.state?.metadata?.agentId ?? parentChannel,
+    ).trim();
     if (!parentThreadId || !parentChannel || !parentAgentId) {
       return { successBoolean: false, responseString: 'launch_agent_tab must be called from an active chat thread.' };
     }
