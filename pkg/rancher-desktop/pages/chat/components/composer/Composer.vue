@@ -72,7 +72,7 @@
 
           <div class="composer-tools">
             <ComposerAttach :open="controller.staged.value.length > 0" @pick="onAttach" />
-            <button class="context-btn" type="button" title="Add context" @click="addContext">@</button>
+            <HeartbeatControl />
             <button class="model-btn" type="button" title="Switch agent or model" @click="controller.openModal('model')">
               <span class="model-avatar">{{ modelInitial }}</span>
               <span class="model-name">{{ controller.model.value.name }}</span>
@@ -102,7 +102,6 @@
       </div>
 
       <div class="hints">
-        <HeartbeatControl />
         <div class="classic-guide">
           <span><kbd>⏎</kbd> send</span>
           <span><kbd>hold ␣</kbd> talk</span>
@@ -207,12 +206,6 @@ const usagePercent = computed(() => {
   if (!contextLimit.value) return 0;
   return Math.min(100, Math.round((controller.usage.value.totalTokens / contextLimit.value) * 100));
 });
-
-function addContext(): void {
-  const suffix = draft.value && !draft.value.endsWith(' ') ? ' @' : '@';
-  draft.value += suffix;
-  nextTick(() => inputRef.value?.focus());
-}
 
 // ─── Voice state bridge ────────────────────────────────────────────
 const isRecording  = computed(() => controller.voice.value.phase === 'recording');
@@ -513,7 +506,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 .chat-root.artifact-open .composer-inner { max-width: 720px; }
 .composer-card, .composer-top, .composer-tools, .classic-guide { display: contents; }
-.context-btn, .model-btn, .usage-meter, .tool-spacer, .noir-guide { display: none; }
+.model-btn, .usage-meter, .tool-spacer, .noir-guide { display: none; }
 
 .composer {
   display: flex; align-items: baseline; gap: 18px;
@@ -677,20 +670,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   padding: 6px 8px 8px;
   border-top: 1px solid color-mix(in srgb, var(--nx-hair-strong) 43.75%, transparent);
 }
-.theme-noir .context-btn {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  color: var(--nx-read-3);
-  background: transparent;
-  font: 600 15px var(--mono);
-  cursor: pointer;
-}
-.theme-noir .context-btn:hover { color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 12%, transparent); }
 .theme-noir .model-btn {
   display: inline-flex;
   align-items: center;
@@ -766,13 +745,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   font-weight: 500;
 }
 .theme-noir .noir-guide span:not(:last-child)::after { content: " ·"; color: var(--nx-read-5); }
-.theme-noir .hints :deep(.heartbeat-control) {
-  position: absolute;
-  right: 88px;
-  bottom: 23px;
-  z-index: 4;
-  margin: 0;
-}
 
 @media (max-width: 680px) {
   .theme-noir .composer-wrap { padding-right: 10px; padding-left: 10px; }

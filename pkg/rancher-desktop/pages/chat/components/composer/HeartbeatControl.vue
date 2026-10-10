@@ -6,7 +6,7 @@
     <button
       type="button"
       class="heartbeat-heart"
-      :class="{ enabled: isOn }"
+      :class="{ enabled: isOn, paused: isOn && (status.paused || controller.isRunning.value) }"
       :title="`Chat heartbeat — ${label}`"
       :aria-label="`Chat heartbeat: ${label}`"
       :aria-expanded="open"
@@ -139,7 +139,8 @@ const label = computed(() => {
   return countdown.value;
 });
 const countdown = computed(() => {
-  if (status.value.pending) return 'pending';
+  if (status.value.paused || controller.isRunning.value) return 'paused while running';
+  if (status.value.pending) return 'retrying';
   if (!status.value.nextAt) return 'on';
   const seconds = Math.max(0, Math.ceil((status.value.nextAt - now.value) / 1_000));
   return `next in ${ Math.floor(seconds / 60) }:${ String(seconds % 60).padStart(2, '0') }`;
@@ -279,7 +280,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.heartbeat-control { position: relative; margin-right: auto; letter-spacing: normal; text-transform: none; }
+.heartbeat-control { position: relative; display: inline-flex; align-items: center; letter-spacing: normal; text-transform: none; }
 /* Just a heart: grey when off, red and slowly beating when on. */
 .heartbeat-heart {
   padding: 0 2px; border: 0; background: transparent; font-size: 16px; line-height: 1;
@@ -309,13 +310,16 @@ onBeforeUnmount(() => {
   28% { transform: scale(1.08); }
 }
 .theme-noir .heartbeat-popover {
-  right: 0; left: auto; bottom: calc(100% + 12px); border-color: var(--nx-hair-strong);
+  left: 0; right: auto; bottom: calc(100% + 12px); border-color: var(--nx-hair-strong);
   border-radius: 18px; color: var(--nx-read-2); background: rgba(12, 18, 28, 0.98);
 }
 .theme-noir-light .heartbeat-popover { background: color-mix(in srgb, var(--nx-surface) 98%, transparent); }
 @media (prefers-reduced-motion: reduce) {
   .theme-noir .heartbeat-heart.enabled { animation: none; }
 }
+/* On, but the graph is running — the heart rests until it stops. */
+.heartbeat-heart.enabled.paused,
+.theme-noir .heartbeat-heart.enabled.paused { animation: none; opacity: 0.55; text-shadow: none; }
 .heartbeat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .heartbeat-switch {
   display: inline-flex; align-items: center; gap: 8px; padding: 2px 0;
