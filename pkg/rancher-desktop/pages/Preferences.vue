@@ -301,7 +301,7 @@ export default defineComponent({
     }
   }
 
-  .theme-noir-dark {
+  .theme-noir {
     .modal-grid {
       --preferences-noir-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
       position: relative;
@@ -314,10 +314,10 @@ export default defineComponent({
         "nav footer";
       overflow: hidden;
       background:
-        radial-gradient(110% 60% at 0% 0%, rgba(80, 150, 179, 0.12), transparent 55%),
-        #070d1a;
-      color: #dee4ec;
-      box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.1);
+        radial-gradient(110% 60% at 0% 0%, color-mix(in srgb, var(--nx-accent) 12%, transparent), transparent 55%),
+        var(--nx-surface);
+      color: var(--nx-read-2);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
     }
 
     .preferences-header {
@@ -329,8 +329,8 @@ export default defineComponent({
       align-items: flex-start;
       justify-content: flex-end;
       border: 0;
-      border-right: 1px solid rgba(168, 192, 220, 0.08);
-      background: rgba(3, 6, 12, 0.6);
+      border-right: 1px solid var(--nx-hair);
+      background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
 
       .title {
         flex: none;
@@ -339,7 +339,7 @@ export default defineComponent({
         font-weight: 600;
         line-height: 1.2;
         letter-spacing: -0.01em;
-        color: #f3f5f8;
+        color: var(--nx-read-1);
       }
 
       .preferences-noir-subtitle {
@@ -349,7 +349,7 @@ export default defineComponent({
         font-size: 10.5px;
         line-height: 1.3;
         letter-spacing: 0.04em;
-        color: #7a8291;
+        color: var(--nx-read-4);
       }
     }
 
@@ -360,8 +360,8 @@ export default defineComponent({
       min-height: 0;
       padding: 0 12px 18px;
       border: 0;
-      border-right: 1px solid rgba(168, 192, 220, 0.08);
-      background: rgba(3, 6, 12, 0.6);
+      border-right: 1px solid var(--nx-hair);
+      background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
     }
 
     .preferences-nav-list {
@@ -378,10 +378,10 @@ export default defineComponent({
       height: 40px;
       border-radius: 20px;
       pointer-events: none;
-      background: linear-gradient(180deg, rgba(80, 150, 179, 0.28), rgba(80, 150, 179, 0.12));
+      background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
       box-shadow:
-        inset 0 0 0 0.5px rgba(106, 176, 204, 0.5),
-        0 0 20px rgba(80, 150, 179, 0.2);
+        inset 0 0 0 0.5px color-mix(in srgb, var(--nx-accent-2) 50%, transparent),
+        0 0 20px color-mix(in srgb, var(--nx-accent) 20%, transparent);
       transition: transform 0.58s var(--preferences-noir-spring);
 
       &::before {
@@ -392,8 +392,8 @@ export default defineComponent({
         width: 3px;
         height: 22px;
         border-radius: 0 3px 3px 0;
-        background: #6ab0cc;
-        box-shadow: 0 0 10px #6ab0cc;
+        background: var(--nx-accent-2);
+        box-shadow: 0 0 10px var(--nx-accent-2);
       }
     }
 
@@ -410,7 +410,7 @@ export default defineComponent({
       font-size: 13.5px;
       font-weight: 500;
       line-height: 40px;
-      color: #a9b3c1;
+      color: var(--nx-read-3);
       background: transparent;
       transition:
         color 0.16s,
@@ -418,8 +418,8 @@ export default defineComponent({
         transform 0.45s var(--preferences-noir-spring);
 
       &:hover {
-        color: #dee4ec;
-        background: rgba(80, 150, 179, 0.08);
+        color: var(--nx-read-2);
+        background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
       }
 
       &:active {
@@ -428,7 +428,7 @@ export default defineComponent({
 
       &.active {
         border: 0;
-        color: #f3f5f8;
+        color: var(--nx-read-1);
         background: transparent;
         font-weight: 500;
       }
@@ -452,12 +452,12 @@ export default defineComponent({
       font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
       font-size: 10.5px;
       line-height: 1.7;
-      color: #7a8291;
-      background: rgba(168, 192, 220, 0.035);
-      box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.07);
+      color: var(--nx-read-4);
+      background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair) 87.5%, transparent);
 
       div {
-        color: #a9b3c1;
+        color: var(--nx-read-3);
       }
 
       span {
@@ -466,23 +466,23 @@ export default defineComponent({
         height: 7px;
         margin-right: 6px;
         border-radius: 50%;
-        background: #3fb950;
-        box-shadow: 0 0 8px rgba(63, 185, 80, 0.7);
+        background: var(--nx-success);
+        box-shadow: 0 0 8px color-mix(in srgb, var(--nx-success) 70%, transparent);
       }
 
       small {
         font: inherit;
-        color: #7a8291;
+        color: var(--nx-read-4);
       }
     }
 
     .preferences-body {
       min-width: 0;
       padding: 30px 34px;
-      color: #dee4ec;
+      color: var(--nx-read-2);
       background: transparent;
       scrollbar-width: thin;
-      scrollbar-color: rgba(168, 192, 220, 0.15) transparent;
+      scrollbar-color: color-mix(in srgb, var(--nx-hair-strong) 93.75%, transparent) transparent;
 
       > .preferences-noir-intro {
         display: block;
@@ -495,7 +495,7 @@ export default defineComponent({
           font-size: 10.5px;
           letter-spacing: 0.14em;
           text-transform: uppercase;
-          color: #6ab0cc;
+          color: var(--nx-accent-2);
         }
 
         h1 {
@@ -505,13 +505,13 @@ export default defineComponent({
           font-weight: 600;
           line-height: 1.1;
           letter-spacing: -0.015em;
-          color: #f3f5f8;
+          color: var(--nx-read-1);
         }
 
         p {
           margin: 0 0 24px;
           font-size: 14px;
-          color: #a9b3c1;
+          color: var(--nx-read-3);
         }
       }
 
@@ -549,8 +549,8 @@ export default defineComponent({
         padding: 4px;
         border: 0;
         border-radius: 16px;
-        background: rgba(3, 6, 12, 0.6);
-        box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.1);
+        background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
       }
 
       .action-tabs li.tab {
@@ -568,7 +568,7 @@ export default defineComponent({
           border-radius: 12px;
           font-size: 12.5px;
           font-weight: 500;
-          color: #7a8291;
+          color: var(--nx-read-4);
           transition:
             color 0.2s,
             background 0.3s cubic-bezier(.22, 1, .36, 1),
@@ -576,15 +576,15 @@ export default defineComponent({
         }
 
         &:hover a {
-          color: #dee4ec;
+          color: var(--nx-read-2);
         }
 
         &.active a {
-          color: #f3f5f8;
-          background: linear-gradient(180deg, rgba(80, 150, 179, 0.32), rgba(80, 150, 179, 0.16));
+          color: var(--nx-read-1);
+          background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 32%, transparent), color-mix(in srgb, var(--nx-accent) 16%, transparent));
           box-shadow:
-            inset 0 0 0 0.5px rgba(106, 176, 204, 0.55),
-            0 0 14px rgba(80, 150, 179, 0.25);
+            inset 0 0 0 0.5px color-mix(in srgb, var(--nx-accent-2) 55%, transparent),
+            0 0 14px color-mix(in srgb, var(--nx-accent) 25%, transparent);
         }
       }
 
@@ -610,8 +610,8 @@ export default defineComponent({
       .wsl-integrations {
         padding: 18px;
         border-radius: 18px;
-        background: rgba(168, 192, 220, 0.035);
-        box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.08);
+        background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
+        box-shadow: inset 0 0 0 1px var(--nx-hair);
       }
 
       .rd-fieldset .rd-fieldset {
@@ -625,13 +625,13 @@ export default defineComponent({
         padding-bottom: 10px;
         font-size: 14px;
         font-weight: 600;
-        color: #f3f5f8;
+        color: var(--nx-read-1);
       }
 
       .rd-checkbox-container,
       .checkbox-outer-container-description,
       .description {
-        color: #a9b3c1;
+        color: var(--nx-read-3);
       }
 
       .rd-checkbox-container + .rd-checkbox-container {
@@ -648,7 +648,7 @@ export default defineComponent({
         .checkbox-label {
           order: -1;
           margin: 0;
-          color: #dee4ec;
+          color: var(--nx-read-2);
         }
 
         .checkbox-custom {
@@ -658,8 +658,8 @@ export default defineComponent({
           height: 26px;
           border: 0;
           border-radius: 13px;
-          background: rgba(168, 192, 220, 0.12);
-          box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.14);
+          background: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 87.5%, transparent);
           transition:
             background 0.3s cubic-bezier(.22, 1, .36, 1),
             box-shadow 0.3s;
@@ -672,7 +672,7 @@ export default defineComponent({
             border: 0;
             border-radius: 50%;
             opacity: 1;
-            background: #dee4ec;
+            background: var(--nx-read-2);
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
             transform: none;
             transition:
@@ -683,8 +683,8 @@ export default defineComponent({
 
         input:checked ~ .checkbox-custom {
           border: 0;
-          background: linear-gradient(180deg, #6ab0cc, #5096b3);
-          box-shadow: 0 0 14px rgba(80, 150, 179, 0.45);
+          background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
+          box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 45%, transparent);
 
           &::after {
             top: 3px;
@@ -710,9 +710,9 @@ export default defineComponent({
         min-height: 40px;
         border: 0;
         border-radius: 12px;
-        color: #f3f5f8;
-        background: rgba(3, 6, 12, 0.6);
-        box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.12);
+        color: var(--nx-read-1);
+        background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
       }
 
       input:not([type='checkbox']):not([type='radio']):focus,
@@ -720,8 +720,8 @@ export default defineComponent({
       textarea:focus {
         outline: none;
         box-shadow:
-          inset 0 0 0 1px rgba(106, 176, 204, 0.65),
-          0 0 16px rgba(80, 150, 179, 0.18);
+          inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 65%, transparent),
+          0 0 16px color-mix(in srgb, var(--nx-accent) 18%, transparent);
       }
 
       input:disabled,
@@ -739,22 +739,22 @@ export default defineComponent({
         margin: 0 0 6px;
         padding: 10px 12px;
         border-radius: 12px;
-        color: #dee4ec;
-        background: rgba(3, 6, 12, 0.4);
-        box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.06);
+        color: var(--nx-read-2);
+        background: color-mix(in srgb, var(--bg-surface-alt) 40%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair) 75%, transparent);
         transition:
           background 0.16s,
           box-shadow 0.2s,
           transform 0.45s var(--preferences-noir-spring);
 
         &:hover {
-          background: rgba(80, 150, 179, 0.08);
+          background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
           transform: translateX(2px);
         }
 
         &:has(input:checked) {
-          background: rgba(80, 150, 179, 0.12);
-          box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.4);
+          background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 40%, transparent);
         }
 
         .radio-custom {
@@ -763,16 +763,16 @@ export default defineComponent({
           height: 16px;
           min-height: 16px;
           margin-top: 2px;
-          border: 1.5px solid #484f5a;
+          border: 1.5px solid var(--nx-read-5);
           background: transparent;
         }
 
         .radio-custom[aria-checked='true'] {
-          border-color: #6ab0cc;
-          background: #6ab0cc;
+          border-color: var(--nx-accent-2);
+          background: var(--nx-accent-2);
           box-shadow:
-            inset 0 0 0 4px #03060c,
-            0 0 8px #6ab0cc;
+            inset 0 0 0 4px var(--bg-surface-alt),
+            0 0 8px var(--nx-accent-2);
         }
 
         .labeling {
@@ -780,16 +780,16 @@ export default defineComponent({
         }
 
         .radio-label {
-          color: #dee4ec;
+          color: var(--nx-read-2);
         }
 
         .radio-button-outer-container-description {
-          color: #7a8291;
+          color: var(--nx-read-4);
         }
       }
 
       hr {
-        border-color: rgba(168, 192, 220, 0.08);
+        border-color: var(--nx-hair);
       }
 
       .help {
@@ -803,10 +803,10 @@ export default defineComponent({
       min-height: 66px;
       padding: 14px 34px;
       border: 0;
-      border-top: 1px solid rgba(168, 192, 220, 0.08);
+      border-top: 1px solid var(--nx-hair);
       align-items: center;
       gap: 12px;
-      background: rgba(3, 6, 12, 0.92);
+      background: color-mix(in srgb, var(--bg-surface-alt) 92%, transparent);
       box-shadow: 0 -18px 32px rgba(3, 6, 12, 0.42);
 
       .preferences-noir-save-note {
@@ -814,7 +814,7 @@ export default defineComponent({
         flex: none;
         font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
         font-size: 11px;
-        color: #7a8291;
+        color: var(--nx-read-4);
       }
 
       .preferences-alert {
@@ -823,7 +823,7 @@ export default defineComponent({
         padding: 0;
 
         .alert-text {
-          color: #e3b341;
+          color: var(--nx-warning);
         }
       }
 
@@ -849,16 +849,16 @@ export default defineComponent({
 
         .role-secondary {
           border: 0;
-          color: #dee4ec;
+          color: var(--nx-read-2);
           background: transparent;
-          box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.16);
+          box-shadow: inset 0 0 0 1px var(--nx-hair-strong);
         }
 
         .role-primary {
           border: 0;
           color: #fff;
-          background: linear-gradient(180deg, #6ab0cc, #5096b3);
-          box-shadow: 0 0 16px rgba(80, 150, 179, 0.4);
+          background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
+          box-shadow: 0 0 16px color-mix(in srgb, var(--nx-accent) 40%, transparent);
 
           &:disabled {
             opacity: 0.4;
@@ -869,8 +869,18 @@ export default defineComponent({
     }
   }
 
+  .theme-noir-light {
+    .preferences-nav-toggle .slider::before {
+      box-shadow: 0 2px 6px color-mix(in srgb, var(--nx-ink) 14%, transparent);
+    }
+
+    .preferences-footer {
+      box-shadow: 0 -18px 32px color-mix(in srgb, var(--nx-ink) 8%, transparent);
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .theme-noir-dark {
+    .theme-noir {
       .preferences-nav-glass,
       .preferences-nav-item,
       .preferences-body > .preferences-noir-intro,

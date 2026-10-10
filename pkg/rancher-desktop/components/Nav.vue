@@ -326,52 +326,52 @@ a {
   display: none;
 }
 
-:global(.theme-noir-dark) .docker-nav {
+:global(.theme-noir) .docker-nav {
   padding: 18px 12px;
-  background: rgba(3, 6, 12, 0.6);
-  border-right: 1px solid rgba(168, 192, 220, 0.08);
+  background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
+  border-right: 1px solid var(--nx-hair);
 }
 
-:global(.theme-noir-dark) .docker-nav-heading {
+:global(.theme-noir) .docker-nav-heading {
   display: block;
   padding: 20px 8px 18px;
 }
 
-:global(.theme-noir-dark) .docker-nav-title {
-  color: #f3f5f8;
+:global(.theme-noir) .docker-nav-title {
+  color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 21px;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
 
-:global(.theme-noir-dark) .docker-nav-subtitle {
+:global(.theme-noir) .docker-nav-subtitle {
   margin-top: 3px;
-  color: #7a8291;
+  color: var(--nx-read-4);
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 10.5px;
   letter-spacing: 0.04em;
 }
 
-:global(.theme-noir-dark) .docker-nav-routes {
+:global(.theme-noir) .docker-nav-routes {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-:global(.theme-noir-dark) .docker-nav-indicator {
+:global(.theme-noir) .docker-nav-indicator {
   display: block;
   position: absolute;
   inset: 0 0 auto;
   border-radius: 20px;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(80, 150, 179, 0.28), rgba(80, 150, 179, 0.12));
-  box-shadow: inset 0 0 0 0.5px rgba(106, 176, 204, 0.5), 0 0 20px rgba(80, 150, 179, 0.2);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--nx-accent-2) 50%, transparent), 0 0 20px color-mix(in srgb, var(--nx-accent) 20%, transparent);
   transition: transform .58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), opacity .16s;
 }
 
-:global(.theme-noir-dark) .docker-nav-indicator::before {
+:global(.theme-noir) .docker-nav-indicator::before {
   content: '';
   position: absolute;
   left: -12px;
@@ -379,35 +379,35 @@ a {
   width: 3px;
   height: 22px;
   border-radius: 0 3px 3px 0;
-  background: #6ab0cc;
-  box-shadow: 0 0 10px #6ab0cc;
+  background: var(--nx-accent-2);
+  box-shadow: 0 0 10px var(--nx-accent-2);
 }
 
-:global(.theme-noir-dark) .docker-nav-routes li a {
+:global(.theme-noir) .docker-nav-routes li a {
   position: relative;
   z-index: 1;
   min-height: 40px;
   padding: 0 14px;
   border-radius: 20px;
   gap: 11px;
-  color: #a9b3c1;
+  color: var(--nx-read-3);
   font-size: 13.5px;
   font-weight: 500;
   line-height: 40px;
   transition: color .16s, background .16s, transform .45s ease;
 }
 
-:global(.theme-noir-dark) .docker-nav-routes li a:hover {
-  color: #dee4ec;
-  background: rgba(80, 150, 179, 0.08);
+:global(.theme-noir) .docker-nav-routes li a:hover {
+  color: var(--nx-read-2);
+  background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir-dark) .docker-nav-routes li a:is(.router-link-active, .rd-link-active) {
-  color: #f3f5f8;
+:global(.theme-noir) .docker-nav-routes li a:is(.router-link-active, .rd-link-active) {
+  color: var(--nx-read-1);
   background: transparent;
 }
 
-:global(.theme-noir-dark) .docker-nav-glyph {
+:global(.theme-noir) .docker-nav-glyph {
   display: inline-block;
   width: 18px;
   color: #8cacc9;
@@ -415,14 +415,18 @@ a {
   text-align: center;
 }
 
-:global(.theme-noir-dark) .nav-button-container {
+:global(.theme-noir-light) .docker-nav-glyph {
+  color: var(--nx-accent);
+}
+
+:global(.theme-noir) .nav-button-container {
   padding-top: 12px;
-  border-top: 1px solid rgba(168, 192, 220, 0.08);
+  border-top: 1px solid var(--nx-hair);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir-dark) .docker-nav-indicator,
-  :global(.theme-noir-dark) .docker-nav-routes li a {
+  :global(.theme-noir) .docker-nav-indicator,
+  :global(.theme-noir) .docker-nav-routes li a {
     transition: none;
   }
 }
