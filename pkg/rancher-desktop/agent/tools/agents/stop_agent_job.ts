@@ -1,5 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
-import { abortJob } from './jobRegistry';
+import { emitSubAgentExchange } from './jobExchange';
+import { abortJob, getJob } from './jobRegistry';
 
 /**
  * Kill switch for async sub-agent jobs launched with spawn_agent(async: true).
@@ -26,10 +27,26 @@ export class StopAgentJobWorker extends BaseTool {
       };
     }
 
+    const job = await getJob(jobId);
     const outcome = abortJob(jobId);
 
     switch (outcome) {
     case 'stopped':
+      await Promise.all((job?.tasks ?? []).map((task, taskIndex) => emitSubAgentExchange(
+        job?.parentChannel,
+        job?.parentThreadId,
+        {
+          direction: 'from_agent',
+          agentId: task.agentId,
+          label: task.label,
+          summary: `${ task.label } was stopped`,
+          detail: `Stop requested for job ${ jobId } before the sub-agent finished.`,
+          status: 'stopped',
+          jobId,
+          taskIndex,
+          conversationId: task.threadId,
+        },
+      )));
       return {
         successBoolean: true,
         responseString: `Stop requested for job "${ jobId }". Its sub-agents will unwind at their next step (cooperative — an in-flight LLM/tool call finishes first). Poll check_agent_jobs("${ jobId }") to confirm it settled as 'stopped'.`,

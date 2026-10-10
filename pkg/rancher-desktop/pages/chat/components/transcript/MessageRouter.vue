@@ -24,6 +24,7 @@
   <PatchBlock      v-else-if="msg.kind === 'patch'"     :msg="msg" />
   <ChannelMessage  v-else-if="msg.kind === 'channel'"   :msg="msg" />
   <SubAgentBubble  v-else-if="msg.kind === 'subagent'"  :msg="msg" />
+  <SubAgentExchange v-else-if="msg.kind === 'subagent_exchange'" :msg="msg" />
   <CitationRow     v-else-if="msg.kind === 'citation'"  :msg="msg" />
   <MemoryNote      v-else-if="msg.kind === 'memory'"    :msg="msg" />
   <ProactiveCard   v-else-if="msg.kind === 'proactive'" :msg="msg" />
@@ -47,6 +48,7 @@ import ToolQuestion    from '../tool/ToolQuestion.vue';
 import PatchBlock      from '../patch/PatchBlock.vue';
 import ChannelMessage  from '../channel/ChannelMessage.vue';
 import SubAgentBubble  from '../subagent/SubAgentBubble.vue';
+import SubAgentExchange from '../subagent/SubAgentExchange.vue';
 import CitationRow     from '../citation/CitationRow.vue';
 import MemoryNote      from '../memory/MemoryNote.vue';
 import ProactiveCard   from '../proactive/ProactiveCard.vue';

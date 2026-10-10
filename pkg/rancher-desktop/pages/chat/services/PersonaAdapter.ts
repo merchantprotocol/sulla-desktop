@@ -23,7 +23,7 @@ import type {
 } from '../models/Artifact';
 import type { Attachment } from '../models/Attachment';
 import type { Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
-  ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
+  ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, SubAgentExchangeMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
   PatchMessage, PatchHunk, ProactiveMessage,
 } from '../models/Message';
 import { asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
@@ -55,6 +55,8 @@ export class PersonaAdapter {
    * localStorage don't suppress the landing on a fresh-looking tab.
    */
   readonly hasSentMessage: ComputedRef<boolean>;
+  /** Backend graph thread used by spawn_agent's parent linkage. */
+  get backendThreadId(): string | undefined { return this.ci.threadId.value; }
   /** Backend ids we've seen (so we don't re-append duplicates on watcher fires). */
   private seen = new Set<string>();
   /** Stable createdAt timestamps keyed by backend message id. */
@@ -595,6 +597,13 @@ export class PersonaAdapter {
         status,
         steps,
       } satisfies SubAgentMessage;
+    }
+
+    if (b.kind === 'sub_agent_exchange' && b.subAgentExchange) {
+      return {
+        id, kind: 'subagent_exchange', createdAt,
+        ...b.subAgentExchange,
+      } satisfies SubAgentExchangeMessage;
     }
 
     // Proactive card — backend (workflow completion, async sub-agent

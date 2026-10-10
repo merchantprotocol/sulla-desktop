@@ -13,7 +13,7 @@
       messages. The transcript replaces it once a conversation begins.
 -->
 <template>
-  <div class="chat-root" :class="{ 'artifact-open': hasArtifact, 'history-open': historyOpen, 'file-tree-open': fileTreeOpen, 'artifact-expanded': artifactExpanded }">
+  <div class="chat-root" :class="{ 'artifact-open': hasArtifact, 'history-open': historyOpen, 'file-tree-open': fileTreeOpen, 'artifact-expanded': artifactExpanded, 'subagents-open': subAgentRailVisible }">
     <Canvas />
 
     <div class="shell">
@@ -32,6 +32,12 @@
         @jump-to="onJumpTo"
         @archived-click="onArchivedClick"
         @close="controller.toggleHistory()"
+      />
+
+      <SubAgentRail
+        :parent-thread-id="subAgentParentThreadId"
+        @open="openSubAgentConversation"
+        @visibility="subAgentRailVisible = $event"
       />
 
       <main class="main">
@@ -66,6 +72,8 @@
       <ArtifactSidebar />
     </div>
 
+    <SubAgentDrawer :target="subAgentTarget" @close="subAgentTarget = null" />
+
     <ModelSwitcherModal />
     <ShortcutsModal />
     <TokenUsageModal />
@@ -91,6 +99,9 @@ import ArtifactSidebar   from './components/artifact/ArtifactSidebar.vue';
 import HistoryRail       from './components/history/HistoryRail.vue';
 import FileTreeRail      from './components/files/FileTreeRail.vue';
 import EmptyState        from './components/empty/EmptyState.vue';
+import SubAgentDrawer    from './components/subagent/SubAgentDrawer.vue';
+import SubAgentRail      from './components/subagent/SubAgentRail.vue';
+import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
 
 import { restoreChatFromHistory } from './services/historyRestore';
 
@@ -275,6 +286,15 @@ provide('chat:navigate-url', (url: string) => emit('navigate-url', url));
 // as the controller's sendHandler, so user sends flow through the
 // persona and responses flow back into the controller.
 const adapter = new PersonaAdapter(controller, { tabId: props.tabId });
+const subAgentRailVisible = ref(false);
+const subAgentTarget = ref<SubAgentConversationTarget | null>(null);
+const subAgentParentThreadId = computed(() => adapter.backendThreadId);
+
+function openSubAgentConversation(target: SubAgentConversationTarget): void {
+  subAgentTarget.value = target;
+}
+
+provide('chat:open-subagent-conversation', openSubAgentConversation);
 onBeforeUnmount(() => {
   adapter.dispose();
   controller.dispose();
@@ -726,6 +746,9 @@ onBeforeUnmount(() => {
 
 .chat-root.history-open   .main { left: 260px; }
 .chat-root.file-tree-open .main { left: 260px; }
+.chat-root.subagents-open .main { left: 272px; }
+.chat-root.subagents-open.history-open .main,
+.chat-root.subagents-open.file-tree-open .main { left: 532px; }
 .chat-root.artifact-open  .main { right: 560px; }
 .chat-root.artifact-open.artifact-expanded .main { right: 70vw; }
 
@@ -742,10 +765,19 @@ onBeforeUnmount(() => {
   width: 260px;
   z-index: 7;
 }
+.chat-root.history-open .shell :deep(.subagent-rail),
+.chat-root.file-tree-open .shell :deep(.subagent-rail) { left: 260px; }
 .shell :deep(.artifact) {
   position: absolute;
   top: 0; bottom: 0; right: 0;
   width: 560px;
   z-index: 6;
+}
+
+@media (max-width: 1200px) {
+  .shell :deep(.subagent-rail) { display: none; }
+  .chat-root.subagents-open .main { left: 0; }
+  .chat-root.subagents-open.history-open .main,
+  .chat-root.subagents-open.file-tree-open .main { left: 260px; }
 }
 </style>
