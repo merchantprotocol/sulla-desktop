@@ -1,5 +1,64 @@
+import { AgentJobMessagingModel, type AgentJobCheckin, type AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
 import { BaseTool, ToolResponse } from '../base';
 import { getJob, getAllJobs, deleteJob } from './jobRegistry';
+
+import type { AgentJob } from './jobRegistry';
+
+function elapsedSince(startedAt: number | undefined, fallback: number, finishedAt?: number): string {
+  const start = startedAt ?? fallback;
+  const end = finishedAt ?? Date.now();
+
+  return `${ Math.max(0, Math.round((end - start) / 1000)) }s`;
+}
+
+function serializeCheckin(checkin: AgentJobCheckin | null): Record<string, unknown> | null {
+  if (!checkin) return null;
+
+  return {
+    step:         checkin.step,
+    summary:      checkin.summary,
+    files:        checkin.filesTouched,
+    blockers:     checkin.blockers,
+    percent:      checkin.percent,
+    time:         new Date(checkin.createdAt).toISOString(),
+  };
+}
+
+export function jobTaskViews(job: AgentJob, telemetry: Record<number, AgentJobTaskTelemetry>): Array<Record<string, unknown>> {
+  return job.tasks.map((task, taskIndex) => {
+    const activity = telemetry[taskIndex] ?? {
+      latestCheckin: null,
+      checkins: [],
+      undeliveredMessages: 0,
+    };
+
+    return {
+      taskIndex,
+      agentId: task.agentId,
+      label: task.label,
+      status: task.status,
+      elapsed: elapsedSince(task.startedAt, job.createdAt, task.finishedAt),
+      threadId: task.threadId,
+      latestCheckin: serializeCheckin(activity.latestCheckin),
+      undeliveredOrchestratorMessages: activity.undeliveredMessages,
+      checkins: activity.checkins.map(serializeCheckin),
+    };
+  });
+}
+
+async function serializeJob(job: AgentJob): Promise<Record<string, unknown>> {
+  const telemetry = await AgentJobMessagingModel.telemetryForJob(job.jobId);
+
+  return {
+    jobId: job.jobId,
+    status: job.status,
+    taskCount: job.taskCount,
+    elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
+    error: job.error,
+    tasks: jobTaskViews(job, telemetry),
+    results: job.results,
+  };
+}
 
 export class CheckAgentJobsWorker extends BaseTool {
   name = '';
@@ -8,10 +67,8 @@ export class CheckAgentJobsWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { jobId } = input;
 
-    // ── Specific job lookup ──────────────────────────────────────
     if (jobId) {
       const job = await getJob(jobId);
-
       if (!job) {
         return {
           successBoolean: false,
@@ -19,75 +76,16 @@ export class CheckAgentJobsWorker extends BaseTool {
         };
       }
 
-      if (job.status === 'running') {
-        const elapsed = Math.round((Date.now() - job.createdAt) / 1000);
-
-        return {
-          successBoolean: true,
-          responseString: JSON.stringify({
-            jobId:     job.jobId,
-            status:    'running',
-            taskCount: job.taskCount,
-            elapsed:   `${ elapsed }s`,
-            message:   `Job is still running (${ job.taskCount } task(s), ${ elapsed }s elapsed). Check again later.`,
-          }, null, 2),
-        };
-      }
-
-      if (job.status === 'failed') {
-        const result = {
-          jobId:  job.jobId,
-          status: 'failed',
-          error:  job.error,
-        };
-
-        deleteJob(jobId);
-
-        return {
-          successBoolean: false,
-          responseString: JSON.stringify(result, null, 2),
-        };
-      }
-
-      if (job.status === 'stopped') {
-        const done = job.results.filter(r => r.status === 'completed').length;
-        const result = {
-          jobId:          job.jobId,
-          status:         'stopped',
-          taskCount:      job.taskCount,
-          partialResults: job.results.length,
-          message:        `Job was stopped via stop_agent_job. ${ done } of ${ job.taskCount } task(s) had completed before cancellation; the rest were aborted.`,
-        };
-
-        deleteJob(jobId);
-
-        return {
-          successBoolean: false,
-          responseString: JSON.stringify(result, null, 2),
-        };
-      }
-
-      // Completed — return results. Keep an undelivered completion in the
-      // durable outbox so boot recovery can still wake its parent graph.
-      const allSuccess = job.results.every(r => r.status === 'completed');
-
-      const formatted = job.results.map(r =>
-        `### ${ r.label } [${ r.status.toUpperCase() }]\n${ r.output }`,
-      ).join('\n\n---\n\n');
-
-      if (job.completionDeliveredAt) deleteJob(jobId);
+      const result = await serializeJob(job);
+      if (job.status !== 'running' && job.completionDeliveredAt) deleteJob(jobId);
 
       return {
-        successBoolean: allSuccess,
-        responseString: job.results.length === 1
-          ? job.results[0].output
-          : `${ job.results.length } sub-agent(s) completed.${ job.completionDeliveredAt ? '' : ' Completion remains queued for parent-graph recovery.' }\n\n${ formatted }`,
+        successBoolean: job.status === 'running' || (job.status === 'completed' && job.results.every(result => result.status === 'completed')),
+        responseString: JSON.stringify(result, null, 2),
       };
     }
 
-    // ── List all jobs ────────────────────────────────────────────
     const allJobs = await getAllJobs();
-
     if (allJobs.length === 0) {
       return {
         successBoolean: true,
@@ -95,15 +93,11 @@ export class CheckAgentJobsWorker extends BaseTool {
       };
     }
 
-    const summary = allJobs.map((j) => {
-      const elapsed = Math.round((Date.now() - j.createdAt) / 1000);
-
-      return `- **${ j.jobId }**: ${ j.status } (${ j.taskCount } task(s), ${ elapsed }s ago)`;
-    }).join('\n');
+    const jobs = await Promise.all(allJobs.map(serializeJob));
 
     return {
       successBoolean: true,
-      responseString: `${ allJobs.length } job(s):\n\n${ summary }`,
+      responseString: JSON.stringify({ count: jobs.length, jobs }, null, 2),
     };
   }
 }

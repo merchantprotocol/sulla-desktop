@@ -1,8 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 
-/**
- * Deprecated: async jobs are intentionally bounded, single-instruction work.
- */
+/** Deprecated conversation-id compatibility surface. */
 export class SendAgentMessageWorker extends BaseTool {
   name = '';
   description = '';
@@ -26,7 +24,7 @@ export class SendAgentMessageWorker extends BaseTool {
 
     return Promise.resolve({
       successBoolean: false,
-      responseString: `send_agent_message is deprecated and cannot continue "${ conversationId }". Launch the next bounded task with spawn_agent; use check_agent_jobs for fallback/history of an existing job. Multi-turn continuation requires a separate continue_agent_job contract.`,
+      responseString: `send_agent_message is deprecated. If "${ conversationId }" is an agent job, call send_job_message with { jobId: "${ conversationId }", message: ... }; otherwise launch a bounded task with spawn_agent.`,
     });
   }
 }

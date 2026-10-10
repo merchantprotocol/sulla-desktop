@@ -15,6 +15,7 @@ import { redisClient } from '../database/RedisClient';
 import { markSteerPending, onSteer } from '../utils/steerChannel';
 import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
 import { graphBrowserControllerContext } from '../utils/graphBrowserController';
+import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
@@ -686,14 +687,15 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     //   - existingSession → send only the latest user message (codex has the
     //     rest via `exec resume`)
     //   - no session    → seed codex with the full curated transcript
-    const basePrompt = existingSession
+    const extractedPrompt = existingSession
       ? this.extractLatestUserMessage(messages)
       : this.serializeFullTranscript(messages);
 
-    if (!basePrompt.trim()) {
+    if (!extractedPrompt.trim()) {
       const roles = messages.map(m => m.role).join(',');
       throw new Error(`Codex got no extractable prompt from ${ messages.length } messages (roles=${ roles })`);
     }
+    const basePrompt = await prepareWorkerTurnPrompt(options.state, extractedPrompt);
 
     const { prefix: contextPrefix, stableHash } = await this.buildUserMessageContextPrefix(options.state, {
       convId,

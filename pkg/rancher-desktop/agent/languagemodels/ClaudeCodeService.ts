@@ -18,6 +18,7 @@ import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/lin
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
 import { markSteerPending, onSteer } from '../utils/steerChannel';
+import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
@@ -1031,14 +1032,15 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     //   - existingSession → send only the latest user message (Claude has the
     //     rest via --resume + prompt cache)
     //   - no session    → seed Claude with the full curated transcript
-    const basePrompt = existingSession
+    const extractedPrompt = existingSession
       ? this.extractLatestUserMessage(messages)
       : this.serializeFullTranscript(messages);
 
-    if (!basePrompt.trim()) {
+    if (!extractedPrompt.trim()) {
       const roles = messages.map(m => m.role).join(',');
       throw new Error(`Claude Code got no extractable prompt from ${ messages.length } messages (roles=${ roles })`);
     }
+    const basePrompt = await prepareWorkerTurnPrompt(options.state, extractedPrompt);
 
     // Prepend Sulla context to the outgoing user message. Recall context
     // travels every turn; the stable tier (platform rules + memories) is only

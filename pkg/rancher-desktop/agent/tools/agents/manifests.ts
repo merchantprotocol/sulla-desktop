@@ -36,13 +36,39 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'check_agent_jobs',
-    description: 'Fallback/history read of async sub-agent jobs launched with spawn_agent(async: true). Results normally arrive via parent-graph wake — use this after a restart or to inspect a specific jobId. Omit jobId to list all pending/completed jobs.',
+    description: 'Inspect async spawn_agent jobs, including per-task elapsed time, latest and recent worker check-ins, blockers, touched files, and undelivered orchestrator-message counts.',
     category:    'agents',
     schemaDef:   {
       jobId: { type: 'string', optional: true, description: 'The job ID returned by an async spawn_agent call. Omit to list all jobs.' },
     },
     operationTypes: ['read'],
     loader:         () => import('./check_agent_jobs'),
+  },
+  {
+    name:        'send_job_message',
+    description: 'Send new direction to one or all queued/running tasks in a spawn_agent job. The message is persisted and delivered live when possible, otherwise at the worker\'s next model-call boundary.',
+    category:    'agents',
+    schemaDef:   {
+      jobId:     { type: 'string', description: 'The job ID returned by spawn_agent.' },
+      taskIndex: { type: 'number', optional: true, description: 'Zero-based task index. Omit to target every queued/running task in the job.' },
+      message:   { type: 'string', description: 'Direction for the worker, delivered with a clear "Message from orchestrator" label.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./send_job_message'),
+  },
+  {
+    name:        'report_progress',
+    description: 'Record a milestone check-in for the current spawn_agent worker task. Workers should call this at meaningful milestones and at least every ~5 minutes.',
+    category:    'agents',
+    schemaDef:   {
+      step:         { type: 'string', description: 'Short milestone or phase name.' },
+      summary:      { type: 'string', description: 'What changed or was verified since the previous check-in.' },
+      filesTouched: { type: 'array', items: { type: 'string' }, optional: true, description: 'Files created or changed so far.' },
+      blockers:     { type: 'array', items: { type: 'string' }, optional: true, description: 'Concrete blockers requiring orchestrator or human action.' },
+      percent:      { type: 'number', optional: true, description: 'Optional completion estimate from 0 to 100.' },
+    },
+    operationTypes: ['create'],
+    loader:         () => import('./report_progress'),
   },
   {
     name:        'stop_agent_job',
@@ -68,7 +94,7 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'send_agent_message',
-    description: 'DEPRECATED compatibility surface. Returns a clear error directing callers to spawn_agent and check_agent_jobs; async jobs do not preserve a multi-turn conversation.',
+    description: 'DEPRECATED conversation compatibility surface. For a running spawn_agent job, use send_job_message with its jobId instead.',
     category:    'agents',
     schemaDef:   {
       conversationId: { type: 'string', description: 'The conversationId from start_agent_conversation.' },

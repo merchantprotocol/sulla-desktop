@@ -35,6 +35,14 @@ export function markSteerDelivered(message: ChatMessage): void {
   if (meta && meta.steerPending) {
     meta.steerPending = false;
     meta.steerDeliveredAt = Date.now();
+    if (typeof meta.jobMessageId === 'string' && typeof meta.jobMessageThreadId === 'string') {
+      void import('../database/models/AgentJobMessagingModel')
+        .then(({ AgentJobMessagingModel }) => AgentJobMessagingModel.markMessagesDelivered(
+          [meta.jobMessageId],
+          meta.jobMessageThreadId,
+        ))
+        .catch(err => console.warn('[steerChannel] could not mark job message delivered:', (err as Error).message));
+    }
   }
 }
 
@@ -48,10 +56,10 @@ export function markSteerPending(message: ChatMessage): void {
  * Append a steer to the running state and offer it to the live CLI turn, if
  * one is listening. Stays pending when no listener takes it.
  */
-export function injectSteer(state: { messages: ChatMessage[] }, message: ChatMessage): void {
+export function injectSteer(state: { messages: ChatMessage[] }, message: ChatMessage): boolean {
   (message as any).metadata = { ...((message as any).metadata || {}), steerPending: true };
   state.messages.push(message);
-  offerSteer(state, message);
+  return offerSteer(state, message);
 }
 
 function offerSteer(state: object, message: ChatMessage): boolean {
