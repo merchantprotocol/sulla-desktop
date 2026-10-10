@@ -12,11 +12,12 @@
  */
 
 import seed from '../../reflex/seed/reflex-seed.json';
+import routeSeed from '../../reflex/seed/route-seed.json';
 import { ReflexModel } from '../models/ReflexModel';
 
 export const REFLEX_SEED_VERSION = seed.version;
 
 export async function initialize(): Promise<void> {
-  const inserted = await ReflexModel.seedExamples(seed.examples, 'seed');
-  console.log(`[ReflexSeedSeeder] Seed v${ seed.version }: inserted ${ inserted } of ${ seed.examples.length } example(s)`);
+  const inserted = await ReflexModel.seedExamples([...seed.examples, ...routeSeed.examples], 'seed');
+  console.log(`[ReflexSeedSeeder] Seed v${ seed.version }: inserted ${ inserted } of ${ seed.examples.length + routeSeed.examples.length } example(s)`);
 }

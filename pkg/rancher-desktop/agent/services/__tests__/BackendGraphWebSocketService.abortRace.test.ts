@@ -21,6 +21,9 @@ function deferred<T = void>(): Deferred<T> {
 
 const sendMock: any = jest.fn();
 const executeMock: any = jest.fn();
+const routeChatAgentMock: any = jest.fn(() => Promise.resolve(null));
+const loadThreadStateMock: any = jest.fn(() => Promise.resolve(null));
+const saveThreadStateMock: any = jest.fn(() => Promise.resolve());
 const state: any = {
   metadata: { options: {} },
   messages: [],
@@ -55,17 +58,43 @@ jest.unstable_mockModule('../SchedulerService', () => ({
   })),
 }));
 
+const getOrCreateAgentGraphMock: any = jest.fn((agentId: string, threadId: string) => {
+  const threadState = stateForThread(threadId);
+  threadState.metadata.threadId = threadId;
+  threadState.metadata.agentId = agentId;
+  return Promise.resolve({ graph: { execute: executeMock }, state: threadState });
+});
+
 jest.unstable_mockModule('../GraphRegistry', () => ({
   GraphRegistry: {
-    getOrCreateAgentGraph: jest.fn((_agentId: string, threadId: string) => Promise.resolve({
-      graph: { execute: executeMock },
-      state: stateForThread(threadId),
-    })),
-    delete: jest.fn(),
+    get:                   jest.fn((threadId: string) => statesByThread.has(threadId) ? { state: statesByThread.get(threadId) } : null),
+    getOrCreateAgentGraph: getOrCreateAgentGraphMock,
+    delete:                jest.fn(),
   },
   getAgentIdForTrigger: jest.fn(() => Promise.resolve('sulla-desktop')),
   nextThreadId:         jest.fn(() => 'thread-generated'),
   nextMessageId:        jest.fn(() => `msg-${ ++messageSequence }`),
+}));
+
+jest.unstable_mockModule('../../nodes/ThreadStateStore', () => ({
+  loadThreadState: loadThreadStateMock,
+  saveThreadState: saveThreadStateMock,
+}));
+
+jest.unstable_mockModule('../../reflex/ReflexService', () => ({
+  routeChatAgent: routeChatAgentMock,
+}));
+
+jest.unstable_mockModule('../ChatAgentRouting', () => ({
+  resolveRoutableAgent: jest.fn((agentId: string) => Promise.resolve(
+    agentId === 'sulla'
+      ? { agentId: 'sulla', graphAgentId: 'sulla-desktop', name: 'Sulla' }
+      : { agentId, graphAgentId: agentId, name: agentId === 'analytics-worker' ? 'Analytics Worker' : agentId },
+  )),
+  applyThreadAgentRoute: jest.fn((routeState: any, agent: any) => {
+    routeState.metadata.routedAgentId = agent.graphAgentId;
+    routeState.metadata.routedAgentSourceId = agent.agentId;
+  }),
 }));
 
 jest.unstable_mockModule('../ActiveAgentsRegistry', () => ({
@@ -84,10 +113,52 @@ describe('BackendGraphWebSocketService interruption ownership', () => {
   beforeEach(() => {
     executeMock.mockReset();
     sendMock.mockReset();
+    routeChatAgentMock.mockReset();
+    routeChatAgentMock.mockResolvedValue(null);
+    loadThreadStateMock.mockReset();
+    loadThreadStateMock.mockResolvedValue(null);
+    saveThreadStateMock.mockClear();
+    getOrCreateAgentGraphMock.mockClear();
     statesByThread.clear();
     state.metadata = { options: {} };
     state.messages = [];
     messageSequence = 0;
+  });
+
+  it('routes only an implicit first desktop message and keeps that route for later turns', async() => {
+    const { BackendGraphWebSocketService } = await import('../BackendGraphWebSocketService');
+    const svc: any = new BackendGraphWebSocketService();
+    executeMock.mockResolvedValue(undefined);
+    routeChatAgentMock.mockResolvedValue({ agentId: 'analytics-worker', confidence: 0.91, decisionId: 'route-1' });
+
+    await svc.dispatchToAgent('sulla-desktop', 'sulla-desktop', 'chart weekly revenue', 'route-thread');
+    expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('analytics-worker', 'route-thread');
+    expect(routeChatAgentMock).toHaveBeenCalledTimes(1);
+    expect(saveThreadStateMock).toHaveBeenCalledTimes(1);
+    expect(sendMock).toHaveBeenCalledWith('sulla-desktop', expect.objectContaining({
+      type: 'agent_routed',
+      data: expect.objectContaining({ threadId: 'route-thread', agentId: 'analytics-worker', decisionId: 'route-1' }),
+    }));
+
+    await svc.dispatchToAgent('sulla-desktop', 'sulla-desktop', 'and compare last month', 'route-thread');
+    expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('analytics-worker', 'route-thread');
+    expect(routeChatAgentMock).toHaveBeenCalledTimes(1);
+
+    loadThreadStateMock.mockResolvedValueOnce({
+      metadata: { routedAgentId: 'analytics-worker' },
+      messages: [{ role: 'user', content: 'earlier turn' }],
+    });
+    await svc.dispatchToAgent('sulla-desktop', 'sulla-desktop', 'continue the report', 'persisted-thread');
+    expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('analytics-worker', 'persisted-thread');
+    expect(routeChatAgentMock).toHaveBeenCalledTimes(1);
+
+    await svc.dispatchToAgent('sulla-desktop', 'sulla-desktop', 'chart this', 'explicit-thread', undefined, 'mockup-designer');
+    expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('mockup-designer', 'explicit-thread');
+    expect(routeChatAgentMock).toHaveBeenCalledTimes(1);
+
+    await svc.dispatchToAgent('workbench', 'workbench', 'chart this', 'workbench-thread');
+    expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('sulla-desktop', 'workbench-thread');
+    expect(routeChatAgentMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not let an aborted superseded run delete the newer run abort handle', async() => {

@@ -20,6 +20,7 @@ import { StreamUpdateScheduler } from './StreamUpdateScheduler';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
 import { asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
 
+import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { ChatController } from '../controller/ChatController';
@@ -58,7 +59,7 @@ export class PersonaAdapter {
    */
   readonly hasSentMessage: ComputedRef<boolean>;
   /** Backend graph thread used by spawn_agent's parent linkage. */
-  get backendThreadId(): string | undefined { return this.ci.threadId.value; }
+  get backendThreadId(): string | undefined { return this.ci.threadId.value }
   /** Backend ids we've seen (so we don't re-append duplicates on watcher fires). */
   private seen = new Set<string>();
   /** Stable createdAt timestamps keyed by backend message id. */
@@ -100,6 +101,30 @@ export class PersonaAdapter {
       onStop:     () => this.ci.stop(),
       onContinue: () => this.ci.continueRun(),
     });
+    const channelId = opts.channelId ?? 'sulla-desktop';
+    const routeUnsub = getWebSocketClientService().onMessage(channelId, (message) => {
+      if (message.type !== 'agent_routed' || !message.data || typeof message.data !== 'object') return;
+      const route = message.data as Record<string, unknown>;
+      if (route.threadId !== this.ci.threadId.value || typeof route.agentId !== 'string') return;
+
+      // Preserve the chat-local provider/model while making future sends carry
+      // the routed persona selected before the first agent turn.
+      this.controller.selectForChat(
+        this.controller.model.value,
+        this.controller.thread.value.providerId ?? null,
+        route.agentId,
+      );
+      const name = typeof route.name === 'string' && route.name.trim() ? route.name.trim() : route.agentId;
+      this.controller.appendMessage({
+        id:        asMessageId(`reflex-route-${ String(route.decisionId || Date.now()) }`),
+        kind:      'thinking',
+        thoughts:  [`⚡ Reflex routed this chat to ${ name }`],
+        startedAt: Date.now(),
+        completed: true,
+        createdAt: Date.now(),
+      });
+    });
+    if (routeUnsub) this.stopWatchers.push(routeUnsub);
 
     // Pull in any messages that were already restored from localStorage.
     this.syncMessages();
@@ -640,7 +665,9 @@ export class PersonaAdapter {
 
     if (b.kind === 'sub_agent_exchange' && b.subAgentExchange) {
       return {
-        id, kind: 'subagent_exchange', createdAt,
+        id,
+        kind: 'subagent_exchange',
+        createdAt,
         ...b.subAgentExchange,
       } satisfies SubAgentExchangeMessage;
     }

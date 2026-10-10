@@ -8,7 +8,7 @@ import type { ToolManifest } from '../registry';
 export const reflexToolManifests: ToolManifest[] = [
   {
     name:        'reflex_teach',
-    description: 'Teach the Reflex engine what to do for a user message: map an utterance to ONE Sulla tool call (tool + params) that fully satisfies it, or to tool "none" for messages that should never trigger an action. Set positive:false to teach "do NOT do this for this message". Accepts a single example or an `examples` array for bulk training. Only local, non-destructive tools (browser/ui/docker/project/capture/secretary/notify by default) can be taught as positive actions. Teach several phrasings of the same request so the engine generalizes.',
+    description: 'Teach the Reflex engine what to do for a user message: map an utterance to ONE Sulla tool call (tool + params) that fully satisfies it, or to tool "none" for messages that should never trigger an action. Set positive:false to teach "do NOT do this for this message". Accepts a single example or an `examples` array for bulk training. Only local, non-destructive tools (browser/ui/docker/project/capture/secretary/notify by default) can be taught as positive actions; chat/route_agent is also allowed as the isolated first-message persona-routing target. Teach several phrasings of the same request so the engine generalizes.',
     category:    'reflex',
     schemaDef:   {
       utterance: { type: 'string', optional: true, description: 'What the user says, e.g. "open the doctor container in my browser".' },
@@ -21,7 +21,7 @@ export const reflexToolManifests: ToolManifest[] = [
         description: 'Bulk form: [{utterance, tool, params, positive}] — use instead of the single fields.',
         items:       { type: 'object', properties: { utterance: { type: 'string' }, tool: { type: 'string' }, params: { type: 'object' }, positive: { type: 'boolean' } } },
       },
-      source:    { type: 'string', optional: true, description: 'Who is teaching: "model" (default), "human", "trainer", or "seed".' },
+      source: { type: 'string', optional: true, description: 'Who is teaching: "model" (default), "human", "trainer", or "seed".' },
     },
     operationTypes: ['create'],
     loader:         () => import('./reflex_teach'),
