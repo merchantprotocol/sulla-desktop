@@ -498,4 +498,98 @@ footer {
   border-color: var(--steel-400);
 }
 .btn.primary:disabled { opacity: 0.55; cursor: not-allowed; }
+
+:global(.theme-noir-dark) .page {
+  position: fixed;
+  z-index: 90;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(880px, calc(100vw - 72px));
+  overflow-y: auto;
+  padding: 28px 32px 52px;
+  gap: 18px;
+  color: #dee4ec;
+  background:
+    radial-gradient(90% 45% at 100% 0%, rgba(80, 150, 179, 0.15), transparent 62%),
+    rgba(3, 6, 12, 0.985);
+  border-left: 1px solid rgba(168, 192, 220, 0.1);
+  box-shadow: -32px 0 80px rgba(0, 0, 0, 0.62), -70vw 0 0 rgba(1, 3, 10, 0.5);
+  backdrop-filter: blur(28px);
+  animation: noir-draft-drawer 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) both;
+}
+
+:global(.theme-noir-dark) .back {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  min-height: 34px;
+  border-color: rgba(168, 192, 220, 0.12);
+  border-radius: 17px;
+  color: #a9b3c1;
+  background: rgba(3, 6, 12, 0.74);
+  backdrop-filter: blur(18px);
+}
+
+:global(.theme-noir-dark) h1,
+:global(.theme-noir-dark) h2 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: normal;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .tabs {
+  width: fit-content;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid rgba(168, 192, 220, 0.1);
+  border-radius: 17px;
+  background: rgba(3, 6, 12, 0.7);
+}
+
+:global(.theme-noir-dark) .tab {
+  min-height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 13px;
+  color: #7a8291;
+}
+
+:global(.theme-noir-dark) .tab.on {
+  border: 0;
+  color: #f3f5f8;
+  background: linear-gradient(180deg, rgba(80, 150, 179, 0.28), rgba(80, 150, 179, 0.12));
+  box-shadow: inset 0 0 0 0.5px rgba(106, 176, 204, 0.5), 0 0 16px rgba(80, 150, 179, 0.18);
+}
+
+:global(.theme-noir-dark) .file-entry,
+:global(.theme-noir-dark) .publish-card {
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 17px;
+  background: rgba(168, 192, 220, 0.035);
+}
+
+:global(.theme-noir-dark) input,
+:global(.theme-noir-dark) .file-body {
+  min-height: 40px;
+  border-color: rgba(168, 192, 220, 0.12);
+  border-radius: 12px;
+  color: #f3f5f8;
+  background: rgba(3, 6, 12, 0.68);
+}
+
+:global(.theme-noir-dark) .btn {
+  border-radius: 17px;
+}
+
+:global(.theme-noir-dark) .btn.primary {
+  border-color: rgba(106, 176, 204, 0.46);
+  background: linear-gradient(180deg, #6ab0cc, #5096b3);
+  box-shadow: 0 0 20px rgba(80, 150, 179, 0.25);
+}
+
+@keyframes noir-draft-drawer {
+  from { opacity: 0; transform: translateX(48px); filter: blur(8px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
 </style>

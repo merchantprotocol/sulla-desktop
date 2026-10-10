@@ -55,4 +55,31 @@ defineProps<{
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
+
+:global(.theme-noir-dark) .act {
+  margin-bottom: 14px;
+}
+
+:global(.theme-noir-dark) .head {
+  gap: 12px;
+  margin: 34px 0 14px;
+  padding: 0 4px 11px;
+  border-color: rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .num {
+  color: #6ab0cc;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 25px;
+  font-style: normal;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .count {
+  color: #7a8291;
+}
 </style>

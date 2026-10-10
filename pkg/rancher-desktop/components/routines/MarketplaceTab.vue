@@ -209,15 +209,17 @@
         </div>
 
         <template v-else>
-          <MarketplaceStrip
-            v-for="t in mp.templates.value"
-            :key="t.id"
-            :row="t"
-            :installing="mp.installing.value === t.id"
-            :install-state="mp.installStateFor(t)"
-            @open="onOpen(t.id)"
-            @install="onInstall(t.id)"
-          />
+          <div class="marketplace-grid">
+            <MarketplaceStrip
+              v-for="t in mp.templates.value"
+              :key="t.id"
+              :row="t"
+              :installing="mp.installing.value === t.id"
+              :install-state="mp.installStateFor(t)"
+              @open="onOpen(t.id)"
+              @install="onInstall(t.id)"
+            />
+          </div>
 
           <div
             v-if="mp.totalPages.value > 1"
@@ -1070,5 +1072,172 @@ function formatRelative(iso: string): string {
   flex-direction: column;
   gap: 6px;
   align-self: start;
+}
+
+:global(.theme-noir-dark) .marketplace {
+  display: block;
+  margin-top: 0;
+  min-height: 440px;
+  animation: noir-marketplace-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
+}
+
+:global(.theme-noir-dark) .rail {
+  position: relative;
+  top: auto;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  margin-bottom: 22px;
+  padding: 12px 14px;
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 20px;
+  background: rgba(3, 6, 12, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(20px);
+}
+
+:global(.theme-noir-dark) .rail-head {
+  align-self: center;
+  margin: 0 auto 0 2px;
+  padding: 0 8px;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .rail-section,
+:global(.theme-noir-dark) .rail-section + .rail-section {
+  margin: 0;
+}
+
+:global(.theme-noir-dark) .rail-label {
+  padding: 0 6px 5px;
+  border: 0;
+  margin: 0;
+  color: #6ab0cc;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+}
+
+:global(.theme-noir-dark) .rail-nav {
+  flex-direction: row;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid rgba(168, 192, 220, 0.1);
+  border-radius: 16px;
+  background: rgba(3, 6, 12, 0.72);
+}
+
+:global(.theme-noir-dark) .rail-item,
+:global(.theme-noir-dark) .rail-item.plain {
+  display: flex;
+  grid-template-columns: none;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 12px;
+  color: #7a8291;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 12px;
+  white-space: nowrap;
+  transition: color 0.2s, background 0.3s, box-shadow 0.3s, transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
+}
+
+:global(.theme-noir-dark) .rail-item:hover {
+  color: #dee4ec;
+  background: rgba(80, 150, 179, 0.08);
+}
+
+:global(.theme-noir-dark) .rail-item.on {
+  color: #f3f5f8;
+  border: 0;
+  background: linear-gradient(180deg, rgba(80, 150, 179, 0.28), rgba(80, 150, 179, 0.12));
+  box-shadow: inset 0 0 0 0.5px rgba(106, 176, 204, 0.5), 0 0 16px rgba(80, 150, 179, 0.18);
+}
+
+:global(.theme-noir-dark) .rail-item .dot {
+  width: 6px;
+  height: 6px;
+  background: #5096b3;
+  box-shadow: 0 0 7px rgba(80, 150, 179, 0.5);
+}
+
+:global(.theme-noir-dark) .rail-footer {
+  display: none;
+}
+
+:global(.theme-noir-dark) .content-head {
+  margin-bottom: 18px;
+}
+
+:global(.theme-noir-dark) .content-head h3 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: normal;
+  font-size: 30px;
+  color: #f3f5f8;
+}
+
+:global(.theme-noir-dark) .search-box {
+  min-height: 42px;
+  padding: 0 14px;
+  border-color: rgba(168, 192, 220, 0.1);
+  border-radius: 13px;
+  background: rgba(3, 6, 12, 0.65);
+  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, 0.025);
+}
+
+:global(.theme-noir-dark) .search-box:focus-within {
+  border-color: rgba(106, 176, 204, 0.45);
+  box-shadow: 0 0 0 3px rgba(80, 150, 179, 0.1), 0 0 18px rgba(80, 150, 179, 0.1);
+}
+
+:global(.theme-noir-dark) .marketplace-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+:global(.theme-noir-dark) .submission-row,
+:global(.theme-noir-dark) .status,
+:global(.theme-noir-dark) .banner {
+  border-color: rgba(168, 192, 220, 0.08);
+  border-radius: 16px;
+  background: rgba(168, 192, 220, 0.035);
+}
+
+:global(.theme-noir-dark) .btn {
+  border-radius: 15px;
+}
+
+@keyframes noir-marketplace-in {
+  from { opacity: 0; transform: translateY(8px); filter: blur(8px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+@media (max-width: 1100px) {
+  :global(.theme-noir-dark) .rail {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  :global(.theme-noir-dark) .rail-head {
+    align-self: flex-start;
+    margin-bottom: 4px;
+  }
+
+  :global(.theme-noir-dark) .rail-nav {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 820px) {
+  :global(.theme-noir-dark) .marketplace-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
