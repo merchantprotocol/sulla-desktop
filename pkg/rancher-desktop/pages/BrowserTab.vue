@@ -988,7 +988,7 @@ const shouldShowView = computed(() =>
 watch(shouldShowView, (visible) => {
   if (visible) {
     window.addEventListener('keydown', onKeydown);
-    ipcRenderer.invoke('browser-tab-view:focus', props.tabId);
+    ipcRenderer.invoke('browser-tab-view:focus', props.tabId, undefined, Date.now());
     lastSentBounds = '';
     nextTick(() => sendBounds());
     // Show this tab's side panel (if it has one) when tab becomes visible
@@ -998,7 +998,7 @@ watch(shouldShowView, (visible) => {
     // Tell main process this tab is no longer visible, but only let it clear
     // focus if this tab still owns focus. During tab switches, the newly
     // visible sibling can claim focus before this hidden-tab watcher runs.
-    ipcRenderer.invoke('browser-tab-view:focus', null, props.tabId);
+    ipcRenderer.invoke('browser-tab-view:focus', null, props.tabId, Date.now());
   }
 }, { immediate: true });
 

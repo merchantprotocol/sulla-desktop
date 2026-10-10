@@ -87,7 +87,7 @@ jest.unstable_mockModule('@pkg/SullaWebRequestFixer', () => ({
 }));
 
 jest.unstable_mockModule('@pkg/utils/logging', () => ({
-  default: { sulla: { log: jest.fn(), warn: jest.fn(), error: jest.fn() } },
+  default: { sulla: { log: jest.fn(), warn: jest.fn(), error: jest.fn() }, perf: { log: jest.fn() } },
 }));
 
 jest.unstable_mockModule('@pkg/main/browserTabs/TabRegistry', () => ({

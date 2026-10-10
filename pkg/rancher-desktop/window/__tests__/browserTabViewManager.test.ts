@@ -55,6 +55,7 @@ jest.unstable_mockModule('@pkg/utils/logging', () => ({
       warn:  jest.fn(),
       error: jest.fn(),
     },
+    perf: { log: jest.fn() },
   },
 }));
 
@@ -319,5 +320,29 @@ describe('BrowserTabViewManager', () => {
     expect(mockView.setVisible).toHaveBeenCalledWith(true);
     expect(mockWebContents.setBackgroundThrottling).toHaveBeenCalledWith(false);
     expect(mockMainWindow.contentView.addChildView).toHaveBeenCalledWith(mockView);
+  });
+
+  it('only re-places the outgoing and incoming views on a tab switch', async() => {
+    const { BrowserTabViewManager } = await loadManager();
+    const manager = BrowserTabViewManager.getInstance();
+    const views: Record<string, typeof mockView> = {};
+
+    for (const id of ['tab-a', 'tab-b', 'tab-c']) {
+      const view = { webContents: mockWebContents, setBounds: jest.fn(), setVisible: jest.fn() };
+      views[id] = view;
+      mockWebContentsView.mockImplementationOnce(() => view);
+      manager.createView(id, 'http://localhost:3000', { x: 10, y: 20, width: 800, height: 600 });
+    }
+    manager.setFocusedTab('tab-a');
+    for (const view of Object.values(views)) view.setBounds.mockClear();
+    mockMainWindow.contentView.addChildView.mockClear();
+
+    manager.setFocusedTab('tab-b');
+
+    expect(views['tab-a'].setBounds).toHaveBeenCalledTimes(1);
+    expect(views['tab-b'].setBounds).toHaveBeenCalledTimes(1);
+    expect(views['tab-c'].setBounds).not.toHaveBeenCalled();
+    expect(mockMainWindow.contentView.addChildView).toHaveBeenCalledTimes(2);
+    expect(mockMainWindow.contentView.addChildView).toHaveBeenCalledWith(views['tab-b']);
   });
 });
