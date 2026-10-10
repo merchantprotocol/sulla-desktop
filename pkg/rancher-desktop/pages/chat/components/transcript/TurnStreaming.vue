@@ -8,7 +8,7 @@
     <div class="chat-body">
       <IsolatedHtml
         v-if="isHtmlDocument"
-        :html="msg.text"
+        :html="htmlDocument"
       />
       <span
         v-else
@@ -41,6 +41,16 @@ const timeLabel = computed(() => {
 // through Shadow DOM so mid-stream CSS can't leak into the host app.
 const HTML_DOC_RE = /<style\b|<script\b|<!doctype|<html\b|<body\b|<head\b/i;
 const isHtmlDocument = computed(() => HTML_DOC_RE.test(props.msg.text || ''));
+
+// Once the <html>…</html> block is closed, freeze on it. Tokens streamed
+// after it (wrapper, citations) would otherwise repaint the whole shadow
+// tree on every token and reset any interactive widget the user touches.
+const COMPLETE_HTML_RE = /<html\b[^>]*>[\s\S]*?<\/html>/i;
+const htmlDocument = computed(() => {
+  const text = props.msg.text || '';
+
+  return COMPLETE_HTML_RE.exec(text)?.[0] ?? text;
+});
 
 const rendered = computed(() => renderMarkdown(props.msg.text));
 </script>
