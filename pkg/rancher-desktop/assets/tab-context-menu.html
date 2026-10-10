@@ -154,6 +154,21 @@
 
       /** Menu item definitions — each has an action key, label, SVG paths, and optional group separator */
       const ALL_ITEMS = {
+        pin: {
+          label: "Pin Tab",
+          paths: [
+            '<path d="M12 17v5" />',
+            '<path d="M5 3h14l-3 6v4l2 2H6l2-2V9L5 3z" />',
+          ],
+        },
+        unpin: {
+          label: "Unpin Tab",
+          paths: [
+            '<path d="M12 17v5" />',
+            '<path d="M5 3h14l-3 6v4l2 2H6l2-2V9L5 3z" />',
+            '<path d="M3 3l18 18" />',
+          ],
+        },
         close: {
           label: "Close Tab",
           paths: ['<path d="M18 6L6 18M6 6l12 12" />'],

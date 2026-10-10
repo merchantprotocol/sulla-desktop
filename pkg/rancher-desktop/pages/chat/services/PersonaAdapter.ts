@@ -40,6 +40,7 @@ export interface PersonaAdapterOptions {
 
 export class PersonaAdapter {
   private ci:           ChatInterface;
+  private readonly tabId?: string;
   private stopWatchers: WatchStopHandle[] = [];
   // Backend stream deltas can arrive faster than Vue can paint. Publish the
   // leading update immediately, then cap continuous updates to ~30fps. A pure
@@ -58,7 +59,7 @@ export class PersonaAdapter {
    */
   readonly hasSentMessage: ComputedRef<boolean>;
   /** Backend graph thread used by spawn_agent's parent linkage. */
-  get backendThreadId(): string | undefined { return this.ci.threadId.value; }
+  get backendThreadId(): string | undefined { return this.ci.threadId.value }
   /** Backend ids we've seen (so we don't re-append duplicates on watcher fires). */
   private seen = new Set<string>();
   /** Stable createdAt timestamps keyed by backend message id. */
@@ -89,6 +90,7 @@ export class PersonaAdapter {
     private readonly controller: ChatController,
     opts: PersonaAdapterOptions = {},
   ) {
+    this.tabId = opts.tabId;
     this.ci = new ChatInterface(opts.channelId ?? 'sulla-desktop', opts.tabId);
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
     this.hasSentMessage = this.ci.hasMessages;
@@ -121,6 +123,11 @@ export class PersonaAdapter {
       watch(() => this.ci.graphRunning.value, (running) => {
         this.syncRunState(running);
         this.messageSyncScheduler.flush();
+        if (opts.tabId) {
+          window.dispatchEvent(new CustomEvent('sulla:chat-running', {
+            detail: { tabId: opts.tabId, running },
+          }));
+        }
       }),
     );
 
@@ -286,6 +293,11 @@ export class PersonaAdapter {
   }
 
   dispose(): void {
+    if (this.tabId) {
+      window.dispatchEvent(new CustomEvent('sulla:chat-running', {
+        detail: { tabId: this.tabId, running: false },
+      }));
+    }
     this.messageSyncScheduler.dispose();
     for (const stop of this.stopWatchers) stop();
     this.stopWatchers = [];
@@ -640,7 +652,9 @@ export class PersonaAdapter {
 
     if (b.kind === 'sub_agent_exchange' && b.subAgentExchange) {
       return {
-        id, kind: 'subagent_exchange', createdAt,
+        id,
+        kind: 'subagent_exchange',
+        createdAt,
         ...b.subAgentExchange,
       } satisfies SubAgentExchangeMessage;
     }

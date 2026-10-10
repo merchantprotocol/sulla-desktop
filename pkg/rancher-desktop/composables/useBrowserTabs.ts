@@ -31,9 +31,10 @@ export interface ClosedTab {
   closedAt: number;
 }
 
-const STORAGE_KEY    = 'sulla:browser-tabs';
-const HISTORY_KEY    = 'sulla:closed-tabs';
-const ORDER_KEY      = 'sulla:tab-order';
+const STORAGE_KEY = 'sulla:browser-tabs';
+const HISTORY_KEY = 'sulla:closed-tabs';
+const ORDER_KEY = 'sulla:tab-order';
+const PINNED_KEY = 'sulla:pinned-tabs';
 const ACTIVE_TAB_KEY = 'sulla:active-tab';
 const MAX_HISTORY = 25;
 // Cap the restored-tab count to stop a runaway agent from creating hundreds
@@ -113,7 +114,7 @@ function persistTabs(tabList: BrowserTab[]): void {
       // than silently losing the entire tab list.
       if (quota?.name === 'QuotaExceededError' || quota?.code === 22) {
         const stripped = JSON.stringify(toStore.map(t => ({ ...t, content: undefined })));
-        try { localStorage.setItem(STORAGE_KEY, stripped); } catch { /* give up */ }
+        try { localStorage.setItem(STORAGE_KEY, stripped) } catch { /* give up */ }
       }
     }
   } catch { /* best-effort */ }
@@ -291,6 +292,41 @@ const tabOrder = ref<string[]>(loadTabOrder());
 
 watch(tabOrder, (current) => {
   persistTabOrder([...current]);
+}, { deep: true });
+
+// ── Pinned tabs ──
+
+function loadPinnedTabs(): string[] {
+  try {
+    const raw = localStorage.getItem(PINNED_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+
+    return Array.isArray(parsed) ? parsed.filter(id => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistPinnedTabs(ids: string[]): void {
+  try {
+    localStorage.setItem(PINNED_KEY, JSON.stringify(ids));
+  } catch { /* best-effort */ }
+}
+
+export function orderPinnedFirst(ids: string[], pinnedIds: readonly string[]): string[] {
+  const pinned = new Set(pinnedIds);
+
+  return [
+    ...ids.filter(id => pinned.has(id)),
+    ...ids.filter(id => !pinned.has(id)),
+  ];
+}
+
+const pinnedTabIds = ref<string[]>(loadPinnedTabs());
+
+watch(pinnedTabIds, (current) => {
+  persistPinnedTabs([...current]);
 }, { deep: true });
 
 // ── Active tab persistence ──
@@ -540,11 +576,41 @@ export function useBrowserTabs() {
     return tabs.find(t => t.id === id);
   }
 
+  function isTabPinned(id: string): boolean {
+    return pinnedTabIds.value.includes(id);
+  }
+
+  function setTabPinned(id: string, pinned: boolean): void {
+    const nextPinned = pinnedTabIds.value.filter(tabId => tabId !== id);
+
+    if (pinned) nextPinned.push(id);
+
+    const ids = tabOrder.value.filter(tabId => tabId !== id);
+    const pinnedSet = new Set(nextPinned);
+    const boundary = ids.filter(tabId => pinnedSet.has(tabId)).length;
+
+    ids.splice(boundary, 0, id);
+    pinnedTabIds.value = nextPinned;
+    tabOrder.value = orderPinnedFirst(ids, nextPinned);
+  }
+
+  function prunePinnedTabs(validIds: readonly string[]): void {
+    const valid = new Set(validIds);
+    const next = pinnedTabIds.value.filter(id => valid.has(id));
+
+    if (next.length !== pinnedTabIds.value.length) pinnedTabIds.value = next;
+  }
+
   function reorderTabs(fromIndex: number, toIndex: number): void {
-    const ids = [...tabOrder.value];
+    const ids = orderPinnedFirst([...tabOrder.value], pinnedTabIds.value);
     if (fromIndex < 0 || fromIndex >= ids.length || toIndex < 0 || toIndex >= ids.length) return;
+    const pinnedCount = ids.filter(id => pinnedTabIds.value.includes(id)).length;
+    const movingPinned = fromIndex < pinnedCount;
+    const constrainedTarget = movingPinned
+      ? Math.min(toIndex, pinnedCount - 1)
+      : Math.max(toIndex, pinnedCount);
     const [moved] = ids.splice(fromIndex, 1);
-    ids.splice(toIndex, 0, moved);
+    ids.splice(constrainedTarget, 0, moved);
     tabOrder.value = ids;
   }
 
@@ -574,6 +640,7 @@ export function useBrowserTabs() {
     tabs:         readonly(tabs),
     closedTabs:   readonly(closedTabs),
     previewTabId: readonly(previewTabId),
+    pinnedTabIds: readonly(pinnedTabIds),
     tabOrder,
     createTab,
     openInPreviewTab,
@@ -581,6 +648,9 @@ export function useBrowserTabs() {
     closeTab,
     updateTab,
     getTab,
+    isTabPinned,
+    setTabPinned,
+    prunePinnedTabs,
     ensureOneTab,
     restoreClosedTab,
     restoreHistoryTab,
