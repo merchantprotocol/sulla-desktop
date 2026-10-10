@@ -18,6 +18,7 @@
 @import "./themes/protocol-dark.css";
 @import "./themes/protocol-light.css";
 @import "./themes/noir-dark.css";
+@import "./themes/noir-light.css";
 
 /* Global accent aliases — themes can override, but these ensure --accent-dim,
    --accent-border, and --accent-hover always resolve to something sensible. */

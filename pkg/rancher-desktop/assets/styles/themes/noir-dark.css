@@ -1,8 +1,31 @@
 /* ------------------------------------------------------------------ */
-/*  Noir theme — deep ink surfaces, steel accents, fine hairlines      */
-/*  Brand color: Steel Blue #5096b3                                   */
+/*  Noir Dark theme — deep ink surfaces, steel accents, fine hairlines */
+/*  Shared --nx-* contract: paper/surfaces, five reading levels,       */
+/*  hairlines, accents/glow, indicator chrome, shadow, and statuses.   */
 /* ------------------------------------------------------------------ */
 .theme-noir-dark {
+  /* Shared Noir component tokens */
+  --nx-paper: #01030a;
+  --nx-surface: #070d1a;
+  --nx-glass: rgba(7, 13, 26, 0.75);
+  --nx-ink: #f3f5f8;
+  --nx-read-1: #f3f5f8;
+  --nx-read-2: #dee4ec;
+  --nx-read-3: #a9b3c1;
+  --nx-read-4: #7a8291;
+  --nx-read-5: #484f5a;
+  --nx-hair: rgba(168, 192, 220, 0.08);
+  --nx-hair-strong: rgba(168, 192, 220, 0.16);
+  --nx-accent: #5096b3;
+  --nx-accent-2: #6ab0cc;
+  --nx-glow: rgba(80, 150, 179, 0.4);
+  --nx-indicator-bg: #070d1a;
+  --nx-indicator-edge: rgba(80, 150, 179, 0.45);
+  --nx-shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --nx-success: #3fb950;
+  --nx-warning: #e3b341;
+  --nx-danger: #f85149;
+
   /* Typography tokens */
   --fs-display:  30px;
   --fs-heading:  18px;

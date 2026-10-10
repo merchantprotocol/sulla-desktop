@@ -38,13 +38,15 @@ describe('useTheme', () => {
 
     expect(DEFAULT_THEME).toBe('noir-dark');
     expect(document.documentElement.classList.contains('theme-noir-dark')).toBe(true);
+    expect(document.documentElement.classList.contains('theme-noir')).toBe(true);
     expect(document.documentElement.classList.contains('theme-protocol-dark')).toBe(false);
 
     wrapper.unmount();
   });
 
-  it('selects Noir and applies its dark root classes', async() => {
-    const noir = availableThemes.find(theme => theme.id === 'noir-dark');
+  it('selects both Noir variants and applies their family root class', async() => {
+    const noirDark = availableThemes.find(theme => theme.id === 'noir-dark');
+    const noirLight = availableThemes.find(theme => theme.id === 'noir-light');
     const noirGroup = themeGroups.find(group => group.scheme === 'noir');
     let themeApi: ReturnType<typeof useTheme> | undefined;
     const harness = defineComponent({
@@ -56,20 +58,43 @@ describe('useTheme', () => {
     });
     const wrapper = mount(harness);
 
-    expect(noir).toEqual({
+    expect(noirDark).toEqual({
       id:     'noir-dark',
       scheme: 'noir',
       mode:   'dark',
-      label:  'Noir',
+      label:  'Noir Dark',
       isDark: true,
     });
-    expect(noirGroup?.themes).toEqual([noir]);
+    expect(noirLight).toEqual({
+      id:     'noir-light',
+      scheme: 'noir',
+      mode:   'light',
+      label:  'Noir Light',
+      isDark: false,
+    });
+    expect(noirGroup?.themes).toEqual([noirDark, noirLight]);
 
     themeApi?.setTheme('noir-dark');
     await nextTick();
 
     expect(document.documentElement.classList.contains('theme-noir-dark')).toBe(true);
+    expect(document.documentElement.classList.contains('theme-noir')).toBe(true);
     expect(document.documentElement.classList.contains('dark')).toBe(true);
+
+    themeApi?.setTheme('noir-light');
+    await nextTick();
+
+    expect(document.documentElement.classList.contains('theme-noir-dark')).toBe(false);
+    expect(document.documentElement.classList.contains('theme-noir-light')).toBe(true);
+    expect(document.documentElement.classList.contains('theme-noir')).toBe(true);
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
+
+    themeApi?.setTheme('protocol-light');
+    await nextTick();
+
+    expect(document.documentElement.classList.contains('theme-noir-light')).toBe(false);
+    expect(document.documentElement.classList.contains('theme-noir')).toBe(false);
+    expect(document.documentElement.classList.contains('theme-protocol-light')).toBe(true);
 
     wrapper.unmount();
   });

@@ -2,7 +2,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
-export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark' | 'protocol-light' | 'noir-dark';
+export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark' | 'protocol-light' | 'noir-dark' | 'noir-light';
 
 export type ThemeScheme = 'default' | 'ocean' | 'nord' | 'protocol' | 'noir';
 
@@ -29,7 +29,8 @@ export const availableThemes: ThemeOption[] = [
   { id: 'nord-dark', scheme: 'nord', mode: 'dark', label: 'Nord Dark', isDark: true },
   { id: 'protocol-dark', scheme: 'protocol', mode: 'dark', label: 'Protocol Dark', isDark: true },
   { id: 'protocol-light', scheme: 'protocol', mode: 'light', label: 'Protocol Light', isDark: false },
-  { id: 'noir-dark', scheme: 'noir', mode: 'dark', label: 'Noir', isDark: true },
+  { id: 'noir-dark', scheme: 'noir', mode: 'dark', label: 'Noir Dark', isDark: true },
+  { id: 'noir-light', scheme: 'noir', mode: 'light', label: 'Noir Light', isDark: false },
 ];
 
 export const themeGroups: ThemeGroup[] = [
@@ -77,10 +78,14 @@ function applyThemeClass(theme: ThemeName): void {
   const root = document.documentElement;
   // Remove all theme classes
   availableThemes.forEach(t => root.classList.remove(`theme-${ t.id }`));
+  root.classList.remove('theme-noir');
   // Add current theme class
   root.classList.add(`theme-${ theme }`);
   // Toggle Tailwind dark class for backward compatibility
   const themeInfo = availableThemes.find(t => t.id === theme);
+  if (themeInfo?.scheme === 'noir') {
+    root.classList.add('theme-noir');
+  }
   if (themeInfo?.isDark) {
     root.classList.add('dark');
   } else {
