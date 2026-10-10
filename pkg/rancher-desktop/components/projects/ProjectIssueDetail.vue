@@ -415,4 +415,46 @@ a { display: inline-block; margin-top: 14px; color: var(--pacc); font-size: 12px
 .gate-footnote { padding-top: 12px; border-top: 1px solid var(--pborder); }
 .issue-state { display: grid; place-content: center; min-height: 60vh; gap: 8px; text-align: center; }
 @media (max-width: 960px) { .issue-layout { grid-template-columns: 1fr; padding: 24px; } }
+
+:global(.theme-noir-dark) .issue-detail {
+  inset: 0 0 0 auto;
+  width: min(1240px, calc(100% - 70px));
+  border-left: 1px solid rgba(168,192,220,.10);
+  background: rgba(7,13,26,.96);
+  box-shadow: -36px 0 100px rgba(0,0,0,.62),-1px 0 0 rgba(106,176,204,.08);
+  backdrop-filter: blur(26px) saturate(120%);
+  animation: noir-issue-drawer-in .58s var(--noir-spring) both;
+}
+:global(.theme-noir-dark) .issue-topbar { min-height: 64px; border-color: rgba(168,192,220,.08); background: rgba(3,6,12,.72); }
+:global(.theme-noir-dark) .issue-topbar button,
+:global(.theme-noir-dark) .issue-detail button { border-color: rgba(168,192,220,.1); border-radius: 999px; transition: transform .45s var(--noir-spring),background .16s ease,border-color .16s ease,box-shadow .16s ease; }
+:global(.theme-noir-dark) .issue-detail button:hover:not(:disabled) { border-color: rgba(106,176,204,.35); background: rgba(80,150,179,.1); transform: translateY(-1px); }
+:global(.theme-noir-dark) .issue-id,
+:global(.theme-noir-dark) .eyebrow { color: #6ab0cc; }
+:global(.theme-noir-dark) .issue-layout { gap: 24px; padding: 34px; }
+:global(.theme-noir-dark) h1 { color: #f3f5f8; font-weight: 600; letter-spacing: -.025em; }
+:global(.theme-noir-dark) h2 { color: #dee4ec; }
+:global(.theme-noir-dark) .meta span,
+:global(.theme-noir-dark) .immutable,
+:global(.theme-noir-dark) .readiness { border-color: rgba(168,192,220,.1); background: rgba(168,192,220,.035); }
+:global(.theme-noir-dark) .panel {
+  border-color: rgba(168,192,220,.08);
+  border-radius: 18px;
+  background: rgba(168,192,220,.035);
+  box-shadow: inset 0 1px 0 rgba(168,192,220,.025);
+}
+:global(.theme-noir-dark) .review-brief { background: linear-gradient(160deg,rgba(80,150,179,.075),rgba(168,192,220,.02)); }
+:global(.theme-noir-dark) .comment {
+  margin-top: 10px;
+  padding: 14px 15px;
+  border: 1px solid rgba(168,192,220,.07);
+  border-radius: 14px;
+  background: rgba(3,6,12,.42);
+}
+:global(.theme-noir-dark) textarea { min-height: 42px; border-color: rgba(168,192,220,.1); border-radius: 12px; background: rgba(3,6,12,.7); }
+:global(.theme-noir-dark) .pull-card { padding: 16px; border: 1px solid rgba(168,192,220,.08); border-radius: 15px; background: rgba(3,6,12,.45); }
+:global(.theme-noir-dark) .gate { border-color: rgba(227,179,65,.28); background: rgba(227,179,65,.045); }
+@keyframes noir-issue-drawer-in { from { opacity: 0; transform: translateX(52px); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+@media (max-width: 960px) { :global(.theme-noir-dark) .issue-detail { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { :global(.theme-noir-dark) .issue-detail, :global(.theme-noir-dark) .issue-detail button { animation: none; transition: none; } }
 </style>

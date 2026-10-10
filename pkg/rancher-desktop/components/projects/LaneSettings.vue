@@ -702,4 +702,72 @@ defineExpose({ openEdit, openAssignment });
 .ls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.ls-modal fieldset { margin-top: 14px; border: 1px solid var(--pborder); border-radius: 8px; }.ls-modal fieldset label { display: flex; align-items: center; }
 .ls-provenance { margin-top: 15px; padding: 12px; background: var(--psurface2); border-radius: 8px; font-size: 12px; }.ls-provenance ol { padding-left: 20px; color: var(--ptext3); }.ls-provenance li.effective { color: var(--pacc); font-weight: 600; }
 .ls-footer { display: flex; gap: 8px; margin-top: 20px; }.ls-footer button { border: 1px solid var(--pborder); border-radius: 7px; }
+
+:global(.theme-noir-dark) .lane-settings { max-width: 1240px; }
+:global(.theme-noir-dark) .ls-head { margin-bottom: 24px; }
+:global(.theme-noir-dark) .ls-head h2,
+:global(.theme-noir-dark) .ls-modal h3 { color: #f3f5f8; font-size: 28px; font-weight: 600; letter-spacing: -.015em; }
+:global(.theme-noir-dark) .ls-head p { color: #a9b3c1; font-size: 13px; }
+:global(.theme-noir-dark) .ls-scope {
+  gap: 3px;
+  padding: 3px;
+  border-color: rgba(168,192,220,.08);
+  border-radius: 18px;
+  background: rgba(3,6,12,.62);
+}
+:global(.theme-noir-dark) .ls-scope button { border-radius: 15px; font: 10px var(--pmono); }
+:global(.theme-noir-dark) .ls-scope button.on {
+  background: linear-gradient(180deg,rgba(80,150,179,.28),rgba(80,150,179,.11));
+  box-shadow: inset 0 0 0 .5px rgba(106,176,204,.45),0 0 16px rgba(80,150,179,.14);
+}
+:global(.theme-noir-dark) .ls-list { gap: 9px; }
+:global(.theme-noir-dark) .ls-row {
+  min-height: 76px;
+  border-color: rgba(168,192,220,.08);
+  border-radius: 16px;
+  background: rgba(168,192,220,.035);
+  box-shadow: inset 0 1px 0 rgba(168,192,220,.025);
+  transition: transform .5s var(--noir-spring),border-color .16s ease,background .16s ease,box-shadow .16s ease;
+}
+:global(.theme-noir-dark) .ls-row:hover {
+  border-color: rgba(106,176,204,.25);
+  background: rgba(80,150,179,.05);
+  box-shadow: 0 14px 34px rgba(0,0,0,.22);
+  transform: translateY(-2px);
+}
+:global(.theme-noir-dark) .ls-color { width: 4px; height: 46px; box-shadow: 0 0 10px currentColor; }
+:global(.theme-noir-dark) .ls-title { color: #dee4ec; }
+:global(.theme-noir-dark) .ls-badges span,
+:global(.theme-noir-dark) .ls-badge { border-color: rgba(168,192,220,.08); border-radius: 999px; background: rgba(3,6,12,.5); }
+:global(.theme-noir-dark) .ls-actions button,
+:global(.theme-noir-dark) .ls-add,
+:global(.theme-noir-dark) .ls-footer button {
+  border-color: rgba(168,192,220,.1);
+  border-radius: 999px;
+  transition: transform .45s var(--noir-spring),color .16s ease,border-color .16s ease,background .16s ease;
+}
+:global(.theme-noir-dark) .ls-actions button:hover:not(:disabled),
+:global(.theme-noir-dark) .ls-add:hover:not(:disabled),
+:global(.theme-noir-dark) .ls-footer button:hover:not(:disabled) { color: #f3f5f8; border-color: rgba(106,176,204,.35); background: rgba(80,150,179,.08); transform: translateY(-1px); }
+:global(.theme-noir-dark) .ls-scrim { background: rgba(1,3,10,.72); backdrop-filter: blur(6px); }
+:global(.theme-noir-dark) .ls-modal {
+  border-color: rgba(168,192,220,.1);
+  border-radius: 20px;
+  background: rgba(7,13,26,.96);
+  box-shadow: 0 32px 90px rgba(0,0,0,.62),inset 0 1px 0 rgba(168,192,220,.04);
+  backdrop-filter: blur(24px);
+  animation: noir-lane-modal-in .48s var(--noir-spring) both;
+}
+:global(.theme-noir-dark) .ls-modal label { color: #7a8291; font: 10px var(--pmono); letter-spacing: .08em; text-transform: uppercase; }
+:global(.theme-noir-dark) .ls-modal input:not([type=radio]):not([type=checkbox]),
+:global(.theme-noir-dark) .ls-modal textarea,
+:global(.theme-noir-dark) .ls-modal select { min-height: 40px; border-color: rgba(168,192,220,.1); border-radius: 12px; background: rgba(3,6,12,.7); }
+@keyframes noir-lane-modal-in { from { opacity: 0; transform: translateY(10px) scale(.985); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .ls-row,
+  :global(.theme-noir-dark) .ls-actions button,
+  :global(.theme-noir-dark) .ls-add,
+  :global(.theme-noir-dark) .ls-footer button,
+  :global(.theme-noir-dark) .ls-modal { animation: none; transition: none; }
+}
 </style>
