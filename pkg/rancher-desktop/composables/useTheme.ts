@@ -66,8 +66,11 @@ function migrateLegacyTheme(value: unknown): ThemeName | null {
 const THEME_SETTING_KEY = 'theme';
 const THEME_STORAGE_KEY = 'agentTheme';
 
+/** Theme used when nothing has been saved yet (fresh installs). */
+export const DEFAULT_THEME: ThemeName = 'noir-dark';
+
 // Shared reactive state across all composable instances in the same window
-const currentTheme = ref<ThemeName>('protocol-dark');
+const currentTheme = ref<ThemeName>(DEFAULT_THEME);
 let initialized = false;
 
 function applyThemeClass(theme: ThemeName): void {
@@ -110,7 +113,7 @@ async function loadThemeFromSettings(): Promise<ThemeName> {
   }
 
   // Final fallback
-  return 'protocol-dark';
+  return DEFAULT_THEME;
 }
 
 async function persistTheme(theme: ThemeName): Promise<void> {

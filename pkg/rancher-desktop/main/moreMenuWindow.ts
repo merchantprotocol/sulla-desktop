@@ -51,7 +51,7 @@ function onShow(
   _event: Electron.IpcMainEvent,
   payload: { screenX: number; screenY: number; buttonWidth?: number; buttonHeight?: number; theme?: string },
 ): void {
-  const { screenX, screenY, theme = 'protocol-dark' } = payload;
+  const { screenX, screenY, theme = 'noir-dark' } = payload;
   const isDark = !theme.includes('light');
 
   console.log('[MoreMenu] onShow', { screenX, screenY, existingWindow: !!win, theme });

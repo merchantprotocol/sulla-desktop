@@ -28,7 +28,7 @@ let win: BrowserWindow | null = null;
 /** Check if current theme is light mode */
 async function isLightTheme(): Promise<boolean> {
   try {
-    const theme = await SullaSettingsModel.get('theme', 'protocol-dark') as string;
+    const theme = await SullaSettingsModel.get('theme', 'noir-dark') as string;
     return theme.includes('-light');
   } catch {
     return false;

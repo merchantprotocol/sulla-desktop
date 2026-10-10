@@ -9,7 +9,7 @@ jest.unstable_mockModule('@pkg/agent/database/models/SullaSettingsModel', () => 
   },
 }));
 
-const { availableThemes, themeGroups, useTheme } = await import('../useTheme');
+const { availableThemes, DEFAULT_THEME, themeGroups, useTheme } = await import('../useTheme');
 
 describe('useTheme', () => {
   beforeEach(() => {
@@ -19,6 +19,28 @@ describe('useTheme', () => {
 
   afterEach(() => {
     document.documentElement.className = '';
+  });
+
+  it('falls back to Noir when no theme has been saved', async() => {
+    const harness = defineComponent({
+      setup() {
+        useTheme();
+
+        return () => h('div');
+      },
+    });
+    const wrapper = mount(harness);
+
+    for (let i = 0; i < 5; i++) {
+      await Promise.resolve();
+    }
+    await nextTick();
+
+    expect(DEFAULT_THEME).toBe('noir-dark');
+    expect(document.documentElement.classList.contains('theme-noir-dark')).toBe(true);
+    expect(document.documentElement.classList.contains('theme-protocol-dark')).toBe(false);
+
+    wrapper.unmount();
   });
 
   it('selects Noir and applies its dark root classes', async() => {

@@ -157,8 +157,8 @@ function applyThemeToPage(theme: string): void {
 }
 
 // Apply on load — async IPC call, resolves before first meaningful paint
-ipcRenderer.invoke('sulla-settings-get', 'theme', 'protocol-dark')
-  .then((theme: unknown) => applyThemeToPage(String(theme || 'protocol-dark')))
+ipcRenderer.invoke('sulla-settings-get', 'theme', 'noir-dark')
+  .then((theme: unknown) => applyThemeToPage(String(theme || 'noir-dark')))
   .catch(() => IS_FILE_URL && document.documentElement.classList.add('dark'));
 
 // Listen for live theme changes pushed from the main process

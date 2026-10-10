@@ -13,7 +13,7 @@ export default defineComponent({
   name: 'preferences-body-appearance',
   data() {
     return {
-      selectedTheme: localStorage.getItem(THEME_STORAGE_KEY) || 'protocol-dark',
+      selectedTheme: localStorage.getItem(THEME_STORAGE_KEY) || 'noir-dark',
       themeGroups,
     };
   },
