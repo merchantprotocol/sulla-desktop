@@ -146,7 +146,7 @@ export default {
   display: none;
 }
 
-:global(.theme-noir) .general-noir-intro {
+.theme-noir .general-noir-intro {
   display: block;
   margin-bottom: 10px;
 
@@ -175,15 +175,15 @@ export default {
   }
 }
 
-:global(.theme-noir) .general > div:not(.general-noir-intro),
-:global(.theme-noir) .general > .network-status {
+.theme-noir .general > div:not(.general-noir-intro),
+.theme-noir .general > .network-status {
   padding: 18px;
   border-radius: 18px;
   background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
   box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
 
-:global(.theme-noir) .general > hr {
+.theme-noir .general > hr {
   display: none;
 }
 </style>

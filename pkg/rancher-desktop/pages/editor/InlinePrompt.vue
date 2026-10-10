@@ -167,12 +167,12 @@ defineExpose({ show });
 </style>
 
 <style scoped>
-:global(.theme-noir) .inline-prompt-overlay {
+.theme-noir .inline-prompt-overlay {
   background: color-mix(in srgb, var(--nx-paper) 70%, transparent);
   backdrop-filter: blur(8px);
 }
 
-:global(.theme-noir) .inline-prompt-dialog {
+.theme-noir .inline-prompt-dialog {
   width: 360px;
   padding: 18px;
   gap: 14px;
@@ -183,13 +183,13 @@ defineExpose({ show });
   animation: noir-prompt-in 0.42s cubic-bezier(.22, 1, .36, 1) both;
 }
 
-:global(.theme-noir) .inline-prompt-title {
+.theme-noir .inline-prompt-title {
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 18px;
 }
 
-:global(.theme-noir) .inline-prompt-input {
+.theme-noir .inline-prompt-input {
   height: 40px;
   color: var(--nx-read-2);
   background: color-mix(in srgb, var(--nx-paper) 72%, transparent);
@@ -198,12 +198,12 @@ defineExpose({ show });
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
-:global(.theme-noir) .inline-prompt-input:focus {
+.theme-noir .inline-prompt-input:focus {
   border-color: color-mix(in srgb, var(--nx-accent-2) 55%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 12%, transparent);
 }
 
-:global(.theme-noir) .inline-prompt-btn {
+.theme-noir .inline-prompt-btn {
   min-width: 74px;
   height: 32px;
   padding: 0 14px;
@@ -211,19 +211,19 @@ defineExpose({ show });
   transition: transform 0.42s cubic-bezier(.22, 1, .36, 1);
 }
 
-:global(.theme-noir) .inline-prompt-btn.cancel {
+.theme-noir .inline-prompt-btn.cancel {
   color: var(--nx-read-3);
   background: color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent);
   border: 1px solid color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
 }
 
-:global(.theme-noir) .inline-prompt-btn.confirm {
+.theme-noir .inline-prompt-btn.confirm {
   color: var(--text-on-accent);
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   box-shadow: 0 0 16px color-mix(in srgb, var(--nx-accent) 35%, transparent);
 }
 
-:global(.theme-noir) .inline-prompt-btn:active { transform: scale(0.94); }
+.theme-noir .inline-prompt-btn:active { transform: scale(0.94); }
 
 @keyframes noir-prompt-in {
   from { opacity: 0; transform: translateY(8px); filter: blur(8px); }
@@ -231,7 +231,7 @@ defineExpose({ show });
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .inline-prompt-dialog { animation: none; }
-  :global(.theme-noir) .inline-prompt-btn { transition-duration: 0.01ms; }
+  .theme-noir .inline-prompt-dialog { animation: none; }
+  .theme-noir .inline-prompt-btn { transition-duration: 0.01ms; }
 }
 </style>

@@ -292,7 +292,7 @@ export default defineComponent({
 </style>
 
 <style scoped>
-:global(.theme-noir) .file-tree-row {
+.theme-noir .file-tree-row {
   position: relative;
   height: 30px;
   margin-bottom: 2px;
@@ -301,22 +301,22 @@ export default defineComponent({
   transition: color 0.14s, background 0.14s, transform 0.4s cubic-bezier(.22, 1, .36, 1);
 }
 
-:global(.theme-noir) .file-tree-row:hover {
+.theme-noir .file-tree-row:hover {
   color: var(--nx-read-2);
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
   transform: translateX(2px);
 }
 
-:global(.theme-noir) .file-tree-row.is-selected,
-:global(.theme-noir) .file-tree-row.is-highlighted {
+.theme-noir .file-tree-row.is-selected,
+.theme-noir .file-tree-row.is-highlighted {
   color: var(--nx-read-1);
   background: linear-gradient(90deg, color-mix(in srgb, var(--nx-accent) 22%, transparent), color-mix(in srgb, var(--nx-accent) 8%, transparent));
   border-left: 0;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 24%, transparent);
 }
 
-:global(.theme-noir) .file-tree-row.is-selected::before,
-:global(.theme-noir) .file-tree-row.is-highlighted::before {
+.theme-noir .file-tree-row.is-selected::before,
+.theme-noir .file-tree-row.is-highlighted::before {
   content: '';
   position: absolute;
   left: -6px;
@@ -328,18 +328,18 @@ export default defineComponent({
   box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent-2) 80%, transparent);
 }
 
-:global(.theme-noir) .node-label {
+.theme-noir .node-label {
   color: inherit;
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 11.5px;
   line-height: 30px;
 }
 
-:global(.theme-noir) .node-icon { color: var(--text-info); }
-:global(.theme-noir) .icon-file,
-:global(.theme-noir) .chevron { color: var(--nx-read-4); }
+.theme-noir .node-icon { color: var(--text-info); }
+.theme-noir .icon-file,
+.theme-noir .chevron { color: var(--nx-read-4); }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .file-tree-row { transition-duration: 0.01ms; }
+  .theme-noir .file-tree-row { transition-duration: 0.01ms; }
 }
 </style>

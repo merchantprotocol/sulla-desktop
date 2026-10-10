@@ -1720,7 +1720,7 @@ function handleTabContextMenuAction(
 
 /* Arc-style titlebar tabs. Kept under .app-titlebar to avoid the theme files'
    global .tab selectors. */
-:global(.theme-noir) .app-titlebar .tab-scroll-wrapper {
+.theme-noir .app-titlebar .tab-scroll-wrapper {
   --tab-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 
   align-items: center;
@@ -1732,7 +1732,7 @@ function handleTabContextMenuAction(
   backdrop-filter: blur(10px);
 }
 
-:global(.theme-noir) .app-titlebar .tab-scroll-container {
+.theme-noir .app-titlebar .tab-scroll-container {
   align-items: center;
   gap: 4px;
   height: 40px;
@@ -1741,7 +1741,7 @@ function handleTabContextMenuAction(
   scroll-behavior: smooth;
 }
 
-:global(.theme-noir) .app-titlebar .tab-active-indicator {
+.theme-noir .app-titlebar .tab-active-indicator {
   position: absolute;
   display: block;
   top: 1px;
@@ -1755,16 +1755,16 @@ function handleTabContextMenuAction(
   transition: transform .58s var(--tab-spring), width .58s var(--tab-spring), opacity .2s;
 }
 
-:global(.theme-noir-light) .app-titlebar .tab-scroll-wrapper {
+.theme-noir-light .app-titlebar .tab-scroll-wrapper {
   background: var(--nx-glass);
 }
 
-:global(.theme-noir-light) .app-titlebar .tab-active-indicator {
+.theme-noir-light .app-titlebar .tab-active-indicator {
   background: var(--nx-indicator-bg);
   box-shadow: inset 0 0 0 1px var(--nx-indicator-edge), 0 4px 14px color-mix(in srgb, var(--nx-accent-2) 18%, transparent);
 }
 
-:global(.theme-noir) .app-titlebar .tab-active-indicator::after {
+.theme-noir .app-titlebar .tab-active-indicator::after {
   content: '';
   position: absolute;
   left: 50%;
@@ -1777,7 +1777,7 @@ function handleTabContextMenuAction(
   box-shadow: 0 0 10px var(--nx-accent-2);
 }
 
-:global(.theme-noir) .app-titlebar .tab-item {
+.theme-noir .app-titlebar .tab-item {
   width: 136px;
   min-width: 112px;
   max-width: 176px;
@@ -1795,18 +1795,18 @@ function handleTabContextMenuAction(
   transition: color .16s cubic-bezier(.22, 1, .36, 1), background .16s cubic-bezier(.22, 1, .36, 1), transform .5s var(--tab-spring), width .58s var(--tab-spring), min-width .58s var(--tab-spring), opacity .3s, padding .58s var(--tab-spring);
 }
 
-:global(.theme-noir) .app-titlebar .tab-item:hover {
+.theme-noir .app-titlebar .tab-item:hover {
   color: var(--read-2, var(--nx-read-2));
   background: color-mix(in srgb, var(--nx-accent) 9%, transparent);
 }
 
-:global(.theme-noir) .app-titlebar .tab-item:active {
+.theme-noir .app-titlebar .tab-item:active {
   transform: scale(.95);
   transition: transform .08s;
 }
 
-:global(.theme-noir) .app-titlebar .tab-active,
-:global(.theme-noir) .app-titlebar .tab-active-native {
+.theme-noir .app-titlebar .tab-active,
+.theme-noir .app-titlebar .tab-active-native {
   color: var(--read-1, var(--nx-read-1));
   background: transparent;
   border: 0;
@@ -1814,17 +1814,17 @@ function handleTabContextMenuAction(
   font-weight: 500;
 }
 
-:global(.theme-noir) .app-titlebar .tab-accent-bar {
+.theme-noir .app-titlebar .tab-accent-bar {
   display: none;
 }
 
-:global(.theme-noir) .app-titlebar .tab-active::before,
-:global(.theme-noir) .app-titlebar .tab-active::after,
-:global(.theme-noir) .app-titlebar .tab-inactive::before {
+.theme-noir .app-titlebar .tab-active::before,
+.theme-noir .app-titlebar .tab-active::after,
+.theme-noir .app-titlebar .tab-inactive::before {
   display: none;
 }
 
-:global(.theme-noir) .app-titlebar .tab-pinned {
+.theme-noir .app-titlebar .tab-pinned {
   width: 36px;
   min-width: 36px;
   max-width: 36px;
@@ -1834,15 +1834,15 @@ function handleTabContextMenuAction(
   padding: 0;
 }
 
-:global(.theme-noir) .app-titlebar .tab-pinned .tab-label {
+.theme-noir .app-titlebar .tab-pinned .tab-label {
   display: none;
 }
 
-:global(.theme-noir) .app-titlebar .tab-pinned-boundary {
+.theme-noir .app-titlebar .tab-pinned-boundary {
   margin-left: 18px;
 }
 
-:global(.theme-noir) .app-titlebar .tab-pinned-boundary::before {
+.theme-noir .app-titlebar .tab-pinned-boundary::before {
   content: '';
   display: block;
   position: absolute;
@@ -1854,30 +1854,30 @@ function handleTabContextMenuAction(
   pointer-events: none;
 }
 
-:global(.theme-noir) .app-titlebar .tab-preview {
+.theme-noir .app-titlebar .tab-preview {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
 }
 
-:global(.theme-noir) .app-titlebar .tab-icon {
+.theme-noir .app-titlebar .tab-icon {
   position: relative;
   width: 16px;
   height: 16px;
   opacity: .85;
 }
 
-:global(.theme-noir) .app-titlebar .tab-favicon-img,
-:global(.theme-noir) .app-titlebar .tab-favicon-svg {
+.theme-noir .app-titlebar .tab-favicon-img,
+.theme-noir .app-titlebar .tab-favicon-svg {
   width: 16px;
   height: 16px;
 }
 
-:global(.theme-noir) .app-titlebar .tab-active .tab-icon,
-:global(.theme-noir) .app-titlebar .tab-active-native .tab-icon {
+.theme-noir .app-titlebar .tab-active .tab-icon,
+.theme-noir .app-titlebar .tab-active-native .tab-icon {
   color: var(--read-1, var(--nx-read-1));
   filter: drop-shadow(0 0 6px color-mix(in srgb, var(--nx-accent-2) 70%, transparent));
 }
 
-:global(.theme-noir) .app-titlebar .tab-working .tab-icon::after {
+.theme-noir .app-titlebar .tab-working .tab-icon::after {
   content: '';
   position: absolute;
   inset: -4px;
@@ -1887,7 +1887,7 @@ function handleTabContextMenuAction(
   animation: tab-working-spin 1s linear infinite;
 }
 
-:global(.theme-noir) .app-titlebar .tab-working-streak {
+.theme-noir .app-titlebar .tab-working-streak {
   position: absolute;
   display: block;
   left: 14px;
@@ -1899,7 +1899,7 @@ function handleTabContextMenuAction(
   pointer-events: none;
 }
 
-:global(.theme-noir) .app-titlebar .tab-working-streak::after {
+.theme-noir .app-titlebar .tab-working-streak::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -1917,7 +1917,7 @@ function handleTabContextMenuAction(
   to { transform: translateX(260%); }
 }
 
-:global(.theme-noir) .app-titlebar .tab-close {
+.theme-noir .app-titlebar .tab-close {
   width: 18px;
   height: 18px;
   margin-left: auto;
@@ -1928,17 +1928,17 @@ function handleTabContextMenuAction(
   transition: opacity .16s, transform .4s var(--tab-spring), background .16s, color .16s;
 }
 
-:global(.theme-noir) .app-titlebar .tab-item:hover .tab-close {
+.theme-noir .app-titlebar .tab-item:hover .tab-close {
   opacity: 1;
   transform: scale(1);
 }
 
-:global(.theme-noir) .app-titlebar .tab-close:hover {
+.theme-noir .app-titlebar .tab-close:hover {
   color: var(--read-1, var(--nx-read-1));
   background: color-mix(in srgb, var(--nx-hair-strong) 87.5%, transparent);
 }
 
-:global(.theme-noir) .app-titlebar .tab-new {
+.theme-noir .app-titlebar .tab-new {
   width: 34px;
   height: 34px;
   padding: 0;
@@ -1948,35 +1948,35 @@ function handleTabContextMenuAction(
   transition: background .16s, color .16s, transform .5s var(--tab-spring);
 }
 
-:global(.theme-noir) .app-titlebar .tab-new svg {
+.theme-noir .app-titlebar .tab-new svg {
   transition: transform .5s var(--tab-spring);
 }
 
-:global(.theme-noir) .app-titlebar .tab-new:hover {
+.theme-noir .app-titlebar .tab-new:hover {
   color: var(--read-1, var(--nx-read-1));
   background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
 }
 
-:global(.theme-noir) .app-titlebar .tab-new:hover svg {
+.theme-noir .app-titlebar .tab-new:hover svg {
   transform: rotate(90deg);
 }
 
-:global(.theme-noir) .app-titlebar .tab-new:active {
+.theme-noir .app-titlebar .tab-new:active {
   transform: scale(.88);
 }
 
-:global(.theme-noir) .app-titlebar .tab-scroll-chevron {
+.theme-noir .app-titlebar .tab-scroll-chevron {
   width: 24px;
   color: var(--read-3, var(--nx-read-3));
   border-radius: 12px;
 }
 
-:global(.theme-noir) .app-titlebar .tab-scroll-chevron:hover {
+.theme-noir .app-titlebar .tab-scroll-chevron:hover {
   color: var(--read-1, var(--nx-read-1));
   background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir) .app-titlebar .tab-peek {
+.theme-noir .app-titlebar .tab-peek {
   position: absolute;
   display: block;
   top: 46px;
@@ -1992,23 +1992,23 @@ function handleTabContextMenuAction(
   animation: tab-peek-in .4s var(--tab-spring) both;
 }
 
-:global(.theme-noir-light) .app-titlebar .tab-peek {
+.theme-noir-light .app-titlebar .tab-peek {
   background: color-mix(in srgb, var(--nx-surface) 97%, transparent);
   box-shadow: var(--nx-shadow-lg);
 }
 
-:global(.theme-noir) .app-titlebar .tab-peek-title,
-:global(.theme-noir) .app-titlebar .tab-peek-status {
+.theme-noir .app-titlebar .tab-peek-title,
+.theme-noir .app-titlebar .tab-peek-status {
   display: block;
 }
 
-:global(.theme-noir) .app-titlebar .tab-peek-title {
+.theme-noir .app-titlebar .tab-peek-title {
   margin-bottom: 4px;
   font-size: 12.5px;
   font-weight: 600;
 }
 
-:global(.theme-noir) .app-titlebar .tab-peek-status {
+.theme-noir .app-titlebar .tab-peek-status {
   overflow: hidden;
   color: var(--read-4, var(--nx-read-4));
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
@@ -2017,7 +2017,7 @@ function handleTabContextMenuAction(
   white-space: nowrap;
 }
 
-:global(.theme-noir) .app-titlebar .tab-tooltip {
+.theme-noir .app-titlebar .tab-tooltip {
   width: auto;
   max-width: 240px;
   padding: 6px 10px;
@@ -2034,18 +2034,18 @@ function handleTabContextMenuAction(
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .app-titlebar .tab-active-indicator,
-  :global(.theme-noir) .app-titlebar .tab-item,
-  :global(.theme-noir) .app-titlebar .tab-close,
-  :global(.theme-noir) .app-titlebar .tab-new,
-  :global(.theme-noir) .app-titlebar .tab-new svg,
-  :global(.theme-noir) .app-titlebar .tab-peek {
+  .theme-noir .app-titlebar .tab-active-indicator,
+  .theme-noir .app-titlebar .tab-item,
+  .theme-noir .app-titlebar .tab-close,
+  .theme-noir .app-titlebar .tab-new,
+  .theme-noir .app-titlebar .tab-new svg,
+  .theme-noir .app-titlebar .tab-peek {
     animation: none;
     transition-duration: 0s;
   }
 
-  :global(.theme-noir) .app-titlebar .tab-working .tab-icon::after,
-  :global(.theme-noir) .app-titlebar .tab-working-streak::after {
+  .theme-noir .app-titlebar .tab-working .tab-icon::after,
+  .theme-noir .app-titlebar .tab-working-streak::after {
     animation: none;
   }
 }

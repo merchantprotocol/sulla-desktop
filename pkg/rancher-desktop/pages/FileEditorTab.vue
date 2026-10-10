@@ -266,12 +266,12 @@ export default defineComponent({
 </style>
 
 <style scoped>
-:global(.theme-noir) .file-editor-root {
+.theme-noir .file-editor-root {
   background: var(--nx-paper);
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .file-editor-bar {
+.theme-noir .file-editor-bar {
   height: 44px;
   padding: 0 14px;
   gap: 9px;
@@ -281,22 +281,22 @@ export default defineComponent({
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir) .file-editor-name {
+.theme-noir .file-editor-name {
   color: var(--nx-read-1);
   font-weight: 600;
 }
 
-:global(.theme-noir) .dirty-dot {
+.theme-noir .dirty-dot {
   color: var(--nx-warning);
   text-shadow: 0 0 8px color-mix(in srgb, var(--nx-warning) 70%, transparent);
 }
 
-:global(.theme-noir) .file-editor-path {
+.theme-noir .file-editor-path {
   color: var(--nx-read-4);
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
-:global(.theme-noir) .save-btn {
+.theme-noir .save-btn {
   height: 30px;
   padding: 0 14px;
   color: var(--nx-read-2);
@@ -306,20 +306,20 @@ export default defineComponent({
   transition: transform 0.45s cubic-bezier(.22, 1, .36, 1), background 0.16s, border-color 0.16s;
 }
 
-:global(.theme-noir) .save-btn:hover:not(:disabled) {
+.theme-noir .save-btn:hover:not(:disabled) {
   color: var(--nx-read-1);
   background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 32%, transparent), color-mix(in srgb, var(--nx-accent) 16%, transparent));
   border-color: color-mix(in srgb, var(--nx-accent-2) 50%, transparent);
   transform: translateY(-1px);
 }
 
-:global(.theme-noir) .file-editor-error {
+.theme-noir .file-editor-error {
   color: var(--nx-danger);
   background: color-mix(in srgb, var(--nx-danger) 6%, transparent);
   border-color: color-mix(in srgb, var(--nx-danger) 22%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .save-btn { transition-duration: 0.01ms; }
+  .theme-noir .save-btn { transition-duration: 0.01ms; }
 }
 </style>

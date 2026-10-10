@@ -90,20 +90,20 @@ const queue = computed(() => controller.queue.value);
 .qitem .inject           { color: var(--text-success, var(--ok)); font-size: 10px; }
 .qitem .inject:hover     { color: var(--text-success, var(--ok)); background: rgba(134, 239, 172, 0.1); }
 .qitem .rm:hover         { color: var(--text-error, var(--err)); background: rgba(252, 165, 165, 0.1); }
-:global(.theme-noir) .queue {
+.theme-noir .queue {
   margin: 10px 0 0; padding: 8px 12px; border: 0; border-radius: 14px;
   color: var(--nx-read-2); background: color-mix(in srgb, var(--nx-hair-strong) 25%, transparent);
   box-shadow: inset 0 0 0 1px var(--nx-hair);
   animation: noir-queue-in 0.42s cubic-bezier(.22, 1, .36, 1) both;
 }
-:global(.theme-noir) .qhead {
+.theme-noir .qhead {
   margin-bottom: 4px; color: var(--nx-read-4); font-size: 10px; letter-spacing: 0.12em;
 }
-:global(.theme-noir) .qhead .count { color: var(--nx-read-3); background: var(--nx-hair); }
-:global(.theme-noir) .qitem {
+.theme-noir .qhead .count { color: var(--nx-read-3); background: var(--nx-hair); }
+.theme-noir .qitem {
   padding: 5px 0; border-color: color-mix(in srgb, var(--nx-hair-strong) 43.75%, transparent);
   color: var(--nx-read-2); font-family: var(--font-body); font-size: 12.5px; font-style: normal;
 }
 @keyframes noir-queue-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { :global(.theme-noir) .queue { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .theme-noir .queue { animation: none; } }
 </style>

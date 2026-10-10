@@ -565,12 +565,12 @@ input:hover, select:hover {
   color: var(--text-muted, #64748b);
 }
 
-:global(.theme-noir) .frw {
+.theme-noir .frw {
   --frw-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .frw-eyebrow {
+.theme-noir .frw-eyebrow {
   margin-top: 5px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
@@ -579,7 +579,7 @@ input:hover, select:hover {
   color: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .frw-title {
+.theme-noir .frw-title {
   max-width: 650px;
   margin: 9px 0 12px;
   font-family: "Playfair Display", Georgia, serif;
@@ -592,19 +592,19 @@ input:hover, select:hover {
   text-shadow: 0 0 34px color-mix(in srgb, var(--nx-accent) 18%, transparent);
 }
 
-:global(.theme-noir) .frw-lead {
+.theme-noir .frw-lead {
   max-width: 680px;
   font-size: 15px;
   line-height: 1.65;
   color: var(--nx-read-3);
 }
 
-:global(.theme-noir) .frw-how {
+.theme-noir .frw-how {
   gap: 10px;
   margin: 26px 0 18px;
 }
 
-:global(.theme-noir) .frw-how > div {
+.theme-noir .frw-how > div {
   min-height: 142px;
   gap: 6px;
   padding: 16px;
@@ -616,19 +616,19 @@ input:hover, select:hover {
   transition: transform .58s var(--frw-spring), background .22s ease, box-shadow .22s ease;
 }
 
-:global(.theme-noir) .frw-how > div:hover {
+.theme-noir .frw-how > div:hover {
   transform: translateY(-3px);
   background: color-mix(in srgb, var(--nx-accent) 7%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 16px 34px rgba(0, 0, 0, .18);
 }
 
-:global(.theme-noir) .frw-how b {
+.theme-noir .frw-how b {
   color: var(--nx-read-1);
   font-size: 14px;
   font-weight: 600;
 }
 
-:global(.theme-noir) .frw-num {
+.theme-noir .frw-num {
   width: 28px;
   height: 28px;
   margin-bottom: 6px;
@@ -641,7 +641,7 @@ input:hover, select:hover {
   box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--nx-accent-2) 45%, transparent), 0 0 16px color-mix(in srgb, var(--nx-accent) 15%, transparent);
 }
 
-:global(.theme-noir) .frw-resources {
+.theme-noir .frw-resources {
   padding: 16px 18px;
   border: 0;
   border-radius: 18px;
@@ -650,12 +650,12 @@ input:hover, select:hover {
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .frw-resources b {
+.theme-noir .frw-resources b {
   color: var(--nx-read-1);
   font-weight: 600;
 }
 
-:global(.theme-noir) .frw-link {
+.theme-noir .frw-link {
   height: 30px;
   padding: 0 13px;
   border-radius: 15px;
@@ -669,9 +669,9 @@ input:hover, select:hover {
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-:global(.theme-noir) .frw-link:active { transform: scale(.94); }
+.theme-noir .frw-link:active { transform: scale(.94); }
 
-:global(.theme-noir) .fr-fieldset {
+.theme-noir .fr-fieldset {
   margin-top: 14px;
   padding: 14px 16px;
   border-color: var(--nx-hair);
@@ -681,27 +681,27 @@ input:hover, select:hover {
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .frw :deep(.vue-slider-rail) {
+.theme-noir .frw :deep(.vue-slider-rail) {
   height: 5px;
   border-radius: 3px;
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .7);
   box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
 
-:global(.theme-noir) .frw :deep(.vue-slider-process) {
+.theme-noir .frw :deep(.vue-slider-process) {
   background: linear-gradient(90deg, var(--nx-accent), var(--nx-accent-2));
   box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent) 45%, transparent);
 }
 
-:global(.theme-noir) .frw :deep(.vue-slider-dot-handle) {
+.theme-noir .frw :deep(.vue-slider-dot-handle) {
   background: var(--nx-read-2);
   box-shadow: inset 0 0 0 2px var(--nx-accent-2), 0 0 14px color-mix(in srgb, var(--nx-accent) 55%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-:global(.theme-noir) .frw :deep(.vue-slider-dot-handle:active) { transform: scale(1.14); }
+.theme-noir .frw :deep(.vue-slider-dot-handle:active) { transform: scale(1.14); }
 
-:global(.theme-noir) .frw input[type="checkbox"] {
+.theme-noir .frw input[type="checkbox"] {
   width: 38px;
   height: 22px;
   flex: none;
@@ -715,7 +715,7 @@ input:hover, select:hover {
   transition: background .25s ease, box-shadow .25s ease;
 }
 
-:global(.theme-noir) .frw input[type="checkbox"]::after {
+.theme-noir .frw input[type="checkbox"]::after {
   content: "";
   display: block;
   width: 16px;
@@ -727,21 +727,21 @@ input:hover, select:hover {
   transition: transform .58s var(--frw-spring), background .2s ease;
 }
 
-:global(.theme-noir) .frw input[type="checkbox"]:checked {
+.theme-noir .frw input[type="checkbox"]:checked {
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 40%, transparent);
 }
 
-:global(.theme-noir) .frw input[type="checkbox"]:checked::after {
+.theme-noir .frw input[type="checkbox"]:checked::after {
   transform: translateX(16px);
   background: #fff;
 }
 
-:global(.theme-noir) .frw-muted { color: var(--nx-read-4); }
+.theme-noir .frw-muted { color: var(--nx-read-4); }
 
-:global(.theme-noir) .frw-actions { margin-top: 22px; }
+.theme-noir .frw-actions { margin-top: 22px; }
 
-:global(.theme-noir) .frw-btn {
+.theme-noir .frw-btn {
   min-height: 42px;
   padding: 0 22px;
   border-radius: 21px;
@@ -753,33 +753,33 @@ input:hover, select:hover {
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-:global(.theme-noir) .frw-btn:hover {
+.theme-noir .frw-btn:hover {
   filter: none;
   box-shadow: inset 0 0 0 .5px rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / .22), 0 0 28px color-mix(in srgb, var(--nx-accent) 48%, transparent);
 }
 
-:global(.theme-noir) .frw-btn:active { transform: scale(.95); }
+.theme-noir .frw-btn:active { transform: scale(.95); }
 
-:global(.theme-noir) .frw-trust {
+.theme-noir .frw-trust {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
   color: var(--nx-read-4);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .frw-how > div,
-  :global(.theme-noir) .frw-link,
-  :global(.theme-noir) .frw input[type="checkbox"]::after,
-  :global(.theme-noir) .frw-btn {
+  .theme-noir .frw-how > div,
+  .theme-noir .frw-link,
+  .theme-noir .frw input[type="checkbox"]::after,
+  .theme-noir .frw-btn {
     transition-duration: .01ms;
   }
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-:global(.theme-noir-light) .frw-how > div:hover {
+.theme-noir-light .frw-how > div:hover {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 16px 34px color-mix(in srgb, var(--nx-ink) 8%, transparent);
 }
-:global(.theme-noir-light) .frw input[type="checkbox"]::after {
+.theme-noir-light .frw input[type="checkbox"]::after {
   box-shadow: 0 2px 6px color-mix(in srgb, var(--nx-ink) 14%, transparent);
 }
 </style>

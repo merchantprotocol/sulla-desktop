@@ -374,7 +374,7 @@ const installButtonLabel = computed(() => {
   cursor: not-allowed;
 }
 
-:global(.theme-noir) .strip {
+.theme-noir .strip {
   display: flex;
   min-height: 310px;
   margin: 0;
@@ -391,17 +391,17 @@ const installButtonLabel = computed(() => {
   transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), border-color 0.2s, box-shadow 0.2s;
 }
 
-:global(.theme-noir) .strip::before {
+.theme-noir .strip::before {
   display: none;
 }
 
-:global(.theme-noir) .strip::after {
+.theme-noir .strip::after {
   left: 20px;
   right: 20px;
   background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--nx-accent-2) 26%, transparent), transparent);
 }
 
-:global(.theme-noir) .strip:hover {
+.theme-noir .strip:hover {
   border-color: color-mix(in srgb, var(--nx-accent-2) 30%, transparent);
   background:
     linear-gradient(155deg, color-mix(in srgb, var(--nx-accent) 14%, transparent), transparent 48%),
@@ -410,7 +410,7 @@ const installButtonLabel = computed(() => {
   box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.035), 0 22px 48px rgba(0, 0, 0, 0.34), 0 0 28px color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir) .icon {
+.theme-noir .icon {
   width: 58px;
   height: 58px;
   border-color: color-mix(in srgb, var(--nx-accent-2) 30%, transparent);
@@ -420,15 +420,15 @@ const installButtonLabel = computed(() => {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 5%, transparent), 0 0 24px color-mix(in srgb, var(--nx-accent) 12%, transparent);
 }
 
-:global(.theme-noir) .icon[class*="kind-"] {
+.theme-noir .icon[class*="kind-"] {
   background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent-2) 34%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
 }
 
-:global(.theme-noir) .body {
+.theme-noir .body {
   flex: 1;
 }
 
-:global(.theme-noir) .title {
+.theme-noir .title {
   margin: 9px 0 7px;
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 24px;
@@ -436,26 +436,26 @@ const installButtonLabel = computed(() => {
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .tagline,
-:global(.theme-noir) .desc {
+.theme-noir .tagline,
+.theme-noir .desc {
   color: var(--nx-read-3);
 }
 
-:global(.theme-noir) .kind-badge,
-:global(.theme-noir) .chip {
+.theme-noir .kind-badge,
+.theme-noir .chip {
   border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
   border-radius: 9px;
   color: rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16));
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.52);
 }
 
-:global(.theme-noir) .kind-badge[class*="kind-"] {
+.theme-noir .kind-badge[class*="kind-"] {
   border-color: color-mix(in srgb, var(--nx-accent-2) 22%, transparent);
   color: var(--nx-accent-2);
   background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir) .metrics {
+.theme-noir .metrics {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: end;
@@ -464,44 +464,44 @@ const installButtonLabel = computed(() => {
   border-top: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 7%, transparent);
 }
 
-:global(.theme-noir) .metric b {
+.theme-noir .metric b {
   font-family: 'Playfair Display', Georgia, serif;
   font-style: normal;
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .author {
+.theme-noir .author {
   justify-self: start;
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .cta {
+.theme-noir .cta {
   display: grid;
   grid-template-columns: 1fr 1fr;
   min-width: 0;
 }
 
-:global(.theme-noir) .cta .btn {
+.theme-noir .cta .btn {
   min-height: 34px;
   border-radius: 17px;
   transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), filter 0.2s;
 }
 
-:global(.theme-noir) .cta .btn:active {
+.theme-noir .cta .btn:active {
   transform: scale(0.95);
 }
 
-:global(.theme-noir) .cta .btn.primary {
+.theme-noir .cta .btn.primary {
   border-color: color-mix(in srgb, var(--nx-accent-2) 45%, transparent);
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 24%, transparent);
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-:global(.theme-noir-light) .strip {
+.theme-noir-light .strip {
   box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025), 0 12px 34px color-mix(in srgb, var(--nx-ink) 8%, transparent);
 }
-:global(.theme-noir-light) .strip:hover {
+.theme-noir-light .strip:hover {
   box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.035), 0 22px 48px color-mix(in srgb, var(--nx-ink) 14%, transparent), 0 0 28px color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 </style>

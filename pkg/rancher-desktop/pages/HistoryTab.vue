@@ -509,19 +509,19 @@ onUnmounted(() => {
 </style>
 
 <style scoped>
-:global(.theme-noir) .history-page {
+.theme-noir .history-page {
   background: radial-gradient(90% 60% at 0% 0%, color-mix(in srgb, var(--nx-accent) 10%, transparent), transparent 58%), var(--nx-paper);
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .history-header {
+.theme-noir .history-header {
   background: color-mix(in srgb, var(--bg-surface-alt) 52%, transparent);
   border-bottom: 1px solid var(--nx-hair);
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir) .history-header > div { padding-top: 34px; padding-bottom: 30px; }
-:global(.theme-noir) .history-title {
+.theme-noir .history-header > div { padding-top: 34px; padding-bottom: 30px; }
+.theme-noir .history-title {
   color: var(--nx-read-1);
   background: none;
   font-family: 'Playfair Display', Georgia, serif;
@@ -530,15 +530,15 @@ onUnmounted(() => {
   line-height: 1.1;
 }
 
-:global(.theme-noir) .history-lede {
+.theme-noir .history-lede {
   margin-top: 7px;
   color: var(--nx-read-3);
   font-size: 14px;
   letter-spacing: 0;
 }
 
-:global(.theme-noir) .history-query,
-:global(.theme-noir) .history-filter {
+.theme-noir .history-query,
+.theme-noir .history-filter {
   height: 40px;
   color: var(--nx-read-2);
   background: color-mix(in srgb, var(--bg-surface-alt) 68%, transparent);
@@ -549,20 +549,20 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-:global(.theme-noir) .history-query:focus,
-:global(.theme-noir) .history-filter:focus {
+.theme-noir .history-query:focus,
+.theme-noir .history-filter:focus {
   border-color: color-mix(in srgb, var(--nx-accent-2) 58%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 12%, transparent);
 }
 
-:global(.theme-noir) .history-clear {
+.theme-noir .history-clear {
   border-color: color-mix(in srgb, var(--nx-danger) 28%, transparent);
   border-radius: 12px;
   color: var(--nx-danger);
   background: color-mix(in srgb, var(--nx-danger) 4%, transparent);
 }
 
-:global(.theme-noir) .history-entry {
+.theme-noir .history-entry {
   min-height: 52px;
   margin-bottom: 6px;
   border: 1px solid color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent);
@@ -571,19 +571,19 @@ onUnmounted(() => {
   transition: transform 0.35s cubic-bezier(.22, 1, .36, 1), background 0.16s, border-color 0.16s;
 }
 
-:global(.theme-noir) .history-entry:hover {
+.theme-noir .history-entry:hover {
   background: color-mix(in srgb, var(--nx-accent) 9%, transparent);
   border-color: color-mix(in srgb, var(--nx-accent-2) 20%, transparent);
   transform: translateX(2px);
 }
 
-:global(.theme-noir) .history-entry p:first-child { color: var(--nx-read-2); }
-:global(.theme-noir) .history-entry p:nth-child(2) {
+.theme-noir .history-entry p:first-child { color: var(--nx-read-2); }
+.theme-noir .history-entry p:nth-child(2) {
   color: var(--nx-read-4);
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
-:global(.theme-noir) .history-dialog {
+.theme-noir .history-dialog {
   color: var(--nx-read-2);
   background: color-mix(in srgb, var(--nx-surface) 96%, transparent);
   border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
@@ -593,6 +593,6 @@ onUnmounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .history-entry { transition-duration: 0.01ms; }
+  .theme-noir .history-entry { transition-duration: 0.01ms; }
 }
 </style>

@@ -119,18 +119,18 @@ onMounted(async() => {
 </style>
 
 <style scoped>
-:global(.theme-noir) .page-root {
+.theme-noir .page-root {
   background: radial-gradient(100% 55% at 0% 0%, color-mix(in srgb, var(--nx-accent) 9%, transparent), transparent 58%), var(--nx-paper);
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .extension-frame,
-:global(.theme-noir) .extension-embedded {
+.theme-noir .extension-frame,
+.theme-noir .extension-embedded {
   background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
   border-top: 1px solid var(--nx-hair);
 }
 
-:global(.theme-noir) .extension-loading {
+.theme-noir .extension-loading {
   margin: 30px;
   border: 1px solid var(--nx-hair);
   border-radius: 20px;
@@ -140,8 +140,8 @@ onMounted(async() => {
   animation: noir-extension-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
 }
 
-:global(.theme-noir) .extension-loading p { color: var(--nx-read-3); }
-:global(.theme-noir) .extension-spinner {
+.theme-noir .extension-loading p { color: var(--nx-read-3); }
+.theme-noir .extension-spinner {
   border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   border-top-color: var(--nx-accent-2);
   box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 22%, transparent);
@@ -153,6 +153,6 @@ onMounted(async() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .extension-loading { animation: none; }
+  .theme-noir .extension-loading { animation: none; }
 }
 </style>

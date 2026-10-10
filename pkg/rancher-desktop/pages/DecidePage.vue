@@ -215,15 +215,15 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
 </style>
 
 <style scoped>
-:global(.theme-noir) .decide-page {
+.theme-noir .decide-page {
   padding: 42px clamp(28px, 5vw, 68px);
   background: radial-gradient(75% 50% at 50% 110%, color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), transparent 65%), var(--nx-paper);
   color: var(--nx-read-2);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
-:global(.theme-noir) .decide-page > * { max-width: 920px; margin-left: auto; margin-right: auto; }
-:global(.theme-noir) .decide-hero { margin-bottom: 30px; }
-:global(.theme-noir) .decide-eyebrow {
+.theme-noir .decide-page > * { max-width: 920px; margin-left: auto; margin-right: auto; }
+.theme-noir .decide-hero { margin-bottom: 30px; }
+.theme-noir .decide-eyebrow {
   display: block;
   margin-bottom: 7px;
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
@@ -232,7 +232,7 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
   text-transform: uppercase;
   color: var(--nx-accent-2);
 }
-:global(.theme-noir) .decide-page h1 {
+.theme-noir .decide-page h1 {
   margin: 0 0 6px;
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 36px;
@@ -240,10 +240,10 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
   letter-spacing: -.025em;
   color: var(--nx-read-1);
 }
-:global(.theme-noir) .decide-page h2 { font-family: 'Playfair Display', Georgia, serif; color: var(--nx-read-1); }
-:global(.theme-noir) .decide-page p,
-:global(.theme-noir) .decide-page small { color: var(--nx-read-4); }
-:global(.theme-noir) .decision {
+.theme-noir .decide-page h2 { font-family: 'Playfair Display', Georgia, serif; color: var(--nx-read-1); }
+.theme-noir .decide-page p,
+.theme-noir .decide-page small { color: var(--nx-read-4); }
+.theme-noir .decision {
   position: relative;
   padding: 22px;
   margin: 14px auto;
@@ -254,13 +254,13 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
   transition: transform .58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), box-shadow .2s;
   animation: decide-noir-enter .45s cubic-bezier(.22, 1, .36, 1) both;
 }
-:global(.theme-noir) .decision:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-warning) 294.1176%, transparent), 0 22px 58px color-mix(in srgb, var(--shadow) 300%, transparent); }
-:global(.theme-noir) .decision-approved,
-:global(.theme-noir) .decision-answered {
+.theme-noir .decision:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-warning) 294.1176%, transparent), 0 22px 58px color-mix(in srgb, var(--shadow) 300%, transparent); }
+.theme-noir .decision-approved,
+.theme-noir .decision-answered {
   background: color-mix(in srgb, var(--nx-success) 2222.2222%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-success) 400%, transparent), 0 18px 50px color-mix(in srgb, var(--shadow) 450%, transparent);
 }
-:global(.theme-noir) .decision header > span {
+.theme-noir .decision header > span {
   padding: 4px 9px;
   border-radius: 999px;
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
@@ -270,16 +270,16 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
   color: var(--nx-warning);
   background: color-mix(in srgb, var(--nx-warning) 1000%, transparent);
 }
-:global(.theme-noir) .decision-approved header > span,
-:global(.theme-noir) .decision-answered header > span { color: var(--nx-success); background: color-mix(in srgb, var(--nx-success) 1000%, transparent); }
-:global(.theme-noir) .decide-page fieldset {
+.theme-noir .decision-approved header > span,
+.theme-noir .decision-answered header > span { color: var(--nx-success); background: color-mix(in srgb, var(--nx-success) 1000%, transparent); }
+.theme-noir .decide-page fieldset {
   border: 0;
   border-radius: 14px;
   background: color-mix(in srgb, var(--bg-surface-alt) 200%, transparent);
   box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
-:global(.theme-noir) .decide-page input[type='search'],
-:global(.theme-noir) .decide-page input:not([type]) {
+.theme-noir .decide-page input[type='search'],
+.theme-noir .decide-page input:not([type]) {
   min-height: 42px;
   padding: 0 14px;
   border: 0;
@@ -287,14 +287,14 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
   background: color-mix(in srgb, var(--bg-surface-alt) 151.5152%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 133.3333%, transparent);
 }
-:global(.theme-noir) .decide-page button {
+.theme-noir .decide-page button {
   border-color: color-mix(in srgb, var(--nx-hair-strong) 114.2857%, transparent);
   border-radius: 999px;
   color: var(--nx-read-3);
   transition: transform .45s cubic-bezier(.22, 1, .36, 1), background .16s, color .16s;
 }
-:global(.theme-noir) .decide-page button:hover { transform: translateY(-1px); color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 1111.1111%, transparent); }
-:global(.theme-noir) .decide-page .decision-primary {
+.theme-noir .decide-page button:hover { transform: translateY(-1px); color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 1111.1111%, transparent); }
+.theme-noir .decide-page .decision-primary {
   border-color: color-mix(in srgb, var(--nx-accent-2) 222.2222%, transparent);
   color: var(--nx-paper);
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
@@ -302,7 +302,7 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
 }
 @keyframes decide-noir-enter { from { opacity: 0; transform: translateY(8px); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .decision { animation: none; transition: none; }
-  :global(.theme-noir) .decide-page button { transition: none; }
+  .theme-noir .decision { animation: none; transition: none; }
+  .theme-noir .decide-page button { transition: none; }
 }
 </style>

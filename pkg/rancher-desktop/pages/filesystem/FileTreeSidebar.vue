@@ -728,7 +728,7 @@ export default defineComponent({
 </style>
 
 <style scoped>
-:global(.theme-noir) .file-tree-sidebar {
+.theme-noir .file-tree-sidebar {
   background: color-mix(in srgb, var(--bg-surface-alt) 74%, transparent);
   color: var(--nx-read-2);
   border-right: 1px solid var(--nx-hair);
@@ -736,7 +736,7 @@ export default defineComponent({
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir) .file-tree-header {
+.theme-noir .file-tree-header {
   height: 44px;
   padding: 0 10px 0 14px;
   color: var(--nx-accent-2);
@@ -746,7 +746,7 @@ export default defineComponent({
   letter-spacing: 0.16em;
 }
 
-:global(.theme-noir) .action-btn {
+.theme-noir .action-btn {
   width: 28px;
   height: 28px;
   color: var(--nx-read-4);
@@ -754,23 +754,23 @@ export default defineComponent({
   transition: background 0.16s, color 0.16s, transform 0.4s cubic-bezier(.22, 1, .36, 1);
 }
 
-:global(.theme-noir) .action-btn:hover {
+.theme-noir .action-btn:hover {
   color: var(--nx-read-1);
   background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
   transform: translateY(-1px);
 }
 
-:global(.theme-noir) .file-tree-scroll { padding: 7px 6px; }
-:global(.theme-noir) .file-tree-scroll::-webkit-scrollbar-thumb {
+.theme-noir .file-tree-scroll { padding: 7px 6px; }
+.theme-noir .file-tree-scroll::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--nx-hair-strong) 87.5%, transparent);
 }
 
-:global(.theme-noir) .file-tree-loading {
+.theme-noir .file-tree-loading {
   color: var(--nx-read-4);
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .action-btn { transition-duration: 0.01ms; }
+  .theme-noir .action-btn { transition-duration: 0.01ms; }
 }
 </style>

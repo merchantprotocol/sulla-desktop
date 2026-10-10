@@ -436,7 +436,7 @@ const items: readonly ModeItem[] = Object.freeze([
   display: none;
 }
 
-:global(.theme-noir) .mode-rail {
+.theme-noir .mode-rail {
   --rail-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) .58s;
   box-sizing: border-box;
   width: 64px;
@@ -447,16 +447,16 @@ const items: readonly ModeItem[] = Object.freeze([
   z-index: 20;
 }
 
-:global(.theme-noir) .mode-rail.expanded {
+.theme-noir .mode-rail.expanded {
   width: 212px;
 }
 
-:global(.theme-noir) .rail-items,
-:global(.theme-noir) .rail-footer {
+.theme-noir .rail-items,
+.theme-noir .rail-footer {
   position: relative;
 }
 
-:global(.theme-noir) .active-indicator {
+.theme-noir .active-indicator {
   position: absolute;
   inset: 0 0 auto;
   display: block;
@@ -469,21 +469,21 @@ const items: readonly ModeItem[] = Object.freeze([
   z-index: 0;
 }
 
-:global(.theme-noir-light) .mode-rail {
+.theme-noir-light .mode-rail {
   background: color-mix(in srgb, var(--nx-surface) 60%, transparent);
   border-right-color: var(--nx-hair);
 }
 
-:global(.theme-noir-light) .active-indicator {
+.theme-noir-light .active-indicator {
   background: var(--nx-indicator-bg);
   box-shadow: inset 0 0 0 1px var(--nx-indicator-edge), 0 6px 16px color-mix(in srgb, var(--nx-accent-2) 22%, transparent);
 }
 
-:global(.theme-noir) .active-indicator.visible {
+.theme-noir .active-indicator.visible {
   opacity: 1;
 }
 
-:global(.theme-noir) .active-indicator::before {
+.theme-noir .active-indicator::before {
   content: '';
   position: absolute;
   left: -10px;
@@ -496,7 +496,7 @@ const items: readonly ModeItem[] = Object.freeze([
   box-shadow: 0 0 10px var(--nx-accent-2);
 }
 
-:global(.theme-noir) .mode-btn {
+.theme-noir .mode-btn {
   width: 100%;
   height: 40px;
   min-height: 40px;
@@ -513,53 +513,53 @@ const items: readonly ModeItem[] = Object.freeze([
   z-index: 1;
 }
 
-:global(.theme-noir) .mode-btn:hover {
+.theme-noir .mode-btn:hover {
   color: var(--nx-read-2);
   background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir) .mode-btn:active {
+.theme-noir .mode-btn:active {
   transform: scale(.92);
   transition-duration: .08s;
 }
 
-:global(.theme-noir) .mode-btn:focus-visible {
+.theme-noir .mode-btn:focus-visible {
   outline: 2px solid var(--nx-accent-2);
   outline-offset: 2px;
 }
 
-:global(.theme-noir) .mode-btn.active {
+.theme-noir .mode-btn.active {
   color: var(--nx-read-1);
   background: transparent;
 }
 
-:global(.theme-noir) .mode-btn.active::before {
+.theme-noir .mode-btn.active::before {
   content: none;
 }
 
-:global(.theme-noir) .mode-btn:hover .icon {
+.theme-noir .mode-btn:hover .icon {
   transform: none;
 }
 
-:global(.theme-noir) .mode-btn.active .icon {
+.theme-noir .mode-btn.active .icon {
   filter: drop-shadow(0 0 8px color-mix(in srgb, var(--nx-accent-2) 60%, transparent));
 }
 
-:global(.theme-noir) .expanded .mode-btn {
+.theme-noir .expanded .mode-btn {
   gap: 12px;
 }
 
-:global(.theme-noir) .rail-footer .mode-btn.active {
+.theme-noir .rail-footer .mode-btn.active {
   background: color-mix(in srgb, var(--nx-accent) 14%, transparent);
 }
 
-:global(.theme-noir) .icon {
+.theme-noir .icon {
   width: 20px;
   height: 20px;
   flex: none;
 }
 
-:global(.theme-noir) .item-label {
+.theme-noir .item-label {
   max-width: 0;
   display: inline;
   overflow: hidden;
@@ -571,14 +571,14 @@ const items: readonly ModeItem[] = Object.freeze([
   transition: opacity .24s cubic-bezier(.22, 1, .36, 1), filter .24s cubic-bezier(.22, 1, .36, 1), transform var(--rail-spring);
 }
 
-:global(.theme-noir) .expanded .item-label {
+.theme-noir .expanded .item-label {
   max-width: 120px;
   opacity: 1;
   filter: blur(0);
   transform: none;
 }
 
-:global(.theme-noir) .shortcut-hint {
+.theme-noir .shortcut-hint {
   margin-left: auto;
   color: var(--nx-read-5);
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -587,12 +587,12 @@ const items: readonly ModeItem[] = Object.freeze([
   transition: opacity .2s ease;
 }
 
-:global(.theme-noir) .expanded .shortcut-hint {
+.theme-noir .expanded .shortcut-hint {
   display: inline;
   opacity: 1;
 }
 
-:global(.theme-noir) .rail-divider {
+.theme-noir .rail-divider {
   height: 1px;
   margin: 6px 8px;
   display: block;
@@ -600,7 +600,7 @@ const items: readonly ModeItem[] = Object.freeze([
   background: var(--nx-hair);
 }
 
-:global(.theme-noir) .decision-badge {
+.theme-noir .decision-badge {
   left: 25px;
   right: auto;
   top: 3px;
@@ -615,7 +615,7 @@ const items: readonly ModeItem[] = Object.freeze([
   font-weight: 650;
 }
 
-:global(.theme-noir) .decision-badge::after {
+.theme-noir .decision-badge::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -630,7 +630,7 @@ const items: readonly ModeItem[] = Object.freeze([
   70%, 100% { transform: scale(2.2); opacity: 0; }
 }
 
-:global(.theme-noir) .mode-btn::after {
+.theme-noir .mode-btn::after {
   content: attr(data-noir-tooltip);
   left: 52px;
   padding: 6px 10px;
@@ -641,42 +641,42 @@ const items: readonly ModeItem[] = Object.freeze([
   transition: opacity .14s cubic-bezier(.22, 1, .36, 1), transform .3s var(--rail-spring);
 }
 
-:global(.theme-noir) .mode-rail:not(.expanded) .mode-btn:hover::after {
+.theme-noir .mode-rail:not(.expanded) .mode-btn:hover::after {
   transform: translate(0, -50%) scale(1);
   transition-delay: .25s;
 }
 
-:global(.theme-noir) .expanded .mode-btn::after {
+.theme-noir .expanded .mode-btn::after {
   display: none;
 }
 
-:global(.theme-noir) .expand-toggle {
+.theme-noir .expand-toggle {
   display: flex;
 }
 
-:global(.theme-noir) .expand-icon {
+.theme-noir .expand-icon {
   transition: transform var(--rail-spring);
 }
 
-:global(.theme-noir) .expanded .expand-icon {
+.theme-noir .expanded .expand-icon {
   transform: scaleX(-1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .mode-rail,
-  :global(.theme-noir) .active-indicator,
-  :global(.theme-noir) .mode-btn,
-  :global(.theme-noir) .item-label,
-  :global(.theme-noir) .shortcut-hint,
-  :global(.theme-noir) .expand-icon {
+  .theme-noir .mode-rail,
+  .theme-noir .active-indicator,
+  .theme-noir .mode-btn,
+  .theme-noir .item-label,
+  .theme-noir .shortcut-hint,
+  .theme-noir .expand-icon {
     transition: none;
   }
 
-  :global(.theme-noir) .item-label {
+  .theme-noir .item-label {
     filter: none;
   }
 
-  :global(.theme-noir) .decision-badge::after {
+  .theme-noir .decision-badge::after {
     animation: none;
   }
 }

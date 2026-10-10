@@ -326,18 +326,18 @@ a {
   display: none;
 }
 
-:global(.theme-noir) .docker-nav {
+.theme-noir .docker-nav {
   padding: 18px 12px;
   background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
   border-right: 1px solid var(--nx-hair);
 }
 
-:global(.theme-noir) .docker-nav-heading {
+.theme-noir .docker-nav-heading {
   display: block;
   padding: 20px 8px 18px;
 }
 
-:global(.theme-noir) .docker-nav-title {
+.theme-noir .docker-nav-title {
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 21px;
@@ -345,7 +345,7 @@ a {
   letter-spacing: -0.01em;
 }
 
-:global(.theme-noir) .docker-nav-subtitle {
+.theme-noir .docker-nav-subtitle {
   margin-top: 3px;
   color: var(--nx-read-4);
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
@@ -353,14 +353,14 @@ a {
   letter-spacing: 0.04em;
 }
 
-:global(.theme-noir) .docker-nav-routes {
+.theme-noir .docker-nav-routes {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-:global(.theme-noir) .docker-nav-indicator {
+.theme-noir .docker-nav-indicator {
   display: block;
   position: absolute;
   inset: 0 0 auto;
@@ -371,7 +371,7 @@ a {
   transition: transform .58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), opacity .16s;
 }
 
-:global(.theme-noir) .docker-nav-indicator::before {
+.theme-noir .docker-nav-indicator::before {
   content: '';
   position: absolute;
   left: -12px;
@@ -383,7 +383,7 @@ a {
   box-shadow: 0 0 10px var(--nx-accent-2);
 }
 
-:global(.theme-noir) .docker-nav-routes li a {
+.theme-noir .docker-nav-routes li a {
   position: relative;
   z-index: 1;
   min-height: 40px;
@@ -397,17 +397,17 @@ a {
   transition: color .16s, background .16s, transform .45s ease;
 }
 
-:global(.theme-noir) .docker-nav-routes li a:hover {
+.theme-noir .docker-nav-routes li a:hover {
   color: var(--nx-read-2);
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-:global(.theme-noir) .docker-nav-routes li a:is(.router-link-active, .rd-link-active) {
+.theme-noir .docker-nav-routes li a:is(.router-link-active, .rd-link-active) {
   color: var(--nx-read-1);
   background: transparent;
 }
 
-:global(.theme-noir) .docker-nav-glyph {
+.theme-noir .docker-nav-glyph {
   display: inline-block;
   width: 18px;
   color: #8cacc9;
@@ -415,18 +415,18 @@ a {
   text-align: center;
 }
 
-:global(.theme-noir-light) .docker-nav-glyph {
+.theme-noir-light .docker-nav-glyph {
   color: var(--nx-accent);
 }
 
-:global(.theme-noir) .nav-button-container {
+.theme-noir .nav-button-container {
   padding-top: 12px;
   border-top: 1px solid var(--nx-hair);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .docker-nav-indicator,
-  :global(.theme-noir) .docker-nav-routes li a {
+  .theme-noir .docker-nav-indicator,
+  .theme-noir .docker-nav-routes li a {
     transition: none;
   }
 }

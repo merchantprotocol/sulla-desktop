@@ -212,13 +212,13 @@ button:hover {
 
 .frm-radio-mark { display: none; }
 
-:global(.theme-noir) .frm-page {
+.theme-noir .frm-page {
   --frm-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   background: transparent;
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .frm-page form::before {
+.theme-noir .frm-page form::before {
   content: "YOUR AI";
   display: block;
   margin-top: 5px;
@@ -229,7 +229,7 @@ button:hover {
   color: var(--nx-accent-2);
 }
 
-:global(.theme-noir) .frm-heading {
+.theme-noir .frm-heading {
   margin: 7px 0 7px;
   font-family: "Playfair Display", Georgia, serif;
   font-size: 34px;
@@ -239,16 +239,16 @@ button:hover {
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .frm-subtext {
+.theme-noir .frm-subtext {
   margin-bottom: 22px;
   font-size: 14px;
   line-height: 1.6;
   color: var(--nx-read-3);
 }
 
-:global(.theme-noir) .frm-options { gap: 7px; }
+.theme-noir .frm-options { gap: 7px; }
 
-:global(.theme-noir) .frm-option {
+.theme-noir .frm-option {
   min-height: 66px;
   gap: 13px;
   padding: 11px 14px;
@@ -260,20 +260,20 @@ button:hover {
   transition: transform .58s var(--frm-spring), background .2s ease, box-shadow .25s ease;
 }
 
-:global(.theme-noir) .frm-option:hover {
+.theme-noir .frm-option:hover {
   transform: translateX(2px);
   border-color: transparent;
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 18%, transparent);
 }
 
-:global(.theme-noir) .frm-option.is-selected {
+.theme-noir .frm-option.is-selected {
   border-color: transparent;
   background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 42%, transparent), 0 0 20px color-mix(in srgb, var(--nx-accent) 10%, transparent);
 }
 
-:global(.theme-noir) .frm-radio-mark {
+.theme-noir .frm-radio-mark {
   display: grid;
   width: 17px;
   height: 17px;
@@ -284,7 +284,7 @@ button:hover {
   transition: box-shadow .2s ease;
 }
 
-:global(.theme-noir) .frm-radio-mark::after {
+.theme-noir .frm-radio-mark::after {
   content: "";
   width: 8px;
   height: 8px;
@@ -295,38 +295,38 @@ button:hover {
   transition: transform .58s var(--frm-spring);
 }
 
-:global(.theme-noir) .frm-option.is-selected .frm-radio-mark {
+.theme-noir .frm-option.is-selected .frm-radio-mark {
   box-shadow: inset 0 0 0 1.5px var(--nx-accent-2);
 }
 
-:global(.theme-noir) .frm-option.is-selected .frm-radio-mark::after { transform: scale(1); }
+.theme-noir .frm-option.is-selected .frm-radio-mark::after { transform: scale(1); }
 
-:global(.theme-noir) .frm-option-icon {
+.theme-noir .frm-option-icon {
   width: 26px;
   height: 26px;
   filter: saturate(.75) drop-shadow(0 0 10px color-mix(in srgb, var(--nx-accent-2) 18%, transparent));
 }
 
-:global(.theme-noir) .frm-option-name {
+.theme-noir .frm-option-name {
   color: var(--nx-read-1);
   font-size: 13.5px;
   font-weight: 600;
 }
 
-:global(.theme-noir) .frm-option-plan {
+.theme-noir .frm-option-plan {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .frm-error-box {
+.theme-noir .frm-error-box {
   border-color: color-mix(in srgb, var(--nx-danger) 30%, transparent);
   border-radius: 12px;
   background: color-mix(in srgb, var(--nx-danger) 7%, transparent);
   color: rgb(from var(--nx-danger) calc(r - 4) calc(g + 82) calc(b + 86));
 }
 
-:global(.theme-noir) .frm-btn-accent {
+.theme-noir .frm-btn-accent {
   min-height: 40px;
   padding-inline: 20px;
   border-radius: 20px;
@@ -336,14 +336,14 @@ button:hover {
   transition: transform .58s var(--frm-spring), box-shadow .2s ease;
 }
 
-:global(.theme-noir) .frm-btn-accent:hover:not(:disabled) {
+.theme-noir .frm-btn-accent:hover:not(:disabled) {
   background: linear-gradient(180deg, rgb(from var(--nx-accent-2) calc(r + 8) calc(g + 10) calc(b + 9)), var(--nx-accent));
   box-shadow: 0 0 24px color-mix(in srgb, var(--nx-accent) 48%, transparent);
 }
 
-:global(.theme-noir) .frm-btn-accent:active { transform: scale(.95); }
+.theme-noir .frm-btn-accent:active { transform: scale(.95); }
 
-:global(.theme-noir) .frm-btn-back {
+.theme-noir .frm-btn-back {
   min-height: 40px;
   padding-inline: 18px;
   border-radius: 20px;
@@ -353,9 +353,9 @@ button:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .frm-option,
-  :global(.theme-noir) .frm-radio-mark::after,
-  :global(.theme-noir) .frm-btn-accent {
+  .theme-noir .frm-option,
+  .theme-noir .frm-radio-mark::after,
+  .theme-noir .frm-btn-accent {
     transition-duration: .01ms;
   }
 }

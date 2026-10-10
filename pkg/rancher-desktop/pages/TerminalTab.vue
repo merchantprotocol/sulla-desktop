@@ -58,14 +58,14 @@ export default defineComponent({
 </style>
 
 <style scoped>
-:global(.theme-noir) .terminal-tab {
+.theme-noir .terminal-tab {
   display: flex;
   flex-direction: column;
   padding: 0;
   background: var(--nx-paper);
 }
 
-:global(.theme-noir) .terminal-chrome {
+.theme-noir .terminal-chrome {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -80,7 +80,7 @@ export default defineComponent({
   backdrop-filter: blur(18px);
 }
 
-:global(.theme-noir) .terminal-status-dot {
+.theme-noir .terminal-status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -88,9 +88,9 @@ export default defineComponent({
   box-shadow: 0 0 8px color-mix(in srgb, var(--nx-success) 70%, transparent);
 }
 
-:global(.theme-noir) .terminal-title { color: var(--nx-read-1); font-weight: 600; }
-:global(.theme-noir) .terminal-session { margin-left: auto; color: var(--nx-read-4); }
-:global(.theme-noir) .terminal-tab > :deep(.terminal-wrapper) {
+.theme-noir .terminal-title { color: var(--nx-read-1); font-weight: 600; }
+.theme-noir .terminal-session { margin-left: auto; color: var(--nx-read-4); }
+.theme-noir .terminal-tab > :deep(.terminal-wrapper) {
   min-height: 0;
   padding: 9px 10px 7px;
   background: var(--bg-surface-alt);

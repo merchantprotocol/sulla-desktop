@@ -254,33 +254,33 @@ onBeforeUnmount(() => {
 .cc-btn-danger { color: var(--text-error, #f85149); }
 .cc-error { color: var(--text-error, #f85149); font-size: 12px; }
 
-:global(.theme-noir) .cc {
+.theme-noir .cc {
   margin-top: 18px;
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .cc-row,
-:global(.theme-noir) .cc-item,
-:global(.theme-noir) .cc-sync {
+.theme-noir .cc-row,
+.theme-noir .cc-item,
+.theme-noir .cc-sync {
   padding: 12px 14px;
   border: 1px solid var(--nx-hair);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-surface-alt) 38%, transparent);
 }
 
-:global(.theme-noir) .cc-row {
+.theme-noir .cc-row {
   justify-content: space-between;
   margin: 8px 0;
 }
 
-:global(.theme-noir) .cc-label,
-:global(.theme-noir) .cc-item-sub,
-:global(.theme-noir) .cc-hint,
-:global(.theme-noir) .cc-sync-meta {
+.theme-noir .cc-label,
+.theme-noir .cc-item-sub,
+.theme-noir .cc-hint,
+.theme-noir .cc-sync-meta {
   color: var(--nx-read-4);
 }
 
-:global(.theme-noir) .cc-title {
+.theme-noir .cc-title {
   margin-top: 24px;
   color: var(--nx-read-1);
   font-family: 'Playfair Display', Georgia, serif;
@@ -288,13 +288,13 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-:global(.theme-noir) .cc-mono,
-:global(.theme-noir) .cc-sync-meta {
+.theme-noir .cc-mono,
+.theme-noir .cc-sync-meta {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.68rem;
 }
 
-:global(.theme-noir) .cc-pill {
+.theme-noir .cc-pill {
   border: 1px solid var(--nx-hair);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
@@ -302,12 +302,12 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 
-:global(.theme-noir) .cc-pill-on {
+.theme-noir .cc-pill-on {
   border-color: color-mix(in srgb, var(--nx-success) 25%, transparent);
   box-shadow: 0 0 12px color-mix(in srgb, var(--nx-success) 9%, transparent);
 }
 
-:global(.theme-noir) .cc-toggle input {
+.theme-noir .cc-toggle input {
   width: 38px;
   height: 22px;
   flex: 0 0 38px;
@@ -315,7 +315,7 @@ onBeforeUnmount(() => {
   accent-color: var(--nx-accent);
 }
 
-:global(.theme-noir) .cc-btn {
+.theme-noir .cc-btn {
   border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
   border-radius: 9px;
   background: color-mix(in srgb, var(--nx-hair-strong) 28.125%, transparent);

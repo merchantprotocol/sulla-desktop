@@ -292,7 +292,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 
 /* Noir is opt-in: the first-run window uses the saved theme when one exists,
  * while a fresh install keeps useTheme's existing Protocol Dark fallback. */
-:global(.theme-noir) .page-root {
+.theme-noir .page-root {
   --fr-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   background:
     radial-gradient(90% 64% at 50% -8%, color-mix(in srgb, var(--nx-accent) 18%, transparent), transparent 60%),
@@ -301,7 +301,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   color: var(--nx-read-2);
 }
 
-:global(.theme-noir) .fr-steps {
+.theme-noir .fr-steps {
   gap: 6px;
   padding: 13px 22px;
   border-color: var(--nx-hair);
@@ -309,7 +309,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   backdrop-filter: blur(16px);
 }
 
-:global(.theme-noir) .fr-step {
+.theme-noir .fr-step {
   position: relative;
   height: 34px;
   gap: 8px;
@@ -323,13 +323,13 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   transition: color .2s ease, background .58s var(--fr-spring), box-shadow .58s var(--fr-spring), transform .58s var(--fr-spring);
 }
 
-:global(.theme-noir) .fr-step.is-active {
+.theme-noir .fr-step.is-active {
   color: var(--nx-read-1);
   background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
   box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--nx-accent-2) 50%, transparent), 0 0 20px color-mix(in srgb, var(--nx-accent) 18%, transparent);
 }
 
-:global(.theme-noir) .fr-step.is-active::before {
+.theme-noir .fr-step.is-active::before {
   content: "";
   position: absolute;
   left: -1px;
@@ -341,9 +341,9 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent-2) 90%, transparent);
 }
 
-:global(.theme-noir) .fr-step.is-done { color: var(--nx-read-3); }
+.theme-noir .fr-step.is-done { color: var(--nx-read-3); }
 
-:global(.theme-noir) .fr-step-n {
+.theme-noir .fr-step-n {
   width: 20px;
   height: 20px;
   border-radius: 10px;
@@ -354,14 +354,14 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
 
-:global(.theme-noir) .fr-step.is-active .fr-step-n,
-:global(.theme-noir) .fr-step.is-done .fr-step-n {
+.theme-noir .fr-step.is-active .fr-step-n,
+.theme-noir .fr-step.is-done .fr-step-n {
   color: var(--nx-read-1);
   background: color-mix(in srgb, var(--nx-accent) 24%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 45%, transparent), 0 0 10px color-mix(in srgb, var(--nx-accent) 20%, transparent);
 }
 
-:global(.theme-noir) .fr-setup {
+.theme-noir .fr-setup {
   padding: 9px 24px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
@@ -370,22 +370,22 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   border-bottom: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 6%, transparent);
 }
 
-:global(.theme-noir) .fr-setup-track {
+.theme-noir .fr-setup-track {
   height: 4px;
   background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
 }
 
-:global(.theme-noir) .fr-setup-bar {
+.theme-noir .fr-setup-bar {
   background: linear-gradient(90deg, var(--nx-accent), var(--nx-accent-2));
   box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent) 50%, transparent);
 }
 
-:global(.theme-noir) .fr-stage {
+.theme-noir .fr-stage {
   align-items: center;
   padding: 34px 28px 58px;
 }
 
-:global(.theme-noir) .fr-card {
+.theme-noir .fr-card {
   max-width: 820px;
   padding: 12px 22px 22px;
   border-color: var(--nx-hair);
@@ -397,33 +397,33 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   backdrop-filter: blur(22px);
 }
 
-:global(.theme-noir) .fr-pane-enter-active,
-:global(.theme-noir) .fr-pane-leave-active {
+.theme-noir .fr-pane-enter-active,
+.theme-noir .fr-pane-leave-active {
   transition: opacity .34s ease, transform .58s var(--fr-spring), filter .34s ease;
 }
 
-:global(.theme-noir) .fr-pane-enter-from {
+.theme-noir .fr-pane-enter-from {
   opacity: 0;
   transform: translateY(10px) scale(.985);
   filter: blur(8px);
 }
 
-:global(.theme-noir) .fr-pane-leave-to {
+.theme-noir .fr-pane-leave-to {
   opacity: 0;
   transform: translateY(-6px) scale(.99);
   filter: blur(5px);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(.theme-noir) .fr-step,
-  :global(.theme-noir) .fr-pane-enter-active,
-  :global(.theme-noir) .fr-pane-leave-active {
+  .theme-noir .fr-step,
+  .theme-noir .fr-pane-enter-active,
+  .theme-noir .fr-pane-leave-active {
     transition-duration: .01ms;
   }
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-:global(.theme-noir-light) .fr-card {
+.theme-noir-light .fr-card {
   box-shadow: inset 0 0 0 .5px var(--nx-hair), 0 30px 80px color-mix(in srgb, var(--nx-ink) 14%, transparent), 0 0 70px color-mix(in srgb, var(--nx-accent) 6%, transparent);
 }
 </style>

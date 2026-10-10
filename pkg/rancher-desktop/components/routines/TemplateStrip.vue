@@ -271,7 +271,7 @@ defineEmits<{
 }
 .btn.ghost { background: transparent; }
 
-:global(.theme-noir) .strip {
+.theme-noir .strip {
   grid-template-columns: 52px minmax(0, 1fr) 150px auto;
   gap: 18px;
   margin-bottom: 10px;
@@ -282,14 +282,14 @@ defineEmits<{
   transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), border-color 0.2s, background 0.2s, box-shadow 0.2s;
 }
 
-:global(.theme-noir) .strip:hover {
+.theme-noir .strip:hover {
   border-color: color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
   background: color-mix(in srgb, var(--nx-accent) 7.5%, transparent);
   transform: translateY(-2px);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
 }
 
-:global(.theme-noir) .strip::before {
+.theme-noir .strip::before {
   left: -1px;
   top: 14px;
   bottom: 14px;
@@ -299,8 +299,8 @@ defineEmits<{
   box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent) 60%, transparent);
 }
 
-:global(.theme-noir) .icon,
-:global(.theme-noir) .icon[class] {
+.theme-noir .icon,
+.theme-noir .icon[class] {
   width: 46px;
   height: 46px;
   border-color: color-mix(in srgb, var(--nx-accent-2) 24%, transparent);
@@ -308,32 +308,32 @@ defineEmits<{
   background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent-2) 30%, transparent), color-mix(in srgb, var(--nx-accent) 10%, transparent));
 }
 
-:global(.theme-noir) .title,
-:global(.theme-noir) .metrics .big {
+.theme-noir .title,
+.theme-noir .metrics .big {
   font-family: 'Playfair Display', Georgia, serif;
   font-style: normal;
   color: var(--nx-read-1);
 }
 
-:global(.theme-noir) .chip {
+.theme-noir .chip {
   border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 9%, transparent);
   border-radius: 9px;
   color: var(--nx-read-4);
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.5);
 }
 
-:global(.theme-noir) .btn {
+.theme-noir .btn {
   border-radius: 16px;
 }
 
-:global(.theme-noir) .btn.primary {
+.theme-noir .btn.primary {
   border-color: color-mix(in srgb, var(--nx-accent-2) 42%, transparent);
   background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
   box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 20%, transparent);
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-:global(.theme-noir-light) .strip:hover {
+.theme-noir-light .strip:hover {
   box-shadow: 0 14px 34px color-mix(in srgb, var(--nx-ink) 8%, transparent);
 }
 </style>
