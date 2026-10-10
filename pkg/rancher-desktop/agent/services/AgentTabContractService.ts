@@ -301,7 +301,7 @@ export class AgentTabContractService {
 
     if (contract.contract_spec.schema) {
       const ajv = new Ajv({ allErrors: true });
-      let validate: ReturnType<Ajv['compile']>;
+      let validate: Ajv.ValidateFunction;
       try {
         validate = ajv.compile(contract.contract_spec.schema);
       } catch (error) {
