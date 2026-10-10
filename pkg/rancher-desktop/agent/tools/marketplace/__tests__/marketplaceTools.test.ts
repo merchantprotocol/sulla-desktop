@@ -15,6 +15,17 @@ jest.unstable_mockModule('@pkg/utils/logging', () => ({
   default: { background: { log: () => {}, warn: () => {}, error: () => {}, info: () => {}, debug: () => {} } },
 }));
 
+const mockFindAgent = jest.fn<any>();
+const mockToManifest = jest.fn<any>();
+jest.unstable_mockModule('@pkg/agent/services/AgentDefinitionService', () => ({
+  agentDefinitionService: {
+    findBySlug:    mockFindAgent,
+    toManifest:    mockToManifest,
+    list:          jest.fn(() => Promise.resolve([])),
+    importManifest: jest.fn(),
+  },
+}));
+
 const { MarketplaceSearchWorker } = await import('../search');
 const { MarketplaceInfoWorker } = await import('../info');
 const { MarketplaceDownloadWorker } = await import('../download');
@@ -23,6 +34,7 @@ const { MarketplaceDiffWorker } = await import('../diff');
 const { MarketplacePublishWorker } = await import('../publish');
 const { MarketplaceUnpublishWorker } = await import('../unpublish');
 const { MarketplaceListPublishedWorker } = await import('../list_published');
+const { toMarketplaceKind } = await import('../types');
 
 const call = (Worker: any, input: any) => new Worker()['_validatedCall'](input) as Promise<{ successBoolean: boolean; responseString: string }>;
 
@@ -48,10 +60,35 @@ function zipNames(buf: Buffer): Promise<string[]> {
   });
 }
 
+function zipText(buf: Buffer, wanted: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    yauzl.fromBuffer(buf, { lazyEntries: true }, (err, zip) => {
+      if (err || !zip) return reject(err);
+      zip.on('entry', (entry: yauzl.Entry) => {
+        if (entry.fileName !== wanted) {
+          zip.readEntry();
+
+          return;
+        }
+        zip.openReadStream(entry, (streamErr, stream) => {
+          if (streamErr || !stream) return reject(streamErr);
+          const chunks: Buffer[] = [];
+          stream.on('data', chunk => chunks.push(Buffer.from(chunk)));
+          stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+          stream.on('error', reject);
+        });
+      });
+      zip.on('end', () => reject(new Error(`Missing zip entry ${ wanted }`)));
+      zip.readEntry();
+    });
+  });
+}
+
 interface Row { id: string; kind: string; slug: string; name: string; version: string; description?: string; download_count: number; author_display?: string; updated_at: string; zip: Buffer }
 let rows: Row[];
 let mine: any[];
 let uploaded: Buffer | null;
+let submittedManifest: Record<string, any> | null;
 let deleted: string[];
 let home: string;
 const realFetch = global.fetch;
@@ -64,6 +101,9 @@ beforeEach(async() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-mkt-tools-'));
   process.env.SULLA_HOME_DIR = home;
   uploaded = null;
+  submittedManifest = null;
+  mockFindAgent.mockReset();
+  mockToManifest.mockReset();
   deleted = [];
   mine = [];
   rows = [
@@ -94,7 +134,12 @@ beforeEach(async() => {
       return r ? json({ template: { ...pub(r), manifest: { metadata: { category: 'Docs' }, functionSummary: { runtime: 'python' } } } }) : json({ error: 'Not found' }, 404);
     }
     if (!auth) return json({ error: 'Missing or invalid Authorization header' }, 401);
-    if (u.pathname === '/marketplace/submit-manifest') return json({ template: { id: 'tpl_newsub', slug: 'my-fn', bundle_status: 'pending' } }, 201);
+    if (u.pathname === '/marketplace/submit-manifest') {
+      const body = JSON.parse(String(init.body));
+      submittedManifest = body.manifest;
+
+      return json({ template: { id: 'tpl_newsub', slug: body.manifest.metadata.slug ?? 'my-fn', bundle_status: 'pending' } }, 201);
+    }
     if (u.pathname === '/marketplace/templates/tpl_newsub/bundle') {
       const chunks: Buffer[] = [];
       for await (const c of init.body as AsyncIterable<Uint8Array>) chunks.push(Buffer.from(c));
@@ -117,6 +162,10 @@ afterEach(() => {
 });
 
 describe('agent marketplace tools against the real API contract', () => {
+  it('maps database agents to the marketplace agent kind', () => {
+    expect(toMarketplaceKind('agent')).toBe('agent');
+  });
+
   it('search lists live listings with author and downloads, signed out', async() => {
     const r = await call(MarketplaceSearchWorker, { query: 'pdf' });
 
@@ -132,11 +181,12 @@ describe('agent marketplace tools against the real API contract', () => {
     }
   });
 
-  it('refuses agent kind for marketplace calls with a clear message', async() => {
+  it('searches agent listings', async() => {
+    rows.push({ id: 'tpl_agent', kind: 'agent', slug: 'reviewer', name: 'Reviewer', version: '1.0.0', download_count: 2, updated_at: '2026-01-03', zip: await zipOf({ 'reviewer/agent.json': '{}' }) });
     const r = await call(MarketplaceSearchWorker, { kind: 'agent' });
 
-    expect(r.successBoolean).toBe(false);
-    expect(r.responseString).toMatch(/Agents aren't distributed/);
+    expect(r.successBoolean).toBe(true);
+    expect(r.responseString).toContain('agent/reviewer');
   });
 
   it('info shows id, author, manifest summary and install status', async() => {
@@ -189,6 +239,54 @@ describe('agent marketplace tools against the real API contract', () => {
     expect(r.responseString).toContain('tpl_newsub');
     const names = await zipNames(uploaded!);
     expect(names.sort()).toEqual(['my-fn/function.yaml', 'my-fn/main.py']);
+  });
+
+  it('publishes a database agent as one slug-rooted bundle with exactly one agentSummary', async() => {
+    const agent = { slug: 'reviewer', name: 'Reviewer', description: 'Reviews changes', provider: 'openai', model: 'gpt-5', allowed_tools: ['github/get_pr'], skill_refs: ['review'] };
+    const manifest = {
+      apiVersion:      'sulla/v3',
+      kind:            'Agent',
+      manifestVersion: 1,
+      metadata: { slug: 'reviewer', title: 'Reviewer', description: 'Reviews changes', version: '1.0.0' },
+      spec: { provider: 'openai', model: 'gpt-5', prompt: 'Review carefully.', soul: '', goals: '', tools: ['github/get_pr'], skills: ['review'], config: {}, promptFiles: { 'prompt.md': 'Review carefully.' } },
+    };
+    mockFindAgent.mockResolvedValue(agent);
+    mockToManifest.mockReturnValue(manifest);
+    token = 'tok';
+
+    const result = await call(MarketplacePublishWorker, { kind: 'agent', slug: 'reviewer' });
+
+    expect(result.successBoolean).toBe(true);
+    expect((await zipNames(uploaded!)).sort()).toEqual(['reviewer/README.md', 'reviewer/agent.json']);
+    expect(JSON.parse(await zipText(uploaded!, 'reviewer/agent.json'))).toEqual(manifest);
+    expect(Object.keys(submittedManifest!).filter(key => key.endsWith('Summary'))).toEqual(['agentSummary']);
+    expect(submittedManifest!.agentSummary).toEqual({
+      provider:   'openai',
+      model:      'gpt-5',
+      toolsCount: 1,
+      skills:     ['review'],
+      requires:   { skills: [{ slug: 'review', optional: false }] },
+    });
+    expect(submittedManifest!.bundle.files.every((file: { path: string }) => file.path.startsWith('reviewer/'))).toBe(true);
+  });
+
+  it('refuses to publish an agent manifest containing a possible secret', async() => {
+    const prompt = `Use ${ ['sk', 'ant', 'abcdefghijklmnopqrstuv'].join('-') } directly.`;
+    mockFindAgent.mockResolvedValue({ slug: 'unsafe', name: 'Unsafe' });
+    mockToManifest.mockReturnValue({
+      apiVersion:      'sulla/v3',
+      kind:            'Agent',
+      manifestVersion: 1,
+      metadata: { slug: 'unsafe', title: 'Unsafe', description: '', version: '1.0.0' },
+      spec: { prompt, tools: [], skills: [], config: {}, promptFiles: { 'prompt.md': prompt } },
+    });
+    token = 'tok';
+
+    const result = await call(MarketplacePublishWorker, { kind: 'agent', slug: 'unsafe' });
+
+    expect(result.successBoolean).toBe(false);
+    expect(result.responseString).toMatch(/possible Anthropic API key secret/);
+    expect(uploaded).toBeNull();
   });
 
   it('list_published and unpublish target your newest live submission', async() => {

@@ -19,7 +19,7 @@
       class="signin-gate"
     >
       <SullaCloudCard
-        rationale="You need a Sulla Cloud account to install routines, skills, functions, and recipes from the marketplace — and to publish your own."
+        rationale="You need a Sulla Cloud account to install routines, skills, functions, agents, and recipes from the marketplace — and to publish your own."
         @signed-in="onSignedIn"
         @signed-out="onSignedOut"
       />
@@ -131,7 +131,7 @@
             Signed-in browse — installs land in your Library.
           </p>
           <p v-else>
-            Every routine, skill, function and recipe you've submitted.
+            Every routine, skill, function, agent and recipe you've submitted.
             Status updates arrive from the reviewers.
           </p>
         </div>
@@ -407,6 +407,7 @@ const KIND_OPTIONS: { value: KindFilter; label: string }[] = [
   { value: 'routine', label: 'Routines' },
   { value: 'skill', label: 'Skills' },
   { value: 'function', label: 'Functions' },
+  { value: 'agent', label: 'Agents' },
   { value: 'recipe', label: 'Recipes' },
   { value: 'integration', label: 'Integrations' },
 ];
@@ -428,7 +429,7 @@ const STATUS_LABELS: Record<'pending' | 'approved' | 'rejected', string> = {
 
 interface SubmissionRow {
   id:              string;
-  kind:            'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+  kind:            'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
   slug:            string;
   name:            string;
   description?:    string | null;
@@ -527,13 +528,13 @@ function onOpenDetailEvent(ev: Event) {
   const id = (ev as CustomEvent<{ id?: string }>).detail?.id;
   if (!id) return;
   mp.clearInstallResult();
-  void mp.loadDetail(id);
+  mp.loadDetail(id).catch(() => undefined);
 }
 
 onMounted(async() => {
   window.addEventListener('sulla:marketplace-open-detail', onOpenDetailEvent);
   const authed = await refreshAuthStatus();
-  if (authed) void mp.load();
+  if (authed) mp.load().catch(() => undefined);
 });
 
 onUnmounted(() => {
@@ -541,17 +542,17 @@ onUnmounted(() => {
 });
 
 function onKind(k: KindFilter) {
-  void mp.setKind(k);
+  mp.setKind(k).catch(() => undefined);
 }
 function onSort(s: SortValue) {
-  void mp.setSort(s);
+  mp.setSort(s).catch(() => undefined);
 }
 function submitSearch() {
-  void mp.setSearch(searchDraft.value);
+  mp.setSearch(searchDraft.value).catch(() => undefined);
 }
 function onOpen(id: string) {
   mp.clearInstallResult();
-  void mp.loadDetail(id);
+  mp.loadDetail(id).catch(() => undefined);
 }
 function onCloseDetail() {
   mp.clearDetail();
@@ -570,9 +571,10 @@ async function onInstall(id: string) {
       return;
     }
     emit('installed', result);
-    window.alert(result.updated
+    const warning = result.warnings?.length ? `\n\nWarning: ${ result.warnings.join('\nWarning: ') }` : '';
+    window.alert((result.updated
       ? `Updated ${ result.name } to v${ result.version } → ${ result.path }`
-      : `Installed ${ result.name } (${ result.kind }) → ${ result.path }`);
+      : `Installed ${ result.name } (${ result.kind }) → ${ result.path }`) + warning);
 
     return;
   }
@@ -621,14 +623,14 @@ function setView(next: 'browse' | 'submissions') {
     // marketplace won't surface thousands of personal submissions), so
     // refetching each time keeps status freshness without needing
     // server-side push.
-    void loadSubmissions();
+    loadSubmissions().catch(() => undefined);
   }
 }
 
 function setSubmissionsPage(nextPage: number) {
   if (nextPage < 1 || nextPage > submissionsTotalPages.value) return;
   submissionsPage.value = nextPage;
-  void loadSubmissions();
+  loadSubmissions().catch(() => undefined);
 }
 
 async function confirmTakedown(s: SubmissionRow) {

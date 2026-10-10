@@ -13,11 +13,21 @@ jest.unstable_mockModule('@pkg/utils/logging', () => ({
   default: { background: { log: () => {}, warn: () => {}, error: () => {}, info: () => {}, debug: () => {} } },
 }));
 
+const mockFindAgent = jest.fn<any>();
+const mockImportAgentManifest = jest.fn<any>();
+jest.unstable_mockModule('@pkg/agent/services/AgentDefinitionService', () => ({
+  agentDefinitionService: {
+    findBySlug:     mockFindAgent,
+    importManifest: mockImportAgentManifest,
+    list:           jest.fn(() => Promise.resolve([])),
+  },
+}));
+
 const { installTemplate, listInstalled, findInstalledBySlug, INSTALL_MARKER } = await import('../install');
 const { listBundleFiles } = await import('../bundleFiles');
 
 type Files = Record<string, string>;
-interface Listing { id: string; kind: string; slug: string; name: string; version: string; zip: Buffer }
+interface Listing { id: string; kind: string; slug: string; name: string; version: string; zip: Buffer; manifest?: Record<string, unknown> }
 
 function makeZip(files: Files): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -45,6 +55,8 @@ beforeEach(() => {
   process.env.SULLA_HOME_DIR = home;
   listings = {};
   failDownloads = false;
+  mockFindAgent.mockReset();
+  mockImportAgentManifest.mockReset();
   // eslint-disable-next-line @typescript-eslint/require-await -- fetch stub
   global.fetch = (async(input: any) => {
     const url = String(input);
@@ -58,7 +70,7 @@ beforeEach(() => {
     }
     const { zip: _z, ...row } = l;
 
-    return new Response(JSON.stringify({ template: { ...row, manifest: {} } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ template: { ...row, manifest: l.manifest ?? {} } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch;
 });
 
@@ -182,6 +194,48 @@ version: '1',
 
     expect(read(fnDir(), 'qb-sync', 'function.yaml')).toBe('version: 2');
     expect(fs.readdirSync(fnDir())).toEqual(['qb-sync']);
+  });
+
+  it('imports an agent bundle into the database without writing ~/sulla/agents', async() => {
+    const agentManifest = {
+      apiVersion:      'sulla/v3',
+      kind:            'Agent',
+      manifestVersion: 1,
+      metadata: { slug: 'reviewer', title: 'Reviewer', description: 'Reviews changes', version: '1.0.0' },
+      spec: { prompt: 'Review carefully.', tools: [], skills: [], config: {}, promptFiles: {} },
+    };
+    await publish({ id: 'tpl_agent', kind: 'agent', slug: 'reviewer', name: 'Reviewer', version: '1.0.0', manifest: { agentSummary: { requires: { skills: [] } } } }, {
+      'reviewer/agent.json': JSON.stringify(agentManifest),
+      'reviewer/README.md': '# Reviewer',
+    });
+    mockFindAgent.mockResolvedValue(null);
+    mockImportAgentManifest.mockResolvedValue({ name: 'Reviewer' });
+
+    const result = await installTemplate('tpl_agent');
+
+    expect(result).toMatchObject({ kind: 'agent', slug: 'reviewer', path: 'database:agent_definitions/reviewer', version: '1.0.0' });
+    expect(mockImportAgentManifest).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ slug: 'reviewer', marketplaceTemplateId: 'tpl_agent' }),
+    }));
+    expect(fs.existsSync(path.join(home, 'agents'))).toBe(false);
+  });
+
+  it('protects a local database agent unless overwrite is explicit', async() => {
+    const agentManifest = {
+      apiVersion:      'sulla/v3',
+      kind:            'Agent',
+      manifestVersion: 1,
+      metadata: { slug: 'reviewer', title: 'Reviewer', description: '', version: '1.0.0' },
+      spec: { prompt: 'Review carefully.', tools: [], skills: [], config: {}, promptFiles: {} },
+    };
+    await publish({ id: 'tpl_agent', kind: 'agent', slug: 'reviewer', name: 'Reviewer', version: '1.0.0' }, {
+      'reviewer/agent.json': JSON.stringify(agentManifest),
+    });
+    mockFindAgent.mockResolvedValue({ id: 'local-1', slug: 'reviewer', name: 'My Reviewer', source_kind: 'local' });
+
+    await expect(installTemplate('tpl_agent')).rejects.toThrow(/local custom agent.*overwrite:true/);
+    expect(mockImportAgentManifest).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(home, 'agents'))).toBe(false);
   });
 });
 

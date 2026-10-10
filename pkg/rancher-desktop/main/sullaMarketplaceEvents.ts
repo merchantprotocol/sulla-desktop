@@ -77,10 +77,10 @@ export function initSullaMarketplaceEvents(): void {
   // ── Locally installed marketplace artifacts ──
   ipcMainProxy.handle('marketplace-installed', async() => {
     try {
-      const { listInstalled } = await import('@pkg/main/marketplace/install');
+      const { listInstalledIncludingAgents } = await import('@pkg/main/marketplace/install');
 
       return {
-        installed: listInstalled().map(a => ({
+        installed: (await listInstalledIncludingAgents()).map(a => ({
           templateId: a.templateId,
           kind:       a.kind,
           slug:       a.slug,

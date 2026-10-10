@@ -25,6 +25,7 @@ import yaml from 'yaml';
 import * as yauzl from 'yauzl';
 
 import {
+  resolveAllSkillsDirs,
   resolveSullaFunctionsDir,
   resolveSullaRecipesDir,
   resolveSullaRoutinesDir,
@@ -36,7 +37,7 @@ import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
-export const MARKETPLACE_KINDS: MarketplaceKind[] = ['routine', 'skill', 'function', 'recipe', 'integration'];
+export const MARKETPLACE_KINDS: MarketplaceKind[] = ['routine', 'skill', 'function', 'agent', 'recipe', 'integration'];
 
 // ─── Security caps (mirror sullaRoutineImportEvents.ts) ──────────
 const MAX_FILE_BYTES = 100 * 1024 * 1024;   // 100 MB per file
@@ -475,6 +476,7 @@ export interface InstallResult {
   previousVersion?:  string;
   /** True when an existing install was replaced in place. */
   updated?:          boolean;
+  warnings?:         string[];
 }
 
 function moveDir(src: string, dst: string): void {
@@ -516,6 +518,8 @@ export async function installTemplate(
   if (!MARKETPLACE_KINDS.includes(kind)) {
     throw new Error(`Unknown marketplace kind "${ kind }"`);
   }
+
+  if (kind === 'agent') return installAgentTemplate(detail, opts);
 
   const existing = findInstalled(templateId) ?? (opts.replaces ? findInstalled(opts.replaces) : null);
   if (existing && !opts.overwrite) {
@@ -610,4 +614,131 @@ export async function installTemplate(
   } finally {
     rmrfSync(tmpdir);
   }
+}
+
+/** Database-backed agent install. No path under ~/sulla/agents is touched. */
+async function installAgentTemplate(
+  detail: Awaited<ReturnType<typeof fetchPublicTemplate>>,
+  opts: { overwrite?: boolean; replaces?: string },
+): Promise<InstallResult> {
+  const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+  const existing = await agentDefinitionService.findBySlug(detail.slug);
+  const databasePath = `database:agent_definitions/${ detail.slug }`;
+
+  if (existing?.source_kind && existing.source_kind !== 'marketplace' && !opts.overwrite) {
+    throw new Error(`Agent "${ detail.slug }" already exists as a local custom agent. Pass overwrite:true to replace it with the marketplace version.`);
+  }
+  if (existing?.source_kind === 'marketplace' && !opts.overwrite) {
+    return {
+      kind:             'agent',
+      slug:             detail.slug,
+      path:             databasePath,
+      name:             existing.name,
+      version:          existing.marketplace_version ?? existing.version ?? detail.version,
+      alreadyInstalled: true,
+      previousVersion:  existing.marketplace_version ?? existing.version ?? undefined,
+    };
+  }
+
+  const { tmpdir, rootPath, dirName } = await fetchAndExtract(detail.id);
+
+  try {
+    if (dirName !== detail.slug) {
+      throw new Error(`agent bundle top-level directory "${ dirName }" must match listing slug "${ detail.slug }"`);
+    }
+    const manifestPath = path.join(rootPath, 'agent.json');
+    if (!fs.existsSync(manifestPath)) throw new Error(`agent bundle is missing ${ detail.slug }/agent.json`);
+
+    let manifest: import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest;
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as typeof manifest;
+    } catch (err) {
+      throw new Error(`agent.json is not valid JSON: ${ err instanceof Error ? err.message : String(err) }`);
+    }
+    if (manifest.metadata?.slug !== detail.slug) {
+      throw new Error(`agent.json metadata.slug "${ manifest.metadata?.slug ?? '' }" does not match listing slug "${ detail.slug }"`);
+    }
+    manifest.metadata = {
+      ...manifest.metadata,
+      version:               detail.version,
+      marketplaceTemplateId: detail.id,
+      ...(detail.author_display ? { author: detail.author_display } : {}),
+    };
+
+    const imported = await agentDefinitionService.importManifest(manifest);
+    const warnings = await installRequiredSkills(detail.manifest);
+
+    console.log(`[Sulla] ${ existing ? 'Updated' : 'Installed' } marketplace agent ${ detail.slug } v${ detail.version } → agent_definitions`);
+
+    return {
+      kind:             'agent',
+      slug:             detail.slug,
+      path:             databasePath,
+      name:             imported.name,
+      version:          detail.version,
+      previousVersion:  existing?.marketplace_version ?? existing?.version ?? undefined,
+      updated:          !!existing,
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
+  } finally {
+    rmrfSync(tmpdir);
+  }
+}
+
+async function installRequiredSkills(envelope: Record<string, unknown>): Promise<string[]> {
+  const summary = envelope.agentSummary as { requires?: { skills?: { slug?: unknown }[] } } | undefined;
+  const required = Array.isArray(summary?.requires?.skills) ? summary.requires.skills : [];
+  const warnings: string[] = [];
+  const { findTemplateBySlug } = await import('@pkg/main/marketplace/client');
+
+  for (const entry of required) {
+    const slug = typeof entry?.slug === 'string' ? entry.slug.trim() : '';
+    if (!slug || isSkillInstalled(slug)) continue;
+    let listing: Awaited<ReturnType<typeof findTemplateBySlug>>;
+    try {
+      listing = await findTemplateBySlug('skill', slug);
+    } catch (err) {
+      warnings.push(`Required skill "${ slug }" could not be found: ${ err instanceof Error ? err.message : String(err) }`);
+      continue;
+    }
+    if (!listing) {
+      warnings.push(`Required skill "${ slug }" is not available on the marketplace; the agent was installed without it.`);
+      continue;
+    }
+    try {
+      await installTemplate(listing.id);
+    } catch (err) {
+      warnings.push(`Required skill "${ slug }" could not be installed: ${ err instanceof Error ? err.message : String(err) }`);
+    }
+  }
+
+  return warnings;
+}
+
+function isSkillInstalled(slug: string): boolean {
+  if (findInstalledBySlug('skill', slug)) return true;
+
+  return resolveAllSkillsDirs().some(root => fs.existsSync(path.join(root, slug, 'SKILL.md')));
+}
+
+/** Filesystem marketplace installs plus marketplace-sourced database agents. */
+export async function listInstalledIncludingAgents(kinds: MarketplaceKind[] = MARKETPLACE_KINDS): Promise<InstalledArtifact[]> {
+  const installed = listInstalled(kinds.filter(kind => kind !== 'agent'));
+  if (!kinds.includes('agent')) return installed;
+
+  const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+  for (const agent of await agentDefinitionService.list()) {
+    if (agent.status === 'archive' || agent.source_kind !== 'marketplace' || !agent.marketplace_template_id) continue;
+    installed.push({
+      templateId:  agent.marketplace_template_id,
+      kind:        'agent',
+      slug:        agent.marketplace_slug ?? agent.slug,
+      name:        agent.name,
+      version:     agent.marketplace_version ?? agent.version ?? '1.0.0',
+      installedAt: agent.updated_at,
+      path:        `database:agent_definitions/${ agent.slug }`,
+    });
+  }
+
+  return installed;
 }

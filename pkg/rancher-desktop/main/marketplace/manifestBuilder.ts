@@ -25,9 +25,11 @@ import * as path from 'path';
 import yaml from 'yaml';
 
 import { listBundleFiles } from './bundleFiles';
-import type { MarketplaceKind } from './client';
 
+import type { AgentMarketplaceManifest } from '@pkg/agent/services/AgentDefinitionService';
 import Logging from '@pkg/utils/logging';
+
+import type { MarketplaceKind } from './client';
 
 const console = Logging.background;
 
@@ -570,6 +572,56 @@ function buildIntegrationManifest(opts: BuildOptions): Record<string, unknown> {
   };
 }
 
+/** Build the distribution envelope around a database agent export. */
+function buildAgentManifest(opts: BuildOptions): Record<string, unknown> {
+  const { slug, bundleRoot, overrides } = opts;
+  const agentPath = path.join(bundleRoot, 'agent.json');
+  const raw = readOptionalFile(agentPath);
+
+  if (!raw) throw new Error(`agent.json not found at ${ agentPath }`);
+
+  let agent: AgentMarketplaceManifest;
+  try {
+    agent = JSON.parse(raw) as AgentMarketplaceManifest;
+  } catch (err) {
+    throw new Error(`agent.json is not valid JSON: ${ err instanceof Error ? err.message : String(err) }`);
+  }
+  if (agent.apiVersion !== 'sulla/v3' || agent.kind !== 'Agent' || agent.manifestVersion !== 1) {
+    throw new Error('agent.json must be a sulla/v3 Agent manifestVersion 1 document');
+  }
+  if (agent.metadata?.slug !== slug) {
+    throw new Error(`agent.json metadata.slug "${ agent.metadata?.slug ?? '' }" does not match bundle slug "${ slug }"`);
+  }
+
+  const skills = Array.isArray(agent.spec?.skills) ? agent.spec.skills.map(String) : [];
+  const tools = Array.isArray(agent.spec?.tools) ? agent.spec.tools : [];
+  const bundle = describeBundleFiles(bundleRoot, slug);
+  const metadata: Record<string, unknown> = {
+    slug,
+    title:       overrides?.name ?? agent.metadata.title,
+    description: overrides?.description ?? agent.metadata.description ?? '',
+    version:     overrides?.version ?? agent.metadata.version ?? '1.0.0',
+  };
+
+  if (agent.metadata.author) metadata.author = agent.metadata.author;
+
+  return {
+    ...baseEnvelope('agent', metadata),
+    agentSummary: {
+      ...(agent.spec.provider ? { provider: agent.spec.provider } : {}),
+      ...(agent.spec.model ? { model: agent.spec.model } : {}),
+      toolsCount: tools.length,
+      skills,
+      requires:   { skills: skills.map(skillSlug => ({ slug: skillSlug, optional: false })) },
+    },
+    bundle: {
+      bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+      totalSize:           bundle.totalSize,
+      files:               bundle.files,
+    },
+  };
+}
+
 // ─── Public dispatch ────────────────────────────────────────────────
 
 export function buildManifest(kind: MarketplaceKind, opts: BuildOptions): Record<string, unknown> {
@@ -578,6 +630,7 @@ export function buildManifest(kind: MarketplaceKind, opts: BuildOptions): Record
     case 'routine': return buildRoutineManifest(opts);
     case 'skill': return buildSkillManifest(opts);
     case 'function': return buildFunctionManifest(opts);
+    case 'agent': return buildAgentManifest(opts);
     case 'recipe': return buildRecipeManifest(opts);
     case 'integration': return buildIntegrationManifest(opts);
     default: throw new Error(`unsupported kind: ${ String(kind) }`);

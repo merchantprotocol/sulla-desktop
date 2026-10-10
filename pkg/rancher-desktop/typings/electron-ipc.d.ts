@@ -17,7 +17,7 @@ import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
  */
 export interface MarketplaceBrowseRow {
   id:                   string;
-  kind:                 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+  kind:                 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
   slug:                 string;
   name:                 string;
   description?:         string | null;
@@ -220,13 +220,13 @@ export interface IpcMainEvents {
  */
 export interface IpcMainInvokeEvents {
   'agent-tab:ready': (payload: { contractId: string; threadId: string }) => {
-    messages: Array<{
+    messages: {
       id?:        string;
       role?:      string;
       content?:   unknown;
       timestamp?: number;
       metadata?:  Record<string, unknown>;
-    }>;
+    }[];
   };
   'chat-artifacts:list': (input: { threadId: string; includeClosed?: boolean }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord[];
   'chat-artifacts:get': (input: { threadId: string; idOrName: string }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
@@ -469,6 +469,8 @@ export interface IpcMainInvokeEvents {
   'agent-definitions:delete':      (id: string) => boolean;
   'agent-definitions:export':      (slug: string) => import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest;
   'agent-definitions:import':      (manifest: import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
+  'agent-definitions:publish-check': (slug: string) => { secret: string | null; warnings: string[] } | { error: string };
+  'agent-definitions:publish':     (slug: string) => import('@pkg/main/marketplace/publish').PublishResult | { error: string };
   'agents-get-prompt-templates':   () => { soul: string; environment: string };
   'agents-delete':                 (agentId: string) => boolean;
   'agents-get-template-variables': () => { key: string; label: string; preview: string }[];
@@ -684,7 +686,7 @@ export interface IpcMainInvokeEvents {
   // takedown need a session. `{ error }` comes back on network failure or
   // a non-2xx response.
   'marketplace-browse':  (opts?: {
-    kind?:     'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+    kind?:     'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
     q?:        string;
     category?: string;
     sort?:  'popular' | 'newest' | 'featured';
@@ -700,7 +702,7 @@ export interface IpcMainInvokeEvents {
     template: MarketplaceBrowseRow & { manifest: Record<string, unknown> };
   } | { error: string };
   'marketplace-install': (id: string, opts?: { overwrite?: boolean; replaces?: string }) => {
-    kind:              'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+    kind:              'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
     slug:              string;
     path:              string;
     name:              string;
@@ -708,11 +710,12 @@ export interface IpcMainInvokeEvents {
     alreadyInstalled?: boolean;
     previousVersion?:  string;
     updated?:          boolean;
+    warnings?:         string[];
   } | { error: string };
   'marketplace-installed': () => {
     installed: {
       templateId: string;
-      kind:       'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+      kind:       'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
       slug:       string;
       version:    string;
       path:       string;
