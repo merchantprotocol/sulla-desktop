@@ -86,7 +86,9 @@ async function validateByKind(
   const issues: string[] = [];
 
   if (kind === 'skill') {
-    if (!manifestRaw.trim().startsWith('#')) issues.push('SKILL.md should start with a level-1 heading (the skill name).');
+    // Standard skills open with YAML frontmatter; the heading rule applies to the body after it.
+    const body = manifestRaw.replace(/^\s*---\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)/, '');
+    if (!body.trim().startsWith('#')) issues.push('SKILL.md should start with a level-1 heading (the skill name).');
     if (manifestRaw.trim().length < 50) issues.push('SKILL.md is suspiciously short — needs trigger conditions + instructions.');
     return issues;
   }

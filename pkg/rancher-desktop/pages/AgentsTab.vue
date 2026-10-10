@@ -547,6 +547,22 @@ async function exportManifest(agent: AgentDefinitionResponse) {
 }
 
 async function publishAgent(agent: AgentDefinitionResponse) {
+  const check = await ipcRenderer.invoke('agent-definitions:publish-check', agent.slug);
+  if ('error' in check) {
+    window.alert(`Could not check ${ agent.name } for publishing: ${ check.error }`);
+
+    return;
+  }
+  if (check.secret) {
+    window.alert(`${ agent.name } contains a possible ${ check.secret } secret. Remove it before publishing.`);
+
+    return;
+  }
+  const warning = check.warnings.length ? `\n\nWarning: ${ check.warnings.join(' ') }` : '';
+  if (!window.confirm(`Publish ${ agent.name } to the Sulla Marketplace?\n\nIts full prompt, soul, goals and prompt files will be uploaded for admin review, and anyone can install it once approved.${ warning }`)) {
+    return;
+  }
+
   publishingSlug.value = agent.slug;
   try {
     const result = await ipcRenderer.invoke('agent-definitions:publish', agent.slug);
@@ -555,8 +571,7 @@ async function publishAgent(agent: AgentDefinitionResponse) {
 
       return;
     }
-    const warning = result.warnings?.length ? `\n\nWarning: ${ result.warnings.join(' ') }` : '';
-    window.alert(`${ agent.name } was submitted for marketplace review.${ warning }`);
+    window.alert(`${ agent.name } was submitted for marketplace review.`);
   } finally {
     publishingSlug.value = null;
   }

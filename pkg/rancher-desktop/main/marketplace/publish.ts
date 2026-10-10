@@ -17,6 +17,7 @@ import { listBundleFiles } from './bundleFiles';
 import { submitManifest, uploadBundle, type MarketplaceKind } from './client';
 import { buildManifest } from './manifestBuilder';
 
+import type { AgentMarketplaceManifest } from '@pkg/agent/services/AgentDefinitionService';
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
 
 export interface PublishOverrides {
@@ -77,14 +78,12 @@ export async function publishLocalArtifact(args: {
     if (!agent) throw new Error(`Agent not found in the database: ${ slug }`);
     const manifest = agentDefinitionService.toManifest(agent);
     const serialized = `${ JSON.stringify(manifest, null, 2) }\n`;
-    const secret = findAgentSecret(serialized);
+    const check = checkAgentManifestForPublish(manifest);
 
-    if (secret) {
-      throw new Error(`agent.json contains a possible ${ secret } secret. Remove credentials from the agent before publishing.`);
+    if (check.secret) {
+      throw new Error(`agent.json contains a possible ${ check.secret } secret. Remove credentials from the agent before publishing.`);
     }
-    if (hasAbsoluteHomePath(manifest.spec.prompt)) {
-      warnings.push('The agent prompt contains an absolute home-directory path. It may not work on other machines.');
-    }
+    warnings.push(...check.warnings);
 
     agentStagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-agent-publish-'));
     try {
@@ -160,4 +159,22 @@ export function findAgentSecret(agentJson: string): string | null {
 
 export function hasAbsoluteHomePath(prompt: string): boolean {
   return /(?:\/Users\/[^/\s]+\/|\/home\/[^/\s]+\/)/.test(prompt);
+}
+
+/** Every text field that ships in agent.json: prompt, soul, goals and each prompt file. */
+function agentTextFields(manifest: AgentMarketplaceManifest): string[] {
+  const spec = manifest.spec ?? ({} as AgentMarketplaceManifest['spec']);
+
+  return [spec.prompt, spec.soul, spec.goals, ...Object.values(spec.promptFiles ?? {})].filter((v): v is string => typeof v === 'string');
+}
+
+/** Pre-publish check shared by the publish path and the Agents tab confirm step. */
+export function checkAgentManifestForPublish(manifest: AgentMarketplaceManifest): { secret: string | null; warnings: string[] } {
+  const warnings: string[] = [];
+
+  if (agentTextFields(manifest).some(hasAbsoluteHomePath)) {
+    warnings.push('The agent contains absolute home-directory paths (e.g. /Users/<name>/). They may not work on other machines.');
+  }
+
+  return { secret: findAgentSecret(JSON.stringify(manifest)), warnings };
 }

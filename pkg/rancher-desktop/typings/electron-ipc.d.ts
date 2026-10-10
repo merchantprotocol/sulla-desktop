@@ -469,6 +469,7 @@ export interface IpcMainInvokeEvents {
   'agent-definitions:delete':      (id: string) => boolean;
   'agent-definitions:export':      (slug: string) => import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest;
   'agent-definitions:import':      (manifest: import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
+  'agent-definitions:publish-check': (slug: string) => { secret: string | null; warnings: string[] } | { error: string };
   'agent-definitions:publish':     (slug: string) => import('@pkg/main/marketplace/publish').PublishResult | { error: string };
   'agents-get-prompt-templates':   () => { soul: string; environment: string };
   'agents-delete':                 (agentId: string) => boolean;
