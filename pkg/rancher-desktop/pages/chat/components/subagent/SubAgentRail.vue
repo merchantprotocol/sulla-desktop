@@ -1,12 +1,21 @@
 <template>
   <aside
-    v-if="cards.length"
+    v-if="cards.length && !collapsed"
     class="subagent-rail"
     aria-label="Sub-agents launched by this chat"
   >
     <div class="rail-heading">
       <span>Sub-agents</span>
       <span class="count">{{ runningCount }} running</span>
+      <button
+        type="button"
+        class="collapse"
+        title="Collapse sub-agents"
+        aria-label="Collapse sub-agents panel"
+        @click="emit('toggle-collapse')"
+      >
+        ‹
+      </button>
     </div>
     <div class="cards">
       <article
@@ -46,6 +55,18 @@
       </article>
     </div>
   </aside>
+  <button
+    v-else-if="cards.length"
+    type="button"
+    class="subagent-rail-tab"
+    :class="{ running: runningCount > 0 }"
+    title="Show sub-agents"
+    aria-label="Show sub-agents panel"
+    @click="emit('toggle-collapse')"
+  >
+    <span class="tab-chevron">›</span>
+    <span class="tab-label">Sub-agents · {{ runningCount ? `${ runningCount } running` : cards.length }}</span>
+  </button>
 </template>
 
 <script setup lang="ts">
@@ -56,10 +77,11 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { SubAgentConversationTarget } from './subAgentConversation';
 
-const props = defineProps<{ parentThreadId?: string }>();
+const props = defineProps<{ parentThreadId?: string; collapsed?: boolean }>();
 const emit = defineEmits<{
   open:       [target: SubAgentConversationTarget];
   visibility: [visible: boolean];
+  'toggle-collapse': [];
 }>();
 
 const cards = ref<ThreadAgentCard[]>([]);
@@ -136,7 +158,40 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
   border-bottom: 1px solid var(--border-default);
   font: 600 12px var(--font-body, var(--sans));
 }
-.count { color: var(--text-muted); font: 10px var(--mono); }
+.count { margin-left: auto; color: var(--text-muted); font: 10px var(--mono); }
+.collapse {
+  margin-left: 10px; padding: 0 6px;
+  border-radius: 6px;
+  color: var(--text-muted); font-size: 16px; line-height: 20px;
+}
+.collapse:hover { color: var(--text-primary); background: var(--bg-surface-alt); }
+
+/* Collapsed: a slim tab sticks out of the left edge where the rail was. */
+.subagent-rail-tab {
+  position: absolute;
+  top: 50%; left: 0;
+  z-index: 8;
+  transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 12px 5px;
+  border: 1px solid var(--border-default);
+  border-left: none;
+  border-radius: 0 9px 9px 0;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, padding 0.15s ease;
+}
+.subagent-rail-tab:hover { color: var(--text-primary); border-color: var(--accent-primary); padding-right: 8px; }
+.subagent-rail-tab.running { border-color: var(--accent-primary); }
+.tab-chevron { font-size: 14px; line-height: 1; }
+.tab-label {
+  writing-mode: vertical-rl;
+  font: 600 10px var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
 .cards { height: calc(100% - 48px); overflow-y: auto; padding: 10px; }
 .agent-card {
   margin-bottom: 8px;
