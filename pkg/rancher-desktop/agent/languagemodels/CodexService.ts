@@ -7,6 +7,7 @@ import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type Stre
 import { buildRemoteKillCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { isObserverSpawn } from './claudeToolPolicy';
 import { removeFileOnExit, systemPromptFromMessages, writeSystemPromptFile } from './cliSystemPromptFile';
+import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { emitCodexToolEvent } from './codexToolEvents';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
@@ -635,6 +636,14 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
     const browserController = graphBrowserControllerContext(state);
     if (browserController) stableParts.push(browserController);
+
+    // AGENTS.md is built for the default agent; a spawned agent's own DB
+    // prompt would otherwise never reach codex.
+    const agentInstructions = await buildCodexAgentInstructions(
+      state?.metadata as any,
+      async(agentId) => (await import('../nodes/BaseNode')).loadAgentPromptData(agentId),
+    );
+    if (agentInstructions) stableParts.push(agentInstructions);
 
     const parts: string[] = [];
 
