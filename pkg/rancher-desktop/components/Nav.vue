@@ -1,15 +1,36 @@
 <template>
-  <nav>
-    <ul>
+  <nav class="docker-nav">
+    <div class="docker-nav-heading">
+      <div class="docker-nav-title">
+        Docker
+      </div>
+      <div class="docker-nav-subtitle">
+        Containers and local runtime
+      </div>
+    </div>
+    <ul
+      ref="routeList"
+      class="docker-nav-routes"
+    >
+      <li
+        class="docker-nav-indicator"
+        aria-hidden="true"
+        :style="indicatorStyle"
+      />
       <li
         v-for="item in items"
         :key="item.route"
         :item="item.route"
       >
         <RouterLink
+          :ref="el => setRouteLink(item.route, el)"
           :class="{ 'rd-link-active': isRouteActive(item.route) }"
           :to="item.route"
         >
+          <span
+            class="docker-nav-glyph"
+            aria-hidden="true"
+          >{{ routeGlyph(item.route) }}</span>
           {{ routes[item.route].name }}
           <badge-state
             v-if="item.error"
@@ -127,6 +148,8 @@ export default defineComponent({
 
         return paths;
       }, {}),
+      indicatorStyle: { transform: 'translateY(0px)', height: '40px', opacity: '0' },
+      routeLinks:     {} as Record<string, any>,
     };
   },
   computed: {
@@ -139,6 +162,43 @@ export default defineComponent({
     },
   },
   methods: {
+    setRouteLink(route: string, element: any) {
+      if (element) {
+        this.routeLinks[route] = element;
+      }
+    },
+    routeGlyph(route: string): string {
+      return ({
+        '/Containers':      '▣',
+        '/Volumes':         '◫',
+        '/PortForwarding':  '↗',
+        '/Images':          '◇',
+        '/Snapshots':       '◷',
+        '/Troubleshooting': '⌁',
+        '/Diagnostics':     '◎',
+      } as Record<string, string>)[route] ?? '·';
+    },
+    updateIndicator() {
+      this.$nextTick(() => {
+        const active = this.items.find(item => this.isRouteActive(item.route));
+        const list = this.$refs.routeList as HTMLElement | undefined;
+        const link = active ? this.routeLinks[active.route]?.$el ?? this.routeLinks[active.route] : null;
+
+        if (!list || !(link instanceof HTMLElement)) {
+          this.indicatorStyle = { ...this.indicatorStyle, opacity: '0' };
+          return;
+        }
+
+        const listRect = list.getBoundingClientRect();
+        const linkRect = link.getBoundingClientRect();
+
+        this.indicatorStyle = {
+          transform: `translateY(${ linkRect.top - listRect.top }px)`,
+          height:    `${ linkRect.height }px`,
+          opacity:   '1',
+        };
+      });
+    },
     extensionRoute({ id, metadata }: { id: string, metadata: any }) {
       const { ui: { 'dashboard-tab': { root, src } } } = metadata;
 
@@ -166,6 +226,21 @@ export default defineComponent({
     },
     openDashboard(): void {
       this.$emit('open-dashboard');
+    },
+  },
+  mounted() {
+    this.updateIndicator();
+    window.addEventListener('resize', this.updateIndicator);
+  },
+  beforeUnmount() {
+    window.removeEventListener('resize', this.updateIndicator);
+  },
+  watch: {
+    '$route.path': {
+      handler() {
+        this.updateIndicator();
+      },
+      flush: 'post',
     },
   },
 });
@@ -242,6 +317,113 @@ a {
     flex: 1;
     margin: 5px 10px 0px 10px;
     justify-content: center;
+  }
+}
+
+.docker-nav-heading,
+.docker-nav-glyph,
+.docker-nav-indicator {
+  display: none;
+}
+
+:global(.theme-noir-dark) .docker-nav {
+  padding: 18px 12px;
+  background: rgba(3, 6, 12, 0.6);
+  border-right: 1px solid rgba(168, 192, 220, 0.08);
+}
+
+:global(.theme-noir-dark) .docker-nav-heading {
+  display: block;
+  padding: 20px 8px 18px;
+}
+
+:global(.theme-noir-dark) .docker-nav-title {
+  color: #f3f5f8;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+:global(.theme-noir-dark) .docker-nav-subtitle {
+  margin-top: 3px;
+  color: #7a8291;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+
+:global(.theme-noir-dark) .docker-nav-routes {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+:global(.theme-noir-dark) .docker-nav-indicator {
+  display: block;
+  position: absolute;
+  inset: 0 0 auto;
+  border-radius: 20px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(80, 150, 179, 0.28), rgba(80, 150, 179, 0.12));
+  box-shadow: inset 0 0 0 0.5px rgba(106, 176, 204, 0.5), 0 0 20px rgba(80, 150, 179, 0.2);
+  transition: transform .58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), opacity .16s;
+}
+
+:global(.theme-noir-dark) .docker-nav-indicator::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 9px;
+  width: 3px;
+  height: 22px;
+  border-radius: 0 3px 3px 0;
+  background: #6ab0cc;
+  box-shadow: 0 0 10px #6ab0cc;
+}
+
+:global(.theme-noir-dark) .docker-nav-routes li a {
+  position: relative;
+  z-index: 1;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 20px;
+  gap: 11px;
+  color: #a9b3c1;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 40px;
+  transition: color .16s, background .16s, transform .45s ease;
+}
+
+:global(.theme-noir-dark) .docker-nav-routes li a:hover {
+  color: #dee4ec;
+  background: rgba(80, 150, 179, 0.08);
+}
+
+:global(.theme-noir-dark) .docker-nav-routes li a:is(.router-link-active, .rd-link-active) {
+  color: #f3f5f8;
+  background: transparent;
+}
+
+:global(.theme-noir-dark) .docker-nav-glyph {
+  display: inline-block;
+  width: 18px;
+  color: #8cacc9;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  text-align: center;
+}
+
+:global(.theme-noir-dark) .nav-button-container {
+  padding-top: 12px;
+  border-top: 1px solid rgba(168, 192, 220, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.theme-noir-dark) .docker-nav-indicator,
+  :global(.theme-noir-dark) .docker-nav-routes li a {
+    transition: none;
   }
 }
 
