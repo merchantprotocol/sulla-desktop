@@ -3,9 +3,12 @@
 // and heartbeat channels to the default agent via GraphRegistry.
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
+import { applyThreadAgentRoute, resolveRoutableAgent, type RoutableAgent } from './ChatAgentRouting';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
+import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
+import { routeChatAgent, type ReflexRouteResult } from '../reflex/ReflexService';
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
@@ -262,12 +265,36 @@ export class BackendGraphWebSocketService {
   }
 
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<void> {
-    const agentId = overrideAgentId || await getAgentIdForTrigger(triggerType) || channelId;
-
     // Use the frontend's threadId if provided (maintains conversation).
     // Otherwise create a new one and notify the frontend via thread_created.
     const isNewThread = !threadIdFromMsg;
     const threadId = threadIdFromMsg || nextThreadId();
+    const explicitAgentId = typeof overrideAgentId === 'string' ? overrideAgentId.trim() : '';
+    const defaultAgentId = await getAgentIdForTrigger(triggerType) || channelId;
+    let agentId = explicitAgentId || defaultAgentId;
+    let newRoute: { prediction: ReflexRouteResult; agent: RoutableAgent } | null = null;
+
+    // The renderer allocates a threadId before its first send, so first-turn
+    // detection must use actual graph/saved history rather than !threadIdFromMsg.
+    // Explicit persona picks always win, and only the human desktop chat may route.
+    if (!explicitAgentId && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
+      const liveState = GraphRegistry.get(threadId)?.state;
+      const priorState = liveState ?? await loadThreadState(threadId);
+      const rememberedAgentId = String((priorState?.metadata as any)?.routedAgentId || '').trim();
+
+      if (rememberedAgentId) {
+        agentId = rememberedAgentId;
+      } else if (!priorState || priorState.messages.length === 0) {
+        const prediction = await routeChatAgent(message, threadId);
+        if (prediction) {
+          const routedAgent = await resolveRoutableAgent(prediction.agentId);
+          if (routedAgent && routedAgent.graphAgentId !== defaultAgentId) {
+            agentId = routedAgent.graphAgentId;
+            newRoute = { prediction, agent: routedAgent };
+          }
+        }
+      }
+    }
 
     let state: AgentGraphState | undefined;
     const abortKey = this.abortKey(channelId, threadId);
@@ -279,6 +306,24 @@ export class BackendGraphWebSocketService {
       const result = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
       const graph = result.graph;
       state = result.state;
+
+      if (newRoute) {
+        applyThreadAgentRoute(state, newRoute.agent);
+        // Persist before execution so a renderer refresh or process interruption
+        // cannot lose the sticky route chosen for this thread.
+        await saveThreadState(state);
+        this.wsService.send(channelId, {
+          type: 'agent_routed',
+          data: {
+            threadId,
+            agentId:    newRoute.agent.agentId,
+            name:       newRoute.agent.name,
+            confidence: newRoute.prediction.confidence,
+            decisionId: newRoute.prediction.decisionId,
+          },
+          timestamp: Date.now(),
+        });
+      }
 
       // Model choices from the chat picker are scoped to this thread state;
       // they never mutate ModelProviderService or global settings.

@@ -16,6 +16,7 @@
 export const DEFAULT_REFLEX_THRESHOLD = 0.6;
 
 export const DEFAULT_REFLEX_CATEGORIES = ['browser', 'ui', 'docker', 'project', 'capture', 'secretary', 'notify'];
+export const REFLEX_ROUTE_TOOL = 'route_agent';
 
 /** Tools inside allowed categories that must still never fire without the model. */
 const DENIED_TOOLS = new Set([
@@ -39,6 +40,9 @@ export interface ReflexPolicyInput {
 /** Returns null when allowed, otherwise the reason it is not. */
 export function reflexPolicyViolation(input: ReflexPolicyInput): string | null {
   if (!input.category) return `tool "${ input.toolName }" is not registered`;
+  // Routing only selects an enabled persona and is isolated from the normal
+  // action engine, so it is safe to teach regardless of the action-category list.
+  if (input.toolName === REFLEX_ROUTE_TOOL) return null;
   if (!input.allowedCategories.includes(input.category)) {
     return `category "${ input.category }" is not allowed for reflex actions (allowed: ${ input.allowedCategories.join(', ') })`;
   }

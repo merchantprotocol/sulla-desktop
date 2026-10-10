@@ -15,13 +15,13 @@
  * Either way the post-turn Reflex Trainer learns from what the model did.
  */
 
+import { REFLEX_NONE, ReflexEngine, type ReflexCandidate, type ReflexPrediction } from './ReflexEngine';
+import { reflexActionLabel } from './reflexLabels';
+import { DEFAULT_REFLEX_THRESHOLD, parseCategories, REFLEX_ROUTE_TOOL, reflexPolicyViolation } from './reflexPolicy';
 import { ReflexModel } from '../database/models/ReflexModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { resolveRoutableAgent } from '../services/ChatAgentRouting';
 import { toolRegistry } from '../tools/registry';
-
-import { REFLEX_NONE, ReflexEngine, type ReflexCandidate, type ReflexPrediction } from './ReflexEngine';
-import { DEFAULT_REFLEX_THRESHOLD, parseCategories, reflexPolicyViolation } from './reflexPolicy';
-import { reflexActionLabel } from './reflexLabels';
 
 export { DEFAULT_REFLEX_THRESHOLD } from './reflexPolicy';
 export { reflexActionLabel } from './reflexLabels';
@@ -41,9 +41,9 @@ export interface ReflexTurnResult {
 
 /** Not executed — tools the model might consider, ranked. */
 export interface ReflexHint {
-  kind:       'hint';
-  decisionId: string;
-  candidates: (ReflexCandidate & { command: string })[];
+  kind:           'hint';
+  decisionId:     string;
+  candidates:     (ReflexCandidate & { command: string })[];
   /** Set when the top candidate cleared the threshold but policy/approval stopped it */
   blockedReason?: string;
 }
@@ -59,6 +59,8 @@ export interface ReflexSettings {
 
 let engine: ReflexEngine | null = null;
 let engineVersion = -1;
+let routeEngine: ReflexEngine | null = null;
+let routeEngineVersion = -1;
 
 export async function getReflexSettings(): Promise<ReflexSettings> {
   const [enabled, threshold, hintThreshold, categories] = await Promise.all([
@@ -84,10 +86,21 @@ export async function getReflexEngine(): Promise<ReflexEngine> {
   if (!engine || engineVersion !== ReflexModel.version) {
     const version = ReflexModel.version;
     const examples = await ReflexModel.activeExamples();
-    engine = new ReflexEngine(examples);
+    engine = new ReflexEngine(examples.filter(example => example.toolName !== REFLEX_ROUTE_TOOL));
     engineVersion = version;
   }
   return engine;
+}
+
+/** First-message classifier trained only on route_agent examples. */
+export async function getRouteReflexEngine(): Promise<ReflexEngine> {
+  if (!routeEngine || routeEngineVersion !== ReflexModel.version) {
+    const version = ReflexModel.version;
+    const examples = await ReflexModel.activeExamples();
+    routeEngine = new ReflexEngine(examples.filter(example => example.toolName === REFLEX_ROUTE_TOOL));
+    routeEngineVersion = version;
+  }
+  return routeEngine;
 }
 
 export function toolCategory(toolName: string): string | undefined {
@@ -99,6 +112,62 @@ export function toolCategory(toolName: string): string | undefined {
 
 export async function predictReflex(message: string): Promise<ReflexPrediction> {
   return (await getReflexEngine()).predict(message);
+}
+
+export async function predictRouteReflex(message: string): Promise<ReflexPrediction> {
+  return (await getRouteReflexEngine()).predict(message);
+}
+
+export interface ReflexRouteResult {
+  agentId:    string;
+  confidence: number;
+  decisionId: string;
+}
+
+/**
+ * Classify the first human message without executing a tool. Every attempted
+ * classification gets a receipt so reflex_stats/reflex_correct remain useful.
+ */
+export async function routeChatAgent(message: string, threadId: string | null = null): Promise<ReflexRouteResult | null> {
+  try {
+    const [enabledRaw, settings] = await Promise.all([
+      SullaSettingsModel.get('reflexRouteEnabled', 'true'),
+      getReflexSettings(),
+    ]);
+    if (String(enabledRaw) === 'false' || !message.trim()) return null;
+
+    const prediction = await predictRouteReflex(message);
+    const requestedAgentId = typeof prediction.params?.agentId === 'string' ? prediction.params.agentId.trim() : '';
+    const base = {
+      thread_id:  threadId,
+      utterance:  message.slice(0, 2000),
+      tool_name:  REFLEX_ROUTE_TOOL,
+      params:     requestedAgentId ? { agentId: requestedAgentId } : {},
+      confidence: prediction.confidence,
+    };
+
+    if (prediction.toolName !== REFLEX_ROUTE_TOOL || prediction.confidence < settings.threshold || !requestedAgentId) {
+      await ReflexModel.recordDecision({ ...base, status: 'below_threshold', result: prediction.reason });
+      return null;
+    }
+
+    const agent = await resolveRoutableAgent(requestedAgentId);
+    if (!agent) {
+      await ReflexModel.recordDecision({ ...base, status: 'below_threshold', result: `agent "${ requestedAgentId }" is not usable` });
+      return null;
+    }
+
+    const switched = agent.agentId !== 'sulla';
+    const decisionId = await ReflexModel.recordDecision({
+      ...base,
+      status: switched ? 'acted' : 'below_threshold',
+      result: switched ? `routed to ${ agent.agentId }` : 'kept the default Sulla agent',
+    });
+    return { agentId: agent.agentId, confidence: prediction.confidence, decisionId };
+  } catch (err) {
+    console.warn('[Reflex] chat routing failed; using the default agent:', err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 /** CLI form the model can run, e.g. `sulla ui/open_tab '{"mode":"projects"}'`. */
@@ -196,7 +265,7 @@ function formatReflexHint(h: ReflexHint): string {
 /** Plain text of the latest human message, or '' when the turn is not a fresh human message. */
 export function latestHumanText(messages: any[]): string {
   const last = messages[messages.length - 1];
-  if (!last || last.role !== 'user' || last.metadata?.source === 'subconscious') return '';
+  if (last?.role !== 'user' || last.metadata?.source === 'subconscious') return '';
   const text = typeof last.content === 'string'
     ? last.content
     : Array.isArray(last.content)

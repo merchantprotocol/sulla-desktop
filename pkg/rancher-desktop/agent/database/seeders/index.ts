@@ -30,7 +30,7 @@ export const seedersRegistry = [
   {
     // Bump with agent/reflex/seed/reflex-seed.json "version" so a new seed
     // loads once on existing installs.
-    name: 'reflex-seed-v1',
+    name: 'reflex-seed-v2',
     run:  reflexSeedSeeder,
   },
   // {
