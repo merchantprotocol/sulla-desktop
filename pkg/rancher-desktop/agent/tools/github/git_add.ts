@@ -1,5 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
+import { claimWarningsForChangedFiles } from './fileClaims';
 
 /**
  * Git Add Tool - Stage files for commit.
@@ -44,7 +45,8 @@ export class GitAddWorker extends BaseTool {
         ? `Staged ${ files.length } file(s): ${ files.join(', ') }`
         : 'Staged all changes';
 
-      return { successBoolean: true, responseString: stagedMsg };
+      const warning = await claimWarningsForChangedFiles(repoRoot);
+      return { successBoolean: true, responseString: `${ stagedMsg }${ warning ? `\n\n${ warning }` : '' }` };
     } catch (error: any) {
       return { successBoolean: false, responseString: `Git add failed: ${ error.message }` };
     }

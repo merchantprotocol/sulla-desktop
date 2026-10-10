@@ -60,7 +60,7 @@ async function onCheckboxChange(event: Event): Promise<void> {
 
 <style scoped>
 .markdown-artifact {
-  color: var(--text-primary);
+  color: var(--text, var(--text-primary));
   font-family: var(--font-body);
   font-size: 14px;
   line-height: 1.7;
@@ -72,30 +72,30 @@ async function onCheckboxChange(event: Event): Promise<void> {
 .markdown-artifact :deep(h1),
 .markdown-artifact :deep(h2),
 .markdown-artifact :deep(h3) {
-  color: var(--text-primary);
+  color: var(--text, var(--text-primary));
   font-family: var(--font-display);
   line-height: 1.2;
 }
 .theme-noir .markdown-artifact :deep(h1),
 .theme-noir .markdown-artifact :deep(h2),
 .theme-noir .markdown-artifact :deep(h3) { color: var(--nx-read-1); }
-.markdown-artifact :deep(a) { color: var(--accent); }
+.markdown-artifact :deep(a) { color: var(--accent, var(--accent-primary)); }
 .theme-noir .markdown-artifact :deep(a) { color: var(--nx-accent-2); }
 .markdown-artifact :deep(pre),
 .markdown-artifact :deep(code) { font-family: var(--font-mono); }
 .markdown-artifact :deep(pre) {
   overflow-x: auto;
   padding: 14px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-muted, var(--border-subtle));
   border-radius: 8px;
-  background: var(--surface-2);
+  background: var(--surface-2, var(--bg-surface-alt));
 }
 .theme-noir .markdown-artifact :deep(pre) {
   border-color: var(--nx-hair-strong);
   background: var(--nx-surface);
 }
 .markdown-artifact :deep(input[type="checkbox"]) {
-  accent-color: var(--accent);
+  accent-color: var(--accent, var(--accent-primary));
   cursor: pointer;
   margin-right: 8px;
 }

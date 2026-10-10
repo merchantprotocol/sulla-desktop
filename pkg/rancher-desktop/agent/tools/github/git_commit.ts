@@ -1,5 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
+import { claimWarningsForChangedFiles } from './fileClaims';
 
 /**
  * Git Commit Tool - Stage files and create a commit.
@@ -25,6 +26,7 @@ export class GitCommitWorker extends BaseTool {
       }
 
       const repoRoot = rootResult.stdout.trim();
+      const warning = await claimWarningsForChangedFiles(repoRoot);
 
       // Stage files
       let addCmd: string;
@@ -48,7 +50,7 @@ export class GitCommitWorker extends BaseTool {
       if (commitResult.exitCode !== 0) {
         const output = commitResult.stderr || commitResult.stdout;
         if (output.includes('nothing to commit')) {
-          return { successBoolean: true, responseString: 'Nothing to commit, working tree clean.' };
+          return { successBoolean: true, responseString: `Nothing to commit, working tree clean.${ warning ? `\n\n${ warning }` : '' }` };
         }
         return { successBoolean: false, responseString: `Git commit failed: ${ output }` };
       }
@@ -61,7 +63,7 @@ export class GitCommitWorker extends BaseTool {
       );
       const hash = hashResult.stdout.trim();
 
-      return { successBoolean: true, responseString: `Committed ${ hash }: ${ message }` };
+      return { successBoolean: true, responseString: `Committed ${ hash }: ${ message }${ warning ? `\n\n${ warning }` : '' }` };
     } catch (error: any) {
       return { successBoolean: false, responseString: `Git commit failed: ${ error.message }` };
     }

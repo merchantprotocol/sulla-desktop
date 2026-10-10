@@ -220,6 +220,7 @@ type SendFn = (channel: string, message: any) => Promise<unknown> | unknown;
  */
 export class BackgroundCompletionDelivery {
   private readonly pending = new Map<string, PendingEntry>();
+  private readonly seenTaskIds = new Map<string, Map<string, number>>();
   private readonly send: SendFn;
   private readonly now: () => number;
   private readonly emitExchange: typeof emitSubAgentExchange;
@@ -239,9 +240,43 @@ export class BackgroundCompletionDelivery {
   deliver(convId: string, target: WakeTarget | null, notices: BackgroundTaskNotice[]): void {
     if (notices.length === 0) return;
     this.prune();
+    const seen = this.seenTaskIds.get(convId) ?? new Map<string, number>();
+    const handledIds = new Set<string>();
+
+    for (const notice of notices) {
+      if (!notice.followUpText.trim()) continue;
+      handledIds.add(notice.taskId);
+      seen.set(notice.taskId, this.now());
+      console.debug(`[ClaudeBackgroundTasks] Suppressed already-handled completion convId=${ convId } task=${ notice.taskId }`);
+    }
+    this.seenTaskIds.set(convId, seen);
+
+    // If an unhandled copy was being held while the thread was busy and the
+    // CLI subsequently completed its own follow-up turn, cancel that stale
+    // wake too.
     const existing = this.pending.get(convId);
-    const entry: PendingEntry = existing ?? { notices: [], target, queuedAt: this.now(), timer: null };
-    entry.notices.push(...notices);
+    if (existing && handledIds.size > 0) {
+      existing.notices = existing.notices.filter(n => !handledIds.has(n.taskId));
+      if (existing.notices.length === 0) {
+        if (existing.timer) clearTimeout(existing.timer);
+        this.pending.delete(convId);
+      }
+    }
+
+    const fresh = notices.filter((notice) => {
+      if (handledIds.has(notice.taskId)) return false;
+      if (seen.has(notice.taskId)) {
+        console.debug(`[ClaudeBackgroundTasks] Suppressed duplicate completion convId=${ convId } task=${ notice.taskId }`);
+        return false;
+      }
+      seen.set(notice.taskId, this.now());
+      return true;
+    });
+    if (fresh.length === 0) return;
+
+    const queued = this.pending.get(convId);
+    const entry: PendingEntry = queued ?? { notices: [], target, queuedAt: this.now(), timer: null };
+    entry.notices.push(...fresh);
     if (target) entry.target = target;
     this.pending.set(convId, entry);
     this.attempt(convId);
@@ -333,6 +368,12 @@ export class BackgroundCompletionDelivery {
     const cutoff = this.now() - PENDING_TTL_MS;
     for (const [convId, entry] of this.pending) {
       if (entry.queuedAt < cutoff && !entry.timer) this.pending.delete(convId);
+    }
+    for (const [convId, taskIds] of this.seenTaskIds) {
+      for (const [taskId, seenAt] of taskIds) {
+        if (seenAt < cutoff) taskIds.delete(taskId);
+      }
+      if (taskIds.size === 0) this.seenTaskIds.delete(convId);
     }
   }
 }

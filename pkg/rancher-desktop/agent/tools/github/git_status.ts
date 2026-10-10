@@ -1,5 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
+import { claimWarningsForChangedFiles } from './fileClaims';
 
 /**
  * Git Status Tool - Show working tree status.
@@ -64,6 +65,8 @@ export class GitStatusWorker extends BaseTool {
       if (unstaged.length) output += `\nUnstaged changes (${ unstaged.length }):\n  ${ unstaged.join('\n  ') }`;
       if (untracked.length) output += `\nUntracked files (${ untracked.length }):\n  ${ untracked.join('\n  ') }`;
       if (!staged.length && !unstaged.length && !untracked.length) output += '\nWorking tree clean.';
+      const warning = await claimWarningsForChangedFiles(repoRoot);
+      if (warning) output += `\n\n${ warning }`;
 
       return { successBoolean: true, responseString: output };
     } catch (error: any) {
