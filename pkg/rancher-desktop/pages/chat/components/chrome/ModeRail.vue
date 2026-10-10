@@ -118,17 +118,6 @@
         </span>
         <span class="item-label">{{ expanded ? 'Collapse' : 'Expand' }}</span>
       </button>
-
-      <div
-        class="rail-profile"
-        aria-label="Jonathon"
-      >
-        <span
-          class="profile-avatar"
-          aria-hidden="true"
-        >J</span>
-        <span class="profile-label">Jonathon</span>
-      </div>
     </div>
   </nav>
 </template>
@@ -414,8 +403,7 @@ const items: readonly ModeItem[] = Object.freeze([
   filter: drop-shadow(0 0 8px rgba(106, 176, 204, .6));
 }
 
-.item-label,
-.profile-label {
+.item-label {
   max-width: 0;
   overflow: hidden;
   font-size: 13.5px;
@@ -426,8 +414,7 @@ const items: readonly ModeItem[] = Object.freeze([
   transition: opacity .24s var(--rail-standard), filter .24s var(--rail-standard), transform .48s var(--rail-spring);
 }
 
-.expanded .item-label,
-.expanded .profile-label {
+.expanded .item-label {
   max-width: 120px;
   opacity: 1;
   filter: blur(0);
@@ -533,51 +520,17 @@ const items: readonly ModeItem[] = Object.freeze([
   transform: scaleX(-1);
 }
 
-.rail-profile {
-  height: 44px;
-  display: flex;
-  align-items: center;
-  gap: 0;
-  padding-left: 2px;
-  margin-top: 8px;
-  overflow: hidden;
-}
-
-.profile-avatar {
-  width: 40px;
-  height: 40px;
-  display: grid;
-  flex: none;
-  place-items: center;
-  border-radius: 20px;
-  color: var(--read-2, #dee4ec);
-  background: conic-gradient(from 215deg, #1b2433, #2c3a50, #151d2a, #26344a, #1b2433);
-  box-shadow: inset 0 0 0 1px rgba(168, 192, 220, .16);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.profile-label {
-  color: var(--read-1, #f3f5f8);
-}
-
-.expanded .rail-profile {
-  gap: 10px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .mode-rail,
   .active-indicator,
   .mode-btn,
   .item-label,
-  .profile-label,
   .shortcut-hint,
   .expand-icon {
     transition: none;
   }
 
-  .item-label,
-  .profile-label {
+  .item-label {
     filter: none;
   }
 
