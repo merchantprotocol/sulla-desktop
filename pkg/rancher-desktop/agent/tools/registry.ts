@@ -62,7 +62,7 @@ export class ToolRegistry {
     bridge:             'Bidirectional communication bridge between the heartbeat (autonomous background agent) and the frontend (human-facing chat). Send messages, read messages, update and read human presence state.',
     browser:            'Open/close tabs, read page content, click + fill forms, screenshot, exec JS, inspect cookies/history, background browsing, and desktop notifications. Open returns the page snapshot inline so you do not need a second call.',
     calendar:           'Tools for managing calendar events.',
-    chat:               'Controls scoped to the current chat thread, including its independent heartbeat.',
+    chat:               'Controls scoped to the current chat thread, including its independent heartbeat and persistent sidebar artifacts.',
     docker:             'Tools for Docker container management.',
     extensions:         'Tools for browsing the extension marketplace catalog, listing installed extensions, installing new extensions, and uninstalling extensions. Extensions are Docker Compose stacks managed by Sulla Desktop.',
     fs:                 'File system operations tools for creating, reading, writing, moving, copying, and deleting files/directories.',
@@ -283,23 +283,13 @@ export class ToolRegistry {
         break;
       case 'array':
         field.type = 'array';
-        if (spec.items) {
-          const itemField: any = { type: spec.items.type === 'enum' ? 'string' : spec.items.type };
-          if (spec.items.enum) itemField.enum = spec.items.enum;
-          if (spec.items.description) itemField.description = spec.items.description;
-          field.items = itemField;
-        }
+        if (spec.items) field.items = ToolRegistry.fieldToJsonSchema(spec.items);
         break;
       case 'object':
         field.type = 'object';
         if (spec.properties) {
           field.properties = Object.fromEntries(
-            Object.entries(spec.properties).map(([k, v]: [string, any]) => {
-              const sub: any = { type: v.type === 'enum' ? 'string' : v.type };
-              if (v.enum) sub.enum = v.enum;
-              if (v.description) sub.description = v.description;
-              return [k, sub];
-            }),
+            Object.entries(spec.properties).map(([k, v]: [string, any]) => [k, ToolRegistry.fieldToJsonSchema(v)]),
           );
         }
         break;
@@ -311,6 +301,23 @@ export class ToolRegistry {
     }
 
     return { type: 'object', properties, required, additionalProperties: false };
+  }
+
+  private static fieldToJsonSchema(spec: any): any {
+    const field: any = { type: spec.type === 'enum' ? 'string' : spec.type };
+    if (spec.enum) field.enum = spec.enum;
+    if (spec.description) field.description = spec.description;
+    if (spec.type === 'array' && spec.items) field.items = this.fieldToJsonSchema(spec.items);
+    if (spec.type === 'object' && spec.properties) {
+      field.properties = Object.fromEntries(
+        Object.entries(spec.properties).map(([key, value]) => [key, this.fieldToJsonSchema(value)]),
+      );
+      field.required = Object.entries(spec.properties)
+        .filter(([, value]: [string, any]) => !value.optional)
+        .map(([key]) => key);
+      field.additionalProperties = false;
+    }
+    return field;
   }
 
   getOperationTypes(name: string): ToolOperation[] {

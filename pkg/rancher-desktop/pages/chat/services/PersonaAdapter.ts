@@ -18,14 +18,14 @@ import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
 
 import { StreamUpdateScheduler } from './StreamUpdateScheduler';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
-import { asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
+import { asArtifactId, asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
 
 import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { ChatController } from '../controller/ChatController';
 import type {
-  ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, HtmlPayload,
+  Artifact, ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, HtmlPayload,
 } from '../models/Artifact';
 import type { Attachment } from '../models/Attachment';
 import type {
@@ -33,6 +33,7 @@ import type {
   ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, SubAgentExchangeMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
   PatchMessage, PatchHunk, ProactiveMessage,
 } from '../models/Message';
+import type { ChatArtifactChangedEvent, ChatArtifactRecord } from '@pkg/shared/chatArtifacts';
 
 export interface PersonaAdapterOptions {
   channelId?: string;
@@ -86,6 +87,8 @@ export class PersonaAdapter {
   private htmlArtifacts = new Map<string, ArtifactId>();
   /** Backend id → artifactId for <workflow-artifact> blocks in text responses. */
   private staticWorkflowArtifacts = new Map<string, ArtifactId>();
+  /** IDs of DB-backed artifacts currently reconciled into the controller. */
+  private persistentArtifacts = new Set<string>();
 
   constructor(
     private readonly controller: ChatController,
@@ -93,6 +96,9 @@ export class PersonaAdapter {
   ) {
     this.tabId = opts.tabId;
     this.ci = new ChatInterface(opts.channelId ?? 'sulla-desktop', opts.tabId);
+    this.persistentArtifacts = new Set(
+      this.controller.artifacts.value.list.filter(artifact => artifact.persistent).map(artifact => artifact.id),
+    );
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
     this.hasSentMessage = this.ci.hasMessages;
 
@@ -127,6 +133,24 @@ export class PersonaAdapter {
       });
     });
     if (routeUnsub) this.stopWatchers.push(routeUnsub);
+
+    const onArtifactChanged = (_event: unknown, change: ChatArtifactChangedEvent) => {
+      if (change?.threadId !== this.ci.threadId.value) return;
+      this.applyPersistentArtifact(change.artifact, !!change.focus);
+    };
+    ipcRenderer.on('chat-artifacts:changed', onArtifactChanged);
+    this.stopWatchers.push(() => ipcRenderer.removeListener('chat-artifacts:changed', onArtifactChanged));
+
+    const unsubscribeArtifactClose = this.controller.on('artifactClosed', (event) => {
+      if (!this.persistentArtifacts.has(event.artifactId)) return;
+      ipcRenderer.invoke('chat-artifacts:close', {
+        threadId: this.ci.threadId.value,
+        idOrName: event.artifactId,
+      }).catch(err => console.warn('[PersonaAdapter] artifact close failed:', err));
+    });
+    this.stopWatchers.push(unsubscribeArtifactClose);
+    this.loadPersistentArtifacts(this.ci.threadId.value ?? '').catch(err =>
+      console.warn('[PersonaAdapter] artifact load failed:', err));
 
     // Pull in any messages that were already restored from localStorage.
     this.syncMessages();
@@ -284,6 +308,8 @@ export class PersonaAdapter {
       ...(this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
     };
     await this.ci.send(selection, resolved.length ? resolved : undefined);
+    this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
+    await this.loadPersistentArtifacts(this.ci.threadId.value ?? '');
   }
 
   /**
@@ -306,6 +332,8 @@ export class PersonaAdapter {
   newChat(): void {
     this.ci.newChat();
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
+    this.loadPersistentArtifacts(this.ci.threadId.value ?? '').catch(err =>
+      console.warn('[PersonaAdapter] artifact load failed:', err));
     this.seen.clear();
     this.firstSeenAt.clear();
     this.firstCompletedAt.clear();
@@ -334,6 +362,7 @@ export class PersonaAdapter {
     this.workflowNames.clear();
     this.htmlArtifacts.clear();
     this.staticWorkflowArtifacts.clear();
+    this.persistentArtifacts.clear();
     this.ci.dispose();
   }
 
@@ -1038,6 +1067,58 @@ export class PersonaAdapter {
     this.htmlArtifacts.set(backendId, artifactId);
     return artifactId;
   }
+
+  private async loadPersistentArtifacts(threadId: string): Promise<void> {
+    if (!threadId) return;
+    const records = await ipcRenderer.invoke('chat-artifacts:list', { threadId }) as ChatArtifactRecord[];
+    if (threadId !== this.ci.threadId.value) return;
+    this.persistentArtifacts = new Set(records.map(record => record.id));
+    this.controller.syncPersistentArtifacts(records.map(record => this.mapPersistentArtifact(record)));
+  }
+
+  private applyPersistentArtifact(record: ChatArtifactRecord, focus: boolean): void {
+    const id = asArtifactId(record.id);
+    if (record.isDeleted || !record.isOpen) {
+      this.persistentArtifacts.delete(record.id);
+      this.controller.removeSyncedArtifact(id);
+      return;
+    }
+    this.persistentArtifacts.add(record.id);
+    this.controller.syncArtifact(this.mapPersistentArtifact(record), focus);
+  }
+
+  private mapPersistentArtifact(record: ChatArtifactRecord): Artifact {
+    let payload: Artifact['payload'];
+
+    if (record.kind === 'markdown') {
+      payload = { markdown: record.content };
+    } else if (record.kind === 'html') {
+      payload = { html: record.content };
+    } else {
+      payload = {
+        path:     record.path || record.name,
+        language: record.language || 'text',
+        lines:    record.content.split('\n').map((line, index) => ({
+          n: index + 1,
+          text: escapeHtml(line),
+          op: 'context' as const,
+        })),
+      };
+    }
+
+    return {
+      id:         asArtifactId(record.id),
+      kind:       record.kind,
+      name:       record.name,
+      status:     record.status,
+      createdAt:  Date.parse(record.createdAt),
+      updatedAt:  Date.parse(record.updatedAt),
+      persistent: true,
+      threadId:   record.threadId,
+      version:    record.version,
+      payload,
+    };
+  }
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────
@@ -1050,6 +1131,15 @@ export class PersonaAdapter {
 function isMobileRelayChannel(channel: string): boolean {
   const c = (channel || '').toLowerCase();
   return c === 'mobile-relay' || c === 'mobile' || c.startsWith('mobile-');
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 function splitThoughts(content: string): string[] {

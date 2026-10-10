@@ -21,7 +21,7 @@ pages/chat/
 ├── models/                      # Plain data. No Vue. No DOM.
 │   ├── Message.ts               # Discriminated union by `kind`
 │   ├── Thread.ts                # Thread shape + ThreadState for serialization
-│   ├── Artifact.ts              # workflow | html | code artifact
+│   ├── Artifact.ts              # workflow | html | code | markdown artifact
 │   ├── Attachment.ts
 │   ├── QueuedMessage.ts
 │   ├── VoiceState.ts
@@ -159,7 +159,7 @@ Codified as a pure function `nextRunState(current, event) → next` in `runState
 | **0** | Foundation: types, models, controller, state machine, composable, registry | All existing `ChatInterface` behavior reproduced in controller unit tests. |
 | **1** | `ChatPage.vue` + Transcript + MessageRouter + user/sulla/thinking/tool/patch. Canvas + reading styles. | Feature parity for basic text turns. |
 | **2** | Composer decomposition + voice + attachments + queue + run controls + keyboard. | Full composer parity. |
-| **3** | Artifact sidebar (workflow + html + code panes). Patch → Open File wires in. | Artifact lives when Sulla runs a routine. |
+| **3** | Artifact sidebar (workflow + html + code + markdown panes). Patch → Open File wires in. | Artifact lives when Sulla runs a routine. |
 | **4** | Channel + subagent + citations + memory + proactive + approval + model switcher + search + shortcuts + history rail. | `chat-whisper-full.html` parity. |
 | **5** | Swap `BrowserTabChat.vue` → `ChatPage.vue`. Delete old file. | No regressions. |
 

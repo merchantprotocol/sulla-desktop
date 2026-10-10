@@ -22,7 +22,7 @@ import { useChatController } from '../../controller/useChatController';
 const props = defineProps<{ artifact: Artifact }>();
 defineEmits<{ (e: 'expand'): void }>();
 const controller = useChatController();
-const typeLabel = computed(() => ({ workflow: 'Workflow', html: 'HTML Artifact', code: 'Code File' })[props.artifact.kind]);
+const typeLabel = computed(() => ({ workflow: 'Workflow', html: 'HTML Artifact', code: 'Code File', markdown: 'Markdown' })[props.artifact.kind]);
 </script>
 
 <style scoped>

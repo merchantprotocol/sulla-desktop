@@ -124,6 +124,22 @@ sulla <category> --help          # what THIS install exposes right now
 
 `git_push`/`git_pull` inject the vault PAT automatically — never extract it for raw git. Merges require `confirm:true`. → See [`tools/github.md`](github.md)
 
+## chat — current-chat controls and sidebar artifacts (14 tools)
+- `sulla chat/route_agent` — Select an enabled agent persona for the current chat.
+- `sulla chat/set_heartbeat` — Configure this chat's independent heartbeat; graph runs pause it and restart a full interval afterward.
+- `sulla chat/artifact_list` — List open artifacts, optionally including closed ones.
+- `sulla chat/artifact_create` — Create a markdown, HTML, or code artifact; an existing name is updated in place.
+- `sulla chat/artifact_read` — Read the current content and version, including human edits.
+- `sulla chat/artifact_update` — Fully replace content and/or update name, status, or code metadata.
+- `sulla chat/artifact_edit` — Apply atomic exact-once find/replace edits, ideal for ticking plan items.
+- `sulla chat/artifact_append` — Append text to an artifact.
+- `sulla chat/artifact_focus` — Focus an existing sidebar tab.
+- `sulla chat/artifact_close` / `artifact_reopen` — Hide or restore a sidebar tab without losing history.
+- `sulla chat/artifact_delete` — Soft-delete an artifact; requires `confirm: true`.
+- `sulla chat/artifact_history` / `artifact_revert` — Inspect revisions and restore an older content version as a new revision.
+
+Keep one Plan artifact per chat, read it before editing because the human may have ticked items, and update it in place instead of pasting new plan copies into the transcript.
+
 ## pg — PostgreSQL (6 tools)
 - `sulla pg/pg_query` — SELECT (rows).
 - `sulla pg/pg_queryall` — SELECT, all rows (explicit).

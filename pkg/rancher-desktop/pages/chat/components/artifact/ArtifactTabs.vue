@@ -31,7 +31,7 @@ const artifacts = computed(() => controller.artifacts.value.list);
 const activeId  = computed(() => controller.artifacts.value.activeId);
 
 function iconFor(kind: ArtifactKind): string {
-  return ({ workflow: '⌘', html: '▦', code: '‹›' })[kind];
+  return ({ workflow: '⌘', html: '▦', code: '‹›', markdown: '☷' })[kind];
 }
 </script>
 

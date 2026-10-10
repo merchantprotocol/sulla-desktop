@@ -1,5 +1,10 @@
 import type { ToolManifest } from '../registry';
 
+const artifactTarget: Record<string, any> = {
+  idOrName:       { type: 'string', description: 'Artifact id or exact name in this chat.' },
+  expectedVersion: { type: 'number', optional: true, description: 'Reject the write unless this is still the current version. Read before editing because the human may have changed it.' },
+};
+
 export const chatToolManifests: ToolManifest[] = [
   {
     name:        'route_agent',
@@ -13,7 +18,7 @@ export const chatToolManifests: ToolManifest[] = [
   },
   {
     name:        'set_heartbeat',
-    description: 'Set the heartbeat for the current chat tab only. Use intervalMinutes=0 to turn it off. The timer never interrupts an in-flight run; one pending beat is delivered when the thread becomes idle.',
+    description: 'Set the heartbeat for the current chat tab only. Use intervalMinutes=0 to turn it off. While the graph runs the timer is paused; after the graph stops, a fresh full interval starts. No held beat is delivered.',
     category:    'chat',
     schemaDef:   {
       intervalMinutes: { type: 'number', description: 'Minutes between beats. Use 0 to turn this chat heartbeat off.' },
@@ -21,5 +26,131 @@ export const chatToolManifests: ToolManifest[] = [
     },
     operationTypes: ['update'],
     loader:         () => import('./set_heartbeat'),
+  },
+  {
+    name:        'artifact_list',
+    description: 'List sidebar artifacts for this chat. Plans and working docs should live in ONE named artifact that you keep updating in place.',
+    category:    'chat',
+    schemaDef:   { includeClosed: { type: 'boolean', optional: true, description: 'Include closed artifacts. Deleted artifacts stay hidden.' } },
+    operationTypes: ['read'],
+    loader:         () => import('./artifact_list'),
+  },
+  {
+    name:        'artifact_create',
+    description: 'Create and focus a sidebar artifact for this chat. If its name already exists, updates that same artifact instead of opening a duplicate. Keep ONE plan artifact per chat and update it as work progresses.',
+    category:    'chat',
+    schemaDef:   {
+      name:     { type: 'string', description: 'Stable artifact name, such as Plan.' },
+      kind:     { type: 'enum', enum: ['markdown', 'html', 'code'], optional: true, default: 'markdown', description: 'Artifact kind; defaults to markdown.' },
+      content:  { type: 'string', description: 'Complete artifact content.' },
+      status:   { type: 'enum', enum: ['working', 'done', 'error', 'viewing', 'editing'], optional: true, description: 'Initial status; defaults to working.' },
+      language: { type: 'string', optional: true, description: 'Code language when kind is code.' },
+      path:     { type: 'string', optional: true, description: 'Displayed file path when kind is code.' },
+      focus:    { type: 'boolean', optional: true, default: true, description: 'Focus the sidebar tab; defaults to true.' },
+      expectedVersion: { type: 'number', optional: true, description: 'When updating an existing artifact by name, reject unless this is still the current version.' },
+    },
+    operationTypes: ['create', 'update'],
+    loader:         () => import('./artifact_create'),
+  },
+  {
+    name:        'artifact_read',
+    description: 'Read current artifact content and version, including edits or checkbox ticks made by the human. Always read before editing a shared plan.',
+    category:    'chat',
+    schemaDef:   { idOrName: artifactTarget.idOrName },
+    operationTypes: ['read'],
+    loader:         () => import('./artifact_read'),
+  },
+  {
+    name:        'artifact_update',
+    description: 'Replace an artifact content and/or rename or change its status. Updates the existing sidebar tab in place; do not create a new copy of a plan.',
+    category:    'chat',
+    schemaDef:   {
+      ...artifactTarget,
+      content:  { type: 'string', optional: true, description: 'Complete replacement content.' },
+      newName:  { type: 'string', optional: true, description: 'New artifact name.' },
+      status:   { type: 'enum', enum: ['working', 'done', 'error', 'viewing', 'editing'], optional: true, description: 'New status.' },
+      language: { type: 'string', optional: true, description: 'Code language.' },
+      path:     { type: 'string', optional: true, description: 'Displayed code path.' },
+      focus:    { type: 'boolean', optional: true, description: 'Focus the artifact after updating it.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./artifact_update'),
+  },
+  {
+    name:        'artifact_edit',
+    description: 'Apply exact find/replace edits atomically to an existing artifact. Every find must occur exactly once or nothing changes. Best for ticking plan items; read first because the human may have edited them.',
+    category:    'chat',
+    schemaDef:   {
+      ...artifactTarget,
+      edits: {
+        type: 'array',
+        description: 'Ordered exact edits applied atomically.',
+        items: {
+          type: 'object',
+          properties: {
+            find:    { type: 'string', description: 'Exact text that must occur once.' },
+            replace: { type: 'string', description: 'Replacement text.' },
+          },
+        },
+      },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./artifact_edit'),
+  },
+  {
+    name:        'artifact_append',
+    description: 'Append text to an existing sidebar artifact, such as a notes or progress log section.',
+    category:    'chat',
+    schemaDef:   { ...artifactTarget, text: { type: 'string', description: 'Text to append verbatim.' } },
+    operationTypes: ['update'],
+    loader:         () => import('./artifact_append'),
+  },
+  {
+    name:        'artifact_focus',
+    description: 'Focus an existing open sidebar artifact without changing its content or version.',
+    category:    'chat',
+    schemaDef:   { idOrName: artifactTarget.idOrName },
+    operationTypes: ['read'],
+    loader:         () => import('./artifact_focus'),
+  },
+  {
+    name:        'artifact_close',
+    description: 'Close an artifact sidebar tab while preserving its content and revision history.',
+    category:    'chat',
+    schemaDef:   artifactTarget,
+    operationTypes: ['update'],
+    loader:         () => import('./artifact_close'),
+  },
+  {
+    name:        'artifact_reopen',
+    description: 'Reopen and focus a previously closed artifact in this chat.',
+    category:    'chat',
+    schemaDef:   artifactTarget,
+    operationTypes: ['update'],
+    loader:         () => import('./artifact_reopen'),
+  },
+  {
+    name:        'artifact_delete',
+    description: 'Soft-delete an artifact while retaining its database revision history. Requires confirm: true.',
+    category:    'chat',
+    schemaDef:   { ...artifactTarget, confirm: { type: 'boolean', description: 'Must be true to confirm deletion.' } },
+    operationTypes: ['delete'],
+    loader:         () => import('./artifact_delete'),
+  },
+  {
+    name:        'artifact_history',
+    description: 'Read every saved revision of an artifact, newest first, including whether the agent or human made it.',
+    category:    'chat',
+    schemaDef:   { idOrName: artifactTarget.idOrName },
+    operationTypes: ['read'],
+    loader:         () => import('./artifact_history'),
+  },
+  {
+    name:        'artifact_revert',
+    description: 'Restore an artifact content from an earlier version as a new revision, preserving all history.',
+    category:    'chat',
+    schemaDef:   { ...artifactTarget, version: { type: 'number', description: 'Historical version to restore.' } },
+    operationTypes: ['update'],
+    loader:         () => import('./artifact_revert'),
   },
 ];

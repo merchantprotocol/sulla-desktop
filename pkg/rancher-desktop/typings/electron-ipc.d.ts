@@ -219,6 +219,18 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'chat-artifacts:list': (input: { threadId: string; includeClosed?: boolean }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord[];
+  'chat-artifacts:get': (input: { threadId: string; idOrName: string }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
+  'chat-artifacts:save': (input: {
+    threadId: string;
+    idOrName: string;
+    content?: string;
+    name?: string;
+    status?: import('@pkg/shared/chatArtifacts').ChatArtifactStatus;
+    expectedVersion?: number;
+  }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
+  'chat-artifacts:close': (input: { threadId: string; idOrName: string; expectedVersion?: number }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
+  'chat-artifacts:focus': (input: { threadId: string; idOrName: string }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
   'get-locked-fields':         () => import('@pkg/config/settings').LockedSettingsType;
   'settings-write':            (arg: RecursivePartial<import('@pkg/config/settings').Settings>) => void;
   'transient-settings-fetch':  () => import('@pkg/config/transientSettings').TransientSettings;
@@ -1028,6 +1040,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'chat-artifacts:changed': (change: import('@pkg/shared/chatArtifacts').ChatArtifactChangedEvent) => void;
   'decisions:changed': (record: import('@pkg/shared/decisions').DecisionRecord) => void;
   'claude-oauth:progress':          (text: string) => void;
   /** First-run: VM + database are up, AI sign-in can start. */

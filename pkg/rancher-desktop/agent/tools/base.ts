@@ -201,6 +201,14 @@ export abstract class BaseTool<TState = any> {
     const field: any = { type: spec.type === 'enum' ? 'string' : spec.type };
     if (spec.enum) field.enum = spec.enum;
     if (spec.description) field.description = spec.description;
+    if (spec.type === 'array' && spec.items) field.items = this.fieldToJsonSchema(spec.items);
+    if (spec.type === 'object' && spec.properties) {
+      field.properties = Object.fromEntries(
+        Object.entries(spec.properties).map(([key, value]) => [key, this.fieldToJsonSchema(value)]),
+      );
+      field.required = Object.entries(spec.properties).filter(([, value]) => !value.optional).map(([key]) => key);
+      field.additionalProperties = false;
+    }
     return field;
   }
 
