@@ -1,9 +1,10 @@
 <template>
   <div
-    class="wrapper"
+    class="wrapper docker-dashboard-shell"
     :class="{
       blur,
       dark: isDark,
+      'docker-dashboard-main': activeMainTab,
     }"
   >
     <rd-nav
@@ -18,6 +19,16 @@
       ref="body"
       class="body main-preferences"
     >
+      <header
+        v-if="activeMainTab"
+        class="docker-page-intro"
+      >
+        <div class="docker-page-eyebrow">
+          {{ activePageCopy.eyebrow }}
+        </div>
+        <h1>{{ activePageCopy.headline }}</h1>
+        <p>{{ activePageCopy.lead }}</p>
+      </header>
       <!-- Main tabs are always mounted, toggled with v-show to preserve state -->
       <Containers v-show="activeMainTab === '/Containers'" />
       <Volumes v-show="activeMainTab === '/Volumes'" />
@@ -110,6 +121,31 @@ export default {
       const currentPath = this.$route.path;
 
       return this.paths.find(p => currentPath.toLowerCase() === p.toLowerCase()) || null;
+    },
+    activePageCopy() {
+      return ({
+        '/Containers': {
+          eyebrow: 'Containers', headline: 'Everything running, at a glance.', lead: 'Start, stop, inspect, and clean up local workloads.',
+        },
+        '/Volumes': {
+          eyebrow: 'Volumes', headline: 'Persistent data, accounted for.', lead: 'Browse storage, inspect mount points, and remove what is no longer needed.',
+        },
+        '/PortForwarding': {
+          eyebrow: 'Port forwarding', headline: 'Local services, within reach.', lead: 'Expose Kubernetes services on local ports and control every active forward.',
+        },
+        '/Images': {
+          eyebrow: 'Images', headline: 'The layers behind every workload.', lead: 'Pull, scan, push, and prune the images stored by your local runtime.',
+        },
+        '/Snapshots': {
+          eyebrow: 'Snapshots', headline: 'A safe point to return to.', lead: 'Capture the current runtime state and restore it when you need to rewind.',
+        },
+        '/Troubleshooting': {
+          eyebrow: 'Troubleshooting', headline: 'When the engine needs attention.', lead: 'Open logs, reset Kubernetes, or return the runtime to a clean state.',
+        },
+        '/Diagnostics': {
+          eyebrow: 'Diagnostics', headline: 'Know what is healthy, and what is not.', lead: 'Run system checks, inspect failures, and mute findings you have reviewed.',
+        },
+      })[this.activeMainTab] ?? { eyebrow: '', headline: '', lead: '' };
     },
     /** @returns {number} The number of diagnostics errors. */
     diagnosticsCount() {
@@ -298,6 +334,326 @@ export default {
     grid-area: status-bar;
     border-top: 1px solid var(--header-border);
     background: var(--status-bar-bg, var(--body-bg));
+  }
+}
+</style>
+<style lang="scss">
+.docker-page-intro {
+  display: none;
+}
+
+.theme-noir-dark .docker-dashboard-shell {
+  --docker-hairline: rgba(168, 192, 220, 0.08);
+  --docker-steel: #5096b3;
+  --docker-steel-bright: #6ab0cc;
+  --docker-read: #f3f5f8;
+  --docker-read-soft: #a9b3c1;
+  --docker-read-dim: #7a8291;
+  grid-template:
+    "nav        title"
+    "nav        body" 1fr
+    "status-bar status-bar"
+    / 230px 1fr;
+  background: radial-gradient(110% 60% at 0% 0%, rgba(80, 150, 179, 0.12), transparent 55%), #070d1a;
+
+  > .title {
+    min-height: 52px;
+    padding: 10px 34px;
+    border-color: var(--docker-hairline);
+    background: rgba(3, 6, 12, 0.28);
+
+    .title-top {
+      justify-content: flex-end;
+    }
+
+    h1 {
+      color: var(--docker-read);
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 24px;
+      font-weight: 600;
+    }
+  }
+
+  &.docker-dashboard-main > .title {
+    h1,
+    .description {
+      display: none;
+    }
+  }
+
+  > .body {
+    padding: 0 34px 30px;
+    background: transparent;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(168, 192, 220, 0.15) transparent;
+  }
+
+  .main-preferences > div {
+    padding-top: 0;
+    animation: docker-noir-enter .48s cubic-bezier(.22, 1, .36, 1) both;
+  }
+
+  .docker-page-intro {
+    display: block;
+    flex: none;
+    padding: 28px 0 24px;
+    animation: docker-noir-enter .48s cubic-bezier(.22, 1, .36, 1) both;
+
+    .docker-page-eyebrow {
+      margin-bottom: 6px;
+      color: var(--docker-steel-bright);
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 10.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      color: var(--docker-read);
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 30px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+    }
+
+    p {
+      margin: 0;
+      color: var(--docker-read-soft);
+      font-size: 14px;
+    }
+  }
+
+  .sortable-table-header {
+    margin-bottom: 4px;
+  }
+
+  .fixed-header-actions {
+    align-items: end;
+    padding-bottom: 14px;
+  }
+
+  .search-box,
+  select,
+  input[type="number"] {
+    min-height: 40px;
+    border: 1px solid rgba(168, 192, 220, 0.12);
+    border-radius: 12px;
+    color: var(--docker-read);
+    background: rgba(3, 6, 12, 0.6);
+    box-shadow: none;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+
+  table.sortable-table {
+    border-collapse: separate;
+    border-spacing: 0 6px;
+    overflow: visible;
+    outline: 0;
+    background: transparent;
+
+    thead th {
+      padding: 0 12px 6px;
+      border: 0;
+      color: var(--docker-read-dim);
+      background: transparent;
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    tbody tr.main-row,
+    tbody tr:not(.group-row):not(.no-rows):not(.no-results) {
+      height: 44px;
+      border: 0;
+      color: #dee4ec;
+      background: rgba(168, 192, 220, 0.035);
+      box-shadow: inset 0 0 0 1px var(--docker-hairline);
+      transition: background .16s, box-shadow .2s, transform .3s cubic-bezier(.22, 1, .36, 1);
+
+      &:hover {
+        background: rgba(80, 150, 179, 0.08);
+        box-shadow: inset 0 0 0 1px rgba(106, 176, 204, 0.2);
+        transform: translateX(2px);
+
+        .actions,
+        .action-div {
+          opacity: 1;
+        }
+      }
+
+      .actions,
+      .action-div {
+        opacity: 0.2;
+        transition: opacity .16s;
+      }
+
+      td {
+        padding: 9px 12px;
+        border: 0;
+
+        &:first-child {
+          border-radius: 12px 0 0 12px;
+        }
+
+        &:last-child {
+          border-radius: 0 12px 12px 0;
+        }
+      }
+    }
+
+    tbody tr.group-row {
+      background: transparent;
+
+      .group-tab {
+        color: var(--docker-read-soft);
+        background: transparent;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+
+        &::after {
+          display: none;
+        }
+      }
+    }
+
+    tbody .no-rows td,
+    tbody .no-results td {
+      padding: 46px 20px;
+      border-radius: 18px;
+      color: var(--docker-read-soft);
+      background: rgba(168, 192, 220, 0.025);
+      box-shadow: inset 0 0 0 1px var(--docker-hairline);
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 20px;
+    }
+
+    td:nth-child(n+2) code,
+    td:nth-child(n+2) .port-container,
+    td[data-testid*="mountpoint"],
+    td[data-testid*="driver"],
+    td[data-testid*="name"] {
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 11.5px;
+    }
+  }
+
+  .paging {
+    color: var(--docker-read-dim);
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 11px;
+  }
+
+  .btn {
+    border-radius: 16px;
+  }
+
+  .btn.role-primary {
+    border-color: rgba(106, 176, 204, 0.5);
+    background: linear-gradient(180deg, #6ab0cc, #5096b3);
+    box-shadow: 0 0 16px rgba(80, 150, 179, 0.22);
+  }
+
+  .containersTable .port-container,
+  .imagesTable td:nth-child(3),
+  .imagesTable td:nth-child(4),
+  .listen-port-p {
+    color: #a8c0dc;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+
+  .badge-state {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 10px;
+  }
+
+  .troubleshooting-items,
+  .snapshots .cards,
+  .general {
+    gap: 14px;
+  }
+
+  .troubleshooting-items > *,
+  .snapshots .cards > div,
+  .general > div,
+  .diagnostics > .status {
+    border-radius: 18px;
+    background: rgba(168, 192, 220, 0.035);
+    box-shadow: inset 0 0 0 1px var(--docker-hairline);
+  }
+
+  .snapshots .cards > div {
+    overflow: hidden;
+  }
+
+  .snapshots .cards .empty-state-container {
+    min-height: 180px;
+    display: grid;
+    place-items: center;
+  }
+
+  .snapshot-card,
+  .card-container,
+  .scanning-results,
+  .container-info,
+  .volume-files {
+    border-color: var(--docker-hairline);
+    border-radius: 18px;
+    background: rgba(168, 192, 220, 0.035);
+    box-shadow: inset 0 0 0 1px var(--docker-hairline);
+  }
+
+  .troubleshooting-items > * {
+    margin-bottom: 12px;
+    padding: 18px;
+  }
+
+  .troubleshooting .text-xl {
+    color: var(--docker-read);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .diagnostics > .status {
+    padding: 18px;
+  }
+
+  .diagnostics .item-results::first-letter {
+    color: #f85149;
+  }
+
+  .status-bar {
+    border-color: var(--docker-hairline);
+    background: rgba(3, 6, 12, 0.75);
+  }
+}
+
+@keyframes docker-noir-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-noir-dark .docker-dashboard-shell {
+    .main-preferences > div,
+    .docker-page-intro,
+    table.sortable-table tbody tr {
+      animation: none;
+      transition: none;
+    }
   }
 }
 </style>
