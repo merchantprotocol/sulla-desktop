@@ -46,6 +46,7 @@ function agent(slug: string, overrides: Partial<AgentDefinition> = {}): AgentDef
     cost_tier:               null,
     can_call:                [],
     is_builtin:              false,
+    front_door:              null,
     builtin_hash:            null,
     created_at:              '',
     updated_at:              '',

@@ -128,7 +128,7 @@ export class PersonaAdapter {
       this.controller.appendMessage({
         id:        asMessageId(`reflex-route-${ String(route.decisionId || Date.now()) }`),
         kind:      'thinking',
-        thoughts:  [`⚡ Reflex routed this chat to ${ name }`],
+        thoughts:  [route.reason === 'default' ? `Chat opened with ${ name }` : `⚡ Reflex routed this chat to ${ name }`],
         startedAt: Date.now(),
         completed: true,
         createdAt: Date.now(),

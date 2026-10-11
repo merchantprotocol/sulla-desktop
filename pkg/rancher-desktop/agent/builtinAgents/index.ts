@@ -29,6 +29,11 @@ export interface BuiltinAgentCard {
   returns:       string;
   costTier:      AgentCostTier | null;
   canCall:       string[];
+  /**
+   * Reflex may route a new chat straight to this agent. Not managed content:
+   * the seeder only fills it while the row's front_door is still unset.
+   */
+  frontDoor?:    boolean;
 }
 
 /** One entry of builtin-agents.json. */

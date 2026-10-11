@@ -122,6 +122,13 @@ jest.unstable_mockModule('../../tools/registry', () => ({
   },
 }));
 
+const buildTeamRecallContextMock = jest.fn((opts: { agentSlug: string; text: string }) => Promise.resolve(
+  opts.agentSlug === 'account-manager' ? `## Calling your team\n\n## Team directory\nranked for: ${ opts.text }` : '',
+));
+jest.unstable_mockModule('../../services/AgentTeamRecall', () => ({
+  buildTeamRecallContext: buildTeamRecallContextMock,
+}));
+
 function stateWithMessages(count: number): any {
   return {
     messages: Array.from({ length: count }, (_, i) => ({
@@ -131,6 +138,26 @@ function stateWithMessages(count: number): any {
     metadata: {},
   };
 }
+
+describe('runSubconsciousMiddleware team recall', () => {
+  it('gives a lead agent the team section and a directory ranked by the latest user message', async() => {
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const state: any = {
+      messages: [{ role: 'user', content: 'test the checkout flow in the browser' }],
+      metadata: { agentId: 'account-manager', teamDirectoryContext: 'stale' },
+    };
+    await runSubconsciousMiddleware(state, { includeObservations: false });
+    expect(buildTeamRecallContextMock).toHaveBeenCalledWith({ agentSlug: 'account-manager', text: 'test the checkout flow in the browser' });
+    expect(state.metadata.teamDirectoryContext).toContain('## Team directory');
+  });
+
+  it('leaves non-lead agents without a team block', async() => {
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const state: any = { messages: [{ role: 'user', content: 'hello' }], metadata: { agentId: 'haiku-worker', teamDirectoryContext: 'stale' } };
+    await runSubconsciousMiddleware(state, { includeObservations: false });
+    expect(state.metadata.teamDirectoryContext).toBe('');
+  });
+});
 
 describe('runSubconsciousMiddleware', () => {
   beforeEach(() => {

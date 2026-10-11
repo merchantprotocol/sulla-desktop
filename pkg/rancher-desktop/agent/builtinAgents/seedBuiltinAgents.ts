@@ -10,6 +10,7 @@
  *   - any other existing row                      → keep its content
  * The only write to an edited or non-built-in row is filling directory-card
  * fields that are still empty; that adds a card without overwriting anything.
+ * The front-door flag works the same way: it is filled only while unset.
  *
  * "Untouched" means the row's live managed content still hashes to the
  * builtin_hash the seeder last wrote, so edits from any path (UI, SQL, tools)
@@ -174,6 +175,7 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
           status:        'production',
           enabled:       true,
           sourceKind:    'local',
+          ...(typeof spec.card?.frontDoor === 'boolean' ? { frontDoor: spec.card.frontDoor } : {}),
         });
         summary.inserted++;
         break;
@@ -195,7 +197,12 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
       case 'deleted-by-human': summary.skipped++; break;
       }
 
-      if (action.kind !== 'deleted-by-human') await markSeen(spec.slug);
+      if (action.kind !== 'deleted-by-human') {
+        if (row?.front_door === null && typeof spec.card?.frontDoor === 'boolean') {
+          await AgentDefinitionModel.fillFrontDoor(spec.slug, spec.card.frontDoor);
+        }
+        await markSeen(spec.slug);
+      }
     } catch (error) {
       summary.errors.push(`${ spec.slug }: ${ error instanceof Error ? error.message : String(error) }`);
     }

@@ -8,7 +8,7 @@ const examples: ReflexExample[] = [
 ];
 const decisions: any[] = [];
 const settings: Record<string, string> = {};
-const resolveRoutableAgentMock = jest.fn((agentId: string) => Promise.resolve({
+const resolveFrontDoorAgentMock = jest.fn((agentId: string) => Promise.resolve({
   agentId, graphAgentId: agentId, name: 'Analytics Worker',
 }));
 
@@ -32,7 +32,8 @@ jest.unstable_mockModule('../../tools/registry', () => ({
   },
 }));
 jest.unstable_mockModule('../../services/ChatAgentRouting', () => ({
-  resolveRoutableAgent: resolveRoutableAgentMock,
+  resolveFrontDoorAgent: resolveFrontDoorAgentMock,
+  isSullaRoute:          (agentId: string) => agentId === 'sulla' || agentId === 'sulla-desktop',
 }));
 
 let getReflexEngine: typeof import('../ReflexService').getReflexEngine;
@@ -47,7 +48,7 @@ describe('Reflex route/action engine isolation', () => {
   beforeEach(() => {
     decisions.length = 0;
     for (const key of Object.keys(settings)) delete settings[key];
-    resolveRoutableAgentMock.mockClear();
+    resolveFrontDoorAgentMock.mockClear();
   });
 
   it('keeps route examples out of normal action prediction', async() => {
@@ -69,10 +70,16 @@ describe('Reflex route/action engine isolation', () => {
     await expect(routeChatAgent('chart weekly revenue', 'thread-1')).resolves.toEqual({
       agentId: 'analytics-worker', confidence: 1, decisionId: 'decision-1',
     });
-    expect(resolveRoutableAgentMock).toHaveBeenCalledWith('analytics-worker');
+    expect(resolveFrontDoorAgentMock).toHaveBeenCalledWith('analytics-worker');
     expect(decisions).toEqual([expect.objectContaining({
       thread_id: 'thread-1', tool_name: 'route_agent', status: 'acted', params: { agentId: 'analytics-worker' },
     })]);
+  });
+
+  it('does not route to an agent that is not a front door', async() => {
+    resolveFrontDoorAgentMock.mockResolvedValueOnce(null as any);
+    await expect(routeChatAgent('chart weekly revenue', 'thread-1')).resolves.toBeNull();
+    expect(decisions).toEqual([expect.objectContaining({ status: 'below_threshold', result: expect.stringContaining('front-door') })]);
   });
 
   it('honors reflexRouteEnabled=false without recording a decision', async() => {
