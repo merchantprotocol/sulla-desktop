@@ -401,6 +401,9 @@ const formatters: Record<string, Formatter> = {
   list_agents() {
     return { label: 'Agents', summary: 'Listing available agents' };
   },
+  agents_directory(args) {
+    return { label: 'Agents', summary: args.slug ? `Agent card: ${ truncate(str(args.slug), 30) }` : args.query ? `Finding agents for: ${ truncate(str(args.query), 40) }` : 'Listing agent directory' };
+  },
 
   // ── Bridge ───────────────────────────────────────────────────────────────
   send_notification_to_human(args) {

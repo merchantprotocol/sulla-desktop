@@ -8,7 +8,7 @@ export const agentToolManifests: ToolManifest[] = [
     schemaDef:   {
       tasks: {
         type:        'array',
-        description: 'Array of task objects. Each task has: prompt (required — the instruction), agentId (optional — database-backed custom agent slug, defaults to the parent/primary agent; agentName is accepted as an alias), label (optional — human-readable name for the task), projectTaskId (required when the sub-agent works a Projects task — the job then owns that task for its run and launch is refused if another agent already owns it). A non-empty agentId/agentName that does not match an enabled agent definition is rejected — it is NOT silently run as the default agent.',
+        description: 'Array of task objects. Each task has: prompt (required — the instruction), agentId (optional — database-backed custom agent slug, defaults to the parent/primary agent; agentName is accepted as an alias; pick the right specialist with agents_directory), label (optional — human-readable name for the task), projectTaskId (required when the sub-agent works a Projects task — the job then owns that task for its run and launch is refused if another agent already owns it). A non-empty agentId/agentName that does not match an enabled agent definition is rejected — it is NOT silently run as the default agent.',
         items:       {
           type:       'object',
           properties: {
@@ -130,5 +130,18 @@ export const agentToolManifests: ToolManifest[] = [
     schemaDef:      {},
     operationTypes: ['read'],
     loader:         () => import('./list_agents'),
+  },
+  {
+    name:        'agents_directory',
+    description: 'Directory of every callable custom agent (from agent_definitions) as compact cards: when to call it, when not to, what to send, what it returns, cost tier, and which agents it can call. Use it to pick the right specialist before spawn_agent. Search with query, fetch one card with slug, or omit both to list all enabled agents.',
+    category:    'agents',
+    schemaDef:   {
+      query:           { type: 'string', optional: true, description: 'Free-text description of the work (e.g. "build a dashboard from sales data"); returns matching agents, best first.' },
+      slug:            { type: 'string', optional: true, description: 'Return the card for this one agent slug (includes disabled/archived agents).' },
+      includeInactive: { type: 'boolean', optional: true, description: 'Also list disabled and archived agents (default false).' },
+      limit:           { type: 'number', optional: true, description: 'Maximum number of cards to return.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./agent_directory'),
   },
 ];

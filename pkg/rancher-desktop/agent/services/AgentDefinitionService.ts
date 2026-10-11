@@ -5,6 +5,7 @@ import yaml from 'yaml';
 
 import {
   AgentDefinitionModel,
+  type AgentCostTier,
   type AgentDefinition,
   type AgentDefinitionInput,
   type AgentDefinitionPatch,
@@ -29,6 +30,15 @@ export interface AgentMarketplaceManifest {
     skills:      string[];
     config:      Record<string, unknown>;
     promptFiles: Record<string, string>;
+    /** Agent-directory card (optional; older manifests omit it). */
+    directory?: {
+      whenToCall?:    string;
+      whenNotToCall?: string;
+      send?:          string;
+      returns?:       string;
+      costTier?:      AgentCostTier | null;
+      canCall?:       string[];
+    };
   };
 }
 
@@ -127,6 +137,14 @@ export class AgentDefinitionService {
         skills:      agent.skill_refs,
         config:      agent.config,
         promptFiles: agent.prompt_files,
+        directory:   {
+          whenToCall:    agent.when_to_call,
+          whenNotToCall: agent.when_not_to_call,
+          send:          agent.send,
+          returns:       agent.returns,
+          costTier:      agent.cost_tier,
+          canCall:       agent.can_call,
+        },
       },
     };
   }
@@ -167,6 +185,16 @@ export class AgentDefinitionService {
       marketplaceSlug:       metadata.slug,
       marketplaceVersion:    metadata.version,
       marketplaceAuthor:     metadata.author ?? null,
+      ...(spec.directory
+        ? {
+          whenToCall:    spec.directory.whenToCall ?? '',
+          whenNotToCall: spec.directory.whenNotToCall ?? '',
+          send:          spec.directory.send ?? '',
+          returns:       spec.directory.returns ?? '',
+          costTier:      spec.directory.costTier ?? null,
+          canCall:       spec.directory.canCall ?? [],
+        }
+        : {}),
     };
     if (!existing) return this.create(input);
     return (await this.update(existing.id, input))!;

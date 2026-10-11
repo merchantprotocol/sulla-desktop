@@ -6,6 +6,7 @@ import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
 import { up as up_0108, down as down_0108 } from './0108_create_agent_job_messages_and_checkins';
 import { up as up_0109, down as down_0109 } from './0109_create_agent_tab_contracts';
+import { up as up_0110, down as down_0110 } from './0110_add_agent_directory_fields';
 import { up as up_0098, down as down_0098 } from './0098_create_decisions';
 import { up as up_0099, down as down_0099 } from './0099_create_browser_bookmarks';
 import { up as up_0100, down as down_0100 } from './0100_create_reflex_engine';
@@ -193,4 +194,5 @@ export const migrationsRegistry = [
   { name: '0107_create_work_file_claims', up: up_0107, down: down_0107 },
   { name: '0108_create_agent_job_messages_and_checkins', up: up_0108, down: down_0108 },
   { name: '0109_create_agent_tab_contracts', up: up_0109, down: down_0109 },
+  { name: '0110_add_agent_directory_fields', up: up_0110, down: down_0110 },
 ] as const;
