@@ -18,10 +18,13 @@
  * Non-fatal by contract: callers wrap it; a failure re-seeds next boot.
  */
 
+import os from 'node:os';
+
 import {
   BUILTIN_CARD_FIELDS,
   getBuiltinAgentSpecs,
   hashManagedContent,
+  readGitIdentity,
   renderBuiltinAgent,
   type BuiltinAgentSpec,
   type BuiltinManagedContent,
@@ -152,10 +155,12 @@ export interface BuiltinSeedSummary {
 export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAgentSpecs()): Promise<BuiltinSeedSummary> {
   const summary: BuiltinSeedSummary = { inserted: 0, refreshed: 0, adopted: 0, filled: 0, kept: 0, unchanged: 0, skipped: 0, errors: [] };
   const seen = await seenSlugs();
+  const home = os.homedir();
+  const git = readGitIdentity(home);
 
   for (const spec of specs) {
     try {
-      const content = renderBuiltinAgent(spec);
+      const content = renderBuiltinAgent(spec, home, git);
       const bundleHash = hashManagedContent(content);
       const row = await AgentDefinitionModel.findBySlug(spec.slug);
       const action = decideBuiltinSeedAction(content, row, seen.has(spec.slug));
