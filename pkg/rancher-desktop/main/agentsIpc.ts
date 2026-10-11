@@ -187,6 +187,7 @@ export function initAgentsIpc(): void {
 
   ipcMain.handle('agent-definitions:publish-check', async(_event, slug: string) => {
     try {
+      const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
       const { checkAgentManifestForPublish } = await import('@pkg/main/marketplace/publish');
 
       return checkAgentManifestForPublish(await agentDefinitionService.exportManifest(slug));
