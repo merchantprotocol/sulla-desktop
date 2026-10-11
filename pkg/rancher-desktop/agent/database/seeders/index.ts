@@ -34,8 +34,9 @@ export const seedersRegistry = [
     run:  reflexSeedSeeder,
   },
   {
-    // Bump with agent/reflex/seed/route-seed.json "version".
-    name: 'reflex-route-seed-v2',
+    // Bump with agent/reflex/seed/route-seed.json "version". Each run archives
+    // shipped routes to retired agents, then loads the current seed.
+    name: 'reflex-route-seed-v3',
     run:  reflexRouteSeedSeeder,
   },
   // {

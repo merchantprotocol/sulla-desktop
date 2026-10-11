@@ -5,6 +5,7 @@ import {
   BUILTIN_GIT_COMMIT_TOKEN,
   BUILTIN_HOME_TOKEN,
   getBuiltinAgentSpecs,
+  getRetiredBuiltinSlugs,
   gitCommitCommand,
   hashManagedContent,
   parseGitUserConfig,
@@ -53,6 +54,11 @@ describe('built-in agent bundle', () => {
     const text = JSON.stringify(specs);
     expect(text).not.toMatch(/users\.noreply\.github\.com|user\.name="[^{<]/);
     expect(text).not.toMatch(/Jonathon(?! Byrdziak is your creator)/);
+  });
+
+  it('never ships a retired agent', () => {
+    const slugs = new Set(specs.map(s => s.slug));
+    for (const slug of getRetiredBuiltinSlugs()) expect(slugs.has(slug)).toBe(false);
   });
 
   it('marks front-door agents, led by the account manager', () => {

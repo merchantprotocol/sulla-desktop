@@ -7,8 +7,8 @@ import seed from '../seed/route-seed.json';
 // Near-paraphrases of seed rows: these must still route with the row removed.
 const heldOut: [string, string][] = [
   ['show me revenue by week as a chart', 'analytics-worker'],
-  ['add validation to the signup form', 'coding-manager'],
-  ['how long will this project take', 'project-planner'],
+  ['add validation to the signup form', 'director'],
+  ['how long will this project take', 'project-manager'],
   ['merge the approved pull request', 'account-manager'],
 ];
 
@@ -64,17 +64,18 @@ describe('Reflex route seed', () => {
     expect(prediction.confidence).toBeGreaterThanOrEqual(DEFAULT_REFLEX_THRESHOLD);
   });
 
-  it('covers every front-door agent, never routes to sulla, and has no duplicates', () => {
+  it('covers every front-door agent, never routes to a retired agent, and has no duplicates', () => {
     const counts = seed.examples.reduce<Record<string, number>>((all, example) => {
       const agentId = String(example.params.agentId);
       all[agentId] = (all[agentId] ?? 0) + 1;
       return all;
     }, {});
     expect(counts['account-manager']).toBeGreaterThanOrEqual(50);
-    for (const agentId of ['analytics-worker', 'mockup-designer', 'coding-manager', 'ui-test-manager', 'project-planner', 'integrator', 'premortem-planner']) {
+    for (const agentId of ['analytics-worker', 'mockup-designer', 'director', 'ui-test-manager', 'project-manager', 'integrator', 'premortem-planner']) {
       expect(counts[agentId]).toBeGreaterThanOrEqual(12);
     }
-    expect(counts.sulla).toBeUndefined();
+    // Retired targets (see RETIRED_ROUTE_AGENTS in ReflexSeedSeeder).
+    for (const agentId of ['sulla', 'project-planner', 'coding-manager']) expect(counts[agentId]).toBeUndefined();
     expect(new Set(seed.examples.map(example => example.utterance.toLowerCase())).size).toBe(seed.examples.length);
   });
 });
