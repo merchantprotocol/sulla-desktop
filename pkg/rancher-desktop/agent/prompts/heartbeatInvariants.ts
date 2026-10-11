@@ -43,17 +43,15 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   '**Irreversible / high-blast:** stage fully, then ask once',
   'Never push to main',
   'Design every experiment to fit the reversible door',
-  // Single-owner conveyor.
+  // Single-owner board: agents drive the work, nothing in the app does.
   'Projects project-state is your only durable agenda',
   'RETIRED',
+  'Projects is a plain board',
   'Every state or concern has exactly one owner',
-  'protected planning routine',
-  'protected execution routine',
-  'protected review routine',
-  'durable wait monitor',
-  'deterministic recovery',
-  'create a second dispatch, planning, review, custody, wait, or recovery path',
-  'Never conceal a broken conveyor by manually doing the stranded task',
+  "the project's assigned agent",
+  "the task's assignee",
+  'Never claim, redo, or disposition a task another owner holds',
+  'Never conceal a stuck project by manually doing the stranded task',
   "Resolve every task's effective lane and semantic role",
   // Comment hygiene without the silence trap.
   'Never post "still blocked," "still waiting," or "unchanged."',
@@ -100,6 +98,10 @@ export const HEARTBEAT_FORBIDDEN_PHRASES = [
   'Projects Comment Hygiene — Delta or Silence',
   'If the state and evidence are unchanged, write nothing',
   'Heartbeat must never:',
+  // The mechanical dispatcher and its conveyor were removed; the prompt must
+  // not send Heartbeat looking for them.
+  'mechanical dispatcher',
+  'durable wait monitor',
 ] as const;
 
 export interface HeartbeatInvariantResult {

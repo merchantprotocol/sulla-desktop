@@ -88,8 +88,8 @@ describe('project pipeline template engine', () => {
     expect(laneInserts.map(call => call.params[1])).toEqual([
       'plan', 'build', 'review', 'research', 'draft', 'approve', 'publish',
     ]);
-    const bindingInserts = calls.filter(call => call.sql.includes('INSERT INTO work_lane_workflow_bindings'));
-    expect(bindingInserts).toHaveLength(laneInserts.length);
+    // Lanes are presentation only: applying a template never binds workflows.
+    expect(calls.some(call => call.sql.includes('work_lane_workflow_bindings'))).toBe(false);
     expect(calls.filter(call => call.sql.includes('UPDATE work_projects SET pipeline_template_id'))
       .map(call => call.params)).toEqual([
       ['coding-project', 'coding'], ['publishing-project', 'publishing'],

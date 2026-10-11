@@ -20,7 +20,7 @@ const navItems = [
   { id: 'models', name: 'Models' },
   { id: 'system-prompt', name: 'System Prompt' },
   { id: 'heartbeat', name: 'Heartbeat' },
-  { id: 'project-automation', name: 'Project Automation' },
+  { id: 'routine-workers', name: 'Routine Workers' },
 ];
 
 // Shape of a system-prompt section row returned by the `system-prompt:*` IPC.
@@ -85,8 +85,7 @@ export default defineComponent({
       modelLoadError:        '' as string,
       remoteRetryCount:      3, // Number of retries before falling back to local LLM
       remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
-      // Project Automation master switch
-      automatedProjectManagementEnabled: true,
+      // Shared concurrency ceiling for system routine runs
       routineConcurrencyTotalLimit: DEFAULT_WORKER_CONCURRENCY as number | string,
       // Heartbeat settings
       heartbeatEnabled:      true,
@@ -227,7 +226,6 @@ export default defineComponent({
     this.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
     this.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
-    this.automatedProjectManagementEnabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', true));
     this.routineConcurrencyTotalLimit = normalizeWorkerConcurrency(await SullaSettingsModel.get(WORKER_CONCURRENCY_KEY, DEFAULT_WORKER_CONCURRENCY));
     this.botName = await SullaSettingsModel.get('botName', 'Sulla');
     this.primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
@@ -998,7 +996,7 @@ export default defineComponent({
 
     // On/off switches save the moment they are flipped and are never part of
     // the Save batch, so a stale form can't switch them back on.
-    async persistSwitch(key: 'heartbeatEnabled' | 'automatedProjectManagementEnabled', event: Event) {
+    async persistSwitch(key: 'heartbeatEnabled', event: Event) {
       const input = event.target as HTMLInputElement;
       const enabled = input.checked;
       try {
@@ -1012,7 +1010,6 @@ export default defineComponent({
 
     async refreshSwitches() {
       this.heartbeatEnabled = Boolean(await SullaSettingsModel.get('heartbeatEnabled', true));
-      this.automatedProjectManagementEnabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', true));
     },
 
     async onPrimaryModelChange(event: Event) {
@@ -1907,44 +1904,25 @@ export default defineComponent({
           </div>
         </div>
 
-        <!-- Project Automation Tab -->
+        <!-- Routine Workers Tab -->
         <div
-          v-if="currentNav === 'project-automation'"
+          v-if="currentNav === 'routine-workers'"
           class="tab-content"
         >
           <div class="noir-page-head">
-            <div class="noir-eyebrow">Project Automation</div>
-            <div class="noir-headline">Work that runs itself.</div>
-            <div class="noir-lead">The dispatcher picks up todo tasks and hands each one to a worker.</div>
+            <div class="noir-eyebrow">Routine Workers</div>
+            <div class="noir-headline">How many routines run at once.</div>
+            <div class="noir-lead">A shared ceiling for system routine runs such as dreaming.</div>
           </div>
-          <h2>Project Automation</h2>
+          <h2>Routine Workers</h2>
           <p class="description">
-            Configure the automated Projects dispatcher independently of the Heartbeat agent loop.
+            Projects is a plain board; agents drive project work themselves. This only limits concurrent system routine runs.
           </p>
 
-          <!-- Enable/Disable Toggle -->
           <div class="setting-group">
-            <label class="setting-label">Enable Automation PM Work</label>
-            <div class="toggle-switch">
-              <label class="switch">
-                <input
-                  :checked="automatedProjectManagementEnabled"
-                  type="checkbox"
-                  @change="persistSwitch('automatedProjectManagementEnabled', $event)"
-                >
-                <span class="slider" />
-              </label>
-              <span class="toggle-label">{{ automatedProjectManagementEnabled ? 'Enabled' : 'Disabled' }}</span>
-            </div>
-            <p class="setting-description">
-              When enabled, the dispatcher automatically claims and runs Projects work. When disabled, no protected routine launches automatically.
-            </p>
-          </div>
-
-          <div class="setting-group noir-dependent" :class="{ 'is-dimmed': !automatedProjectManagementEnabled }">
-            <label class="setting-label" for="dispatcher-worker-limit">Concurrent workers</label>
+            <label class="setting-label" for="routine-worker-limit">Concurrent workers</label>
             <input
-              id="dispatcher-worker-limit"
+              id="routine-worker-limit"
               v-model.number="routineConcurrencyTotalLimit"
               type="number"
               min="1"
@@ -1952,8 +1930,7 @@ export default defineComponent({
               class="text-input"
               style="width: 120px;"
               :aria-invalid="!workerConcurrencyValid"
-              aria-describedby="dispatcher-worker-limit-help"
-              :disabled="!automatedProjectManagementEnabled && currentTheme === 'noir-dark'"
+              aria-describedby="routine-worker-limit-help"
             >
             <div class="noir-segment-row">
               <label
@@ -1961,14 +1938,13 @@ export default defineComponent({
                 :key="workers"
                 :class="{ 'is-current': Number(routineConcurrencyTotalLimit) === workers }"
               >
-                <input v-model="routineConcurrencyTotalLimit" type="radio" :value="workers" :disabled="!automatedProjectManagementEnabled">
+                <input v-model="routineConcurrencyTotalLimit" type="radio" :value="workers">
                 <span>{{ workers }}</span>
               </label>
             </div>
-            <p id="dispatcher-worker-limit-help" class="setting-description">
-              Maximum concurrent workers shared by execution, review, planning and other automated routines.
-              Save to apply to new launches. Lowering this value lets running workers finish before more start.
-              Every board card is still considered. Project pauses, task ownership and approval boundaries still apply.
+            <p id="routine-worker-limit-help" class="setting-description">
+              Maximum concurrent system routine runs. Save to apply to new launches.
+              Lowering this value lets running routines finish before more start.
             </p>
             <p v-if="!workerConcurrencyValid" role="alert" class="setting-description">
               Enter a whole number of at least 1.

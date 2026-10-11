@@ -25,9 +25,6 @@ jest.unstable_mockModule('../../workflow/WorkflowPlaybook', () => ({
   completeSubAgent: jest.fn((playbook: any) => ({ action: 'continue', updatedPlaybook: playbook })),
 }));
 
-const planningFinished = jest.fn<(...args: any[]) => Promise<void>>().mockResolvedValue(undefined);
-jest.unstable_mockModule('../../services/PlanningCouncilService', () => ({ PlanningCouncilService: { handleWorkflowFinished: planningFinished } }));
-
 const { PlaybookController } = await import('../PlaybookController');
 const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
 const { WorkflowCheckpointModel } = await import('../../database/models/WorkflowCheckpointModel');
@@ -107,7 +104,7 @@ describe('singleton worker lifecycle', () => {
     return { state, controller, execute };
   }
 
-  it.each(['singleton', 'core-routine-plan-project-task', 'custom-lane'])(
+  it.each(['singleton', 'custom-lane'])(
     'retains reservations and heartbeats for %s until the child stops', async(workflowId) => {
       jest.useFakeTimers();
       const { state, controller } = setup();
@@ -129,7 +126,6 @@ describe('singleton worker lifecycle', () => {
       expect(WorkflowExecutionModel.settle).not.toHaveBeenCalled();
       expect(heartbeat.stop).not.toHaveBeenCalled();
       expect(terminal).not.toHaveBeenCalled();
-      expect(planningFinished).not.toHaveBeenCalled();
       expect(state.metadata.lastCompletedWorkflow).toBeUndefined();
       finish();
       await child;
@@ -139,7 +135,6 @@ describe('singleton worker lifecycle', () => {
       expect(WorkflowExecutionModel.settle).toHaveBeenCalledWith(playbook.executionId, 'failed', 'Parent aborted');
       expect(heartbeat.stop).toHaveBeenCalledTimes(1);
       expect(terminal).toHaveBeenCalledTimes(1);
-      expect(planningFinished).toHaveBeenCalledTimes(workflowId === 'core-routine-plan-project-task' ? 1 : 0);
     });
 
   it('settles a failed singleton that never left a worker running, so the next scheduled run is admitted', async() => {

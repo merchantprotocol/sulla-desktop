@@ -25,29 +25,22 @@ The heartbeat is an **autonomous background agent** that wakes up on a schedule 
 7. On exit, show a desktop notification in the top-right frameless window with the run summary
 8. Stop caffeinate, record `heartbeat_completed` (or `_error` / `_aborted`)
 
-## Projects dispatch and task rotation
+## Projects and Heartbeat
 
-Ordinary task scheduling is deterministic and separate from the Heartbeat LLM:
-
-- `TaskDispatcherService` runs while Heartbeat is enabled and inside the same configured time window. It fills `taskDispatcherConcurrency` slots (default 3, bounded 1–10).
-- PostgreSQL selects the next eligible `todo` by epic priority, task priority, due date, then oldest `last_activity_at`. `FOR UPDATE ... SKIP LOCKED` plus a partial unique index on `work_task_dispatches(task_id) WHERE status = 'running'` make one-live-worker-per-task a database invariant.
-- Tasks assigned to a human or labeled `gated`, `decision`, `human`, `manual`, or `no-auto-dispatch` are excluded.
-- A claim moves the task to `planning` with assignee `dispatcher`. Completion returns it to `in_review`/`heartbeat`; blocked or failed work returns to `blocked`/`heartbeat` with the worker result in a task comment.
-- Dispatcher leases are durable. On service/app restart, orphaned `planning` work is returned to `todo` before new claims are taken.
-- The worker persona defaults to `opus-worker` and is configurable through `taskDispatcherAgentId`.
-
-Heartbeat is the supervisor: it verifies `in_review` artifacts, investigates failures, resolves reversible blockers, requeues incomplete work, and preserves merge/deploy/money/external-communication gates. The LLM does not choose or launch ordinary `todo` work.
-
-**Blocked tasks — recovery planning** remains the reasoning exception. Heartbeat moves a blocked task to `planning`, launches independent high-reasoning planners, cross-checks their proposals, chooses the strongest reversible path itself, and returns executable work to `todo` for mechanical dispatch. Human escalation is reserved for a genuine irreversible or high-blast boundary after reversible work is staged.
+Projects is a plain board; nothing in the app claims or launches tasks. Each
+project's assigned agent (usually its project manager) drives it, launches a
+director, and checks progress on its own chat heartbeat. Heartbeat is not a
+task dispatcher: it works its own idea lab and tasks assigned to `heartbeat`,
+and tells a project's assigned agent when that project looks stuck rather than
+doing the work itself.
 
 ## Human comments on tickets
 
-When the human comments on a Projects ticket (desktop Projects UI or Sulla Mobile, both stamp author `human`), Heartbeat owes that ticket a look, whatever its lane, lifecycle owner, parked/blocked/done state or dependencies.
+When the human comments on a Projects ticket (desktop Projects UI or Sulla Mobile, both stamp author `human`), Heartbeat owes that ticket a look, whatever its lane, parked/blocked/done state or dependencies.
 
 - The comment wakes Heartbeat at the next minute check instead of waiting out `heartbeatDelayMinutes` (the enabled switch and `heartbeatWindow` still apply).
 - The Heartbeat project report opens with **💬 Human comments awaiting your reply** (last 14 days, oldest first), and the oldest one becomes the hydrated `<selected_project_item>` ahead of normal lane work.
-- Heartbeat reads the comment, then changes the ticket, moves it to its execution lane (`transition_task_to_execution`) so the dispatcher picks it up, or answers. It always finishes with `add_task_comment author="heartbeat"`; that reply clears the ticket from the queue.
-- Tickets with a live worker claim are held back until the claim ends.
+- Heartbeat reads the comment, then changes the ticket (`update_task`), tells the task's assignee or the project's assigned agent, or answers. It always finishes with `add_task_comment author="heartbeat"`; that reply clears the ticket from the queue.
 - Agents cannot post comments as `human` (`add_task_comment` refuses `human`/`user`/`owner`/`me`), so only the real human can trigger this.
 
 ## Channel & messaging
@@ -127,8 +120,6 @@ The heartbeat is for **proactive ambient work**, not as a generic cron.
 ## Reference
 
 - Service: `pkg/rancher-desktop/agent/services/HeartbeatService.ts`
-- Mechanical dispatcher: `pkg/rancher-desktop/agent/services/TaskDispatcherService.ts`
-- Dispatch ledger/model: `pkg/rancher-desktop/agent/database/models/WorkTaskDispatchModel.ts`
 - Node: `pkg/rancher-desktop/agent/nodes/HeartbeatNode.ts`
 - Notification window: `pkg/rancher-desktop/main/heartbeatNotification.ts`
 - Settings model: `pkg/rancher-desktop/agent/database/models/SullaSettingsModel.ts`

@@ -29,13 +29,6 @@ interface WorkflowExecutionAttributes {
   terminal_reason:  string | null;
 }
 
-/**
- * Outcome message the dispatcher reconciler writes when it fails a running
- * lane automation row. Lane boot retry keys on this exact marker to reclaim
- * rows the reconciler killed, so the two sites must never drift apart.
- */
-export const DISPATCHER_RECONCILED_LANE_MESSAGE = 'dispatcher workflow execution reconciled';
-
 export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttributes> {
   protected readonly tableName = 'workflow_executions';
   protected readonly primaryKey = 'execution_id';
@@ -192,61 +185,6 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   }
 
   /**
-   * The dispatcher is the recovery authority for dispatch-parented scoped
-   * executions only. Lane-entry automations launch scoped executions with no
-   * work_task_dispatches parent at all (their parent is the lane entry), so a
-   * scoped execution bound to a running lane automation must be left alone --
-   * LaneEntryAutomationService.drainRecoverable() owns that recovery path.
-   */
-  static async reconcileDispatcherOwnedExecutions(): Promise<string[]> {
-    return postgresClient.transaction(async(client) => {
-      const rows = await client.query<{ execution_id: string }>(`
-        WITH orphaned AS (
-          SELECT execution.execution_id
-          FROM workflow_executions execution
-          LEFT JOIN work_task_dispatches dispatch
-            ON dispatch.workflow_execution_id = execution.execution_id
-          WHERE execution.scope_task_id IS NOT NULL
-            AND execution.status IN ('running', 'suspended')
-            AND execution.auto_restart = TRUE
-            AND execution.workflow_id <> 'core-routine-plan-project-task'
-            AND NOT EXISTS (SELECT 1 FROM work_task_planning_runs planning WHERE planning.execution_id = execution.execution_id)
-            AND (dispatch.id IS NULL OR dispatch.status <> 'running')
-            AND NOT EXISTS (
-              SELECT 1 FROM work_lane_entry_automations lane
-              WHERE lane.execution_id = execution.execution_id
-                AND lane.status = 'running'
-            )
-          FOR UPDATE OF execution
-        ), settled AS (
-          UPDATE workflow_executions execution
-             SET status = 'failed', completed_at = COALESCE(completed_at, NOW()),
-                 terminal_at = COALESCE(terminal_at, NOW()),
-                 terminal_reason = 'dispatcher_parent_terminal_or_missing',
-                 error = COALESCE(error, 'dispatcher parent dispatch is terminal or missing'),
-                 owner_id = NULL, lease_token = NULL, lease_expires_at = NULL,
-                 updated_at = NOW()
-           WHERE execution.execution_id IN (SELECT execution_id FROM orphaned)
-           RETURNING execution.execution_id
-        )
-        SELECT execution_id FROM settled`, []);
-      const executionIds = rows.rows.map(row => row.execution_id);
-      if (executionIds.length === 0) return [];
-      await client.query(`UPDATE work_task_dispatches
-        SET status = 'stale', failure_reason = COALESCE(failure_reason, 'dispatcher_workflow_execution_reconciled'),
-            error = COALESCE(error, 'dispatcher workflow execution was reconciled'),
-            heartbeat_at = NOW(), finished_at = COALESCE(finished_at, NOW())
-        WHERE workflow_execution_id = ANY($1::text[]) AND status = 'running'`, [executionIds]);
-      await client.query(`UPDATE work_lane_entry_automations
-        SET status = 'failed',
-            outcome = jsonb_build_object('disposition', 'runtime_failed', 'message', '${ DISPATCHER_RECONCILED_LANE_MESSAGE }'),
-            completed_at = COALESCE(completed_at, NOW())
-        WHERE execution_id = ANY($1::text[]) AND status = 'running'`, [executionIds]);
-      return executionIds;
-    });
-  }
-
-  /**
    * Retire executions that can no longer be owned by a live worker. These
    * rows predate lease ownership (or were created before activation finished)
    * and otherwise remain permanently eligible for recovery/concurrency scans.
@@ -287,7 +225,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   /**
    * Earliest lease expiry among executions boot recovery can actually claim.
    * MUST use the same predicate as findStaleExecutions: a task-scoped row
-   * (recovered by the dispatcher / lane automation, not here) with an expired
+   * (never recovered here; the dispatcher that owned them was removed) with an expired
    * lease used to make this return a past time forever, re-arming recovery
    * every second (57k passes/day observed in production).
    */

@@ -1,6 +1,6 @@
 /**
  * The one native tool set every agent gets: primary chat, heartbeat,
- * dispatcher workers, reviewers, planners and workflow nodes. `exec` reaches
+ * spawned workers, reviewers, planners and workflow nodes. `exec` reaches
  * the whole `sulla` catalog. Every lane is treated the same, with full access.
  *
  * Kept dependency-free so services and tests can import it without loading

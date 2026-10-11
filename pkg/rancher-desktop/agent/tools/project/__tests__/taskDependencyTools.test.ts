@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { getProjectsApplicationService } from '../../../projects/application/ProjectsApplicationService';
 import { CreateTaskDependencyWorker } from '../create_task_dependency';
-import { ExplainTaskClaimabilityWorker } from '../explain_task_claimability';
 import { ListTaskDependenciesWorker } from '../list_task_dependencies';
 import { RemoveTaskDependencyWorker } from '../remove_task_dependency';
 
@@ -12,7 +11,6 @@ const createDependency = jest.spyOn(projects, 'createDependency');
 const removeDependency = jest.spyOn(projects, 'removeDependency');
 const listDependencies = jest.spyOn(projects, 'listDependencies');
 const listDependents = jest.spyOn(projects, 'listDependents');
-const explainTaskClaimability = jest.spyOn(projects, 'explainTaskClaimability');
 
 const call = (tool: any, input: any) => tool._validatedCall(input);
 
@@ -61,12 +59,5 @@ describe('task dependency tools', () => {
     const res = await call(new ListTaskDependenciesWorker(), { task_id: 't1' });
     expect(res.successBoolean).toBe(true);
     expect(res.responseString).toContain('dependencies');
-  });
-
-  it('explain_task_claimability returns the explanation payload', async() => {
-    explainTaskClaimability.mockResolvedValue({ taskId: 't1', claimable: false, reason: 'x', unresolved: [], chain: [] });
-    const res = await call(new ExplainTaskClaimabilityWorker(), { task_id: 't1' });
-    expect(res.successBoolean).toBe(true);
-    expect(res.responseString).toContain('claimable');
   });
 });

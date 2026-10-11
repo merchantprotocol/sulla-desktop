@@ -1,5 +1,6 @@
 import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
+import { assignedAgentInput } from './assignedAgentInput';
 
 function slugify(v: string): string {
   return v.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'item';
@@ -35,13 +36,14 @@ export class CreateProjectWorker extends BaseTool {
         owner:          input.owner,
         due_at:         input.due_at === '' ? null : input.due_at,
         github_repo:    input.github_repo,
+        assigned_agent: assignedAgentInput(input),
         pipeline_template_id: input.pipeline_template_id,
         source:         input.source || 'agent',
       }, { actor: input.actor || 'sulla', source: 'tool' });
 
       return {
         successBoolean: true,
-        responseString: `Project created: "${ record.title }" (id: ${ record.id }, slug: ${ record.slug }, status: ${ record.status }, priority: ${ record.priority }, pipeline_template_id: ${ record.pipeline_template_id })`,
+        responseString: `Project created: "${ record.title }" (id: ${ record.id }, slug: ${ record.slug }, status: ${ record.status }, priority: ${ record.priority }, assigned_agent: ${ record.assigned_agent ?? 'none' }, pipeline_template_id: ${ record.pipeline_template_id })`,
       };
     } catch (err: any) {
       return { successBoolean: false, responseString: `Failed to create project: ${ err?.message }` };

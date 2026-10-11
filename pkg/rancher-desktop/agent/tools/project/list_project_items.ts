@@ -2,7 +2,7 @@ import { getProjectsApplicationService } from '../../projects/application/Projec
 import { BaseTool, ToolResponse } from '../base';
 
 function fmtProject(p: any): string {
-  return `[project ${ p.id }] ${ p.priority } ${ p.status } ${ p.title } (slug: ${ p.slug }${ p.due_at ? `, due ${ p.due_at }` : '' }${ p.owner ? `, owner ${ p.owner }` : '' }) moved ${ p.last_moved_at }`;
+  return `[project ${ p.id }] ${ p.priority } ${ p.status } ${ p.title } (slug: ${ p.slug }${ p.due_at ? `, due ${ p.due_at }` : '' }${ p.owner ? `, owner ${ p.owner }` : '' }${ p.assigned_agent ? `, agent ${ p.assigned_agent }` : '' }) moved ${ p.last_moved_at }`;
 }
 function fmtEpic(e: any): string {
   return `[epic ${ e.id }] ${ e.priority } ${ e.status } ${ e.title } (project: ${ e.project_id }${ e.due_at ? `, due ${ e.due_at }` : '' }) moved ${ e.last_moved_at }`;

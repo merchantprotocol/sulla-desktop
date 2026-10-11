@@ -127,26 +127,6 @@
                   >{{ role }}</option>
                 </select>
               </label>
-              <label>Workflow
-                <select
-                  v-model="stage.workflowId"
-                  :disabled="readonly"
-                >
-                  <option :value="null">Manual / none</option>
-                  <option
-                    v-for="workflow in workflows"
-                    :key="workflow.id"
-                    :value="workflow.id"
-                  >{{ workflow.name }}</option>
-                </select>
-              </label>
-              <label>WIP <input
-                v-model.number="stage.wipLimit"
-                :disabled="readonly"
-                min="1"
-                type="number"
-                placeholder="∞"
-              ></label>
               <button
                 v-if="!readonly"
                 type="button"
@@ -213,7 +193,6 @@ import { computed, ref, watch } from 'vue';
 
 import type { WorkLaneSemanticRole } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import { useProjects, type ProjectPipelineTemplate, type ProjectView } from '@pkg/composables/useProjects';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 interface TemplateStageDraft {
   stageKey:     string;
@@ -242,7 +221,6 @@ const {
 
 const ROLES: WorkLaneSemanticRole[] = ['backlog', 'planning', 'execution', 'review', 'blocked', 'terminal', 'manual'];
 const templates = ref<Awaited<ReturnType<typeof listPipelineTemplates>>>([]);
-const workflows = ref<{ id: string; name: string }[]>([]);
 const selectedId = ref('');
 const creating = ref(false);
 const busy = ref(false);
@@ -276,9 +254,6 @@ async function reload(): Promise<void> {
   failure.value = '';
   try {
     templates.value = await listPipelineTemplates(false);
-    workflows.value = (await ipcRenderer.invoke('workflow-db-list'))
-      .filter(workflow => workflow.status !== 'archive')
-      .map(workflow => ({ id: workflow.id, name: workflow.name }));
     if (!selectedId.value && templates.value[0]) await selectTemplate(templates.value[0].id);
   } catch (error) {
     failure.value = error instanceof Error ? error.message : String(error);
@@ -382,7 +357,7 @@ watch(() => props.project.id, () => { reload().catch(() => undefined) }, { immed
 .pt-layout nav { display: flex; flex-direction: column; gap: 5px; }.pt-layout nav button { display: flex; justify-content: space-between; gap: 8px; border: 1px solid var(--pborder); border-radius: 7px; background: var(--psurface); color: var(--ptext2); padding: 9px; text-align: left; cursor: pointer; }.pt-layout nav button.on { border-color: var(--pacc-line); color: var(--ptext); background: var(--pacc-soft); }.pt-layout nav small { font: 9px var(--pmono); color: var(--ptext3); }
 .pt-editor { min-width: 0; border: 1px solid var(--pborder); border-radius: 10px; background: var(--psurface); padding: 14px; }.pt-editor > label, .pt-stage label { display: grid; gap: 4px; color: var(--ptext2); font-size: 11px; margin-bottom: 9px; }.pt-editor input, .pt-editor textarea, .pt-editor select { width: 100%; border: 1px solid var(--pborder); border-radius: 6px; background: var(--psurface2); color: var(--ptext); padding: 7px; }
 .pt-stage-head { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 8px; }.pt-stage-head b { font-size: 12px; }
-.pt-stages { display: grid; gap: 7px; }.pt-stage { display: grid; grid-template-columns: auto 1fr 1.2fr 1fr 1.2fr 70px auto; align-items: end; gap: 7px; border: 1px solid var(--pborder); border-radius: 8px; background: var(--psurface2); padding: 9px; }.pt-stage label { margin: 0; }.pt-order { display: grid; gap: 3px; }.pt-order button { padding: 3px 6px; }
+.pt-stages { display: grid; gap: 7px; }.pt-stage { display: grid; grid-template-columns: auto 1fr 1.2fr 1fr auto; align-items: end; gap: 7px; border: 1px solid var(--pborder); border-radius: 8px; background: var(--psurface2); padding: 9px; }.pt-stage label { margin: 0; }.pt-order { display: grid; gap: 3px; }.pt-order button { padding: 3px 6px; }
 .pt-editor footer { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }.danger { color: var(--pred) !important; }.pt-note { color: var(--ptext3); font-size: 10px; }.pt-error, .pt-message { margin-bottom: 10px; padding: 9px; border-radius: 7px; font-size: 11px; }.pt-error { color: var(--pred); background: rgba(201,115,111,.1); }.pt-message { color: var(--pacc); background: var(--pacc-soft); }.pt-empty { color: var(--ptext2); }
 @media (max-width: 1000px) { .pt-layout { grid-template-columns: 1fr; }.pt-layout nav { flex-direction: row; overflow-x: auto; }.pt-stage { grid-template-columns: auto 1fr 1fr; } }
 

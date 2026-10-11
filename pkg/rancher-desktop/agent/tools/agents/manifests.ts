@@ -15,7 +15,7 @@ export const agentToolManifests: ToolManifest[] = [
             agentId:   { type: 'string', description: 'Database-backed agent slug (e.g. "codex-test"). Omit to use the default agent. Must match an enabled agent definition.', optional: true },
             agentName: { type: 'string', description: 'Alias for agentId. Same resolution rules.', optional: true },
             prompt:    { type: 'string', description: 'The task/instruction to give the sub-agent.' },
-            projectTaskId: { type: 'string', optional: true, description: 'REQUIRED whenever the sub-agent works a Projects task: the task id (e.g. "AwBS"). The job owns that task for its whole run (assignee = this agent; the dispatcher and other sessions stay off it) and hands it back when the job ends. Launch is refused if another agent already owns the task.' },
+            projectTaskId: { type: 'string', optional: true, description: 'REQUIRED whenever the sub-agent works a Projects task: the task id (e.g. "AwBS"). The job owns that task for its whole run (assignee = this agent; other sessions stay off it) and hands it back when the job ends. Launch is refused if another agent already owns the task.' },
             label:     { type: 'string', description: 'Optional human-readable label for this task.', optional: true },
           },
         },

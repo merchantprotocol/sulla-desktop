@@ -1,8 +1,7 @@
 /**
  * Which configured model slot a graph run should chat through.
  *
- * Work-executing agents (mechanical dispatcher workers, protected verifiers,
- * workflow-node agents, spawned worker agents) must run on the PRIMARY model
+ * Work-executing agents (workflow-node agents, spawned worker agents) must run on the PRIMARY model
  * chain so autonomous work quality matches interactive chat on every install,
  * regardless of local configuration (Jonathon directive 2026-09-01). The
  * subconscious slot is reserved for observation/recall/summarizer agents.

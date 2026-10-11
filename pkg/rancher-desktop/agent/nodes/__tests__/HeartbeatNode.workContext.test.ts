@@ -13,16 +13,7 @@ const listCommentsMock: any = jest.fn();
 const latestCommentAtByTaskMock: any = jest.fn();
 const listRecentActivityMock: any = jest.fn(() => Promise.resolve([]));
 const getProjectBySlugMock: any = jest.fn(() => Promise.resolve(null));
-const filterHeartbeatEligibleMock: any = jest.fn((tasks: any[]) => Promise.resolve(tasks));
 const enrichPromptMock: any = jest.fn(() => Promise.resolve('healthy heartbeat prompt'));
-const heartbeatAccessByTaskMock: any = jest.fn((tasks: any[]) => Promise.resolve(
-  new Map(tasks.map(task => [task.id, {
-    capabilityKey: null,
-    mode:          'unmanaged',
-    owner:         null,
-    liveClaim:     null,
-  }])),
-));
 
 jest.unstable_mockModule('../BaseNode', () => ({
   BaseNode: class MockBaseNode {
@@ -49,14 +40,6 @@ jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
     latestCommentAtByTask: latestCommentAtByTaskMock,
     listRecentActivity:    listRecentActivityMock,
     getProjectBySlug:      getProjectBySlugMock,
-  },
-}));
-
-jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () => ({
-  LifecycleCapabilityModel: {
-    buildDigest:             jest.fn(() => Promise.resolve('LIFECYCLE: test')),
-    filterHeartbeatEligible: filterHeartbeatEligibleMock,
-    heartbeatAccessByTask:   heartbeatAccessByTaskMock,
   },
 }));
 
@@ -110,15 +93,6 @@ describe('HeartbeatNode Projects context injection', () => {
     latestCommentAtByTaskMock.mockReset();
     latestCommentAtByTaskMock.mockResolvedValue(new Map());
     enrichPromptMock.mockReset().mockResolvedValue('healthy heartbeat prompt');
-    filterHeartbeatEligibleMock.mockImplementation((tasks: any[]) => Promise.resolve(tasks));
-    heartbeatAccessByTaskMock.mockImplementation((tasks: any[]) => Promise.resolve(
-      new Map(tasks.map(task => [task.id, {
-        capabilityKey: null,
-        mode:          'unmanaged',
-        owner:         null,
-        liveClaim:     null,
-      }])),
-    ));
 
     ensureTablesMock.mockResolvedValue(undefined);
     buildProjectReportMock.mockResolvedValue('# Project report\n\n## Next up\n- [critical] Hydrate me (id task1)');
@@ -189,7 +163,7 @@ describe('HeartbeatNode Projects context injection', () => {
     expect(injected.content).toContain('Acceptance requires selected task comments in model input.');
     expect(injected.content).toContain('Prior cycle discovered project_report is too thin');
     expect(injected.content).toContain('Child proof (id child1)');
-    expect(injected.content).toContain('Record any material fallback outcome in Projects');
+    expect(injected.content).toContain('Record any material outcome in Projects');
     expect(injected.content).not.toContain('hydrate and dispatch additional independent tasks');
     expect(state.metadata.heartbeatSelectedTaskId).toBe('task1');
     expect(state.metadata.heartbeatProjectsSnapshot).toMatchObject({
@@ -199,7 +173,7 @@ describe('HeartbeatNode Projects context injection', () => {
       commentCount: 1,
     });
     expect(state.messages[1].role).toBe('user');
-    expect(buildProjectReportMock).toHaveBeenCalledWith(expect.objectContaining({ lifecycleAware: true }));
+    expect(buildProjectReportMock).toHaveBeenCalledWith(expect.objectContaining({ includeHumanComments: true }));
   });
 
   it('hydrates a ticket the human commented on first, even when it is parked outside the Heartbeat lane', async() => {
@@ -212,7 +186,7 @@ describe('HeartbeatNode Projects context injection', () => {
       description:  'Waiting on a decision.',
       status:       'parked',
       priority:     'high',
-      assignee:     'dispatcher',
+      assignee:     'coder',
       labels:       [],
       due_at:       null,
       github_issue: null,
@@ -230,10 +204,11 @@ describe('HeartbeatNode Projects context injection', () => {
     expect(content).toContain('the human commented on it and Heartbeat has not replied yet');
     expect(content).toContain('## Human comment awaiting your reply');
     expect(content).toContain('Scope changed: drop the export step, then dispatch it.');
-    expect(content).toContain('transition_task_to_execution');
+    expect(content).toContain('Nothing picks work up automatically');
+    expect(content).not.toContain('transition_task_to_execution');
+    expect(content).not.toContain('dispatcher');
     expect(content).toContain('add_task_comment task_id="parked1" author="heartbeat"');
-    expect(content).not.toContain('## Fallback Contract');
-    expect(filterHeartbeatEligibleMock).toHaveBeenCalledTimes(1);
+    expect(content).not.toContain('## Contract');
     expect(state.metadata.heartbeatSelectedTaskId).toBe('parked1');
     expect(state.metadata.heartbeatHumanCommentId).toBe('hc1');
   });
@@ -245,7 +220,7 @@ describe('HeartbeatNode Projects context injection', () => {
     await node.injectHeartbeatProjectReport(state);
 
     expect(state.messages[0].content).toContain('<selected_project_item source="heartbeat" id="task1">');
-    expect(state.messages[0].content).toContain('## Fallback Contract');
+    expect(state.messages[0].content).toContain('## Contract');
     expect(state.messages[0].content).not.toContain('Human Comment Contract');
     expect(state.metadata.heartbeatHumanCommentId).toBeUndefined();
   });
@@ -358,7 +333,7 @@ describe('HeartbeatNode Projects context injection', () => {
     await node.injectHeartbeatProjectReport(state);
 
     expect(state.messages[0].content).toContain('id="blocked1"');
-    expect(state.messages[0].content).toContain('explicitly names Heartbeat as the planning fallback');
+    expect(state.messages[0].content).toContain('top open item in your Heartbeat lane');
     expect(state.messages[0].content).not.toContain('independent planner council');
     expect(state.metadata.heartbeatSelectedTaskId).toBe('blocked1');
   });
@@ -686,14 +661,6 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
     listTasksMock.mockReset();
     latestCommentAtByTaskMock.mockReset();
     latestCommentAtByTaskMock.mockResolvedValue(new Map());
-    heartbeatAccessByTaskMock.mockImplementation((tasks: any[]) => Promise.resolve(
-      new Map(tasks.map(task => [task.id, {
-        capabilityKey: task.status === 'blocked' ? 'planning-council' : 'todo-execution',
-        mode:          'heartbeat_fallback',
-        owner:         'heartbeat',
-        liveClaim:     null,
-      }])),
-    ));
   });
 
   it('returns empty when the lane is healthy (single fresh in_progress, nothing off-lane)', async() => {
@@ -729,11 +696,11 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
     const node = await makeNode();
     const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
 
-    expect(digest).toContain('EXPLICIT FALLBACK CONCURRENCY: 2 Heartbeat-owned fallback tasks');
+    expect(digest).toContain('CONCURRENCY: 2 tasks in your lane are in_progress');
     expect(digest).toContain('taskA');
-    expect(digest).toContain('FALLBACK AGE SIGNAL: task taskB');
-    expect(digest).toContain('EXPLICIT PLANNING FALLBACK (1): blk1');
-    expect(digest).toContain('FALLBACK LANE SIGNAL: 1 explicitly Heartbeat-owned task');
+    expect(digest).toContain('STALE: task taskB');
+    expect(digest).toContain('BLOCKED (1): blk1');
+    expect(digest).toContain('LANE DRIFT: 1 Heartbeat task(s)');
     expect(digest).toContain('off1 (project farm)');
     // The in-lane fresh task must NOT be reported as drift.
     expect(digest).not.toContain('taskA (project proj1)');
@@ -749,8 +716,8 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
     const node = await makeNode();
     const digest = await node.buildLaneHealthDigest({ assignee: 'heartbeat' });
 
-    expect(digest).toContain('FALLBACK AGE SIGNAL: task task1');
-    expect(digest).not.toContain('FALLBACK LANE SIGNAL');
+    expect(digest).toContain('STALE: task task1');
+    expect(digest).not.toContain('LANE DRIFT');
     // Only two queries — no third heartbeat-assignee probe.
     expect(listTasksMock).toHaveBeenCalledTimes(2);
   });
@@ -772,8 +739,8 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
 
     // Parent + one fresh child is the normal case: no duplicate, and the
     // comment-only-progressed parent must NOT be reported stale.
-    expect(digest).not.toContain('EXPLICIT FALLBACK CONCURRENCY');
-    expect(digest).not.toContain('FALLBACK AGE SIGNAL');
+    expect(digest).not.toContain('CONCURRENCY:');
+    expect(digest).not.toContain('STALE:');
     expect(digest).toBe('');
   });
 
@@ -791,7 +758,7 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
     const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
 
     // Two real active threads → duplicate, but counted as 2 (leaves), not 3.
-    expect(digest).toContain('EXPLICIT FALLBACK CONCURRENCY: 2 Heartbeat-owned fallback tasks');
+    expect(digest).toContain('CONCURRENCY: 2 tasks in your lane are in_progress');
     expect(digest).toContain('child1');
     expect(digest).toContain('child2');
     expect(digest).not.toContain('parent1');
@@ -812,7 +779,7 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
     const node = await makeNode();
     const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
 
-    expect(digest).not.toContain('FALLBACK AGE SIGNAL');
+    expect(digest).not.toContain('STALE:');
     expect(digest).toBe('');
   });
 
@@ -828,31 +795,7 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
     const node = await makeNode();
     const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
 
-    expect(digest).toContain('FALLBACK AGE SIGNAL: task task1');
-  });
-
-  it('keeps healthy protected work data-only even when old and blocked', async() => {
-    listTasksMock
-      .mockResolvedValueOnce([
-        { id: 'protected1', status: 'in_progress', project_id: 'proj1', title: 'Protected lease', parent_id: null, last_moved_at: staleIso },
-      ])
-      .mockResolvedValueOnce([
-        { id: 'protected-blocked', status: 'blocked', project_id: 'proj1', title: 'Protected blocker', parent_id: null, last_moved_at: staleIso },
-      ])
-      .mockResolvedValueOnce([]);
-    heartbeatAccessByTaskMock.mockImplementation((tasks: any[]) => Promise.resolve(
-      new Map(tasks.map(task => [task.id, {
-        capabilityKey: task.status === 'blocked' ? 'planning-council' : 'todo-execution',
-        mode:          'protected_owner',
-        owner:         'protected-routine',
-        liveClaim:     task.id === 'protected1' ? { id: 'claim-1', owner: 'protected-routine' } : null,
-      }])),
-    ));
-
-    const node = await makeNode();
-    const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
-
-    expect(digest).toBe('');
+    expect(digest).toContain('STALE: task task1');
   });
 });
 

@@ -37,7 +37,9 @@ describe('Projects Phase 5 renderer contract', () => {
       'createPipelineTemplate', 'updatePipelineTemplate', 'archivePipelineTemplate', 'applyPipelineTemplate',
     ]) expect(source).toContain(operation);
     expect(source).toContain('moveStage(index, -1)');
-    expect(source).toContain('workflow-db-list');
+    // Template stages are lanes only; they never bind workflows or WIP caps.
+    expect(source).not.toContain('workflow-db-list');
+    expect(source).not.toContain('stage.workflowId"');
   });
 
   it('routes readiness and template mutations through typed IPC application adapters', () => {

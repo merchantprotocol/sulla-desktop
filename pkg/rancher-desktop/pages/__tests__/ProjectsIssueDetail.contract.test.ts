@@ -27,30 +27,28 @@ describe('full-screen Projects issue detail contract', () => {
     expect(detailSource).toContain('renderProjectRichText');
   });
 
-  it('supports deep links, browser back, keyboard exit, loading, errors, and explicit gate decisions', () => {
+  it('supports deep links, browser back, keyboard exit, loading, and errors', () => {
     expect(homeSource).toContain('route.query.issue');
     expect(homeSource).toContain('router.back()');
     expect(detailSource).toContain('@keydown.esc="$emit(\'close\')"');
     expect(detailSource).toContain('Loading issue and live review state');
     expect(detailSource).toContain('role="alert"');
-    expect(detailSource).toContain('Approve and advance');
-    expect(detailSource).toContain('Reject for repair');
-    expect(detailSource).toContain('background: var(--pgreen)');
   });
 
-  it('loads live GitHub state and never invokes merge from the decision boundary', () => {
-    const decisionSource = serviceSource.slice(serviceSource.indexOf('export async function decideProjectsHumanGate'));
+  it('has no human-gate approval path: the board never holds work for approval', () => {
+    expect(detailSource).not.toContain('Approve and advance');
+    expect(detailSource).not.toContain('humanGate');
+    expect(homeSource).not.toContain('work-items:human-gate-decision');
+    expect(serviceSource).not.toContain('decideProjectsHumanGate');
+    expect(serviceSource).not.toContain('humanGate');
+  });
 
+  it('loads live GitHub state and never merges anything', () => {
     expect(serviceSource).toContain('octokit.pulls.get');
     expect(serviceSource).toContain('octokit.checks.listForRef');
     expect(serviceSource).toContain('octokit.pulls.listReviews');
     expect(serviceSource).toContain('documentation:');
     expect(serviceSource).toContain('testResults:');
-    expect(serviceSource).toContain('transitionTaskRelative');
     expect(serviceSource).not.toMatch(/pulls\.merge|github_merge_pr|mergePullRequest/);
-    expect(serviceSource).toContain('requires_human_approval === true');
-    expect(serviceSource).toContain("'Decision by: human'");
-    expect(decisionSource).toContain('expectedStage');
-    expect(decisionSource).not.toContain('headSha');
   });
 });

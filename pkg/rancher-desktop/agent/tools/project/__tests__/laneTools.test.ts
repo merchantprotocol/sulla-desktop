@@ -14,9 +14,15 @@ describe('project lane tools', () => {
     for (const name of [
       'list_lanes', 'resolve_lanes', 'create_lane', 'update_lane',
       'archive_lane', 'restore_lane', 'reorder_lanes', 'reset_lane_override',
+    ]) expect(names.has(name)).toBe(true);
+  });
+
+  it('exposes no lane-trigger tools: lanes never launch work', () => {
+    const names = new Set(projectToolManifests.map(tool => tool.name));
+    for (const name of [
       'list_lane_workflow_bindings', 'set_lane_workflow_binding', 'remove_lane_workflow_binding',
       'resolve_lane_workflow', 'inspect_lane_entry_automation',
-    ]) expect(names.has(name)).toBe(true);
+    ]) expect(names.has(name)).toBe(false);
   });
 
   it('does not expose lane_key as an update field', () => {

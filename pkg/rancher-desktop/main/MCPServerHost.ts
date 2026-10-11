@@ -446,7 +446,7 @@ export class MCPServerHost {
 
     // sulla_tool — the graph-stamped tool surface, projected provider-neutrally.
     // The graph system decides which tools an agent node may use
-    // (state.metadata.allowedToolNames, stamped by the dispatcher and
+    // (state.metadata.allowedToolNames, stamped by the graph runtime and
     // inherited by sub-nodes — the same mechanism the subconscious observer
     // agents use). API-driven providers honor it because the graph loop
     // executes their tool calls; CLI-driven providers (Claude Code, Codex, or

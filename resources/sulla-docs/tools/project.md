@@ -4,6 +4,18 @@ Desktop Postgres is the operator agenda. The Projects view is the human UI, and
 the Sulla CLI catalog `project/*` tools are how agents read and write it. There
 is no direct/native project-management tool surface and no parallel task system.
 
+Projects is a **plain board**. Nothing in the app claims, launches, recovers,
+reviews, or moves tasks on its own, and there is no automation switch to turn
+on. Agents drive the work:
+
+1. An **Account Manager** talks to the human and launches a **Project Manager**.
+2. The Project Manager creates the project, lanes, epics, and tasks, assigns a
+   custom agent to each task (`assignee`), assigns itself to the project
+   (`assignedAgent`), launches a **Director**, and checks progress on its own
+   30-minute chat heartbeat (`chat/set_heartbeat`).
+3. The Director pushes workers (`spawn_agent`) through the tasks; each worker
+   records its outcome with `update_task` / `add_task_comment`.
+
 ```
 work_projects          one outcome with a metric
   └── work_epics       major chunk of a project
@@ -41,19 +53,16 @@ round-robin cursor inside each priority block.
 Defaults from `WorkItemsModel`: projects + epics `status='working'`
 `priority='p2'`; tasks `status='todo'` `priority='p2'`.
 
-## Task ownership contract
+## Ownership
 
-Task authorship and queue ownership are separate. Use `dispatcher` for
-autonomous executable work, `heartbeat` for supervisory/review work, and
-`human` for explicit human ownership. A null assignee is unowned work that the
-dispatcher may claim unless a non-autonomous label excludes it. `sulla` is the
-legacy/direct-chat actor identity, not a durable queue owner; ordinary `todo`
-tasks written by Sulla, Heartbeat, or the dispatcher with `assignee='sulla'`
-are stored as `dispatcher`.
+Ownership is plain metadata; assigning never launches anything.
 
-Labels `gated`, `decision`, `human`, `manual`, and `no-auto-dispatch` always
-exclude a task from mechanical dispatch. Their ownership is never normalized,
-and an explicit `assignee='human'` is never rewritten.
+- `work_projects.assigned_agent` — the agent slug that drives the project
+  (usually `project-manager`). Set it with `assignedAgent` on `create_project`
+  or `update_project`; pass an empty string to clear it.
+- `work_tasks.assignee` — who owns the task: a custom agent slug, `heartbeat`,
+  or `human`. A `spawn_agent` job given a `projectTaskId` sets the assignee to
+  its agent for the run and refuses to launch if another live job owns the task.
 
 ## Tools (bare names — slash paths misroute)
 
@@ -65,8 +74,9 @@ Reads:
 | `sulla project/get_project_item` | One row + children + comments. |
 | `sulla project/search_project_items` | Title + description search. Use before creating. |
 | `sulla project/list_task_comments` | Comment thread on a task, oldest first. |
-| `sulla project/list_task_waits` | Durable external waits. Active unchanged waits are monitor-owned. |
-| `sulla project/project_report` | Standup: completed work plus separate actionable, blocked-recovery, and planning-in-flight queues. Within each priority block, least-recent activity comes first. Injected as `<project_report>` on first chat turn. |
+| `sulla project/project_report` | Standup: completed work plus open, dependency-held, blocked, and planning tasks. Within each priority block, least-recent activity comes first. Injected as `<project_report>` on first chat turn. |
+| `sulla project/list_ready_tasks` | Open tasks in a project split into ready vs dependency-held, plus open prerequisites that can be worked first. |
+| `sulla project/list_task_dependencies` | A task's prerequisites and dependents. |
 
 Explicit projections:
 
@@ -78,15 +88,14 @@ Writes — explicit create / update, **no upsert**:
 
 | Tool | Use |
 |---|---|
-| `sulla project/create_project` | Always inserts. Unique slug auto-resolved. |
-| `sulla project/update_project` | In-place by id. Status/priority/due stamp `last_moved_at`. |
+| `sulla project/create_project` | Always inserts. Unique slug auto-resolved. Optional `assignedAgent`. |
+| `sulla project/update_project` | In-place by id. Status/priority/due stamp `last_moved_at`. `assignedAgent` sets or clears the driving agent. |
 | `sulla project/create_epic` | Always inserts under a project. |
 | `sulla project/update_epic` | In-place by id. |
 | `sulla project/create_task` | Always inserts. `project_id` required; `epic_id` and `parent_id` optional. |
 | `sulla project/update_task` | In-place by id. |
 | `sulla project/add_task_comment` | Append a note. Default author `sulla`; desktop UI stamps `human`. |
-| `sulla project/register_task_wait` | Idempotently register one structured external wait; adds one initial comment. |
-| `sulla project/cancel_task_wait` | Cancel one obsolete active wait; terminal task states cancel automatically. |
+| `sulla project/create_task_dependency` / `remove_task_dependency` | Link or unlink a prerequisite. Dependencies are readiness metadata only. |
 | `sulla project/archive_project_item` | Soft-archive. Cascades to children. |
 
 Lane definitions:
@@ -102,8 +111,11 @@ Lane definitions:
 | `sulla project/reorder_lanes` | Reorder one scope atomically. Reordering an inherited project lane creates an override. |
 | `sulla project/reset_lane_override` | Return a project override to global inheritance while retaining the old row as audit history. |
 
-Schema-only migrations `0044_create_work_items_tables`,
-`0065_create_work_task_waits`, and `0069_create_work_lane_definitions` contain no user data.
+Lanes are presentation and status vocabulary only. Moving a task between lanes
+never triggers a workflow or an agent. Agents may create and reorder lanes.
+
+Schema-only migrations `0044_create_work_items_tables` and
+`0069_create_work_lane_definitions` contain no user data.
 A runtime seeder (`WorkItemsImportSeeder`) may import this
 install's leftover `~/sulla/ledger/goals/*.md` on first boot by stable
 slug. `WorkLaneDefinitionSeeder` runs on every boot, reasserts missing built-in
@@ -114,22 +126,12 @@ Optional GitHub mapping on tasks: `github_issue`. It is not a live sync by itsel
 the opt-in `reconcile_github_pr_mirror` projection requires explicit repositories,
 destination, and an installation-local schedule.
 
-## External waits
-
-`work_task_waits` is the durable owner for pending GitHub checks, human gates,
-scheduled times, and external jobs. Register a stable structured target once;
-the monitor fingerprints GitHub head SHA plus normalized check state and writes
-only material deltas. Active unchanged waits are summarized in `project_report`
-and, once `externalWaitCommentSuppressionEnabled` is enabled, omitted from the
-actionable queue. `externalWaitMonitorEnabled=false` restores the prior report
-behavior. Human comments/task mutations and terminal task states invalidate or
-cancel waits through database triggers, so human gates do not poll GitHub.
-
 ## Cycle contract
 
 1. First chat turn already has a `<project_report>` standup. Read it. Do not
    re-query unless you need a filter the report doesn't have.
-2. Pick the top open task you can move (`list_project_items` / the report).
+2. Work tasks assigned to you, or the ones you were asked to drive. Leave a
+   task to its assignee and a project to its assigned agent.
 3. Move it. `update_task` status / comment / complete.
 4. Bookkeep on the same row: comment what shipped, mark done, or park
    with the decision + recommendation + staged artifact.

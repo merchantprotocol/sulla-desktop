@@ -75,10 +75,8 @@
           <div class="ls-badges">
             <span>{{ provenanceLabel(lane) }}</span>
             <span>{{ lane.semantic_role }}</span>
-            <span v-if="lane.requires_human_approval">human approval</span>
             <span v-if="lane.system_required">protected required</span>
             <span v-if="lane.archived">archived</span>
-            <span v-else>{{ lane.semantic_role === 'manual' ? 'manual' : 'automated-capable' }}</span>
           </div>
         </div>
         <div class="ls-actions">
@@ -104,13 +102,6 @@
             @click="openEdit(lane)"
           >
             Customize
-          </button>
-          <button
-            type="button"
-            :disabled="busy || lane.archived"
-            @click="openAssignment(lane)"
-          >
-            Assign workflow
           </button>
           <button
             v-if="lane.provenance === 'project_override'"
@@ -201,10 +192,6 @@
             </select>
           </label>
         </div>
-        <label class="ls-check">
-          <input v-model="editor.requiresHumanApproval" type="checkbox">
-          Require a human approval before this lane can advance
-        </label>
         <div class="ls-footer">
           <button
             type="submit"
@@ -275,127 +262,15 @@
       </form>
     </div>
 
-    <div
-      v-if="assignment.open"
-      class="ls-scrim"
-      @click="assignment.open = false"
-    >
-      <form
-        class="ls-modal wide"
-        @submit.prevent="saveAssignment"
-        @click.stop
-      >
-        <h3>Assign workflow · {{ assignment.lane?.display_name }}</h3>
-        <fieldset>
-          <legend>Apply to</legend>
-          <label><input
-            v-model="assignment.scope"
-            type="radio"
-            value="epic"
-          > This epic</label>
-          <label><input
-            v-model="assignment.scope"
-            type="radio"
-            value="project"
-          > This project</label>
-          <label><input
-            v-model="assignment.scope"
-            type="radio"
-            value="global"
-          > Every project using this lane type</label>
-        </fieldset>
-        <p class="ls-target">
-          Affected target: <strong>{{ affectedTarget }}</strong>
-        </p>
-        <label v-if="assignment.scope === 'epic'">Epic
-          <select
-            v-model="assignment.epicId"
-            required
-            @change="refreshResolution"
-          >
-            <option
-              v-for="epic in project.epics"
-              :key="epic.id"
-              :value="epic.id"
-            >{{ epic.title }}</option>
-          </select>
-        </label>
-        <label>Workflow
-          <select
-            v-model="assignment.workflowId"
-            required
-          >
-            <option
-              value=""
-              disabled
-            >Select a workflow</option>
-            <option
-              v-for="workflow in assignment.workflows"
-              :key="workflow.id"
-              :value="workflow.id"
-            >
-              {{ workflow.name }}{{ workflow.system ? ' · protected core' : '' }}
-            </option>
-          </select>
-        </label>
-        <p
-          v-if="!assignment.loading && !assignment.workflows.length"
-          class="ls-error"
-        >
-          No enabled workflows are available to assign.
-        </p>
-        <div class="ls-provenance">
-          <b>Current precedence</b>
-          <ol>
-            <li
-              v-for="step in precedence"
-              :key="step.scope"
-              :class="{ effective: step.effective }"
-            >
-              {{ step.label }} — {{ step.workflow }}
-            </li>
-          </ol>
-          <p>Effective now: <strong>{{ effectiveWorkflowLabel }}</strong> <span class="ls-badge">{{ provenanceBadge }}</span></p>
-          <p v-if="assignment.resolution?.fallbackReason">
-            Fallback: {{ assignment.resolution.fallbackReason }}
-          </p>
-        </div>
-        <div class="ls-footer">
-          <button
-            type="submit"
-            :disabled="busy || !assignment.workflowId || !assignment.workflows.length"
-          >
-            Save assignment
-          </button>
-          <button
-            v-if="assignment.exactBinding"
-            type="button"
-            :disabled="busy"
-            @click="removeAssignment"
-          >
-            Use inherited fallback
-          </button>
-          <button
-            type="button"
-            @click="assignment.open = false"
-          >
-            Cancel
-          </button>
-        </div>
-      </form>
-    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { reactive, ref, watch } from 'vue';
 
 import type {
   ArchiveWorkLanePreview, EffectiveWorkLane, WorkLaneSemanticRole,
 } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
-import type {
-  CompatibleLaneWorkflow, LaneBindingResolution, LaneWorkflowBindingRecord, LaneBindingScope,
-} from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
 import PipelineTemplateSettings from '@pkg/components/projects/PipelineTemplateSettings.vue';
 import { useProjects, type ProjectView } from '@pkg/composables/useProjects';
 
@@ -403,8 +278,7 @@ const props = defineProps<{ project: ProjectView }>();
 const emit = defineEmits<{ refresh: [] }>();
 const {
   listLanes, resolveLanes, createLane, updateLane, archiveLane, previewArchiveLane, restoreLane,
-  reorderLanes, resetLaneOverride, listLaneWorkflowBindings, setLaneWorkflowBinding,
-  removeLaneWorkflowBinding, resolveLaneWorkflowContext, listCompatibleLaneWorkflows,
+  reorderLanes, resetLaneOverride,
 } = useProjects();
 
 const ROLES: WorkLaneSemanticRole[] = ['backlog', 'planning', 'execution', 'review', 'blocked', 'terminal', 'manual'];
@@ -424,24 +298,10 @@ const editor = reactive({
   description:  '',
   color:        '#5096b3',
   semanticRole: 'manual' as WorkLaneSemanticRole,
-  requiresHumanApproval: false,
 });
 const archiveDialog = reactive({
   open: false, lane: null as EffectiveWorkLane | null, preview: null as ArchiveWorkLanePreview | null, destination: '',
 });
-const assignment = reactive({
-  open:         false,
-  loading:      false,
-  lane:         null as EffectiveWorkLane | null,
-  scope:        'project' as Exclude<LaneBindingScope, 'core'>,
-  epicId:       '',
-  workflowId:   '',
-  workflows:    [] as CompatibleLaneWorkflow[],
-  bindings:     [] as LaneWorkflowBindingRecord[],
-  resolution:   null as LaneBindingResolution | null,
-  exactBinding: null as LaneWorkflowBindingRecord | null,
-});
-
 async function run(action: () => Promise<void>): Promise<void> {
   busy.value = true; failure.value = ''; message.value = '';
   try { await action() } catch (error) { failure.value = error instanceof Error ? error.message : String(error) } finally { busy.value = false }
@@ -467,10 +327,10 @@ function provenanceLabel(lane: EffectiveWorkLane): string {
 }
 
 function openCreate(): void {
-  Object.assign(editor, { open: true, create: true, lane: null, laneKey: '', displayName: '', description: '', color: '#5096b3', semanticRole: 'manual', requiresHumanApproval: false });
+  Object.assign(editor, { open: true, create: true, lane: null, laneKey: '', displayName: '', description: '', color: '#5096b3', semanticRole: 'manual' });
 }
 function openEdit(lane: EffectiveWorkLane): void {
-  Object.assign(editor, { open: true, create: false, lane, laneKey: lane.lane_key, displayName: lane.display_name, description: lane.description, color: lane.color || '#5096b3', semanticRole: lane.semantic_role, requiresHumanApproval: lane.requires_human_approval });
+  Object.assign(editor, { open: true, create: false, lane, laneKey: lane.lane_key, displayName: lane.display_name, description: lane.description, color: lane.color || '#5096b3', semanticRole: lane.semantic_role });
 }
 async function saveLane(): Promise<void> {
   await run(async() => {
@@ -483,7 +343,6 @@ async function saveLane(): Promise<void> {
         description:   editor.description,
         color:         editor.color,
         semantic_role: editor.semanticRole,
-        requires_human_approval: editor.requiresHumanApproval,
         position:      lanes.value.length,
       });
     } else if (editor.lane) {
@@ -499,10 +358,9 @@ async function saveLane(): Promise<void> {
           icon:          editor.lane.icon,
           position:      editor.lane.position,
           semantic_role: editor.semanticRole,
-          requires_human_approval: editor.requiresHumanApproval,
-        });
+          });
       } else {
-        await updateLane(editor.lane.id, { display_name: editor.displayName, description: editor.description, color: editor.color, semantic_role: editor.semanticRole, requires_human_approval: editor.requiresHumanApproval });
+        await updateLane(editor.lane.id, { display_name: editor.displayName, description: editor.description, color: editor.color, semantic_role: editor.semanticRole });
       }
     }
     editor.open = false; message.value = 'Lane saved.'; await reload(); emit('refresh');
@@ -574,97 +432,7 @@ async function archiveSelected(): Promise<void> {
   });
 }
 
-function bindingFor(scopeName: LaneBindingScope): LaneWorkflowBindingRecord | null {
-  if (!assignment.lane) return null;
-  return assignment.bindings.find((binding) => {
-    if (binding.scope !== scopeName) return false;
-    if (scopeName === 'epic') return binding.epic_id === assignment.epicId && binding.lane_key === assignment.lane!.lane_key;
-    if (scopeName === 'project') return binding.project_id === props.project.id && binding.lane_key === assignment.lane!.lane_key;
-    return binding.lane_key === assignment.lane!.lane_key ||
-      (!binding.lane_key && binding.semantic_role === assignment.lane!.semantic_role);
-  }) ?? null;
-}
-function exactBindingForScope(): LaneWorkflowBindingRecord | null {
-  if (!assignment.lane) return null;
-  return assignment.bindings.find(binding => binding.scope === assignment.scope &&
-    binding.lane_key === assignment.lane!.lane_key &&
-    (assignment.scope !== 'epic' || binding.epic_id === assignment.epicId) &&
-    (assignment.scope !== 'project' || binding.project_id === props.project.id)) ?? null;
-}
-async function refreshResolution(): Promise<void> {
-  if (!assignment.lane) return;
-  assignment.bindings = await listLaneWorkflowBindings();
-  assignment.resolution = await resolveLaneWorkflowContext({
-    projectId: props.project.id, epicId: assignment.epicId || undefined, laneKey: assignment.lane.lane_key,
-  });
-  assignment.exactBinding = exactBindingForScope();
-}
-async function openAssignment(lane: EffectiveWorkLane, epicId?: string): Promise<void> {
-  Object.assign(assignment, {
-    open:         true,
-    loading:      true,
-    lane,
-    scope:        epicId ? 'epic' : 'project',
-    epicId:       epicId || props.project.epics[0]?.id || '',
-    workflowId:   '',
-    workflows:    [],
-    bindings:     [],
-    resolution:   null,
-    exactBinding: null,
-  });
-  try {
-    [assignment.workflows] = await Promise.all([
-      listCompatibleLaneWorkflows(props.project.id, lane.lane_key), refreshResolution(),
-    ]);
-    assignment.exactBinding = exactBindingForScope();
-    assignment.workflowId = assignment.exactBinding?.workflow_id ?? assignment.resolution?.workflowId ?? '';
-  } catch (error) { failure.value = error instanceof Error ? error.message : String(error) } finally { assignment.loading = false }
-}
-watch(() => assignment.scope, () => {
-  if (!assignment.open) return;
-  assignment.exactBinding = exactBindingForScope();
-  assignment.workflowId = assignment.exactBinding?.workflow_id ?? assignment.resolution?.workflowId ?? '';
-});
-
-async function saveAssignment(): Promise<void> {
-  if (!assignment.lane || !assignment.workflowId) return;
-  await run(async() => {
-    await setLaneWorkflowBinding({
-      scope:      assignment.scope,
-      workflowId: assignment.workflowId,
-      laneKey:    assignment.lane!.lane_key,
-      epicId:     assignment.scope === 'epic' ? assignment.epicId : undefined,
-      projectId:  assignment.scope === 'project' ? props.project.id : undefined,
-    });
-    await refreshResolution(); message.value = `Workflow assigned. Effective source: ${ assignment.resolution?.source ?? 'none' }.`;
-  });
-}
-async function removeAssignment(): Promise<void> {
-  if (!assignment.exactBinding) return;
-  await run(async() => { await removeLaneWorkflowBinding(assignment.exactBinding!.id); await refreshResolution(); message.value = 'Override removed; inherited fallback restored.' });
-}
-
-const precedence = computed(() => ['epic', 'project', 'global', 'core'].map((item) => {
-  const binding = bindingFor(item as LaneBindingScope);
-  return {
-    scope:     item,
-    label:     item === 'core' ? 'Protected core' : `${ item[0].toUpperCase() }${ item.slice(1) } override`,
-    workflow:  binding?.workflow_id ?? 'not assigned',
-    effective: assignment.resolution?.source === item,
-  };
-}));
-const effectiveWorkflowLabel = computed(() => assignment.resolution?.workflowId ?? (assignment.resolution?.source === 'manual' ? 'Manual lane' : 'No automation'));
-const affectedTarget = computed(() => {
-  if (assignment.scope === 'global') return `all projects using lane key ${ assignment.lane?.lane_key ?? '' }`;
-  if (assignment.scope === 'project') return props.project.title;
-  return props.project.epics.find(epic => epic.id === assignment.epicId)?.title ?? 'Select an epic';
-});
-const provenanceBadge = computed(() => {
-  const source = assignment.resolution?.source;
-  return source === 'epic' ? 'epic override' : source === 'project' ? 'project override' : source === 'global' ? 'global default' : source === 'core' ? 'protected core' : source || 'none';
-});
-
-defineExpose({ openEdit, openAssignment });
+defineExpose({ openEdit });
 </script>
 
 <style scoped>
@@ -694,13 +462,9 @@ defineExpose({ openEdit, openAssignment });
 .ls-message { background: var(--pacc-soft); color: var(--pacc); }.ls-error { background: rgba(201,115,111,.1); color: var(--pred); }.ls-empty { color: var(--ptext2); }
 .ls-scrim { position: fixed; inset: 0; background: rgba(4,7,12,.72); z-index: 50; display: grid; place-items: center; }
 .ls-modal { width: 480px; max-width: calc(100vw - 40px); max-height: calc(100vh - 50px); overflow: auto; background: var(--psurface); border: 1px solid var(--pborder); border-radius: 14px; padding: 22px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
-.ls-modal.wide { width: 620px; }
 .ls-modal label { display: grid; gap: 5px; margin-top: 14px; color: var(--ptext2); font-size: 12px; }
 .ls-modal input:not([type=radio]):not([type=checkbox]), .ls-modal textarea, .ls-modal select { width: 100%; background: var(--psurface2); border: 1px solid var(--pborder); border-radius: 7px; color: var(--ptext); padding: 8px; }
-.ls-modal .ls-check { display: flex; align-items: flex-start; gap: 8px; }
-.ls-check input { margin-top: 2px; accent-color: var(--pacc); }
-.ls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.ls-modal fieldset { margin-top: 14px; border: 1px solid var(--pborder); border-radius: 8px; }.ls-modal fieldset label { display: flex; align-items: center; }
-.ls-provenance { margin-top: 15px; padding: 12px; background: var(--psurface2); border-radius: 8px; font-size: 12px; }.ls-provenance ol { padding-left: 20px; color: var(--ptext3); }.ls-provenance li.effective { color: var(--pacc); font-weight: 600; }
+.ls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .ls-footer { display: flex; gap: 8px; margin-top: 20px; }.ls-footer button { border: 1px solid var(--pborder); border-radius: 7px; }
 
 .theme-noir .lane-settings { max-width: 1240px; }

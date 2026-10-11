@@ -20,9 +20,9 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('## The Idea Lab — Your Memory Between Wakes');
     expect(heartbeatPrompt).toContain("slug 'heartbeat-idea-lab'");
     expect(heartbeatPrompt).toContain("Write with actor 'heartbeat'");
-    expect(heartbeatPrompt).toContain('backlog-role lane so no execution routine claims them');
+    expect(heartbeatPrompt).toContain("Keep ideas and live experiments in the project's backlog-role lane");
     expect(heartbeatPrompt).toContain('Never move a lab task into the ordered effective execution-entry lane');
-    expect(heartbeatPrompt).toContain('ordered effective planning lane');
+    expect(heartbeatPrompt).toContain("becomes a complete task in the owning project, and you tell that project's assigned agent");
     expect(heartbeatPrompt).toContain('Read the lab before brainstorming, every wake');
   });
 
@@ -55,22 +55,21 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('Design every experiment to fit the reversible door');
   });
 
-  it('respects the single-owner conveyor', () => {
+  it('respects single ownership on a plain board', () => {
     expect(heartbeatPrompt).toContain('Projects project-state is your only durable agenda');
     expect(heartbeatPrompt).toContain('HEARTBEAT_STATE.md');
     expect(heartbeatPrompt).toContain('RETIRED');
     expect(heartbeatPrompt).toContain('Every state or concern has exactly one owner');
+    expect(heartbeatPrompt).toContain('Projects is a plain board: nothing in the app claims, launches, or moves tasks on its own');
     for (const ownership of [
-      'planning-role and recoverable blocked-role work | protected planning routine',
-      'execution-role work plus artifact custody | protected execution routine',
-      'review-role verification and disposition | protected review routine',
-      'unchanged external gates | durable wait monitor',
-      'lost leases and stale orphans | deterministic recovery',
+      "a project's plan, lanes, tasks, and progress | the project's assigned agent",
+      "a task's work and its outcome | the task's assignee",
     ]) {
       expect(heartbeatPrompt).toContain(ownership);
     }
-    expect(heartbeatPrompt).toContain('create a second dispatch, planning, review, custody, wait, or recovery path');
-    expect(heartbeatPrompt).toContain('Never conceal a broken conveyor by manually doing the stranded task');
+    expect(heartbeatPrompt).toContain('Never claim, redo, or disposition a task another owner holds');
+    expect(heartbeatPrompt).toContain('Never conceal a stuck project by manually doing the stranded task');
+    expect(heartbeatPrompt).not.toMatch(/dispatcher|conveyor|durable wait monitor|deterministic recovery|protected (planning|execution|review) routine/i);
     expect(heartbeatPrompt).toContain("Resolve every task's effective lane and semantic role");
   });
 

@@ -9,18 +9,16 @@
  * round-robin rotation whenever an agent edits or comments on a task.
  */
 
-import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
 import { WorkTaskDependencyModel } from '../database/models/WorkTaskDependencyModel';
-import { WorkTaskWaitModel, type WorkTaskWaitRecord } from '../database/models/WorkTaskWaitModel';
 
 export interface ProjectReportOpts {
-  hours?:          number;
-  nextLimit?:      number;
-  projectId?:      string;
-  assignee?:       string;
-  lifecycleAware?: boolean;
+  hours?:                number;
+  nextLimit?:            number;
+  projectId?:            string;
+  assignee?:             string;
+  /** Lead with human comments awaiting a Heartbeat reply (Heartbeat's own report). */
+  includeHumanComments?: boolean;
 }
 
 function shorten(s: string): string {
@@ -35,21 +33,6 @@ function fmt(iso: string | null): string {
   if (Number.isNaN(d.getTime())) return iso;
 
   return `${ d.toISOString().slice(0, 16).replace('T', ' ') } UTC`;
-}
-
-function waitTiming(wait: WorkTaskWaitRecord, monitorEnabled: boolean): string {
-  const technicalCheck = `technical next_check_at ${ fmt(wait.next_check_at) }`;
-
-  switch (wait.wait_kind) {
-  case 'external_job':
-    return `awaiting external event or explicit adapter · ${ technicalCheck } (not a scheduled provider poll)`;
-  case 'human_gate':
-    return `${ wait.due_at ? `awaiting human approval · due ${ fmt(wait.due_at) }` : 'awaiting human approval (no deadline)' } · ${ technicalCheck }`;
-  case 'scheduled_time':
-    return `scheduled deadline ${ wait.due_at ? fmt(wait.due_at) : 'not set' } · ${ technicalCheck }`;
-  case 'github_checks':
-    return `${ monitorEnabled ? 'next poll' : 'stored next poll (monitor disabled)' } ${ fmt(wait.next_check_at) }`;
-  }
 }
 
 export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<string> {
@@ -85,30 +68,11 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
 
   // OPEN QUEUES — WorkItemsModel already orders by epic priority → task
   // priority → oldest activity. Preserve that order while separating states.
-  const listedOpenRows = await WorkItemsModel.listTasks({ projectId, assignee, limit: 500 });
-  const lifecycleAccess = opts.lifecycleAware
-    ? await LifecycleCapabilityModel.heartbeatAccessByTask(listedOpenRows)
-    : null;
-  const openRows = lifecycleAccess
-    ? listedOpenRows.filter(task => ['heartbeat_fallback', 'unmanaged'].includes(lifecycleAccess.get(task.id)?.mode ?? 'manual_hold'))
-    : listedOpenRows;
-  const lifecycleOwnedRows = lifecycleAccess
-    ? listedOpenRows.filter(task => !['heartbeat_fallback', 'unmanaged'].includes(lifecycleAccess.get(task.id)?.mode ?? 'manual_hold'))
-    : [];
-  const [activeWaitIds, activeWaits, suppressionConfigured, monitorEnabled, dependencyHolds] = await Promise.all([
-    WorkTaskWaitModel.activeTaskIds(),
-    WorkTaskWaitModel.list({ status: 'active', limit: 500 }),
-    SullaSettingsModel.get('externalWaitCommentSuppressionEnabled', false),
-    SullaSettingsModel.get('externalWaitMonitorEnabled', true),
-    WorkTaskDependencyModel.listUnresolvedForTasks(openRows.map(task => task.id)),
-  ]);
-  const suppressionEnabled = monitorEnabled && suppressionConfigured;
-  const scopedTaskIds = new Set(openRows.map(task => task.id));
-  const scopedActiveWaits = activeWaits.filter(wait => scopedTaskIds.has(wait.task_id));
+  const openRows = await WorkItemsModel.listTasks({ projectId, assignee, limit: 500 });
+  const dependencyHolds = await WorkTaskDependencyModel.listUnresolvedForTasks(openRows.map(task => task.id));
   const dependencyHeldIds = new Set(dependencyHolds.map(hold => hold.taskId));
   const actionableRows = openRows.filter(t =>
-    t.status !== 'blocked' && t.status !== 'planning' && !dependencyHeldIds.has(t.id) &&
-      (!suppressionEnabled || !activeWaitIds.has(t.id)),
+    t.status !== 'blocked' && t.status !== 'planning' && !dependencyHeldIds.has(t.id),
   );
   const blockedRows = openRows.filter(t => t.status === 'blocked');
   const planningRows = openRows.filter(t => t.status === 'planning');
@@ -123,13 +87,13 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
 
   // Human comments outrank every queue below and ignore lane scope: the human
   // asked for a look, whatever state the ticket is in.
-  if (opts.lifecycleAware) {
+  if (opts.includeHumanComments) {
     const { listHumanCommentTriage } = await import('../services/HumanCommentTriage');
     const awaiting = await listHumanCommentTriage();
     if (awaiting.length) {
       lines.push('');
       lines.push(`## 💬 Human comments awaiting your reply (${ awaiting.length })`);
-      lines.push('_Handle these first, oldest first, regardless of lane, lifecycle owner, parked/blocked/done state or dependencies. Open the ticket, read the comment in context, then either change the ticket as asked, move it to its execution lane so the dispatcher picks it up, or answer the question. Finish every one with add_task_comment author="heartbeat" saying what you decided and did — that reply clears it from this list. Tickets with a live worker claim are held back until the claim ends._');
+      lines.push('_Handle these first, oldest first, regardless of lane, parked/blocked/done state or dependencies. Open the ticket, read the comment in context, then change the ticket as asked, tell the project\'s assigned agent, or answer the question. Finish every one with add_task_comment author="heartbeat" saying what you decided and did — that reply clears it from this list._');
       for (const row of awaiting) {
         const excerpt = row.body.replace(/\s+/g, ' ').trim();
         lines.push(`- **${ row.task.title }** — ${ context(row.task) } · ${ row.task.status } · commented ${ fmt(row.created_at) }: "${ excerpt.length > 280 ? `${ excerpt.slice(0, 279) }…` : excerpt }" (id ${ row.task.id })`);
@@ -150,12 +114,8 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   for (const p of doneProjects) lines.push(`- _(project)_ **${ p.title }** completed (id ${ p.id })`);
 
   lines.push('');
-  lines.push(opts.lifecycleAware
-    ? `## ▶️ Explicit Heartbeat fallback (${ next.length } of ${ actionableRows.length })`
-    : `## ▶️ Actionable now (${ next.length } of ${ actionableRows.length })`);
-  lines.push(opts.lifecycleAware
-    ? '_Only rows listed here have an explicit named Heartbeat fallback (or no lifecycle stage). Heartbeat may act within that fallback; absence or manual hold never grants ownership._'
-    : '_Task selection, admission, assignment, retries, and recovery belong to the mechanical dispatcher. This report is context, not permission for Heartbeat or another LLM to dispatch portfolio workers. Workers execute only their already-claimed task; do not create a second dispatch path._');
+  lines.push(`## ▶️ Open now (${ next.length } of ${ actionableRows.length })`);
+  lines.push('_Projects is a plain board. Each project\'s assigned agent (its project manager) and the director it launches drive the work; the app never claims or launches tasks. Work a task only when it is assigned to you or you were asked to._');
   if (!next.length) {
     lines.push('_No open tasks in scope._');
   } else {
@@ -168,7 +128,7 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
 
   lines.push('');
   lines.push(`## 🔗 Dependency-held work (${ dependencyHeldIds.size })`);
-  lines.push('_These tasks are mechanically excluded from planning, execution, review, and lane-entry claims. They are separate from external waits and human gates._');
+  lines.push('_These tasks wait on a prerequisite that is not done yet. Finish or remove the prerequisite first._');
   for (const taskId of [...dependencyHeldIds].slice(0, nextLimit)) {
     const task = openRows.find(row => row.id === taskId);
     const reasons = dependencyHolds.filter(hold => hold.taskId === taskId)
@@ -177,23 +137,8 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   }
 
   lines.push('');
-  lines.push(`## ⏳ Monitor-owned external waits (${ scopedActiveWaits.length })`);
-  lines.push(!monitorEnabled
-    ? '_Monitor disabled: stored wait dates do not imply active checks; actionable filtering/comment suppression is disabled._'
-    : suppressionEnabled
-      ? '_These waits are omitted from actionable work until a material delta reactivates them. Heartbeat must not poll or comment on unchanged waits._'
-      : '_Shadow mode: monitor decisions are recorded, but actionable filtering/comment suppression is not enabled yet._');
-  for (const wait of scopedActiveWaits.slice(0, nextLimit)) {
-    lines.push(`- **${ wait.wait_kind }** ${ wait.target_key } · task ${ wait.task_id } · ${ waitTiming(wait, monitorEnabled) } · unchanged ${ wait.consecutive_unchanged_count }`);
-  }
-
-  lines.push('');
-  lines.push(opts.lifecycleAware
-    ? `## 🧭 Explicit Heartbeat planning fallback (${ blocked.length } of ${ blockedRows.length })`
-    : `## 🧭 Blocked tasks — recovery planning (${ blocked.length } of ${ blockedRows.length })`);
-  lines.push(opts.lifecycleAware
-    ? '_These rows are available only because the planning-capability contract explicitly names Heartbeat as fallback._'
-    : '_These are recovery-planning work, not a human review queue. A committed transition to `blocked` or `planning` triggers the locked core planning routine, which owns the independent council, synthesis, final-plan comment, and return to `todo/dispatcher`. Heartbeat must not launch a second council; supervise failed/stale runs and verify the persisted plan._');
+  lines.push(`## 🧭 Blocked tasks (${ blocked.length } of ${ blockedRows.length })`);
+  lines.push('_Each needs its owner (the assignee or the project\'s assigned agent) to clear the blocker or re-plan it._');
   if (!blocked.length) {
     lines.push('_No blocked tasks in scope._');
   } else {
@@ -205,23 +150,10 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
 
   if (planningRows.length) {
     lines.push('');
-    lines.push(`## 🛠 Planning in flight (${ planning.length } of ${ planningRows.length })`);
-    lines.push('_Do not dispatch these again. The locked core routine already owns the task-scoped planning council._');
+    lines.push(`## 🛠 In planning (${ planning.length } of ${ planningRows.length })`);
     for (const t of planning) {
       const who = t.assignee ? ` · ${ t.assignee }` : '';
       lines.push(`- [${ t.priority }] **${ t.title }** — ${ context(t) }${ who } (id ${ t.id })`);
-    }
-  }
-
-  if (lifecycleOwnedRows.length) {
-    lines.push('');
-    lines.push(`## 🔒 Protected lifecycle work — data only (${ lifecycleOwnedRows.length })`);
-    lines.push('_Visibility is informational. Do not plan, execute, review, poll, reclaim, or mutate task status for these rows; the named capability owner and its live claim retain custody._');
-    for (const task of lifecycleOwnedRows.slice(0, nextLimit)) {
-      const access = lifecycleAccess?.get(task.id);
-      const owner = access?.owner ?? 'manual hold';
-      const claim = access?.liveClaim ? ` · live claim ${ access.liveClaim.id } by ${ access.liveClaim.owner }` : '';
-      lines.push(`- [${ task.priority }] **${ task.title }** — ${ context(task) } · ${ task.status } · capability ${ access?.capabilityKey ?? 'none' } · owner ${ owner }${ claim } (id ${ task.id })`);
     }
   }
 

@@ -6,14 +6,12 @@ import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
-import { MASTER_ENABLED_KEY as PM_AUTOMATION_KEY } from '@pkg/agent/services/RoutineConcurrencyPolicy';
 import { getModelProviderService } from '@pkg/agent/services/ModelProviderService';
 
-// The only desktop switches the phone may flip. Heartbeat and Projects
-// automation are independent systems — each toggle writes exactly one key.
+// The only desktop switches the phone may flip. Each toggle writes exactly
+// one key. (Projects has no automation switch: it is a plain board.)
 const DESKTOP_TOGGLES = {
-  heartbeat:         { key: 'heartbeatEnabled', fallback: false },
-  projectAutomation: { key: PM_AUTOMATION_KEY, fallback: true },
+  heartbeat: { key: 'heartbeatEnabled', fallback: false },
 } as const;
 type DesktopToggle = keyof typeof DESKTOP_TOGGLES;
 

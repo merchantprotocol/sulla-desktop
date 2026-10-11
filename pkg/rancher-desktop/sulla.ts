@@ -7,8 +7,6 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { getIntegrationService } from './agent/services/IntegrationService';
 import { getSchedulerService } from '@pkg/agent/services/SchedulerService';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
-import { getTaskDispatcherService } from '@pkg/agent/services/TaskDispatcherService';
-import { getExternalWaitMonitorService } from '@pkg/agent/services/ExternalWaitMonitorService';
 import { getProjectsAutoArchiveService } from '@pkg/agent/services/ProjectsAutoArchiveService';
 import { getWorkflowSchedulerService } from '@pkg/agent/services/WorkflowSchedulerService';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
@@ -225,28 +223,6 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => {
       getHeartbeatService().destroy();
       console.log('[Background] HeartbeatService destroyed');
-    },
-  );
-
-  lifecycle.register('task-dispatcher', ['database-manager', 'redis'],
-    async() => {
-      await getTaskDispatcherService().initialize();
-      console.log('[Background] TaskDispatcherService initialized');
-    },
-    async() => {
-      getTaskDispatcherService().destroy();
-      console.log('[Background] TaskDispatcherService destroyed');
-    },
-  );
-
-  lifecycle.register('external-wait-monitor', ['database-manager', 'redis'],
-    async() => {
-      await getExternalWaitMonitorService().initialize();
-      console.log('[Background] ExternalWaitMonitorService initialized');
-    },
-    async() => {
-      getExternalWaitMonitorService().destroy();
-      console.log('[Background] ExternalWaitMonitorService destroyed');
     },
   );
 

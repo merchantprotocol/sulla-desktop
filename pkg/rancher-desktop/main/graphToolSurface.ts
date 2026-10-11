@@ -2,7 +2,7 @@
  * graphToolSurface — the graph-stamped tool surface, projected to CLI providers.
  *
  * The graph system is the single authority on which tools an agent node may
- * use: the dispatcher (and subconscious/observer plumbing) stamps
+ * use: the graph runtime (and subconscious/observer plumbing) stamps
  * state.metadata.allowedToolNames, and inheritSubAgentToolPolicy propagates it
  * to sub-nodes. API-driven providers honor that surface because the graph
  * loop executes their tool calls. CLI-driven providers (Claude Code, Codex,
