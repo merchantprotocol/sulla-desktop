@@ -70,6 +70,18 @@ export class DatabaseManager {
       console.warn('[DB] Legacy agent import failed:', error);
     }
 
+    // Built-in agents ship in the app bundle. Re-asserted every boot: inserts
+    // missing ones and refreshes only rows untouched since the last seed.
+    // Non-fatal; a failure re-seeds on the next boot.
+    try {
+      const { seedBuiltinAgents } = await import('@pkg/agent/builtinAgents/seedBuiltinAgents');
+      const result = await seedBuiltinAgents();
+      console.log(`[DB] Built-in agents: ${ result.inserted } inserted, ${ result.refreshed } refreshed, ${ result.adopted } adopted, ${ result.filled } card-filled, ${ result.kept } kept (edited), ${ result.unchanged } unchanged, ${ result.skipped } deleted by user`);
+      if (result.errors.length) console.warn('[DB] Built-in agent seed errors:', result.errors);
+    } catch (error) {
+      console.warn('[DB] Built-in agent seed failed:', error);
+    }
+
     // Now that tables are ready, sync settings to persistent storage
     await SullaSettingsModel.bootstrap();
 

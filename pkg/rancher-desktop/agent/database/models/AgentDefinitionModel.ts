@@ -4,6 +4,9 @@ import { postgresClient } from '../PostgresClient';
 
 export type AgentDefinitionStatus = 'draft' | 'production' | 'archive';
 export type AgentSourceKind = 'local' | 'filesystem-import' | 'marketplace';
+export type AgentCostTier = 'low' | 'medium' | 'high';
+
+export const AGENT_COST_TIERS: readonly AgentCostTier[] = ['low', 'medium', 'high'];
 
 export interface ModelPriorityEntry {
   provider: string;
@@ -37,6 +40,21 @@ export interface AgentDefinition {
   marketplace_slug:        string | null;
   marketplace_version:     string | null;
   marketplace_author:      string | null;
+  /** Directory card: situations where this agent is the right call. */
+  when_to_call:            string;
+  /** Directory card: situations where another agent fits better. */
+  when_not_to_call:        string;
+  /** Directory card: what a caller must put in the brief. */
+  send:                    string;
+  /** Directory card: what the caller gets back. */
+  returns:                 string;
+  cost_tier:               AgentCostTier | null;
+  /** Agent slugs this agent may call. Empty means it calls no one. */
+  can_call:                string[];
+  /** Seeded from the bundled built-in catalog (agent/builtinAgents). */
+  is_builtin:              boolean;
+  /** Hash of the managed content the built-in seeder last wrote. */
+  builtin_hash:            string | null;
   created_at:              string;
   updated_at:              string;
 }
@@ -67,6 +85,14 @@ export interface AgentDefinitionInput {
   marketplaceSlug?:       string | null;
   marketplaceVersion?:    string | null;
   marketplaceAuthor?:     string | null;
+  whenToCall?:            string;
+  whenNotToCall?:         string;
+  send?:                  string;
+  returns?:               string;
+  costTier?:              AgentCostTier | null;
+  canCall?:               string[];
+  isBuiltin?:             boolean;
+  builtinHash?:           string | null;
 }
 
 export interface AgentDefinitionPatch {
@@ -94,6 +120,14 @@ export interface AgentDefinitionPatch {
   marketplaceSlug?:       string | null;
   marketplaceVersion?:    string | null;
   marketplaceAuthor?:     string | null;
+  whenToCall?:            string;
+  whenNotToCall?:         string;
+  send?:                  string;
+  returns?:               string;
+  costTier?:              AgentCostTier | null;
+  canCall?:               string[];
+  isBuiltin?:             boolean;
+  builtinHash?:           string | null;
 }
 
 function toStringArray(value: unknown): string[] {
@@ -106,6 +140,11 @@ function toModelPriority(value: unknown): ModelPriorityEntry[] {
     provider: String(entry?.provider ?? '').trim(),
     model:    String(entry?.model ?? '').trim(),
   })).filter(entry => entry.provider && entry.model);
+}
+
+function toCostTier(value: unknown): AgentCostTier | null {
+  const tier = String(value ?? '').trim().toLowerCase();
+  return (AGENT_COST_TIERS as readonly string[]).includes(tier) ? tier as AgentCostTier : null;
 }
 
 function toIso(value: unknown): string {
@@ -153,6 +192,14 @@ function rowToDefinition(row: any): AgentDefinition {
     marketplace_slug:        row.marketplace_slug == null ? null : String(row.marketplace_slug),
     marketplace_version:     row.marketplace_version == null ? null : String(row.marketplace_version),
     marketplace_author:      row.marketplace_author == null ? null : String(row.marketplace_author),
+    when_to_call:            String(row.when_to_call ?? ''),
+    when_not_to_call:        String(row.when_not_to_call ?? ''),
+    send:                    String(row.send ?? ''),
+    returns:                 String(row.returns ?? ''),
+    cost_tier:               toCostTier(row.cost_tier),
+    can_call:                toStringArray(row.can_call),
+    is_builtin:              row.is_builtin === true,
+    builtin_hash:            row.builtin_hash == null ? null : String(row.builtin_hash),
     created_at:              toIso(row.created_at),
     updated_at:              toIso(row.updated_at),
   };
@@ -198,9 +245,11 @@ export class AgentDefinitionModel {
         allowed_tools, skill_refs, routine_refs, model_priority,
         version, status, enabled, source_template_slug, content_hash,
         config, prompt_content, goals_content, prompt_files, provider, model,
-        source_kind, marketplace_template_id, marketplace_slug, marketplace_version, marketplace_author
+        source_kind, marketplace_template_id, marketplace_slug, marketplace_version, marketplace_author,
+        when_to_call, when_not_to_call, send, returns, cost_tier, can_call, is_builtin, builtin_hash
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,
-        $16::jsonb,$17,$18,$19::jsonb,$20,$21,$22,$23,$24,$25,$26)
+        $16::jsonb,$17,$18,$19::jsonb,$20,$21,$22,$23,$24,$25,$26,
+        $27,$28,$29,$30,$31,$32,$33,$34)
       RETURNING *
     `, [
       `agent-${ randomUUID() }`, slug, name, input.description ?? '', input.systemPrompt ?? '', input.soulContent ?? '',
@@ -211,12 +260,19 @@ export class AgentDefinitionModel {
       JSON.stringify(input.promptFiles ?? {}), input.provider ?? null, input.model ?? null,
       input.sourceKind ?? 'local', input.marketplaceTemplateId ?? null, input.marketplaceSlug ?? null,
       input.marketplaceVersion ?? null, input.marketplaceAuthor ?? null,
+      input.whenToCall ?? '', input.whenNotToCall ?? '', input.send ?? '', input.returns ?? '',
+      toCostTier(input.costTier), toStringArray(input.canCall), input.isBuiltin === true, input.builtinHash ?? null,
     ]);
     if (!row) throw new Error(`Failed to create agent definition ${ slug }.`);
     return rowToDefinition(row);
   }
 
-  static async update(id: string, patch: AgentDefinitionPatch): Promise<AgentDefinition | null> {
+  /**
+   * Apply a patch. When expectedUpdatedAt is given the write only lands if the
+   * row has not changed since it was read (compare-and-set on updated_at);
+   * otherwise null is returned and nothing is written.
+   */
+  static async update(id: string, patch: AgentDefinitionPatch, expectedUpdatedAt?: string): Promise<AgentDefinition | null> {
     const sets: string[] = [];
     const params: unknown[] = [];
     const add = (column: string, value: unknown, cast = '') => {
@@ -247,10 +303,24 @@ export class AgentDefinitionModel {
     if (patch.marketplaceSlug !== undefined) add('marketplace_slug', patch.marketplaceSlug);
     if (patch.marketplaceVersion !== undefined) add('marketplace_version', patch.marketplaceVersion);
     if (patch.marketplaceAuthor !== undefined) add('marketplace_author', patch.marketplaceAuthor);
+    if (patch.whenToCall !== undefined) add('when_to_call', patch.whenToCall);
+    if (patch.whenNotToCall !== undefined) add('when_not_to_call', patch.whenNotToCall);
+    if (patch.send !== undefined) add('send', patch.send);
+    if (patch.returns !== undefined) add('returns', patch.returns);
+    if (patch.costTier !== undefined) add('cost_tier', toCostTier(patch.costTier));
+    if (patch.canCall !== undefined) add('can_call', toStringArray(patch.canCall));
+    if (patch.isBuiltin !== undefined) add('is_builtin', patch.isBuiltin);
+    if (patch.builtinHash !== undefined) add('builtin_hash', patch.builtinHash);
     if (sets.length === 0) return AgentDefinitionModel.get(id);
     sets.push('updated_at = now()');
     params.push(id);
-    const row = await postgresClient.queryOne(`UPDATE agent_definitions SET ${ sets.join(', ') } WHERE id = $${ params.length } RETURNING *`, params);
+    let where = `id = $${ params.length }`;
+    if (expectedUpdatedAt) {
+      params.push(expectedUpdatedAt);
+      // JS dates carry ms only; allow for the dropped microseconds.
+      where += ` AND abs(extract(epoch FROM updated_at - $${ params.length }::timestamptz)) < 0.002`;
+    }
+    const row = await postgresClient.queryOne(`UPDATE agent_definitions SET ${ sets.join(', ') } WHERE ${ where } RETURNING *`, params);
     return row ? rowToDefinition(row) : null;
   }
 
