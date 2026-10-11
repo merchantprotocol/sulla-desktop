@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { postgresClient } from '../../database/PostgresClient';
 import { AgentDefinitionModel, type AgentDefinition } from '../../database/models/AgentDefinitionModel';
 import { hashManagedContent, renderBuiltinAgent, type BuiltinAgentSpec } from '../index';
-import { decideBuiltinSeedAction, seedBuiltinAgents } from '../seedBuiltinAgents';
+import { decideBuiltinSeedAction, retireBuiltinAgents, seedBuiltinAgents, shouldRetireBuiltin } from '../seedBuiltinAgents';
 
 const HOME = '/Users/someone';
 
@@ -130,5 +130,36 @@ describe('seedBuiltinAgents', () => {
 
     expect(update).toHaveBeenCalledWith('agent-1', expect.objectContaining({ promptContent: 'prompt v1', isBuiltin: true }), stale.updated_at);
     expect(summary).toMatchObject({ refreshed: 0, kept: 1 });
+  });
+});
+
+describe('retiring built-ins the bundle no longer ships', () => {
+  it('only switches off an enabled built-in the human never edited, and only once', () => {
+    expect(shouldRetireBuiltin(row(), false)).toBe(true);
+    expect(shouldRetireBuiltin(row(), true)).toBe(false);
+    expect(shouldRetireBuiltin(null, false)).toBe(false);
+    expect(shouldRetireBuiltin(row({ enabled: false }), false)).toBe(false);
+    expect(shouldRetireBuiltin(row({ is_builtin: false }), false)).toBe(false);
+    expect(shouldRetireBuiltin(row({ prompt_content: 'edited by the human' }), false)).toBe(false);
+  });
+
+  it('disables with compare-and-set, never deletes, and records the retirement', async() => {
+    const query = jest.spyOn(postgresClient, 'query').mockResolvedValue([] as any);
+    jest.spyOn(AgentDefinitionModel, 'findBySlug').mockResolvedValue(row());
+    const update = jest.spyOn(AgentDefinitionModel, 'update').mockResolvedValue(row({ enabled: false }));
+
+    expect(await retireBuiltinAgents(['demo-worker'])).toEqual({ disabled: 1, errors: [] });
+    expect(update).toHaveBeenCalledWith('agent-1', { enabled: false }, row().updated_at);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO agent_builtin_seed_ledger'), ['retired:demo-worker']);
+  });
+
+  it('leaves a retirement alone once it has been handled', async() => {
+    jest.spyOn(postgresClient, 'query').mockResolvedValue([{ slug: 'retired:demo-worker' }] as any);
+    const find = jest.spyOn(AgentDefinitionModel, 'findBySlug');
+    const update = jest.spyOn(AgentDefinitionModel, 'update');
+
+    expect(await retireBuiltinAgents(['demo-worker'])).toEqual({ disabled: 0, errors: [] });
+    expect(find).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 });

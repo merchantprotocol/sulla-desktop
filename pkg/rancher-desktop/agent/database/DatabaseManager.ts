@@ -74,10 +74,13 @@ export class DatabaseManager {
     // missing ones and refreshes only rows untouched since the last seed.
     // Non-fatal; a failure re-seeds on the next boot.
     try {
-      const { seedBuiltinAgents } = await import('@pkg/agent/builtinAgents/seedBuiltinAgents');
+      const { retireBuiltinAgents, seedBuiltinAgents } = await import('@pkg/agent/builtinAgents/seedBuiltinAgents');
       const result = await seedBuiltinAgents();
       console.log(`[DB] Built-in agents: ${ result.inserted } inserted, ${ result.refreshed } refreshed, ${ result.adopted } adopted, ${ result.filled } card-filled, ${ result.kept } kept (edited), ${ result.unchanged } unchanged, ${ result.skipped } deleted by user`);
       if (result.errors.length) console.warn('[DB] Built-in agent seed errors:', result.errors);
+      const retired = await retireBuiltinAgents();
+      if (retired.disabled) console.log(`[DB] Built-in agents: ${ retired.disabled } retired agent(s) switched off`);
+      if (retired.errors.length) console.warn('[DB] Built-in agent retire errors:', retired.errors);
     } catch (error) {
       console.warn('[DB] Built-in agent seed failed:', error);
     }

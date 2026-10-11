@@ -103,6 +103,11 @@ export function getBuiltinAgentSpecs(): BuiltinAgentSpec[] {
   return (bundle as { agents: BuiltinAgentSpec[] }).agents;
 }
 
+/** Slugs the bundle used to ship and no longer does (see retireBuiltinAgents). */
+export function getRetiredBuiltinSlugs(): string[] {
+  return (bundle as { retired?: string[] }).retired ?? [];
+}
+
 /** [user] name/email from a git config file's text; later keys win, like git. */
 export function parseGitUserConfig(text: string): Partial<GitIdentity> {
   const found: Partial<GitIdentity> = {};

@@ -16,6 +16,9 @@
  * builtin_hash the seeder last wrote, so edits from any path (UI, SQL, tools)
  * are detected without hooks. Status and enabled always stay the human's.
  *
+ * Agents the bundle stops shipping are listed in its "retired" array;
+ * retireBuiltinAgents switches off its own untouched copy once, never deletes.
+ *
  * Non-fatal by contract: callers wrap it; a failure re-seeds next boot.
  */
 
@@ -24,6 +27,7 @@ import os from 'node:os';
 import {
   BUILTIN_CARD_FIELDS,
   getBuiltinAgentSpecs,
+  getRetiredBuiltinSlugs,
   hashManagedContent,
   readGitIdentity,
   renderBuiltinAgent,
@@ -208,5 +212,50 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
     }
   }
 
+  return summary;
+}
+
+/** Ledger key recording that a retirement was handled, so it runs once per install. */
+export function retiredLedgerKey(slug: string): string {
+  return `retired:${ slug }`;
+}
+
+/**
+ * Pure decision for a retired built-in. Switch it off only when the seeder
+ * still owns it: installed as built-in, enabled, and untouched since the last
+ * seed. An edited row is the human's; a row they re-enable later stays on,
+ * because the retirement is handled once.
+ */
+export function shouldRetireBuiltin(row: AgentDefinition | null, handledBefore: boolean): boolean {
+  if (!row || handledBefore || !row.is_builtin || !row.enabled || !row.builtin_hash) return false;
+  return hashManagedContent(row) === row.builtin_hash;
+}
+
+export interface BuiltinRetireSummary {
+  disabled: number;
+  errors:   string[];
+}
+
+/**
+ * Switch off built-ins the bundle no longer ships (bundle "retired" list).
+ * Never deletes: the row and its history stay, disabled.
+ */
+export async function retireBuiltinAgents(slugs: string[] = getRetiredBuiltinSlugs()): Promise<BuiltinRetireSummary> {
+  const summary: BuiltinRetireSummary = { disabled: 0, errors: [] };
+  if (!slugs.length) return summary;
+  const seen = await seenSlugs();
+  for (const slug of slugs) {
+    try {
+      const key = retiredLedgerKey(slug);
+      if (seen.has(key)) continue;
+      const row = await AgentDefinitionModel.findBySlug(slug);
+      if (shouldRetireBuiltin(row, false) && await AgentDefinitionModel.update(row!.id, { enabled: false }, row!.updated_at)) {
+        summary.disabled++;
+      }
+      await markSeen(key);
+    } catch (error) {
+      summary.errors.push(`${ slug }: ${ error instanceof Error ? error.message : String(error) }`);
+    }
+  }
   return summary;
 }

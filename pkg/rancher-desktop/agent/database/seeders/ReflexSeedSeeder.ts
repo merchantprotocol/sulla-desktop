@@ -18,16 +18,22 @@ import { ReflexModel } from '../models/ReflexModel';
 export const REFLEX_SEED_VERSION = seed.version;
 
 /**
- * Route seed v2: front-door routing across every routable agent. The old seed
- * labelled vague requests "sulla"; those now belong to account-manager, so the
- * shipped "sulla" route rows are archived before the new seed loads. If the
- * account-manager row is missing, routing to it fails closed and the chat
- * falls back to Sulla anyway.
+ * Agents the shipped route seed used to target and no longer does. Their
+ * shipped rows are archived before the current seed loads; rows a human,
+ * model or correction taught are never touched.
+ *   v2: vague requests moved from "sulla" to account-manager.
+ *   v3: project-planner was folded into project-manager, and project
+ *       execution (including code) moved from coding-manager to director.
+ * If a target row is missing or disabled, routing fails closed and the chat
+ * opens on the default front door.
  */
+export const RETIRED_ROUTE_AGENTS = ['sulla', 'project-planner', 'coding-manager'] as const;
+
 export async function initializeRouteSeed(): Promise<void> {
-  const archived = await ReflexModel.archiveSeedRouteExamples('sulla');
+  let archived = 0;
+  for (const agentId of RETIRED_ROUTE_AGENTS) archived += await ReflexModel.archiveSeedRouteExamples(agentId);
   const inserted = await ReflexModel.seedExamples(routeSeed.examples, 'seed');
-  console.log(`[ReflexSeedSeeder] Route seed v${ routeSeed.version }: archived ${ archived } old sulla route(s), inserted ${ inserted } of ${ routeSeed.examples.length } example(s)`);
+  console.log(`[ReflexSeedSeeder] Route seed v${ routeSeed.version }: archived ${ archived } retired route(s), inserted ${ inserted } of ${ routeSeed.examples.length } example(s)`);
 }
 
 export async function initialize(): Promise<void> {
