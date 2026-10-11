@@ -2,9 +2,12 @@ import { describe, expect, it } from '@jest/globals';
 
 import { AGENT_COST_TIERS } from '../../database/models/AgentDefinitionModel';
 import {
+  BUILTIN_GIT_COMMIT_TOKEN,
   BUILTIN_HOME_TOKEN,
   getBuiltinAgentSpecs,
+  gitCommitCommand,
   hashManagedContent,
+  parseGitUserConfig,
   renderBuiltinAgent,
   type BuiltinAgentSpec,
 } from '../index';
@@ -44,6 +47,35 @@ describe('built-in agent bundle', () => {
     const text = JSON.stringify(specs);
     expect(text).not.toMatch(/\/Users\/[A-Za-z]/);
     expect(text).not.toMatch(/sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abp]-|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY/);
+  });
+
+  it('ships generic prompts with no owner identity', () => {
+    const text = JSON.stringify(specs);
+    expect(text).not.toMatch(/users\.noreply\.github\.com|user\.name="[^{<]/);
+    expect(text).not.toMatch(/Jonathon(?! Byrdziak is your creator)/);
+  });
+
+  it('marks front-door agents, led by the account manager', () => {
+    for (const s of specs) expect(typeof s.config?.front_door).toBe('boolean');
+    expect(specs.find(s => s.slug === 'account-manager')?.config?.front_door).toBe(true);
+  });
+});
+
+describe('git identity', () => {
+  it('reads [user] name and email from git config text', () => {
+    const config = '[core]\n\tname = nope\n[user]\n\tname = Ada Lovelace\n\temail = "ada@example.com" # work\n[user "x"]\n\temail = skip@example.com\n';
+    expect(parseGitUserConfig(config)).toEqual({ name: 'Ada Lovelace', email: 'ada@example.com' });
+  });
+
+  it('renders a commit command with the identity, or a plain one without it', () => {
+    expect(gitCommitCommand({ name: 'Ada "A" Lovelace', email: 'ada@example.com' }))
+      .toBe('git -c user.name="Ada A Lovelace" -c user.email="ada@example.com" commit -m "<message>"');
+    expect(gitCommitCommand({ name: '', email: '' })).toBe('git commit -m "<message>"');
+  });
+
+  it('fills the commit token at render time', () => {
+    const content = renderBuiltinAgent({ ...spec, prompt: `Commit: ${ BUILTIN_GIT_COMMIT_TOKEN }` }, '/home/a', { name: 'Ada', email: 'ada@example.com' });
+    expect(content.prompt_content).toBe('Commit: git -c user.name="Ada" -c user.email="ada@example.com" commit -m "<message>"');
   });
 });
 
