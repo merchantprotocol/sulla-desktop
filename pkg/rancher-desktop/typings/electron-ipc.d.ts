@@ -621,7 +621,7 @@ export interface IpcMainInvokeEvents {
   // install pipeline against local assets. Does NOT auto-start recipes —
   // the user clicks Launch separately from the library UI.
   'bundles-install-from-marketplace': (templateId: string) => {
-    kind:        'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+    kind:        'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
     slug:        string;
     templateId:  string;
     name:        string;
