@@ -53,8 +53,8 @@ describe('configurable routine admission', () => {
     query.mockResolvedValue({ rows: [{ count: '1' }] });
     expect(await policy.RoutineConcurrencyPolicy.acquire('execution', 8)).toBeTruthy();
   });
-  it('retains the explicit automation stop', async() => {
-    settingsGet.mockResolvedValue(false);
-    expect(await policy.RoutineConcurrencyPolicy.isEnabled()).toBe(false);
+  it('has no project-automation master switch', () => {
+    expect((policy.RoutineConcurrencyPolicy as any).isEnabled).toBeUndefined();
+    expect((policy as any).MASTER_ENABLED_KEY).toBeUndefined();
   });
 });

@@ -60,13 +60,12 @@ describe('checkHeartbeatPromptInvariants', () => {
     expect(HEARTBEAT_FORBIDDEN_PHRASES.length).toBeGreaterThan(0);
   });
 
-  it('keeps blocked planning, execution, review, waiting, and recovery single-owned', () => {
-    expect(heartbeatPrompt).toContain('protected planning routine');
-    expect(heartbeatPrompt).toContain('protected execution routine');
-    expect(heartbeatPrompt).toContain('protected review routine');
-    expect(heartbeatPrompt).toContain('durable wait monitor');
-    expect(heartbeatPrompt).toContain('deterministic recovery');
+  it('keeps projects and tasks single-owned by their agents, not by app machinery', () => {
+    expect(heartbeatPrompt).toContain('Projects is a plain board');
+    expect(heartbeatPrompt).toContain("the project's assigned agent");
+    expect(heartbeatPrompt).toContain("the task's assignee");
     expect(heartbeatPrompt).toContain('Every state or concern has exactly one owner');
+    expect(checkHeartbeatPromptInvariants('mechanical dispatcher').forbidden).toContain('mechanical dispatcher');
   });
 
   it('forbids the removed duplicate-owner doctrine at runtime', () => {
@@ -190,7 +189,7 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
 
     expect(built.includedSections).toContain('heartbeat');
     expect(built.includedSections).not.toContain('agent_prompt');
-    expect(built.text).toContain('## Respect the Conveyor');
+    expect(built.text).toContain('## Respect Ownership');
     expect(built.text).not.toContain('STALE LOCAL HEARTBEAT OVERRIDE');
     expect(built.text).not.toContain('STALE LOCAL PLAYBOOK CONTENT');
     expect(built.text).not.toContain('STALE DB HEARTBEAT OVERRIDE');

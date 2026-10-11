@@ -25,7 +25,6 @@
       @close="closeTask"
       @refresh="refreshIssueDetail"
       @comment="postDetailComment"
-      @decide="decideHumanGate"
     />
     <div v-show="!issueRouteId || taskMode === 'create'" class="ph-body">
       <!-- project list -->
@@ -63,11 +62,7 @@
                 class="ph-st"
                 :class="dotClass(p)"
               />{{ shortName(p) }}</span>
-              <span class="ph-pc">{{ p.status === 'done' ? 'Closed' : `${p.openCount} open · ${p.doneCount} done` }}<span
-                v-if="p.dispatch_enabled === false"
-                class="ph-paused"
-                title="Dispatcher paused for this project"
-              > · paused</span></span>
+              <span class="ph-pc">{{ p.status === 'done' ? 'Closed' : `${p.openCount} open · ${p.doneCount} done` }}</span>
             </button>
           </template>
         </div>
@@ -168,65 +163,9 @@
               v-if="laneCapability && !laneCapability.ready"
               class="ph-state ph-err"
             >
-              <b>Lane automation is in compatibility mode.</b>
+              <b>Lanes are in compatibility mode.</b>
               <p>{{ laneCapability.degradedReason }}</p>
             </div>
-            <div v-if="automationStatus" class="ph-automation-health" :class="{ held: !automationStatus.decision.allowed }">
-              <div>
-                <b>Conveyor capacity</b>
-                <span v-if="automationStatus.decision.reason"> · {{ automationStatus.decision.reason }}</span>
-                <span v-else> · upstream claims have capacity</span>
-              </div>
-              <div class="ph-automation-stages">
-                <span v-for="role in automationRoles" :key="role" class="ph-pill">
-                  {{ role }} {{ automationStatus.counts[role] || 0 }}/{{ automationStatus.limits[role] || '∞' }}
-                </span>
-              </div>
-            </div>
-            <section v-if="conveyorHealth" class="ph-health" aria-label="Projects conveyor health">
-              <header class="ph-health-head">
-                <div>
-                  <b>Conveyor health</b>
-                  <span> · {{ conveyorWindow }}h · {{ healthScopeProject ? 'current project' : 'portfolio' }}</span>
-                </div>
-                <div class="ph-health-controls">
-                  <label><input v-model="healthScopeProject" type="checkbox"> Project only</label>
-                  <select v-model.number="conveyorWindow" aria-label="Metrics window">
-                    <option :value="24">24 hours</option>
-                    <option :value="168">7 days</option>
-                    <option :value="720">30 days</option>
-                  </select>
-                  <button type="button" class="ph-btn ghost sm" @click="loadConveyorHealth">Refresh</button>
-                </div>
-              </header>
-              <div class="ph-health-grid">
-                <button
-                  v-for="stage in conveyorHealth.stages"
-                  :key="stage.stage"
-                  type="button"
-                  class="ph-health-stat stage"
-                  :class="{ on: healthStage === stage.stage }"
-                  @click="loadHealthStage(stage.stage)"
-                >
-                  <span>{{ stage.stage }}</span><b>{{ stage.count }}</b><small>oldest {{ duration(stage.oldestAgeSeconds) }}</small>
-                </button>
-                <div class="ph-health-stat"><span>Throughput</span><b>{{ conveyorHealth.throughput.reachedDone }}</b><small>done · {{ conveyorHealth.throughput.reviewsCompleted }} reviews</small></div>
-                <div class="ph-health-stat"><span>Verifier</span><b>{{ percent(conveyorHealth.verifier.utilization) }}</b><small>{{ conveyorHealth.verifier.activeVerificationLeases }}/{{ conveyorHealth.verifier.capacity ?? '∞' }} active</small></div>
-                <div class="ph-health-stat"><span>Rework</span><b>{{ percent(conveyorHealth.rework.reworkRate) }}</b><small>{{ conveyorHealth.rework.avgRepairLoops.toFixed(1) }} loops avg</small></div>
-                <div class="ph-health-stat"><span>Wait adoption</span><b>{{ percent(conveyorHealth.waits.adoptionRate) }}</b><small>{{ conveyorHealth.waits.blockedWithActiveWait }}/{{ conveyorHealth.waits.blockedTotal }} external gates</small></div>
-                <div class="ph-health-stat"><span>Custody</span><b>{{ custodyPercent }}</b><small>latest completed artifacts</small></div>
-                <div class="ph-health-stat"><span>Stale leases</span><b>{{ conveyorHealth.leases.staleLeases }}</b><small>{{ conveyorHealth.leases.activeLeases }} active total</small></div>
-                <div class="ph-health-stat"><span>Dependency held</span><b>{{ conveyorHealth.deps.dependencyHeld }}</b><small>claim-gated tasks</small></div>
-                <div class="ph-health-stat"><span>Shipments</span><b>{{ conveyorHealth.shipments.independentShipments }}</b><small>{{ conveyorHealth.shipments.integrationTrainClosures }} train · {{ conveyorHealth.shipments.missingEvidence }} missing</small></div>
-                <div class="ph-health-stat" :class="{ held: conveyorHealth.dispatcherLiveness.status === 'wedged' }"><span>Dispatcher</span><b>{{ conveyorHealth.dispatcherLiveness.status }}</b><small>last {{ conveyorHealth.dispatcherLiveness.last_tick_at ? new Date(conveyorHealth.dispatcherLiveness.last_tick_at).toLocaleTimeString() : 'never' }} · next {{ conveyorHealth.dispatcherLiveness.next_expected_tick_at ? new Date(conveyorHealth.dispatcherLiveness.next_expected_tick_at).toLocaleTimeString() : 'unknown' }}</small></div>
-              </div>
-              <div v-if="healthItems.length" class="ph-health-drill">
-                <b>Oldest {{ healthStage }} work</b>
-                <button v-for="item in healthItems" :key="item.id" type="button" @click="openHealthTask(item.id)">
-                  <span>{{ item.title }}</span><small>{{ duration(item.ageSeconds) }}</small>
-                </button>
-              </div>
-            </section>
             <!-- TODAY -->
             <div
               v-show="tab === 'list'"
@@ -238,18 +177,6 @@
                 <div class="ph-lead-row">
                   <h2>{{ shortName(sel) }}</h2>
                   <div class="ph-actions">
-                    <button
-                      type="button"
-                      class="ph-btn ghost sm"
-                      :class="{ paused: sel.dispatch_enabled === false }"
-                      :disabled="saving"
-                      :title="sel.dispatch_enabled === false
-                        ? 'Autonomous dispatch is paused for this project. Click to let the dispatcher and Heartbeat pick up its tasks again.'
-                        : 'Pause the dispatcher, reviews, lane automation and Heartbeat for this project only. You can still move cards by hand.'"
-                      @click="toggleProjectDispatch(sel)"
-                    >
-                      {{ sel.dispatch_enabled === false ? '▶ Resume dispatch' : '⏸ Pause dispatch' }}
-                    </button>
                     <button
                       type="button"
                       class="ph-btn ghost sm"
@@ -283,13 +210,13 @@
                   >{{ sel.status }}</span>
                   <span class="ph-pill">{{ sel.priority }}</span>
                   <span
-                    v-if="sel.dispatch_enabled === false"
-                    class="ph-pill paused"
-                  >dispatch paused</span>
-                  <span
                     v-if="sel.owner"
                     class="ph-pill"
                   >owner: {{ sel.owner }}</span>
+                  <span
+                    v-if="sel.assigned_agent"
+                    class="ph-pill"
+                  >agent: {{ sel.assigned_agent }}</span>
                   <span
                     v-if="sel.github_repo"
                     class="ph-pill"
@@ -440,7 +367,6 @@
                     />{{ col.label }} <span class="ph-n">{{ col.items.length }}</span>
                     <span class="ph-sp" />
                     <button type="button" class="ph-lane-action" :aria-label="`Customize ${col.label}`" @click="openLaneEditor(col.key)">Customize</button>
-                    <button type="button" class="ph-lane-action" :aria-label="`Assign workflow to ${col.label}`" @click="openLaneAssignment(col.key)">Automate</button>
                   </div>
                   <div
                     v-if="!col.items.length"
@@ -1285,6 +1211,28 @@
           class="ph-in"
           placeholder="how you know it's done"
         >
+        <label class="ph-fl">Assigned agent</label>
+        <select
+          v-model="projectDraft.assigned_agent"
+          class="ph-in"
+        >
+          <option value="">
+            none
+          </option>
+          <option
+            v-for="a in agentOptions"
+            :key="a.value"
+            :value="a.value"
+          >
+            {{ a.label }}
+          </option>
+          <option
+            v-if="projectDraft.assigned_agent && !agentOptions.some(a => a.value === projectDraft.assigned_agent)"
+            :value="projectDraft.assigned_agent"
+          >
+            {{ projectDraft.assigned_agent }}
+          </option>
+        </select>
         <div class="ph-dactions">
           <button
             type="button"
@@ -1386,8 +1334,6 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import type { SemanticStage, WorkConveyorMetricsModel } from '@pkg/agent/database/models/WorkConveyorMetricsModel';
-import type { BackpressureDecision, RoleCounts, WipLimits } from '@pkg/agent/services/ProjectAutomationWipLimits';
 import type { ProjectsIssueDetail } from '@pkg/agent/services/ProjectsIssueDetailService';
 import { formatDateOnly } from '@pkg/agent/utils/formatDateOnly';
 import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
@@ -1433,21 +1379,6 @@ const PROJECTION_RENDER_LIMIT = 500;
 const isDataView = computed(() => PROJECT_VIEWS.some(view => view.key === tab.value));
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 const laneSettings = ref<InstanceType<typeof LaneSettings> | null>(null);
-const automationRoles = ['terminal', 'review', 'blocked', 'execution', 'planning', 'backlog', 'manual'] as const;
-const automationStatus = ref<{ limits: WipLimits; counts: RoleCounts; decision: BackpressureDecision; at: string } | null>(null);
-type ConveyorSnapshot = Awaited<ReturnType<typeof WorkConveyorMetricsModel.snapshot>>;
-type HealthItem = Awaited<ReturnType<typeof WorkConveyorMetricsModel.oldestItems>>[number];
-const conveyorHealth = ref<ConveyorSnapshot | null>(null);
-const conveyorWindow = ref(168);
-const healthScopeProject = ref(true);
-const healthStage = ref<SemanticStage | null>(null);
-const healthItems = ref<HealthItem[]>([]);
-const custodyPercent = computed(() => {
-  const rows = conveyorHealth.value?.custody ?? [];
-  const total = rows.reduce((sum, row) => sum + row.total, 0);
-  const complete = rows.reduce((sum, row) => sum + row.structured, 0);
-  return percent(total ? complete / total : 0);
-});
 
 const selectedLanes = computed(() => selectedId.value ? (lanesByProject.value[selectedId.value] ?? []) : []);
 // Server-owned only: no literal coding-lane fallback. A project's status options are
@@ -1455,16 +1386,30 @@ const selectedLanes = computed(() => selectedId.value ? (lanesByProject.value[se
 // empty rather than silently guessing a coding lifecycle for a non-coding pipeline.
 const STATUSES = computed(() => selectedLanes.value.map(lane => lane.lane_key));
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
-// Canonical assignees. Values are the exact lowercase tokens the Projects tools and
-// the Heartbeat lane filter match on — 'heartbeat' is what routes work into the
-// autonomous agent's queue, so it must stay lowercase and spelled this way.
-const ASSIGNEES = [
+// Assignees are plain ownership metadata: a built-in owner or an enabled custom
+// agent slug. 'heartbeat' is what the Heartbeat lane filter matches on, so it
+// must stay lowercase and spelled this way.
+const BASE_ASSIGNEES = [
   { value: 'heartbeat', label: 'Heartbeat (autonomous)' },
   { value: 'sulla', label: 'Sulla' },
   { value: 'human', label: 'Human' },
 ];
+// Enabled custom agents (agent slug → name), used for task assignees and the
+// project's assigned agent.
+const agentOptions = ref<{ value: string; label: string }[]>([]);
+const ASSIGNEES = computed(() => [
+  ...BASE_ASSIGNEES,
+  ...agentOptions.value.filter(agent => !BASE_ASSIGNEES.some(base => base.value === agent.value)),
+]);
 function isKnownAssignee(a: string): boolean {
-  return ASSIGNEES.some(x => x.value === a);
+  return ASSIGNEES.value.some(x => x.value === a);
+}
+async function loadAgentOptions(): Promise<void> {
+  const agents = await ipcRenderer.invoke('agent-definitions:list').catch(() => []);
+  agentOptions.value = agents
+    .filter(agent => agent.enabled)
+    .map(agent => ({ value: agent.slug, label: agent.name || agent.slug }))
+    .sort((left, right) => left.label.localeCompare(right.label));
 }
 
 onMounted(async() => {
@@ -1473,57 +1418,12 @@ onMounted(async() => {
   });
   await restoreProjectView();
   await openIssueFromRoute();
-  automationStatus.value = await ipcRenderer.invoke('work-items:automation-status').catch(() => null);
-  await loadConveyorHealth();
+  await loadAgentOptions();
   refreshTimer = setInterval(() => {
     if (!document.hidden && !saving.value) {
       load().catch(() => undefined);
-      ipcRenderer.invoke('work-items:automation-status')
-        .then((status) => {
-          automationStatus.value = status;
-        })
-        .catch(() => undefined);
-      loadConveyorHealth().catch(() => undefined);
     }
   }, 15_000);
-});
-
-function healthProjectId(): string | null {
-  return healthScopeProject.value ? (selectedId.value || null) : null;
-}
-
-async function loadConveyorHealth(): Promise<void> {
-  conveyorHealth.value = await ipcRenderer.invoke('work-items:conveyor-health', {
-    projectId: healthProjectId(), windowHours: conveyorWindow.value,
-  }).catch(() => null);
-  if (healthStage.value) await loadHealthStage(healthStage.value);
-}
-
-async function loadHealthStage(stage: SemanticStage): Promise<void> {
-  healthStage.value = stage;
-  healthItems.value = await ipcRenderer.invoke('work-items:conveyor-oldest', {
-    projectId: healthProjectId(), stage,
-  }).catch(() => []);
-}
-
-function duration(seconds: number | null): string {
-  if (seconds == null) return '-';
-  if (seconds < 3600) return `${ Math.max(1, Math.round(seconds / 60)) }m`;
-  if (seconds < 86_400) return `${ Math.round(seconds / 3600) }h`;
-  return `${ Math.round(seconds / 86_400) }d`;
-}
-
-function percent(value: number | null): string {
-  return value == null ? 'unlimited' : `${ Math.round(value * 100) }%`;
-}
-
-async function openHealthTask(taskId: string): Promise<void> {
-  const row = allTasks.value.find(entry => entry.task.id === taskId);
-  if (row) await openTaskDrawer(row.task);
-}
-
-watch([conveyorWindow, healthScopeProject, selectedId], () => {
-  loadConveyorHealth().catch(() => undefined);
 });
 
 onBeforeUnmount(() => {
@@ -1787,12 +1687,6 @@ function openLaneEditor(laneKey: string): void {
   if (!lane) return;
   tab.value = 'lanes';
   laneSettings.value?.openEdit(lane);
-}
-
-function openLaneAssignment(laneKey: string): void {
-  const lane = selectedLanes.value.find(item => item.lane_key === laneKey);
-  if (!lane) return;
-  laneSettings.value?.openAssignment(lane);
 }
 
 // ══════════ DRAG TO REORDER ══════════
@@ -2168,27 +2062,6 @@ async function postDetailComment(body: string): Promise<void> {
   }
 }
 
-async function decideHumanGate(decision: 'approved' | 'rejected', reason: string): Promise<void> {
-  if (!taskDraft.id) return;
-  saving.value = true;
-  issueDetailError.value = '';
-  try {
-    issueDetail.value = await ipcRenderer.invoke('work-items:human-gate-decision', {
-      taskId:        taskDraft.id,
-      decision,
-      reason,
-      expectedStage: issueDetail.value?.humanGate.currentStage ?? '',
-    });
-    await load();
-    openTask.value = issueDetail.value.task;
-    fillTaskDraft(issueDetail.value.task);
-  } catch (error: any) {
-    issueDetailError.value = error?.message ?? String(error);
-  } finally {
-    saving.value = false;
-  }
-}
-
 // ══════════ PROJECT MODAL ══════════
 type ProjectDraft = UpsertProjectInput & { id?: string };
 const projectModal = reactive<{ open: boolean; mode: 'create' | 'edit' }>({ open: false, mode: 'create' });
@@ -2197,7 +2070,7 @@ const projectDraft = reactive<ProjectDraft>({ title: '' });
 function openNewProject(): void {
   projectModal.mode = 'create';
   Object.assign(projectDraft, {
-    id: undefined, title: '', description: '', status: 'backlog', priority: 'medium', owner: '', github_repo: '', outcome_metric: '',
+    id: undefined, title: '', description: '', status: 'backlog', priority: 'medium', owner: '', github_repo: '', outcome_metric: '', assigned_agent: '',
   });
   projectModal.open = true;
 }
@@ -2212,6 +2085,7 @@ function openEditProject(p: ProjectView): void {
     owner:          p.owner ?? '',
     github_repo:    p.github_repo ?? '',
     outcome_metric: p.outcome_metric ?? '',
+    assigned_agent: p.assigned_agent ?? '',
   });
   projectModal.open = true;
 }
@@ -2228,6 +2102,7 @@ async function saveProject(): Promise<void> {
         owner:          projectDraft.owner || null,
         github_repo:    projectDraft.github_repo || null,
         outcome_metric: projectDraft.outcome_metric || null,
+        assigned_agent: projectDraft.assigned_agent || null,
       });
     } else if (projectDraft.id) {
       await updateProject(projectDraft.id, {
@@ -2238,17 +2113,10 @@ async function saveProject(): Promise<void> {
         owner:          projectDraft.owner || null,
         github_repo:    projectDraft.github_repo || null,
         outcome_metric: projectDraft.outcome_metric || null,
+        assigned_agent: projectDraft.assigned_agent || null,
       });
     }
     projectModal.open = false;
-  } finally {
-    saving.value = false;
-  }
-}
-async function toggleProjectDispatch(p: ProjectView): Promise<void> {
-  saving.value = true;
-  try {
-    await updateProject(p.id, { dispatch_enabled: p.dispatch_enabled === false });
   } finally {
     saving.value = false;
   }
@@ -2418,8 +2286,6 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-lead-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .ph-pill { font-family: var(--pmono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ptext2); border: 1px solid var(--pborder); border-radius: 5px; padding: 2px 8px; }
 .ph-pill.hb { color: var(--pacc); border-color: var(--pacc-line); background: var(--pacc-soft); }
-.ph-pill.paused, .ph-paused, .ph-btn.paused { color: var(--pamber); }
-.ph-pill.paused, .ph-btn.paused { border-color: var(--pamber); }
 .ph-sec { margin-bottom: 30px; }
 .ph-sec-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
 .ph-sec-h h3 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; margin: 0; color: var(--ptext); }
@@ -2470,27 +2336,6 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-ct { font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--ptext); }
 .ph-card.ghost .ph-ct { color: var(--ptext3); font-weight: 400; font-size: 12.5px; }
 .ph-cm { font-family: var(--pmono); font-size: 10.5px; color: var(--ptext3); margin-top: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
-.ph-automation-health { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--pacc-line); border-radius: 9px; background: var(--pacc-soft); color: var(--ptext2); font-size: 12px; }
-.ph-automation-health.held { border-color: color-mix(in srgb, var(--pamber) 55%, transparent); background: color-mix(in srgb, var(--pamber) 10%, transparent); }
-.ph-automation-stages { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.ph-health { margin: 0 0 20px; padding: 13px; border: 1px solid var(--pborder); border-radius: 11px; background: var(--psurface); }
-.ph-health-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--ptext2); font-size: 12px; }
-.ph-health-head b { color: var(--ptext); }
-.ph-health-controls { display: flex; align-items: center; gap: 8px; font-size: 10px; color: var(--ptext3); }
-.ph-health-controls label { display: inline-flex; align-items: center; gap: 4px; }
-.ph-health-controls select { border: 1px solid var(--pborder); border-radius: 5px; background: var(--psurface2); color: var(--ptext2); padding: 4px 6px; font-size: 10px; }
-.ph-health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 7px; margin-top: 11px; }
-.ph-health-stat { min-width: 0; padding: 8px 9px; border: 1px solid var(--pborder-soft); border-radius: 7px; background: var(--psurface2); color: var(--ptext2); text-align: left; }
-button.ph-health-stat { cursor: pointer; }
-button.ph-health-stat:hover, button.ph-health-stat.on { border-color: var(--pacc-line); background: var(--pacc-soft); }
-.ph-health-stat span, .ph-health-stat small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 9px var(--pmono); color: var(--ptext3); text-transform: uppercase; }
-.ph-health-stat b { display: block; margin: 4px 0 2px; color: var(--ptext); font: 600 17px var(--pmono); }
-.ph-health-stat small { text-transform: none; }
-.ph-health-drill { display: grid; gap: 4px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--pborder-soft); }
-.ph-health-drill > b { color: var(--ptext2); font-size: 11px; }
-.ph-health-drill button { display: flex; justify-content: space-between; gap: 12px; border: 0; background: transparent; color: var(--ptext2); padding: 4px 2px; text-align: left; cursor: pointer; }
-.ph-health-drill button:hover { color: var(--pacc); }
-.ph-health-drill small { color: var(--ptext3); font-family: var(--pmono); }
 
 /* shared data projections */
 .ph-data-view { min-width: 0; }
@@ -2760,8 +2605,6 @@ button.ph-health-stat:hover, button.ph-health-stat.on { border-color: var(--pacc
   box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 28%, transparent);
 }
 
-.theme-noir .ph-health,
-.theme-noir .ph-automation-health,
 .theme-noir .ph-row,
 .theme-noir .ph-pcard,
 .theme-noir .ph-table-wrap,
@@ -2771,13 +2614,6 @@ button.ph-health-stat:hover, button.ph-health-stat.on { border-color: var(--pacc
   background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 2.5%, transparent);
 }
-.theme-noir .ph-health { border-radius: 18px; padding: 16px; }
-.theme-noir .ph-health-stat {
-  border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 7%, transparent);
-  border-radius: 12px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.52);
-}
-.theme-noir .ph-health-stat b { font: 600 22px var(--pserif); }
 .theme-noir .ph-row,
 .theme-noir .ph-pcard {
   border-radius: 16px;

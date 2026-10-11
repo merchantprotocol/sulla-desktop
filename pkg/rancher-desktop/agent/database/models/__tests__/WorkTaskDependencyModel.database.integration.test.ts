@@ -153,43 +153,6 @@ describeDatabase('WorkTaskDependencyModel on a migrated PostgreSQL database', ()
     expect(unresolved.find(u => u.dependsOnTaskId === 't5')?.policy).toBe('failed_terminal');
   });
 
-  it('assertClaimable fails closed when unresolved and passes once resolved', async() => {
-    await WorkTaskDependencyModel.create({ dependentTaskId: 't1', dependsOnTaskId: 't2' });
-    await postgresClient.transaction(async(client: any) => {
-      await expect(WorkTaskDependencyModel.assertClaimable('t1', client)).rejects.toMatchObject({ code: 'TASK_DEPENDENCY_UNRESOLVED' });
-    });
-    await pool.query(`UPDATE work_tasks SET status = 'done' WHERE id = 't2'`);
-    await postgresClient.transaction(async(client: any) => {
-      await expect(WorkTaskDependencyModel.assertClaimable('t1', client)).resolves.toBeUndefined();
-    });
-  });
-
-  it('no scan->claim gap: a resolution committed before the claim check is observed', async() => {
-    await WorkTaskDependencyModel.create({ dependentTaskId: 't1', dependsOnTaskId: 't2' });
-    await pool.query(`UPDATE work_tasks SET status = 'done' WHERE id = 't2'`);
-    await postgresClient.transaction(async(client: any) => {
-      await expect(WorkTaskDependencyModel.assertClaimable('t1', client)).resolves.toBeUndefined();
-    });
-  });
-
-  it('claimExclusionSql excludes dependency-blocked tasks and keeps free/resolved ones', async() => {
-    await WorkTaskDependencyModel.create({ dependentTaskId: 't1', dependsOnTaskId: 't2' }); // t1 blocked (t2 todo)
-    await WorkTaskDependencyModel.create({ dependentTaskId: 't3', dependsOnTaskId: 't4' }); // t3 free (t4 done)
-    const sql = `SELECT t.id FROM work_tasks t WHERE t.status = 'todo' ${ WorkTaskDependencyModel.claimExclusionSql('t.id') } ORDER BY t.id`;
-    const ids = (await pool.query(sql)).rows.map(r => r.id);
-    expect(ids).toContain('t3');
-    expect(ids).not.toContain('t1');
-  });
-
-  it('explainClaimability returns the transitive chain and blocking reason', async() => {
-    await WorkTaskDependencyModel.create({ dependentTaskId: 't1', dependsOnTaskId: 't2' });
-    await WorkTaskDependencyModel.create({ dependentTaskId: 't2', dependsOnTaskId: 't3' });
-    const ex = await WorkTaskDependencyModel.explainClaimability('t1');
-    expect(ex.claimable).toBe(false);
-    expect(ex.chain.map(c => c.taskId).sort()).toEqual(['t2', 't3']);
-    expect(ex.reason).toMatch(/not claimable/i);
-  });
-
   it('concurrent opposing edges: exactly one succeeds, the other is rejected as a cycle', async() => {
     const results = await Promise.allSettled([
       WorkTaskDependencyModel.create({ dependentTaskId: 't1', dependsOnTaskId: 't2' }),

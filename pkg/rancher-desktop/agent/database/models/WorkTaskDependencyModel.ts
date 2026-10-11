@@ -4,20 +4,15 @@ import type { PoolClient } from 'pg';
 import { postgresClient } from '../PostgresClient';
 
 /**
- * WorkTaskDependencyModel — FK-backed dependencies between Projects tasks that
- * mechanically gate planning, execution, review, and lane-entry claims. A row
- * means `dependent_task_id` depends on `depends_on_task_id`; the dependent
- * cannot be claimed on any autonomous path until the prerequisite reaches a
- * qualifying terminal state ('done').
+ * WorkTaskDependencyModel — FK-backed dependencies between Projects tasks. A
+ * row means `dependent_task_id` depends on `depends_on_task_id`. Dependencies
+ * are plain board metadata: they inform readiness (list_ready_tasks, the
+ * project report, the UI) and never move or claim work on their own.
  *
- * Design: there is NO cached "resolved" flag. The gate
- * (listUnresolvedDependencies / assertClaimable) always joins the LIVE
- * work_tasks.status, and callers run it INSIDE their own claim transaction
- * (passing their PoolClient) after locking the task row FOR UPDATE. A
- * dependency resolved between queue-scan and claim is therefore observed
- * atomically, and a prerequisite that reaches a failed/cancelled terminal state
- * (status <> 'done') stays blocking — we never silently unblock. Auto-release
- * is a consequence of reading live status, not a separate write path.
+ * There is NO cached "resolved" flag. Readiness always joins the LIVE
+ * work_tasks.status, so a prerequisite counts as resolved only once it is
+ * 'done'; one that reaches a failed/cancelled terminal state stays listed as
+ * unresolved until someone removes the dependency explicitly.
  *
  * Rows are soft-archived (archived_at) so attribution and removal history
  * survive. Cycles and self-links are rejected transactionally in create().
@@ -81,24 +76,6 @@ export interface TaskDependencyHold extends UnresolvedDependency {
   taskId: string;
 }
 
-export interface DependencyChainEntry {
-  taskId: string;
-  status: string | null;
-  title: string | null;
-  relationType: DependencyRelationType;
-  depth: number;
-  resolved: boolean;
-}
-
-export interface ClaimabilityExplanation {
-  taskId: string;
-  claimable: boolean;
-  reason: string;
-  unresolved: UnresolvedDependency[];
-  chain: DependencyChainEntry[];
-  exclusionReasons?: string[];
-}
-
 function normalizeRelation(value?: DependencyRelationType | string | null): DependencyRelationType {
   const v = (value ?? 'requires').toString().trim() as DependencyRelationType;
   if (!RELATION_TYPES.has(v)) {
@@ -109,24 +86,6 @@ function normalizeRelation(value?: DependencyRelationType | string | null): Depe
 
 export class WorkTaskDependencyModel {
   private static readonly TABLE = 'work_task_dependencies';
-
-  /**
-   * A correlated `AND NOT EXISTS (...)` SQL fragment for queue-scan claim
-   * SELECTs. Interpolate into a candidate query INSIDE the same FOR UPDATE
-   * transaction so any task with an unresolved dependency is never selected —
-   * fail-closed, non-starving, and free of a scan->claim gap. `taskIdExpr` is a
-   * trusted column reference (e.g. 't.id'), never user input.
-   */
-  static claimExclusionSql(taskIdExpr: string): string {
-    return `AND NOT EXISTS (
-          SELECT 1 FROM ${ this.TABLE } wtd
-          LEFT JOIN work_tasks dep_t ON dep_t.id = wtd.depends_on_task_id
-          WHERE wtd.dependent_task_id = ${ taskIdExpr }
-            AND wtd.archived_at IS NULL
-            AND (dep_t.id IS NULL OR dep_t.status IS DISTINCT FROM 'done')
-        )`;
-  }
-
 
   private static mapRow(row: any): DependencyRecord {
     return {
@@ -254,11 +213,7 @@ export class WorkTaskDependencyModel {
     return rows.map(r => this.mapRow(r));
   }
 
-  /**
-   * The fail-closed gate's data: active prerequisites of `taskId` whose task is
-   * not 'done'. Pass a PoolClient to run inside the caller's claim transaction
-   * so a resolution committed between queue-scan and claim is seen atomically.
-   */
+  /** Active prerequisites of `taskId` whose task is not 'done'. */
   static async listUnresolvedDependencies(taskId: string, client?: PoolClient): Promise<UnresolvedDependency[]> {
     const sql = `
       SELECT d.*, t.id AS dep_exists, t.status AS dep_status, t.title AS dep_title
@@ -321,117 +276,5 @@ export class WorkTaskDependencyModel {
         reason,
       };
     });
-  }
-
-  /**
-   * Fail-closed claim gate. MUST be called inside the caller's claim
-   * transaction (pass its PoolClient) after the task row is locked FOR UPDATE.
-   * Throws (code TASK_DEPENDENCY_UNRESOLVED) when any prerequisite is
-   * unresolved, which rolls the claim back.
-   */
-  static async assertClaimable(taskId: string, client: PoolClient): Promise<void> {
-    const unresolved = await this.listUnresolvedDependencies(taskId, client);
-    if (unresolved.length > 0) {
-      const summary = unresolved.map(u => `${ u.dependsOnTaskId }(${ u.dependsOnStatus ?? 'missing' })`).join(', ');
-      const err = new Error(`Task ${ taskId } blocked by ${ unresolved.length } unresolved dependency(ies): ${ summary }`) as Error & {
-        code?: string; unresolved?: UnresolvedDependency[];
-      };
-      err.code = 'TASK_DEPENDENCY_UNRESOLVED';
-      err.unresolved = unresolved;
-      throw err;
-    }
-  }
-
-  /** Human/agent-facing claimability explanation with the transitive chain. */
-  static async explainClaimability(taskId: string, maxDepth = 25): Promise<ClaimabilityExplanation> {
-    const unresolved = await this.listUnresolvedDependencies(taskId);
-    const task = await postgresClient.queryOne<{
-      id: string;
-      status: string;
-      archived: boolean;
-      assignee: string | null;
-      labels: string[] | null;
-      epic_status: string | null;
-      project_status: string | null;
-      epic_archived: boolean | null;
-      project_archived: boolean | null;
-      project_dispatch_enabled: boolean | null;
-      has_active_child: boolean;
-      has_running_dispatch: boolean;
-    }>(`
-      SELECT t.id, t.status, t.archived, t.assignee, t.labels,
-             e.status AS epic_status, p.status AS project_status,
-             e.archived AS epic_archived, p.archived AS project_archived,
-             p.dispatch_enabled AS project_dispatch_enabled,
-             EXISTS (
-               SELECT 1 FROM work_tasks child
-                WHERE child.parent_id = t.id AND child.archived = false
-                  AND child.status NOT IN ('done', 'cancelled', 'parked')
-             ) AS has_active_child,
-             EXISTS (
-               SELECT 1 FROM work_task_dispatches d
-                WHERE d.task_id = t.id AND d.status = 'running'
-             ) AS has_running_dispatch
-        FROM work_tasks t
-        LEFT JOIN work_epics e ON e.id = t.epic_id
-        LEFT JOIN work_projects p ON p.id = e.project_id
-       WHERE t.id = $1
-    `, [taskId]);
-    const exclusionReasons: string[] = [];
-    if (!task) exclusionReasons.push('task is missing');
-    else {
-      if (task.archived) exclusionReasons.push('task is archived');
-      if (!['todo', 'in_review'].includes(task.status)) {
-        exclusionReasons.push(`status '${ task.status }' is not a claimable execution or review lane`);
-      }
-      if (task.epic_status === null || task.epic_archived) exclusionReasons.push('epic is missing or archived');
-      else if (['done', 'cancelled', 'parked', 'blocked'].includes(task.epic_status)) {
-        exclusionReasons.push(`epic is '${ task.epic_status }'`);
-      }
-      if (task.project_status === null || task.project_archived) exclusionReasons.push('project is missing or archived');
-      else if (['done', 'cancelled', 'parked', 'blocked'].includes(task.project_status)) {
-        exclusionReasons.push(`project is '${ task.project_status }'`);
-      }
-      if (task.project_dispatch_enabled === false) exclusionReasons.push('project dispatch is paused');
-      if (task.assignee && !['heartbeat', 'dispatcher', 'sulla-desktop', 'verifier'].includes(task.assignee.toLowerCase())) {
-        exclusionReasons.push(`assignee '${ task.assignee }' is outside autonomous ownership`);
-      }
-      if ((task.labels ?? []).some(label => ['gated', 'decision', 'human', 'manual', 'no-auto-dispatch'].includes(label.trim().toLowerCase()))) {
-        exclusionReasons.push('task has a non-autonomous label');
-      }
-      if (task.has_active_child) exclusionReasons.push('task has open non-terminal children');
-      if (task.has_running_dispatch) exclusionReasons.push('task already has a running dispatch');
-    }
-    const chainRows = await postgresClient.query<any>(
-      `WITH RECURSIVE chain AS (
-         SELECT d.depends_on_task_id AS task_id, d.relation_type, 1 AS depth
-           FROM ${ this.TABLE } d
-          WHERE d.dependent_task_id = $1 AND d.archived_at IS NULL
-         UNION ALL
-         SELECT d.depends_on_task_id, d.relation_type, c.depth + 1
-           FROM ${ this.TABLE } d
-           JOIN chain c ON d.dependent_task_id = c.task_id
-          WHERE d.archived_at IS NULL AND c.depth < $2
-       )
-       SELECT DISTINCT ON (task_id) task_id, relation_type, depth,
-              t.status AS status, t.title AS title
-         FROM chain
-         LEFT JOIN work_tasks t ON t.id = chain.task_id
-        ORDER BY task_id, depth ASC`,
-      [taskId, maxDepth]);
-    const chain: DependencyChainEntry[] = chainRows.map(r => ({
-      taskId:       r.task_id,
-      status:       r.status ?? null,
-      title:        r.title ?? null,
-      relationType: r.relation_type as DependencyRelationType,
-      depth:        r.depth,
-      resolved:     r.status === 'done',
-    }));
-    const reasons = [...unresolved.map(u => u.reason), ...exclusionReasons];
-    const claimable = reasons.length === 0;
-    const reason = claimable
-      ? `Task ${ taskId } is claimable: no dispatcher or review exclusions.`
-      : `Task ${ taskId } is NOT claimable — ${ reasons.join('; ') }`;
-    return { taskId, claimable, reason, unresolved, chain, exclusionReasons };
   }
 }

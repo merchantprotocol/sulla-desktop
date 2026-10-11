@@ -35,7 +35,7 @@ interface SpawnTask {
   projectTaskId?: string;
 }
 
-/** Projects tasks the calling graph already owns (dispatch or parent job). */
+/** Projects tasks the calling graph already owns (its parent job). */
 function inheritedTaskIds(metadata: any): string[] {
   const owned = Array.isArray(metadata?.ownedProjectTaskIds) ? metadata.ownedProjectTaskIds : [];
   return owned.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
@@ -170,8 +170,8 @@ export class SpawnAgentWorker extends BaseTool {
 
     // ── Task ownership ──────────────────────────────────────────
     // A job that works a Projects task owns it for its whole run. Ownership is
-    // taken before anything launches, under the dispatcher's admission lock,
-    // so this job and a dispatch (or another session's job) can't both win.
+    // taken before anything launches, under one advisory lock, so this job
+    // and another session's job for the same task can't both win.
     const inherited = inheritedTaskIds((this.state as any)?.metadata);
     const assignees: Record<string, string> = {};
     for (const task of tasks) {

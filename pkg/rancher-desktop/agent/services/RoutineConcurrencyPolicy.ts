@@ -19,8 +19,6 @@ export const PROTECTED_ROUTINE_KINDS: ProtectedRoutineKind[] = [
   'planning', 'execution', 'review', 'repair', 'dreaming', 'other',
 ];
 
-export const MASTER_ENABLED_KEY = 'automatedProjectManagementEnabled';
-
 /** Advisory-lock key that serialises all slot acquisitions. */
 const SLOT_ADVISORY_LOCK_KEY = 4823710298;
 
@@ -35,10 +33,6 @@ export interface RoutineSlotContext {
 const wait = (milliseconds: number): Promise<void> => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 export class RoutineConcurrencyPolicy {
-  static async isEnabled(): Promise<boolean> {
-    return Boolean(await SullaSettingsModel.get(MASTER_ENABLED_KEY, true));
-  }
-
   /** Keep worker capacity independent of whole-board consideration. */
   static async resolveLimit(_kind: ProtectedRoutineKind, _legacyFallback?: number): Promise<number> {
     return this.resolveTotalLimit();

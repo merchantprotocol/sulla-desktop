@@ -5,7 +5,7 @@ import type { KnowledgeWorkItemKind } from '../../database/models/WorkItemKnowle
 
 function block(label: string, rec: Record<string, any>, extra: string[] = []): string {
   const keys = [
-    'id', 'slug', 'title', 'status', 'priority', 'owner', 'assignee',
+    'id', 'slug', 'title', 'status', 'priority', 'owner', 'assigned_agent', 'assignee',
     'due_at', 'github_issue', 'parent_id', 'project_id', 'epic_id',
     'source', 'created_at', 'updated_at', 'last_moved_at', 'archived',
     ...extra,

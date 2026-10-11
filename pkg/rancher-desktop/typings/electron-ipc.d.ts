@@ -502,20 +502,8 @@ export interface IpcMainInvokeEvents {
   };
   'work-items:comments':        (taskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord[];
   'work-items:issue-detail':    (taskId: string) => import('@pkg/agent/services/ProjectsIssueDetailService').ProjectsIssueDetail;
-  'work-items:human-gate-decision': (input: { taskId: string; decision: 'approved' | 'rejected'; reason?: string; expectedStage: string }) => import('@pkg/agent/services/ProjectsIssueDetailService').ProjectsIssueDetail;
   'work-items:artifact-evidence': (commentId: string) => { receipt: import('@pkg/agent/database/models/ArtifactReceiptModel').ArtifactReceiptRow; evidence: unknown } | null;
   'work-items:activity':        (opts?: { projectId?: string; author?: string; limit?: number }) => import('@pkg/agent/database/models/WorkItemsModel').WorkActivityRecord[];
-  'work-items:automation-status': () => {
-    limits: import('@pkg/agent/services/ProjectAutomationWipLimits').WipLimits;
-    counts: import('@pkg/agent/services/ProjectAutomationWipLimits').RoleCounts;
-    decision: import('@pkg/agent/services/ProjectAutomationWipLimits').BackpressureDecision;
-    at: string;
-  };
-  'work-items:conveyor-health': (opts?: { projectId?: string | null; windowHours?: number }) => Awaited<ReturnType<typeof import('@pkg/agent/database/models/WorkConveyorMetricsModel').WorkConveyorMetricsModel.snapshot>>;
-  'work-items:conveyor-oldest': (opts: {
-    projectId?: string | null;
-    stage: import('@pkg/agent/database/models/WorkConveyorMetricsModel').SemanticStage;
-  }) => Awaited<ReturnType<typeof import('@pkg/agent/database/models/WorkConveyorMetricsModel').WorkConveyorMetricsModel.oldestItems>>;
   'work-items:knowledge-list':  (input: { itemKind: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeWorkItemKind; itemId: string; includeInherited?: boolean; includeArchived?: boolean; limit?: number }) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').LinkedKnowledgeRecord[];
   'work-items:knowledge-link':  (input: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkInput) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkRecord;
   'work-items:knowledge-unlink': (input: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkInput) => boolean;
@@ -554,13 +542,6 @@ export interface IpcMainInvokeEvents {
   'work-items:lane-restore':    (id: string) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord | null;
   'work-items:lanes-reorder':   (scope: import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneScope, orderedKeys: string[], projectId?: string) => number;
   'work-items:lane-reset-override': (projectId: string, laneKey: string) => boolean;
-  'work-items:lane-bindings-list': (input?: import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').ListLaneBindingsInput) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').LaneWorkflowBindingRecord[];
-  'work-items:lane-binding-set': (input: import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').SetLaneBindingInput) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').LaneWorkflowBindingRecord;
-  'work-items:lane-binding-remove': (id: string) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').LaneWorkflowBindingRecord | null;
-  'work-items:lane-workflow-resolve': (taskId: string, laneKey: string, profileId?: string) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').LaneBindingResolution;
-  'work-items:lane-workflow-resolve-context': (input: import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').ResolveLaneBindingContextInput) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').LaneBindingResolution;
-  'work-items:lane-compatible-workflows': (projectId: string, laneKey: string) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').CompatibleLaneWorkflow[];
-  'work-items:lane-entry-automations': (taskId: string) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').LaneEntryAutomationRecord[];
 
   // User-defined project catalog (scanned from ~/sulla/projects/ + DB)
   'projects-list': () => {

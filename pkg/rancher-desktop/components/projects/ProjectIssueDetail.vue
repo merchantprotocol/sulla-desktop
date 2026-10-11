@@ -256,48 +256,6 @@
           />
         </section>
 
-        <section
-          v-if="detail.humanGate.active"
-          class="panel gate"
-          aria-labelledby="human-gate-title"
-        >
-          <span class="eyebrow">Human-gated stage</span>
-          <h2 id="human-gate-title">
-            Jonathon's decision
-          </h2>
-          <p>
-            Approval advances from <b>{{ detail.humanGate.currentStage }}</b> to
-            <b>{{ detail.humanGate.nextStage || 'no configured next stage' }}</b>. It does not merge or deploy anything.
-          </p>
-          <label for="gate-reason">Decision note</label>
-          <textarea
-            id="gate-reason"
-            v-model="decisionReason"
-            rows="3"
-            placeholder="Required when rejecting…"
-          />
-          <div class="gate-actions">
-            <button
-              type="button"
-              class="approve"
-              :disabled="busy || !detail.humanGate.nextStage"
-              @click="decide('approved')"
-            >
-              Approve and advance
-            </button>
-            <button
-              type="button"
-              class="reject"
-              :disabled="busy || !detail.humanGate.previousStage || !decisionReason.trim()"
-              @click="decide('rejected')"
-            >
-              Reject for repair
-            </button>
-          </div>
-          <p class="gate-footnote">
-            The next pipeline stage must revalidate the GitHub head SHA and checks before any merge action.
-          </p>
-        </section>
       </aside>
     </div>
   </main>
@@ -326,12 +284,10 @@ const emit = defineEmits<{
   close:   [];
   refresh: [];
   comment: [body: string];
-  decide:  [decision: 'approved' | 'rejected', reason: string];
 }>();
 
 const detailRoot = ref<HTMLElement | null>(null);
 const commentDraft = ref('');
-const decisionReason = ref('');
 
 onMounted(() => detailRoot.value?.focus());
 
@@ -346,10 +302,6 @@ function submitComment(): void {
   if (!body || props.busy) return;
   emit('comment', body);
   commentDraft.value = '';
-}
-function decide(decision: 'approved' | 'rejected'): void {
-  if (props.busy) return;
-  emit('decide', decision, decisionReason.value.trim());
 }
 </script>
 
@@ -406,13 +358,6 @@ a { display: inline-block; margin-top: 14px; color: var(--pacc); font-size: 12px
 .empty { color: var(--ptext3); font-size: 12px; }
 .empty.small { margin: 12px 0; }
 .inline-error, .issue-state.error { color: var(--pred); }
-.gate { border-color: var(--pacc-line); }
-.gate p { color: var(--ptext2); font-size: 12px; line-height: 1.55; }
-.gate textarea { margin-top: 6px; }
-.gate-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
-.gate-actions .approve { border-color: var(--pgreen); background: var(--pgreen); color: var(--pbg); }
-.gate-actions .reject { border-color: var(--pred); background: transparent; color: var(--pred); }
-.gate-footnote { padding-top: 12px; border-top: 1px solid var(--pborder); }
 .issue-state { display: grid; place-content: center; min-height: 60vh; gap: 8px; text-align: center; }
 @media (max-width: 960px) { .issue-layout { grid-template-columns: 1fr; padding: 24px; } }
 
@@ -453,7 +398,6 @@ a { display: inline-block; margin-top: 14px; color: var(--pacc); font-size: 12px
 }
 .theme-noir textarea { min-height: 42px; border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent); border-radius: 12px; background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .7); }
 .theme-noir .pull-card { padding: 16px; border: 1px solid var(--nx-hair); border-radius: 15px; background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .45); }
-.theme-noir .gate { border-color: color-mix(in srgb, var(--nx-warning) 28%, transparent); background: color-mix(in srgb, var(--nx-warning) 4.5%, transparent); }
 @keyframes noir-issue-drawer-in { from { opacity: 0; transform: translateX(52px); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
 @media (max-width: 960px) { .theme-noir .issue-detail { width: 100%; } }
 @media (prefers-reduced-motion: reduce) { .theme-noir .issue-detail, .theme-noir .issue-detail button { animation: none; transition: none; } }

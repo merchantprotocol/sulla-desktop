@@ -736,7 +736,7 @@ async function executeRoutineInternal(
     // LLMs misread that as an imperative and trigger recursive workflow calls.
     const message = (triggerPayload ?? '').trim();
 
-    if (protectedKind && await RoutineConcurrencyPolicy.isEnabled()) {
+    if (protectedKind) {
       await RoutineConcurrencyPolicy.reclaimStale();
       const limit = await RoutineConcurrencyPolicy.resolveLimit(protectedKind);
       const slotContext = {

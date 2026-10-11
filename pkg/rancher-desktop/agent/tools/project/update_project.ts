@@ -1,5 +1,6 @@
 import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
+import { assignedAgentInput } from './assignedAgentInput';
 
 /**
  * Update an existing work project in place (by id). Only the fields you pass
@@ -27,26 +28,16 @@ export class UpdateProjectWorker extends BaseTool {
         due_at:         input.due_at === '' ? null : input.due_at,
         github_repo:    input.github_repo,
         source:         input.source,
-        dispatch_enabled: parseDispatchEnabled(input.dispatch_enabled),
+        assigned_agent: assignedAgentInput(input),
       }, { actor: input.actor || 'sulla', source: 'tool' });
       if (!updated) return { successBoolean: false, responseString: `No project found with id: ${ id }` };
 
       return {
         successBoolean: true,
-        responseString: `Project updated: "${ updated.title }" (id: ${ updated.id }, status: ${ updated.status }, priority: ${ updated.priority }, dispatch: ${ updated.dispatch_enabled === false ? 'paused' : 'on' }, last_moved_at: ${ updated.last_moved_at })`,
+        responseString: `Project updated: "${ updated.title }" (id: ${ updated.id }, status: ${ updated.status }, priority: ${ updated.priority }, assigned_agent: ${ updated.assigned_agent ?? 'none' }, last_moved_at: ${ updated.last_moved_at })`,
       };
     } catch (err: any) {
       return { successBoolean: false, responseString: `Failed to update project: ${ err?.message }` };
     }
   }
-}
-
-function parseDispatchEnabled(value: unknown): boolean | undefined {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    const v = value.trim().toLowerCase();
-    if (['true', 'on', 'yes', '1', 'enabled'].includes(v)) return true;
-    if (['false', 'off', 'no', '0', 'disabled', 'paused'].includes(v)) return false;
-  }
-  return undefined;
 }

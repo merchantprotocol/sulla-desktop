@@ -37,7 +37,6 @@ mockModules({
   '@pkg/agent/database/models/WorkItemsModel': { WorkItemsModel: { getProject, listTasks, getTask, listComments, listProjects: jest.fn(), listRecentActivity: jest.fn<() => Promise<any>>().mockResolvedValue([]) } },
   '@pkg/agent/database/models/WorkLaneDefinitionModel': { WorkLaneDefinitionModel: { resolveEffective: jest.fn<() => Promise<any>>().mockResolvedValue([{ lane_key: 'custom' }]) } },
   '@pkg/agent/database/models/SullaSettingsModel': { SullaSettingsModel: { set, get: jest.fn<() => Promise<any>>().mockResolvedValue(false) } },
-  '@pkg/agent/services/RoutineConcurrencyPolicy': { MASTER_ENABLED_KEY: 'automatedProjectManagementEnabled' },
   '@pkg/agent/services/ModelProviderService': { getModelProviderService: () => modelProviders },
   '@pkg/agent/services/HeartbeatService': { getHeartbeatService: () => ({ getStatus: () => ({ isExecuting: false }), getHistory: () => [] }) },
   '@pkg/agent/projects/application/ProjectsApplicationService': { getProjectsApplicationService: () => ({ addComment }) },
@@ -114,11 +113,9 @@ test('empty or oversized comments are rejected before touching the task', async(
   expect(getTask).not.toHaveBeenCalled();
   expect(addComment).not.toHaveBeenCalled();
 });
-test('desktop settings toggle Heartbeat and Projects automation independently', async() => {
-  await request('desktop.settings.update', { setting: 'projectAutomation', enabled: false });
-  expect(set).toHaveBeenCalledWith('automatedProjectManagementEnabled', false, 'boolean');
-  expect(set).toHaveBeenCalledTimes(1);
-  set.mockClear();
+test('desktop settings toggle Heartbeat; Projects has no automation switch', async() => {
+  await expect(request('desktop.settings.update', { setting: 'projectAutomation', enabled: false })).rejects.toThrow('Invalid');
+  expect(set).not.toHaveBeenCalled();
   await request('desktop.settings.update', { setting: 'heartbeat', enabled: true });
   expect(set).toHaveBeenCalledWith('heartbeatEnabled', true, 'boolean');
   expect(set).toHaveBeenCalledTimes(1);
@@ -126,11 +123,11 @@ test('desktop settings toggle Heartbeat and Projects automation independently', 
 test('desktop settings reject unknown keys and non-boolean values', async() => {
   await expect(request('desktop.settings.update', { setting: 'heartbeatEnabled', enabled: true })).rejects.toThrow('Invalid');
   await expect(request('desktop.settings.update', { setting: 'toString', enabled: true })).rejects.toThrow('Invalid');
-  await expect(request('desktop.settings.update', { setting: 'projectAutomation', enabled: 'false' })).rejects.toThrow('Invalid');
+  await expect(request('desktop.settings.update', { setting: 'heartbeat', enabled: 'false' })).rejects.toThrow('Invalid');
   expect(set).not.toHaveBeenCalled();
 });
-test('desktop settings read reports both switches', async() => {
-  await expect(request('desktop.settings.read', {})).resolves.toEqual({ heartbeat: false, projectAutomation: false });
+test('desktop settings read reports the Heartbeat switch only', async() => {
+  await expect(request('desktop.settings.read', {})).resolves.toEqual({ heartbeat: false });
 });
 describe('bookmarks', () => {
   test('lists bookmarks with local flags, trims heavy favicons, and includes Docker links', async() => {

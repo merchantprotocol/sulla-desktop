@@ -29,10 +29,6 @@ import type {
   ArchiveWorkLanePreview, WorkLaneDefinitionRecord, WorkLaneScope,
 } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import type {
-  CompatibleLaneWorkflow, LaneBindingResolution, LaneEntryAutomationRecord, LaneWorkflowBindingRecord,
-  ListLaneBindingsInput, ResolveLaneBindingContextInput, SetLaneBindingInput,
-} from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
-import type {
   CreateProjectPipelineTemplateInput, ProjectPipelineTemplate, ProjectPipelineTemplateRecord,
   UpdateProjectPipelineTemplateInput,
 } from '@pkg/agent/database/models/WorkProjectPipelineTemplateModel';
@@ -363,34 +359,6 @@ export function useProjects() {
     return ipcRenderer.invoke('work-items:lane-reset-override', projectId, laneKey);
   }
 
-  async function listLaneWorkflowBindings(input: ListLaneBindingsInput = {}): Promise<LaneWorkflowBindingRecord[]> {
-    return ipcRenderer.invoke('work-items:lane-bindings-list', input);
-  }
-
-  async function setLaneWorkflowBinding(input: SetLaneBindingInput): Promise<LaneWorkflowBindingRecord> {
-    return ipcRenderer.invoke('work-items:lane-binding-set', input);
-  }
-
-  async function removeLaneWorkflowBinding(id: string): Promise<LaneWorkflowBindingRecord | null> {
-    return ipcRenderer.invoke('work-items:lane-binding-remove', id);
-  }
-
-  async function resolveLaneWorkflow(taskId: string, laneKey: string, profileId = 'default'): Promise<LaneBindingResolution> {
-    return ipcRenderer.invoke('work-items:lane-workflow-resolve', taskId, laneKey, profileId);
-  }
-
-  async function resolveLaneWorkflowContext(input: ResolveLaneBindingContextInput): Promise<LaneBindingResolution> {
-    return ipcRenderer.invoke('work-items:lane-workflow-resolve-context', input);
-  }
-
-  async function listCompatibleLaneWorkflows(projectId: string, laneKey: string): Promise<CompatibleLaneWorkflow[]> {
-    return ipcRenderer.invoke('work-items:lane-compatible-workflows', projectId, laneKey);
-  }
-
-  async function inspectLaneEntryAutomation(taskId: string): Promise<LaneEntryAutomationRecord[]> {
-    return ipcRenderer.invoke('work-items:lane-entry-automations', taskId);
-  }
-
   return {
     projects,
     selected,
@@ -437,12 +405,5 @@ export function useProjects() {
     restoreLane,
     reorderLanes,
     resetLaneOverride,
-    listLaneWorkflowBindings,
-    setLaneWorkflowBinding,
-    removeLaneWorkflowBinding,
-    resolveLaneWorkflow,
-    resolveLaneWorkflowContext,
-    listCompatibleLaneWorkflows,
-    inspectLaneEntryAutomation,
   };
 }

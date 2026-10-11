@@ -42,8 +42,7 @@ export const SUBCONSCIOUS_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit Note
 
 /**
  * Full `--disallowedTools` value for a spawn. Every acting agent — primary
- * chat, heartbeat, dispatcher workers, reviewers, workflow nodes, spawned
- * sub-agents — gets the same base set. Only subconscious observers (memory
+ * chat, heartbeat, reviewers, workflow nodes, spawned sub-agents — gets the same base set. Only subconscious observers (memory
  * curators, never a swimlane actor) additionally lose the native actor tools.
  */
 export function disallowedToolsFor(metadata: Record<string, unknown> | null | undefined): string {

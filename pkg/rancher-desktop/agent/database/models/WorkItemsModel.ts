@@ -13,11 +13,7 @@
  * DUAL-STORE NOTE: reads and writes ONLY Postgres — no Redis hash.
  */
 
-import { randomUUID } from 'node:crypto';
-
-import { approvalSafeTargetSql } from './WorkAgentAdmission';
 import { postgresClient } from '../PostgresClient';
-import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
 import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
@@ -46,8 +42,8 @@ export interface WorkProjectRecord {
   last_moved_at:  string;
   archived:       boolean;
   pipeline_template_id: string | null;
-  /** False pauses every autonomous claimer (dispatcher, reviews, reclaim, lane automation, Heartbeat queue) for this project. */
-  dispatch_enabled: boolean;
+  /** Agent slug that owns driving this project (e.g. the project manager agent). Plain metadata. */
+  assigned_agent: string | null;
 }
 
 export interface WorkEpicRecord {
@@ -176,6 +172,7 @@ export interface UpsertProjectInput {
   source_ref?:     string | null;
   source_path?:    string | null;
   github_repo?:    string | null;
+  assigned_agent?: string | null;
   pipeline_template_id?: string | null;
 }
 
@@ -191,7 +188,7 @@ export interface UpdateProjectInput {
   source?:         string | null;
   source_path?:    string | null;
   github_repo?:    string | null;
-  dispatch_enabled?: boolean;
+  assigned_agent?: string | null;
 }
 
 export interface UpsertEpicInput {
@@ -413,46 +410,6 @@ function fallbackKeys(roles: WorkLaneSemanticRole[]): string[] {
   return Array.from(new Set(roles.flatMap(role => FALLBACK_ROLE_KEYS[role])));
 }
 
-/**
- * Bridge committed Projects status writes into the sole matching routine.
- * Dynamic import keeps the Projects model free of main-process/workflow cycles.
- * The task write is already durable when this runs, so bridge failures do not
- * misreport the Projects mutation to its caller.
- */
-async function notifyTaskStatusCommitted(
-  task: WorkTaskRecord,
-  previousStatus: string,
-  actor?: string,
-): Promise<void> {
-  try {
-    const capability = await WorkLaneDefinitionModel.runtimeCapability(task.project_id);
-    const currentRole = capability.ready
-      ? (await WorkLaneDefinitionModel.resolveStatus(task.project_id, task.status))?.semantic_role ?? 'manual'
-      : (FALLBACK_ROLE_KEYS.planning.includes(task.status)
-        ? 'planning'
-        : FALLBACK_ROLE_KEYS.blocked.includes(task.status)
-          ? 'blocked'
-          : FALLBACK_ROLE_KEYS.execution.includes(task.status) ? 'execution' : 'manual');
-    const previousRole = capability.ready
-      ? (await WorkLaneDefinitionModel.resolveStatus(task.project_id, previousStatus))?.semantic_role ?? 'manual'
-      : (FALLBACK_ROLE_KEYS.planning.includes(previousStatus)
-        ? 'planning'
-        : FALLBACK_ROLE_KEYS.blocked.includes(previousStatus)
-          ? 'blocked'
-          : FALLBACK_ROLE_KEYS.execution.includes(previousStatus) ? 'execution' : 'manual');
-    if ([currentRole, previousRole].some(role => role === 'blocked' || role === 'planning')) {
-      const { PlanningCouncilService } = await import('../../services/PlanningCouncilService');
-      await PlanningCouncilService.handleTaskStatusTransition(task, previousStatus, actor);
-    }
-    if (currentRole === 'execution' && previousRole !== 'execution') {
-      const { getTaskDispatcherService } = await import('../../services/TaskDispatcherService');
-      await getTaskDispatcherService().forceCheck();
-    }
-  } catch (err) {
-    console.error(`[WorkItemsModel] Post-commit status bridge failed for task ${ task.id }:`, err);
-  }
-}
-
 // ── Model ──────────────────────────────────────────────────────────────
 
 export class WorkItemsModel {
@@ -529,18 +486,6 @@ export class WorkItemsModel {
     return rows[0] ?? null;
   }
 
-  /** Whether autonomous claimers may pick up work in the task's project. Missing rows count as enabled. */
-  static async isTaskDispatchEnabled(taskId: string): Promise<boolean> {
-    const rows = await postgresClient.query<{ dispatch_enabled: boolean }>(
-      `SELECT p.dispatch_enabled
-         FROM work_tasks t
-         JOIN ${ WorkItemsModel.PROJECTS } p ON p.id = t.project_id
-        WHERE t.id = $1 LIMIT 1`,
-      [taskId],
-    );
-    return rows[0]?.dispatch_enabled !== false;
-  }
-
   static async getProjectBySlug(slug: string): Promise<WorkProjectRecord | null> {
     const rows = await postgresClient.query<WorkProjectRecord>(
       `SELECT * FROM ${ WorkItemsModel.PROJECTS }
@@ -566,6 +511,7 @@ export class WorkItemsModel {
         source:         input.source,
         source_path:    input.source_path ?? input.source_ref,
         github_repo:    input.github_repo,
+        assigned_agent: input.assigned_agent,
       })) ?? existing;
     }
 
@@ -573,8 +519,8 @@ export class WorkItemsModel {
     const rows = await postgresClient.query<WorkProjectRecord>(
       `INSERT INTO ${ WorkItemsModel.PROJECTS }
          (id, slug, title, description, outcome_metric, status, priority,
-          owner, source, source_path, github_repo, due_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          owner, source, source_path, github_repo, due_at, assigned_agent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [
         id,
@@ -589,6 +535,7 @@ export class WorkItemsModel {
         input.source_path ?? input.source_ref ?? null,
         input.github_repo ?? null,
         input.due_at ?? null,
+        input.assigned_agent || null,
       ],
     );
     return rows[0];
@@ -619,7 +566,7 @@ export class WorkItemsModel {
     if (changes.source !== undefined) assign('source', changes.source);
     if (changes.source_path !== undefined) assign('source_path', changes.source_path);
     if (changes.github_repo !== undefined) assign('github_repo', changes.github_repo);
-    if (changes.dispatch_enabled !== undefined) assign('dispatch_enabled', changes.dispatch_enabled === true);
+    if (changes.assigned_agent !== undefined) assign('assigned_agent', changes.assigned_agent || null);
 
     if (moved) setClauses.push('last_moved_at = now()');
     if (setClauses.length === 1) return existing;
@@ -867,14 +814,7 @@ export class WorkItemsModel {
     const id = input.id || await WorkItemsModel.uniqueId(WorkItemsModel.TASKS);
     const actor = input.actor ?? 'sulla';
     const labels = input.labels ?? [];
-    const assignee = normalizeAutonomousTaskOwnership({
-      status,
-      assignee:              input.assignee ?? null,
-      labels,
-      actor,
-      semanticRole:         lane?.semantic_role,
-      executionEntryLaneKey,
-    });
+    const assignee = input.assignee || null;
 
     const rows = await postgresClient.query<WorkTaskRecord>(
       `INSERT INTO ${ WorkItemsModel.TASKS }
@@ -906,21 +846,7 @@ export class WorkItemsModel {
         input.milestone_at ?? null,
       ],
     );
-    const created = rows[0];
-    if (created) {
-      // Creation into an active stage is a real lane entry too. Previously
-      // only later status updates produced automation records, so a freshly
-      // fed todo task waited for the minute poll and a freshly fed planning
-      // task had no workflow custody at all.
-      try {
-        const { LaneEntryAutomationService } = await import('../../services/LaneEntryAutomationService');
-        await LaneEntryAutomationService.handleTransition(created.id, created.status, actor);
-      } catch (error) {
-        console.warn(`[WorkItems] Initial lane automation for task ${ created.id } remains recoverable:`, error);
-      }
-      await notifyTaskStatusCommitted(created, '', input.actor);
-    }
-    return created;
+    return rows[0];
   }
 
   static async upsertTask(input: UpsertTaskInput): Promise<WorkTaskRecord> {
@@ -956,10 +882,7 @@ export class WorkItemsModel {
     return WorkItemsModel.insertTask(input);
   }
 
-  static async updateTask(id: string, changes: UpdateTaskInput, humanDecision?: {
-    expectedStage: string; expectedGeneration: number; expectedUpdatedAt: string | null;
-    decision: 'approved' | 'rejected'; waitIds: string[]; comment: string;
-  }): Promise<WorkTaskRecord | null> {
+  static async updateTask(id: string, changes: UpdateTaskInput): Promise<WorkTaskRecord | null> {
     const existing = await WorkItemsModel.getTask(id);
     if (!existing) return null;
 
@@ -970,7 +893,7 @@ export class WorkItemsModel {
     }
     if (nextProjectId && nextProjectId !== existing.project_id &&
         !await WorkLaneDefinitionModel.resolveStatus(nextProjectId, changes.status ?? existing.status)) {
-      throw new Error('human_approval_required: project move requires an active destination lane');
+      throw new Error('Project move requires an active destination lane for the task status.');
     }
     const targetLane = changes.status !== undefined
       ? await WorkLaneDefinitionModel.validateTaskStatus(nextProjectId ?? existing.project_id, changes.status)
@@ -987,35 +910,11 @@ export class WorkItemsModel {
     if (enteringDone) {
       await ArtifactCustodyPolicy.assertForTransition('done', changes.custody);
     }
-    const ownershipProjectId = nextProjectId ?? existing.project_id;
-    const ownershipCapability = changes.status === undefined
-      ? await WorkLaneDefinitionModel.runtimeCapability(ownershipProjectId)
-      : null;
-    const ownershipLane = targetLane ?? (ownershipCapability?.ready
-      ? await WorkLaneDefinitionModel.resolveStatus(ownershipProjectId, existing.status)
-      : null);
-    const ownershipSemanticRole = targetLane?.semantic_role ?? (ownershipCapability?.ready
-      ? ownershipLane?.semantic_role ?? 'manual'
-      : undefined);
-    const executionEntryLaneKey = ownershipLane?.semantic_role === 'execution'
-      ? await WorkLaneDefinitionModel.preferredLaneKey(ownershipProjectId, 'execution', 'todo', 'first')
-      : null;
-
     const setClauses: string[] = ['updated_at = now()'];
     const values: any[] = [];
     let idx = 1;
     let moved = false;
     const actor = changes.actor ?? 'sulla';
-    const assignee = normalizeAutonomousTaskOwnership({
-      status:                changes.status ?? existing.status,
-      assignee:              changes.assignee !== undefined ? changes.assignee : existing.assignee,
-      labels:                changes.labels ?? existing.labels,
-      actor,
-      semanticRole:         ownershipSemanticRole,
-      executionEntryLaneKey,
-      enteringReview,
-      explicitAssignee:      changes.assignee !== undefined,
-    });
 
     const assign = (col: string, val: any) => {
       setClauses.push(`${ col } = $${ idx++ }`);
@@ -1030,8 +929,8 @@ export class WorkItemsModel {
     if (changes.description !== undefined) assign('description', changes.description);
     if (changes.status !== undefined) { assign('status', changes.status); moved = true }
     if (changes.priority !== undefined) { assign('priority', changes.priority); moved = true }
-    if (changes.assignee !== undefined || assignee !== existing.assignee) {
-      assign('assignee', assignee);
+    if (changes.assignee !== undefined) {
+      assign('assignee', changes.assignee || null);
       moved = true;
     }
     if (changes.due_at !== undefined) { assign('due_at', changes.due_at); moved = true }
@@ -1069,58 +968,6 @@ export class WorkItemsModel {
         const current = await client.query<WorkTaskRecord>(
           `SELECT * FROM ${ WorkItemsModel.TASKS } WHERE id = $1 AND archived = false FOR UPDATE`, [id]);
         if (!current.rows[0]) return null;
-        if (humanDecision) {
-          if (actor !== 'human' || !changes.status) throw new Error('human_approval_required');
-          const generation = await client.query<{ generation: number }>(
-            'SELECT COALESCE(MAX(generation), 0)::int AS generation FROM work_lane_entry_automations WHERE task_id=$1', [id]);
-          const updatedAt = current.rows[0].updated_at;
-          if (current.rows[0].status !== humanDecision.expectedStage ||
-              generation.rows[0].generation !== humanDecision.expectedGeneration ||
-              (updatedAt ? new Date(updatedAt).toISOString() : null) !== humanDecision.expectedUpdatedAt) {
-            throw new Error('Human decision is stale. Refresh before deciding.');
-          }
-          const waits = await client.query<{ id: string }>(
-            "SELECT id FROM work_task_waits WHERE task_id=$1 AND status='active' AND wait_kind='human_gate' ORDER BY id FOR UPDATE", [id]);
-          if (JSON.stringify(waits.rows.map(row => row.id)) !== JSON.stringify([...humanDecision.waitIds].sort())) {
-            throw new Error('Human approval waits changed. Refresh before deciding.');
-          }
-          await client.query(`UPDATE work_task_waits SET status=$2, completed_at=now(), updated_at=now(),
-            last_checked_at=now(), last_observed_fingerprint=$3 WHERE id=ANY($1::text[])`,
-          [humanDecision.waitIds, humanDecision.decision === 'approved' ? 'satisfied' : 'failed', humanDecision.comment]);
-          await client.query('INSERT INTO work_task_comments (id, task_id, author, body) VALUES ($1,$2,$3,$4)',
-            [`human-decision-${ randomUUID() }`, id, 'human', humanDecision.comment]);
-        }
-
-        if (nextProjectId !== undefined && nextProjectId !== current.rows[0].project_id && actor !== 'human') {
-          // Project moves change the meaning of even an unchanged lane key.
-          // Evaluate the source boundary before replacing its project context.
-          const held = await client.query<{ held: boolean }>(
-            `SELECT EXISTS (SELECT 1 FROM work_task_waits w WHERE w.task_id=t.id
-               AND w.status='active' AND w.wait_kind='human_gate') OR COALESCE((
-                 SELECT lane.requires_human_approval FROM work_lane_definitions lane
-                 WHERE lane.lane_key=t.status AND lane.reset_at IS NULL
-                   AND (lane.scope='global_default' OR (lane.scope='project' AND lane.project_id=t.project_id))
-                 ORDER BY CASE WHEN lane.scope='project' THEN 0 ELSE 1 END LIMIT 1
-               ), false) AS held FROM work_tasks t WHERE id = $1`, [id]);
-          if (held.rows[0]?.held) throw new Error('human_approval_required: project move cannot discard approval');
-          const destination = changes.status ?? current.rows[0].status;
-          const permitted = await client.query<{ target: string }>(
-            `SELECT ${ approvalSafeTargetSql('destination_task', '$3', true) } AS target
-             FROM (SELECT id, $2::text AS project_id, '__project_entry__'::text AS status
-                   FROM work_tasks WHERE id = $1) destination_task`,
-            [id, nextProjectId, destination]);
-          if (permitted.rows[0]?.target !== destination) {
-            throw new Error('human_approval_required: project move cannot skip destination approval');
-          }
-        }
-        if (changes.status !== undefined && changes.status !== current.rows[0].status && actor !== 'human') {
-          const permitted = await client.query<{ target: string }>(
-            `SELECT ${ approvalSafeTargetSql('t', '$2') } AS target FROM work_tasks t WHERE id = $1`,
-            [id, changes.status]);
-          if (permitted.rows[0]?.target !== changes.status) {
-            throw new Error('human_approval_required: automatic transition cannot cross an approval boundary');
-          }
-        }
         const rows = await client.query<WorkTaskRecord>(updateSql, values);
         const committed = rows.rows[0] ?? null;
         if (committed && enteringReview && changes.custody) {
@@ -1130,28 +977,6 @@ export class WorkItemsModel {
         if (committed && enteringDone && changes.custody) {
           await ArtifactCustodyPolicy.persistWithClient(
             client, committed.id, 'done', changes.custody, actor);
-        }
-        if (committed && committed.status !== current.rows[0].status) {
-          const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
-          const claimed = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
-            client, committed.id, committed.status, changes.actor ?? 'sulla');
-          const { createPostgresProjectsRepositories } = await import('../../projects/infrastructure/PostgresProjectsRepositories');
-          await createPostgresProjectsRepositories(client).events.append({
-            id:             `projects-event-${ committed.id }-${ claimed.entry.generation }-transition`,
-            taskId:         committed.id,
-            generation:     claimed.entry.generation,
-            eventType:      'projects.task.transitioned',
-            idempotencyKey: `projects.task.transitioned:${ committed.id }:${ claimed.entry.generation }`,
-            occurredAt:     new Date(),
-            payload:        {
-              actor,
-              source:        changes.source ?? 'system',
-              fromLane:      current.rows[0].status,
-              toLane:        committed.status,
-              laneEntryId:   claimed.entry.id,
-              laneAutomated: claimed.entry.status === 'pending',
-            },
-          });
         }
         if (committed && changesSchedule) {
           await WorkItemsModel.auditScheduleChangesWithClient(
@@ -1164,17 +989,6 @@ export class WorkItemsModel {
       updated = rows[0] ?? null;
     }
 
-    if (updated && changes.status !== undefined && updated.status !== existing.status) {
-      try {
-        const { getProjectsOrchestrationEventService } = await import('../../projects/application/ProjectsOrchestrationEventService');
-        await getProjectsOrchestrationEventService().drain();
-      } catch (error) {
-        console.warn(`[WorkItems] Transition events for task ${ updated.id } remain recoverable after dispatch failure:`, error);
-      }
-    }
-    if (updated && changes.status !== undefined) {
-      await notifyTaskStatusCommitted(updated, existing.status, changes.actor);
-    }
     return updated;
   }
 
@@ -1482,16 +1296,6 @@ export class WorkItemsModel {
           WHERE id = $1`,
         [id],
       );
-      // Project- and epic-scoped lane workflow bindings die with the project,
-      // so an archived project stops appearing in active-binding listings.
-      await postgresClient.query(
-        `UPDATE work_lane_workflow_bindings
-            SET active = false, archived = true, archived_at = now(), updated_at = now()
-          WHERE archived = false
-            AND (   (scope = 'project' AND project_id = $1)
-                 OR (scope = 'epic' AND epic_id IN (SELECT id FROM ${ WorkItemsModel.EPICS } WHERE project_id = $1)))`,
-        [id],
-      );
       return true;
     }
 
@@ -1511,12 +1315,6 @@ export class WorkItemsModel {
       await postgresClient.query(
         `UPDATE ${ WorkItemsModel.EPICS } SET archived = true, updated_at = now()
           WHERE id = $1`,
-        [id],
-      );
-      await postgresClient.query(
-        `UPDATE work_lane_workflow_bindings
-            SET active = false, archived = true, archived_at = now(), updated_at = now()
-          WHERE scope = 'epic' AND epic_id = $1 AND archived = false`,
         [id],
       );
       return true;

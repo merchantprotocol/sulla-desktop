@@ -224,17 +224,17 @@ Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`. → S
 - `sulla project/get_project_item` — One item + children + comments.
 - `sulla project/search_project_items` — Title + description search (dedupe before create).
 - `sulla project/project_report` — Standup: completed last N hours (default 24) + top open tasks.
-- `sulla project/create_project` / `update_project` — Project CRUD.
+- `sulla project/create_project` / `update_project` — Project CRUD (`assignedAgent` = the agent that drives the project).
 - `sulla project/create_epic` / `update_epic` — Epic CRUD (under a project).
 - `sulla project/create_task` / `update_task` — Task CRUD (`parent_id` for a subtask).
 - `sulla project/add_task_comment` — Append a note (author defaults `sulla`; Heartbeat passes `heartbeat`; UI stamps `human`).
 - `sulla project/list_task_comments` — Comment thread, oldest first.
-- `sulla project/list_task_waits` — Inspect durable external waits and monitor ownership.
-- `sulla project/register_task_wait` — Idempotently register one structured external wait and initial comment.
-- `sulla project/cancel_task_wait` — Cancel an obsolete active wait; terminal tasks cancel automatically.
+- `sulla project/list_ready_tasks` — Ready vs dependency-held tasks in a project.
+- `sulla project/create_task_dependency` / `remove_task_dependency` / `list_task_dependencies` — Task prerequisites (readiness metadata only).
+- `sulla project/list_lanes` / `resolve_lanes` / `create_lane` / `update_lane` / `archive_lane` / `restore_lane` / `reorder_lanes` / `reset_lane_override` — Lane definitions (presentation only; lanes never trigger work).
 - `sulla project/archive_project_item` — Soft-archive a project / epic / task (cascades).
 
-The ONE project-state store — not CRM, distinct from the `~/sulla/projects/<slug>/PROJECT.md` PRDs. → See [`tools/project.md`](project.md)
+The ONE project-state store — a plain board; agents (project manager → director → workers) drive the work. Not CRM, distinct from the `~/sulla/projects/<slug>/PROJECT.md` PRDs. → See [`tools/project.md`](project.md)
 
 ## ledger — leftover ledger scoreboard (NOT the pick-path) (1 tool)
 - `sulla ledger/ledger_scoreboard` — Zero-LLM scoreboard over the leftover `~/sulla/ledger/` markdown archive. Do **not** pick work from those files — the agenda lives in the project tables.

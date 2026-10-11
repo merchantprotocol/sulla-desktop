@@ -1,14 +1,10 @@
 import { Octokit } from '@octokit/rest';
 
-import { ArtifactCustodyPolicy } from './ArtifactCustodyPolicy';
 import { extractPullRequestReferences } from './GitHubPullRequestHeadService';
 import { getIntegrationService } from './IntegrationService';
 import { evaluatePullRequestMergeReadiness } from './ProjectsIssueReview';
 import { ArtifactReceiptModel, type ArtifactReceiptRow } from '../database/models/ArtifactReceiptModel';
 import { WorkItemsModel, type WorkCommentRecord, type WorkTaskRecord } from '../database/models/WorkItemsModel';
-import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
-import { WorkTaskWaitModel } from '../database/models/WorkTaskWaitModel';
-import { WorkLaneWorkflowBindingModel } from '../database/models/WorkLaneWorkflowBindingModel';
 
 export interface ProjectsPullRequestBrief {
   repository:     string;
@@ -38,19 +34,10 @@ export interface ProjectsIssueReviewBrief {
   rollbackNotes:   string[];
 }
 
-export interface ProjectsHumanGateBrief {
-  active:        boolean;
-  waitIds:       string[];
-  currentStage:  string;
-  previousStage: string | null;
-  nextStage:     string | null;
-}
-
 export interface ProjectsIssueDetail {
   task:      WorkTaskRecord;
   comments:  WorkCommentRecord[];
   review:    ProjectsIssueReviewBrief;
-  humanGate: ProjectsHumanGateBrief;
 }
 
 type OctokitClient = InstanceType<typeof Octokit>;
@@ -171,19 +158,14 @@ function receiptEvidence(receipts: ArtifactReceiptRow[]): string[] {
 export async function loadProjectsIssueDetail(taskId: string): Promise<ProjectsIssueDetail> {
   const task = await WorkItemsModel.getTask(taskId);
   if (!task || task.archived) throw new Error(`Issue ${ taskId } was not found.`);
-  const [comments, receipts, waits, lanes] = await Promise.all([
+  const [comments, receipts] = await Promise.all([
     WorkItemsModel.listComments(task.id),
     ArtifactReceiptModel.listByTask(task.id),
-    WorkTaskWaitModel.list({ taskId: task.id, status: 'active' }),
-    WorkLaneDefinitionModel.resolveEffective(task.project_id),
   ]);
   const evidenceLines = [
     ...comments.flatMap(comment => conciseEvidence(comment.body)),
     ...receiptEvidence(receipts),
   ];
-  const humanWaits = waits.filter(wait => wait.wait_kind === 'human_gate');
-  const stageIndex = lanes.findIndex(lane => lane.lane_key === task.status && lane.enabled && !lane.archived);
-  const currentLane = stageIndex >= 0 ? lanes[stageIndex] : null;
 
   return {
     task,
@@ -197,60 +179,5 @@ export async function loadProjectsIssueDetail(taskId: string): Promise<ProjectsI
       stagingEvidence: matchingNotes(evidenceLines, /\b(staging|smoke test|acceptance|runtime verification)\b/i),
       rollbackNotes:   matchingNotes(evidenceLines, /\b(rollback|revert|undo|recovery)\b/i),
     },
-    humanGate: {
-      active:        currentLane?.requires_human_approval === true || humanWaits.length > 0,
-      waitIds:       humanWaits.map(wait => wait.id),
-      currentStage:  task.status,
-      previousStage: stageIndex > 0 ? lanes[stageIndex - 1].lane_key : null,
-      nextStage:     stageIndex >= 0 && stageIndex < lanes.length - 1 ? lanes[stageIndex + 1].lane_key : null,
-    },
   };
-}
-
-export async function decideProjectsHumanGate(
-  taskId: string,
-  decision: 'approved' | 'rejected',
-  reason: string,
-  expectedStage: string,
-): Promise<ProjectsIssueDetail> {
-  const generation = (await WorkLaneWorkflowBindingModel.listLaneEntries(taskId))[0]?.generation ?? 0;
-  const before = await loadProjectsIssueDetail(taskId);
-  if (!expectedStage || before.task.status !== expectedStage) {
-    throw new Error(`This issue moved from ${ expectedStage || 'an unknown stage' } to ${ before.task.status }. Refresh before deciding.`);
-  }
-  if (!before.humanGate.active) throw new Error('This issue is not at an active human approval gate.');
-  if (decision === 'approved' && !before.humanGate.nextStage) throw new Error('No next pipeline stage is configured.');
-  if (decision === 'rejected' && !before.humanGate.previousStage) throw new Error('No previous pipeline stage is configured.');
-  const normalizedReason = reason.trim();
-  if (decision === 'rejected' && !normalizedReason) throw new Error('A rejection reason is required.');
-
-  const targetStage = (decision === 'approved' ? before.humanGate.nextStage : before.humanGate.previousStage)!;
-  const target = await WorkLaneDefinitionModel.resolveStatus(before.task.project_id, targetStage);
-  if (target?.semantic_role === 'review') await ArtifactCustodyPolicy.assertForTransition('in_review', undefined);
-  if (target?.semantic_role === 'terminal') await ArtifactCustodyPolicy.assertForTransition('done', undefined);
-  const decidedAt = new Date().toISOString();
-  // Commit the task, generation event, approval waits and audit together. A
-  // concurrent PASS sees either the gate or the completed human transition.
-  await WorkItemsModel.updateTask(taskId, {
-    status: targetStage,
-    ...(target?.semantic_role === 'terminal' ? { assignee: null } : {}),
-    actor: 'human',
-  }, {
-    expectedStage,
-    expectedGeneration: generation,
-    expectedUpdatedAt: before.task.updated_at ? new Date(before.task.updated_at).toISOString() : null,
-    decision,
-    waitIds: before.humanGate.waitIds,
-    comment: [
-      `Human gate ${ decision }.`,
-      'Decision by: human',
-      `Recorded at: ${ decidedAt }`,
-      normalizedReason ? `Reason: ${ normalizedReason }` : '',
-      decision === 'approved'
-        ? 'This decision advanced the configured Projects pipeline only. No merge, deployment, payment, or external communication was performed.'
-        : 'This decision returned the issue to the previous configured pipeline stage for repair.',
-    ].filter(Boolean).join('\n'),
-  });
-
-  return loadProjectsIssueDetail(taskId);
 }

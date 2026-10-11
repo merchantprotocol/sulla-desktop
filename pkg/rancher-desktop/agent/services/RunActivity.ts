@@ -1,5 +1,5 @@
 /**
- * Last-activity clock for whole runs (a dispatch, a spawned job) including
+ * Last-activity clock for whole runs (a spawned job or workflow) including
  * every sub-agent they start. A graph state carries `metadata.activityKeys`;
  * each LLM token, thinking event and tool call touches every key, and child
  * states inherit their parent's keys. Dead-run detection reads this instead
@@ -41,7 +41,7 @@ export const DEAD_RUN_CHECK_MS = 60_000;
 export const DEAD_RUN_GRACE_MS = 180_000;
 const DEFAULT_DEAD_RUN_MINUTES = 30;
 
-/** Minutes of tree-wide silence before a run counts as dead (setting taskDispatcherDeadRunMinutes). */
+/** Minutes of tree-wide silence before a run counts as dead (legacy setting key taskDispatcherDeadRunMinutes, kept so saved values still apply). */
 export async function deadRunMinutes(): Promise<number> {
   const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
   const value = Number(await SullaSettingsModel.get('taskDispatcherDeadRunMinutes', DEFAULT_DEAD_RUN_MINUTES));

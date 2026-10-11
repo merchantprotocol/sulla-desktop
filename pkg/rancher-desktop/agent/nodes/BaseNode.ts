@@ -877,7 +877,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Agent-definition override first: an agent whose config.yaml declares
     // model/provider gets its own service instance regardless of role slot.
     // Otherwise route by graph-stamped model slot: work-executing sub-agents
-    // (dispatcher workers/verifiers, workflow nodes, spawned workers) stamp
+    // (workflow nodes, spawned workers) stamp
     // modelSlot='primary' so autonomous work runs on the primary chain on
     // every install; only subconscious observers (observation writer/recall,
     // summarizer) keep the fast subconscious chat peer.
@@ -1759,9 +1759,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       return false;
     }
 
-    // Dispatcher leases are renewed by real agent output, not by a live JS
-    // promise. This marker is shared with the dispatcher through the live
-    // graph state and is intentionally updated before transport delivery.
+    // Run liveness is renewed by real agent output, not by a live JS promise.
+    // This marker is shared with dead-run detection (RunActivity) through the
+    // live graph state and is intentionally updated before transport delivery.
     (state.metadata as any).lastAgentActivityAt = Date.now();
     RunActivity.touch(state.metadata);
 

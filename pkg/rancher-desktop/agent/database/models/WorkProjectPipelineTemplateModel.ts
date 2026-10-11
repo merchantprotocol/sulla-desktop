@@ -2,8 +2,6 @@ import { randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
 
-import type { LaneContract } from './WorkLaneWorkflowBindingModel';
-
 export const CORE_PROJECT_PIPELINE_TEMPLATE_ID = 'core-project-template-default';
 
 export interface ProjectPipelineTemplateRecord {
@@ -203,12 +201,6 @@ export class WorkProjectPipelineTemplateModel {
            SET reset_at = now(), enabled = false, updated_at = now(), updated_by = $2
          WHERE scope = 'project' AND project_id = $1 AND reset_at IS NULL
       `, [projectId, actor]);
-      await client.query(`
-        UPDATE work_lane_workflow_bindings
-           SET active = false, archived = true, archived_at = now(), updated_at = now(), updated_by = $2
-         WHERE scope = 'project' AND project_id = $1 AND active = true AND archived = false
-      `, [projectId, actor]);
-
       for (const stage of template.stages) {
         await client.query(`
           INSERT INTO work_lane_definitions (
@@ -217,21 +209,6 @@ export class WorkProjectPipelineTemplateModel {
           ) VALUES ($1,$2,'project',$3,$4,$5,$6,$7,true,false,$8)
         `, [`lane-${ randomUUID() }`, stage.stage_key, projectId, stage.display_name,
           stage.description, stage.position, stage.semantic_role ?? 'manual', actor]);
-
-        if (!stage.bundled_workflow_id) continue;
-        const workflow = (await client.query<{ id: string; definition: Record<string, any> }>(`
-          SELECT id, definition FROM workflows
-           WHERE id = $1 AND status <> 'archive' LIMIT 1
-        `, [stage.bundled_workflow_id])).rows[0];
-        if (!workflow) throw new Error(`Template workflow is unavailable: ${ stage.bundled_workflow_id }`);
-        // Any non-archived workflow may be bound to a stage; the lane contract (if declared) is
-        // stored for display/dispatch only and is not a selection gate.
-        const contract = (workflow.definition?.laneContract ?? workflow.definition?.metadata?.laneContract ?? {}) as LaneContract;
-        await client.query(`
-          INSERT INTO work_lane_workflow_bindings (
-            id, profile_id, scope, project_id, lane_key, workflow_id, lane_contract, created_by
-          ) VALUES ($1,'default','project',$2,$3,$4,$5::jsonb,$6)
-        `, [`binding-${ randomUUID() }`, projectId, stage.stage_key, workflow.id, JSON.stringify(contract), actor]);
       }
       await client.query('UPDATE work_projects SET pipeline_template_id = $2, updated_at = now() WHERE id = $1',
         [projectId, template.id]);

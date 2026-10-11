@@ -1,6 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import { LaneEntryAutomationService } from '../../../services/LaneEntryAutomationService';
 import { postgresClient } from '../../PostgresClient';
 import { WorkItemsModel } from '../WorkItemsModel';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
@@ -19,7 +18,6 @@ describe('WorkItemsModel', () => {
     });
     jest.spyOn(WorkLaneDefinitionModel, 'validateTaskStatus').mockResolvedValue(null);
     jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('todo');
-    jest.spyOn(LaneEntryAutomationService, 'handleTransition').mockResolvedValue({} as any);
   });
 
   afterEach(() => {
@@ -134,7 +132,7 @@ describe('WorkItemsModel', () => {
     expect(sql).not.toContain('last_moved_at = now()');
   });
 
-  it('normalizes direct Sulla todo ownership when inserting through the model boundary', async() => {
+  it('stores the given assignee as plain ownership metadata on insert', async() => {
     (postgresClient as any).query = (jest.fn() as any)
       .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
       .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
@@ -151,11 +149,13 @@ describe('WorkItemsModel', () => {
       labels:   ['projects'],
     });
 
-    expect(task.assignee).toBe('dispatcher');
-    expect((postgresClient.query as any).mock.calls[1][1][11]).toBe('dispatcher');
+    expect(task.assignee).toBe('sulla');
+    expect((postgresClient.query as any).mock.calls[1][1][11]).toBe('sulla');
+    // Creating a task is a plain insert: nothing launches or claims it.
+    expect((postgresClient.query as any).mock.calls).toHaveLength(2);
   });
 
-  it('falls back to todo ownership when omitted-status creation is capability-degraded', async() => {
+  it('falls back to todo when omitted-status creation is capability-degraded', async() => {
     (postgresClient as any).query = (jest.fn() as any)
       .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
       .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
@@ -170,7 +170,7 @@ describe('WorkItemsModel', () => {
       actor:    'sulla',
     });
 
-    expect(task).toMatchObject({ status: 'todo', assignee: 'dispatcher' });
+    expect(task).toMatchObject({ status: 'todo', assignee: 'sulla' });
   });
 
   it('defaults omitted-status creation to the project-specific execution-entry lane', async() => {
@@ -192,7 +192,7 @@ describe('WorkItemsModel', () => {
       actor:    'sulla',
     });
 
-    expect(task).toMatchObject({ status: 'ready-custom', assignee: 'dispatcher' });
+    expect(task).toMatchObject({ status: 'ready-custom', assignee: 'sulla' });
     expect(WorkLaneDefinitionModel.preferredLaneKey).toHaveBeenCalledWith(
       'project-1', 'execution', 'todo', 'first',
     );
@@ -227,21 +227,56 @@ describe('WorkItemsModel', () => {
     expect((postgresClient.query as any).mock.calls[3][1][11]).toBe('human');
   });
 
-  it('normalizes a legacy todo during an update using the resulting labels and status', async() => {
+  it('leaves the assignee alone when an update does not set it', async() => {
     (postgresClient as any).query = (jest.fn() as any)
       .mockResolvedValueOnce([{
         id: 'task-1', status: 'todo', priority: 'high', assignee: 'sulla', labels: [],
       }])
       .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
-        id: 'task-1', assignee: params[1], title: params[0],
+        id: 'task-1', assignee: 'sulla', title: params[0],
       }]));
 
     const task = await WorkItemsModel.updateTask('task-1', { title: 'Touched', actor: 'heartbeat' });
     const sql = (postgresClient.query as any).mock.calls[1][0] as string;
 
-    expect(task?.assignee).toBe('dispatcher');
-    expect(sql).toContain('assignee = $2');
+    expect(task?.assignee).toBe('sulla');
+    expect(sql).not.toContain('assignee');
+    expect(sql).not.toContain('last_moved_by');
+  });
+
+  it('stores an explicit assignee change verbatim and stamps the move', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{
+        id: 'task-1', status: 'todo', priority: 'high', assignee: null, labels: [],
+      }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id: 'task-1', assignee: params[0],
+      }]));
+
+    const task = await WorkItemsModel.updateTask('task-1', { assignee: 'coder-agent', actor: 'project-manager' });
+    const sql = (postgresClient.query as any).mock.calls[1][0] as string;
+
+    expect(task?.assignee).toBe('coder-agent');
+    expect(sql).toContain('assignee = $1');
     expect(sql).toContain('last_moved_by');
+  });
+
+  it('writes and clears the project-level assigned agent', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{ id: params[0], assigned_agent: params[12] }]))
+      .mockResolvedValueOnce([{ id: 'project-1', assigned_agent: 'project-manager' }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{ id: 'project-1', assigned_agent: params[0] }]));
+
+    const created = await WorkItemsModel.upsertProject({ id: 'project-1', title: 'Launch', assigned_agent: 'project-manager' });
+    const insertSql = (postgresClient.query as any).mock.calls[1][0] as string;
+    expect(insertSql).toContain('assigned_agent');
+    expect(created.assigned_agent).toBe('project-manager');
+
+    const cleared = await WorkItemsModel.updateProject('project-1', { assigned_agent: '' });
+    const updateSql = (postgresClient.query as any).mock.calls[3][0] as string;
+    expect(updateSql).toContain('assigned_agent = $1');
+    expect(cleared?.assigned_agent).toBeNull();
   });
 
   it('inserts a comment and touches its task in one SQL statement', async() => {

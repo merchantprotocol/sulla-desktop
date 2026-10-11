@@ -34,9 +34,6 @@ import type {
   CreateWorkLaneInput, UpdateWorkLaneInput, WorkLaneScope,
 } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import type {
-  ListLaneBindingsInput, ResolveLaneBindingContextInput, SetLaneBindingInput,
-} from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
-import type {
   CreateProjectPipelineTemplateInput, UpdateProjectPipelineTemplateInput,
 } from '@pkg/agent/database/models/WorkProjectPipelineTemplateModel';
 import type { SaveProjectViewInput } from '@pkg/agent/database/models/WorkProjectViewModel';
@@ -129,16 +126,6 @@ export function initWorkItemsEvents(): void {
     return loadProjectsIssueDetail(taskId);
   });
 
-  ipcMainProxy.handle('work-items:human-gate-decision', async(_event: unknown, input: {
-    taskId: string; decision: 'approved' | 'rejected'; reason?: string; expectedStage: string;
-  }) => {
-    if (!input?.taskId || !input.expectedStage || !['approved', 'rejected'].includes(input.decision)) {
-      throw new Error('A taskId, expected stage, and approved/rejected decision are required.');
-    }
-    const { decideProjectsHumanGate } = await import('@pkg/agent/services/ProjectsIssueDetailService');
-    return decideProjectsHumanGate(input.taskId, input.decision, input.reason ?? '', input.expectedStage);
-  });
-
   ipcMainProxy.handle('work-items:artifact-evidence', async(_event: unknown, commentId: string) => {
     if (!commentId) return null;
     const { ArtifactReceiptModel } = await import('@pkg/agent/database/models/ArtifactReceiptModel');
@@ -149,33 +136,6 @@ export function initWorkItemsEvents(): void {
     const projects = await importProjectsApplicationService();
 
     return projects.listRecentActivity(opts);
-  });
-
-  ipcMainProxy.handle('work-items:automation-status', async() => {
-    const projects = await importProjectsApplicationService();
-    return projects.automationStatus();
-  });
-
-  ipcMainProxy.handle('work-items:conveyor-health', async(_event: unknown, opts: {
-    projectId?: string | null; windowHours?: number;
-  } = {}) => {
-    const projects = await importProjectsApplicationService();
-    const automation = await projects.automationStatus();
-    return projects.conveyorHealth({
-      projectId:   opts.projectId ?? null,
-      windowHours: opts.windowHours,
-      wipLimit:    automation.limits.execution,
-      reviewLimit: automation.limits.review,
-    });
-  });
-
-  ipcMainProxy.handle('work-items:conveyor-oldest', async(_event: unknown, opts: {
-    projectId?: string | null; stage: import('@pkg/agent/database/models/WorkConveyorMetricsModel').SemanticStage;
-  }) => {
-    const allowed = new Set(['backlog', 'planning', 'execution', 'review', 'blocked', 'terminal', 'manual']);
-    if (!allowed.has(opts.stage)) throw new Error(`Invalid semantic stage: ${ opts.stage }`);
-    const projects = await importProjectsApplicationService();
-    return projects.conveyorOldest(opts);
   });
 
   ipcMainProxy.handle('work-items:views-list', async(_event: unknown, projectId?: string | null) => {
@@ -300,43 +260,6 @@ export function initWorkItemsEvents(): void {
     return projects.resetLaneOverride(projectId, laneKey, { actor: 'human', source: 'ipc' });
   });
 
-  // ── lane workflow bindings + entry audit ─────────────────────────────
-
-  ipcMainProxy.handle('work-items:lane-bindings-list', async(_event: unknown, input: ListLaneBindingsInput = {}) => {
-    const projects = await importProjectsApplicationService();
-    return projects.listLaneBindings(input);
-  });
-
-  ipcMainProxy.handle('work-items:lane-binding-set', async(_event: unknown, input: SetLaneBindingInput) => {
-    const projects = await importProjectsApplicationService();
-    return projects.setLaneBinding(input, { actor: 'human', source: 'ipc' });
-  });
-
-  ipcMainProxy.handle('work-items:lane-binding-remove', async(_event: unknown, id: string) => {
-    const projects = await importProjectsApplicationService();
-    return projects.removeLaneBinding(id, { actor: 'human', source: 'ipc' });
-  });
-
-  ipcMainProxy.handle('work-items:lane-workflow-resolve', async(_event: unknown, taskId: string, laneKey: string, profileId = 'default') => {
-    const projects = await importProjectsApplicationService();
-    return projects.resolveLaneBinding(taskId, laneKey, profileId);
-  });
-
-  ipcMainProxy.handle('work-items:lane-workflow-resolve-context', async(_event: unknown, input: ResolveLaneBindingContextInput) => {
-    const projects = await importProjectsApplicationService();
-    return projects.resolveLaneBindingContext(input);
-  });
-
-  ipcMainProxy.handle('work-items:lane-compatible-workflows', async(_event: unknown, projectId: string, laneKey: string) => {
-    const projects = await importProjectsApplicationService();
-    return projects.listCompatibleLaneWorkflows(projectId, laneKey);
-  });
-
-  ipcMainProxy.handle('work-items:lane-entry-automations', async(_event: unknown, taskId: string) => {
-    const projects = await importProjectsApplicationService();
-    return projects.listLaneEntries(taskId);
-  });
-
   ipcMainProxy.handle('work-items:knowledge-list', async(_event: unknown, input: {
     itemKind: KnowledgeWorkItemKind; itemId: string; includeInherited?: boolean; includeArchived?: boolean; limit?: number;
   }) => listKnowledgeForWorkItem(input));
@@ -441,34 +364,6 @@ export function initWorkItemsEvents(): void {
     await projects.reorder(updates, { actor: 'human', source: 'ipc' });
     return true;
   });
-
-  // Domain events are the durable orchestration handoff. Drain them after IPC
-  // setup so a crash after task commit cannot strand a lane transition.
-  // Both boot drains wait behind the shared DB gate: this module initializes
-  // before Postgres accepts connections on a cold boot, and an ungated first
-  // attempt dies with ECONNREFUSED and never runs again — leaving every
-  // pending transition stranded until the next restart (2026-08-31 boot).
-  import('@pkg/main/dbBootGate')
-    .then(({ awaitDatabaseReady }) => awaitDatabaseReady())
-    .then(() => import('@pkg/agent/projects/application/ProjectsOrchestrationEventService'))
-    .then(({ getProjectsOrchestrationEventService }) => getProjectsOrchestrationEventService().drain(50))
-    .catch(error => console.warn('[WorkItems] Projects orchestration recovery failed:', error));
-
-  // The domain-event drain only recovers transitions that never dispatched.
-  // A lane workflow that dies MID-RUN leaves its lane entry stuck in
-  // 'running' with the outbox already settled — drainRecoverable is the only
-  // path that resumes those. Recovery is lease-fenced in the model, so both
-  // startup and periodic sweeps leave live executions alone.
-  const sweepLaneEntries = () => {
-    import('@pkg/agent/services/LaneEntryAutomationService')
-      .then(({ LaneEntryAutomationService }) => LaneEntryAutomationService.drainRecoverable(50))
-      .catch(error => console.warn('[WorkItems] Lane-entry automation recovery failed:', error));
-  };
-  import('@pkg/main/dbBootGate')
-    .then(({ awaitDatabaseReady }) => awaitDatabaseReady())
-    .then(sweepLaneEntries)
-    .catch(error => console.warn('[WorkItems] Lane-entry boot sweep failed to start:', error));
-  setInterval(sweepLaneEntries, 5 * 60_000);
 }
 
 interface ReorderUpdate {

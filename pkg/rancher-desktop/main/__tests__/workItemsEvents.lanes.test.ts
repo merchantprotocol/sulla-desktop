@@ -11,13 +11,18 @@ describe('work-items lane IPC contract', () => {
       'work-items:lane-update', 'work-items:lane-archive', 'work-items:lane-restore',
       'work-items:lane-archive-preview',
       'work-items:lanes-reorder', 'work-items:lane-reset-override',
+    ]) expect(source).toContain(`handle('${ channel }'`);
+    for (const removed of [
       'work-items:lane-bindings-list', 'work-items:lane-binding-set',
       'work-items:lane-binding-remove', 'work-items:lane-workflow-resolve',
       'work-items:lane-workflow-resolve-context', 'work-items:lane-compatible-workflows',
-      'work-items:lane-entry-automations',
-    ]) expect(source).toContain(`handle('${ channel }'`);
+      'work-items:lane-entry-automations', 'work-items:automation-status',
+      'work-items:conveyor-health', 'work-items:human-gate-decision',
+    ]) expect(source).not.toContain(`handle('${ removed }'`);
+    // No boot-time drains or sweeps: lane moves never trigger work.
+    expect(source).not.toContain('setInterval');
+    expect(source).not.toContain('drainRecoverable');
     expect(source).toContain("import('@pkg/agent/projects/application/ProjectsApplicationService')");
     expect(source).not.toContain("import('@pkg/agent/database/models/WorkLaneDefinitionModel')");
-    expect(source).not.toContain("import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel')");
   });
 });

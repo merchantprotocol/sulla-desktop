@@ -26,7 +26,7 @@ describe('spawn_agent task ownership', () => {
   it('refuses to launch when another agent owns the task, and launches nothing', async() => {
     const query = jest.spyOn(postgresClient, 'query').mockResolvedValue([] as any);
     const claim = jest.spyOn(WorkTaskOwnershipModel, 'claimForJob').mockResolvedValue({
-      claimed: false, conflicts: [{ taskId: 'AwBS', kind: 'dispatch', ref: 'dispatch-1' }],
+      claimed: false, conflicts: [{ taskId: 'AwBS', kind: 'agent_job', ref: 'agent-job-other' }],
     });
     const worker = new SpawnAgentWorker();
     worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'parent' } });
@@ -36,13 +36,13 @@ describe('spawn_agent task ownership', () => {
     });
 
     expect(result.successBoolean).toBe(false);
-    expect(result.responseString).toContain('task AwBS is owned by dispatch dispatch-1');
+    expect(result.responseString).toContain('task AwBS is owned by agent_job agent-job-other');
     expect(claim).toHaveBeenCalledWith(expect.stringMatching(/^agent-job-/), { AwBS: 'sulla-desktop' }, []);
     expect((GraphRegistry as any).getOrCreateAgentGraph).not.toHaveBeenCalled();
     expect(query.mock.calls.some(([sql]) => String(sql).startsWith('DELETE FROM agent_jobs'))).toBe(true);
   });
 
-  it('lets a dispatch worker delegate the task it already owns, and hands it back when done', async() => {
+  it('lets a worker delegate the task it already owns, and hands it back when done', async() => {
     jest.spyOn(postgresClient, 'query').mockResolvedValue([] as any);
     const claim = jest.spyOn(WorkTaskOwnershipModel, 'claimForJob').mockResolvedValue({ claimed: true, conflicts: [] });
     let released!: () => void;

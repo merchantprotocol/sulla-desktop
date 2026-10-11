@@ -3,15 +3,14 @@ import { postgresClient } from '../PostgresClient';
 import type { PoolClient } from 'pg';
 
 /**
- * Mechanical task ownership for agent jobs. An agent working a Projects task
- * owns it for the whole run: the task's assignee is that agent, and every
- * other writer (dispatcher, planning council, another session's job) sees the
- * owner and stays off. Ownership is taken under the same advisory lock the
- * dispatcher uses for admission, so a job and a dispatch can never both win.
+ * Task ownership for agent jobs. An agent job launched for a Projects task
+ * owns it for the whole run: the task's assignee is that agent, and another
+ * session's job for the same task is refused until the first one finishes.
+ * Ownership is taken under one advisory lock so two jobs can never both win.
  */
 export interface TaskOwner {
   taskId: string;
-  kind:   'dispatch' | 'stage_claim' | 'planning_council' | 'lane_automation' | 'agent_job';
+  kind:   'agent_job';
   ref:    string;
 }
 
@@ -32,19 +31,7 @@ export class WorkTaskOwnershipModel {
   static async findOwnersWithClient(client: PoolClient, taskIds: string[], excludeJobId?: string): Promise<TaskOwner[]> {
     if (taskIds.length === 0) return [];
     const rows = await client.query<{ task_id: string; kind: TaskOwner['kind']; ref: string }>(`
-      SELECT task_id, 'dispatch' AS kind, id AS ref FROM work_task_dispatches
-       WHERE status = 'running' AND task_id = ANY($1::text[])
-      UNION ALL
-      SELECT task_id, 'stage_claim', owner || ':' || id FROM work_task_stage_claims
-       WHERE status = 'active' AND task_id = ANY($1::text[])
-      UNION ALL
-      SELECT task_id, 'planning_council', id FROM work_task_planning_runs
-       WHERE status = 'active' AND task_id = ANY($1::text[])
-      UNION ALL
-      SELECT task_id, 'lane_automation', id FROM work_lane_entry_automations
-       WHERE status = 'running' AND task_id = ANY($1::text[])
-      UNION ALL
-      SELECT owned.task_id, 'agent_job', job.job_id FROM agent_jobs job
+      SELECT owned.task_id, 'agent_job' AS kind, job.job_id AS ref FROM agent_jobs job
        CROSS JOIN LATERAL unnest(job.project_task_ids) AS owned(task_id)
        WHERE job.status = 'running' AND owned.task_id = ANY($1::text[])
          AND ($2::text IS NULL OR job.job_id <> $2)
@@ -54,8 +41,8 @@ export class WorkTaskOwnershipModel {
 
   /**
    * Take ownership of `assignees` (task id -> agent id) for a running job.
-   * Tasks in `inherited` are already owned by the caller (a dispatcher worker
-   * delegating its own task), so their existing owner is not a conflict.
+   * Tasks in `inherited` are already owned by the caller (a worker delegating
+   * its own task), so their existing owner is not a conflict.
    * On any conflict nothing is written and the conflicts are returned.
    */
   static async claimForJob(
@@ -136,7 +123,7 @@ export class WorkTaskOwnershipModel {
       await client.query(`
         UPDATE work_tasks SET assignee = $2, updated_at = now()
          WHERE id = $1 AND assignee IS NOT DISTINCT FROM $3
-      `, [taskId, assignment.prior ?? 'dispatcher', assignment.owner]);
+      `, [taskId, assignment.prior ?? null, assignment.owner]);
     }
   }
 }

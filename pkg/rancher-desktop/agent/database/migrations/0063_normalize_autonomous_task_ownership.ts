@@ -4,7 +4,9 @@
  * audit/rollback marker and makes the ownership change visible in Projects.
  */
 
-import { NON_AUTONOMOUS_TASK_LABELS } from '../models/TaskOwnership';
+// Frozen copy of the labels this migration honoured when it shipped. The
+// runtime ownership module was removed with the dispatcher; keep the SQL stable.
+const NON_AUTONOMOUS_TASK_LABELS = ['gated', 'decision', 'human', 'manual', 'no-auto-dispatch'] as const;
 
 export const OWNERSHIP_MIGRATION_COMMENT_PREFIX = 'ownership-0063:';
 export const OWNERSHIP_MIGRATION_COMMENT = '[migration 0063] Normalized legacy assignee "sulla" to "dispatcher" because this todo is autonomous queue work. Undo: restore assignee to "sulla" for this task and archive this marker.';
