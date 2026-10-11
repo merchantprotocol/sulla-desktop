@@ -20,7 +20,7 @@ import { reflexActionLabel } from './reflexLabels';
 import { DEFAULT_REFLEX_THRESHOLD, parseCategories, REFLEX_ROUTE_TOOL, reflexPolicyViolation } from './reflexPolicy';
 import { ReflexModel } from '../database/models/ReflexModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { resolveRoutableAgent } from '../services/ChatAgentRouting';
+import { isSullaRoute, resolveFrontDoorAgent } from '../services/ChatAgentRouting';
 import { toolRegistry } from '../tools/registry';
 
 export { DEFAULT_REFLEX_THRESHOLD } from './reflexPolicy';
@@ -125,8 +125,11 @@ export interface ReflexRouteResult {
 }
 
 /**
- * Classify the first human message without executing a tool. Every attempted
- * classification gets a receipt so reflex_stats/reflex_correct remain useful.
+ * Classify the first human message without executing a tool. Only front-door
+ * agents (directory front_door) are valid targets; anything else, or no
+ * confident match, returns null and the caller uses the default front door.
+ * Every attempted classification gets a receipt so reflex_stats/reflex_correct
+ * remain useful.
  */
 export async function routeChatAgent(message: string, threadId: string | null = null): Promise<ReflexRouteResult | null> {
   try {
@@ -151,13 +154,13 @@ export async function routeChatAgent(message: string, threadId: string | null = 
       return null;
     }
 
-    const agent = await resolveRoutableAgent(requestedAgentId);
+    const agent = await resolveFrontDoorAgent(requestedAgentId);
     if (!agent) {
-      await ReflexModel.recordDecision({ ...base, status: 'below_threshold', result: `agent "${ requestedAgentId }" is not usable` });
+      await ReflexModel.recordDecision({ ...base, status: 'below_threshold', result: `agent "${ requestedAgentId }" is not a usable front-door agent` });
       return null;
     }
 
-    const switched = agent.agentId !== 'sulla';
+    const switched = !isSullaRoute(agent.agentId);
     const decisionId = await ReflexModel.recordDecision({
       ...base,
       status: switched ? 'acted' : 'below_threshold',

@@ -3,7 +3,7 @@
 // and heartbeat channels to the default agent via GraphRegistry.
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
-import { applyThreadAgentRoute, resolveRoutableAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
+import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
@@ -275,11 +275,14 @@ export class BackendGraphWebSocketService {
     const explicitAgentId = typeof overrideAgentId === 'string' ? overrideAgentId.trim() : '';
     const defaultAgentId = await getAgentIdForTrigger(triggerType) || channelId;
     let agentId = explicitAgentId || defaultAgentId;
-    let newRoute: { prediction: ReflexRouteResult; agent: RoutableAgent } | null = null;
+    let newRoute: { prediction: ReflexRouteResult | null; agent: RoutableAgent } | null = null;
 
     // The renderer allocates a threadId before its first send, so first-turn
     // detection must use actual graph/saved history rather than !threadIdFromMsg.
     // Explicit persona picks always win, and only the human desktop chat may route.
+    // A confident Reflex match picks a front-door agent; otherwise the chat
+    // opens on the default front door (account-manager, else Sulla). Either
+    // way the choice is stored on the thread so it stays sticky.
     if (!explicitAgentId && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
       const liveState = GraphRegistry.get(threadId)?.state;
       const priorState = liveState ?? await loadThreadState(threadId);
@@ -289,12 +292,11 @@ export class BackendGraphWebSocketService {
         agentId = rememberedAgentId;
       } else if (!priorState || priorState.messages.length === 0) {
         const prediction = await routeChatAgent(message, threadId);
-        if (prediction) {
-          const routedAgent = await resolveRoutableAgent(prediction.agentId);
-          if (routedAgent && routedAgent.graphAgentId !== defaultAgentId) {
-            agentId = routedAgent.graphAgentId;
-            newRoute = { prediction, agent: routedAgent };
-          }
+        const predictedAgent = prediction ? await resolveFrontDoorAgent(prediction.agentId) : null;
+        const routedAgent = predictedAgent ?? await resolveDefaultRouteAgent();
+        if (routedAgent.graphAgentId !== defaultAgentId) {
+          agentId = routedAgent.graphAgentId;
+          newRoute = { prediction: predictedAgent ? prediction : null, agent: routedAgent };
         }
       }
     }
@@ -321,8 +323,9 @@ export class BackendGraphWebSocketService {
             threadId,
             agentId:    newRoute.agent.agentId,
             name:       newRoute.agent.name,
-            confidence: newRoute.prediction.confidence,
-            decisionId: newRoute.prediction.decisionId,
+            confidence: newRoute.prediction?.confidence ?? null,
+            decisionId: newRoute.prediction?.decisionId ?? null,
+            reason:     newRoute.prediction ? 'reflex' : 'default',
           },
           timestamp: Date.now(),
         });

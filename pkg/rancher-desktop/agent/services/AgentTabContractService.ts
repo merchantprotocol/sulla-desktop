@@ -6,6 +6,7 @@ import { postgresClient } from '../database/PostgresClient';
 import { GraphRegistry, nextThreadId } from './GraphRegistry';
 import { applyThreadAgentRoute, resolveRoutableAgent, SULLA_DESKTOP_CHANNEL_ID } from './ChatAgentRouting';
 import { getWebSocketClientService } from './WebSocketClientService';
+import { safeFinishDelegationByRef } from '../database/models/AgentDelegationModel';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 
 import { getWindow } from '@pkg/window';
@@ -338,6 +339,7 @@ export class AgentTabContractService {
         },
       },
     });
+    await safeFinishDelegationByRef(updated.id, { outcome: 'completed', resultDelivered: true });
     return updated;
   }
 

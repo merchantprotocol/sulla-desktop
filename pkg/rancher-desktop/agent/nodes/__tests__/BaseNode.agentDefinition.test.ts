@@ -45,6 +45,7 @@ describe('runtime agent prompt resolution', () => {
       cost_tier:               null,
       can_call:                [],
       is_builtin:              false,
+      front_door:              null,
       builtin_hash:            null,
       created_at:              new Date(0).toISOString(),
       updated_at:              new Date(0).toISOString(),

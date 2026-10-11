@@ -42,6 +42,7 @@ function row(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     updated_at:              '2026-10-11T00:00:00.123Z',
     ...content,
     is_builtin:              true,
+    front_door:              null,
     builtin_hash:            bundleHash,
     ...overrides,
   };

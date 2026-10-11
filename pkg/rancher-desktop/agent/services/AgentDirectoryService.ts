@@ -25,6 +25,8 @@ export interface AgentDirectoryCard {
   returns:       string;
   costTier:      AgentCostTier | null;
   canCall:       string[];
+  /** Reflex may route a new chat straight to this agent. */
+  frontDoor:     boolean;
   provider:      string | null;
   model:         string | null;
   builtin:       boolean;
@@ -58,6 +60,17 @@ export function isActiveAgent(agent: AgentDefinition): boolean {
   return agent.enabled && agent.status !== 'archive';
 }
 
+/**
+ * Front-door agents are the ones Reflex may route a brand-new chat to. The
+ * front_door column wins; rows without it fall back to config.frontDoor /
+ * config.front_door so imported or hand-made agents can opt in too.
+ */
+export function isFrontDoorAgent(agent: AgentDefinition): boolean {
+  if (typeof agent.front_door === 'boolean') return agent.front_door;
+  const config = agent.config ?? {};
+  return config.frontDoor === true || config.front_door === true;
+}
+
 export function toDirectoryCard(agent: AgentDefinition): AgentDirectoryCard {
   return {
     slug:          agent.slug,
@@ -69,6 +82,7 @@ export function toDirectoryCard(agent: AgentDefinition): AgentDirectoryCard {
     returns:       agent.returns,
     costTier:      agent.cost_tier,
     canCall:       agent.can_call,
+    frontDoor:     isFrontDoorAgent(agent),
     provider:      agent.provider,
     model:         agent.model,
     builtin:       agent.is_builtin,

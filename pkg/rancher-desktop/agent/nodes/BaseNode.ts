@@ -737,8 +737,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|reflex_context|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|reflex_context|routine_digest|lane_health)>/;
+    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|reflex_context|team_directory|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|reflex_context|team_directory|routine_digest|lane_health)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;
@@ -788,6 +788,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['skills_observations', 'skillsObservationContext'],
       ['conversation_context', 'conversationContext'],
       ['reflex_context', 'reflexContext'],
+      ['team_directory', 'teamDirectoryContext'],
     ];
     const blocks = fields.flatMap(([tag, key]) => {
       const value = key === 'conversationContext'

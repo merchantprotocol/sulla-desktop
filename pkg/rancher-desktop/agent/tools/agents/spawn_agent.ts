@@ -2,10 +2,20 @@ import { BaseTool, ToolResponse } from '../base';
 import { extractAgentTurnOutcome } from './agentTurnOutcome';
 import { emitSubAgentExchange } from './jobExchange';
 import { abortJob, createJob, completeJob, deleteJob, failJob, getJobAbortSignal, markCompletionDelivered, updateJobTask } from './jobRegistry';
+import {
+  delegationSituation,
+  delegationTaskId,
+  safeFinishDelegation,
+  safeMarkDelegationsDelivered,
+  safeRejectDelegation,
+  safeStartDelegation,
+  type AgentDelegationStart,
+} from '../../database/models/AgentDelegationModel';
 import { combineAborts } from '../../services/AbortService';
 import { agentDefinitionService } from '../../services/AgentDefinitionService';
 import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
+import { resolveAgentIdentity } from '../../utils/agentIdentity';
 
 import type { AgentJobResult, AgentJobTask } from './jobRegistry';
 
@@ -46,6 +56,26 @@ export class SpawnAgentWorker extends BaseTool {
     if (state) this.setState(state);
 
     return this._validatedCall(input);
+  }
+
+  /** Delegation-log row for one task of this call (outcome log for routing). */
+  private delegationFor(task: SpawnTask, extra: Partial<AgentDelegationStart> = {}): AgentDelegationStart {
+    const metadata = this.state?.metadata;
+    const parentChannel = metadata?.wsChannel || 'sulla-desktop';
+    return {
+      via:            'spawn_agent',
+      parentAgentId:  resolveAgentIdentity(metadata) || parentChannel,
+      parentThreadId: metadata?.threadId ?? null,
+      childAgentId:   taskAgentSelector(task) || parentChannel,
+      taskId:         delegationTaskId(task.projectTaskId, metadata),
+      situation:      delegationSituation(this.state?.messages),
+      brief:          typeof task.prompt === 'string' ? task.prompt : '',
+      ...extra,
+    };
+  }
+
+  private async rejectTasks(tasks: SpawnTask[], reason: string): Promise<void> {
+    await Promise.all(tasks.map(task => safeRejectDelegation(this.delegationFor(task), reason)));
   }
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
@@ -89,6 +119,7 @@ export class SpawnAgentWorker extends BaseTool {
 
       const selector = taskAgentSelector(tasks[i]);
       if (selector && !await agentDefinitionService.findBySlug(selector)) {
+        await this.rejectTasks([tasks[i]], `unknown agent "${ selector }"`);
         return {
           successBoolean: false,
           responseString: `Task at index ${ i } references agent "${ selector }" but no enabled agent definition exists. Use a valid agentId (or omit it to use the default agent).`,
@@ -104,6 +135,7 @@ export class SpawnAgentWorker extends BaseTool {
     const parentDepth: number = (this.state)?.metadata?.subAgentDepth ?? 0;
 
     if (parentDepth >= MAX_DEPTH) {
+      await this.rejectTasks(tasks, `sub-agent depth limit (${ MAX_DEPTH }) reached`);
       return {
         successBoolean: false,
         responseString: `Sub-agent depth limit reached (${ MAX_DEPTH }). Cannot spawn further sub-agents. Complete your work and return results to the parent agent.`,
@@ -133,6 +165,8 @@ export class SpawnAgentWorker extends BaseTool {
     let jobAbortSignal: AbortSignal | undefined;
     // Set once a job exists; its id is the dead-run activity key for the job.
     let activityJobId: string | undefined;
+    // Delegation-log row per task index, so delivery can be recorded later.
+    const delegationIds: (string | null)[] = [];
 
     // ── Task ownership ──────────────────────────────────────────
     // A job that works a Projects task owns it for its whole run. Ownership is
@@ -158,6 +192,7 @@ export class SpawnAgentWorker extends BaseTool {
         refusal = `Not launched: could not take ownership of ${ Object.keys(assignees).join(', ') } (${ (err as Error).message }).`;
       }
       if (refusal) {
+        await this.rejectTasks(tasks, refusal);
         deleteJob(ownershipJob.jobId);
         return { successBoolean: false, responseString: refusal };
       }
@@ -169,6 +204,8 @@ export class SpawnAgentWorker extends BaseTool {
       const label = task.label || selector || `task-${ index }`;
       const agentConfigChannel = selector || parentChannel;
       const threadId = `spawn-agent-${ label.replace(/\s+/g, '-').toLowerCase() }-${ Date.now() }-${ index }`;
+      const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId: threadId, refId: activityJobId ?? null }));
+      delegationIds[index] = delegationId;
 
       if (activityJobId) {
         await updateJobTask(activityJobId, index, { status: 'running', threadId, startedAt: Date.now() });
@@ -245,6 +282,10 @@ export class SpawnAgentWorker extends BaseTool {
           output: text,
           threadId,
         };
+        await safeFinishDelegation(delegationId, {
+          outcome: status === 'completed' ? 'completed' : 'failed',
+          detail:  status === 'completed' ? '' : `${ status }: ${ text }`,
+        });
         if (activityJobId) {
           await updateJobTask(activityJobId, index, { status, threadId, finishedAt: Date.now() });
           await emitSubAgentExchange(parentChannel, parentThreadId, {
@@ -263,6 +304,7 @@ export class SpawnAgentWorker extends BaseTool {
       } catch (err) {
         const output = `Error: ${ (err as Error).message }`;
         const stopped = jobAbortSignal?.aborted === true;
+        await safeFinishDelegation(delegationId, { outcome: 'failed', detail: `${ stopped ? 'stopped' : 'error' }: ${ output }` });
         if (activityJobId) {
           await updateJobTask(activityJobId, index, { status: stopped ? 'stopped' : 'error', threadId, finishedAt: Date.now() });
           await emitSubAgentExchange(parentChannel, parentThreadId, {
@@ -363,7 +405,10 @@ export class SpawnAgentWorker extends BaseTool {
           // re-invokes it — the results would strand and the orchestrator would
           // report that the sub-agents "died".
           const delivered = await wakeParentGraph(parentChannel, parentThreadId, job.jobId, results);
-          if (delivered) await markCompletionDelivered(job.jobId);
+          if (delivered) {
+            await markCompletionDelivered(job.jobId);
+            await safeMarkDelegationsDelivered(delegationIds);
+          }
         })
         .catch(async(err) => {
           failJob(job.jobId, (err as Error).message);
@@ -411,6 +456,7 @@ export class SpawnAgentWorker extends BaseTool {
     // ownership record needs settling, not a background wake.
     await completeJob(syncJob.jobId, results);
     await markCompletionDelivered(syncJob.jobId);
+    await safeMarkDelegationsDelivered(delegationIds);
 
     const allSuccess = results.every(r => r.status === 'completed');
 

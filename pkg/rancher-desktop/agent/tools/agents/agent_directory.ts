@@ -48,6 +48,7 @@ export class AgentDirectoryWorker extends BaseTool {
           ...(card.costTier ? { costTier: card.costTier } : {}),
           ...(card.canCall.length ? { canCall: card.canCall } : {}),
           ...(card.model ? { model: card.model } : {}),
+          ...(card.frontDoor ? { frontDoor: true } : {}),
           ...(card.builtin ? { builtin: true } : {}),
           ...(!card.enabled || card.status === 'archive' ? { inactive: true, status: card.status, enabled: card.enabled } : {}),
         })),

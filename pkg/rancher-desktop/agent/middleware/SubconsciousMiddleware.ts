@@ -24,8 +24,10 @@ import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '.
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
 import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
+import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { sanitizeConversationContext } from '../utils/conversationContext';
 import { formatDateOnly } from '../utils/formatDateOnly';
+import { latestUserText } from '../utils/latestUserText';
 import { extractRecallTerms } from '../utils/recallTerms';
 
 import Logging from '@pkg/utils/logging';
@@ -143,6 +145,7 @@ export async function runSubconsciousMiddleware(
   //                             marker in case activeWorkflow hasn't
   //                             landed yet.
   const meta = state.metadata as any;
+  meta.teamDirectoryContext = '';
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     console.log('[SubconsciousMiddleware] Skipped — running inside a workflow');
     return;
@@ -307,6 +310,17 @@ export async function runSubconsciousMiddleware(
     launched.push('conversation-reader');
     const conversationRecallPromise = runConversationReader(state);
     awaitedTasks.push(timed('conversation-reader', 'Recalling prior conversations', conversationRecallPromise.then(ctx => { (state.metadata as any).conversationContext = ctx })));
+  }
+
+  // R10. Team recall — lead agents (non-empty can_call) get a Team directory
+  // ranked by the current situation (plus the shared "Calling your team"
+  // section when their prompt lacks it), injected as <team_directory>.
+  // Keyword ranking over one table read: no LLM call, bounded size. It
+  // suggests; the lead agent decides.
+  const teamAgentSlug = resolveAgentIdentity(state.metadata);
+  if (teamAgentSlug) {
+    launched.push('team-recall');
+    awaitedTasks.push(runTeamRecall(state, teamAgentSlug));
   }
 
   console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
@@ -859,6 +873,19 @@ async function runIdentityObserver(state: BaseThreadState, domain: string): Prom
     console.log(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Completed in ${ Date.now() - startTime }ms | iterations: ${ iterations }, status: ${ agentMeta.status }`);
   } catch (error) {
     console.error(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/** Best effort: a directory read failure just means no team block this turn. */
+async function runTeamRecall(state: BaseThreadState, agentSlug: string): Promise<void> {
+  try {
+    const { buildTeamRecallContext } = await import('../services/AgentTeamRecall');
+    (state.metadata as any).teamDirectoryContext = await buildTeamRecallContext({
+      agentSlug,
+      text: latestUserText(state.messages),
+    });
+  } catch (err) {
+    console.warn('[SubconsciousMiddleware] team recall failed:', err instanceof Error ? err.message : err);
   }
 }
 

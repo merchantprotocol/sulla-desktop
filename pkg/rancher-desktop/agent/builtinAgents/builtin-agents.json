@@ -8,6 +8,7 @@
       "provider": "claude-code",
       "model": "claude-opus-5-5",
       "card": {
+        "frontDoor": true,
         "whenToCall": "A new chat starts (it is the default front door); the human brings a goal that is vague, multi-step, multi-specialist, or spans more than a few hours; another agent's work needs to go back to the human as a decision or a result",
         "whenNotToCall": "You are already working under it: return your result to it instead of calling it (no ping-pong); a clear, single-lane task another agent can do directly from its brief",
         "send": "The human's request in their own words; any existing Projects project or task id; what has already been done or tried",
@@ -55,6 +56,7 @@
       "provider": "claude-code",
       "model": "claude-opus-5-5",
       "card": {
+        "frontDoor": true,
         "whenToCall": "A Charter is agreed and the work spans more than a day or more than one specialist; a project blew its budget or horizon and needs a re-plan; someone asks how long something will take or what the milestones are",
         "whenNotToCall": "Small jobs a lead can just do; there is no Charter or clear outcome yet (interview first); you need the work built (it only plans)",
         "send": "The Projects project id whose description holds the Charter (plus the goal's epic id if it lives in a shared project); repos, existing work, deadlines and budget you know about",
@@ -89,6 +91,7 @@
       "provider": "claude-code",
       "model": "claude-opus-5-5",
       "card": {
+        "frontDoor": true,
         "whenToCall": "Weekly on any project running longer than about a week; a budget breaker may have tripped or numbers look off track; decisions are piling up and need sorting into decide-now vs needs-the-human",
         "whenNotToCall": "Short or one-off jobs; to manage or launch workers (it only checks, decides, logs and reports); as a relay to pass messages between agents",
         "send": "The Projects project id (plus the goal's epic id if it lives in a shared project); it reads the Charter, plan, epics, tasks and comments there; what happened since its last run: job results, PRs, deploys",
@@ -123,6 +126,7 @@
       "provider": "claude-code",
       "model": "claude-opus-5-5",
       "card": {
+        "frontDoor": true,
         "whenToCall": "A software change bigger than one small PR, or one that needs several workers; a goal needs code built, reviewed, merged, deployed and verified end to end; code work is stuck across several PRs or workers",
         "whenNotToCall": "A one-line fix or a code question (do it yourself or use one worker); testing an app without changing it (ui-test-manager); UI look-and-feel exploration (mockup-designer)",
         "send": "The goal, its Projects task id(s) and the Charter (or its project id); repo(s) and target branch/environment; done-means checks and what is off limits; mockup decisions already made, if UI is involved",
@@ -164,6 +168,7 @@
       "provider": "claude-code",
       "model": "claude-opus-5-5",
       "card": {
+        "frontDoor": true,
         "whenToCall": "A Charter or plan is about to start (find human-only dependencies while the human is still around); work is stuck and the cause or the way around it is not obvious (live-blocker mode); before an irreversible step that needs a restore point and undo plan",
         "whenNotToCall": "Trivial tasks with no external dependencies; to write the plan itself (that is project-planner)",
         "send": "The Charter or plan, or the Projects project id that holds them; repos and target environments; for live-blocker mode: what is stuck, the exact error, what was tried",
@@ -196,6 +201,7 @@
       "provider": "claude-code",
       "model": "claude-opus-5-5",
       "card": {
+        "frontDoor": true,
         "whenToCall": "An app or feature needs real end-to-end testing in the browser; independent verification of something a builder says is done (validation contract checks); before a release, to find what is broken",
         "whenNotToCall": "Unit tests, lint or typechecks; fixing the bugs it finds (send its report to coding-manager); pure code review",
         "send": "App/repo, branch or PR, and environment to test; areas and user roles in scope; done-means checks to verify; test accounts available (never real customer data)",
@@ -233,6 +239,7 @@
       "provider": "claude-code",
       "model": "claude-opus-5-5",
       "card": {
+        "frontDoor": false,
         "whenToCall": "Hard bugs where cheaper workers failed; multi-source research or synthesis into a decision; architecture or design writing; high-stakes writing",
         "whenNotToCall": "Simple lookups or routine edits (cheaper workers); work needing its own team (it does not spawn agents)",
         "send": "Full self-contained goal, context and paths; what has been tried; output shape wanted",
@@ -265,6 +272,7 @@
       "provider": "claude-code",
       "model": "claude-sonnet-5",
       "card": {
+        "frontDoor": false,
         "whenToCall": "Normal implementation work when Codex is unavailable or over quota; tasks that need Claude-specific tooling at mid cost",
         "whenNotToCall": "Hard debugging or architecture (opus-worker); trivial lookups (haiku-worker)",
         "send": "Repo, branch name, exact task and files; acceptance checks",
@@ -297,6 +305,7 @@
       "provider": "claude-code",
       "model": "claude-haiku-5-5",
       "card": {
+        "frontDoor": false,
         "whenToCall": "Lookups, summaries, small edits, simple checks; running a scripted test or user story; fallback when Codex is unavailable for small tasks",
         "whenNotToCall": "Anything needing judgment, design or debugging; multi-file changes",
         "send": "Exact task, inputs and paths; precise output format",
@@ -329,6 +338,7 @@
       "provider": "codex",
       "model": "gpt-5.6-sol",
       "card": {
+        "frontDoor": false,
         "whenToCall": "Critical-path or tricky coding chunks; a task Luna failed or would likely thrash on",
         "whenNotToCall": "Simple, well-scoped chunks (codex-luna-worker is cheaper); non-code work",
         "send": "Repo, branch name, exact task and files; acceptance checks; what failed before, if this is an escalation",
@@ -361,6 +371,7 @@
       "provider": "codex",
       "model": "gpt-5.6-luna",
       "card": {
+        "frontDoor": false,
         "whenToCall": "A well-scoped coding task with clear files and acceptance checks; default implementation worker for most PR-sized chunks",
         "whenNotToCall": "Ambiguous or architecture-heavy work (codex-sol-worker or opus-worker); work outside a git repo",
         "send": "Repo, branch name, exact task and files; acceptance checks; existing PR to continue, if any",
@@ -393,6 +404,7 @@
       "provider": "claude-code",
       "model": "claude-fable-5-1",
       "card": {
+        "frontDoor": true,
         "whenToCall": "Before building or changing UI, so the human can pick a direction; the human asks to see layouts, wireframes or design options",
         "whenNotToCall": "Wiring UI into the product (coding-manager); charts of real data (analytics-worker)",
         "send": "Screen and problem to solve, who uses it; paths to the real schema and design-token CSS; number of variations and exact output paths; reference screenshots if any",
@@ -425,6 +437,7 @@
       "provider": "claude-code",
       "model": "claude-opus-5-5",
       "card": {
+        "frontDoor": true,
         "whenToCall": "A question needs real numbers: trends, comparisons, breakdowns, KPIs; a scorecard number needs real analysis; the human wants a chart or dashboard",
         "whenNotToCall": "A single number you can read with one cheap query yourself; writing to source data (it is read-only)",
         "send": "The question and the decision it serves; data sources (tables, files, integrations) and time window/time zone; comparison period or target",

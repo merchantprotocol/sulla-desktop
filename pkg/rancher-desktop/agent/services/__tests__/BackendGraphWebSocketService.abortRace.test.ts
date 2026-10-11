@@ -22,6 +22,8 @@ function deferred<T = void>(): Deferred<T> {
 const sendMock: any = jest.fn();
 const executeMock: any = jest.fn();
 const routeChatAgentMock: any = jest.fn(() => Promise.resolve(null));
+const sullaRoute = { agentId: 'sulla', graphAgentId: 'sulla-desktop', name: 'Sulla' };
+const resolveDefaultRouteAgentMock: any = jest.fn(() => Promise.resolve(sullaRoute));
 const loadThreadStateMock: any = jest.fn(() => Promise.resolve(null));
 const saveThreadStateMock: any = jest.fn(() => Promise.resolve());
 const state: any = {
@@ -86,7 +88,9 @@ jest.unstable_mockModule('../../reflex/ReflexService', () => ({
 }));
 
 jest.unstable_mockModule('../ChatAgentRouting', () => ({
-  resolveRoutableAgent: jest.fn((agentId: string) => Promise.resolve(
+  SULLA_DESKTOP_CHANNEL_ID: 'sulla-desktop',
+  resolveDefaultRouteAgent: resolveDefaultRouteAgentMock,
+  resolveFrontDoorAgent:    jest.fn((agentId: string) => Promise.resolve(
     agentId === 'sulla'
       ? { agentId: 'sulla', graphAgentId: 'sulla-desktop', name: 'Sulla' }
       : { agentId, graphAgentId: agentId, name: agentId === 'analytics-worker' ? 'Analytics Worker' : agentId },
@@ -115,6 +119,8 @@ describe('BackendGraphWebSocketService interruption ownership', () => {
     sendMock.mockReset();
     routeChatAgentMock.mockReset();
     routeChatAgentMock.mockResolvedValue(null);
+    resolveDefaultRouteAgentMock.mockReset();
+    resolveDefaultRouteAgentMock.mockResolvedValue(sullaRoute);
     loadThreadStateMock.mockReset();
     loadThreadStateMock.mockResolvedValue(null);
     saveThreadStateMock.mockClear();
@@ -134,7 +140,9 @@ describe('BackendGraphWebSocketService interruption ownership', () => {
     await svc.dispatchToAgent('sulla-desktop', 'sulla-desktop', 'chart weekly revenue', 'route-thread');
     expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('analytics-worker', 'route-thread');
     expect(routeChatAgentMock).toHaveBeenCalledTimes(1);
-    expect(saveThreadStateMock).toHaveBeenCalledTimes(1);
+    // The sticky route is persisted before the agent runs (a second save
+    // follows the run for tab hydration).
+    expect(saveThreadStateMock.mock.invocationCallOrder[0]).toBeLessThan(executeMock.mock.invocationCallOrder[0]);
     expect(sendMock).toHaveBeenCalledWith('sulla-desktop', expect.objectContaining({
       type: 'agent_routed',
       data: expect.objectContaining({ threadId: 'route-thread', agentId: 'analytics-worker', decisionId: 'route-1' }),
@@ -159,6 +167,27 @@ describe('BackendGraphWebSocketService interruption ownership', () => {
     await svc.dispatchToAgent('workbench', 'workbench', 'chart this', 'workbench-thread');
     expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('sulla-desktop', 'workbench-thread');
     expect(routeChatAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens an unmatched first desktop message on the default front door and keeps it', async() => {
+    const { BackendGraphWebSocketService } = await import('../BackendGraphWebSocketService');
+    const svc: any = new BackendGraphWebSocketService();
+    executeMock.mockResolvedValue(undefined);
+    resolveDefaultRouteAgentMock.mockResolvedValue({ agentId: 'account-manager', graphAgentId: 'account-manager', name: 'Account Manager' });
+
+    await svc.dispatchToAgent('sulla-desktop', 'sulla-desktop', 'I want to grow my business', 'default-thread');
+    expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('account-manager', 'default-thread');
+    // The sticky route is persisted before the agent runs (a second save
+    // follows the run for tab hydration).
+    expect(saveThreadStateMock.mock.invocationCallOrder[0]).toBeLessThan(executeMock.mock.invocationCallOrder[0]);
+    expect(sendMock).toHaveBeenCalledWith('sulla-desktop', expect.objectContaining({
+      type: 'agent_routed',
+      data: expect.objectContaining({ threadId: 'default-thread', agentId: 'account-manager', reason: 'default', decisionId: null }),
+    }));
+
+    await svc.dispatchToAgent('sulla-desktop', 'sulla-desktop', 'and what about pricing', 'default-thread');
+    expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('account-manager', 'default-thread');
+    expect(resolveDefaultRouteAgentMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not let an aborted superseded run delete the newer run abort handle', async() => {

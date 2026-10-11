@@ -118,6 +118,21 @@ export class ReflexModel {
     return inserted;
   }
 
+  /**
+   * Archive shipped (source 'seed') route examples that point at an agent the
+   * seed no longer routes to. Examples a human, model or correction taught are
+   * never touched. Returns how many rows were archived.
+   */
+  static async archiveSeedRouteExamples(agentId: string): Promise<number> {
+    const result = await postgresClient.queryWithResult(
+      `UPDATE reflex_examples SET archived = TRUE, updated_at = NOW()
+        WHERE source = 'seed' AND tool_name = 'route_agent' AND params->>'agentId' = $1 AND NOT archived`,
+      [agentId],
+    );
+    if (result.rowCount) examplesVersion++;
+    return result.rowCount ?? 0;
+  }
+
   static async forget(id: string): Promise<boolean> {
     const result = await postgresClient.queryWithResult(
       'UPDATE reflex_examples SET archived = TRUE, updated_at = NOW() WHERE id = $1 AND NOT archived',

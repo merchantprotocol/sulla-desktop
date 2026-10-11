@@ -38,6 +38,7 @@ export interface AgentMarketplaceManifest {
       returns?:       string;
       costTier?:      AgentCostTier | null;
       canCall?:       string[];
+      frontDoor?:     boolean;
     };
   };
 }
@@ -144,6 +145,7 @@ export class AgentDefinitionService {
           returns:       agent.returns,
           costTier:      agent.cost_tier,
           canCall:       agent.can_call,
+          ...(typeof agent.front_door === 'boolean' ? { frontDoor: agent.front_door } : {}),
         },
       },
     };
@@ -193,6 +195,7 @@ export class AgentDefinitionService {
           returns:       spec.directory.returns ?? '',
           costTier:      spec.directory.costTier ?? null,
           canCall:       spec.directory.canCall ?? [],
+          ...(typeof spec.directory.frontDoor === 'boolean' ? { frontDoor: spec.directory.frontDoor } : {}),
         }
         : {}),
     };

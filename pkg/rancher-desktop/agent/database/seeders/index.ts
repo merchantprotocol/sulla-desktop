@@ -4,7 +4,7 @@
 
 import { initialize as firstRunRemoteCredentialsSeeder } from './FirstRunRemoteCredentialsSeeder';
 import { initialize as observationsImportSeeder } from './ObservationsImportSeeder';
-import { initialize as reflexSeedSeeder } from './ReflexSeedSeeder';
+import { initialize as reflexSeedSeeder, initializeRouteSeed as reflexRouteSeedSeeder } from './ReflexSeedSeeder';
 import { initialize as workItemsImportSeeder } from './WorkItemsImportSeeder';
 
 // n8n user and settings seeders have been replaced by the recipe's
@@ -32,6 +32,11 @@ export const seedersRegistry = [
     // loads once on existing installs.
     name: 'reflex-seed-v2',
     run:  reflexSeedSeeder,
+  },
+  {
+    // Bump with agent/reflex/seed/route-seed.json "version".
+    name: 'reflex-route-seed-v2',
+    run:  reflexRouteSeedSeeder,
   },
   // {
   //   name: 'core-data-seed',
