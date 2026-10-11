@@ -100,12 +100,11 @@ export function normalizeKind(raw: unknown): ArtifactKind | null {
   return isArtifactKind(k) ? k : (isArtifactKind(v) ? v : null);
 }
 
-export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
 
-/** Marketplace kind for an artifact kind, or null when the kind isn't distributed there (agents). */
+/** Marketplace kind for an artifact kind. */
 export function toMarketplaceKind(kind: ArtifactKind): MarketplaceKind | null {
   if (kind === 'workflow') return 'routine';
-  if (kind === 'agent') return null;
 
   return kind;
 }
@@ -139,7 +138,7 @@ export function resolveArtifactManifestPath(kind: ArtifactKind, slug: string): s
   // Dynamic — scan.
   if (!fs.existsSync(dir)) return null;
   let entries: string[];
-  try { entries = fs.readdirSync(dir); } catch { return null; }
+  try { entries = fs.readdirSync(dir) } catch { return null }
   const pattern = layout.manifestPattern;
   if (!pattern) return null;
   const match = entries.find(name => pattern.test(name));

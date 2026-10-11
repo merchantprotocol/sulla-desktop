@@ -19,7 +19,7 @@ import { computed, ref } from 'vue';
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
 export type MarketplaceSort = 'popular' | 'newest' | 'featured';
 export type KindFilter = MarketplaceKind | 'all';
 
@@ -29,7 +29,7 @@ export interface MarketplaceDetail {
 }
 
 export interface InstallResult {
-  kind:              'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+  kind:              MarketplaceKind;
   slug:              string;
   path:              string;
   name:              string;
@@ -37,6 +37,7 @@ export interface InstallResult {
   alreadyInstalled?: boolean;
   previousVersion?:  string;
   updated?:          boolean;
+  warnings?:         string[];
 }
 
 export interface InstalledEntry {

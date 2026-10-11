@@ -1,11 +1,11 @@
 import type { ToolManifest } from '../registry';
 
-const KINDS_DESC = 'Artifact kind. One of: skill, function, routine (alias: workflow), recipe, integration. "agent" is local-only (scaffold/validate/list_local).';
+const KINDS_DESC = 'Artifact kind. One of: skill, function, routine (alias: workflow), agent, recipe, integration.';
 
 export const marketplaceToolManifests: ToolManifest[] = [
   {
     name:        'search',
-    description: 'Search the Sulla Marketplace (skills, functions, routines, recipes, integrations). Filter by free text, kind, and category. Shows version, author, download count, and whether each listing is already installed or has an update. Works without signing in.',
+    description: 'Search the Sulla Marketplace (skills, functions, routines, agents, recipes, integrations). Filter by free text, kind, and category. Shows version, author, download count, and whether each listing is already installed or has an update. Works without signing in.',
     category:    'marketplace',
     schemaDef:   {
       query:    { type: 'string', optional: true, description: 'Free-text search across artifact name + description + tags.' },
@@ -29,7 +29,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'download',
-    description: 'Install a marketplace listing into its local directory (~/sulla/<kind>s/<dir>/) using the same safe installer as the Marketplace tab. No-op if already installed; pass overwrite:true to reinstall/replace in place (rolled back on failure).',
+    description: 'Install a marketplace listing using the same safe installer as the Marketplace tab. Agents are imported into the database; other kinds land under ~/sulla/. No-op if already installed; pass overwrite:true to reinstall/replace in place.',
     category:    'marketplace',
     schemaDef:   {
       kind:      { type: 'string', description: KINDS_DESC },
@@ -66,7 +66,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'publish',
-    description: 'Submit a local artifact (~/sulla/<kind>s/<slug>/) to the Sulla Marketplace — same pipeline as the Library Publish button. Secrets and junk (.env, .git, node_modules, keys) are never uploaded. The listing is pending until an admin approves it. Requires a Sulla Cloud session (sign in from the app).',
+    description: 'Submit a local artifact to the Sulla Marketplace using the Library publish pipeline. Agents are exported from the database; other kinds come from ~/sulla/. Secrets and junk (.env, .git, node_modules, keys) are never uploaded. The listing is pending until an admin approves it. Requires a Sulla Cloud session (sign in from the app).',
     category:    'marketplace',
     schemaDef:   {
       kind:    { type: 'string', description: KINDS_DESC },
@@ -90,7 +90,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'list_local',
-    description: 'List artifacts installed locally under ~/sulla/. Filterable by kind. Useful before publishing or to see what you have.',
+    description: 'List local artifacts. Agents come from the database; other kinds are listed under ~/sulla/. Filterable by kind.',
     category:    'marketplace',
     schemaDef:   {
       kind: { type: 'string', optional: true, description: KINDS_DESC + ' Omit to list all kinds.' },

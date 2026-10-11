@@ -33,9 +33,10 @@ export class MarketplaceDownloadWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: result.updated
+        responseString: (result.updated
           ? `Updated ${ listing.name } v${ result.previousVersion } → v${ result.version } at ${ result.path }`
-          : `Installed ${ listing.name } v${ result.version } (${ result.kind }) at ${ result.path }`,
+          : `Installed ${ listing.name } v${ result.version } (${ result.kind }) at ${ result.path }`) +
+          (result.warnings?.length ? `\nWarning: ${ result.warnings.join('\nWarning: ') }` : ''),
       };
     } catch (err) {
       return { successBoolean: false, responseString: `Marketplace install failed: ${ (err as Error).message }` };

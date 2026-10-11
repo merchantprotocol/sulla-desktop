@@ -2,7 +2,7 @@ import * as fs from 'fs';
 
 import { BaseTool, ToolResponse } from '../base';
 import { getMarketplaceClient, isAuthError, SIGN_IN_HINT } from './MarketplaceClient';
-import { artifactDir, KINDS_HELP, KIND_LAYOUTS, normalizeKind, resolveArtifactManifestPath, toMarketplaceKind } from './types';
+import { artifactDir, KINDS_HELP, KIND_LAYOUTS, normalizeKind, resolveArtifactManifestPath } from './types';
 
 /**
  * Publish a local artifact folder to the marketplace using the same pipeline
@@ -25,15 +25,11 @@ export class MarketplacePublishWorker extends BaseTool {
     if (!slug) {
       return { successBoolean: false, responseString: 'Missing required field: slug.' };
     }
-    if (!toMarketplaceKind(kind)) {
-      return { successBoolean: false, responseString: 'Agents aren\'t distributed through the marketplace.' };
-    }
-
-    const dir = artifactDir(kind, slug);
-    if (!fs.existsSync(dir)) {
+    const dir = kind === 'agent' ? undefined : artifactDir(kind, slug);
+    if (dir && !fs.existsSync(dir)) {
       return { successBoolean: false, responseString: `Not found locally: ${ dir }` };
     }
-    if (KIND_LAYOUTS[kind].manifest !== 'dynamic' && !resolveArtifactManifestPath(kind, slug)) {
+    if (dir && KIND_LAYOUTS[kind].manifest !== 'dynamic' && !resolveArtifactManifestPath(kind, slug)) {
       return { successBoolean: false, responseString: `${ KIND_LAYOUTS[kind].manifest } missing in ${ dir } — run \`sulla marketplace/validate\` first.` };
     }
 
@@ -43,7 +39,8 @@ export class MarketplacePublishWorker extends BaseTool {
       return {
         successBoolean: true,
         responseString: `Submitted ${ input.kind }/${ slug } to the marketplace as ${ res.templateId } (bundle ${ res.bundle_size } bytes).\n` +
-          `Status: ${ res.status } — it goes live once an admin approves it. Track it with \`sulla marketplace/list_published '{}'\`.`,
+          `Status: ${ res.status } — it goes live once an admin approves it. Track it with \`sulla marketplace/list_published '{}'\`.` +
+          (res.warnings?.length ? `\nWarning: ${ res.warnings.join(' ') }` : ''),
       };
     } catch (err) {
       if (isAuthError(err)) return { successBoolean: false, responseString: `Publishing needs a Sulla Cloud session. ${ SIGN_IN_HINT }` };

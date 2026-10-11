@@ -185,6 +185,26 @@ export function initAgentsIpc(): void {
     return agentDefinitionService.importManifest(manifest);
   });
 
+  ipcMain.handle('agent-definitions:publish-check', async(_event, slug: string) => {
+    try {
+      const { checkAgentManifestForPublish } = await import('@pkg/main/marketplace/publish');
+
+      return checkAgentManifestForPublish(await agentDefinitionService.exportManifest(slug));
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('agent-definitions:publish', async(_event, slug: string) => {
+    try {
+      const { publishLocalArtifact } = await import('@pkg/main/marketplace/publish');
+
+      return await publishLocalArtifact({ kind: 'agent', slug });
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   ipcMain.handle('agents:list', async(): Promise<AgentsListResponse> => {
     // Gather all four data sources in parallel. Each is wrapped so a
     // failure in one never blocks the others.

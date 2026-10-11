@@ -121,6 +121,14 @@
                 <button
                   class="agent-link"
                   type="button"
+                  :disabled="publishingSlug === agent.slug"
+                  @click="publishAgent(agent)"
+                >
+                  {{ publishingSlug === agent.slug ? 'Publishing…' : 'Publish' }}
+                </button>
+                <button
+                  class="agent-link"
+                  type="button"
                   @click="exportManifest(agent)"
                 >
                   Export
@@ -444,6 +452,7 @@ const data = ref<AgentsListResponse>({
 const definitions = ref<AgentDefinitionResponse[]>([]);
 const availableModels = ref<{ providerId: string; providerName: string; modelId: string; label: string }[]>([]);
 const saving = ref(false);
+const publishingSlug = ref<string | null>(null);
 const manifestInput = ref<HTMLInputElement | null>(null);
 const editing = ref<null | { id?: string; slug: string; name: string; description: string; modelKey: string; prompt: string }>(null);
 
@@ -535,6 +544,37 @@ async function exportManifest(agent: AgentDefinitionResponse) {
   link.download = `${ agent.slug }.agent.json`;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+async function publishAgent(agent: AgentDefinitionResponse) {
+  const check = await ipcRenderer.invoke('agent-definitions:publish-check', agent.slug);
+  if ('error' in check) {
+    window.alert(`Could not check ${ agent.name } for publishing: ${ check.error }`);
+
+    return;
+  }
+  if (check.secret) {
+    window.alert(`${ agent.name } contains a possible ${ check.secret } secret. Remove it before publishing.`);
+
+    return;
+  }
+  const warning = check.warnings.length ? `\n\nWarning: ${ check.warnings.join(' ') }` : '';
+  if (!window.confirm(`Publish ${ agent.name } to the Sulla Marketplace?\n\nIts full prompt, soul, goals and prompt files will be uploaded for admin review, and anyone can install it once approved.${ warning }`)) {
+    return;
+  }
+
+  publishingSlug.value = agent.slug;
+  try {
+    const result = await ipcRenderer.invoke('agent-definitions:publish', agent.slug);
+    if ('error' in result) {
+      window.alert(`Could not publish ${ agent.name }: ${ result.error }`);
+
+      return;
+    }
+    window.alert(`${ agent.name } was submitted for marketplace review.`);
+  } finally {
+    publishingSlug.value = null;
+  }
 }
 
 async function importManifest(event: Event) {

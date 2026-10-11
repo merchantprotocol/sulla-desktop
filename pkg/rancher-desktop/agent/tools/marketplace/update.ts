@@ -41,7 +41,8 @@ export class MarketplaceUpdateWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Updated ${ listing.name } v${ result.previousVersion ?? listing.installed.version } → v${ result.version } at ${ result.path }`,
+        responseString: `Updated ${ listing.name } v${ result.previousVersion ?? listing.installed.version } → v${ result.version } at ${ result.path }` +
+          (result.warnings?.length ? `\nWarning: ${ result.warnings.join('\nWarning: ') }` : ''),
       };
     } catch (err) {
       return { successBoolean: false, responseString: `Marketplace update failed: ${ (err as Error).message }` };
