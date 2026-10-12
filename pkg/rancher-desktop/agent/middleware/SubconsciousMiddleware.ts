@@ -146,6 +146,7 @@ export async function runSubconsciousMiddleware(
   //                             landed yet.
   const meta = state.metadata as any;
   meta.teamDirectoryContext = '';
+  meta.skillRecallContext = '';
   meta.subagentDirectoryContext = '';
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     console.log('[SubconsciousMiddleware] Skipped — running inside a workflow');
@@ -322,6 +323,15 @@ export async function runSubconsciousMiddleware(
   if (teamAgentSlug) {
     launched.push('team-recall');
     awaitedTasks.push(runTeamRecall(state, teamAgentSlug));
+  }
+
+  // R12. Skill recall — installed skills (skill_definitions) whose title,
+  // triggers, tags or description match the current turn, injected as
+  // <installed_skills>. Keyword ranking over one table read: no LLM call.
+  // It suggests; the agent decides whether to load one.
+  if (options.includeObservations && analyzable) {
+    launched.push('skill-recall');
+    awaitedTasks.push(runSkillRecall(state));
   }
 
   // R11. Subagent directory — any agent with children on this thread sees each
@@ -895,6 +905,16 @@ async function runTeamRecall(state: BaseThreadState, agentSlug: string): Promise
     });
   } catch (err) {
     console.warn('[SubconsciousMiddleware] team recall failed:', err instanceof Error ? err.message : err);
+  }
+}
+
+/** Best effort: a table read failure just means no installed-skills block this turn. */
+async function runSkillRecall(state: BaseThreadState): Promise<void> {
+  try {
+    const { buildSkillRecallContext } = await import('../services/SkillRecall');
+    (state.metadata as any).skillRecallContext = await buildSkillRecallContext(recentUserTexts(state, 2).join('\n'));
+  } catch (err) {
+    console.warn('[SubconsciousMiddleware] skill recall failed:', err instanceof Error ? err.message : err);
   }
 }
 
