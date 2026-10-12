@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import yaml from 'js-yaml';
 
+import type { SkillFile } from '../database/models/SkillDefinitionModel';
+
 export type SkillSource = 'database' | 'filesystem';
 
 export interface SkillManifest {
@@ -57,11 +59,14 @@ export class SkillService {
   readonly source:   SkillSource;
   readonly manifest: SkillManifest;
   readonly document: string;
+  /** Extra files of a database skill (relative path → content). */
+  readonly files:    Record<string, SkillFile>;
 
-  private constructor(source: SkillSource, manifest: SkillManifest, document: string) {
+  private constructor(source: SkillSource, manifest: SkillManifest, document: string, files: Record<string, SkillFile> = {}) {
     this.source = source;
     this.manifest = manifest;
     this.document = document;
+    this.files = files;
   }
 
   static fromRaw(source: SkillSource, fallbackSlug: string, rawContent: string): SkillService | null {
@@ -81,7 +86,7 @@ export class SkillService {
     }, parsed.document);
   }
 
-  static fromParts(source: SkillSource, manifest: SkillManifest, document: string): SkillService | null {
+  static fromParts(source: SkillSource, manifest: SkillManifest, document: string, files: Record<string, SkillFile> = {}): SkillService | null {
     const slug = String(manifest.slug || '').trim();
     const title = String(manifest.title || '').trim();
     if (!slug || !title) return null;
@@ -90,7 +95,16 @@ export class SkillService {
       ...manifest,
       slug,
       title,
-    }, String(document || ''));
+    }, String(document || ''), files);
+  }
+
+  /** Text of one of this skill's stored files, or null when it is not stored here. */
+  getStoredFile(resourcePath: string): string | null {
+    const key = String(resourcePath || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+    const file = this.files[key];
+    if (typeof file === 'string') return file;
+    if (file && file.encoding === 'base64') return Buffer.from(String(file.content ?? ''), 'base64').toString('utf8');
+    return null;
   }
 
   get slug(): string {
@@ -244,6 +258,11 @@ export class SkillService {
 
     const loaded: SkillLoadedResource[] = [];
     for (const resource of loadableResources) {
+      const stored = this.getStoredFile(resource.path);
+      if (stored !== null) {
+        loaded.push({ type: resource.type, path: resource.path, content: stored });
+        continue;
+      }
       const candidates = this.resolveResourcePaths(resource.path);
       for (const absolutePath of candidates) {
         try {
@@ -260,7 +279,7 @@ export class SkillService {
       }
     }
 
-    const discoveredResources = await this.loadDiscoveredTemplateAndResourceFiles();
+    const discoveredResources = [...this.storedTemplateAndResourceFiles(), ...await this.loadDiscoveredTemplateAndResourceFiles()];
     const dedupeKey = (resource: SkillLoadedResource): string => {
       const type = String(resource.type || '').toLowerCase();
       const resourcePath = String(resource.path || '').trim();
@@ -285,6 +304,9 @@ export class SkillService {
     const prdResource = templateResources.find((resource) => /(^|\/)prd\.[^/]+$/i.test(String(resource.path || '').trim())) ||
       templateResources[0];
     if (!prdResource) return '';
+
+    const stored = this.getStoredFile(prdResource.path);
+    if (stored !== null) return stored.trim();
 
     const candidates = this.resolveResourcePaths(prdResource.path);
     for (const absolutePath of candidates) {
@@ -365,6 +387,18 @@ export class SkillService {
     );
     const match = this.document.match(sectionRegex);
     return match?.[1]?.trim() || '';
+  }
+
+  /** templates/ and resources/ files stored with a database skill. */
+  private storedTemplateAndResourceFiles(): SkillLoadedResource[] {
+    return Object.keys(this.files)
+      .filter(key => /^(templates|resources)\//.test(key))
+      .sort()
+      .map(key => ({
+        type:    key.startsWith('templates/') ? 'template' : 'resource',
+        path:    key,
+        content: this.getStoredFile(key) ?? '',
+      }));
   }
 
   private async loadDiscoveredTemplateAndResourceFiles(): Promise<SkillLoadedResource[]> {

@@ -34,6 +34,20 @@ export class MarketplaceValidateWorker extends BaseTool {
         : { successBoolean: true, responseString: `✓ agent/${ slug } passes sulla/v3 Agent manifest validation.` };
     }
 
+    // Skills live in the database: validate the row exported as a folder.
+    if (kind === 'skill') {
+      const { exportSkillToTempDir } = await import('../../services/SkillDefinitionService');
+      const exported = await exportSkillToTempDir(slug).catch(() => null);
+      if (exported) {
+        try {
+          const manifestPath = path.join(exported.dir, 'SKILL.md');
+          return formatValidation(kind, slug, await validateByKind(kind, slug, exported.dir, fs.readFileSync(manifestPath, 'utf-8'), manifestPath));
+        } finally {
+          exported.cleanup();
+        }
+      }
+    }
+
     const dir = artifactDir(kind, slug);
     if (!fs.existsSync(dir)) {
       return { successBoolean: false, responseString: `Not installed locally: ${ dir }` };
@@ -59,21 +73,24 @@ export class MarketplaceValidateWorker extends BaseTool {
     const result = await validateByKind(kind, slug, dir, manifestRaw, manifestPath);
     issues.push(...result);
 
-    // Filter out advisory notes (they aren't failures, just guidance).
-    const errors = issues.filter(i => !i.startsWith('Note:'));
-    const notes = issues.filter(i => i.startsWith('Note:'));
-
-    if (errors.length === 0) {
-      const noteSection = notes.length > 0 ? `\n${ notes.map(n => `  ℹ ${ n }`).join('\n') }` : '';
-      return { successBoolean: true, responseString: `✓ ${ kind }/${ slug } passes validation.${ noteSection }` };
-    }
-
-    const noteSection = notes.length > 0 ? `\n${ notes.map(n => `  ℹ ${ n }`).join('\n') }` : '';
-    return {
-      successBoolean: false,
-      responseString: `${ kind }/${ slug } has ${ errors.length } issue(s):\n${ errors.map(i => `  ✗ ${ i }`).join('\n') }${ noteSection }`,
-    };
+    return formatValidation(kind, slug, issues);
   }
+}
+
+function formatValidation(kind: ArtifactKind, slug: string, issues: string[]): ToolResponse {
+  // Filter out advisory notes (they aren't failures, just guidance).
+  const errors = issues.filter(i => !i.startsWith('Note:'));
+  const notes = issues.filter(i => i.startsWith('Note:'));
+  const noteSection = notes.length > 0 ? `\n${ notes.map(n => `  ℹ ${ n }`).join('\n') }` : '';
+
+  if (errors.length === 0) {
+    return { successBoolean: true, responseString: `✓ ${ kind }/${ slug } passes validation.${ noteSection }` };
+  }
+
+  return {
+    successBoolean: false,
+    responseString: `${ kind }/${ slug } has ${ errors.length } issue(s):\n${ errors.map(i => `  ✗ ${ i }`).join('\n') }${ noteSection }`,
+  };
 }
 
 async function validateByKind(

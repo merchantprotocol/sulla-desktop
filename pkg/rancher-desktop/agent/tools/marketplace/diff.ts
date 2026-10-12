@@ -32,10 +32,16 @@ export class MarketplaceDiffWorker extends BaseTool {
       return { successBoolean: false, responseString: `Could not fetch marketplace copy: ${ (err as Error).message }` };
     }
 
+    let exported: { dir: string; cleanup: () => void } | null = null;
     try {
       if (kind === 'agent') return await diffAgent(slug, latest);
 
-      const localDir = latest.listing.installed?.path ?? artifactDir(kind, slug);
+      // Skills live in the database: compare the row exported as a folder.
+      if (kind === 'skill') {
+        const { exportSkillToTempDir } = await import('../../services/SkillDefinitionService');
+        exported = await exportSkillToTempDir(slug).catch(() => null);
+      }
+      const localDir = exported?.dir ?? latest.listing.installed?.path ?? artifactDir(kind, slug);
       if (!fs.existsSync(localDir)) {
         return { successBoolean: false, responseString: `Not installed locally: ${ localDir }` };
       }
@@ -72,6 +78,7 @@ export class MarketplaceDiffWorker extends BaseTool {
 
       return { successBoolean: true, responseString: lines.join('\n') };
     } finally {
+      exported?.cleanup();
       latest.cleanup();
     }
   }

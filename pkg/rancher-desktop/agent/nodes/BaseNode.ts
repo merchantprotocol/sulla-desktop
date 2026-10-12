@@ -337,6 +337,36 @@ export interface AgentPromptLoadResult {
 }
 
 /**
+ * Index of the skills assigned to an agent (agent_definitions.skill_refs),
+ * resolved through the skills registry, which reads the skill_definitions
+ * table. Lists title + description; the agent loads the full skill on demand.
+ */
+export async function buildAssignedSkillsSection(skillRefs: string[] | undefined): Promise<string> {
+  const refs = Array.from(new Set((skillRefs ?? []).map(ref => String(ref).trim()).filter(Boolean)));
+  if (refs.length === 0) return '';
+  try {
+    const { skillsRegistry } = await import('../database/registry/SkillsRegistry');
+    const lines: string[] = [];
+    for (const slug of refs) {
+      const skill = await skillsRegistry.getSkill(slug);
+      lines.push(skill
+        ? `- **${ skill.name }** (\`${ slug }\`): ${ skill.description }`
+        : `- \`${ slug }\` (assigned, but not installed or disabled)`);
+    }
+    return [
+      '## Your skills',
+      '',
+      `These skills are assigned to you. Before you use one, load it in full with \`sulla skills/skill_get '{"slug":"<slug>"}'\` and follow it.`,
+      '',
+      ...lines,
+    ].join('\n');
+  } catch (err) {
+    console.warn('[BaseNode] Failed to load assigned skills:', err);
+    return '';
+  }
+}
+
+/**
  * Load agent .md files and split them into section overrides vs generic prompt content.
  * Files whose basename (minus .md) matches a registered section ID become overrides.
  * All other .md files are concatenated as generic prompt content.
@@ -382,6 +412,10 @@ export async function loadAgentPromptData(agentId: string): Promise<AgentPromptL
         genericSections.push(content);
       }
     }
+
+    // Skills assigned to this agent (skill_refs), read from the skills table.
+    const assignedSkills = await buildAssignedSkillsSection(definition.skill_refs);
+    if (assignedSkills) genericSections.push(assignedSkills);
 
     // Get template variables and substitute in generic prompt
     const vars = await getTemplateVariables();

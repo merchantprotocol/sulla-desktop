@@ -592,6 +592,11 @@ export async function installTemplate(
     for (const b of backups) rmrfSync(b.to);
     console.log(`[Sulla] ${ existing ? 'Updated' : 'Installed' } marketplace ${ kind } ${ detail.slug } v${ detail.version } → ${ targetPath }`);
 
+    // Skills run from the database: copy the installed folder(s) in now
+    // instead of waiting for the next registry refresh. The folder stays.
+    const skillFolders = kind === 'skill' ? [targetPath] : kind === 'integration' ? bundledMoves.skills.map(m => m.dst) : [];
+    const skillWarnings = skillFolders.length ? await importInstalledSkills(skillFolders, templateId, detail, !!existing) : [];
+
     return {
       kind,
       slug:            detail.slug,
@@ -600,6 +605,7 @@ export async function installTemplate(
       version:         detail.version,
       previousVersion: existing?.version,
       updated:         !!existing,
+      ...(skillWarnings.length ? { warnings: skillWarnings } : {}),
     };
   } catch (err) {
     rollbackBundledMoves(bundledMoves);
@@ -614,6 +620,39 @@ export async function installTemplate(
   } finally {
     rmrfSync(tmpdir);
   }
+}
+
+/**
+ * Copy freshly installed skill folders into skill_definitions. An update
+ * replaces the row; a first install never overwrites a skill the human made
+ * or edited under the same slug (it is reported as a warning instead).
+ * Non-fatal: the next registry refresh imports anything missed here.
+ */
+async function importInstalledSkills(
+  folders: string[],
+  templateId: string,
+  detail: { slug: string; version: string },
+  isUpdate: boolean,
+): Promise<string[]> {
+  const warnings: string[] = [];
+  try {
+    const { importSkillFolder } = await import('@pkg/agent/services/SkillDefinitionService');
+    const { skillsRegistry } = await import('@pkg/agent/database/registry/SkillsRegistry');
+    for (const folder of folders) {
+      const row = await importSkillFolder(folder, {
+        sourceKind:  'marketplace',
+        force:       isUpdate,
+        marketplace: { templateId, slug: detail.slug, version: detail.version },
+      });
+      if (!row) warnings.push(`${ folder }: SKILL.md could not be read, so the skill was not added to the database.`);
+      else if (row.source_kind !== 'marketplace') warnings.push(`skill ${ row.slug } already exists in the database (${ row.source_kind }); kept that version.`);
+    }
+    await skillsRegistry.invalidate();
+  } catch (error) {
+    console.warn('[Sulla] marketplace skill import into the database failed:', error);
+    warnings.push('The skill was installed but could not be added to the database yet; it will be imported on the next skills refresh.');
+  }
+  return warnings;
 }
 
 /** Database-backed agent install. No path under ~/sulla/agents is touched. */

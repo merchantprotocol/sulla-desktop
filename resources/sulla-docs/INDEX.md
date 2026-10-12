@@ -67,6 +67,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `computer-use.md` — What's shipped (AppleScript + browser pixel control) vs what's planned (full OS pixel-level)
 - `ui.md` — Open Sulla Desktop views (marketplace, vault, routines, etc.) from chat via `ui/open_tab`
 - `marketplace.md` — Search / download / scaffold / validate / publish / unpublish artifacts of all 6 kinds
+- `skills.md` — Skills live in the `skill_definitions` table: skill_list / skill_get / skill_save / skill_disable; folders are import/export only
 - `capture.md` — Capture Studio control: teleprompter, mic, speaker loopback, camera, recorder, screenshots (20 tools, headless)
 - `redis.md` — 12 Redis tools + how Sulla uses Redis (`sulla:bridge:human_presence`)
 - `pg.md` — 6 Postgres tools + all 16 tables + critical do-not-write list

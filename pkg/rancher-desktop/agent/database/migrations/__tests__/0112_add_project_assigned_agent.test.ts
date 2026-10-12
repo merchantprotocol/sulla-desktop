@@ -15,7 +15,8 @@ describe('0112 add project assigned agent migration', () => {
     expect(down).toContain('DROP COLUMN IF EXISTS assigned_agent');
   });
 
-  it('is registered last', () => {
-    expect(migrationsRegistry[migrationsRegistry.length - 1].name).toBe('0112_add_project_assigned_agent');
+  it('is registered right after 0111', () => {
+    const names = migrationsRegistry.map(migration => migration.name);
+    expect(names.indexOf('0112_add_project_assigned_agent')).toBe(names.indexOf('0111_add_agent_routing') + 1);
   });
 });

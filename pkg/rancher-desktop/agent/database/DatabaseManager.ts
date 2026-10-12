@@ -85,6 +85,21 @@ export class DatabaseManager {
       console.warn('[DB] Built-in agent seed failed:', error);
     }
 
+    // Built-in skills ship in the app bundle the same way. Seeded before the
+    // skills registry warms up (which then imports folder skills the table
+    // does not have yet). Non-fatal; a failure re-seeds on the next boot.
+    try {
+      const { retireBuiltinSkills, seedBuiltinSkills } = await import('@pkg/agent/builtinSkills/seedBuiltinSkills');
+      const result = await seedBuiltinSkills();
+      console.log(`[DB] Built-in skills: ${ result.inserted } inserted, ${ result.refreshed } refreshed, ${ result.adopted } adopted, ${ result.kept } kept (edited), ${ result.unchanged } unchanged, ${ result.skipped } deleted by user`);
+      if (result.errors.length) console.warn('[DB] Built-in skill seed errors:', result.errors);
+      const retired = await retireBuiltinSkills();
+      if (retired.disabled) console.log(`[DB] Built-in skills: ${ retired.disabled } retired skill(s) disabled`);
+      if (retired.errors.length) console.warn('[DB] Built-in skill retire errors:', retired.errors);
+    } catch (error) {
+      console.warn('[DB] Built-in skill seed failed:', error);
+    }
+
     // Now that tables are ready, sync settings to persistent storage
     await SullaSettingsModel.bootstrap();
 

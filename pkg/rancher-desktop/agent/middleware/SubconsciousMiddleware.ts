@@ -294,7 +294,7 @@ export async function runSubconsciousMiddleware(
   // R8. Skills Observation Recall (skills) — awaited: relevant `skills`-domain
   //     rows (provenance/success/failure/gap/inventory for named skill
   //     artifacts), injected as <skills_observations>. Also searches the
-  //     marketplace + local ~/sulla/skills/ install (read-only) so recall can
+  //     marketplace + the installed skills table (read-only) so recall can
   //     surface a skill that fits the current turn even if it was never run
   //     before, not just skills already logged.
   if (legacyRecall) {
