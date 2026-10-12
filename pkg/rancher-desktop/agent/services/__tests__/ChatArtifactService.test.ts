@@ -67,10 +67,16 @@ class MemoryStore {
 describe('ChatArtifactService', () => {
   let store: MemoryStore;
   let service: InstanceType<typeof ChatArtifactService>;
+  let bookmarkSync: { created: jest.Mock; renamed: jest.Mock; deleted: jest.Mock };
 
   beforeEach(() => {
     store = new MemoryStore();
-    service = new ChatArtifactService(store as any);
+    bookmarkSync = {
+      created: jest.fn(async() => undefined),
+      renamed: jest.fn(async() => undefined),
+      deleted: jest.fn(async() => undefined),
+    };
+    service = new ChatArtifactService(store as any, bookmarkSync as any);
   });
 
   test('creates once and deduplicates subsequent creates by case-insensitive name', async() => {
@@ -137,5 +143,27 @@ describe('ChatArtifactService', () => {
     expect(reverted.content).toBe('original');
     expect(reverted.version).toBe(3);
     expect((await service.history('thread-1', artifact.id))[0]).toMatchObject({ version: 3, content: 'original' });
+  });
+
+  test('syncs create, rename, delete and restore without treating close or edit as creation', async() => {
+    const { artifact } = await service.create('thread-1', { name: 'Plan', content: 'v1' });
+    await Promise.resolve();
+    expect(bookmarkSync.created).toHaveBeenCalledTimes(1);
+
+    const renamed = await service.rename('thread-1', artifact.id, 'Roadmap');
+    await service.close('thread-1', artifact.id);
+    await service.reopen('thread-1', artifact.id);
+    await service.append('thread-1', artifact.id, ' v2');
+    await Promise.resolve();
+    expect(bookmarkSync.renamed).toHaveBeenCalledTimes(1);
+    expect(bookmarkSync.created).toHaveBeenCalledTimes(1);
+
+    await service.delete('thread-1', artifact.id);
+    await Promise.resolve();
+    expect(bookmarkSync.deleted).toHaveBeenCalledTimes(1);
+
+    await service.create('thread-1', { name: renamed.name, content: 'restored' });
+    await Promise.resolve();
+    expect(bookmarkSync.created).toHaveBeenCalledTimes(2);
   });
 });

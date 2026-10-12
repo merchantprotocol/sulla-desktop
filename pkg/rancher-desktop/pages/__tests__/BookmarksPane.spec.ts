@@ -13,6 +13,8 @@ const mockRows = [
   { id: 'b', parent_id: null, kind: 'bookmark', title: 'Bravo', url: 'https://bravo.test/', favicon: null, position: 2, created_at: '', updated_at: '' },
   { id: 'f', parent_id: null, kind: 'folder', title: 'Work', url: null, favicon: null, position: 3, created_at: '', updated_at: '' },
   { id: 'c', parent_id: 'f', kind: 'bookmark', title: 'Charlie', url: 'https://charlie.test/', favicon: null, position: 1, created_at: '', updated_at: '' },
+  { id: 'sulla-artifacts', parent_id: null, kind: 'folder', title: 'Artifacts', url: null, favicon: null, position: 4, created_at: '', updated_at: '' },
+  { id: 'artifact-bookmark', parent_id: 'sulla-artifacts', kind: 'bookmark', title: 'Plan', url: 'sulla-artifact://ca_123', favicon: null, position: 1, created_at: '', updated_at: '' },
 ];
 const mockInvoke = jest.fn(async(channel: string): Promise<any> => (channel === 'bookmarks:list' ? mockRows : undefined));
 const invoke = mockInvoke;
@@ -29,6 +31,7 @@ beforeAll(async() => {
   localStorage.clear();
   const useBrowserTabs = await import('@pkg/composables/useBrowserTabs');
   const useBookmarks = await import('@pkg/composables/useBookmarks');
+  const historyRestore = await import('@pkg/pages/chat/services/historyRestore');
   tabsApi = useBrowserTabs.useBrowserTabs();
 
   // Same approach as DecidePage.spec: the legacy Jest Vue transform can't do
@@ -42,6 +45,7 @@ beforeAll(async() => {
     'vue-router':                      { useRouter: () => ({ push }) },
     '@pkg/composables/useBookmarks':   useBookmarks,
     '@pkg/composables/useBrowserTabs': useBrowserTabs,
+    '@pkg/pages/chat/services/historyRestore': historyRestore,
     '@pkg/utils/ipcRenderer':          { ipcRenderer: { invoke: (...args: [string]) => mockInvoke(...args), on: () => undefined, send: () => undefined, removeListener: () => undefined } },
   };
   // eslint-disable-next-line no-new-func, @typescript-eslint/no-implied-eval -- evaluates the SFC compiled above
@@ -63,7 +67,7 @@ test('clicking through bookmarks reuses one preview tab and the pane stays open'
   const wrapper = mount(Component, { props: { activeTab: undefined }, attachTo: document.body });
   await flushPromises();
 
-  expect(wrapper.findAll('.bm-row').map((r: any) => r.find('.bm-label').text())).toEqual(['Alpha', 'Bravo', 'Work']);
+  expect(wrapper.findAll('.bm-row').map((r: any) => r.find('.bm-label').text())).toEqual(['Alpha', 'Bravo', 'Work', 'Artifacts']);
 
   await rowByTitle(wrapper, 'Alpha').trigger('click');
   await rowByTitle(wrapper, 'Bravo').trigger('click');
@@ -133,6 +137,45 @@ test('shows a live Docker section whose links preview like bookmarks but cannot 
 
   await appRow.trigger('click');
   expect(tabsApi.tabs.find((t: any) => t.id === tabsApi.previewTabId.value).url).toBe('http://localhost:5199/');
+
+  wrapper.unmount();
+  mockInvoke.mockImplementation(original!);
+});
+
+test('artifact bookmarks restore their chat and focus the persisted artifact without opening a web tab', async() => {
+  const original = mockInvoke.getMockImplementation();
+  localStorage.setItem('sulla:bookmarks-expanded', JSON.stringify(['sulla-artifacts']));
+  const artifactsFolder = {
+    id: 'sulla-artifacts', parent_id: null, kind: 'folder', title: 'Artifacts',
+    url: null, favicon: null, position: 1, created_at: '', updated_at: '',
+  };
+  const artifactRow = {
+    id: 'artifact-bookmark', parent_id: 'sulla-artifacts', kind: 'bookmark', title: 'Plan',
+    url: 'sulla-artifact://ca_123', favicon: null, position: 1, created_at: '', updated_at: '',
+  };
+  mockInvoke.mockImplementation(async(channel: string) => {
+    if (channel === 'bookmarks:list') return [artifactsFolder, artifactRow];
+    if (channel === 'chat-artifacts:get-by-id') {
+      return {
+        threadId: 'thread-artifact',
+        artifact: { id: 'ca_123', threadId: 'thread-artifact', name: 'Plan', kind: 'markdown', content: '# Plan' },
+        history:  { id: 'tab-artifact', tab_id: 'tab-artifact', thread_id: 'thread-artifact', type: 'chat', title: 'Artifact chat' },
+      };
+    }
+    return undefined;
+  });
+
+  const wrapper = mount(Component, { props: { activeTab: undefined } });
+  await flushPromises();
+  expect(rowByTitle(wrapper, 'Plan').find('.bm-icon-artifact').exists()).toBe(true);
+
+  mockInvoke.mockClear();
+  await rowByTitle(wrapper, 'Plan').trigger('click');
+  await flushPromises();
+
+  expect(push).toHaveBeenCalledWith('/Browser/tab-artifact');
+  expect(mockInvoke).toHaveBeenCalledWith('chat-artifacts:reopen', { threadId: 'thread-artifact', idOrName: 'ca_123' });
+  expect(tabsApi.tabs.some((tab: any) => tab.url === 'sulla-artifact://ca_123')).toBe(false);
 
   wrapper.unmount();
   mockInvoke.mockImplementation(original!);

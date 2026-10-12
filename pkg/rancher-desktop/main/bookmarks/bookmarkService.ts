@@ -122,6 +122,7 @@ export async function fetchFaviconDataUrl(iconUrl: string, fetcher: (url: string
 }
 
 async function captureFavicon(bookmarkId: string, pageUrl: string, tabId?: string): Promise<void> {
+  if (pageUrl.startsWith('sulla-artifact:')) return;
   const candidates: string[] = [];
   // Lazy import — the view manager pulls in window code that must not load
   // while sullaEvents is being initialised (same reason sulla.ts defers it).
@@ -162,6 +163,17 @@ export interface CreateInput {
 
 export const bookmarkService = {
   list: () => BrowserBookmarkModel.list(),
+  findByUrl: (url: string) => BrowserBookmarkModel.findByUrl(url),
+
+  async ensureFolder(id: string, title: string): Promise<BookmarkRecord> {
+    const { record, created } = await BrowserBookmarkModel.ensureFolder(id, title);
+    if (created) {
+      broadcastBookmarksChanged();
+      bookmarkEvents.emit('created', record);
+    }
+
+    return record;
+  },
 
   async create(input: CreateInput): Promise<BookmarkRecord> {
     const parentId = input.parentId ?? null;
@@ -180,7 +192,7 @@ export const bookmarkService = {
     broadcastBookmarksChanged();
     bookmarkEvents.emit('created', record);
 
-    if (record.kind === 'bookmark' && record.url) {
+    if (record.kind === 'bookmark' && record.url && !record.url.startsWith('sulla-artifact:')) {
       captureFavicon(record.id, record.url, input.tabId)
         .catch(err => console.warn('[Bookmarks] favicon capture failed:', err));
     }
@@ -203,7 +215,7 @@ export const bookmarkService = {
     if (record.url && before.url && normalizeBookmarkUrl(before.url) !== record.url &&
         new URL(before.url).origin !== new URL(record.url).origin) {
       await BrowserBookmarkModel.update(id, { favicon: null });
-      captureFavicon(id, record.url).catch(() => {});
+      if (!record.url.startsWith('sulla-artifact:')) captureFavicon(id, record.url).catch(() => {});
     }
 
     return record;

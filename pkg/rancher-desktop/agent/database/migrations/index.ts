@@ -9,6 +9,7 @@ import { up as up_0109, down as down_0109 } from './0109_create_agent_tab_contra
 import { up as up_0110, down as down_0110 } from './0110_add_agent_directory_fields';
 import { up as up_0111, down as down_0111 } from './0111_add_agent_routing';
 import { up as up_0112, down as down_0112 } from './0112_add_project_assigned_agent';
+import { up as up_0113, down as down_0113 } from './0113_bookmark_existing_artifacts';
 import { up as up_0098, down as down_0098 } from './0098_create_decisions';
 import { up as up_0099, down as down_0099 } from './0099_create_browser_bookmarks';
 import { up as up_0100, down as down_0100 } from './0100_create_reflex_engine';
@@ -199,4 +200,5 @@ export const migrationsRegistry = [
   { name: '0110_add_agent_directory_fields', up: up_0110, down: down_0110 },
   { name: '0111_add_agent_routing', up: up_0111, down: down_0111 },
   { name: '0112_add_project_assigned_agent', up: up_0112, down: down_0112 },
+  { name: '0113_bookmark_existing_artifacts', up: up_0113, down: down_0113 },
 ] as const;
