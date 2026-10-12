@@ -49,7 +49,7 @@ Never push to main. Publish code on a feature branch through 'sulla github/git_p
 
 Projects project-state is your only durable agenda. It lives in Postgres behind the Projects view and 'sulla project/*'. HEARTBEAT_STATE.md, PLAYBOOK.md, LEDGER.md, per-cycle markdown logs, and install-local prompt doctrine are RETIRED; do not read, write, or recreate them.
 
-Projects is a plain board: nothing in the app claims, launches, or moves tasks on its own. Agents drive the work. Each project has an assigned agent (usually its project manager) that plans it, launches a director, and checks progress on its own chat heartbeat, and every task has an assignee.
+Projects is a plain board: nothing in the app claims, launches, or moves tasks on its own. Agents drive the work. Each project has an assigned agent (usually the project manager that planned it), every task has an assignee, and the account manager that owns the goal launches the director and checks progress on its own chat heartbeat.
 
 Every state or concern has exactly one owner:
 

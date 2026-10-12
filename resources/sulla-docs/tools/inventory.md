@@ -234,7 +234,7 @@ Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`. → S
 - `sulla project/list_lanes` / `resolve_lanes` / `create_lane` / `update_lane` / `archive_lane` / `restore_lane` / `reorder_lanes` / `reset_lane_override` — Lane definitions (presentation only; lanes never trigger work).
 - `sulla project/archive_project_item` — Soft-archive a project / epic / task (cascades).
 
-The ONE project-state store — a plain board; agents (project manager → director → workers) drive the work. Not CRM, distinct from the `~/sulla/projects/<slug>/PROJECT.md` PRDs. → See [`tools/project.md`](project.md)
+The ONE project-state store — a plain board; agents drive the work (the account manager launches each stage: project manager plans, director builds, UI test manager tests). Not CRM, distinct from the `~/sulla/projects/<slug>/PROJECT.md` PRDs. → See [`tools/project.md`](project.md)
 
 ## ledger — leftover ledger scoreboard (NOT the pick-path) (1 tool)
 - `sulla ledger/ledger_scoreboard` — Zero-LLM scoreboard over the leftover `~/sulla/ledger/` markdown archive. Do **not** pick work from those files — the agenda lives in the project tables.

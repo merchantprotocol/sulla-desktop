@@ -115,7 +115,7 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
 
   lines.push('');
   lines.push(`## ▶️ Open now (${ next.length } of ${ actionableRows.length })`);
-  lines.push('_Projects is a plain board. Each project\'s assigned agent (its project manager) and the director it launches drive the work; the app never claims or launches tasks. Work a task only when it is assigned to you or you were asked to._');
+  lines.push('_Projects is a plain board. The account manager launches each stage: the project manager (the project\'s assigned agent) plans the board and the director drives the work; the app never claims or launches tasks. Work a task only when it is assigned to you or you were asked to._');
   if (!next.length) {
     lines.push('_No open tasks in scope._');
   } else {
