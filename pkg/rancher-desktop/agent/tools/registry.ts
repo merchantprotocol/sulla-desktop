@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'chat', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'ledger', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'pg', 'project', 'projects', 'rdctl', 'redis', 'reflex', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'bridge', 'bookmarks', 'browser', 'calendar', 'capture', 'chat', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'ledger', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'pg', 'project', 'projects', 'rdctl', 'redis', 'reflex', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -60,6 +60,7 @@ export class ToolRegistry {
     memory:             'Tools for the memory recall subconscious agent — Redis citation index lookup/store, tool discovery, and catalog browsing.',
     observation:        'Observational memory tools for the subconscious observation curator agent.',
     bridge:             'Bidirectional communication bridge between the heartbeat (autonomous background agent) and the frontend (human-facing chat). Send messages, read messages, update and read human presence state.',
+    bookmarks:          'Manage the app Bookmarks pane — save useful links and agent-owned items, search and list bookmarks, organize folders, move items, and remove them.',
     browser:            'Open/close tabs, read page content, click + fill forms, screenshot, exec JS, inspect cookies/history, background browsing, and desktop notifications. Open returns the page snapshot inline so you do not need a second call.',
     calendar:           'Tools for managing calendar events.',
     chat:               'Controls scoped to the current chat thread, including its independent heartbeat and persistent sidebar artifacts.',

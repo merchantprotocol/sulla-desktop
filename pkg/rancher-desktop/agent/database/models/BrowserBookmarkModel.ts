@@ -34,6 +34,11 @@ export interface UpdateBookmarkInput {
   favicon?: string | null;
 }
 
+export interface EnsureFolderResult {
+  record:  BookmarkRecord;
+  created: boolean;
+}
+
 const MAX_TITLE = 500;
 const MAX_URL = 4096;
 // Favicons are stored inline as data: URLs — cap them so a hostile page
@@ -41,8 +46,9 @@ const MAX_URL = 4096;
 export const MAX_FAVICON_BYTES = 64 * 1024;
 
 /**
- * Only navigable web/file URLs may be bookmarked. Rejects javascript:, data:
- * and anything else that could execute when the bookmark is opened.
+ * Only navigable web/file URLs and Sulla's inert artifact references may be
+ * bookmarked. Rejects javascript:, data: and anything else that could
+ * execute when the bookmark is opened.
  */
 export function normalizeBookmarkUrl(input: unknown): string {
   if (typeof input !== 'string') throw new Error('Bookmark URL is required');
@@ -54,7 +60,7 @@ export function normalizeBookmarkUrl(input: unknown): string {
   } catch {
     throw new Error('Bookmark URL is invalid');
   }
-  if (!['http:', 'https:', 'file:'].includes(parsed.protocol)) {
+  if (!['http:', 'https:', 'file:', 'sulla-artifact:'].includes(parsed.protocol)) {
     throw new Error(`Bookmark URL scheme ${ parsed.protocol } is not allowed`);
   }
 
@@ -96,6 +102,26 @@ export class BrowserBookmarkModel {
       `SELECT * FROM browser_bookmarks WHERE kind = 'bookmark' AND url = $1 ORDER BY created_at`,
       [normalizeBookmarkUrl(url)],
     );
+  }
+
+  /** Create a root folder with a stable id, or return the existing folder. */
+  static async ensureFolder(id: string, title: string): Promise<EnsureFolderResult> {
+    const cleanId = String(id || '').trim();
+    if (!cleanId) throw new Error('Folder id is required');
+    const rows = await postgresClient.query<BookmarkRecord>(
+      `INSERT INTO browser_bookmarks (id, parent_id, kind, title, url, favicon, position)
+       VALUES ($1, NULL, 'folder', $2, NULL, NULL,
+               (SELECT COALESCE(MAX(position), 0) + 1 FROM browser_bookmarks WHERE parent_id IS NULL))
+       ON CONFLICT (id) DO NOTHING
+       RETURNING *`,
+      [cleanId, cleanTitle(title, 'New folder')],
+    );
+    if (rows[0]) return { record: rows[0], created: true };
+
+    const existing = await this.get(cleanId);
+    if (existing?.kind !== 'folder') throw new Error(`Bookmark id ${ cleanId } is not a folder`);
+
+    return { record: existing, created: false };
   }
 
   static async create(input: CreateBookmarkInput): Promise<BookmarkRecord> {

@@ -17,6 +17,7 @@ describe('BrowserBookmarkModel', () => {
     it('accepts web and file URLs', () => {
       expect(normalizeBookmarkUrl(' https://example.com ')).toBe('https://example.com/');
       expect(normalizeBookmarkUrl('file:///Users/me/notes.html')).toBe('file:///Users/me/notes.html');
+      expect(normalizeBookmarkUrl('sulla-artifact://ca_123')).toBe('sulla-artifact://ca_123');
     });
 
     it('rejects executable and malformed URLs', () => {

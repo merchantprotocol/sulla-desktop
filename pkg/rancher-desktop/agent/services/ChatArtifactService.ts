@@ -2,6 +2,8 @@ import { webContents } from 'electron';
 
 import { ChatArtifactModel } from '../database/models/ChatArtifactModel';
 
+import Logging from '@pkg/utils/logging';
+
 import type {
   ChatArtifactAuthor,
   ChatArtifactChangedEvent,
@@ -13,6 +15,7 @@ import type {
 
 const VALID_KINDS = new Set<ChatArtifactKind>(['markdown', 'html', 'code']);
 const VALID_STATUSES = new Set<ChatArtifactStatus>(['working', 'done', 'error', 'viewing', 'editing']);
+const console = Logging.background;
 
 export interface CreateArtifactInput {
   name:       string;
@@ -56,6 +59,12 @@ interface ChatArtifactStore {
   revision(threadId: string, idOrName: string, version: number): Promise<ChatArtifactRevision | null>;
 }
 
+export interface ArtifactBookmarkSync {
+  created(artifact: ChatArtifactRecord): Promise<void>;
+  renamed(artifact: ChatArtifactRecord): Promise<void>;
+  deleted(artifact: ChatArtifactRecord): Promise<void>;
+}
+
 function required(value: unknown, label: string): string {
   const clean = typeof value === 'string' ? value.trim() : '';
   if (!clean) throw new Error(`${ label } is required.`);
@@ -76,7 +85,14 @@ function cleanStatus(value: unknown, fallback: ChatArtifactStatus = 'working'): 
 }
 
 export class ChatArtifactService {
-  constructor(private readonly store: ChatArtifactStore = ChatArtifactModel) {}
+  constructor(
+    private readonly store: ChatArtifactStore = ChatArtifactModel,
+    private bookmarkSync: ArtifactBookmarkSync | null = configuredBookmarkSync,
+  ) {}
+
+  setBookmarkSync(sync: ArtifactBookmarkSync): void {
+    this.bookmarkSync = sync;
+  }
 
   list(threadId: string, includeClosed = false): Promise<ChatArtifactRecord[]> {
     return this.store.list(required(threadId, 'threadId'), includeClosed);
@@ -94,6 +110,7 @@ export class ChatArtifactService {
     const existing = await this.store.get(scopedThreadId, name, true);
 
     if (existing) {
+      const wasDeleted = existing.isDeleted;
       const artifact = await this.store.mutate({
         threadId: scopedThreadId,
         idOrName: existing.id,
@@ -111,6 +128,7 @@ export class ChatArtifactService {
         }),
       });
       this.publish(scopedThreadId, artifact, input.focus ?? true);
+      if (wasDeleted) this.syncBookmark('created', artifact);
       return { artifact, created: false };
     }
 
@@ -125,6 +143,7 @@ export class ChatArtifactService {
       author:   input.author ?? 'agent',
     });
     this.publish(scopedThreadId, artifact, input.focus ?? true);
+    this.syncBookmark('created', artifact);
     return { artifact, created: true };
   }
 
@@ -142,6 +161,7 @@ export class ChatArtifactService {
       path:     input.path === undefined ? current.path : input.path,
     }));
     this.publish(artifact.threadId, artifact, input.focus);
+    if (input.name !== undefined) this.syncBookmark('renamed', artifact);
     return artifact;
   }
 
@@ -213,6 +233,7 @@ export class ChatArtifactService {
   async delete(threadId: string, idOrName: string, expectedVersion?: number, author: ChatArtifactAuthor = 'agent'): Promise<ChatArtifactRecord> {
     const artifact = await this.mutate(threadId, idOrName, { expectedVersion, author }, () => ({ isOpen: false, isDeleted: true }));
     this.publish(artifact.threadId, artifact);
+    this.syncBookmark('deleted', artifact);
     return artifact;
   }
 
@@ -272,9 +293,23 @@ export class ChatArtifactService {
       } catch { /* A disposed window must not turn a committed DB write into a tool failure. */ }
     }
   }
+
+  private syncBookmark(action: keyof ArtifactBookmarkSync, artifact: ChatArtifactRecord): void {
+    const sync = this.bookmarkSync;
+    if (!sync) return;
+    Promise.resolve()
+      .then(() => sync[action](artifact))
+      .catch(err => console.warn(`[ChatArtifactService] Bookmark ${ action } sync failed:`, err));
+  }
 }
 
 let instance: ChatArtifactService | null = null;
+let configuredBookmarkSync: ArtifactBookmarkSync | null = null;
+
+export function configureChatArtifactBookmarkSync(sync: ArtifactBookmarkSync): void {
+  configuredBookmarkSync = sync;
+  instance?.setBookmarkSync(sync);
+}
 
 export function getChatArtifactService(): ChatArtifactService {
   instance ??= new ChatArtifactService();

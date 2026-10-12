@@ -12,6 +12,8 @@
 
 import { BrowserWindow } from 'electron';
 
+import { configureChatArtifactBookmarkSync } from '@pkg/agent/services/ChatArtifactService';
+import { getArtifactBookmarkSync } from '@pkg/main/bookmarks/artifactBookmarkSync';
 import { bookmarkService } from '@pkg/main/bookmarks/bookmarkService';
 import { listDockerLinks } from '@pkg/main/dockerLinks';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -30,6 +32,8 @@ function trusted(event: Electron.IpcMainInvokeEvent): void {
 }
 
 export function initBookmarksIpc(): void {
+  configureChatArtifactBookmarkSync(getArtifactBookmarkSync());
+
   ipcMainProxy.handle('bookmarks:list', async(event) => {
     trusted(event);
 

@@ -115,6 +115,17 @@ export class ChatArtifactModel {
     return row ? mapArtifact(row) : null;
   }
 
+  static async getById(id: string, includeDeleted = false): Promise<ChatArtifactRecord | null> {
+    const row = await postgresClient.queryOne<ChatArtifactRow>(
+      `SELECT * FROM chat_artifacts
+        WHERE id = $1 AND ($2::boolean OR is_deleted = false)
+        LIMIT 1`,
+      [id, includeDeleted],
+    );
+
+    return row ? mapArtifact(row) : null;
+  }
+
   static async create(input: CreateChatArtifactInput): Promise<ChatArtifactRecord> {
     return postgresClient.transaction(async(client) => {
       const id = newId();

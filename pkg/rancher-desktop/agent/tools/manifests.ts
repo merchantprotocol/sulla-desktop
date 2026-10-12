@@ -4,6 +4,7 @@
 
 import { agentToolManifests } from './agents/manifests';
 import { applescriptToolManifests } from './applescript/manifests';
+import { bookmarkToolManifests } from './bookmarks/manifests';
 import { bridgeToolManifests } from './bridge/manifests';
 import { browserToolManifests } from './browser/manifests';
 import { calendarToolManifests } from './calendar/manifests';
@@ -27,9 +28,9 @@ import { pgToolManifests } from './pg/manifests';
 import { projectToolManifests } from './project/manifests';
 import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
+import { reflexToolManifests } from './reflex/manifests';
 import { toolRegistry } from './registry';
 import { rulesToolManifests } from './rules/manifests';
-import { reflexToolManifests } from './reflex/manifests';
 import { secretaryToolManifests } from './secretary/manifests';
 import { settingsToolManifests } from './settings/manifests';
 import { slackToolManifests } from './slack/manifests';
@@ -39,6 +40,7 @@ import { workflowToolManifests } from './workflow/manifests';
 toolRegistry.registerManifests([
   ...agentToolManifests,
   ...applescriptToolManifests,
+  ...bookmarkToolManifests,
   ...bridgeToolManifests,
   ...browserToolManifests,
   ...calendarToolManifests,

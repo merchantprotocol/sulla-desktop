@@ -25,7 +25,7 @@ BODY="$2"
 # Known internal tool categories. Must stay in sync with agent/tools/registry.ts
 # `categoriesList` so `sulla <category>/<tool>` routes to /v1/tools/internal
 # instead of falling through as a proxy call.
-TOOL_CATEGORIES="agents|applescript|bridge|browser|calendar|capture|chat|docker|extensions|fs|function|github|integrations|kubectl|ledger|lima|marketplace|memory|meta|mobile|models|notify|observation|pg|project|projects|rdctl|redis|reflex|rules|secretary|settings|skills|slack|ui|vault|work|workflow|workspace"
+TOOL_CATEGORIES="agents|applescript|bridge|bookmarks|browser|calendar|capture|chat|docker|extensions|fs|function|github|integrations|kubectl|ledger|lima|marketplace|memory|meta|mobile|models|notify|observation|pg|project|projects|rdctl|redis|reflex|rules|secretary|settings|skills|slack|ui|vault|work|workflow|workspace"
 
 # ── Help & discovery ─────────────────────────────────────────────
 # sulla --help | sulla -h | sulla help | sulla (no args) — query the backend
@@ -66,6 +66,7 @@ Categories (live list unavailable — showing fallback):
   agents            Sub-agent spawning and job management
   applescript       Execute AppleScript to control macOS apps (Calendar, Mail, Finder, etc.)
   bridge            Bidirectional communication bridge between heartbeat and frontend
+  bookmarks         Manage saved links, folders, and agent-owned items in the Bookmarks pane
   browser           Open/close tabs, read page content, click + fill forms, screenshot, exec JS, cookies, history
   calendar          Calendar event management
   capture           Capture Studio control: teleprompter, microphone, speaker loopback, screenshots, recorder

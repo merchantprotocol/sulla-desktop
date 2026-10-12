@@ -1,5 +1,7 @@
 import { ipcMain } from 'electron';
 
+import { ChatArtifactModel } from '@pkg/agent/database/models/ChatArtifactModel';
+import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import { getChatArtifactService } from '@pkg/agent/services/ChatArtifactService';
 import type { ChatArtifactStatus } from '@pkg/shared/chatArtifacts';
 
@@ -15,6 +17,15 @@ export function initChatArtifactsIpc(): void {
 
   ipcMain.handle('chat-artifacts:get', (_event, input: { threadId: string; idOrName: string }) =>
     service.get(text(input?.threadId), text(input?.idOrName)));
+
+  ipcMain.handle('chat-artifacts:get-by-id', async(_event, input: { artifactId: string }) => {
+    const artifact = await ChatArtifactModel.getById(text(input?.artifactId));
+    if (!artifact) return null;
+    const foundHistory = await ConversationHistoryModel.getByThread(artifact.threadId);
+    const history = foundHistory?.status === 'deleted' ? null : foundHistory;
+
+    return { threadId: artifact.threadId, artifact, history };
+  });
 
   ipcMain.handle('chat-artifacts:save', (_event, input: {
     threadId: string;
@@ -36,4 +47,7 @@ export function initChatArtifactsIpc(): void {
 
   ipcMain.handle('chat-artifacts:focus', (_event, input: { threadId: string; idOrName: string }) =>
     service.focus(text(input?.threadId), text(input?.idOrName)));
+
+  ipcMain.handle('chat-artifacts:reopen', (_event, input: { threadId: string; idOrName: string }) =>
+    service.reopen(text(input?.threadId), text(input?.idOrName), undefined, 'human'));
 }

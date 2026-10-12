@@ -359,6 +359,26 @@
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
           </span>
+          <span
+            v-else-if="isArtifactBookmark(row.record)"
+            class="bm-icon bm-icon-artifact"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="8" y1="13" x2="16" y2="13" />
+              <line x1="8" y1="17" x2="16" y2="17" />
+            </svg>
+          </span>
           <img
             v-else-if="row.record.favicon"
             class="bm-icon bm-favicon"
@@ -484,6 +504,8 @@ import { useRouter } from 'vue-router';
 
 import { useBookmarks, bookmarkUrlKey, type BookmarkNode, type BookmarkRecord } from '@pkg/composables/useBookmarks';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
+import type { ChatArtifactRecord } from '@pkg/shared/chatArtifacts';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 interface ActiveTabInfo {
@@ -513,7 +535,7 @@ defineEmits<(e: 'close') => void>();
 
 const router = useRouter();
 const { tree, records, loaded, error, findByUrl, addBookmark, addFolder, update, remove, move } = useBookmarks();
-const { tabs, previewTabId, openInPreviewTab, promoteTab, createTab } = useBrowserTabs();
+const { tabs, previewTabId, openInPreviewTab, promoteTab, createTab, updateTab } = useBrowserTabs();
 
 const query = ref('');
 const selectedId = ref<string | null>(null);
@@ -662,14 +684,86 @@ function isPreviewing(record: BookmarkRecord): boolean {
 }
 
 // ── Opening bookmarks ──
+function isArtifactBookmark(record: BookmarkRecord): boolean {
+  return record.kind === 'bookmark' && !!record.url?.startsWith('sulla-artifact:');
+}
+
+function artifactIdFromUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+
+    return decodeURIComponent(parsed.hostname || parsed.pathname.replace(/^\//, ''));
+  } catch {
+    return '';
+  }
+}
+
+const HTML_ESCAPES: Record<string, string> = {
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+};
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, character => HTML_ESCAPES[character] || character);
+}
+
+function fallbackArtifactContent(artifact: ChatArtifactRecord): string {
+  if (artifact.kind === 'html') return artifact.content;
+  const language = artifact.kind === 'code' && artifact.language ? ` · ${ escapeHtml(artifact.language) }` : '';
+
+  return `<main style="max-width:960px;margin:0 auto;padding:32px;color:#d8dee9;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace"><h1 style="font:600 22px/1.3 system-ui,sans-serif">${ escapeHtml(artifact.name) }</h1><p style="color:#8b949e">${ artifact.kind }${ language }</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${ escapeHtml(artifact.content) }</pre></main>`;
+}
+
+async function openArtifact(record: BookmarkRecord): Promise<void> {
+  const artifactId = artifactIdFromUrl(record.url || '');
+  if (!artifactId) {
+    actionError.value = 'This artifact bookmark is invalid.';
+
+    return;
+  }
+  try {
+    const result = await ipcRenderer.invoke('chat-artifacts:get-by-id', { artifactId });
+    if (!result?.artifact) {
+      actionError.value = 'This artifact was deleted.';
+
+      return;
+    }
+
+    if (result.history) {
+      const tab = restoreChatFromHistory(result.history);
+      await router.push(`/Browser/${ tab.id }`);
+      await nextTick();
+      // Focus an open artifact; only reopen (a versioned write) when it was closed.
+      await ipcRenderer.invoke(result.artifact.isOpen ? 'chat-artifacts:focus' : 'chat-artifacts:reopen', { threadId: result.threadId, idOrName: result.artifact.id });
+
+      return;
+    }
+
+    const tab = createTab('about:blank', { mode: 'document', title: result.artifact.name });
+    updateTab(tab.id, { content: fallbackArtifactContent(result.artifact) });
+    await router.push(`/Browser/${ tab.id }`);
+  } catch {
+    actionError.value = 'Could not open this artifact.';
+  }
+}
+
 function preview(record: BookmarkRecord): void {
   if (record.kind !== 'bookmark' || !record.url) return;
+  if (isArtifactBookmark(record)) {
+    void openArtifact(record);
+
+    return;
+  }
   const tab = openInPreviewTab(record.url, record.title);
   router.push(`/Browser/${ tab.id }`);
 }
 
 function keepOpen(record: BookmarkRecord): void {
   if (record.kind !== 'bookmark' || !record.url) return;
+  if (isArtifactBookmark(record)) {
+    void openArtifact(record);
+
+    return;
+  }
   const current = previewTab.value;
   // Already showing it in the preview tab — just promote that tab.
   const tab = current && bookmarkUrlKey(current.url) === bookmarkUrlKey(record.url)
@@ -681,6 +775,11 @@ function keepOpen(record: BookmarkRecord): void {
 
 function openInBackground(record: BookmarkRecord): void {
   if (record.kind !== 'bookmark' || !record.url) return;
+  if (isArtifactBookmark(record)) {
+    void openArtifact(record);
+
+    return;
+  }
   createTab(record.url);
 }
 
@@ -1330,6 +1429,9 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 .bm-icon-folder {
   color: var(--accent);
   opacity: 0.85;
+}
+.bm-icon-artifact {
+  color: var(--info);
 }
 .bm-favicon {
   object-fit: contain;
