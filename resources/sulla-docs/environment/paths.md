@@ -7,7 +7,7 @@ Created by `bootstrapSullaHome()` at every app startup.
 ```
 ~/sulla/
 ├── resources/                  # Cloned from merchantprotocol/sulla-resources (GitHub)
-│   ├── skills/                 # Default skill instructions (SKILL.md)
+│   ├── skills/                 # Default skills (SKILL.md) — imported into the skill_definitions table
 │   ├── agents/                 # Default agent configs
 │   ├── workflows/
 │   │   ├── draft/
@@ -16,7 +16,7 @@ Created by `bootstrapSullaHome()` at every app startup.
 │   ├── integrations/           # Default integration docs
 │   └── docs/                   # Documentation (if present)
 │
-├── skills/                     # User-defined skills
+├── skills/                     # User skill folders — imported into the skill_definitions table (the runtime source)
 ├── agents/                     # User-defined agent configs
 ├── workflows/
 │   ├── draft/                  # Work-in-progress workflows

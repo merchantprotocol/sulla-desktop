@@ -277,6 +277,12 @@ The ONE project-state store — a plain board; agents drive the work (the accoun
 
 → See [`tools/marketplace.md`](marketplace.md)
 
+## skills — skills stored in the database (4 tools)
+- `skill_list`, `skill_get` (`materialize:true` → `~/sulla/cache/skills/<slug>/`), `skill_save` (from SKILL.md text), `skill_disable` (disable / enable / soft delete).
+- The `skill_definitions` table is the only runtime source; SKILL.md folders are import/export only.
+
+→ See [`tools/skills.md`](skills.md)
+
 ## extensions — marketplace recipe lifecycle (7 tools)
 - `list_extension_catalog`, `list_installed_extensions`, `install_extension`, `uninstall_extension` (preserves data by default), `start_extension`, `stop_extension` (`confirm:true`), `get_extension_status`.
 

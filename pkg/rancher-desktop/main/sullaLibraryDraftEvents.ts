@@ -344,6 +344,19 @@ export function initSullaLibraryDraftEvents(): void {
         fs.writeFileSync(outPath, buf);
       }
 
+      // Skills run from the database: the human just saved this one, so it
+      // replaces the row. Non-fatal; the next skills refresh retries.
+      if (draft.kind === 'skill') {
+        try {
+          const { importSkillFolder } = await import('@pkg/agent/services/SkillDefinitionService');
+          const { skillsRegistry } = await import('@pkg/agent/database/registry/SkillsRegistry');
+          await importSkillFolder(target, { sourceKind: 'user', force: true });
+          await skillsRegistry.invalidate();
+        } catch (err) {
+          console.warn('[Sulla] library-draft-publish-local: skill database import failed:', err);
+        }
+      }
+
       return { path: target, slug };
     } catch (err) {
       console.error('[Sulla] library-draft-publish-local failed:', err);

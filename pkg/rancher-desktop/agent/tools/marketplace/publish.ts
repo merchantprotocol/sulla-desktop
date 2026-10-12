@@ -25,11 +25,25 @@ export class MarketplacePublishWorker extends BaseTool {
     if (!slug) {
       return { successBoolean: false, responseString: 'Missing required field: slug.' };
     }
-    const dir = kind === 'agent' ? undefined : artifactDir(kind, slug);
+    // Skills live in the database: publish the row exported as a folder.
+    let exported: { dir: string; cleanup: () => void } | null = null;
+    if (kind === 'skill') {
+      const { exportSkillToTempDir } = await import('../../services/SkillDefinitionService');
+      exported = await exportSkillToTempDir(slug).catch(() => null);
+    }
+    try {
+      return await this.publishFrom(kind, slug, version, input.kind, exported?.dir);
+    } finally {
+      exported?.cleanup();
+    }
+  }
+
+  private async publishFrom(kind: NonNullable<ReturnType<typeof normalizeKind>>, slug: string, version: string | undefined, kindLabel: string, exportedDir?: string): Promise<ToolResponse> {
+    const dir = kind === 'agent' ? undefined : (exportedDir ?? artifactDir(kind, slug));
     if (dir && !fs.existsSync(dir)) {
       return { successBoolean: false, responseString: `Not found locally: ${ dir }` };
     }
-    if (dir && KIND_LAYOUTS[kind].manifest !== 'dynamic' && !resolveArtifactManifestPath(kind, slug)) {
+    if (dir && !exportedDir && KIND_LAYOUTS[kind].manifest !== 'dynamic' && !resolveArtifactManifestPath(kind, slug)) {
       return { successBoolean: false, responseString: `${ KIND_LAYOUTS[kind].manifest } missing in ${ dir } — run \`sulla marketplace/validate\` first.` };
     }
 
@@ -38,7 +52,7 @@ export class MarketplacePublishWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Submitted ${ input.kind }/${ slug } to the marketplace as ${ res.templateId } (bundle ${ res.bundle_size } bytes).\n` +
+        responseString: `Submitted ${ kindLabel }/${ slug } to the marketplace as ${ res.templateId } (bundle ${ res.bundle_size } bytes).\n` +
           `Status: ${ res.status } — it goes live once an admin approves it. Track it with \`sulla marketplace/list_published '{}'\`.` +
           (res.warnings?.length ? `\nWarning: ${ res.warnings.join(' ') }` : ''),
       };

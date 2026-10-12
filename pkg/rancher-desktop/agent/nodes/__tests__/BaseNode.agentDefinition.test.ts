@@ -2,6 +2,7 @@ import { afterAll, afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { redisClient } from '../../database/RedisClient';
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
+import { skillsRegistry } from '../../database/registry/SkillsRegistry';
 import { agentDefinitionService } from '../../services/AgentDefinitionService';
 import { loadAgentPromptData } from '../BaseNode';
 
@@ -11,6 +12,8 @@ afterAll(async() => { await redisClient.close() });
 describe('runtime agent prompt resolution', () => {
   it('resolves prompt, model config, sections, and observation policy data from the DB definition', async() => {
     jest.spyOn(SullaSettingsModel, 'get').mockResolvedValue('');
+    jest.spyOn(skillsRegistry, 'getSkill').mockResolvedValue(null);
+    jest.spyOn(skillsRegistry, 'getSkillSummaries').mockResolvedValue([]);
     jest.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({
       id:                      'agent-db',
       slug:                    'db-agent',
@@ -52,6 +55,9 @@ describe('runtime agent prompt resolution', () => {
     });
     const result = await loadAgentPromptData('db-agent');
     expect(agentDefinitionService.findBySlug).toHaveBeenCalledWith('db-agent');
+    // skill_refs resolve through the skills registry (the skills table).
+    expect(skillsRegistry.getSkill).toHaveBeenCalledWith('review');
+    expect(result?.genericPrompt).toContain('`review` (assigned, but not installed or disabled)');
     expect(result).toMatchObject({
       agentName:       'DB Agent',
       genericPrompt:   expect.stringContaining('prompt from db'),

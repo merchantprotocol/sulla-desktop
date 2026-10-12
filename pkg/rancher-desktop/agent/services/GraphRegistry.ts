@@ -173,9 +173,9 @@ function identityObservationRecallToolsForDomain(domain: string): string[] {
   }
 
   // Skills recall also needs read-only discovery across every place a skill
-  // can actually live — the public/cloud marketplace, and artifacts already
-  // materialised locally under ~/sulla/skills/ (list_local reads that
-  // directory; no raw filesystem tool is granted). All three are
+  // can actually live — the public/cloud marketplace, and the skills
+  // installed here, which live in the skill_definitions table (skill_list
+  // searches it; list_local lists it; no raw filesystem tool is granted). All four are
   // operationTypes:['read'] — no download/publish/scaffold/update capability,
   // so this cannot be used to install or mutate anything (Jonathon,
   // 2026-08-20: marketplace read tools are fine for an observer; they are not
@@ -185,7 +185,8 @@ function identityObservationRecallToolsForDomain(domain: string): string[] {
       ...IDENTITY_OBSERVATION_RECALL_TOOLS,
       'search',      // marketplace/search — public Sulla Cloud marketplace, kind:'skill'
       'info',        // marketplace/info — full metadata for one marketplace or local skill
-      'list_local',  // marketplace/list_local — skills already installed under ~/sulla/skills/
+      'list_local',  // marketplace/list_local — skills installed here (the skills table)
+      'skill_list',  // skills/skill_list — search the installed skills (the skills table)
     ];
   }
 
@@ -890,7 +891,7 @@ ${ identityRecallScope(cfg) }
 Rules:
 - Call search_identity_observations with key topic/phrase variants from the conversation.
 - Optionally call list_identity_observations when broad identity context is needed.
-${ cfg.domain === 'projects' ? '- Also call search_project_items when the current turn names, implies, or depends on live Projects work-state. Use it only to find relevant project/epic/task context; do not create, update, archive, or comment on project items from recall.\n- When a search hit is clearly central to this turn and its title/status is not enough, drill down: call get_project_item to pull that item\'s full detail (children, status) or list_task_comments to read a task\'s progress/blocker/decision thread. These are READ-ONLY. Drill down only for the one or two items that actually matter — you block the primary agent, so do not fetch detail for every hit.\n' : '' }${ cfg.domain === 'skills' ? '- Also call the marketplace tools `search` and `list_local` — ALWAYS pass `kind:\'skill\'`, never omit it (they default to searching every artifact kind) — but ONLY when the current turn describes a repeatable task a skill could plausibly cover. Most turns are not skill-shaped; do not call them speculatively. Budget: at most 1-2 marketplace lookups — you block the primary agent on a live network call, so do not go searching multiple phrasings. Use `info` only to pull full detail on the one hit that actually matters.\n' : '' }- Return ONLY observations that are relevant or possibly relevant to this turn.
+${ cfg.domain === 'projects' ? '- Also call search_project_items when the current turn names, implies, or depends on live Projects work-state. Use it only to find relevant project/epic/task context; do not create, update, archive, or comment on project items from recall.\n- When a search hit is clearly central to this turn and its title/status is not enough, drill down: call get_project_item to pull that item\'s full detail (children, status) or list_task_comments to read a task\'s progress/blocker/decision thread. These are READ-ONLY. Drill down only for the one or two items that actually matter — you block the primary agent, so do not fetch detail for every hit.\n' : '' }${ cfg.domain === 'skills' ? '- To find an installed skill that fits this turn, call `skill_list` with a short `query` (it searches the skills table). Do this only when the turn describes a repeatable task.\n- Also call the marketplace tools `search` and `list_local` — ALWAYS pass `kind:\'skill\'`, never omit it (they default to searching every artifact kind) — but ONLY when the current turn describes a repeatable task a skill could plausibly cover. Most turns are not skill-shaped; do not call them speculatively. Budget: at most 1-2 marketplace lookups — you block the primary agent on a live network call, so do not go searching multiple phrasings. Use `info` only to pull full detail on the one hit that actually matters.\n' : '' }- Return ONLY observations that are relevant or possibly relevant to this turn.
 - Format each result as: \`[id] L<level>·<category> date — content (basis: ...)\`
 - When including live Projects work-state from search_project_items, format it as: \`[project:<id>] <kind> <status> — <title> (source: Projects work-state)\`
 - If many observations are relevant, return many. If only a few matter, return a few.

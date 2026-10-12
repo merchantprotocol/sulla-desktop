@@ -5,7 +5,7 @@
  * manifest reader so the same MarketplaceDetail drawer can render
  * local items and remote marketplace items with zero forking.
  *
- *   library-list-skills     → scan ~/sulla/skills/<slug>/SKILL.md
+ *   library-list-skills     → skill_definitions table (plus folder-only skills)
  *   library-list-recipes    → scan ~/sulla/recipes/<slug>/manifest.yaml
  *   library-reveal          → open the item's folder in the OS file manager
  *   library-read-manifest   → build a sulla/v3-shaped { template, manifest }
@@ -149,6 +149,51 @@ function scanSkills(): SkillRow[] {
   rows.sort((a, b) => a.name.localeCompare(b.name));
 
   return rows;
+}
+
+/**
+ * Skills run from the skill_definitions table, so the Library lists the table.
+ * Folder-only skills (not imported yet) are kept so nothing disappears. Rows
+ * with no folder in ~/sulla/skills (built-ins, marketplace) are materialized to
+ * ~/sulla/cache/skills/<slug>/ so Reveal and read-manifest still find files.
+ */
+async function listSkills(): Promise<SkillRow[]> {
+  const folderRows = scanSkills();
+  let dbRows: SkillRow[] = [];
+
+  try {
+    const { SkillDefinitionModel } = await import('@pkg/agent/database/models/SkillDefinitionModel');
+    const { materializeSkill } = await import('@pkg/agent/services/SkillDefinitionService');
+    const folderSlugs = new Set(folderRows.map(row => row.slug));
+
+    dbRows = (await SkillDefinitionModel.list({ includeDisabled: true })).map((skill) => {
+      if (!folderSlugs.has(skill.slug)) {
+        try {
+          materializeSkill(skill);
+        } catch (err) {
+          console.warn(`[Sulla] library-list-skills: could not materialize ${ skill.slug }:`, err);
+        }
+      }
+      const fm = skill.frontmatter || {};
+
+      return {
+        slug:         skill.slug,
+        name:         pickString(fm, 'name') ?? skill.title ?? skill.slug,
+        description:  skill.description || (pickString(fm, 'description') ?? ''),
+        category:     pickString(fm, 'category'),
+        condition:    pickString(fm, 'condition'),
+        promptLength: skill.body.trim().length,
+        updatedAt:    new Date(skill.updated_at).toISOString(),
+      };
+    });
+  } catch (err) {
+    console.warn('[Sulla] library-list-skills: database read failed, listing folders only:', err);
+  }
+
+  const bySlug = new Map(folderRows.map(row => [row.slug, row]));
+  dbRows.forEach(row => bySlug.set(row.slug, row));
+
+  return Array.from(bySlug.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // ─── Recipes ─────────────────────────────────────────────────────
@@ -334,7 +379,7 @@ function findItemDir(kind: KindSingular, slug: string): string | null {
   const candidates: string[] = (() => {
     switch (kind) {
     case 'routine': return [paths.resolveSullaRoutinesDir()];
-    case 'skill': return [paths.resolveSullaUserSkillsDir()];
+    case 'skill': return [paths.resolveSullaUserSkillsDir(), path.join(paths.resolveSullaHomeDir(), 'cache', 'skills')];
     case 'function': return [paths.resolveSullaFunctionsDir()];
     case 'recipe': return [paths.resolveSullaRecipesDir()];
     case 'integration': return [paths.resolveSullaUserIntegrationsDir(), paths.resolveSullaIntegrationsDir()];
@@ -735,7 +780,7 @@ function readComposePorts(recipeDir: string): number[] {
 export function initSullaLibraryEvents(): void {
   ipcMainProxy.handle('library-list-skills', async() => {
     try {
-      return scanSkills();
+      return await listSkills();
     } catch (err) {
       console.error('[Sulla] library-list-skills failed:', err);
 

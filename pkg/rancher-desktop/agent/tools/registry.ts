@@ -87,7 +87,7 @@ export class ToolRegistry {
     rules:              'User-created rules the Security Conscience enforces. Distinct from global markdown under ~/sulla/rules/global/.',
     project:            'Local Projects project-state — projects, epics, tasks, sub-tasks, and comments in Postgres. Accessed through the Sulla CLI catalog; distinct from filesystem PROJECT.md PRDs (projects category) and from Cloud CRM.',
     workflow:           'Workflow management — execute, validate, import, and manage Sulla workflow definitions.',
-    skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',
+    skills:             'Skills stored in the database (the only runtime source) — list/search, load (optionally materialized to ~/sulla/cache/skills/<slug>/), create/update from SKILL.md text, and disable/soft-delete. Reusable skills teach agents how to perform repeatable tasks.',
     projects:           'Tools for searching, loading, creating, updating, patching, and deleting project PRDs (PROJECT.md) and their workspace folders.',
     capture:            'Capture Studio control — teleprompter (open/close/script/style), microphone + speaker loopback lifecycle, screen/camera enumeration, screenshots, recorder start/stop/status with auto-acquire.',
     marketplace:        'Marketplace for community artifacts (skills, functions, workflows, agents, recipes) — search, info, download, scaffold, validate, publish, update, unpublish.',

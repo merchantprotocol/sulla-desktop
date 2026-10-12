@@ -34,6 +34,15 @@ export class MarketplaceListLocalWorker extends BaseTool {
           : `### agent (${ agents.length })\n  Database\n${ agents.map(agent => `  - ${ agent.slug } (${ agent.source_kind })`).join('\n') }`);
         continue;
       }
+      if (kind === 'skill') {
+        const { SkillDefinitionModel } = await import('../../database/models/SkillDefinitionModel');
+        const skills = await SkillDefinitionModel.list({ includeDisabled: true });
+        total += skills.length;
+        blocks.push(skills.length === 0
+          ? '### skill (0)\n  Database — empty'
+          : `### skill (${ skills.length })\n  Database\n${ skills.map(skill => `  - ${ skill.slug } (${ skill.source_kind }${ skill.enabled ? '' : ', disabled' })`).join('\n') }`);
+        continue;
+      }
       const layout = KIND_LAYOUTS[kind];
       const root = layout.rootDir();
       const items: { slug: string; manifestExists: boolean }[] = [];

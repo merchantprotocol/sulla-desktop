@@ -366,7 +366,7 @@ const footerHint = computed(() => {
   case 'routines':
     return 'Routine templates in ~/sulla/routines/. Use one to drop a fresh copy onto your canvas.';
   case 'skills':
-    return 'Skills in ~/sulla/skills/. Instructions your agents load on demand.';
+    return 'Skills stored in Sulla. Instructions your agents load on demand.';
   case 'functions':
     return 'Functions in ~/sulla/functions/. Callable code your routines invoke.';
   case 'recipes':
