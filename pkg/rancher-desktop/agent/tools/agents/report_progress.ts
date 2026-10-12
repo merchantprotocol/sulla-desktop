@@ -6,11 +6,13 @@ export class ReportProgressWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
+    // Hidden workers and tab children alike: the thread's job task is the
+    // binding, not the isSubAgent flag (a tab child runs as a normal chat).
     const threadId = (this.state as any)?.metadata?.threadId;
-    if (!(this.state as any)?.metadata?.isSubAgent || typeof threadId !== 'string' || !threadId) {
+    if (typeof threadId !== 'string' || !threadId) {
       return {
         successBoolean: false,
-        responseString: 'report_progress is only available inside a running spawn_agent worker task.',
+        responseString: 'report_progress is only available inside a delegated agent task (hidden or tab).',
       };
     }
     const step = String(input.step ?? '').trim();
@@ -31,7 +33,7 @@ export class ReportProgressWorker extends BaseTool {
       percent,
     });
     if (!result) {
-      return { successBoolean: false, responseString: 'No running spawn_agent job task is bound to this worker thread.' };
+      return { successBoolean: false, responseString: 'No running delegated job task is bound to this thread.' };
     }
 
     return {

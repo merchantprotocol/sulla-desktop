@@ -5,6 +5,7 @@ import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
+import { RunActivity } from './RunActivity';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
@@ -50,6 +51,11 @@ export class BackendGraphWebSocketService {
 
   private abortKey(channelId: string, threadId: string): string {
     return `${ channelId }|${ threadId }`;
+  }
+
+  /** True while a turn is in flight for this thread (an idle chat is not running). */
+  hasActiveRun(channelId: string, threadId: string): boolean {
+    return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
   constructor() {
@@ -246,6 +252,22 @@ export class BackendGraphWebSocketService {
     const hasAttachments = Array.isArray(data?.metadata?.attachments) && data.metadata.attachments.length > 0;
     if (!content && !hasAttachments) return;
 
+    // A hidden sub-agent opened in a tab is still driven by its spawn_agent
+    // runner. A message typed into that tab steers the live run; starting a
+    // second execution on the same state would race the runner.
+    const delegated = typeof data?.threadId === 'string' ? GraphRegistry.get(data.threadId) : undefined;
+    if (content && (delegated?.state.metadata as any)?.delegatedRunActive) {
+      injectSteer(delegated!.state, {
+        id:        nextMessageId(),
+        role:      'user',
+        content,
+        timestamp: Date.now(),
+        metadata:  { ...data?.metadata, source: data?.metadata?.source || 'inject', inputSource: data?.metadata?.inputSource || 'keyboard' },
+      } as any);
+      console.log(`[BackendGraphWS] Steered delegated run ${ data.threadId }: ${ content.slice(0, 50) }...`);
+      return;
+    }
+
     // ThreadId is owned by the frontend chat interface — reuse it to maintain conversation
     const threadIdFromMsg = data?.threadId as string | undefined;
 
@@ -373,6 +395,9 @@ export class BackendGraphWebSocketService {
       runAbort = abort;
       state.metadata.options.abort = abort;
       this.activeAborts.set(abortKey, abort);
+      // A turn starting is activity: a delegated tab that sat idle waiting on
+      // its human must not read as a dead run the moment it wakes.
+      RunActivity.touch(state.metadata);
 
       // Route responses back to the originating channel
       state.metadata.wsChannel = channelId;
