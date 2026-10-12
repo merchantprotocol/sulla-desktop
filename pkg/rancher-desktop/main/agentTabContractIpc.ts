@@ -3,7 +3,7 @@ import { ipcMain } from 'electron';
 import {
   acknowledgeAgentTabReady,
   getAgentTabThreadSnapshot,
-} from '@pkg/agent/services/AgentTabContractService';
+} from '@pkg/agent/services/AgentTabOpener';
 
 export function initAgentTabContractIpc(): void {
   ipcMain.handle('agent-tab:ready', async(_event, payload: { contractId: string; threadId: string }) => {

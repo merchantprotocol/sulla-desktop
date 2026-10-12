@@ -15,16 +15,28 @@
  *
  * Jobs are cleaned up after retrieval or after a TTL (1 hour) — this is
  * operational state, not history; rows are really deleted.
+ *
+ * Every delegation is a job, hidden or tabbed. A tab job holds exactly one
+ * task: a live chat tab the human can join. It stays 'running' across turns
+ * and app restarts until its child returns its contract or someone stops it,
+ * so the boot sweep leaves tab jobs alone.
  */
 
 import { postgresClient } from '../../database/PostgresClient';
 import { WorkTaskOwnershipModel } from '../../database/models/WorkTaskOwnershipModel';
+
+import type { AgentContractSpec } from './contract';
+
+export type AgentJobVisibility = 'hidden' | 'tab';
 
 export interface AgentJobResult {
   label:    string;
   status:   'completed' | 'blocked' | 'error';
   output:   string;
   threadId: string;
+  /** Contract name and the structured value the child returned, if it did. */
+  contract?: string;
+  result?:   unknown;
 }
 
 export interface AgentJobTask {
@@ -36,6 +48,16 @@ export interface AgentJobTask {
   startedAt?: number;
   finishedAt?: number;
   dismissed?:  boolean;
+  visibility?: AgentJobVisibility;
+  contract?:   AgentContractSpec;
+  /** Delegation depth of the child (1 = launched by a top-level chat). */
+  depth?:      number;
+  /** Set once the child called return_result with a contract-valid value. */
+  result?:     unknown;
+  summary?:    string;
+  returnedAt?: number;
+  /** A hidden child the human opened as a chat tab mid-run. */
+  promotedToTab?: boolean;
 }
 
 export interface AgentJob {
@@ -49,8 +71,15 @@ export interface AgentJob {
   error?:     string;
   parentChannel?: string;
   parentThreadId?: string;
+  parentAgentId?: string;
+  visibility?: AgentJobVisibility;
   completionDeliveredAt?: number | null;
   dismissedAt?: number | null;
+}
+
+export interface CreateJobOptions {
+  visibility?:    AgentJobVisibility;
+  parentAgentId?: string;
 }
 
 const JOB_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -61,6 +90,10 @@ const jobs = new Map<string, AgentJob>();
 // sub-agent's `metadata.options.abort`, the same signal the graph honours for
 // the user's stop button — so aborting it cooperatively unwinds the sub-agents.
 const abortControllers = new Map<string, AbortController>();
+
+// Per-job dead-run watcher stop functions, for jobs whose lifetime is not one
+// promise (tab jobs end on return_result or a stop, from another call site).
+const jobWatchers = new Map<string, () => void>();
 
 let jobCounter = 0;
 
@@ -88,13 +121,16 @@ function rowToJob(r: any): AgentJob {
     error:      r.error ?? undefined,
     parentChannel: r.parent_channel ?? undefined,
     parentThreadId: r.parent_thread_id ?? undefined,
+    parentAgentId: r.parent_agent_id ?? undefined,
+    visibility: r.visibility === 'tab' ? 'tab' : 'hidden',
     completionDeliveredAt: r.completion_delivered_at ? new Date(r.completion_delivered_at).getTime() : null,
     dismissedAt: r.dismissed_at ? new Date(r.dismissed_at).getTime() : null,
   };
 }
 
-// One-time sweep after boot: any row still 'running' belonged to a previous
-// process — its promise chain is gone, so report it dead, honestly.
+// One-time sweep after boot: any hidden row still 'running' belonged to a
+// previous process — its promise chain is gone, so report it dead, honestly.
+// Tab jobs survive: their child is a saved chat thread that can still return.
 let bootSweepDone: Promise<void> | null = null;
 function ensureBootSweep(): Promise<void> {
   bootSweepDone ??= (async() => {
@@ -102,7 +138,7 @@ function ensureBootSweep(): Promise<void> {
       const swept = await postgresClient.query(
         `UPDATE agent_jobs
             SET status = 'failed', error = 'app restarted mid-job', finished_at = now()
-          WHERE status = 'running'
+          WHERE status = 'running' AND visibility <> 'tab'
           RETURNING job_id`,
       ) as any[];
       // Jobs that died with the previous process hand their tasks back.
@@ -117,7 +153,12 @@ function ensureBootSweep(): Promise<void> {
 
 // ── API ────────────────────────────────────────────────────────────────
 
-export async function createJob(taskInput: number | AgentJobTask[], parentChannel?: string, parentThreadId?: string): Promise<AgentJob> {
+export async function createJob(
+  taskInput: number | AgentJobTask[],
+  parentChannel?: string,
+  parentThreadId?: string,
+  options: CreateJobOptions = {},
+): Promise<AgentJob> {
   await ensureBootSweep();
   jobCounter += 1;
   const tasks = Array.isArray(taskInput) ? taskInput : [];
@@ -133,6 +174,8 @@ export async function createJob(taskInput: number | AgentJobTask[], parentChanne
     tasks,
     parentChannel,
     parentThreadId,
+    parentAgentId: options.parentAgentId,
+    visibility: options.visibility ?? 'hidden',
     completionDeliveredAt: null,
     dismissedAt: null,
   };
@@ -141,10 +184,10 @@ export async function createJob(taskInput: number | AgentJobTask[], parentChanne
   abortControllers.set(jobId, new AbortController());
 
   await dbWrite(
-    `INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, created_at, tasks)
-     VALUES ($1, 'running', $2, $4, $5, to_timestamp($3 / 1000.0), $6::jsonb)
+    `INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, created_at, tasks, visibility, parent_agent_id)
+     VALUES ($1, 'running', $2, $4, $5, to_timestamp($3 / 1000.0), $6::jsonb, $7, $8)
      ON CONFLICT (job_id) DO NOTHING`,
-    [jobId, taskCount, job.createdAt, parentChannel ?? null, parentThreadId ?? null, JSON.stringify(tasks)],
+    [jobId, taskCount, job.createdAt, parentChannel ?? null, parentThreadId ?? null, JSON.stringify(tasks), job.visibility, options.parentAgentId ?? null],
   );
 
   return job;
@@ -197,6 +240,17 @@ export async function dismissJobTask(jobId: string, parentThreadId: string, task
     [jobId, parentThreadId, JSON.stringify(job.tasks), allDismissed],
   );
   return true;
+}
+
+/** Keep a job's dead-run watcher until releaseJobWatcher (tab jobs). */
+export function registerJobWatcher(jobId: string, stop: () => void): void {
+  jobWatchers.get(jobId)?.();
+  jobWatchers.set(jobId, stop);
+}
+
+export function releaseJobWatcher(jobId: string): void {
+  jobWatchers.get(jobId)?.();
+  jobWatchers.delete(jobId);
 }
 
 /** The abort signal for a job, for wiring into its sub-agents' state. */
@@ -274,7 +328,7 @@ export async function getAllJobs(): Promise<AgentJob[]> {
 }
 
 export async function completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
-  const job = jobs.get(jobId);
+  const job = jobs.get(jobId) ?? await getJob(jobId);
   if (!job) return;
   abortControllers.delete(jobId);
 
@@ -296,7 +350,7 @@ export async function completeJob(jobId: string, results: AgentJobResult[]): Pro
   job.tasks = job.tasks.map((task, index) => {
     const result = results[index];
     if (!result) return task;
-    return { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: Date.now() };
+    return { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? Date.now() };
   });
 
   await dbWrite(
@@ -331,6 +385,95 @@ export async function getPendingCompletions(): Promise<AgentJob[]> {
     console.warn('[jobRegistry] pending completion read failed:', (err as Error).message);
     return [];
   }
+}
+
+/**
+ * The job task a delegated child thread belongs to. Hot cache first; a cache
+ * miss (a tab child after a restart) reads the persisted row.
+ */
+export async function findTaskByThread(threadId: string): Promise<{ job: AgentJob; taskIndex: number } | undefined> {
+  if (!threadId) return undefined;
+  const cached = findCachedTaskByThread(threadId);
+  if (cached) return cached;
+  await ensureBootSweep();
+  try {
+    const rows = await postgresClient.query<any>(
+      `SELECT * FROM agent_jobs
+        WHERE tasks @> jsonb_build_array(jsonb_build_object('threadId', $1::text))
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [threadId],
+    );
+    if (rows?.[0]) {
+      const job = jobs.get(rows[0].job_id) ?? rowToJob(rows[0]);
+      jobs.set(job.jobId, job);
+      const taskIndex = job.tasks.findIndex(task => task.threadId === threadId);
+      if (taskIndex >= 0) return { job, taskIndex };
+    }
+  } catch (err) {
+    console.warn('[jobRegistry] thread task read failed:', (err as Error).message);
+  }
+  return undefined;
+}
+
+function findCachedTaskByThread(threadId: string): { job: AgentJob; taskIndex: number } | undefined {
+  let found: { job: AgentJob; taskIndex: number } | undefined;
+  for (const job of jobs.values()) {
+    const taskIndex = job.tasks.findIndex(task => task.threadId === threadId);
+    if (taskIndex >= 0 && (!found || job.createdAt > found.job.createdAt)) found = { job, taskIndex };
+  }
+  return found;
+}
+
+/** Delegation depth of a thread: 0 for a top-level chat, else its task depth. */
+export async function delegationDepthForThread(threadId: string | undefined): Promise<number> {
+  if (!threadId) return 0;
+  const owner = await findTaskByThread(threadId);
+  if (!owner) return 0;
+  return Number(owner.job.tasks[owner.taskIndex].depth) || 1;
+}
+
+/** Tab jobs still open under one parent chat (each holds a renderer tab). */
+export async function countOpenTabJobs(parentThreadId: string): Promise<number> {
+  const all = await getJobsForParentThread(parentThreadId);
+  return all.filter(job => job.visibility === 'tab' && job.status === 'running').length;
+}
+
+/**
+ * Record a contract-valid return on its task. The caller validated it. A
+ * task returns once; a second call is refused so the parent never gets two
+ * different answers for one brief.
+ */
+export async function recordTaskReturn(jobId: string, taskIndex: number, patch: {
+  result:  unknown;
+  summary?: string;
+  status:  AgentJobTask['status'];
+}): Promise<AgentJob> {
+  const job = jobs.get(jobId) ?? await getJob(jobId);
+  const task = job?.tasks[taskIndex];
+  if (!job || !task) throw new Error(`Job "${ jobId }" has no task ${ taskIndex }.`);
+  if (task.returnedAt) throw new Error(`Job "${ jobId }" already returned its contract.`);
+  if (job.status !== 'running') throw new Error(`Job "${ jobId }" is ${ job.status }; it no longer accepts a return.`);
+  job.tasks[taskIndex] = {
+    ...task,
+    result:     patch.result,
+    summary:    patch.summary,
+    returnedAt: Date.now(),
+    // Hidden runners settle the status when their graph returns; a tab is
+    // finished by this return alone.
+    ...(job.visibility === 'tab' ? { status: patch.status, finishedAt: Date.now() } : {}),
+  };
+  await dbWrite(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(job.tasks)]);
+  return job;
+}
+
+/** Mark a hidden child as opened in a chat tab (rail shows the tab pill). */
+export async function markTaskPromoted(jobId: string, taskIndex: number): Promise<AgentJobTask | undefined> {
+  const job = jobs.get(jobId) ?? await getJob(jobId);
+  if (!job?.tasks[taskIndex]) return undefined;
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex], promotedToTab: true };
+  await dbWrite(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(job.tasks)]);
+  return job.tasks[taskIndex];
 }
 
 export function failJob(jobId: string, error: string): void {

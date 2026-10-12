@@ -20,7 +20,7 @@
     <div class="cards">
       <article
         v-for="card in cards"
-        :key="`${card.jobId}:${card.taskIndex}`"
+        :key="`${card.kind}:${card.jobId}:${card.taskIndex}`"
         class="agent-card"
         :class="[`is-${card.status}`, { clickable: card.conversationId }]"
         @click="openCard(card)"
@@ -31,6 +31,21 @@
             aria-hidden="true"
           />
           <span class="agent-id">{{ card.agentId }}</span>
+          <span
+            v-if="card.kind === 'tab'"
+            class="kind-pill"
+            title="Runs in its own chat tab"
+          >tab</span>
+          <button
+            v-if="card.kind !== 'tab' && card.status === 'running' && card.conversationId"
+            type="button"
+            class="open-tab"
+            title="Open in tab"
+            aria-label="Open this sub-agent in a chat tab"
+            @click.stop="openInTab(card)"
+          >
+            ↗
+          </button>
           <button
             v-if="card.status !== 'running'"
             type="button"
@@ -48,6 +63,11 @@
         <div class="meta">
           <span>{{ card.status }}</span>
           <span>{{ elapsed(card) }}</span>
+          <span
+            v-if="card.contract && card.contract !== 'result'"
+            class="contract"
+            :title="`Return contract: ${ card.contract }`"
+          >{{ card.contract }}</span>
         </div>
         <p class="activity">
           {{ card.lastActivity }}
@@ -72,6 +92,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -89,6 +110,7 @@ const now = ref(Date.now());
 const runningCount = computed(() => cards.value.filter(card => card.status === 'running').length);
 let timer: ReturnType<typeof setInterval> | null = null;
 let request = 0;
+const { tabs: browserTabs, createTab } = useBrowserTabs();
 
 async function refresh(): Promise<void> {
   const parentThreadId = props.parentThreadId;
@@ -107,8 +129,43 @@ async function refresh(): Promise<void> {
 }
 
 function openCard(card: ThreadAgentCard): void {
+  if (card.kind === 'tab' && card.agentTab) {
+    focusAgentTab(card);
+    return;
+  }
   if (!card.conversationId) return;
   emit('open', { agentId: card.agentId, label: card.label, conversationId: card.conversationId });
+}
+
+/** Jump to the child's chat tab, reopening it if the human closed it. */
+function focusAgentTab(card: ThreadAgentCard): void {
+  const info = card.agentTab!;
+  let tab = browserTabs.find(t => t.mode === 'chat' && t.agentChat?.contractId === info.contractId);
+  if (!tab) {
+    tab = createTab('about:blank', {
+      mode:      'chat',
+      title:     card.label,
+      agentChat: {
+        threadId:        info.threadId,
+        agentId:         card.agentId,
+        agentName:       info.agentName,
+        parentThreadId:  props.parentThreadId || '',
+        parentAgentId:   info.parentAgentId,
+        parentAgentName: info.parentAgentId,
+        contractId:      info.contractId,
+        depth:           info.depth,
+      },
+    });
+    localStorage.setItem(`chat_threadId_sulla-desktop_${ tab.id }`, info.threadId);
+  }
+  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+}
+
+/** Promote a running hidden child to a chat tab; main opens and focuses it. */
+async function openInTab(card: ThreadAgentCard): Promise<void> {
+  if (!props.parentThreadId) return;
+  const ok = await ipcRenderer.invoke('agents:open-job-in-tab' as any, card.jobId, props.parentThreadId, card.taskIndex);
+  if (ok) void refresh();
 }
 
 async function dismiss(card: ThreadAgentCard): Promise<void> {
@@ -210,6 +267,15 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
 .is-failed .status-dot { background: var(--text-error); }
 .is-stopped .status-dot { background: var(--text-warning); }
 .agent-id { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px var(--mono); }
+.kind-pill {
+  flex: 0 0 auto; padding: 0 5px;
+  border: 1px solid var(--border-default); border-radius: 5px;
+  color: var(--text-muted); font: 9px var(--mono); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.open-tab { margin-left: auto; padding: 0 3px; color: var(--text-muted); font-size: 12px; line-height: 1; }
+.open-tab:hover { color: var(--accent-primary); }
+.open-tab + .dismiss { margin-left: 0; }
+.contract { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; }
 .dismiss { margin-left: auto; padding: 0 3px; color: var(--text-muted); font-size: 16px; line-height: 1; }
 .dismiss:hover { color: var(--text-primary); }
 .label { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }

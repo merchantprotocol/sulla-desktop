@@ -103,6 +103,18 @@ export interface ThreadAgentCard {
   conversationId?: string;
   lastActivity:   string;
   lastActivityAt: number;
+  /** 'tab' = a child running in (or opened as) its own chat tab. */
+  kind:           'job' | 'tab';
+  /** Return contract name; 'result' is the default contract. */
+  contract:       string;
+  /** Present for tab cards: what the renderer needs to focus or reopen the tab. */
+  agentTab?: {
+    contractId:    string;
+    threadId:      string;
+    agentName:     string;
+    parentAgentId: string;
+    depth:         number;
+  };
 }
 
 const MAX_CONVERSATION_PAGE = 200;
@@ -267,6 +279,18 @@ export function initAgentsIpc(): void {
     return fetchThreadAgentCards(parentThreadId);
   });
 
+  // "Open in tab": show a running hidden child's thread as a chat tab.
+  ipcMain.handle('agents:open-job-in-tab', async(_event, jobId: string, parentThreadId: string, taskIndex: number): Promise<boolean> => {
+    if (!jobId || !parentThreadId || typeof jobId !== 'string' || typeof parentThreadId !== 'string' || !Number.isInteger(taskIndex)) return false;
+    const [{ promoteJobTaskToTab }, { markTaskPromoted }] = await Promise.all([
+      import('@pkg/agent/services/AgentTabOpener'),
+      import('@pkg/agent/tools/agents/jobRegistry'),
+    ]);
+    const opened = await promoteJobTaskToTab({ jobId, taskIndex, parentThreadId });
+    if (opened) await markTaskPromoted(jobId, taskIndex);
+    return opened;
+  });
+
   ipcMain.handle('agents:dismiss-thread-job', async(_event, jobId: string, parentThreadId: string, taskIndex: number): Promise<boolean> => {
     if (!jobId || !parentThreadId || typeof jobId !== 'string' || typeof parentThreadId !== 'string' || !Number.isInteger(taskIndex)) return false;
     const { dismissJobTask } = await import('@pkg/agent/tools/agents/jobRegistry');
@@ -285,7 +309,8 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
   const logsDir = resolveSullaLogsDir();
   const cards = await Promise.all(jobs.flatMap(job => job.tasks.map(async(task, taskIndex): Promise<ThreadAgentCard | null> => {
     if (task.dismissed) return null;
-    let lastActivity = task.status === 'queued' ? 'Waiting to start' : 'Starting…';
+    const isTab = task.visibility === 'tab' || job.visibility === 'tab' || task.promotedToTab === true;
+    let lastActivity = task.status === 'queued' ? 'Waiting to start' : isTab ? 'Working in its own tab' : 'Starting…';
     let lastActivityAt = RunActivity.lastActivityAt(job.jobId) ?? task.startedAt ?? job.createdAt;
 
     if (task.threadId) {
@@ -305,7 +330,7 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
     }
 
     const taskStatus = toCardStatus(task.status, job.status);
-    if (taskStatus === 'done' && lastActivity === 'Starting…') lastActivity = 'Finished';
+    if (taskStatus === 'done' && (lastActivity === 'Starting…' || lastActivity === 'Working in its own tab')) lastActivity = task.returnedAt ? `Returned ${ task.contract?.name ?? 'result' }` : 'Finished';
     if (taskStatus === 'failed' && job.error) lastActivity = job.error;
 
     return {
@@ -319,6 +344,17 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
       conversationId: task.threadId,
       lastActivity: clipLine(lastActivity),
       lastActivityAt,
+      kind: isTab ? 'tab' : 'job',
+      contract: task.contract?.name ?? 'result',
+      ...(isTab && task.threadId ? {
+        agentTab: {
+          contractId:    job.visibility === 'tab' ? job.jobId : `${ job.jobId }#${ taskIndex }`,
+          threadId:      task.threadId,
+          agentName:     task.label || task.agentId,
+          parentAgentId: job.parentAgentId || job.parentChannel || '',
+          depth:         Number(task.depth) || 1,
+        },
+      } : {}),
     };
   })));
 

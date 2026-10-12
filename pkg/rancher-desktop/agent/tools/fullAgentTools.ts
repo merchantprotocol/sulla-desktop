@@ -8,5 +8,5 @@
  */
 export const FULL_AGENT_TOOL_NAMES: string[] = [
   'browse_tools', 'exec', 'read_file', 'write_file', 'ask_user_question', 'browser_controller',
-  'send_job_message', 'report_progress',
+  'send_job_message', 'report_progress', 'return_result',
 ];

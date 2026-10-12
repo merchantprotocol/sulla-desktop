@@ -128,6 +128,12 @@ const buildTeamRecallContextMock = jest.fn((opts: { agentSlug: string; text: str
 jest.unstable_mockModule('../../services/AgentTeamRecall', () => ({
   buildTeamRecallContext: buildTeamRecallContextMock,
 }));
+const buildSubagentDirectoryContextMock = jest.fn((threadId?: string) => Promise.resolve(
+  threadId === 'parent-with-children' ? '## Your subagents\n- project-manager · tab · running 3m · contract result · job job-1' : '',
+));
+jest.unstable_mockModule('../../services/SubagentDirectory', () => ({
+  buildSubagentDirectoryContext: buildSubagentDirectoryContextMock,
+}));
 
 function stateWithMessages(count: number): any {
   return {
@@ -601,5 +607,26 @@ describe('dropMetaRecallOutput', () => {
     }
     expect(dropMetaRecallOutput('[h1] L3·preference 2026-09-01 — Prefers terse status.\nNeeds user input: no'))
       .toBe('[h1] L3·preference 2026-09-01 — Prefers terse status.');
+  });
+});
+
+describe('subagent directory', () => {
+  it('reads this thread\'s children every turn without an LLM call', async() => {
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const state: any = { messages: [{ role: 'user', content: 'How is the plan going?' }], metadata: { threadId: 'parent-with-children' } };
+
+    await runSubconsciousMiddleware(state, { includeObservations: false });
+
+    expect(buildSubagentDirectoryContextMock).toHaveBeenCalledWith('parent-with-children');
+    expect(state.metadata.subagentDirectoryContext).toContain('project-manager · tab');
+  });
+
+  it('clears a stale block when the thread has no children', async() => {
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const state: any = { messages: [{ role: 'user', content: 'hi' }], metadata: { threadId: 'no-children', subagentDirectoryContext: 'stale' } };
+
+    await runSubconsciousMiddleware(state, { includeObservations: false });
+
+    expect(state.metadata.subagentDirectoryContext).toBe('');
   });
 });

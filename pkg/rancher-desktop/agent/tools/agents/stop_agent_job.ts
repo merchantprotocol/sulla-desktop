@@ -1,9 +1,10 @@
 import { BaseTool, ToolResponse } from '../base';
 import { emitSubAgentExchange } from './jobExchange';
-import { abortJob, getJob } from './jobRegistry';
+import { abortJob, getJob, releaseJobWatcher } from './jobRegistry';
+import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
 
 /**
- * Kill switch for async sub-agent jobs launched with spawn_agent(async: true).
+ * Kill switch for delegated jobs from spawn_agent, hidden or tab.
  * Fires the job's AbortController, which is threaded into every sub-agent that
  * job spawned via `metadata.options.abort` — the same signal the user's stop
  * button uses — so the sub-agent graphs unwind cooperatively.
@@ -32,6 +33,15 @@ export class StopAgentJobWorker extends BaseTool {
 
     switch (outcome) {
     case 'stopped':
+      // A tab child runs as a desktop chat, not under the job's abort signal:
+      // stop its live turn directly and close its delegation record.
+      if (job?.visibility === 'tab') {
+        releaseJobWatcher(jobId);
+        const { stopAgentTab } = await import('../../services/AgentTabOpener');
+        const threadId = job.tasks[0]?.threadId;
+        if (threadId) await stopAgentTab(threadId, `The parent agent stopped job ${ jobId }. This tab no longer reports back.`);
+        await safeFinishDelegationByRef(jobId, { outcome: 'failed', detail: 'stopped by parent' });
+      }
       await Promise.all((job?.tasks ?? []).map((task, taskIndex) => emitSubAgentExchange(
         job?.parentChannel,
         job?.parentThreadId,

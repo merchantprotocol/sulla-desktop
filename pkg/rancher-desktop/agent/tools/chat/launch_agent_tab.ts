@@ -1,54 +1,39 @@
-import {
-  delegationSituation,
-  delegationTaskId,
-  safeRejectDelegation,
-  safeStartDelegation,
-  type AgentDelegationStart,
-} from '../../database/models/AgentDelegationModel';
-import { getAgentTabContractService } from '../../services/AgentTabContractService';
 import { BaseTool, ToolResponse } from '../base';
+import { SpawnAgentWorker } from '../agents/spawn_agent';
 
+/**
+ * Alias of spawn_agent with visibility "tab". One delegation path: the tab is
+ * an agent_jobs job with a contract, shown in the parent's sub-agent rail.
+ */
 export class LaunchAgentTabWorker extends BaseTool {
   name = '';
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const parentThreadId = String(this.state?.metadata?.threadId ?? '').trim();
-    const parentChannel = String(this.state?.metadata?.wsChannel ?? '').trim();
-    const parentAgentId = String(
-      (this.state?.metadata as any)?.routedAgentId ?? this.state?.metadata?.agentId ?? parentChannel,
-    ).trim();
-    if (!parentThreadId || !parentChannel || !parentAgentId) {
-      return { successBoolean: false, responseString: 'launch_agent_tab must be called from an active chat thread.' };
-    }
-    const agentId = String(input.agentId ?? '').trim();
-    const brief = String(input.brief ?? '').trim();
-    // Delegation outcome log (routing training data); returnContract closes it.
-    const delegation: AgentDelegationStart = {
-      via:            'agent_tab',
-      parentAgentId,
-      parentThreadId,
-      childAgentId:   agentId,
-      taskId:         delegationTaskId(undefined, this.state?.metadata),
-      situation:      delegationSituation(this.state?.messages),
-      brief,
+    const brief = String(input.brief ?? input.prompt ?? '').trim();
+    if (!brief) return { successBoolean: false, responseString: 'Agent-tab brief is required and cannot be empty.' };
+
+    const result = await new SpawnAgentWorker().runValidated({
+      tasks: [{
+        agentId:       String(input.agentId ?? '').trim(),
+        prompt:        brief,
+        label:         typeof input.title === 'string' ? input.title : undefined,
+        contract:      input.contract,
+        projectTaskId: input.projectTaskId,
+        focus:         input.focus === true,
+        visibility:    'tab',
+      }],
+    }, this.state);
+    if (!result.successBoolean) return result;
+
+    const launched = JSON.parse(result.responseString);
+    return {
+      successBoolean: true,
+      responseString: JSON.stringify({
+        contractId:    launched.contractId,
+        jobId:         launched.jobId,
+        childThreadId: launched.childThreadId,
+      }),
     };
-    try {
-      const result = await getAgentTabContractService().launch({
-        parentThreadId,
-        parentChannel,
-        parentAgentId,
-        agentId,
-        brief,
-        title: typeof input.title === 'string' ? input.title : undefined,
-        contract: input.contract,
-        focus: input.focus === true,
-      });
-      await safeStartDelegation({ ...delegation, childThreadId: result.childThreadId, refId: result.contractId });
-      return { successBoolean: true, responseString: JSON.stringify(result) };
-    } catch (error) {
-      await safeRejectDelegation(delegation, (error as Error).message);
-      return { successBoolean: false, responseString: (error as Error).message };
-    }
   }
 }

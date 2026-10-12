@@ -146,6 +146,7 @@ export async function runSubconsciousMiddleware(
   //                             landed yet.
   const meta = state.metadata as any;
   meta.teamDirectoryContext = '';
+  meta.subagentDirectoryContext = '';
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     console.log('[SubconsciousMiddleware] Skipped — running inside a workflow');
     return;
@@ -321,6 +322,14 @@ export async function runSubconsciousMiddleware(
   if (teamAgentSlug) {
     launched.push('team-recall');
     awaitedTasks.push(runTeamRecall(state, teamAgentSlug));
+  }
+
+  // R11. Subagent directory — any agent with children on this thread sees each
+  // child (hidden or tab), its last check-in, stalls and unprocessed results,
+  // injected as <subagent_directory>. Job-table read only: no LLM call.
+  if (typeof meta.threadId === 'string' && meta.threadId) {
+    launched.push('subagent-directory');
+    awaitedTasks.push(runSubagentDirectory(state));
   }
 
   console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
@@ -886,6 +895,16 @@ async function runTeamRecall(state: BaseThreadState, agentSlug: string): Promise
     });
   } catch (err) {
     console.warn('[SubconsciousMiddleware] team recall failed:', err instanceof Error ? err.message : err);
+  }
+}
+
+/** Best effort: a job read failure just means no subagent block this turn. */
+async function runSubagentDirectory(state: BaseThreadState): Promise<void> {
+  try {
+    const { buildSubagentDirectoryContext } = await import('../services/SubagentDirectory');
+    (state.metadata as any).subagentDirectoryContext = await buildSubagentDirectoryContext((state.metadata as any).threadId);
+  } catch (err) {
+    console.warn('[SubconsciousMiddleware] subagent directory failed:', err instanceof Error ? err.message : err);
   }
 }
 

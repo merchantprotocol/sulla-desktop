@@ -8,7 +8,7 @@ const artifactTarget: Record<string, any> = {
 export const chatToolManifests: ToolManifest[] = [
   {
     name:        'launch_agent_tab',
-    description: 'Launch an enabled agent in its own visible chat tab with a durable return contract. Use this instead of spawn_agent when the agent needs its own visible Playbook/sidebar or will run its own sub-agents.',
+    description: 'Alias of meta/spawn_agent with visibility "tab": launch an enabled agent in its own visible chat tab with a return contract. Prefer spawn_agent with visibility "tab". The tab shows in your sub-agent rail and closes only when the child returns its contract or you stop it.',
     category:    'chat',
     schemaDef:   {
       agentId: { type: 'string', description: 'Enabled agent persona slug.' },
@@ -23,25 +23,28 @@ export const chatToolManifests: ToolManifest[] = [
         },
       },
       focus: { type: 'boolean', optional: true, default: false, description: 'Focus the new tab. Defaults to false so the parent composer keeps focus.' },
+      projectTaskId: { type: 'string', optional: true, description: 'Projects task the child works; its job owns the task until it returns.' },
     },
     operationTypes: ['create', 'execute'],
     loader:         () => import('./launch_agent_tab'),
   },
   {
     name:        'return_contract',
-    description: 'Return a completed agent-tab contract to its parent chat. Only the child thread that owns the contract may call this; schema mismatches are rejected.',
+    description: 'Alias of agents/return_result: return your contract to the agent that launched you. Only the child thread that owns the contract may call this; schema mismatches are rejected.',
     category:    'chat',
     schemaDef:   {
-      contractId: { type: 'string', description: 'Contract id supplied in the launch brief.' },
-      result:     { type: 'object', description: 'Structured contract result.' },
-      summary:    { type: 'string', optional: true, description: 'Short human-readable summary.' },
+      contractId: { type: 'string', optional: true, description: 'Contract/job id supplied in the launch brief. Optional; your thread identifies the job.' },
+      result:     { type: 'object', optional: true, description: 'Structured contract result (custom schema), or {status, summary, output} for the default contract.' },
+      status:     { type: 'enum', enum: ['completed', 'blocked', 'failed'], optional: true, description: 'Default contract: how it went. Defaults to completed.' },
+      summary:    { type: 'string', optional: true, description: 'Short human-readable summary (required by the default contract).' },
+      output:     { type: 'string', optional: true, description: 'Default contract: the deliverable.' },
     },
     operationTypes: ['update', 'execute'],
     loader:         () => import('./return_contract'),
   },
   {
     name:        'message_tab',
-    description: 'Send a follow-up message from a parent chat to one of its open child agent tabs. Steers a running child or starts a new turn when idle.',
+    description: 'Alias of agents/send_job_message addressed by contract id or child thread id: send a follow-up to one of this chat\'s open children. Steers a running child or starts a new turn when idle.',
     category:    'chat',
     schemaDef:   {
       contractId:   { type: 'string', optional: true, description: 'Contract id to address.' },
@@ -53,7 +56,7 @@ export const chatToolManifests: ToolManifest[] = [
   },
   {
     name:        'list_tab_contracts',
-    description: 'List this parent chat\'s child agent-tab contracts, including status and returned results.',
+    description: 'Alias view of agents/check_agent_jobs for this chat\'s tab children, in the old contract shape (status open/returned/cancelled, returned results).',
     category:    'chat',
     schemaDef:   {
       status: { type: 'enum', enum: ['open', 'returned', 'cancelled'], optional: true, description: 'Optional status filter.' },
