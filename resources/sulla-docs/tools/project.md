@@ -8,13 +8,19 @@ Projects is a **plain board**. Nothing in the app claims, launches, recovers,
 reviews, or moves tasks on its own, and there is no automation switch to turn
 on. Agents drive the work:
 
-1. An **Account Manager** talks to the human and launches a **Project Manager**.
-2. The Project Manager creates the project, lanes, epics, and tasks, assigns a
-   custom agent to each task (`assignee`), assigns itself to the project
-   (`assignedAgent`), launches a **Director**, and checks progress on its own
-   30-minute chat heartbeat (`chat/set_heartbeat`).
-3. The Director pushes workers (`spawn_agent`) through the tasks; each worker
-   records its outcome with `update_task` / `add_task_comment`.
+1. An **Account Manager** talks to the human and is the only stage launcher:
+   it picks a playbook skill, keeps one run sheet, and launches every stage.
+   Each specialist does one stage, returns to it, and stops.
+2. A **Project Manager** plans: it creates the project, lanes, epics, and tasks,
+   assigns a custom agent to each task (`assignee`), assigns itself to the
+   project (`assignedAgent`), and returns the plan. It launches nobody.
+3. The Account Manager launches a **Director**, and checks progress on its own
+   30-minute chat heartbeat (`chat/set_heartbeat`) while the build runs. The
+   Director pushes workers (`spawn_agent`) through the tasks; each worker
+   records its outcome with `update_task` / `add_task_comment`. The Director
+   returns when the build is done.
+4. The Account Manager launches a **UI Test Manager** for the full-project test,
+   sends any fixes back to a Director, and delivers to the human.
 
 ```
 work_projects          one outcome with a metric
