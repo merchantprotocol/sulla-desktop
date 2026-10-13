@@ -159,6 +159,18 @@ export class MicrophoneDriverController {
       this._running = true;
       this._persist();
 
+      // Every holder released while the renderer was opening the mic — those
+      // stop() calls saw _running=false and did nothing, so close it now.
+      if (this._holders.size === 0) {
+        log.info(MicrophoneDriverController.TAG, 'All holders released during start — stopping mic');
+        await this._sendRendererStop();
+        this._running = false;
+        this._resetVadState();
+        this._persist();
+
+        return;
+      }
+
       // Init noise processor for gated audio paths
       this._noiseProcessor = new AudioNoiseProcessor(this._pcmSampleRate);
       this._noiseProcessor.init().catch((e: any) => {
@@ -334,6 +346,20 @@ export class MicrophoneDriverController {
     if (this._startedResolve) {
       this._startedResolve(deviceInfo);
       this._startedResolve = null;
+    } else if (this._running && deviceInfo) {
+      // Unsolicited ACK: the renderer reopened the mic after a device change.
+      this._micName = deviceInfo.micName || '';
+      audio.setDeviceNames(this._micName, deviceInfo.speakerName || '');
+      const rate = deviceInfo.pcmSampleRate || 48000;
+      if (rate !== this._pcmSampleRate) {
+        this._pcmSampleRate = rate;
+        this._noiseProcessor?.dispose();
+        this._noiseProcessor = new AudioNoiseProcessor(rate);
+        this._noiseProcessor.init().catch((e: any) => {
+          log.warn(MicrophoneDriverController.TAG, 'Noise processor init failed (layers 2-3 may be degraded)', { error: e.message });
+        });
+      }
+      log.info(MicrophoneDriverController.TAG, 'Mic device changed', { micName: this._micName, rate });
     }
   }
 
