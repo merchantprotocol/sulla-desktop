@@ -55,60 +55,95 @@ function onMicLevel(micLevel) {
 
 // ─── Mic worker: start/stop on command from main process ────
 
+// Options of the running mic pipeline; null while stopped. Used to reopen
+// the mic on the same formats when its device disappears.
+let activeMicOpts = null;
+let micRestarting = false;
+
 window.audioDriver.onStartMic(async(opts) => {
   log.info('Controller', '>>> renderer-start-mic received', opts);
-  const formats = opts?.formats || ['webm-opus']; // default: gateway format
   try {
-    vad.reset();
-    feedbackDetection.reset();
-    log.info('Controller', 'VAD + feedback detection reset, calling audioCapture.start()');
-
-    const deviceInfo = await audioCapture.start(onMicLevel, opts?.deviceId);
-    log.info('Controller', 'audioCapture.start() succeeded', {
-      micName:     deviceInfo?.micName,
-      speakerName: deviceInfo?.speakerName,
-      micDeviceId: deviceInfo?.micDeviceId,
-      formats,
-    });
-
-    // Start WebM/Opus recording → mic socket (for gateway, test recording)
-    if (formats.includes('webm-opus')) {
-      try {
-        const socketPath = await window.audioDriver.getMicSocketPath();
-        if (socketPath) {
-          micSocket.connect(socketPath);
-          log.info('Controller', 'Mic socket connected', { path: socketPath });
-        } else {
-          log.warn('Controller', 'No mic socket path available');
-        }
-      } catch (e) {
-        log.warn('Controller', 'Mic socket connect failed', { error: e.message });
-      }
-
-      audioCapture.startRecording((buffer) => {
-        micSocket.send(buffer);
-      });
-      log.info('Controller', 'WebM/Opus MediaRecorder started');
-    }
-
-    // Start raw PCM capture → IPC (for whisper, local STT, capture studio)
-    if (formats.includes('pcm-s16le') || formats.includes('pcm-s16le-raw')) {
-      audioCapture.startPcmCapture((buffer) => {
-        window.audioDriver.sendMicPcm(buffer);
-      });
-      log.info('Controller', 'PCM capture started (s16le 16kHz mono)');
-    }
-
+    const deviceInfo = await startMicPipeline(opts);
     log.info('Controller', 'Sending ackMicStarted to main process');
     window.audioDriver.ackMicStarted({ ...deviceInfo, pcmSampleRate: audioCapture.getPcmSampleRate() });
   } catch (e) {
     log.error('Controller', 'audioCapture.start() FAILED', { error: e.message, stack: e.stack });
+    activeMicOpts = null;
     window.audioDriver.ackMicStarted(null);
   }
 });
 
-window.audioDriver.onStopMic(() => {
-  log.info('Controller', '>>> renderer-stop-mic received');
+audioCapture.onDeviceLost(async(reason) => {
+  if (!activeMicOpts || micRestarting) return;
+  micRestarting = true;
+  const opts = activeMicOpts;
+  log.info('Controller', 'Mic device lost — reopening on current default', { reason });
+  try {
+    stopMicPipeline();
+    // A device picked explicitly is gone; fall back to the system default.
+    const deviceInfo = await startMicPipeline(reason === 'device-removed' ? { ...opts, deviceId: undefined } : opts);
+    if (!activeMicOpts) {
+      // Main stopped the mic while we were reopening it.
+      stopMicPipeline();
+      return;
+    }
+    log.info('Controller', 'Mic reopened after device change', { micName: deviceInfo?.micName });
+    window.audioDriver.ackMicStarted({ ...deviceInfo, pcmSampleRate: audioCapture.getPcmSampleRate() });
+  } catch (e) {
+    log.error('Controller', 'Mic reopen failed', { error: e.message });
+    activeMicOpts = null;
+  } finally {
+    micRestarting = false;
+  }
+});
+
+async function startMicPipeline(opts) {
+  const formats = opts?.formats || ['webm-opus']; // default: gateway format
+  activeMicOpts = opts || {};
+  vad.reset();
+  feedbackDetection.reset();
+  log.info('Controller', 'VAD + feedback detection reset, calling audioCapture.start()');
+
+  const deviceInfo = await audioCapture.start(onMicLevel, opts?.deviceId);
+  log.info('Controller', 'audioCapture.start() succeeded', {
+    micName:     deviceInfo?.micName,
+    speakerName: deviceInfo?.speakerName,
+    micDeviceId: deviceInfo?.micDeviceId,
+    formats,
+  });
+
+  // Start WebM/Opus recording → mic socket (for gateway, test recording)
+  if (formats.includes('webm-opus')) {
+    try {
+      const socketPath = await window.audioDriver.getMicSocketPath();
+      if (socketPath) {
+        micSocket.connect(socketPath);
+        log.info('Controller', 'Mic socket connected', { path: socketPath });
+      } else {
+        log.warn('Controller', 'No mic socket path available');
+      }
+    } catch (e) {
+      log.warn('Controller', 'Mic socket connect failed', { error: e.message });
+    }
+
+    audioCapture.startRecording((buffer) => {
+      micSocket.send(buffer);
+    });
+    log.info('Controller', 'WebM/Opus MediaRecorder started');
+  }
+
+  // Start raw PCM capture → IPC (for whisper, local STT, capture studio)
+  if (formats.includes('pcm-s16le') || formats.includes('pcm-s16le-raw')) {
+    audioCapture.startPcmCapture((buffer) => {
+      window.audioDriver.sendMicPcm(buffer);
+    });
+    log.info('Controller', 'PCM capture started (s16le 16kHz mono)');
+  }
+
+  return deviceInfo;
+}
+
+function stopMicPipeline() {
   audioCapture.stopPcmCapture();
   log.info('Controller', 'PCM capture stopped');
   audioCapture.stopRecording();
@@ -119,6 +154,12 @@ window.audioDriver.onStopMic(() => {
   log.info('Controller', 'micSocket disconnected');
   vad.reset();
   feedbackDetection.reset();
+}
+
+window.audioDriver.onStopMic(() => {
+  log.info('Controller', '>>> renderer-stop-mic received');
+  activeMicOpts = null;
+  stopMicPipeline();
   log.info('Controller', 'VAD + feedback detection reset, sending ackMicStopped');
   window.audioDriver.ackMicStopped();
 });

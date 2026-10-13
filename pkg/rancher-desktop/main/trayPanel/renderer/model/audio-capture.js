@@ -59,6 +59,12 @@ let levelCallback = null;
 let micMuted = false;
 let micGain = 1.0;
 
+// Device-loss watch: fires when the mic track ends or the device it is bound
+// to goes away / stops being the system default (e.g. AirPods disconnect).
+let deviceLostCallback = null;
+let pinnedDeviceId = null;
+let deviceChangeTimer = null;
+
 // MediaRecorder for gateway streaming (250ms WebM/Opus chunks)
 let mediaRecorder = null;
 let recordingCallback = null;
@@ -120,6 +126,7 @@ async function listDevices() {
  */
 async function start(onLevel, micDeviceId) {
   levelCallback = onLevel;
+  pinnedDeviceId = micDeviceId || null;
 
   audioCtx = new AudioContext();
 
@@ -165,8 +172,55 @@ async function start(onLevel, micDeviceId) {
   const deviceInfo = await detectDevices();
   window.audioDriver.setDeviceNames(deviceInfo.micName, deviceInfo.speakerName);
 
+  const track = micStream.getAudioTracks()[0];
+  if (track) {
+    track.addEventListener('ended', () => reportDeviceLost('track-ended'));
+  }
+  navigator.mediaDevices.addEventListener('devicechange', onDeviceChange);
+
   poll();
   return deviceInfo;
+}
+
+/**
+ * Register a callback fired once when the open mic is no longer usable
+ * (track ended, device removed, or the system default input changed).
+ * The owner should stop and restart capture.
+ */
+function onDeviceLost(callback) {
+  deviceLostCallback = callback;
+}
+
+function reportDeviceLost(reason) {
+  if (!micStream || !deviceLostCallback) return;
+  log.warn('AudioCapture', 'Mic device lost', { reason });
+  deviceLostCallback(reason);
+}
+
+function onDeviceChange() {
+  clearTimeout(deviceChangeTimer);
+  deviceChangeTimer = setTimeout(checkDeviceStillCurrent, 500);
+}
+
+async function checkDeviceStillCurrent() {
+  if (!micStream) return;
+  const track = micStream.getAudioTracks()[0];
+  if (!track || track.readyState === 'ended') return reportDeviceLost('track-ended');
+
+  const settings = track.getSettings();
+  const inputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput');
+
+  if (pinnedDeviceId) {
+    if (!inputs.some((d) => d.deviceId === pinnedDeviceId)) reportDeviceLost('device-removed');
+    return;
+  }
+
+  // Following the system default: restart when the default now points at a
+  // different physical device than the one our stream was opened on.
+  const def = inputs.find((d) => d.deviceId === 'default');
+  if (def && settings.groupId && def.groupId && def.groupId !== settings.groupId) {
+    reportDeviceLost('default-changed');
+  }
 }
 
 /**
@@ -202,6 +256,9 @@ function poll() {
  */
 function stop() {
   log.info('AudioCapture', 'Stopping mic capture');
+  navigator.mediaDevices.removeEventListener('devicechange', onDeviceChange);
+  clearTimeout(deviceChangeTimer);
+  pinnedDeviceId = null;
   if (animFrameId) cancelAnimationFrame(animFrameId);
   if (micStream) micStream.getTracks().forEach((t) => t.stop());
   if (audioCtx) audioCtx.close();
@@ -406,4 +463,4 @@ function isPcmCapturing() {
   return pcmProcessor !== null;
 }
 
-module.exports = { start, stop, listDevices, getActiveDeviceId, setMicGain, setMicMuted, getAnalyser, startRecording, stopRecording, isRecording, startPcmCapture, stopPcmCapture, isPcmCapturing, getPcmSampleRate };
+module.exports = { start, stop, onDeviceLost, listDevices, getActiveDeviceId, setMicGain, setMicMuted, getAnalyser, startRecording, stopRecording, isRecording, startPcmCapture, stopPcmCapture, isPcmCapturing, getPcmSampleRate };

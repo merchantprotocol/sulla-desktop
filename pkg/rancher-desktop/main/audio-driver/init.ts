@@ -188,8 +188,22 @@ function registerIpcHandlers(): void {
 
   // ── Mic lifecycle (ref-counted) ─────────────────────────────────
 
+  // Latest mic request per service. A stop that lands while a start is still
+  // waiting on the permission prompt must cancel that start; otherwise the
+  // start adds a holder after the stop and the mic stays open forever.
+  const micRequestSeq = new Map<string, number>();
+  const nextMicRequest = (sid: string) => {
+    const seq = (micRequestSeq.get(sid) ?? 0) + 1;
+
+    micRequestSeq.set(sid, seq);
+
+    return seq;
+  };
+
   ipcMain.handle('audio-driver:start-mic', async(event: Electron.IpcMainInvokeEvent, serviceId?: string, formats?: string[]) => {
     log.info('IPC', 'start-mic', { serviceId, formats });
+    const sid = serviceId || 'unknown';
+    const seq = nextMicRequest(sid);
 
     // On macOS, proactively request microphone permission before the renderer
     // calls getUserMedia. This triggers the system permission dialog if the user
@@ -206,12 +220,19 @@ function registerIpcHandlers(): void {
       }
     }
 
-    await mic.start(serviceId || 'unknown', event.sender, { formats });
+    if (micRequestSeq.get(sid) !== seq) {
+      log.info('IPC', 'start-mic superseded by a later stop/start — skipping', { serviceId: sid });
+
+      return { ok: false, error: 'superseded', micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
+    }
+
+    await mic.start(sid, event.sender, { formats });
     return { ok: true, micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
   });
 
   ipcMain.handle('audio-driver:stop-mic', async(_event: unknown, serviceId?: string) => {
     log.info('IPC', 'stop-mic', { serviceId });
+    nextMicRequest(serviceId || 'unknown');
     await mic.stop(serviceId || 'unknown');
     return { ok: true, micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
   });
