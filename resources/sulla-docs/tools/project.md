@@ -8,19 +8,17 @@ Projects is a **plain board**. Nothing in the app claims, launches, recovers,
 reviews, or moves tasks on its own, and there is no automation switch to turn
 on. Agents drive the work:
 
-1. An **Account Manager** talks to the human and is the only stage launcher:
-   it picks a playbook skill, keeps one run sheet, and launches every stage.
-   Each specialist does one stage, returns to it, and stops.
-2. A **Project Manager** plans: it creates the project, lanes, epics, and tasks,
-   assigns a custom agent to each task (`assignee`), assigns itself to the
-   project (`assignedAgent`), and returns the plan. It launches nobody.
-3. The Account Manager launches a **Director**, and checks progress on its own
-   30-minute chat heartbeat (`chat/set_heartbeat`) while the build runs. The
-   Director pushes workers (`spawn_agent`) through the tasks; each worker
-   records its outcome with `update_task` / `add_task_comment`. The Director
-   returns when the build is done.
-4. The Account Manager launches a **UI Test Manager** for the full-project test,
-   sends any fixes back to a Director, and delivers to the human.
+1. The human picks the agent to work with in a chat (for code, usually the
+   **Coding Manager**). Nothing auto-routes a new chat to a manager agent.
+2. That agent owns the goal. It plans the work (optionally as tasks on a
+   project, with an `assignee` per task and itself as `assignedAgent`),
+   launches its own workers (`spawn_agent`), watches every check-in, steers
+   them, relays their progress to the human in the chat, reviews and lands
+   their work, and keeps a live Playbook dashboard in the sidebar.
+3. Each worker records its outcome with `update_task` / `add_task_comment`
+   and returns to the agent that launched it.
+4. No agent hands a goal off to another manager agent and goes quiet. Work
+   must stay visible to the human.
 
 ```
 work_projects          one outcome with a metric

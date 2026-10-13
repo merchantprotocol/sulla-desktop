@@ -302,9 +302,9 @@ export class BackendGraphWebSocketService {
     // The renderer allocates a threadId before its first send, so first-turn
     // detection must use actual graph/saved history rather than !threadIdFromMsg.
     // Explicit persona picks always win, and only the human desktop chat may route.
-    // A confident Reflex match picks a front-door agent; otherwise the chat
-    // opens on the default front door (account-manager, else Sulla). Either
-    // way the choice is stored on the thread so it stays sticky.
+    // Reflex routing is opt-in (reflexRouteEnabled); when it's on, a confident
+    // match picks a front-door agent. Otherwise the chat opens on Sulla. Any
+    // routed choice is stored on the thread so it stays sticky.
     if (!explicitAgentId && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
       const liveState = GraphRegistry.get(threadId)?.state;
       const priorState = liveState ?? await loadThreadState(threadId);

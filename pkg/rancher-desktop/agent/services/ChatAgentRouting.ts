@@ -5,8 +5,6 @@ import type { BaseThreadState } from '../nodes/Graph';
 
 /** The built-in Sulla persona. Always available; the last-resort front door. */
 export const SULLA_ROUTE_AGENT_ID = 'sulla';
-/** Where a new chat lands when Reflex has no confident route. Falls back to Sulla. */
-export const DEFAULT_ROUTE_AGENT_ID = 'account-manager';
 export const SULLA_DESKTOP_CHANNEL_ID = 'sulla-desktop';
 export const DEFAULT_ROUTE_GRAPH_AGENT_ID = SULLA_DESKTOP_CHANNEL_ID;
 
@@ -51,18 +49,10 @@ export async function resolveFrontDoorAgent(agentId: string): Promise<RoutableAg
 }
 
 /**
- * The default front door: account-manager when that row exists, is enabled
- * and not explicitly taken off the front door; otherwise Sulla.
+ * Where a new chat lands when the human picked no agent and Reflex has no
+ * confident route: always Sulla. The human picks custom agents themselves.
  */
 export async function resolveDefaultRouteAgent(): Promise<RoutableAgent> {
-  try {
-    const definition = await agentDefinitionService.findBySlug(DEFAULT_ROUTE_AGENT_ID);
-    if (definition && definition.enabled && definition.status !== 'archive' && definition.front_door !== false) {
-      return { agentId: definition.slug, graphAgentId: definition.slug, name: definition.name || definition.slug };
-    }
-  } catch (err) {
-    console.warn('[ChatAgentRouting] default route lookup failed; using Sulla:', err instanceof Error ? err.message : err);
-  }
   return { ...SULLA_ROUTE };
 }
 

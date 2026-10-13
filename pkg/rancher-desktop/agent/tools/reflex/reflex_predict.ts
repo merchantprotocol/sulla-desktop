@@ -15,7 +15,7 @@ export class ReflexPredictWorker extends BaseTool {
       getReflexEngine(),
       getRouteReflexEngine(),
       getReflexSettings(),
-      SullaSettingsModel.get('reflexRouteEnabled', 'true'),
+      SullaSettingsModel.get('reflexRouteEnabled', 'false'),
     ]);
     const p = engine.predict(message);
     const route = routeEngine.predict(message);

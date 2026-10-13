@@ -48,6 +48,7 @@ describe('Reflex route/action engine isolation', () => {
   beforeEach(() => {
     decisions.length = 0;
     for (const key of Object.keys(settings)) delete settings[key];
+    settings.reflexRouteEnabled = 'true';
     resolveFrontDoorAgentMock.mockClear();
   });
 
@@ -80,6 +81,12 @@ describe('Reflex route/action engine isolation', () => {
     resolveFrontDoorAgentMock.mockResolvedValueOnce(null as any);
     await expect(routeChatAgent('chart weekly revenue', 'thread-1')).resolves.toBeNull();
     expect(decisions).toEqual([expect.objectContaining({ status: 'below_threshold', result: expect.stringContaining('front-door') })]);
+  });
+
+  it('does not route when reflexRouteEnabled is unset (routing is opt-in)', async() => {
+    delete settings.reflexRouteEnabled;
+    await expect(routeChatAgent('chart weekly revenue', 'thread-1')).resolves.toBeNull();
+    expect(decisions).toEqual([]);
   });
 
   it('honors reflexRouteEnabled=false without recording a decision', async() => {

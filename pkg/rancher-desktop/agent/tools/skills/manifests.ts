@@ -24,7 +24,7 @@ export const skillsToolManifests: ToolManifest[] = [
     description: 'Load one skill from the database: its full SKILL.md (frontmatter + body) and the list of its extra files. Set materialize:true to also write the skill folder to ~/sulla/cache/skills/<slug>/ and get that path back, for skills whose scripts or html must run from disk. Set include_files:true to inline the extra files.',
     category:    'skills',
     schemaDef:   {
-      slug:          { type: 'string', description: 'Skill slug, e.g. "playbook-software-feature".' },
+      slug:          { type: 'string', description: 'Skill slug, e.g. "chat-dashboard-components".' },
       materialize:   { type: 'boolean', optional: true, description: 'Write the skill folder to ~/sulla/cache/skills/<slug>/ and return the path.' },
       include_files: { type: 'boolean', optional: true, description: 'Inline the text of the extra files.' },
     },
