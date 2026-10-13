@@ -60,25 +60,10 @@ afterEach(() => { findBySlug.mockReset() });
 const sulla = { agentId: 'sulla', graphAgentId: 'sulla-desktop', name: 'Sulla' };
 
 describe('default front door', () => {
-  it('opens new chats on account-manager when it exists and is enabled', async() => {
+  it('opens new chats on Sulla, even when a manager agent is marked front door', async() => {
     table(agent('account-manager', { name: 'Account Manager', front_door: true }));
-    await expect(resolveDefaultRouteAgent()).resolves.toEqual({ agentId: 'account-manager', graphAgentId: 'account-manager', name: 'Account Manager' });
-  });
-
-  it('falls back to Sulla when account-manager is missing, disabled, archived or taken off the front door', async() => {
-    table();
     await expect(resolveDefaultRouteAgent()).resolves.toEqual(sulla);
-    table(agent('account-manager', { enabled: false }));
-    await expect(resolveDefaultRouteAgent()).resolves.toEqual(sulla);
-    table(agent('account-manager', { status: 'archive' }));
-    await expect(resolveDefaultRouteAgent()).resolves.toEqual(sulla);
-    table(agent('account-manager', { front_door: false }));
-    await expect(resolveDefaultRouteAgent()).resolves.toEqual(sulla);
-  });
-
-  it('falls back to Sulla when the lookup throws', async() => {
-    findBySlug.mockRejectedValue(new Error('db down'));
-    await expect(resolveDefaultRouteAgent()).resolves.toEqual(sulla);
+    expect(findBySlug).not.toHaveBeenCalled();
   });
 });
 

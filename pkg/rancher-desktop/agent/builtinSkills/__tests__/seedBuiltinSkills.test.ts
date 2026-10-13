@@ -7,7 +7,7 @@ import { postgresClient } from '../../database/PostgresClient';
 import { installFakeSkillTable } from '../../database/models/__tests__/fakeSkillTable';
 import { SkillDefinitionModel } from '../../database/models/SkillDefinitionModel';
 import { hashSkillContent, renderSkillMarkdown } from '../../services/SkillDefinitionService';
-import { getBuiltinSkillSpecs, renderBuiltinSkill, type BuiltinSkillSpec } from '../index';
+import { getBuiltinSkillSpecs, getRetiredBuiltinSkillSlugs, renderBuiltinSkill, type BuiltinSkillSpec } from '../index';
 import { decideBuiltinSkillSeedAction, seedBuiltinSkills } from '../seedBuiltinSkills';
 
 const skillMd = (version: string) => `---
@@ -52,14 +52,9 @@ describe('the shipped catalog', () => {
     }
   });
 
-  it('ships the Account Manager software-feature playbook and renders it back unchanged', () => {
-    const playbook = getBuiltinSkillSpecs().find(s => s.slug === 'playbook-software-feature');
-    expect(playbook).toBeDefined();
-    const content = renderBuiltinSkill(playbook!);
-    expect(content.title).toMatch(/^Playbook — Software Feature/);
-    expect(content.tags).toContain('account-manager');
-    expect(content.triggers).toContain('new feature');
-    expect(renderSkillMarkdown(content)).toBe(playbook!.files['SKILL.md']);
+  it('retires the Account Manager software-feature playbook', () => {
+    expect(getBuiltinSkillSpecs().map(s => s.slug)).not.toContain('playbook-software-feature');
+    expect(getRetiredBuiltinSkillSlugs()).toContain('playbook-software-feature');
   });
 });
 

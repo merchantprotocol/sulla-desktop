@@ -134,7 +134,7 @@ export interface ReflexRouteResult {
 export async function routeChatAgent(message: string, threadId: string | null = null): Promise<ReflexRouteResult | null> {
   try {
     const [enabledRaw, settings] = await Promise.all([
-      SullaSettingsModel.get('reflexRouteEnabled', 'true'),
+      SullaSettingsModel.get('reflexRouteEnabled', 'false'),
       getReflexSettings(),
     ]);
     if (String(enabledRaw) === 'false' || !message.trim()) return null;
