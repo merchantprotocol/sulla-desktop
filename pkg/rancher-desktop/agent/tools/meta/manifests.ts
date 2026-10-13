@@ -80,6 +80,7 @@ export const metaToolManifests: ToolManifest[] = [
       cwd:     { type: 'string', optional: true, description: 'Working directory on the host to run the command in (absolute path)' },
       timeout: { type: 'number', optional: true, description: 'Timeout in milliseconds (default 60000)' },
       stdin:   { type: 'string', optional: true, description: 'Optional stdin data to pipe into the command' },
+      foreground: { type: 'boolean', optional: true, description: 'Default false: `open` commands get -g so apps launch in the background without stealing the user\'s focus/Space. Set true only when the app must come to the front.' },
     },
     operationTypes: ['execute'],
     loader:         () => import('./exechost'),

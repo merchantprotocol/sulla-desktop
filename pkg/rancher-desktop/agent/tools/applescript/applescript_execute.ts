@@ -19,7 +19,7 @@ export function rewriteTerminalScriptForReuse(script: string): string {
   let s = script;
 
   // Drop standalone `activate` lines so Terminal doesn't grab focus.
-  s = s.replace(/^[ \t]*activate[ \t]*\r?\n/gim, '');
+  s = stripFocusSteal(s);
 
   // Match `do script "<quoted>"` only when it's the whole statement (no
   // existing `in <window/tab>` clause after the string), so we never touch
@@ -36,6 +36,22 @@ export function rewriteTerminalScriptForReuse(script: string): string {
 }
 
 /**
+ * Remove the statements that bring an app to the front. An activated app
+ * pulls the user onto whatever Space holds its window and knocks a
+ * full-screen app out of the way, so agent scripts run in the background
+ * unless the caller asks for `foreground: true`. Handles:
+ *   - a standalone `activate` line
+ *   - `tell application "X" to activate` one-liners
+ *   - `set frontmost ... to true` (System Events)
+ */
+export function stripFocusSteal(script: string): string {
+  return script
+    .replace(/^[ \t]*tell\s+application\s+"[^"]+"\s+to\s+activate[ \t]*(\r?\n|$)/gim, '')
+    .replace(/^[ \t]*activate[ \t]*(\r?\n|$)/gim, '')
+    .replace(/^[ \t]*set\s+frontmost\b[^\n]*\bto\s+true[ \t]*(\r?\n|$)/gim, '');
+}
+
+/**
  * AppleScript Execute Tool — dynamically runs AppleScript to control
  * macOS applications that the user has enabled in Computer Use Settings.
  */
@@ -45,6 +61,7 @@ export class ApplescriptExecuteWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { target_app, script, action_type } = input;
+    const foreground = input.foreground === true || input.foreground === 'true';
 
     if (process.platform !== 'darwin') {
       return {
@@ -130,6 +147,9 @@ export class ApplescriptExecuteWorker extends BaseTool {
     let effectiveScript = script;
     if (String(target_app).toLowerCase() === 'terminal') {
       effectiveScript = rewriteTerminalScriptForReuse(script);
+    } else if (!foreground) {
+      // Background by default so the agent never yanks the user's Space.
+      effectiveScript = stripFocusSteal(script);
     }
 
     // ── Execute ─────────────────────────────────────────────────

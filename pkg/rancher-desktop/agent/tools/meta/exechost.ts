@@ -38,6 +38,7 @@ export class ExecHostWorker extends BaseTool {
     const cwd       = input.cwd ? String(input.cwd).trim() : undefined;
     const timeoutMs = input.timeout ? Number(input.timeout) : 60_000;
     const stdin     = input.stdin ? String(input.stdin) : undefined;
+    const foreground = input.foreground === true || input.foreground === 'true';
 
     // Use the user's configured login shell so PATH includes Homebrew, nvm, etc.
     // Require an absolute path — process.env.SHELL is always /bin/zsh or /bin/bash
@@ -45,7 +46,10 @@ export class ExecHostWorker extends BaseTool {
     const shell = (process.env.SHELL ?? '').startsWith('/') ? process.env.SHELL! : '/bin/bash';
 
     // Prefix with cd when a working directory is requested.
-    const script = cwd ? `cd ${ singleQuote(cwd) } && ${ command }` : command;
+    // Launch apps in the background unless asked otherwise, so `open` never
+    // pulls the user onto another Space or out of a full-screen app.
+    const effective = foreground ? command : backgroundOpen(command);
+    const script = cwd ? `cd ${ singleQuote(cwd) } && ${ effective }` : effective;
 
     try {
       // Passing the full path (e.g. /bin/zsh) bypasses CommandRunner's
@@ -73,6 +77,17 @@ export class ExecHostWorker extends BaseTool {
       return { successBoolean: false, responseString: `exechost failed: ${ err.message }` };
     }
   }
+}
+
+/**
+ * Add `-g` (don't bring the app to the foreground) to every `open` command
+ * that starts a statement and doesn't already pass -g. Exported for tests.
+ */
+export function backgroundOpen(command: string): string {
+  return command.replace(
+    /(^|[;&|(]\s*|\n\s*)open(?=[ \t])(?![^\n;&|]*[ \t]-[a-zA-Z]*g[a-zA-Z]*\b)/g,
+    '$1open -g',
+  );
 }
 
 /** Wrap a string in single quotes, escaping any embedded single quotes. */
