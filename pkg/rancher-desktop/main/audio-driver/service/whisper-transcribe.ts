@@ -89,6 +89,14 @@ let flushTimer: ReturnType<typeof setInterval> | null = null;
 let endOfTurnTimer: ReturnType<typeof setInterval> | null = null;
 let transcribing = false;
 
+// The first whisper-cli run after an app update or cache eviction compiles
+// the Metal shader library (~30s on an M4 under load). With the normal 10s
+// chunk timeout every run gets killed mid-compile, the cache never fills,
+// and nothing is ever transcribed. Allow a long timeout until one run has
+// completed in this process.
+const COLD_START_TIMEOUT_MS = 90_000;
+let whisperWarm = false;
+
 // End-of-turn tracking (conversation mode). `lastMicFedAt` is the wall-clock of the
 // most recent VAD-gated mic chunk — since PCM is only delivered while speaking, the
 // gap since then is real silence. `utteranceOpen` guards a single utterance_end per turn.
@@ -532,7 +540,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string, opt
     '-t', String(threads),
   ];
 
-  const timeoutMs = opts.timeoutMs ?? 10000;
+  const timeoutMs = whisperWarm ? (opts.timeoutMs ?? 10000) : Math.max(opts.timeoutMs ?? 10000, COLD_START_TIMEOUT_MS);
 
   log.debug('WhisperTranscribe', 'Running whisper', { channel, wavPath, model: modelName, threads, timeoutMs });
 
@@ -552,6 +560,8 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string, opt
       done?.();
       return;
     }
+
+    whisperWarm = true;
 
     const text = stdout
       .replace(/\[.*?\]/g, '')  // strip any timestamp artifacts
