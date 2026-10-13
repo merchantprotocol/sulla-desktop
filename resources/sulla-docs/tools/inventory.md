@@ -208,6 +208,14 @@ Keep one Plan artifact per chat, read it before editing because the human may ha
 
 → See [`tools/slack.md`](slack.md)
 
+## gdrive — Google Drive, read-only (4 tools)
+- `sulla gdrive/list_folder` — Folder contents by id or URL; `recursive:true` walks the tree.
+- `sulla gdrive/search` — Name + full-text search, optional folder / MIME filter.
+- `sulla gdrive/read` — Docs as Markdown, Sheets as CSV, Slides as text.
+- `sulla gdrive/download` — Save PDFs, images, videos or exports to ~/sulla/cache/gdrive.
+
+→ See [`tools/gdrive.md`](gdrive.md)
+
 ## mobile — Sulla Mobile companion (read-only) (5 tools)
 - `sulla mobile/list_calls` — Recent AI-receptionist calls (filter by status).
 - `sulla mobile/get_call` — Full call details (transcript, summary, lead metadata).

@@ -105,6 +105,7 @@ export interface IntegrationManifest {
   authType?:          'credentials' | 'oauth';
   oauth?:             boolean;
   oauthProviderId?:   string;
+  oauthScopes?:       string[];
   sullaManagedOAuth?: boolean;
 
   // Documentation
@@ -211,6 +212,9 @@ export function validateIntegrationManifest(raw: unknown, expectedId?: string): 
   }
   if (m.oauthProviderId !== undefined && typeof m.oauthProviderId !== 'string') {
     errors.push('oauthProviderId must be a string if provided');
+  }
+  if (m.oauthScopes !== undefined && (!Array.isArray(m.oauthScopes) || m.oauthScopes.some((s: unknown) => typeof s !== 'string'))) {
+    errors.push('oauthScopes must be an array of strings if provided');
   }
   if (m.sullaManagedOAuth !== undefined && typeof m.sullaManagedOAuth !== 'boolean') {
     errors.push('sullaManagedOAuth must be boolean if provided');
@@ -433,6 +437,7 @@ export function manifestToIntegration(m: IntegrationManifest): Integration {
     authType:          m.authType,
     oauth:             m.oauth,
     oauthProviderId:   m.oauthProviderId,
+    oauthScopes:       m.oauthScopes,
     sullaManagedOAuth: m.sullaManagedOAuth,
     formGuide:         m.formGuide,
     installationGuide: m.installationGuide,

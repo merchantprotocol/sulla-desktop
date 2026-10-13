@@ -18,6 +18,8 @@ export interface Integration {
   oauth?:             boolean;
   /** The registered OAuthProvider id that defines endpoints and scopes (used by authType 'oauth' or oauth: true) */
   oauthProviderId?:   string;
+  /** Scopes requested on top of the OAuth provider's defaults (e.g. Drive read-only for Google Drive) */
+  oauthScopes?:       string[];
   /**
    * When true, the OAuth flow is run through sulla-workers using Sulla's
    * shared app credentials. The user doesn't supply client_id/client_secret —

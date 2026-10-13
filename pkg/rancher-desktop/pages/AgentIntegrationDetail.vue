@@ -1435,6 +1435,7 @@ const handleOAuthConnect = async() => {
       clientId,
       clientSecret,
       accountId:     targetAccountId,
+      extraScopes:   integration.value.oauthScopes ? [...integration.value.oauthScopes] : undefined,
     });
     if (!oauthResult?.success) {
       throw new Error(oauthResult?.error || 'OAuth authorization failed. Please try again.');
