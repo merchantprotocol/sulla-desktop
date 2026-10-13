@@ -3,12 +3,13 @@ import type { ToolManifest } from '../registry';
 export const applescriptToolManifests: ToolManifest[] = [
   {
     name:        'applescript_execute',
-    description: 'Execute AppleScript to interact with macOS applications (Calendar, Reminders, Mail, Notes, Safari, Finder, Music, and more). Always specify the target app name. For write operations (creating, sending, deleting), set action_type to "write". If the target app is not yet enabled in Computer Use Settings, this tool auto-enables it on the fly — the user asking "connect to my mail" is implicit consent. Call applescript/computer_use_list first if you want to see every available target.',
+    description: 'Execute AppleScript to interact with macOS applications (Calendar, Reminders, Mail, Notes, Safari, Finder, Music, and more). Always specify the target app name. For write operations (creating, sending, deleting), set action_type to "write". If the target app is not yet enabled in Computer Use Settings, this tool auto-enables it on the fly — the user asking "connect to my mail" is implicit consent. Call applescript/computer_use_list first if you want to see every available target. Scripts run in the BACKGROUND by default: `activate`, `tell application "X" to activate` and `set frontmost ... to true` are stripped so the user is never pulled to another Space or out of a full-screen app. Only set foreground:true when the app truly must be in front (e.g. System Events keystrokes/clicks), and check the user is idle first.',
     category:    'applescript',
     schemaDef:   {
       target_app:  { type: 'string', description: 'The macOS application name to control (e.g. "Calendar", "Reminders", "Mail", "Finder")' },
       script:      { type: 'string', description: 'The AppleScript code to execute' },
       action_type: { type: 'enum', enum: ['read', 'write'], description: 'Whether this action reads data ("read") or modifies/creates data ("write")' },
+      foreground:  { type: 'boolean', optional: true, description: 'Default false. When true, keep activate/frontmost statements so the app comes to the front (steals the user\'s focus). Only for keystroke/click UI scripting.' },
     },
     operationTypes: ['read', 'execute'],
     loader:         () => import('./applescript_execute'),
