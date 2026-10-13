@@ -33,6 +33,7 @@ interface PendingCredential {
 }
 
 const VAULT_INDEX_TTL_MS = 30_000;
+const BROWSER_TAB_PRELOAD_PATH = path.join(paths.resources, 'browserTabPreload.js');
 
 /** How long a native right-click keeps the injected context menu's actions live. */
 const CONTEXT_MENU_ARM_MS = 2 * 60_000;
@@ -210,18 +211,6 @@ export class BrowserTabViewManager {
 
       this.installPermissionPolicy(sess);
 
-      // Register the browser tab preload script so the guest bridge is
-      // injected at document-start — before any page JavaScript runs.
-      const preloadId = 'sulla-browser-tab-preload';
-
-      if (!sess.getPreloadScripts().some((s) => s.id === preloadId)) {
-        sess.registerPreloadScript({
-          id:       preloadId,
-          filePath: path.join(paths.resources, 'browserTabPreload.js'),
-          type:     'frame',
-        });
-      }
-
       this.sessionInitialised = true;
       console.log('[BrowserTabView] Session initialised:', BROWSER_SESSION_PARTITION);
     }
@@ -316,6 +305,10 @@ export class BrowserTabViewManager {
         contextIsolation:     false,
         nodeIntegration:      false,
         session:              browserSession,
+        // Bind the bridge preload to this WebContents directly. Session-level
+        // registered preloads are not reliably inherited by WebContentsView,
+        // leaving window.sullaBridge undefined on both user and agent tabs.
+        preload:              BROWSER_TAB_PRELOAD_PATH,
         // Set this before the renderer is created. Electron documents that
         // backgroundThrottling also controls the Page Visibility API; setting
         // it after construction can leave the initial document hidden.
