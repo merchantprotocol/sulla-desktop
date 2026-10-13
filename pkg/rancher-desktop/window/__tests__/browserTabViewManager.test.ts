@@ -91,6 +91,24 @@ describe('BrowserTabViewManager', () => {
     mockWebContents.getURL.mockReturnValue('');
   });
 
+  it('binds the browser bridge preload directly to every tab view', async() => {
+    const { BrowserTabViewManager } = await loadManager();
+
+    BrowserTabViewManager.getInstance().createView(
+      'tab-with-bridge',
+      'https://github.com/login',
+      { x: 0, y: 0, width: 1280, height: 800 },
+    );
+
+    expect(mockWebContentsView).toHaveBeenCalledWith(expect.objectContaining({
+      webPreferences: expect.objectContaining({
+        preload: '/tmp/browserTabPreload.js',
+        session: mockBrowserSession,
+      }),
+    }));
+    expect(mockBrowserSession.registerPreloadScript).not.toHaveBeenCalled();
+  });
+
   it('ignores stale focus clears from tabs that no longer own focus', async() => {
     const { BrowserTabViewManager } = await loadManager();
     const manager = BrowserTabViewManager.getInstance();
