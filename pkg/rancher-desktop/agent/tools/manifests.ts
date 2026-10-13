@@ -14,6 +14,7 @@ import { dockerToolManifests } from './docker/manifests';
 import { episodicToolManifests } from './episodic/manifests';
 import { extensionsToolManifests } from './extensions/manifests';
 import { functionToolManifests } from './function/manifests';
+import { gdriveToolManifests } from './gdrive/manifests';
 import { githubToolManifests } from './github/manifests';
 import { integrationsToolManifests } from './integrations/manifests';
 import { kubectlToolManifests } from './kubectl/manifests';
@@ -51,6 +52,7 @@ toolRegistry.registerManifests([
   ...extensionsToolManifests,
   ...episodicToolManifests,
   ...functionToolManifests,
+  ...gdriveToolManifests,
   ...githubToolManifests,
   ...integrationsToolManifests,
   ...kubectlToolManifests,

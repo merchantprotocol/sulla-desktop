@@ -54,6 +54,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `meta.md` — Foundational: exec, browse_tools, file_search, read_file, spawn_agent, observational + identity memory, recall index
 - `models.md` — AI provider/model inventory: models_providers / models_list / models_usage
 - `browser.md` — Full 23-tool surface: tab/snapshot/screenshot/click/click_at/type_at/eval_js/cookies/history/storage/alarms
+- `gdrive.md` — Google Drive read-only: list_folder, search, read (Docs/Sheets/Slides as text), download
 - `github.md` — git + GitHub API (52 tools): git_push/pull/commit, PRs, issues, Projects V2, PAT auth
 - `function.md` — function_list, function_run, invocation examples
 - `vault.md` — Password vault: encryption, LLM access levels, autofill, proxy injection

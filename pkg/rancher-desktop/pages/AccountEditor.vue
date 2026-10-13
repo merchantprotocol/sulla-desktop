@@ -879,6 +879,7 @@ async function handleOAuthConnect() {
       clientId,
       clientSecret,
       accountId:     targetAccountId,
+      extraScopes:   integration.value.oauthScopes ? [...integration.value.oauthScopes] : undefined,
     });
     if (!oauthResult?.success) {
       throw new Error(oauthResult?.error || 'OAuth failed. Please try again.');
