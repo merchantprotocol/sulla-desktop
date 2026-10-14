@@ -6,6 +6,13 @@ const ipcMainProxy = getIpcMainProxy(Logging.background);
 
 export function initUsageEvents(): void {
   ipcMainProxy.handle('usage:summary', async(_event: unknown, options?: { hours?: number; profileId?: string }) => {
-    return getUsageSummary(options?.hours, options?.profileId);
+    let profileId = options?.profileId?.trim();
+    if (!profileId) {
+      try {
+        const { getActiveContractorId } = await import('./sullaCloudAuth');
+        profileId = (await getActiveContractorId()).trim();
+      } catch { /* local/offline installs use the default profile */ }
+    }
+    return getUsageSummary(options?.hours, profileId || 'default');
   });
 }
