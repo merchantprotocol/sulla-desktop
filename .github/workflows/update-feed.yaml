@@ -1,0 +1,67 @@
+name: Update feed
+
+# The packaged macOS app checks for updates with electron-updater's GitHub
+# provider, which reads latest-mac.yml from the newest published release.
+# The Package workflow only uploads the zips, so this job builds
+# latest-mac.yml from the zips in the release and attaches it.
+#
+# Runs when a release is published; run it by hand to backfill an older tag.
+
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to (re)build latest-mac.yml for, e.g. v1.6.1'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  mac-feed:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+    - name: Build and attach latest-mac.yml
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      run: |
+        set -euo pipefail
+        work="$(mktemp -d)"
+        cd "$work"
+        gh release download "$TAG" --repo "$REPO" --pattern '*-mac.zip'
+        shopt -s nullglob
+        zips=( *-mac.zip )
+        if (( ${#zips[@]} == 0 )); then
+          echo "::error::Release $TAG has no macOS zips."
+          exit 1
+        fi
+        # Intel first: older updaters read the top-level path/sha512, and
+        # electron-updater picks the arm64 entry on Apple Silicon by name.
+        ordered=()
+        for z in "${zips[@]}"; do [[ "$z" != *arm64* ]] && ordered+=("$z"); done
+        for z in "${zips[@]}"; do [[ "$z" == *arm64* ]] && ordered+=("$z"); done
+
+        version="${TAG#v}"
+        released="$(gh release view "$TAG" --repo "$REPO" --json publishedAt --jq '.publishedAt // empty')"
+        released="${released:-$(date -u +%Y-%m-%dT%H:%M:%S.000Z)}"
+        {
+          echo "version: $version"
+          echo "files:"
+          for z in "${ordered[@]}"; do
+            echo "  - url: $z"
+            echo "    sha512: $(openssl dgst -sha512 -binary "$z" | base64 -w0)"
+            echo "    size: $(stat -c %s "$z")"
+          done
+          first="${ordered[0]}"
+          echo "path: $first"
+          echo "sha512: $(openssl dgst -sha512 -binary "$first" | base64 -w0)"
+          echo "releaseDate: '$released'"
+        } > latest-mac.yml
+        cat latest-mac.yml
+        gh release upload "$TAG" latest-mac.yml --repo "$REPO" --clobber
+        rm -rf "$work"
