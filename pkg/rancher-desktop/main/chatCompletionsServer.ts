@@ -19,7 +19,10 @@ const WS_CHANNEL = 'tasker';
 // grok: OAuth tokens only work on the grok-cli subscription proxy, never on
 // api.x.ai (separate billing lane) — see GrokService for the full contract.
 const DEFAULT_INTEGRATION_BASE_URLS: Record<string, string> = {
-  grok: 'https://cli-chat-proxy.grok.com',
+  grok:      'https://cli-chat-proxy.grok.com',
+  gitlab:    'https://gitlab.com/api/v4',
+  bitbucket: 'https://api.bitbucket.org/2.0',
+  forgejo:   'https://codeberg.org/api/v1',
 };
 
 export class ChatCompletionsServer {
@@ -1303,6 +1306,17 @@ export class ChatCompletionsServer {
             const apiToken = await svc.getIntegrationValue(slug, 'api_token', accountId);
             if (apiToken?.value) {
               headers.Authorization = `Bearer ${ apiToken.value }`;
+            }
+          }
+
+          // Basic auth (Azure DevOps PATs, Atlassian email + API token)
+          if (!headers.Authorization) {
+            const [basicUser, basicPass] = await Promise.all([
+              svc.getIntegrationValue(slug, 'basic_username', accountId),
+              svc.getIntegrationValue(slug, 'basic_password', accountId),
+            ]);
+            if (basicPass?.value) {
+              headers.Authorization = `Basic ${ Buffer.from(`${ basicUser?.value ?? '' }:${ basicPass.value }`).toString('base64') }`;
             }
           }
 
