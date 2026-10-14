@@ -611,8 +611,8 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
     return;
   }
 
-  // Cmd+Shift+U: provider usage and subscription windows
-  if (meta && e.shiftKey && e.key.toLowerCase() === 'u') {
+  // Cmd+U: provider usage and subscription windows
+  if (meta && !e.shiftKey && e.key.toLowerCase() === 'u') {
     e.preventDefault();
     openModeTab('usage');
     return;

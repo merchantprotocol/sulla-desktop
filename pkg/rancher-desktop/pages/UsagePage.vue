@@ -63,7 +63,7 @@
               <strong>{{ provider.label }}</strong>
             </div>
             <template v-if="summary.limits[provider.id]?.windows.length">
-              <div v-for="window in summary.limits[provider.id]!.windows" :key="window.id" class="limit-row">
+              <div v-for="window in summary.limits[provider.id]?.windows ?? []" :key="window.id" class="limit-row">
                 <div class="limit-copy">
                   <span>{{ window.label }}</span>
                   <strong>{{ Math.round(window.usedPercent) }}%</strong>
@@ -71,7 +71,7 @@
                 <div class="meter"><span :style="{ width: `${Math.min(100, window.usedPercent)}%` }" /></div>
                 <small>{{ window.resetsAt ? `Resets ${formatReset(window.resetsAt)}` : 'Reset time unavailable' }}</small>
               </div>
-              <p class="captured">Updated {{ relativeTime(summary.limits[provider.id]!.capturedAt) }}</p>
+              <p class="captured">Updated {{ relativeTime(summary.limits[provider.id]?.capturedAt ?? '') }}</p>
             </template>
             <p v-else class="no-data">No limit data yet</p>
           </article>

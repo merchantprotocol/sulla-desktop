@@ -133,7 +133,8 @@ export function normalizeClaudeLimitSnapshot(event: unknown): UsageLimitSnapshot
   const source = payload ?? event;
   const windows = collectLimitWindows(source, [
     ['five_hour', '5-hour'], ['fiveHour', '5-hour'], ['primary', 'Primary'],
-    ['weekly', 'Weekly'], ['seven_day', 'Weekly'], ['secondary', 'Secondary'],
+    ['weekly', 'Weekly'], ['seven_day', 'Weekly'], ['seven_day_opus', 'Weekly · Opus'],
+    ['seven_day_sonnet', 'Weekly · Sonnet'], ['secondary', 'Secondary'],
   ]);
   if (windows.length === 0) {
     const single = parseLimitWindow(source, String(source.rate_limit_type ?? source.window ?? 'current'), undefined);
@@ -268,13 +269,13 @@ function fromMeterable(record: MeterableUsageRecord, provider: UsageProviderDefi
   const output = finiteNumber(metadata.output_tokens ?? metadata.completion_tokens);
   return {
     ...sanitizeRecord({
-    ts: record.created_at,
-    model: typeof metadata.model === 'string' ? metadata.model : undefined,
-    input_tokens: input || undefined,
-    output_tokens: output || undefined,
-    total_tokens: Number(record.quantity),
-    cached_input_tokens: finiteNumber(metadata.cached_input_tokens) || undefined,
-    cache_read_input_tokens: finiteNumber(metadata.cache_read_input_tokens) || undefined,
+      ts: record.created_at,
+      model: typeof metadata.model === 'string' ? metadata.model : undefined,
+      input_tokens: input || undefined,
+      output_tokens: output || undefined,
+      total_tokens: Number(record.quantity),
+      cached_input_tokens: finiteNumber(metadata.cached_input_tokens) || undefined,
+      cache_read_input_tokens: finiteNumber(metadata.cache_read_input_tokens) || undefined,
       cache_creation_input_tokens: finiteNumber(metadata.cache_creation_input_tokens) || undefined,
     }),
     providerId: provider.id,
@@ -405,14 +406,15 @@ function collectLimitWindows(source: Record<string, unknown>, keys: Array<[strin
 }
 
 function parseLimitWindow(source: Record<string, unknown>, id: string, label?: string): UsageLimitWindow | null {
-  let used = finiteNumber(source.usedPercent ?? source.used_percent ?? source.percent_used ?? source.utilization ?? source.used);
-  if (used > 0 && used <= 1 && source.usedPercent === undefined && source.used_percent === undefined && source.percent_used === undefined) used *= 100;
-  if (!Number.isFinite(used) || (used === 0 && !('usedPercent' in source) && !('used_percent' in source) && !('percent_used' in source) && !('utilization' in source) && !('used' in source))) return null;
-  const resets = source.resets_at ?? source.reset_at ?? source.reset_time ?? source.resetsAt;
+  let used = finiteNumber(source.usedPercent ?? source.used_percentage ?? source.used_percent ?? source.percent_used ?? source.utilization ?? source.used);
+  if (used > 0 && used <= 1 && source.usedPercent === undefined && source.used_percentage === undefined && source.used_percent === undefined && source.percent_used === undefined) used *= 100;
+  if (!Number.isFinite(used) || (used === 0 && !('usedPercent' in source) && !('used_percentage' in source) && !('used_percent' in source) && !('percent_used' in source) && !('utilization' in source) && !('used' in source))) return null;
+  const resets = source.resets_at ?? source.reset_at ?? source.reset_time ?? source.resetsAt ?? source.resetAt;
   const windowMinutes = finiteNumber(source.window_minutes ?? source.windowMinutes ?? source.limit_window_seconds) / (source.limit_window_seconds ? 60 : 1);
+  const derivedLabel = windowMinutes === 300 ? '5-hour' : windowMinutes === 10_080 ? 'Weekly' : undefined;
   return {
     id,
-    label: label ?? humanize(id),
+    label: derivedLabel ?? label ?? limitLabel(id),
     usedPercent: Math.max(0, Math.min(100, used)),
     resetsAt: normalizeResetTime(resets),
     windowMinutes: windowMinutes || undefined,
@@ -463,10 +465,12 @@ function sanitizeRecord(record: CliUsageRecord): CliUsageRecord {
 
 function enqueueWrite(key: string, operation: () => Promise<void>): Promise<void> {
   const queued = (writeQueues.get(key) ?? Promise.resolve()).catch(() => {}).then(operation);
-  writeQueues.set(key, queued.finally(() => {
-    if (writeQueues.get(key) === queued) writeQueues.delete(key);
-  }));
-  return queued;
+  let tracked: Promise<void>;
+  tracked = queued.finally(() => {
+    if (writeQueues.get(key) === tracked) writeQueues.delete(key);
+  });
+  writeQueues.set(key, tracked);
+  return tracked;
 }
 
 function firstObject(...values: unknown[]): Record<string, unknown> | undefined {
@@ -500,4 +504,10 @@ function localDateKey(date: Date): string {
 
 function humanize(value: string): string {
   return value.replace(/[-_]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
+function limitLabel(value: string): string {
+  if (/five.?hour|session/i.test(value)) return '5-hour';
+  if (/week|seven.?day/i.test(value)) return 'Weekly';
+  return humanize(value);
 }
