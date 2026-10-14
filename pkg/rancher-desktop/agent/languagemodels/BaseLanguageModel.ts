@@ -536,7 +536,12 @@ export abstract class BaseLanguageModel {
       quantity,
       idempotencyKey: usageEventId || derivedUsageEventId,
       source: `model:${ this.getProviderName() }`,
-      metadata: { provider: this.getProviderName(), model: response.metadata.model },
+      metadata: {
+        provider:          this.getProviderName(),
+        model:             response.metadata.model,
+        input_tokens:      response.metadata.prompt_tokens,
+        output_tokens:     response.metadata.completion_tokens,
+      },
     }).catch(() => { /* accounting must never break a model turn */ });
   }
 

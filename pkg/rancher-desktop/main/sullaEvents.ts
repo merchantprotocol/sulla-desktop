@@ -36,6 +36,7 @@ import { initSullaRoutineImportEvents } from './sullaRoutineImportEvents';
 import { initSullaRoutineTemplateEvents } from './sullaRoutineTemplateEvents';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
 import { initWorkItemsEvents } from './workItemsEvents';
+import { initUsageEvents } from './usageEvents';
 import { initSullaRecipeDockerEvents } from './sullaRecipeDockerEvents';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -350,6 +351,7 @@ export function initSullaEvents(): void {
 
   initSullaWorkflowEvents();
   initWorkItemsEvents();
+  initUsageEvents();
   initSullaRoutineTemplateEvents();
   initSullaRoutineExportEvents();
   initSullaRoutineImportEvents();

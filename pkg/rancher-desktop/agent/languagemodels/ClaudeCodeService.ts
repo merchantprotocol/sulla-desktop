@@ -19,6 +19,7 @@ import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHos
 import { redisClient } from '../database/RedisClient';
 import { markSteerPending, onSteer } from '../utils/steerChannel';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
+import { normalizeClaudeLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
@@ -1598,6 +1599,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           return;
         }
 
+        const limitSnapshot = normalizeClaudeLimitSnapshot(parsed);
+        if (limitSnapshot) recordCliLimitSnapshot('claude-code', limitSnapshot).catch(() => {});
+
         if (parsed.session_id) capturedSessionId = parsed.session_id;
 
         // Background-task bookkeeping. Once this turn has settled (cold mode
@@ -2044,66 +2048,24 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 // Usage capture
 // ─────────────────────────────────────────────────────────────
 
-interface UsageRecord {
-  ts:             string;
-  duration_ms?:   number;
-  input_tokens?:  number;
-  output_tokens?: number;
-  cache_creation_input_tokens?: number;
-  cache_read_input_tokens?:     number;
-  cost_usd?:      number;
-  model?:         string;
-}
-
-const USAGE_SETTING_KEY = 'claudeCodeUsage';
-const USAGE_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
-const USAGE_MAX_ENTRIES = 500;
-
 /**
  * Append a single usage sample from Claude Code's result event to
- * SullaSettingsModel.claudeCodeUsage. Trims to a rolling 24h window and
- * caps the array length so the settings row can't grow unbounded.
+ * the shared provider usage registry.
  */
 async function recordUsage(result: any): Promise<void> {
   const u = result?.usage;
   if (!u) return;
-
-  try {
-    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-    const raw = await SullaSettingsModel.get(USAGE_SETTING_KEY, '[]');
-    let records: UsageRecord[] = [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) records = parsed;
-    } catch { /* ignore unparseable prior value */ }
-
-    const entry: UsageRecord = {
-      ts:                          new Date().toISOString(),
-      duration_ms:                 typeof result.duration_ms === 'number' ? result.duration_ms : undefined,
-      input_tokens:                typeof u.input_tokens === 'number' ? u.input_tokens : undefined,
-      output_tokens:               typeof u.output_tokens === 'number' ? u.output_tokens : undefined,
-      cache_creation_input_tokens: typeof u.cache_creation_input_tokens === 'number' ? u.cache_creation_input_tokens : undefined,
-      cache_read_input_tokens:     typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : undefined,
-      cost_usd:                    typeof result.total_cost_usd === 'number' ? result.total_cost_usd : undefined,
-      model:                       typeof result.model === 'string' ? result.model : undefined,
-    };
-
-    records.push(entry);
-
-    const cutoff = Date.now() - USAGE_RETENTION_MS;
-    records = records.filter(r => {
-      const t = Date.parse(r.ts);
-      return Number.isFinite(t) && t >= cutoff;
-    });
-
-    if (records.length > USAGE_MAX_ENTRIES) {
-      records = records.slice(-USAGE_MAX_ENTRIES);
-    }
-
-    await SullaSettingsModel.set(USAGE_SETTING_KEY, JSON.stringify(records));
-  } catch {
-    /* persistence failure — don't disturb the chat */
-  }
+  await recordCliUsage('claude-code', {
+    duration_ms:                 typeof result.duration_ms === 'number' ? result.duration_ms : undefined,
+    input_tokens:                typeof u.input_tokens === 'number' ? u.input_tokens : undefined,
+    output_tokens:               typeof u.output_tokens === 'number' ? u.output_tokens : undefined,
+    total_tokens:                ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']
+      .reduce((total, key) => total + (typeof u[key] === 'number' ? u[key] : 0), 0),
+    cache_creation_input_tokens: typeof u.cache_creation_input_tokens === 'number' ? u.cache_creation_input_tokens : undefined,
+    cache_read_input_tokens:     typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : undefined,
+    cost_usd:                    typeof result.total_cost_usd === 'number' ? result.total_cost_usd : undefined,
+    model:                       typeof result.model === 'string' ? result.model : undefined,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -505,6 +505,7 @@ export interface IpcMainInvokeEvents {
     lanesByProject: Record<string, import('@pkg/agent/database/models/WorkLaneDefinitionModel').EffectiveWorkLane[]>;
     laneCapability: import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneRuntimeCapability;
   };
+  'usage:summary': (options?: { hours?: number; profileId?: string }) => import('@pkg/agent/usage/providerUsage').UsageSummary;
   'work-items:comments':        (taskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord[];
   'work-items:issue-detail':    (taskId: string) => import('@pkg/agent/services/ProjectsIssueDetailService').ProjectsIssueDetail;
   'work-items:artifact-evidence': (commentId: string) => { receipt: import('@pkg/agent/database/models/ArtifactReceiptModel').ArtifactReceiptRow; evidence: unknown } | null;
