@@ -1,4 +1,3 @@
-import { decisionService } from '@pkg/agent/services/DecisionService';
 /**
  * Opt-in desktop → cloud copies of the vault and Projects.
  *
@@ -14,8 +13,8 @@ import { decisionService } from '@pkg/agent/services/DecisionService';
  * password; the server can't.
  *
  * Projects (cloudSyncProjects): a read-only snapshot of projects, epics,
- * tasks and effective lanes so the cloud dashboard can show work while
- * this machine is off.
+ * tasks, running agents and effective lanes so the cloud dashboard can show
+ * work while this machine is off.
  *
  * Uploads are signed with the device key (sync-upload purpose) over the
  * body's SHA-256, and skipped when nothing changed.
@@ -29,11 +28,14 @@ import { CLOUD_API_BASE } from './cloudEndpoints';
 import { getCloudPreferences } from './cloudSettings';
 import { signDeviceMessage } from './deviceKey';
 
+import { AgentJobMessagingModel } from '@pkg/agent/database/models/AgentJobMessagingModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
+import { decisionService } from '@pkg/agent/services/DecisionService';
 import { getVaultBackupService, type VaultSnapshot } from '@pkg/agent/services/VaultBackupService';
 import { getVaultKeyService } from '@pkg/agent/services/VaultKeyService';
+import { getAllJobs } from '@pkg/agent/tools/agents/jobRegistry';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -47,6 +49,17 @@ export interface ObjectSyncStatus {
   lastSyncAt?: string;
   lastError?:  string;
   skipped?:    string;
+}
+
+interface CloudAgentSnapshot {
+  jobId:          string;
+  threadId:       string;
+  agentId:        string;
+  label:          string;
+  status:         string;
+  taskId?:        string;
+  lastCheckinAt:  string | null;
+  percent?:       number;
 }
 
 /** Build the sealed vault body, or null (vault missing or locked). Exported for tests. */
@@ -69,15 +82,43 @@ export async function buildSealedVaultBody(): Promise<{ body: string; dedupe: st
 
 export async function buildProjectsBody(): Promise<{ body: string; dedupe: string }> {
   const projects = (await WorkItemsModel.listProjects({ includeDone: true, limit: 1000 })).filter((p: any) => !p.archived);
-  const [epics, tasks] = await Promise.all([
+  const [epics, projectTasks, jobs] = await Promise.all([
     WorkItemsModel.listEpics({ includeDone: true, limit: 5000 }),
     WorkItemsModel.listTasks({ includeDone: true, limit: 10000 }),
+    getAllJobs(),
   ]);
+  const runningJobs = jobs.filter(job => job.status === 'running');
+  const telemetry = await Promise.all(runningJobs.map(job => AgentJobMessagingModel.telemetryForJob(job.jobId)));
+  const agents: CloudAgentSnapshot[] = runningJobs.flatMap((job, jobIndex) => job.tasks.flatMap((task, taskIndex) => {
+    if (task.status !== 'running' || !task.threadId) return [];
+    const checkin = telemetry[jobIndex][taskIndex]?.latestCheckin;
+    const taskId = task.taskId ?? (job.tasks.length === 1 && job.projectTaskIds?.length === 1 ? job.projectTaskIds[0] : undefined);
+
+    return [{
+      jobId:         job.jobId,
+      threadId:      task.threadId,
+      agentId:       task.agentId,
+      label:         task.label,
+      status:        task.status,
+      ...(taskId ? { taskId } : {}),
+      lastCheckinAt: checkin ? new Date(checkin.createdAt).toISOString() : null,
+      ...(checkin?.percent === undefined ? {} : { percent: checkin.percent }),
+    }];
+  }));
+  const agentByTask = new Map<string, CloudAgentSnapshot>();
+  for (const agent of agents) {
+    if (agent.taskId) agentByTask.set(agent.taskId, agent);
+  }
+  const tasks = projectTasks.map((task: any) => {
+    const agent = agentByTask.get(task.id);
+
+    return agent ? { ...task, jobId: agent.jobId, threadId: agent.threadId } : task;
+  });
   const lanes: Record<string, unknown> = {};
   for (const p of projects) {
     try { lanes[(p as any).id] = await WorkLaneDefinitionModel.resolveEffective((p as any).id) } catch { /* lanes optional */ }
   }
-  const content = { projects, epics, tasks, lanes, decisions: await decisionService.list() };
+  const content = { projects, epics, tasks, lanes, agents, decisions: await decisionService.list() };
   const dedupe = crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex');
   return { body: JSON.stringify({ format: 'sulla-projects-snapshot', version: 1, createdAt: new Date().toISOString(), ...content }), dedupe };
 }

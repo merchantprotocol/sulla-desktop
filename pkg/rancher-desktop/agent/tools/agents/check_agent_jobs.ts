@@ -36,6 +36,7 @@ export function jobTaskViews(job: AgentJob, telemetry: Record<number, AgentJobTa
       taskIndex,
       agentId: task.agentId,
       label: task.label,
+      taskId: task.taskId,
       status: task.status,
       visibility: task.visibility ?? job.visibility ?? 'hidden',
       contract: task.contract?.name ?? 'result',
