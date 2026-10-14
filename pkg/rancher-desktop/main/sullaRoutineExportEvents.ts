@@ -200,7 +200,7 @@ async function buildRoutineBundleToTmpdir(workflowId: string): Promise<{
 }> {
   const WorkflowModel = await importWorkflowModel();
   const row = await WorkflowModel.findById(workflowId);
-  if (!row) throw new Error(`Routine not found: ${ workflowId }`);
+  if (!row) throw new Error(`Workflow not found: ${ workflowId }`);
 
   const attrs = row.attributes as Record<string, unknown>;
   const id = String(attrs.id ?? workflowId);
@@ -245,7 +245,7 @@ export function initSullaRoutineExportEvents(): void {
     const WorkflowModel = await importWorkflowModel();
     const row = await WorkflowModel.findById(workflowId);
     if (!row) {
-      throw new Error(`Routine not found: ${ workflowId }`);
+      throw new Error(`Workflow not found: ${ workflowId }`);
     }
 
     const attrs = row.attributes as Record<string, unknown>;
@@ -258,9 +258,9 @@ export function initSullaRoutineExportEvents(): void {
     const defaultFilename = `${ exportSlug }.routine.zip`;
 
     const saveResult = await dialog.showSaveDialog({
-      title:       'Export Routine',
+      title:       'Export Workflow',
       defaultPath: defaultFilename,
-      filters:     [{ name: 'Sulla Routine Bundle', extensions: ['zip'] }],
+      filters:     [{ name: 'Sulla Workflow Bundle', extensions: ['zip'] }],
       properties:  ['createDirectory', 'showOverwriteConfirmation'],
     });
 
@@ -340,7 +340,7 @@ export function initSullaRoutineExportEvents(): void {
     const saveResult = await dialog.showSaveDialog({
       title:       'Export Template',
       defaultPath: defaultFilename,
-      filters:     [{ name: 'Sulla Routine Bundle', extensions: ['zip'] }],
+      filters:     [{ name: 'Sulla Workflow Bundle', extensions: ['zip'] }],
       properties:  ['createDirectory', 'showOverwriteConfirmation'],
     });
 
@@ -387,8 +387,9 @@ export function initSullaRoutineExportEvents(): void {
       bundle = await buildRoutineBundleToTmpdir(workflowId);
 
       const manifest = buildManifest('routine', {
-        slug:       bundle.slug,
-        bundleRoot: bundle.tmpRoot,
+        slug:           bundle.slug,
+        bundleRoot:     bundle.tmpRoot,
+        writeSanitized: true,
       });
 
       const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-publish-'));

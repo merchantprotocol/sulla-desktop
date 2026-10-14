@@ -19,7 +19,8 @@ import { computed, ref } from 'vue';
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
+import type { MarketplaceKind } from './marketplaceKinds';
+
 export type MarketplaceSort = 'popular' | 'newest' | 'featured';
 export type KindFilter = MarketplaceKind | 'all';
 
@@ -58,6 +59,7 @@ export function useMarketplace() {
   const limit = ref(25);
 
   const kind = ref<KindFilter>('all');
+  const kinds = ref<MarketplaceKind[]>([]);
   const sort = ref<MarketplaceSort>('popular');
   const search = ref('');
 
@@ -79,6 +81,7 @@ export function useMarketplace() {
     try {
       const opts: {
         kind?:  MarketplaceKind;
+        kinds?: MarketplaceKind[];
         q?:     string;
         sort?:  MarketplaceSort;
         page?:  number;
@@ -89,6 +92,7 @@ export function useMarketplace() {
         sort:  sort.value,
       };
       if (kind.value !== 'all') opts.kind = kind.value;
+      else if (kinds.value.length > 0) opts.kinds = kinds.value;
       if (search.value.trim()) opts.q = search.value.trim();
 
       const res = await ipcRenderer.invoke('marketplace-browse', opts);
@@ -99,19 +103,10 @@ export function useMarketplace() {
 
         return;
       }
-      // Defensive client-side kind filter. The Cloudflare worker's browse
-      // endpoint may not yet recognise newer kinds (e.g. 'integration'), in
-      // which case it ignores the filter and returns mixed results. Post-
-      // filtering ensures a selected kind never shows foreign items, even
-      // before the worker ships an updated enum.
-      // The server filters by kind; this is only a guard against foreign
-      // rows. Always trust the server total — using the page length here
-      // hid pagination whenever a kind filter was active.
       const rows = res.templates ?? [];
-      const filtered = kind.value === 'all' ? rows : rows.filter((t: { kind?: string }) => t.kind === kind.value);
 
-      templates.value = filtered;
-      total.value = res.total ?? filtered.length;
+      templates.value = rows;
+      total.value = res.total ?? rows.length;
       loadInstalled().catch(() => undefined);
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
@@ -200,6 +195,39 @@ export function useMarketplace() {
     }
   }
 
+  async function installAll(id: string, opts: { overwrite?: boolean; replaces?: string } = {}): Promise<InstallResult | null> {
+    installing.value = id;
+    installError.value = null;
+    lastInstalled.value = null;
+    try {
+      const res = await ipcRenderer.invoke('marketplace-install-all', id, { overwrite: opts.overwrite === true, replaces: opts.replaces });
+      if ('error' in res) {
+        installError.value = res.error;
+
+        return null;
+      }
+      lastInstalled.value = res;
+      await loadInstalled();
+
+      return res;
+    } catch (err) {
+      installError.value = err instanceof Error ? err.message : String(err);
+
+      return null;
+    } finally {
+      installing.value = null;
+    }
+  }
+
+  async function loadRelated(kind: MarketplaceKind, slug: string): Promise<void> {
+    const res = await ipcRenderer.invoke('marketplace-resolve', kind, slug);
+    if ('error' in res) {
+      detailError.value = res.error;
+      return;
+    }
+    await loadDetail(res.template.id);
+  }
+
   function clearInstallResult(): void {
     lastInstalled.value = null;
     installError.value = null;
@@ -207,6 +235,13 @@ export function useMarketplace() {
 
   async function setKind(k: KindFilter): Promise<void> {
     kind.value = k;
+    page.value = 1;
+    await load();
+  }
+
+  async function setKinds(next: MarketplaceKind[]): Promise<void> {
+    kinds.value = [...new Set(next)];
+    kind.value = 'all';
     page.value = 1;
     await load();
   }
@@ -239,6 +274,7 @@ export function useMarketplace() {
     limit,
     totalPages,
     kind,
+    kinds,
     sort,
     search,
     isLoading,
@@ -265,7 +301,10 @@ export function useMarketplace() {
     load,
     loadDetail,
     install,
+    installAll,
+    loadRelated,
     setKind,
+    setKinds,
     setSort,
     setSearch,
     setPage,

@@ -22,6 +22,7 @@
       :fork-error="forkError"
       @close="onCloseDetail"
       @fork="onFork(detailPayload.row)"
+      @open-dependency="onOpenMarketplaceDependency"
     />
     <div
       v-else-if="detailLoading"
@@ -56,6 +57,7 @@
               { on: activeView === 'kind' && lib.activeKind.value === k.kind },
               `kind-${k.kind}`,
             ]"
+            :style="k.kind === 'all' ? undefined : { '--kind-color': k.color }"
             @click="onSelectKind(k.kind)"
           >
             <span class="dot" />
@@ -137,7 +139,7 @@
         </div>
 
         <!-- Stats tiles — shown only on the All view. Quick at-a-glance
-           breakdown across the four artifact kinds; clicking a tile
+           breakdown across the artifact kinds; clicking a tile
            drills into that kind's filter. -->
         <div
           v-if="lib.activeKind.value === 'all' && !lib.activeState.value.error && lib.activeState.value.items.length > 0"
@@ -149,6 +151,7 @@
             type="button"
             class="stat-tile"
             :class="`kind-${tile.kind}`"
+            :style="{ '--kind-color': tile.color }"
             @click="onSelectKind(tile.kind)"
           >
             <span class="stat-value">{{ lib.kindCounts.value[tile.kind] }}</span>
@@ -289,27 +292,24 @@ import type { LibraryArtifactKind, LibraryItem, LibraryKind } from '@pkg/composa
 import { useLibrary } from '@pkg/composables/useLibrary';
 import { useLibraryDrafts } from '@pkg/composables/useLibraryDrafts';
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
+import { MARKETPLACE_KINDS, marketplaceKindLabel, type MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const emit = defineEmits<(e: 'use-template', slug: string) => void>();
 
 type ActiveView = 'kind' | 'drafts';
 
-const KINDS: { kind: LibraryKind; label: string }[] = [
+const KINDS: { kind: LibraryKind; label: string; color?: string }[] = [
   { kind: 'all', label: 'All' },
-  { kind: 'routines', label: 'Routines' },
-  { kind: 'skills', label: 'Skills' },
-  { kind: 'functions', label: 'Functions' },
-  { kind: 'recipes', label: 'Recipes' },
-  { kind: 'integrations', label: 'Integrations' },
+  ...MARKETPLACE_KINDS.map(entry => ({
+    kind: (entry.kind === 'routine' ? 'routines' : `${ entry.kind }s`) as LibraryArtifactKind,
+    label: entry.label,
+    color: entry.color,
+  })),
 ];
 
-const STAT_TILES: { kind: LibraryArtifactKind; label: string }[] = [
-  { kind: 'routines', label: 'Routines' },
-  { kind: 'skills', label: 'Skills' },
-  { kind: 'functions', label: 'Functions' },
-  { kind: 'recipes', label: 'Recipes' },
-  { kind: 'integrations', label: 'Integrations' },
+const STAT_TILES: { kind: LibraryArtifactKind; label: string; color?: string }[] = [
+  ...KINDS.filter((entry): entry is { kind: LibraryArtifactKind; label: string; color?: string } => entry.kind !== 'all'),
 ];
 
 /** Per-kind row count for the All-view stats tiles + left-rail counts.
@@ -362,13 +362,15 @@ const footerHint = computed(() => {
   }
   switch (lib.activeKind.value) {
   case 'all':
-    return 'Every artifact installed on this machine — routines, skills, functions, and recipes.';
+    return 'Every artifact installed on this machine — workflows, agents, skills, functions, integrations, and recipes.';
   case 'routines':
-    return 'Routine templates in ~/sulla/routines/. Use one to drop a fresh copy onto your canvas.';
+    return 'Workflow templates in ~/sulla/routines/. Use one to drop a fresh copy onto your canvas.';
+  case 'agents':
+    return 'Custom agents stored in Sulla, including agents installed from the marketplace.';
   case 'skills':
     return 'Skills stored in Sulla. Instructions your agents load on demand.';
   case 'functions':
-    return 'Functions in ~/sulla/functions/. Callable code your routines invoke.';
+    return 'Functions in ~/sulla/functions/. Callable code your workflows invoke.';
   case 'recipes':
     return 'Recipes in ~/sulla/recipes/. Docker extension configs; launch them from Extensions.';
   }
@@ -381,7 +383,9 @@ const emptyHint = computed(() => {
   case 'all':
     return 'Install anything from the Marketplace tab, or drop a folder into ~/sulla/<kind>/ to see it here.';
   case 'routines':
-    return 'Install a routine from the Marketplace tab, or import one from disk to see it here.';
+    return 'Install a workflow from the Marketplace tab, or import one from disk to see it here.';
+  case 'agents':
+    return 'Install an agent from the Marketplace tab or create one from Agents.';
   case 'skills':
     return 'Install a skill from the Marketplace tab to add it to your collection.';
   case 'functions':
@@ -455,6 +459,28 @@ async function onView(item: LibraryItem) {
   detailLoading.value = true;
   forkError.value = null;
   try {
+    if (kind === 'agents') {
+      const agent = await ipcRenderer.invoke('agent-definitions:export', item.slug);
+      detailPayload.value = {
+        row: {
+          id: item.slug, kind: 'agent', slug: item.slug, name: item.name, description: item.description,
+          version: item.version ?? '1.0.0', author_user_id: '', tags: [], bundle_size: 0, download_count: 0,
+          created_at: '', updated_at: item.updatedAt ?? '',
+        },
+        manifest: {
+          ...agent,
+          agentSummary: {
+            provider: agent.spec.provider,
+            model: agent.spec.model,
+            toolsCount: agent.spec.tools.length,
+            tools: agent.spec.tools,
+            skills: agent.spec.skills,
+            promptSummary: String(agent.metadata.description || '').slice(0, 500),
+          },
+        },
+      };
+      return;
+    }
     const res = await ipcRenderer.invoke('library-read-manifest', kind, item.slug);
     if ('error' in res) {
       console.warn('[Library] read-manifest failed:', res.error);
@@ -480,13 +506,29 @@ function onCloseDetail() {
   forkError.value = null;
 }
 
+async function onOpenMarketplaceDependency(dependency: { kind: MarketplaceKind; slug: string }) {
+  const resolved = await ipcRenderer.invoke('marketplace-resolve', dependency.kind, dependency.slug);
+  if ('error' in resolved) {
+    window.alert(resolved.error);
+    return;
+  }
+  const detail = await ipcRenderer.invoke('marketplace-detail', resolved.template.id);
+  if ('error' in detail) {
+    window.alert(detail.error);
+    return;
+  }
+  const { manifest, ...row } = detail.template;
+  detailPayload.value = { row, manifest };
+}
+
 // Publish a local library item (routine template folder, skill, function,
 // recipe) straight to the marketplace via bundles-publish. Native confirm
 // keeps the flow bounded; auth failures bubble up from the worker as
 // {error: "..."} with 401-ish strings we surface verbatim.
 async function onPublish(item: LibraryItem) {
-  const pluralToSingular: Record<LibraryArtifactKind, 'routine' | 'skill' | 'function' | 'recipe' | 'integration'> = {
+  const pluralToSingular: Record<LibraryArtifactKind, 'routine' | 'agent' | 'skill' | 'function' | 'recipe' | 'integration'> = {
     routines:     'routine',
+    agents:       'agent',
     skills:       'skill',
     functions:    'function',
     recipes:      'recipe',
@@ -494,7 +536,7 @@ async function onPublish(item: LibraryItem) {
   };
   const resolvedKind = resolveItemKind(item);
   const kind = pluralToSingular[resolvedKind];
-  const label = resolvedKind.slice(0, -1);
+  const label = marketplaceKindLabel(kind).toLowerCase();
 
   const ok = window.confirm(
     `Publish ${ label } "${ item.name || item.slug }" to the Sulla Marketplace? It'll land in review as a pending submission.`,
@@ -502,10 +544,11 @@ async function onPublish(item: LibraryItem) {
   if (!ok) return;
 
   try {
-    const args = kind === 'recipe'
-      ? { kind, extensionId: item.slug }
-      : { kind, slug: item.slug };
-    const result = await ipcRenderer.invoke('bundles-publish', args);
+    const result = kind === 'agent'
+      ? await ipcRenderer.invoke('agent-definitions:publish', item.slug)
+      : await ipcRenderer.invoke('bundles-publish', kind === 'recipe'
+        ? { kind, extensionId: item.slug }
+        : { kind, slug: item.slug });
     if ('error' in result) {
       const msg = String(result.error || '');
       if (/401|unauthor|access token|sign.in|signed in/i.test(msg)) {
@@ -650,10 +693,7 @@ function formatRelative(ts: string): string {
   border-radius: 50%;
 }
 .rail-item.kind-all       .dot { background: linear-gradient(135deg, #4a6fa5, #c026d3); }
-.rail-item.kind-routines  .dot { background: #4a6fa5; }
-.rail-item.kind-skills    .dot { background: #f59e0b; }
-.rail-item.kind-functions .dot { background: #06b6d4; }
-.rail-item.kind-recipes   .dot { background: #c026d3; }
+.rail-item[class*="kind-"]:not(.kind-all):not(.kind-drafts) .dot { background: var(--kind-color); }
 .rail-item.kind-drafts    .dot { background: #86efac; }
 
 .label { text-align: left; }
@@ -911,10 +951,7 @@ function formatRelative(ts: string): string {
   text-transform: uppercase;
   color: var(--steel-400);
 }
-.stat-tile.kind-routines  { border-left-color: #4a6fa5; }
-.stat-tile.kind-skills    { border-left-color: #f59e0b; }
-.stat-tile.kind-functions { border-left-color: #06b6d4; }
-.stat-tile.kind-recipes   { border-left-color: #c026d3; }
+.stat-tile[class*="kind-"] { border-left-color: var(--kind-color); }
 
 .theme-noir .library {
   display: block;

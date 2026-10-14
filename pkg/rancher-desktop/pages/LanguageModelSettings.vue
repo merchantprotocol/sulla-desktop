@@ -20,7 +20,7 @@ const navItems = [
   { id: 'models', name: 'Models' },
   { id: 'system-prompt', name: 'System Prompt' },
   { id: 'heartbeat', name: 'Heartbeat' },
-  { id: 'routine-workers', name: 'Routine Workers' },
+  { id: 'routine-workers', name: 'Workflow Workers' },
 ];
 
 // Shape of a system-prompt section row returned by the `system-prompt:*` IPC.
@@ -1910,13 +1910,13 @@ export default defineComponent({
           class="tab-content"
         >
           <div class="noir-page-head">
-            <div class="noir-eyebrow">Routine Workers</div>
-            <div class="noir-headline">How many routines run at once.</div>
-            <div class="noir-lead">A shared ceiling for system routine runs such as dreaming.</div>
+            <div class="noir-eyebrow">Workflow Workers</div>
+            <div class="noir-headline">How many workflows run at once.</div>
+            <div class="noir-lead">A shared ceiling for system workflow runs such as dreaming.</div>
           </div>
-          <h2>Routine Workers</h2>
+          <h2>Workflow Workers</h2>
           <p class="description">
-            Projects is a plain board; agents drive project work themselves. This only limits concurrent system routine runs.
+            Projects is a plain board; agents drive project work themselves. This only limits concurrent system workflow runs.
           </p>
 
           <div class="setting-group">
@@ -1943,8 +1943,8 @@ export default defineComponent({
               </label>
             </div>
             <p id="routine-worker-limit-help" class="setting-description">
-              Maximum concurrent system routine runs. Save to apply to new launches.
-              Lowering this value lets running routines finish before more start.
+              Maximum concurrent system workflow runs. Save to apply to new launches.
+              Lowering this value lets running workflows finish before more start.
             </p>
             <p v-if="!workerConcurrencyValid" role="alert" class="setting-description">
               Enter a whole number of at least 1.

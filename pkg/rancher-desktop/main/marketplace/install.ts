@@ -32,12 +32,13 @@ import {
   resolveSullaUserIntegrationsDir,
   resolveSullaUserSkillsDir,
 } from '@pkg/agent/utils/sullaPaths';
+import { MARKETPLACE_KINDS as MARKETPLACE_KIND_DEFINITIONS } from '@pkg/composables/marketplaceKinds';
 import { fetchPublicTemplate, publicFetch, type MarketplaceKind } from '@pkg/main/marketplace/client';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
-export const MARKETPLACE_KINDS: MarketplaceKind[] = ['routine', 'skill', 'function', 'agent', 'recipe', 'integration'];
+export const MARKETPLACE_KINDS: MarketplaceKind[] = MARKETPLACE_KIND_DEFINITIONS.map(entry => entry.kind);
 
 // ─── Security caps (mirror sullaRoutineImportEvents.ts) ──────────
 const MAX_FILE_BYTES = 100 * 1024 * 1024;   // 100 MB per file
@@ -477,6 +478,58 @@ export interface InstallResult {
   /** True when an existing install was replaced in place. */
   updated?:          boolean;
   warnings?:         string[];
+}
+
+type DependencyKind = 'agent' | 'skill' | 'integration' | 'function';
+
+/** Install a workflow and every declared dependency that has a listing. */
+export async function installTemplateWithDependencies(
+  templateId: string,
+  opts: { overwrite?: boolean; replaces?: string } = {},
+): Promise<InstallResult> {
+  const detail = await fetchPublicTemplate(templateId);
+  const result = await installTemplate(templateId, opts);
+  if (detail.kind !== 'routine') return result;
+
+  const summary = (detail.manifest?.routineSummary ?? {}) as Record<string, unknown>;
+  const dependencyGroups: [DependencyKind, unknown][] = [
+    ['agent', summary.requiredAgents],
+    ['skill', summary.requiredSkills],
+    ['integration', summary.requiredIntegrations],
+    ['function', summary.requiredFunctions],
+  ];
+  const warnings = [...(result.warnings ?? [])];
+  const installed = new Set<string>();
+
+  for (const [kind, rawEntries] of dependencyGroups) {
+    if (!Array.isArray(rawEntries)) continue;
+    for (const entry of rawEntries) {
+      const slug = dependencySlug(entry);
+      if (!slug || installed.has(`${ kind }:${ slug }`)) continue;
+      installed.add(`${ kind }:${ slug }`);
+      try {
+        const listing = await (await import('@pkg/main/marketplace/client')).findTemplateBySlug(kind, slug);
+        if (!listing) {
+          warnings.push(`${ kind } "${ slug }" is required but isn't available in the marketplace; skipped.`);
+          continue;
+        }
+        await installTemplate(listing.id);
+      } catch (err) {
+        warnings.push(`${ kind } "${ slug }" could not be installed: ${ err instanceof Error ? err.message : String(err) }`);
+      }
+    }
+  }
+
+  return { ...result, ...(warnings.length > 0 ? { warnings } : {}) };
+}
+
+function dependencySlug(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (value && typeof value === 'object' && typeof (value as { slug?: unknown }).slug === 'string') {
+    return (value as { slug: string }).slug.trim();
+  }
+
+  return '';
 }
 
 function moveDir(src: string, dst: string): void {

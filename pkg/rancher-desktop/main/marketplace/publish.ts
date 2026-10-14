@@ -16,8 +16,8 @@ import * as yazl from 'yazl';
 import { listBundleFiles } from './bundleFiles';
 import { submitManifest, uploadBundle, type MarketplaceKind } from './client';
 import { buildManifest } from './manifestBuilder';
+import { checkAgentManifestForPublish } from './agentPublishSafety';
 
-import type { AgentMarketplaceManifest } from '@pkg/agent/services/AgentDefinitionService';
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
 
 export interface PublishOverrides {
@@ -32,7 +32,7 @@ export interface PublishResult {
   slug:          string;
   bundle_status: 'uploaded';
   bundle_size:   number;
-  status:        'pending';
+  status:        'pending' | 'approved';
   warnings?:     string[];
 }
 
@@ -68,7 +68,7 @@ export async function publishLocalArtifact(args: {
 }): Promise<PublishResult> {
   const { kind, sourceDir, slug, overrides } = args;
   let effectiveSourceDir = sourceDir ?? '';
-  let agentStagingDir: string | null = null;
+  let stagingDir: string | null = null;
   const warnings: string[] = [];
 
   if (kind === 'agent') {
@@ -85,9 +85,9 @@ export async function publishLocalArtifact(args: {
     }
     warnings.push(...check.warnings);
 
-    agentStagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-agent-publish-'));
+    stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-agent-publish-'));
     try {
-      effectiveSourceDir = path.join(agentStagingDir, slug);
+      effectiveSourceDir = path.join(stagingDir, slug);
       fs.mkdirSync(effectiveSourceDir, { recursive: true });
       fs.writeFileSync(path.join(effectiveSourceDir, 'agent.json'), serialized, 'utf8');
       fs.writeFileSync(
@@ -96,7 +96,7 @@ export async function publishLocalArtifact(args: {
         'utf8',
       );
     } catch (err) {
-      fs.rmSync(agentStagingDir, { recursive: true, force: true });
+      fs.rmSync(stagingDir, { recursive: true, force: true });
       throw err;
     }
   }
@@ -105,11 +105,26 @@ export async function publishLocalArtifact(args: {
     throw new Error(`bundle source does not exist: ${ effectiveSourceDir }`);
   }
 
+  // Workflow manifests are sanitized in-place by the builder. Work from a
+  // publish-only copy so exporting can never rewrite the user's source file.
+  if (kind === 'routine') {
+    stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-workflow-publish-'));
+    const stagedRoot = path.join(stagingDir, slug);
+    fs.mkdirSync(stagedRoot, { recursive: true });
+    for (const sourceFile of listBundleFiles(effectiveSourceDir)) {
+      const relative = path.relative(effectiveSourceDir, sourceFile);
+      const destination = path.join(stagedRoot, relative);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.copyFileSync(sourceFile, destination);
+    }
+    effectiveSourceDir = stagedRoot;
+  }
+
   let manifest: Record<string, unknown>;
   try {
-    manifest = buildManifest(kind, { slug, bundleRoot: effectiveSourceDir, overrides });
+    manifest = buildManifest(kind, { slug, bundleRoot: effectiveSourceDir, overrides, writeSanitized: kind === 'routine' });
   } catch (err) {
-    if (agentStagingDir) fs.rmSync(agentStagingDir, { recursive: true, force: true });
+    if (stagingDir) fs.rmSync(stagingDir, { recursive: true, force: true });
     throw new Error(`manifest build failed: ${ err instanceof Error ? err.message : String(err) }`);
   }
 
@@ -140,41 +155,8 @@ export async function publishLocalArtifact(args: {
     };
   } finally {
     fs.rmSync(tmpdir, { recursive: true, force: true });
-    if (agentStagingDir) fs.rmSync(agentStagingDir, { recursive: true, force: true });
+    if (stagingDir) fs.rmSync(stagingDir, { recursive: true, force: true });
   }
 }
 
-const AGENT_SECRET_PATTERNS: { label: string; pattern: RegExp }[] = [
-  { label: 'Anthropic API key', pattern: /\bsk-ant-[A-Za-z0-9_-]{10,}/ },
-  { label: 'OpenAI API key', pattern: /\bsk-[A-Za-z0-9_-]{10,}/ },
-  { label: 'GitHub token', pattern: /\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/ },
-  { label: 'AWS access key', pattern: /\bAKIA[A-Z0-9]{16}\b/ },
-  { label: 'Slack token', pattern: /\bxox[bp]-[A-Za-z0-9-]{10,}/ },
-  { label: 'private key', pattern: /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/ },
-];
-
-export function findAgentSecret(agentJson: string): string | null {
-  return AGENT_SECRET_PATTERNS.find(candidate => candidate.pattern.test(agentJson))?.label ?? null;
-}
-
-export function hasAbsoluteHomePath(prompt: string): boolean {
-  return /(?:\/Users\/[^/\s]+\/|\/home\/[^/\s]+\/)/.test(prompt);
-}
-
-/** Every text field that ships in agent.json: prompt, soul, goals and each prompt file. */
-function agentTextFields(manifest: AgentMarketplaceManifest): string[] {
-  const spec = manifest.spec ?? ({} as AgentMarketplaceManifest['spec']);
-
-  return [spec.prompt, spec.soul, spec.goals, ...Object.values(spec.promptFiles ?? {})].filter((v): v is string => typeof v === 'string');
-}
-
-/** Pre-publish check shared by the publish path and the Agents tab confirm step. */
-export function checkAgentManifestForPublish(manifest: AgentMarketplaceManifest): { secret: string | null; warnings: string[] } {
-  const warnings: string[] = [];
-
-  if (agentTextFields(manifest).some(hasAbsoluteHomePath)) {
-    warnings.push('The agent contains absolute home-directory paths (e.g. /Users/<name>/). They may not work on other machines.');
-  }
-
-  return { secret: findAgentSecret(JSON.stringify(manifest)), warnings };
-}
+export { checkAgentManifestForPublish, findAgentSecret, hasAbsoluteHomePath } from './agentPublishSafety';

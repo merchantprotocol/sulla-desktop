@@ -47,8 +47,8 @@ async function notifyManualResumes(executions: SuspendedExecution[]): Promise<vo
     const { getChromeApi } = await import('@pkg/main/chromeApi/ChromeApiService');
     for (const exec of fresh) {
       await getChromeApi().notifications.create(`workflow-paused-${ exec.executionId }`, {
-        title:   `Routine paused: ${ exec.workflowName }`,
-        message: 'It stopped mid-run and needs a decision before it can run again. Open Routines to resume or stop it.',
+        title:   `Workflow paused: ${ exec.workflowName }`,
+        message: 'It stopped mid-run and needs a decision before it can run again. Open Workflows to resume or stop it.',
       });
     }
   } catch (err) {

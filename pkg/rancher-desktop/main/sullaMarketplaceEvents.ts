@@ -74,6 +74,39 @@ export function initSullaMarketplaceEvents(): void {
     }
   });
 
+  ipcMainProxy.handle('marketplace-install-all', async(_event, id: string, opts?: { overwrite?: boolean; replaces?: string }) => {
+    if (!id || typeof id !== 'string') return { error: 'marketplace-install-all requires a template id' };
+    try {
+      const { installTemplateWithDependencies } = await import('@pkg/main/marketplace/install');
+
+      return await installTemplateWithDependencies(id, {
+        overwrite: opts?.overwrite === true,
+        replaces:  typeof opts?.replaces === 'string' ? opts.replaces : undefined,
+      });
+    } catch (err) {
+      console.error('[Sulla] marketplace-install-all failed:', err);
+
+      return errorOf(err);
+    }
+  });
+
+  ipcMainProxy.handle('marketplace-resolve', async(_event, kind: string, slug: string) => {
+    try {
+      const { normalizeMarketplaceKind } = await import('@pkg/composables/marketplaceKinds');
+      const { findTemplateBySlug } = await import('@pkg/main/marketplace/client');
+      const normalizedKind = normalizeMarketplaceKind(kind);
+
+      if (!normalizedKind) return { error: `Unknown marketplace kind: ${ kind }` };
+      if (!slug || typeof slug !== 'string') return { error: 'marketplace-resolve requires a slug' };
+
+      const listing = await findTemplateBySlug(normalizedKind, slug);
+
+      return listing ? { template: listing } : { error: `No marketplace listing for ${ normalizedKind }/${ slug }` };
+    } catch (err) {
+      return errorOf(err);
+    }
+  });
+
   // ── Locally installed marketplace artifacts ──
   ipcMainProxy.handle('marketplace-installed', async() => {
     try {

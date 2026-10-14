@@ -1,4 +1,5 @@
 import { BaseTool, ToolResponse } from '../base';
+import { marketplaceKindLabel } from '@pkg/composables/marketplaceKinds';
 import { getMarketplaceClient, isAuthError, SIGN_IN_HINT } from './MarketplaceClient';
 
 /** Everything the signed-in user has submitted, with review status and reviewer notes. */
@@ -17,7 +18,7 @@ export class MarketplaceListPublishedWorker extends BaseTool {
         const bundle = i.bundle_status === 'pending' ? ' (bundle not uploaded)' : '';
         const notes = i.admin_notes ? `\n     reviewer: ${ i.admin_notes.split('\n').slice(-1)[0] }` : '';
 
-        return `  - ${ i.kind }/${ i.slug } v${ i.version } — ${ label[i.status] ?? i.status }${ bundle } · ${ i.download_count ?? 0 } downloads · ${ i.id }${ notes }`;
+        return `  - ${ marketplaceKindLabel(i.kind) }: ${ i.slug } v${ i.version } — ${ label[i.status] ?? i.status }${ bundle } · ${ i.download_count ?? 0 } downloads · ${ i.id }${ notes }`;
       });
 
       return {

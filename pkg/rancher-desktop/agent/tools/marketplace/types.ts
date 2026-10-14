@@ -16,6 +16,7 @@ import {
   resolveSullaUserIntegrationsDir,
   resolveSullaUserSkillsDir,
 } from '@pkg/agent/utils/sullaPaths';
+import { MARKETPLACE_KINDS, normalizeMarketplaceKind } from '@pkg/composables/marketplaceKinds';
 
 export const ARTIFACT_KINDS = ['skill', 'function', 'workflow', 'agent', 'recipe', 'integration'] as const;
 export type ArtifactKind = typeof ARTIFACT_KINDS[number];
@@ -87,17 +88,17 @@ export function isArtifactKind(value: unknown): value is ArtifactKind {
   return typeof value === 'string' && (ARTIFACT_KINDS as readonly string[]).includes(value);
 }
 
-export const KINDS_HELP = 'skill, function, routine (alias: workflow), agent, recipe, integration';
+export const KINDS_HELP = `workflow, ${ MARKETPLACE_KINDS.filter(k => k.kind !== 'routine').map(k => k.kind).join(', ') }`;
 
 /**
  * Normalize user/agent input to an ArtifactKind. The marketplace and the
  * rest of the app call workflows "routine"; accept both spellings.
  */
 export function normalizeKind(raw: unknown): ArtifactKind | null {
-  const v = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-  const k = v === 'routine' || v === 'routines' ? 'workflow' : v.replace(/s$/, '');
+  const normalized = normalizeMarketplaceKind(raw);
+  const k = normalized === 'routine' ? 'workflow' : normalized;
 
-  return isArtifactKind(k) ? k : (isArtifactKind(v) ? v : null);
+  return isArtifactKind(k) ? k : null;
 }
 
 export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';

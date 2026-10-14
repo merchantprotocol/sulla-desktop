@@ -1,15 +1,16 @@
 import type { ToolManifest } from '../registry';
 
-const KINDS_DESC = 'Artifact kind. One of: skill, function, routine (alias: workflow), agent, recipe, integration.';
+const KINDS_DESC = 'Artifact kind. One of: workflow (alias: routine), agent, skill, function, integration, recipe.';
 
 export const marketplaceToolManifests: ToolManifest[] = [
   {
     name:        'search',
-    description: 'Search the Sulla Marketplace (skills, functions, routines, agents, recipes, integrations). Filter by free text, kind, and category. Shows version, author, download count, and whether each listing is already installed or has an update. Works without signing in.',
+    description: 'Search the whole Sulla Marketplace catalog. Filter by free text, one kind, multiple kinds, and category. Shows version, author, download count, and whether each listing is already installed or has an update. Works without signing in.',
     category:    'marketplace',
     schemaDef:   {
       query:    { type: 'string', optional: true, description: 'Free-text search across artifact name + description + tags.' },
       kind:     { type: 'string', optional: true, description: KINDS_DESC + ' Omit to search all kinds.' },
+      kinds:    { type: 'array', optional: true, description: 'Multiple artifact kinds to include. Omit both kind and kinds to search the whole catalog.' },
       category: { type: 'string', optional: true, description: 'Tag/category filter (e.g. "crm", "productivity", "analytics").' },
       limit:    { type: 'number', optional: true, description: 'Max results to return (default 25).' },
     },

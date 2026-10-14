@@ -335,10 +335,10 @@ export function initSullaRoutineImportEvents(): void {
     // separate dialogs; we default to the file picker and document the
     // alternate path in a log for now.
     const openResult = await dialog.showOpenDialog({
-      title:      'Import Routine',
+      title:      'Import Workflow',
       properties: ['openFile', 'openDirectory', 'treatPackageAsDirectory'],
       filters:    [
-        { name: 'Sulla Routine Bundle', extensions: ['zip'] },
+        { name: 'Sulla Workflow Bundle', extensions: ['zip'] },
         { name: 'All Files',            extensions: ['*'] },
       ],
     });

@@ -18,7 +18,7 @@ import { computed, ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 /** Real on-disk kinds. These are what loaders actually fetch. */
-export type LibraryArtifactKind = 'routines' | 'skills' | 'functions' | 'recipes' | 'integrations';
+export type LibraryArtifactKind = 'routines' | 'agents' | 'skills' | 'functions' | 'recipes' | 'integrations';
 
 /** Selectable views in the Library left rail. `all` is synthetic — it
  *  flattens every artifact kind into one list with a `kind` tag on each
@@ -26,7 +26,7 @@ export type LibraryArtifactKind = 'routines' | 'skills' | 'functions' | 'recipes
  *  everything they own at once. */
 export type LibraryKind = 'all' | LibraryArtifactKind;
 
-const ARTIFACT_KINDS: LibraryArtifactKind[] = ['routines', 'skills', 'functions', 'recipes', 'integrations'];
+const ARTIFACT_KINDS: LibraryArtifactKind[] = ['routines', 'agents', 'skills', 'functions', 'integrations', 'recipes'];
 
 export interface LibraryItem {
   /** Stable directory name on disk — also the primary key within a kind. */
@@ -101,6 +101,22 @@ async function loadSkills(): Promise<LibraryItem[]> {
   });
 }
 
+async function loadAgents(): Promise<LibraryItem[]> {
+  const rows = await ipcRenderer.invoke('agent-definitions:list');
+
+  return rows.map(agent => ({
+    slug:        agent.slug,
+    name:        agent.name,
+    description: agent.description,
+    version:     agent.marketplaceVersion ?? undefined,
+    meta:        [
+      ...(agent.provider ? [{ label: 'Provider', value: agent.provider }] : []),
+      ...(agent.model ? [{ label: 'Model', value: agent.model }] : []),
+    ],
+    kind: 'agents' as const,
+  }));
+}
+
 async function loadFunctions(): Promise<LibraryItem[]> {
   const rows = await ipcRenderer.invoke('functions-list');
 
@@ -170,6 +186,7 @@ async function loadIntegrations(): Promise<LibraryItem[]> {
 
 const LOADERS: Record<LibraryArtifactKind, () => Promise<LibraryItem[]>> = {
   routines:     loadRoutines,
+  agents:       loadAgents,
   skills:       loadSkills,
   functions:    loadFunctions,
   recipes:      loadRecipes,
@@ -186,6 +203,7 @@ const search = ref('');
 
 const states = ref<Record<LibraryArtifactKind, LibraryKindState>>({
   routines:     emptyKindState(),
+  agents:       emptyKindState(),
   skills:       emptyKindState(),
   functions:    emptyKindState(),
   recipes:      emptyKindState(),
@@ -273,6 +291,7 @@ const filteredItems = computed<LibraryItem[]>(() => {
 
 const kindCounts = computed<Record<LibraryArtifactKind, number>>(() => ({
   routines:     states.value.routines.items.length,
+  agents:       states.value.agents.items.length,
   skills:       states.value.skills.items.length,
   functions:    states.value.functions.items.length,
   recipes:      states.value.recipes.items.length,
@@ -282,7 +301,7 @@ const kindCounts = computed<Record<LibraryArtifactKind, number>>(() => ({
 const totalCount = computed<number>(() => {
   const c = kindCounts.value;
 
-  return c.routines + c.skills + c.functions + c.recipes + c.integrations;
+  return c.routines + c.agents + c.skills + c.functions + c.recipes + c.integrations;
 });
 
 export function useLibrary() {
