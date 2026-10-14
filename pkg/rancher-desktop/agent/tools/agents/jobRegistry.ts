@@ -43,6 +43,8 @@ export interface AgentJobTask {
   agentId:    string;
   label:      string;
   prompt:     string;
+  /** Projects task this child was launched to work, when explicitly supplied. */
+  taskId?:    string;
   status:     'queued' | 'running' | 'completed' | 'blocked' | 'error' | 'stopped';
   threadId?:  string;
   startedAt?: number;
@@ -73,6 +75,7 @@ export interface AgentJob {
   parentThreadId?: string;
   parentAgentId?: string;
   visibility?: AgentJobVisibility;
+  projectTaskIds?: string[];
   completionDeliveredAt?: number | null;
   dismissedAt?: number | null;
 }
@@ -123,6 +126,7 @@ function rowToJob(r: any): AgentJob {
     parentThreadId: r.parent_thread_id ?? undefined,
     parentAgentId: r.parent_agent_id ?? undefined,
     visibility: r.visibility === 'tab' ? 'tab' : 'hidden',
+    projectTaskIds: Array.isArray(r.project_task_ids) ? r.project_task_ids : [],
     completionDeliveredAt: r.completion_delivered_at ? new Date(r.completion_delivered_at).getTime() : null,
     dismissedAt: r.dismissed_at ? new Date(r.dismissed_at).getTime() : null,
   };
