@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from '../codexMcpConfig';
+import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_SESSION_TTL_MS, CODEX_MCP_TOKEN_ENV } from '../codexMcpConfig';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import type { RegisteredSession } from '@pkg/main/MCPServerHost';
@@ -54,5 +54,20 @@ describe('CodexService MCP bridge', () => {
     expect(bindCodexMcpSession(host, currentState, expired)).toBe(replacement);
     expect(expired.revoke).toHaveBeenCalledTimes(1);
     expect(registeredState).toBe(currentState);
+  });
+
+  it('mints worker sessions that outlive a long quiet stretch (not the 10-min default)', () => {
+    const state = { metadata: { threadId: 'worker' } } as BaseThreadState;
+    const session: RegisteredSession = { id: 'fresh', url: 'http://host/mcp', header: 'Bearer fresh', revoke: jest.fn() };
+    let ttl: number | undefined;
+    const host = {
+      running:         true,
+      registerSession: (_state: BaseThreadState, ttlMs?: number) => { ttl = ttlMs; return session },
+      rebindSession:   jest.fn<(id: string, state: BaseThreadState) => boolean>().mockReturnValue(false),
+    };
+
+    bindCodexMcpSession(host, state, null);
+    expect(ttl).toBe(CODEX_MCP_SESSION_TTL_MS);
+    expect(CODEX_MCP_SESSION_TTL_MS).toBeGreaterThanOrEqual(4 * 60 * 60_000);
   });
 });

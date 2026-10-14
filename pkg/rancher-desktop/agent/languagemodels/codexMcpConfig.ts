@@ -7,9 +7,18 @@ interface CodexMcpSessionConfig {
   url: string;
 }
 
+/**
+ * Tool-session lifetime for a Codex worker. The default 10-min idle TTL
+ * expired mid-task whenever a worker went 10 min without a `sulla` call (a
+ * long test run or edit), and every later check-in / return_result failed
+ * with "Expired tool session". Matches ClaudeCodeService's process TTL; the
+ * session is still revoked when the run ends.
+ */
+export const CODEX_MCP_SESSION_TTL_MS = 4 * 60 * 60_000 + 30 * 60_000;
+
 interface CodexMcpSessionHost {
   running: boolean;
-  registerSession(state: BaseThreadState): RegisteredSession;
+  registerSession(state: BaseThreadState, ttlMs?: number): RegisteredSession;
   rebindSession(id: string, state: BaseThreadState): boolean;
 }
 
@@ -24,7 +33,7 @@ export function bindCodexMcpSession(
   if (existing) {
     try { existing.revoke() } catch { /* already revoked */ }
   }
-  return host.registerSession(state);
+  return host.registerSession(state, CODEX_MCP_SESSION_TTL_MS);
 }
 
 /** Per-process Codex CLI overrides for Sulla's graph-bound MCP bridge. */

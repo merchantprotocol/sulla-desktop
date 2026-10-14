@@ -8,7 +8,7 @@ import { buildRemoteKillCommand, newRemotePidFile } from './claudeLaunchCommand'
 import { isObserverSpawn } from './claudeToolPolicy';
 import { removeFileOnExit, systemPromptFromMessages, writeSystemPromptFile } from './cliSystemPromptFile';
 import { buildCodexAgentInstructions } from './codexAgentInstructions';
-import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
+import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_SESSION_TTL_MS, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { emitCodexToolEvent } from './codexToolEvents';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { redisClient } from '../database/RedisClient';
@@ -274,7 +274,7 @@ export class CodexService extends BaseLanguageModel {
       let mcpSession: RegisteredSession | null = null;
       try {
         const host = getMCPServerHost();
-        if (host.running) mcpSession = host.registerSession(state);
+        if (host.running) mcpSession = host.registerSession(state, CODEX_MCP_SESSION_TTL_MS);
       } catch { /* continue without sulla-native tools */ }
 
       const limactlPath = paths.limactl;
