@@ -28,6 +28,10 @@
 > ```bash
 > curl -fsSL https://sulladesktop.com/install.sh | sh
 > ```
+> Have Node.js 18+? One command downloads, installs and opens it:
+> ```bash
+> npx sulla-desktop
+> ```
 > Or grab an installer from the [latest release](https://github.com/merchantprotocol/sulla-desktop/releases/latest).
 
 <div align="center">

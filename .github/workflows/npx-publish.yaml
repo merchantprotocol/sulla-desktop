@@ -1,0 +1,78 @@
+name: Publish npx launcher
+
+# Publishes packaging/npx to npm as `sulla-desktop` (so `npx sulla-desktop`
+# works) whenever a release is published. The launcher always fetches the
+# latest GitHub release at run time; the npm version just tracks the app
+# version for clarity.
+#
+# Needs the repository secret NPM_TOKEN (an npm "Automation" or granular
+# access token with publish rights to the package).
+
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'npm version to publish (defaults to package.json)'
+        required: false
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+        working-directory: packaging/npx
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+    - name: Check for NPM_TOKEN
+      id: token
+      env:
+        NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: |
+        if [ -z "$NPM_TOKEN" ]; then
+          echo "::warning::NPM_TOKEN secret is not set; skipping npm publish."
+          echo "present=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Set version
+      if: steps.token.outputs.present == 'true'
+      env:
+        TAG: ${{ github.event.release.tag_name }}
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        version="${INPUT_VERSION:-${TAG#v}}"
+        if [ -n "$version" ]; then
+          npm version "$version" --no-git-tag-version --allow-same-version
+        fi
+        echo "Publishing $(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
+    - name: Smoke check
+      if: steps.token.outputs.present == 'true'
+      run: |
+        node --check bin.js
+        node bin.js --help
+    - name: Publish
+      if: steps.token.outputs.present == 'true'
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: |
+        name="$(node -p "require('./package.json').name")"
+        version="$(node -p "require('./package.json').version")"
+        if npm view "$name@$version" version >/dev/null 2>&1; then
+          echo "$name@$version is already on npm; nothing to do."
+          exit 0
+        fi
+        npm publish --access public --provenance
