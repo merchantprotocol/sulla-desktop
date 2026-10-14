@@ -18,6 +18,20 @@ if [ -f /etc/sulla-env ]; then
 fi
 
 SOCKET="/tmp/sulla-tools.sock"
+
+# The agent's tool session binds CLI calls to its thread (check-ins,
+# return_result, contracts). Some agent shells don't pass it down — Codex's
+# exec kernel drops it on resumed turns — so take it from the nearest
+# ancestor process that has it (the agent process itself always does).
+if [ -z "$SULLA_TOOL_SESSION" ] && [ -r "/proc/$$/status" ]; then
+  _p=$PPID; _n=0
+  while [ -n "$_p" ] && [ "$_p" -gt 1 ] && [ "$_n" -lt 25 ]; do
+    _s=$(tr '\0' '\n' < "/proc/$_p/environ" 2>/dev/null | sed -n 's/^SULLA_TOOL_SESSION=//p' | head -n 1)
+    if [ -n "$_s" ]; then SULLA_TOOL_SESSION="$_s"; export SULLA_TOOL_SESSION; break; fi
+    _p=$(sed -n 's/^PPid:[[:space:]]*//p' "/proc/$_p/status" 2>/dev/null); _n=$((_n + 1))
+  done
+  unset _p _n _s
+fi
 SULLA_HOST="${SULLA_HOST:-host.lima.internal}"
 FIRST="$1"
 BODY="$2"
