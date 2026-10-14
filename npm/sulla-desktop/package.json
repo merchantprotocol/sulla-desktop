@@ -1,0 +1,21 @@
+{
+  "name": "sulla-desktop",
+  "version": "1.0.0",
+  "description": "Download, install, and launch Sulla Desktop",
+  "type": "module",
+  "license": "Apache-2.0 WITH Commons-Clause",
+  "bin": {
+    "sulla": "./bin/sulla.js"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/merchantprotocol/sulla-desktop.git",
+    "directory": "npm/sulla-desktop"
+  },
+  "homepage": "https://sulladesktop.com",
+  "keywords": ["sulla", "desktop", "installer", "launcher"],
+  "files": ["bin/sulla.js"]
+}

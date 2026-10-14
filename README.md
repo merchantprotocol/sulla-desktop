@@ -28,6 +28,11 @@
 > ```bash
 > curl -fsSL https://sulladesktop.com/install.sh | sh
 > ```
+> Or download, install, and launch the latest release with Node.js:
+> ```bash
+> npx sulla-desktop
+> ```
+> The npm package name `sulla` belongs to an unrelated project, so Sulla Desktop uses `sulla-desktop` and exposes the `sulla` executable.
 > Or grab an installer from the [latest release](https://github.com/merchantprotocol/sulla-desktop/releases/latest).
 
 <div align="center">

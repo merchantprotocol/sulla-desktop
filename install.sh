@@ -211,6 +211,11 @@ finish_macos() {
     log "Launch from Applications or run:"
     log "  open '/Applications/${app_name}'"
     echo ""
+
+    if [ "${LAUNCH_APP:-0}" = "1" ]; then
+        log "Launching Sulla Desktop..."
+        open "/Applications/${app_name}"
+    fi
 }
 
 # ─── Linux installer ────────────────────────────────────────
@@ -274,6 +279,11 @@ DESKTOP
     log "Installation complete!"
     log "Run: sulla-desktop"
     echo ""
+
+    if [ "${LAUNCH_APP:-0}" = "1" ] && [ -n "$exe" ]; then
+        log "Launching Sulla Desktop..."
+        nohup "$exe" >/dev/null 2>&1 </dev/null &
+    fi
 }
 
 # ─── Windows installer (Git Bash / MSYS2) ───────────────────
@@ -329,6 +339,11 @@ install_windows_msi() {
     log "Installation complete!"
     log "Launch Sulla Desktop from the Start menu."
     echo ""
+
+    if [ "${LAUNCH_APP:-0}" = "1" ]; then
+        log "Launching Sulla Desktop..."
+        cmd.exe /c start "" "Sulla Desktop"
+    fi
 }
 
 install_windows_zip() {
@@ -354,6 +369,11 @@ install_windows_zip() {
     log "Installation complete!"
     log "Run: '${install_dir}/Sulla Desktop.exe'"
     echo ""
+
+    if [ "${LAUNCH_APP:-0}" = "1" ]; then
+        log "Launching Sulla Desktop..."
+        cmd.exe /c start "" "$(cygpath -w "${install_dir}/Sulla Desktop.exe")"
+    fi
 }
 
 # ─── Uninstall ───────────────────────────────────────────────
@@ -388,6 +408,7 @@ uninstall() {
 
 # ─── Main ────────────────────────────────────────────────────
 
+LAUNCH_APP=0
 for arg in "$@"; do
     case "$arg" in
         --uninstall)
@@ -395,14 +416,18 @@ for arg in "$@"; do
             exit 0
             ;;
         --help|-h)
-            echo "Usage: install.sh [--uninstall]"
+            echo "Usage: install.sh [--uninstall] [--launch]"
             echo ""
             echo "Downloads and installs the latest Sulla Desktop from GitHub."
             echo ""
             echo "  --uninstall   Remove Sulla Desktop"
+            echo "  --launch      Launch Sulla Desktop when installation completes"
             echo ""
             echo "For developer builds from source, use install-dev.sh instead."
             exit 0
+            ;;
+        --launch)
+            LAUNCH_APP=1
             ;;
     esac
 done
