@@ -10,7 +10,13 @@ import os from 'os';
 
 import Electron from 'electron';
 
+import { getSettings } from '@pkg/config/settingsImpl';
+import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
+import { getInstallId } from '@pkg/main/installId';
+
 const ERROR_REPORT_URL = 'https://error-reports.merchantprotocol.com';
+const MAX_ERROR_MESSAGE_LENGTH = 1_024;
+const MAX_STACK_TRACE_LENGTH = 8 * 1_024;
 
 // Client-side flood guard: if a process gets stuck in a tight loop emitting the
 // same rejection (e.g. a `.once()` listener firing repeatedly), we'd otherwise
@@ -19,6 +25,23 @@ const ERROR_REPORT_URL = 'https://error-reports.merchantprotocol.com';
 const DEDUPE_WINDOW_MS = 60_000;
 const DEDUPE_MAX_PER_WINDOW = 3;
 const recentSubmissions = new Map<string, { firstSeenAt: number; count: number; suppressed: number }>();
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  let bytes = 0;
+  let result = '';
+
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+
+    if (bytes + characterBytes > maxBytes) {
+      break;
+    }
+    result += character;
+    bytes += characterBytes;
+  }
+
+  return result;
+}
 
 function dedupeSignature(report: ErrorReportPayload): string {
   const firstStackFrame = (report.stack_trace || '').split('\n').find(line => line.trim().startsWith('at ')) || '';
@@ -81,6 +104,12 @@ export async function submitErrorReport(report: ErrorReportPayload): Promise<{ s
     return { success: false, action: 'suppressed_duplicate' };
   }
 
+  if (!getSettings().application.telemetry.enabled) {
+    return { success: false, action: 'telemetry_disabled' };
+  }
+
+  void submitCloudError(payload);
+
   try {
     const response = await Electron.net.fetch(`${ ERROR_REPORT_URL }/`, {
       method:  'POST',
@@ -102,6 +131,28 @@ export async function submitErrorReport(report: ErrorReportPayload): Promise<{ s
     console.error('[ErrorReporter] Failed to submit report:', err);
 
     return { success: false };
+  }
+}
+
+async function submitCloudError(report: ErrorReportPayload): Promise<void> {
+  try {
+    await Electron.net.fetch(`${ CLOUD_API_BASE }/desktop/errors`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        installId:    getInstallId(Electron.app.getPath('userData')),
+        appVersion:   report.app_version || getAppVersion(),
+        platform:     report.os_platform || process.platform,
+        arch:         process.arch,
+        osVersion:    report.os_version || os.release(),
+        errorType:    report.error_type,
+        errorMessage: truncateUtf8(report.error_message, MAX_ERROR_MESSAGE_LENGTH),
+        stackTrace:   truncateUtf8(report.stack_trace || '', MAX_STACK_TRACE_LENGTH),
+        context:      report.user_context || '',
+      }),
+    });
+  } catch {
+    // The Cloud copy is fire-and-forget and must never affect error handling.
   }
 }
 

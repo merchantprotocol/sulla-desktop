@@ -58,6 +58,7 @@ import { Tray } from '@pkg/main/tray';
 import setupUpdate from '@pkg/main/update';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import { submitErrorReport } from '@pkg/main/errorReporter';
+import { startInstallPing } from '@pkg/main/installPing';
 import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
 import { initSecretaryModeStateIpc } from '@pkg/main/secretaryModeState';
 import { initSullaEvents } from '@pkg/main/sullaEvents';
@@ -564,6 +565,8 @@ Electron.app.whenReady().then(async() => {
       }
       console.log(`Failed to update command from argument ${ commandLineArgs.join(', ') }`, err);
     }
+
+    startInstallPing();
 
     httpCommandServer = new HttpCommandServer(new BackgroundCommandWorker());
     await httpCommandServer.init();
