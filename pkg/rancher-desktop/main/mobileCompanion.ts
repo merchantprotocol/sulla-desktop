@@ -5,10 +5,12 @@ import { ApprovalService, type UserQuestion } from '@pkg/agent/services/Approval
 import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { AgentJobMessagingModel } from '@pkg/agent/database/models/AgentJobMessagingModel';
+import { getActiveAgentsRegistry } from '@pkg/agent/services/ActiveAgentsRegistry';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
 import { getModelProviderService } from '@pkg/agent/services/ModelProviderService';
 import { sendJobMessage } from '@pkg/agent/tools/agents/send_job_message';
-import { findTaskByThread, getJob } from '@pkg/agent/tools/agents/jobRegistry';
+import { findTaskByThread, getAllJobs, getJob } from '@pkg/agent/tools/agents/jobRegistry';
 import { stopAgentJob } from '@pkg/agent/tools/agents/stop_agent_job';
 
 // The only desktop switches the phone may flip. Each toggle writes exactly
@@ -23,6 +25,7 @@ import { listDockerLinks } from '@pkg/main/dockerLinks';
 import { isLoopbackUrl, previewShares } from '@pkg/main/previewShare';
 
 const MAX_RELAY_FAVICON_CHARS = 12_000;
+const MAX_FLEET_TEXT_CHARS = 400;
 
 type PendingCard = { conversationId: string; kind: string; questions?: UserQuestion[] };
 const cards = new Map<string, PendingCard>();
@@ -62,6 +65,18 @@ function companionString(value: unknown, name: string, max: number, required = f
   const normalized = value.trim();
   if ((!normalized && required) || normalized.length > max) throw new Error(`Invalid ${ name.toLowerCase() }`);
   return normalized;
+}
+
+function companionInteger(value: unknown, name: string, fallback: number, min: number, max: number): number {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`Invalid ${ name }`);
+  }
+  return value;
+}
+
+function fleetText(value: unknown): string {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_FLEET_TEXT_CHARS);
 }
 
 async function companionJob(params: Record<string, unknown>) {
@@ -189,6 +204,69 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
     }, CLOUD_PROJECT_CONTEXT);
     if (!task) throw new Error('Task not found');
     return { task };
+  }
+  case 'agents.list': {
+    const includeFinishedHours = companionInteger(params.includeFinishedHours, 'includeFinishedHours', 24, 0, 72);
+    const limit = companionInteger(params.limit, 'limit', 50, 1, 100);
+    const now = Date.now();
+    const finishedCutoff = now - includeFinishedHours * 60 * 60 * 1000;
+    const [activeAgents, allJobs] = await Promise.all([
+      getActiveAgentsRegistry().getAllAgents(),
+      getAllJobs(),
+    ]);
+    const selectedJobs = allJobs
+      .filter(job => job.status === 'running' || (includeFinishedHours > 0 && job.finishedAt !== null && job.finishedAt >= finishedCutoff))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit);
+    const jobs = await Promise.all(selectedJobs.map(async(job) => {
+      const telemetry = await AgentJobMessagingModel.telemetryForJob(job.jobId);
+
+      return {
+        jobId:         job.jobId,
+        status:        job.status,
+        startedAt:     new Date(job.createdAt).toISOString(),
+        elapsedMs:     Math.max(0, (job.finishedAt ?? now) - job.createdAt),
+        parentThreadId: job.parentThreadId,
+        tasks:          job.tasks.map((task, taskIndex) => {
+          const checkin = telemetry[taskIndex]?.latestCheckin;
+
+          return {
+            taskIndex,
+            agentId:   task.agentId,
+            label:     task.label,
+            status:    task.status,
+            visibility: task.visibility ?? job.visibility ?? 'hidden',
+            threadId:  task.threadId,
+            latestCheckin: checkin ? {
+              step:     fleetText(checkin.step),
+              summary:  fleetText(checkin.summary),
+              percent:  checkin.percent,
+              blockers: checkin.blockers.slice(0, 10).map(fleetText),
+              time:     new Date(checkin.createdAt).toISOString(),
+            } : null,
+          };
+        }),
+      };
+    }));
+    const agents = activeAgents
+      .filter(agent => agent.type !== 'human')
+      .map(agent => ({
+        channel:  agent.channel,
+        name:     agent.name || agent.agentId,
+        status:   agent.status,
+        uptimeMs: Math.max(0, now - agent.startedAt),
+        current:  agent.statusNote && agent.statusNote !== 'idle' ? fleetText(agent.statusNote) : undefined,
+      }));
+
+    return {
+      generatedAt: new Date(now).toISOString(),
+      agents,
+      jobs,
+      heartbeat: {
+        enabled: await SullaSettingsModel.get('heartbeatEnabled', false),
+        status:  getHeartbeatService().getStatus(),
+      },
+    };
   }
   case 'agents.message': {
     const target = await companionJob(params);
