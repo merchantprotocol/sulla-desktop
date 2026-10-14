@@ -6,6 +6,16 @@ const listTasks = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue(
 const getTask = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ id: 't1', project_id: 'p1', archived: false });
 const listComments = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue([{ id: 'c1', body: 'hi' }]);
 const addComment = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ id: 'c2', body: 'from phone', author: 'human' });
+const projectServiceGetProject = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ id: 'p1', archived: false });
+const projectServiceGetTask = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ id: 't1', project_id: 'p1', archived: false });
+const projectServiceListEpics = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue([{ id: 'e1', project_id: 'p1' }]);
+const projectServiceCreateTask = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ id: 't2', project_id: 'p1', epic_id: 'e1', title: 'Cloud task', status: 'todo' });
+const projectServiceUpdateTask = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ id: 't1', project_id: 'p1', epic_id: 'e1', title: 'Updated', status: 'in_progress' });
+const sendJobMessage = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ successBoolean: true, responseString: '{}' });
+const stopAgentJob = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ successBoolean: true, responseString: 'stopped' });
+const agentJob = { jobId: 'agent-job-1', status: 'running', tasks: [{ threadId: 'thread-1', status: 'running' }] };
+const getJob = jest.fn<(...args: any[]) => Promise<any>>().mockImplementation(async id => id === agentJob.jobId ? agentJob : undefined);
+const findTaskByThread = jest.fn<(...args: any[]) => Promise<any>>().mockImplementation(async id => id === 'thread-1' ? { job: agentJob, taskIndex: 0 } : undefined);
 const set = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue(undefined);
 const resolveQuestion = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
 const resolve = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
@@ -39,14 +49,34 @@ mockModules({
   '@pkg/agent/database/models/SullaSettingsModel': { SullaSettingsModel: { set, get: jest.fn<() => Promise<any>>().mockResolvedValue(false) } },
   '@pkg/agent/services/ModelProviderService': { getModelProviderService: () => modelProviders },
   '@pkg/agent/services/HeartbeatService': { getHeartbeatService: () => ({ getStatus: () => ({ isExecuting: false }), getHistory: () => [] }) },
-  '@pkg/agent/projects/application/ProjectsApplicationService': { getProjectsApplicationService: () => ({ addComment }) },
+  '@pkg/agent/projects/application/ProjectsApplicationService': { getProjectsApplicationService: () => ({
+    addComment,
+    ready:      jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    getProject: projectServiceGetProject,
+    getTask:    projectServiceGetTask,
+    listEpics:  projectServiceListEpics,
+    createTask: projectServiceCreateTask,
+    updateTask: projectServiceUpdateTask,
+  }) },
+  '@pkg/agent/tools/agents/send_job_message': { sendJobMessage },
+  '@pkg/agent/tools/agents/jobRegistry': { getJob, findTaskByThread },
+  '@pkg/agent/tools/agents/stop_agent_job': { stopAgentJob },
   '@pkg/agent/services/ApprovalService': { ApprovalService: { getInstance: () => ({ resolveQuestion, resolve }) } },
   '@pkg/agent/database/models/BrowserBookmarkModel': { BrowserBookmarkModel: { list: listBookmarks } },
   '@pkg/main/dockerLinks': { listDockerLinks },
   '@pkg/main/previewShare': { isLoopbackUrl: realLoopback, previewShares: { open: openPreview, close: closePreview } },
 });
 const { mobileCompanionRequest: request, registerMobileCard } = await import('@pkg/main/mobileCompanion');
-beforeEach(() => { jest.clearAllMocks(); resolveQuestion.mockReturnValue(true); getTask.mockResolvedValue({ id: 't1', project_id: 'p1', archived: false }); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resolveQuestion.mockReturnValue(true);
+  getTask.mockResolvedValue({ id: 't1', project_id: 'p1', archived: false });
+  projectServiceGetProject.mockResolvedValue({ id: 'p1', archived: false });
+  projectServiceGetTask.mockResolvedValue({ id: 't1', project_id: 'p1', archived: false });
+  projectServiceListEpics.mockResolvedValue([{ id: 'e1', project_id: 'p1' }]);
+  sendJobMessage.mockResolvedValue({ successBoolean: true, responseString: '{}' });
+  stopAgentJob.mockResolvedValue({ successBoolean: true, responseString: 'stopped' });
+});
 test('rejects arbitrary remote commands', async() => {
   await expect(request('exec', { command: 'anything' })).rejects.toThrow('Unsupported');
   expect(set).not.toHaveBeenCalled();
@@ -112,6 +142,45 @@ test('empty or oversized comments are rejected before touching the task', async(
   await expect(request('projects.comment', { taskId: 't1', body: 'x'.repeat(20001) })).rejects.toThrow('Write a comment');
   expect(getTask).not.toHaveBeenCalled();
   expect(addComment).not.toHaveBeenCalled();
+});
+test('cloud board creates tasks through the Projects service with a fixed actor', async() => {
+  await expect(request('projects.create_task', {
+    projectId: 'p1', title: '  Cloud task  ', status: 'todo', priority: 'high', assignee: 'workbench',
+  })).resolves.toMatchObject({ task: { id: 't2' } });
+  expect(projectServiceListEpics).toHaveBeenCalledWith({ projectId: 'p1', includeDone: true, limit: 1000 });
+  expect(projectServiceCreateTask).toHaveBeenCalledWith({
+    epic_id: 'e1', title: 'Cloud task', status: 'todo', priority: 'high', assignee: 'workbench', source: 'cloud-dashboard', actor: 'cloud-dashboard',
+  }, { actor: 'cloud-dashboard', source: 'ipc' });
+});
+test('cloud board updates status or lane through the Projects service with a fixed actor', async() => {
+  await expect(request('projects.update_task', { taskId: 't1', lane: 'in_progress', title: ' Updated ', assignee: null }))
+    .resolves.toMatchObject({ task: { id: 't1' } });
+  expect(projectServiceUpdateTask).toHaveBeenCalledWith('t1', {
+    title: 'Updated', status: 'in_progress', assignee: null, source: 'cloud-dashboard', actor: 'cloud-dashboard',
+  }, { actor: 'cloud-dashboard', source: 'ipc' });
+});
+test('cloud board rejects unknown projects and tasks', async() => {
+  projectServiceGetProject.mockResolvedValueOnce(null);
+  await expect(request('projects.create_task', { projectId: 'missing', title: 'Nope' })).rejects.toThrow('Project not found');
+  projectServiceGetTask.mockResolvedValueOnce(null);
+  await expect(request('projects.update_task', { taskId: 'missing', status: 'todo' })).rejects.toThrow('Task not found');
+});
+test('cloud agent controls resolve a job or thread and use the existing job internals', async() => {
+  await expect(request('agents.message', { threadId: 'thread-1', message: ' Keep the scope tight. ' }))
+    .resolves.toEqual({ accepted: true, jobId: 'agent-job-1', taskIndex: 0 });
+  expect(sendJobMessage).toHaveBeenCalledWith({ jobId: 'agent-job-1', taskIndex: 0, message: 'Keep the scope tight.' });
+
+  await expect(request('agents.pause', { jobId: 'agent-job-1' }))
+    .resolves.toMatchObject({ paused: true, mode: 'cooperative-hold' });
+  await expect(request('agents.resume', { jobId: 'agent-job-1' }))
+    .resolves.toMatchObject({ resumed: true, mode: 'cooperative-hold' });
+  await expect(request('agents.stop', { jobId: 'agent-job-1' }))
+    .resolves.toMatchObject({ stopped: true, mode: 'cooperative-stop' });
+  expect(stopAgentJob).toHaveBeenCalledWith('agent-job-1');
+});
+test('cloud agent controls return clear errors for unknown ids', async() => {
+  await expect(request('agents.message', { jobId: 'missing', message: 'hello' })).rejects.toThrow('Agent job "missing" not found');
+  await expect(request('agents.stop', { threadId: 'missing' })).rejects.toThrow('Agent thread "missing" not found');
 });
 test('desktop settings toggle Heartbeat; Projects has no automation switch', async() => {
   await expect(request('desktop.settings.update', { setting: 'projectAutomation', enabled: false })).rejects.toThrow('Invalid');
