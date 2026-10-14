@@ -65,8 +65,12 @@ const perf = Logging.perf;
 /** Idle timeout for a speculatively-booted process that is never claimed. */
 const PREWARM_IDLE_REAP_MS = 60_000;
 
-/** Idle timeout for a warm-pool process between turns before it's reaped. */
-const WARM_IDLE_REAP_MS = 5 * 60_000;
+/**
+ * Idle timeout for a warm-pool process between turns before it's reaped.
+ * Jonathon's rule: an agent idle for 30+ minutes is killed once more than
+ * WARM_POOL_MIN_DEFAULT processes are idle.
+ */
+const WARM_IDLE_REAP_MS = 30 * 60_000;
 
 /**
  * Bounds on how many idle (prewarmed or parked) `claude` processes are kept
@@ -74,7 +78,7 @@ const WARM_IDLE_REAP_MS = 5 * 60_000;
  * parking or prewarming past MAX retires the longest-idle one. Overridable
  * via the claudeCodeWarmPoolMin / claudeCodeWarmPoolMax settings.
  */
-const WARM_POOL_MIN_DEFAULT = 5;
+const WARM_POOL_MIN_DEFAULT = 3;
 const WARM_POOL_MAX_DEFAULT = 5;
 
 /**
@@ -149,16 +153,27 @@ interface PrewarmRecord {
   idleSince?:     number;
 }
 
+/**
+ * The process pool is shared by EVERY ClaudeCodeService instance. There is
+ * one instance per model/agent override (primary, opus, sonnet, workers…);
+ * when each kept its own pool, each held its own MIN idle processes forever,
+ * and a conversation parked in one instance was invisible to another, which
+ * then cold-spawned a second `claude --resume` of the same session — two or
+ * three live copies of one chat working (and deploying) in parallel.
+ */
+const sharedPrewarmed = new Map<string, PrewarmRecord>();
+const sharedIdle = new Set<PrewarmRecord>();
+
 export class ClaudeCodeService extends BaseLanguageModel {
   // conversationId → Claude session_id — in-memory cache backed by Redis.
   private sessions = new Map<string, string>();
 
   // conversationId → a speculatively-booted process warming up during the
   // pre-turn phase, claimed by the next runClaude. See prewarm().
-  private prewarmed = new Map<string, PrewarmRecord>();
+  private prewarmed = sharedPrewarmed;
 
   // Every idle process (prewarmed or parked), for the pool min/max bounds.
-  private idle = new Set<PrewarmRecord>();
+  private idle = sharedIdle;
   private poolMin = WARM_POOL_MIN_DEFAULT;
   private poolMax = WARM_POOL_MAX_DEFAULT;
 
@@ -402,7 +417,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
     // to the limactl/SSH pipe rather than a terminal. Prefer stdbuf when the
     // VM provides it, but never make Claude startup depend on that optional
     // binary: existing installations may not have coreutils installed.
-    const innerCmd = buildClaudeLaunchCommand(envAssignments, claudeArgs, p.pidFile);
+    // A resumed session must have exactly one live process: the launch first
+    // stops any other claude still holding it (an orphan from an app restart,
+    // or a copy owned elsewhere) so two copies never run the same chat.
+    const innerCmd = buildClaudeLaunchCommand(envAssignments, claudeArgs, p.pidFile, p.existingSession);
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
@@ -2106,6 +2124,14 @@ export function createClaudeCodeService(model: string): ClaudeCodeService {
   const svc = new ClaudeCodeService();
   svc.setModel(model);
   return svc;
+}
+
+/** Drop every pooled process record (tests only — does not kill anything). */
+export function resetClaudeProcessPool(): void {
+  for (const rec of sharedPrewarmed.values()) if (rec.reapTimer) clearTimeout(rec.reapTimer);
+  for (const rec of sharedIdle) if (rec.reapTimer) clearTimeout(rec.reapTimer);
+  sharedPrewarmed.clear();
+  sharedIdle.clear();
 }
 
 export function resetClaudeCodeService(): void {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { buildClaudeLaunchCommand, buildRemoteKillCommand, newRemotePidFile } from '../claudeLaunchCommand';
+import { buildClaudeLaunchCommand, buildRemoteKillCommand, buildSessionTakeoverCommand, newRemotePidFile } from '../claudeLaunchCommand';
 
 describe('buildClaudeLaunchCommand', () => {
   it('falls back to launching Claude directly when stdbuf is unavailable', () => {
@@ -52,5 +52,32 @@ describe('buildRemoteKillCommand', () => {
     expect(command).toContain('kill -KILL "$p"');
     expect(command).toContain("rm -f '/tmp/sulla-claude-abc.pid'");
     expect(command).toContain("find '/tmp' -maxdepth 1 -name 'sulla-claude-*.pid' -mmin +1440 -delete");
+  });
+});
+
+describe('buildSessionTakeoverCommand', () => {
+  it('runs before claude starts when resuming, so one session never has two live copies', () => {
+    const command = buildClaudeLaunchCommand([], ['claude', '-p', '--resume', "'sess-1'"], '/tmp/sulla-claude-abc.pid', 'sess-1');
+
+    expect(command.indexOf('"sessionId":"sess-1"')).toBeGreaterThan(-1);
+    expect(command.indexOf('"sessionId":"sess-1"')).toBeLessThan(command.indexOf('exec'));
+  });
+
+  it('is not added for a brand-new session', () => {
+    expect(buildClaudeLaunchCommand([], ['claude', '-p'], '/tmp/sulla-claude-abc.pid')).not.toContain('sessionId');
+  });
+
+  it('only signals claude processes, never itself or the wrapping shells', () => {
+    const command = buildSessionTakeoverCommand('sess-1');
+
+    expect(command).toContain('[ "$p" = "$$" ] && continue');
+    expect(command).toContain("grep -q '^claude -p '");
+    expect(command).toContain('kill -TERM "$p"');
+    expect(command).not.toContain('pkill');
+  });
+
+  it('strips anything but id characters from the session id', () => {
+    expect(buildSessionTakeoverCommand("x'; rm -rf / #")).not.toContain("'; rm");
+    expect(buildSessionTakeoverCommand("';")).toBe('');
   });
 });

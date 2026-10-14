@@ -29,7 +29,7 @@ jest.unstable_mockModule('@pkg/utils/paths', () => ({
 jest.unstable_mockModule('../../services/WebSocketClientService', () => ({ getWebSocketClientService: jest.fn() }));
 jest.unstable_mockModule('../../prompts/generateClaudeCodeMemoryFile', () => ({ generateClaudeCodeMemoryFile: async() => {} }));
 
-const { ClaudeCodeService } = await import('../ClaudeCodeService');
+const { ClaudeCodeService, resetClaudeProcessPool } = await import('../ClaudeCodeService');
 type ClaudeCodeServiceInstance = InstanceType<typeof ClaudeCodeService>;
 
 /**
@@ -60,6 +60,7 @@ describe('ClaudeCodeService — turns the CLI runs before our prompt', () => {
   let proc: any;
 
   beforeEach(() => {
+    resetClaudeProcessPool();
     service = new ClaudeCodeService();
     proc = makeProc();
     const s = service as any;
@@ -120,8 +121,43 @@ describe('ClaudeCodeService — turns the CLI runs before our prompt', () => {
 describe('ClaudeCodeService — warm pool min/max', () => {
   const mk = () => ({ proc: makeProc(), mcpSession: null, mcpConfigPath: null, pidFile: '/tmp/x.pid', model: 'claude-code', createdAt: Date.now(), closed: false, busy: false, reapTimer: null }) as any;
 
-  beforeEach(() => { jest.useFakeTimers() });
+  beforeEach(() => { jest.useFakeTimers(); resetClaudeProcessPool() });
   afterEach(() => { jest.useRealTimers() });
+
+  it('is one pool across every service instance (one per model/agent)', () => {
+    const opus = new ClaudeCodeService() as any;
+    const sonnet = new ClaudeCodeService() as any;
+    opus.poolMin = sonnet.poolMin = 3;
+    opus.poolMax = sonnet.poolMax = 3;
+    const recs = Array.from({ length: 4 }, mk);
+    recs.forEach((r, i) => {
+      jest.advanceTimersByTime(1_000);
+      const owner = i % 2 ? sonnet : opus;
+      owner.prewarmed.set(`c${ i }`, r);
+      owner.markIdle(r, `c${ i }`);
+    });
+
+    // Max is enforced across both instances, not per instance.
+    expect(opus.idle.size).toBe(3);
+    expect(sonnet.idle).toBe(opus.idle);
+    expect(recs[0].proc.kill).toHaveBeenCalled();
+  });
+
+  it('a chat parked by one instance is not left alive when another instance takes the turn', () => {
+    const opus = new ClaudeCodeService() as any;
+    const sonnet = new ClaudeCodeService() as any;
+    opus.setModel('claude-opus-5-5');
+    const r = mk();
+    r.model = 'claude-opus-5-5';
+    opus.prewarmed.set('chat', r);
+    opus.markIdle(r, 'chat');
+
+    // The other instance sees the parked process and retires it (model
+    // mismatch) instead of cold-spawning a second copy beside it.
+    expect(sonnet.claimPrewarm('chat', 'claude-sonnet-5')).toBeNull();
+    expect(r.proc.kill).toHaveBeenCalled();
+    expect(opus.prewarmed.has('chat')).toBe(false);
+  });
 
   it('never keeps more than max idle — retires the longest-idle first', () => {
     const s = new ClaudeCodeService() as any;
