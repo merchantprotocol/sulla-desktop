@@ -26,7 +26,7 @@ jest.unstable_mockModule('@pkg/utils/paths', () => ({
   default:    { limactl: '/dev/null', lima: '/dev/null', sullaHome: '/tmp', sullaConfig: '/tmp' },
 }));
 
-const { ClaudeCodeService } = await import('../ClaudeCodeService');
+const { ClaudeCodeService, resetClaudeProcessPool } = await import('../ClaudeCodeService');
 type ClaudeCodeServiceInstance = InstanceType<typeof ClaudeCodeService>;
 
 /**
@@ -66,6 +66,8 @@ function claim(service: ClaudeCodeServiceInstance, convId: string, record: Retur
 }
 
 describe('ClaudeCodeService.claimPrewarm', () => {
+  beforeEach(() => { resetClaudeProcessPool() });
+
   it('declines a pooled process that buffered a stale result while unclaimed', () => {
     const service = new ClaudeCodeService();
     const record = makeRecord([

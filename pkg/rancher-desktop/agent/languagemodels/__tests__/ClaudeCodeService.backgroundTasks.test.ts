@@ -30,7 +30,7 @@ jest.unstable_mockModule('@pkg/utils/paths', () => ({
 }));
 jest.unstable_mockModule('../../services/WebSocketClientService', () => ({ getWebSocketClientService: jest.fn() }));
 
-const { ClaudeCodeService } = await import('../ClaudeCodeService');
+const { ClaudeCodeService, resetClaudeProcessPool } = await import('../ClaudeCodeService');
 type ClaudeCodeServiceInstance = InstanceType<typeof ClaudeCodeService>;
 
 /**
@@ -79,6 +79,7 @@ describe('ClaudeCodeService — background tasks on parked processes', () => {
   let deliver: jest.Mock;
 
   beforeEach(() => {
+    resetClaudeProcessPool();
     service = new ClaudeCodeService();
     deliver = jest.fn();
     (service as any).bgDelivery = { deliver, takePending: () => [] };
@@ -141,7 +142,7 @@ describe('ClaudeCodeService — background tasks on parked processes', () => {
   describe('idle reap', () => {
     beforeEach(() => {
       jest.useFakeTimers();
-      // #898 intentionally keeps five idle processes warm. These tests isolate
+      // The pool intentionally keeps three idle processes warm. These tests isolate
       // reap timing, so opt this fixture out of the pool floor.
       (service as any).poolMin = -1;
     });
@@ -153,12 +154,12 @@ describe('ClaudeCodeService — background tasks on parked processes', () => {
       (service as any).ensureBackgroundTracker(rec, 'conv').observe(liveOne, false);
       (service as any).armParkedReap(rec, 'conv');
 
-      jest.advanceTimersByTime(5 * 60_000);
+      jest.advanceTimersByTime(30 * 60_000);
       expect(rec.proc.kill).not.toHaveBeenCalled();
       expect((service as any).prewarmed.get('conv')).toBe(rec);
 
       rec.bgTracker.observe({ type: 'system', subtype: 'background_tasks_changed', tasks: [] }, true);
-      jest.advanceTimersByTime(5 * 60_000);
+      jest.advanceTimersByTime(30 * 60_000);
       expect(rec.proc.kill).toHaveBeenCalled();
       expect((service as any).prewarmed.has('conv')).toBe(false);
     });
@@ -168,7 +169,7 @@ describe('ClaudeCodeService — background tasks on parked processes', () => {
       (service as any).prewarmed.set('conv', rec);
       (service as any).armParkedReap(rec, 'conv');
 
-      jest.advanceTimersByTime(5 * 60_000);
+      jest.advanceTimersByTime(30 * 60_000);
       expect(rec.proc.kill).toHaveBeenCalled();
     });
 
