@@ -28,6 +28,8 @@ let lastSubconsciousResolutionSig = '';
 const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   'claude-code': async() => { const { getClaudeCodeService } = await import('./ClaudeCodeService'); return getClaudeCodeService() },
   codex:         async() => { const { getCodexService } = await import('./CodexService'); return getCodexService() },
+  opencode:      async() => { const { getOpenCodeService } = await import('./OpenCodeService'); return getOpenCodeService() },
+  cursor:        async() => { const { getCursorAgentService } = await import('./CursorAgentService'); return getCursorAgentService() },
   arcee:         async() => { const { getArceeService } = await import('./ArceeService'); return getArceeService() },
   cohere:        async() => { const { getCohereService } = await import('./CohereService'); return getCohereService() },
   deepseek:      async() => { const { getDeepSeekService } = await import('./DeepSeekService'); return getDeepSeekService() },
@@ -114,6 +116,12 @@ class LLMRegistryImpl {
         // Same singleton concern as claude-code.
         const { createCodexService } = await import('./CodexService');
         svc = createCodexService(modelOverride);
+      } else if (modelOverride && providerId === 'opencode') {
+        const { createOpenCodeService } = await import('./OpenCodeService');
+        svc = createOpenCodeService(modelOverride);
+      } else if (modelOverride && providerId === 'cursor') {
+        const { createCursorAgentService } = await import('./CursorAgentService');
+        svc = createCursorAgentService(modelOverride);
       } else {
         const factory = PROVIDER_FACTORIES[providerId];
         if (!factory) {

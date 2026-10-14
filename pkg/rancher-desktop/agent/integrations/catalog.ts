@@ -36,8 +36,17 @@ if (hasYamlIntegrations) {
   console.log(`[integrations] No YAML manifests found, falling back to native catalog with ${ Object.keys(nativeIntegrations).length } integrations`);
 }
 
+// CLI engines ship with the app rather than the separately versioned
+// integration resource pack. Keep these native cards visible even when the
+// YAML catalog is present; YAML definitions win as soon as they are shipped.
+const bundledCliEngines = Object.fromEntries(
+  ['opencode', 'cursor']
+    .filter(id => nativeIntegrations[id])
+    .map(id => [id, nativeIntegrations[id]]),
+);
+
 export const integrations: Record<string, Integration> = hasYamlIntegrations
-  ? loaded.integrations
+  ? { ...bundledCliEngines, ...loaded.integrations }
   : nativeIntegrations;
 
 /** Access the raw manifests (for uninstall, bundled-artifact fan-out, UI). */
