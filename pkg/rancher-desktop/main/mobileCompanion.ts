@@ -158,6 +158,25 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
     ]);
     return { task, project, lanes, comments };
   }
+  // Human-initiated Kanban move from the paired mobile app. Keep this a
+  // narrow operation: the ticket must belong to the project shown on the
+  // phone, and the application service validates the destination lane.
+  case 'projects.moveTask': {
+    const task = await companionTask(params.taskId);
+    const projectId = typeof params.projectId === 'string' ? params.projectId.trim() : '';
+    const status = typeof params.status === 'string' ? params.status.trim() : '';
+    if (!projectId || projectId.length > 200) throw new Error('Project required');
+    if (!status || status.length > 100) throw new Error('Destination stage required');
+    if (task.project_id !== projectId) throw new Error('Ticket does not belong to this project');
+    const { getProjectsApplicationService } = await import('@pkg/agent/projects/application/ProjectsApplicationService');
+    const updated = await getProjectsApplicationService().updateTask(
+      task.id,
+      { status, actor: 'human' },
+      { actor: 'human', source: 'ipc' },
+    );
+    if (!updated) throw new Error('Ticket not found');
+    return { task: updated };
+  }
   // Only ever a human comment: the phone owner typed it and pressed Post.
   case 'projects.comment': {
     const body = typeof params.body === 'string' ? params.body.trim() : '';
