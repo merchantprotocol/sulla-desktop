@@ -46,11 +46,19 @@ interface UpdateYaml {
   vPrefixedTagName?: boolean;
 }
 
+const DEFAULT_UPDATE_CONFIG: UpdateYaml = {
+  upgradeServer:    'https://desktop.version.sulladesktop.com/v1/checkupgrade',
+  owner:            'merchantprotocol',
+  repo:             'sulla-desktop',
+  vPrefixedTagName: true,
+};
+
 /**
  * Resolve the update configuration. Tries, in order:
  *   1. `RD_UPGRADE_RESPONDER_URL` env var override (for testing)
  *   2. `app-update.yml` in packaged resources (production)
  *   3. `dev-app-update.yml` at the repo root (development)
+ *   4. Built-in defaults (the public responder for this repo)
  */
 async function resolveUpdateConfig(): Promise<UpdateYaml | undefined> {
   let config: UpdateYaml = {};
@@ -98,8 +106,10 @@ async function resolveUpdateConfig(): Promise<UpdateYaml | undefined> {
     config.upgradeServer = process.env.RD_UPGRADE_RESPONDER_URL;
   }
 
+  // Packaged builds ship electron-builder's GitHub app-update.yml, which has
+  // no upgradeServer, so fall back to the public responder.
   if (!config.upgradeServer) {
-    return undefined;
+    config = { ...DEFAULT_UPDATE_CONFIG, ...config, upgradeServer: DEFAULT_UPDATE_CONFIG.upgradeServer };
   }
 
   return config;
