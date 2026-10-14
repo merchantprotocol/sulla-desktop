@@ -51,6 +51,12 @@ export const USAGE_PROVIDER_REGISTRY: Record<string, UsageProviderDefinition> = 
   codex: {
     id: 'codex', label: 'Codex', usageSource: { kind: 'settings', key: 'codexUsage' }, limitSource: { kind: 'settings', key: 'codexLimitSnapshot' },
   },
+  opencode: {
+    id: 'opencode', label: 'OpenCode', usageSource: { kind: 'settings', key: 'opencodeUsage' },
+  },
+  cursor: {
+    id: 'cursor', label: 'Cursor', usageSource: { kind: 'settings', key: 'cursorUsage' },
+  },
   grok: {
     id: 'grok', label: 'Grok', usageSource: { kind: 'meterable', providerId: 'grok' },
   },

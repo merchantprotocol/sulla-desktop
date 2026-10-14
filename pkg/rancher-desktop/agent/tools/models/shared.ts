@@ -9,9 +9,13 @@ const EXCLUDED_PROVIDER_IDS = new Set(['activepieces', 'composio', 'mcp', 'enter
 export const CLI_PROVIDERS: Record<string, { command: string; versionCommand: string }> = {
   'claude-code': { command: 'claude', versionCommand: 'claude --version' },
   codex:         { command: 'codex', versionCommand: 'codex --version' },
+  opencode:      { command: 'opencode', versionCommand: 'opencode --version' },
+  cursor:        { command: 'cursor-agent', versionCommand: 'cursor-agent --version' },
 };
 
-const EXTRA_SUPPORTED_PROVIDER_IDS = new Set(['claude-code', 'codex', 'custom']);
+const CLI_PATH = 'export PATH="$HOME/.local/bin:/mnt/data/npm-global/bin:$PATH";';
+
+const EXTRA_SUPPORTED_PROVIDER_IDS = new Set(['claude-code', 'codex', 'opencode', 'cursor', 'custom']);
 
 export interface ProviderRuntimeStatus {
   providerId:       string;
@@ -55,7 +59,7 @@ export async function getCliStatus(providerId: string): Promise<ProviderRuntimeS
   if (!cli) return { required: false, installed: true };
 
   const res = await runCommand(
-    `command -v ${ cli.command } >/dev/null 2>&1 && ${ cli.versionCommand }`,
+    `${ CLI_PATH } command -v ${ cli.command } >/dev/null 2>&1 && ${ cli.versionCommand }`,
     [],
     { runInLimaShell: true, timeoutMs: 10_000, maxOutputChars: 4_000 },
   );
@@ -86,12 +90,14 @@ export async function getProviderRuntimeStatus(providerId: string): Promise<Prov
   const service = getIntegrationService();
   await service.initialize();
 
-  const [connected, accounts, activeAccountId, commandLine] = await Promise.all([
+  const [vaultConnected, accounts, activeAccountId, commandLine] = await Promise.all([
     service.isAnyAccountConnected(providerId).catch(() => false),
     service.getAccounts(providerId).catch(() => []),
     service.getActiveAccountId(providerId).catch(() => undefined),
     getCliStatus(providerId),
   ]);
+
+  const connected = vaultConnected || ((providerId === 'opencode' || providerId === 'cursor') && commandLine.installed);
 
   const sullaCompatible = isSullaCompatibleProvider(providerId);
   const ready = connected && sullaCompatible && (!commandLine.required || commandLine.installed);
