@@ -1,0 +1,58 @@
+name: npx launcher
+
+on:
+  pull_request:
+    paths:
+    - 'packaging/npx/**'
+    - '.github/workflows/npx-launcher.yaml'
+    - '.github/workflows/npx-publish.yaml'
+  push:
+    branches: [ main ]
+    paths:
+    - 'packaging/npx/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        runs-on: [ ubuntu-22.04, macos-15, macos-15-intel, windows-2022 ]
+        node: [ '18', '22' ]
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+        working-directory: packaging/npx
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      with:
+        node-version: ${{ matrix.node }}
+    - name: Syntax check
+      run: node --check bin.js
+    - name: Help
+      run: node bin.js --help
+    - name: Dry run picks an asset for this platform
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -o pipefail
+        node bin.js --dry-run | tee dry-run.txt
+        grep -q 'Asset:' dry-run.txt
+        grep -q 'sha256:' dry-run.txt
+    - name: Pinned release resolves
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: node bin.js --dry-run --version v1.6.1 | grep -q 'v1.6.1'
+    - name: Unknown flag fails cleanly
+      run: |
+        if node bin.js --nope; then echo "expected a non-zero exit"; exit 1; fi
+    - name: Package contents
+      run: npm pack --dry-run

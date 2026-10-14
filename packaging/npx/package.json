@@ -1,0 +1,37 @@
+{
+  "name": "sulla-desktop",
+  "version": "1.6.1",
+  "description": "Download and launch Sulla Desktop with one command: npx sulla-desktop",
+  "bin": {
+    "sulla-desktop": "bin.js"
+  },
+  "files": [
+    "bin.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "sulla",
+    "sulla-desktop",
+    "ai",
+    "agents",
+    "automation",
+    "desktop",
+    "installer",
+    "launcher"
+  ],
+  "homepage": "https://sulladesktop.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/merchantprotocol/sulla-desktop.git",
+    "directory": "packaging/npx"
+  },
+  "bugs": {
+    "url": "https://github.com/merchantprotocol/sulla-desktop/issues"
+  },
+  "author": "Jonathon Byrdziak",
+  "license": "MIT"
+}
