@@ -3,6 +3,61 @@ import { emitSubAgentExchange } from './jobExchange';
 import { abortJob, getJob, releaseJobWatcher } from './jobRegistry';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
 
+export async function stopAgentJob(jobId: string): Promise<ToolResponse> {
+  if (!jobId) {
+    return {
+      successBoolean: false,
+      responseString: 'jobId is required (the id returned by an async spawn_agent call).',
+    };
+  }
+
+  const job = await getJob(jobId);
+  const outcome = abortJob(jobId);
+
+  switch (outcome) {
+  case 'stopped':
+    // A tab child runs as a desktop chat, not under the job's abort signal:
+    // stop its live turn directly and close its delegation record.
+    if (job?.visibility === 'tab') {
+      releaseJobWatcher(jobId);
+      const { stopAgentTab } = await import('../../services/AgentTabOpener');
+      const threadId = job.tasks[0]?.threadId;
+      if (threadId) await stopAgentTab(threadId, `The parent agent stopped job ${ jobId }. This tab no longer reports back.`);
+      await safeFinishDelegationByRef(jobId, { outcome: 'failed', detail: 'stopped by parent' });
+    }
+    await Promise.all((job?.tasks ?? []).map((task, taskIndex) => emitSubAgentExchange(
+      job?.parentChannel,
+      job?.parentThreadId,
+      {
+        direction: 'from_agent',
+        agentId: task.agentId,
+        label: task.label,
+        summary: `${ task.label } was stopped`,
+        detail: `Stop requested for job ${ jobId } before the sub-agent finished.`,
+        status: 'stopped',
+        jobId,
+        taskIndex,
+        conversationId: task.threadId,
+      },
+    )));
+    return {
+      successBoolean: true,
+      responseString: `Stop requested for job "${ jobId }". Its sub-agents will unwind at their next step (cooperative — an in-flight LLM/tool call finishes first). Poll check_agent_jobs("${ jobId }") to confirm it settled as 'stopped'.`,
+    };
+  case 'already-finished':
+    return {
+      successBoolean: false,
+      responseString: `Job "${ jobId }" is not running (already completed, failed, or stopped). Nothing to cancel.`,
+    };
+  case 'not-found':
+  default:
+    return {
+      successBoolean: false,
+      responseString: `Job "${ jobId }" not found. It may have already settled and been cleaned up (jobs are pruned 1 hour after finishing).`,
+    };
+  }
+}
+
 /**
  * Kill switch for delegated jobs from spawn_agent, hidden or tab.
  * Fires the job's AbortController, which is threaded into every sub-agent that
@@ -19,59 +74,6 @@ export class StopAgentJobWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { jobId } = input;
-
-    if (!jobId || typeof jobId !== 'string') {
-      return {
-        successBoolean: false,
-        responseString: 'jobId is required (the id returned by an async spawn_agent call).',
-      };
-    }
-
-    const job = await getJob(jobId);
-    const outcome = abortJob(jobId);
-
-    switch (outcome) {
-    case 'stopped':
-      // A tab child runs as a desktop chat, not under the job's abort signal:
-      // stop its live turn directly and close its delegation record.
-      if (job?.visibility === 'tab') {
-        releaseJobWatcher(jobId);
-        const { stopAgentTab } = await import('../../services/AgentTabOpener');
-        const threadId = job.tasks[0]?.threadId;
-        if (threadId) await stopAgentTab(threadId, `The parent agent stopped job ${ jobId }. This tab no longer reports back.`);
-        await safeFinishDelegationByRef(jobId, { outcome: 'failed', detail: 'stopped by parent' });
-      }
-      await Promise.all((job?.tasks ?? []).map((task, taskIndex) => emitSubAgentExchange(
-        job?.parentChannel,
-        job?.parentThreadId,
-        {
-          direction: 'from_agent',
-          agentId: task.agentId,
-          label: task.label,
-          summary: `${ task.label } was stopped`,
-          detail: `Stop requested for job ${ jobId } before the sub-agent finished.`,
-          status: 'stopped',
-          jobId,
-          taskIndex,
-          conversationId: task.threadId,
-        },
-      )));
-      return {
-        successBoolean: true,
-        responseString: `Stop requested for job "${ jobId }". Its sub-agents will unwind at their next step (cooperative — an in-flight LLM/tool call finishes first). Poll check_agent_jobs("${ jobId }") to confirm it settled as 'stopped'.`,
-      };
-    case 'already-finished':
-      return {
-        successBoolean: false,
-        responseString: `Job "${ jobId }" is not running (already completed, failed, or stopped). Nothing to cancel.`,
-      };
-    case 'not-found':
-    default:
-      return {
-        successBoolean: false,
-        responseString: `Job "${ jobId }" not found. It may have already settled and been cleaned up (jobs are pruned 1 hour after finishing).`,
-      };
-    }
+    return stopAgentJob(typeof input.jobId === 'string' ? input.jobId : '');
   }
 }

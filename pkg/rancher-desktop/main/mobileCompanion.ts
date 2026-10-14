@@ -7,6 +7,9 @@ import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefi
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
 import { getModelProviderService } from '@pkg/agent/services/ModelProviderService';
+import { sendJobMessage } from '@pkg/agent/tools/agents/send_job_message';
+import { findTaskByThread, getJob } from '@pkg/agent/tools/agents/jobRegistry';
+import { stopAgentJob } from '@pkg/agent/tools/agents/stop_agent_job';
 
 // The only desktop switches the phone may flip. Each toggle writes exactly
 // one key. (Projects has no automation switch: it is a plain board.)
@@ -46,6 +49,40 @@ async function companionTask(taskId: unknown) {
   const task = await WorkItemsModel.getTask(taskId);
   if (!task || task.archived) throw new Error('Task not found');
   return task;
+}
+
+const CLOUD_PROJECT_CONTEXT = { actor: 'cloud-dashboard', source: 'ipc' } as const;
+
+function companionString(value: unknown, name: string, max: number, required = false): string | undefined {
+  if (value === undefined || value === null) {
+    if (required) throw new Error(`${ name } required`);
+    return undefined;
+  }
+  if (typeof value !== 'string') throw new Error(`Invalid ${ name.toLowerCase() }`);
+  const normalized = value.trim();
+  if ((!normalized && required) || normalized.length > max) throw new Error(`Invalid ${ name.toLowerCase() }`);
+  return normalized;
+}
+
+async function companionJob(params: Record<string, unknown>) {
+  const jobId = companionString(params.jobId, 'Job', 200);
+  const threadId = companionString(params.threadId, 'Thread', 200);
+  if (!jobId && !threadId) throw new Error('jobId or threadId required');
+  if (jobId && threadId) throw new Error('Send jobId or threadId, not both');
+  if (threadId) {
+    const owner = await findTaskByThread(threadId);
+    if (!owner) throw new Error(`Agent thread "${ threadId }" not found`);
+    return { job: owner.job, jobId: owner.job.jobId, taskIndex: owner.taskIndex, threadId };
+  }
+  const job = await getJob(jobId!);
+  if (!job) throw new Error(`Agent job "${ jobId }" not found`);
+  return { job, jobId: jobId!, taskIndex: undefined, threadId: undefined };
+}
+
+async function companionJobMessage(target: Awaited<ReturnType<typeof companionJob>>, message: string) {
+  const result = await sendJobMessage({ jobId: target.jobId, taskIndex: target.taskIndex, message });
+  if (!result.successBoolean) throw new Error(result.responseString);
+  return result;
 }
 
 // A narrow, authenticated owner surface. Never dispatch arbitrary tool names.
@@ -114,6 +151,68 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
     const { getProjectsApplicationService } = await import('@pkg/agent/projects/application/ProjectsApplicationService');
     const comment = await getProjectsApplicationService().addComment({ task_id: task.id, body, author: 'human' }, { actor: 'human', source: 'ipc' });
     return { comment };
+  }
+  case 'projects.create_task': {
+    const projectId = companionString(params.projectId, 'Project', 200, true)!;
+    const title = companionString(params.title, 'Title', 300, true)!;
+    const priority = companionString(params.priority, 'Priority', 32);
+    const status = companionString(params.status, 'Status', 100);
+    const assignee = params.assignee === null ? null : companionString(params.assignee, 'Assignee', 200);
+    const { getProjectsApplicationService } = await import('@pkg/agent/projects/application/ProjectsApplicationService');
+    const projects = getProjectsApplicationService();
+    await projects.ready();
+    const project = await projects.getProject(projectId);
+    if (!project || project.archived) throw new Error('Project not found');
+    const epic = (await projects.listEpics({ projectId, includeDone: true, limit: 1000 }))[0];
+    if (!epic) throw new Error('Project has no epic for new tasks');
+    const task = await projects.createTask({
+      epic_id: epic.id, title, priority, status, assignee, source: 'cloud-dashboard', actor: 'cloud-dashboard',
+    }, CLOUD_PROJECT_CONTEXT);
+    return { task };
+  }
+  case 'projects.update_task': {
+    const taskId = companionString(params.taskId, 'Task', 200, true)!;
+    const title = params.title === undefined ? undefined : companionString(params.title, 'Title', 300, true);
+    const statusParam = companionString(params.status, 'Status', 100);
+    const lane = companionString(params.lane, 'Lane', 100);
+    if (statusParam && lane && statusParam !== lane) throw new Error('status and lane must match when both are sent');
+    const status = statusParam ?? lane;
+    const assignee = params.assignee === null ? null : companionString(params.assignee, 'Assignee', 200);
+    if (title === undefined && status === undefined && assignee === undefined) throw new Error('No task changes supplied');
+    const { getProjectsApplicationService } = await import('@pkg/agent/projects/application/ProjectsApplicationService');
+    const projects = getProjectsApplicationService();
+    await projects.ready();
+    const current = await projects.getTask(taskId);
+    if (!current || current.archived) throw new Error('Task not found');
+    const task = await projects.updateTask(taskId, {
+      title, status, assignee, source: 'cloud-dashboard', actor: 'cloud-dashboard',
+    }, CLOUD_PROJECT_CONTEXT);
+    if (!task) throw new Error('Task not found');
+    return { task };
+  }
+  case 'agents.message': {
+    const target = await companionJob(params);
+    const message = companionString(params.message, 'Message', 10000, true)!;
+    await companionJobMessage(target, message);
+    return { accepted: true, jobId: target.jobId, taskIndex: target.taskIndex ?? null };
+  }
+  case 'agents.stop': {
+    const target = await companionJob(params);
+    const result = await stopAgentJob(target.jobId);
+    if (!result.successBoolean) throw new Error(result.responseString);
+    return { stopped: true, jobId: target.jobId, mode: 'cooperative-stop' };
+  }
+  case 'agents.pause': {
+    const target = await companionJob(params);
+    if (target.job.status !== 'running') throw new Error(`Agent job "${ target.jobId }" is not running`);
+    await companionJobMessage(target, 'Cloud dashboard pause requested. Finish the current atomic step, then hold without starting new work until a resume message arrives.');
+    return { paused: true, jobId: target.jobId, mode: 'cooperative-hold' };
+  }
+  case 'agents.resume': {
+    const target = await companionJob(params);
+    if (target.job.status !== 'running') throw new Error(`Agent job "${ target.jobId }" is not running`);
+    await companionJobMessage(target, 'Cloud dashboard resume requested. Release the hold and continue the original task from the saved state.');
+    return { resumed: true, jobId: target.jobId, mode: 'cooperative-hold' };
   }
   // Read-only history for the cloud dashboard. Served live from this
   // desktop, so it works even when conversation sync to the cloud is off.
