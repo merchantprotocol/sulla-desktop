@@ -16,6 +16,7 @@ import { markSteerPending, onSteer } from '../utils/steerChannel';
 import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
 import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
+import { normalizeCodexLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
@@ -999,6 +1000,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           return;
         }
 
+        const limitSnapshot = normalizeCodexLimitSnapshot(parsed);
+        if (limitSnapshot) recordCliLimitSnapshot('codex', limitSnapshot).catch(() => {});
+
         // ── Thread-event schema (codex exec --json) ──────────────
         if (typeof parsed.type === 'string') {
           if (parsed.type === 'thread.started' && parsed.thread_id) {
@@ -1239,59 +1243,18 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 // Usage capture
 // ─────────────────────────────────────────────────────────────
 
-interface UsageRecord {
-  ts:             string;
-  input_tokens?:  number;
-  output_tokens?: number;
-  cached_input_tokens?: number;
-  model?:         string;
-}
-
-const USAGE_SETTING_KEY = 'codexUsage';
-const USAGE_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
-const USAGE_MAX_ENTRIES = 500;
-
 /**
  * Append a single usage sample from codex's turn.completed / token_count
- * events to SullaSettingsModel.codexUsage. Trims to a rolling 24h window
- * and caps the array length so the settings row can't grow unbounded.
+ * events to the shared provider usage registry.
  */
 async function recordUsage(usage: any, model: string): Promise<void> {
   if (!usage || typeof usage !== 'object') return;
-
-  try {
-    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-    const raw = await SullaSettingsModel.get(USAGE_SETTING_KEY, '[]');
-    let records: UsageRecord[] = [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) records = parsed;
-    } catch { /* ignore unparseable prior value */ }
-
-    const entry: UsageRecord = {
-      ts:                  new Date().toISOString(),
-      input_tokens:        typeof usage.input_tokens === 'number' ? usage.input_tokens : undefined,
-      output_tokens:       typeof usage.output_tokens === 'number' ? usage.output_tokens : undefined,
-      cached_input_tokens: typeof usage.cached_input_tokens === 'number' ? usage.cached_input_tokens : undefined,
-      model,
-    };
-
-    records.push(entry);
-
-    const cutoff = Date.now() - USAGE_RETENTION_MS;
-    records = records.filter(r => {
-      const t = Date.parse(r.ts);
-      return Number.isFinite(t) && t >= cutoff;
-    });
-
-    if (records.length > USAGE_MAX_ENTRIES) {
-      records = records.slice(-USAGE_MAX_ENTRIES);
-    }
-
-    await SullaSettingsModel.set(USAGE_SETTING_KEY, JSON.stringify(records));
-  } catch {
-    /* persistence failure — don't disturb the chat */
-  }
+  await recordCliUsage('codex', {
+    input_tokens:        typeof usage.input_tokens === 'number' ? usage.input_tokens : undefined,
+    output_tokens:       typeof usage.output_tokens === 'number' ? usage.output_tokens : undefined,
+    cached_input_tokens: typeof usage.cached_input_tokens === 'number' ? usage.cached_input_tokens : undefined,
+    model,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────

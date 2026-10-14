@@ -17,6 +17,15 @@ export interface UsageTotal {
   quantity: number;
 }
 
+export interface MeterableUsageRecord {
+  profile_id: string;
+  dimension:  MeterableUsageDimension;
+  quantity:   number;
+  source:     string;
+  metadata:   Record<string, unknown>;
+  created_at: string;
+}
+
 export class MeterableUsageModel {
   static async accrue(input: UsageAccrualInput): Promise<boolean> {
     if (!isMeterableUsageDimension(input.dimension) || !Number.isFinite(input.quantity) || input.quantity < 0) {
@@ -41,6 +50,18 @@ export class MeterableUsageModel {
       `SELECT profile_id, dimension, SUM(quantity)::text AS quantity
          FROM meterable_usage_accruals ${ where }
         GROUP BY profile_id, dimension ORDER BY dimension`, params,
+    );
+    return rows.map(row => ({ ...row, quantity: Number(row.quantity) }));
+  }
+
+  static async records(profileId = 'default', since?: Date): Promise<MeterableUsageRecord[]> {
+    const params: unknown[] = [profileId.trim() || 'default'];
+    let where = 'WHERE profile_id = $1 AND dimension = \'ai_tokens\'';
+    if (since) { params.push(since.toISOString()); where += ' AND created_at >= $2'; }
+    const rows = await postgresClient.queryAll<Omit<MeterableUsageRecord, 'quantity'> & { quantity: string }>(
+      `SELECT profile_id, dimension, quantity::text, source, metadata, created_at::text
+         FROM meterable_usage_accruals ${ where }
+        ORDER BY created_at ASC`, params,
     );
     return rows.map(row => ({ ...row, quantity: Number(row.quantity) }));
   }

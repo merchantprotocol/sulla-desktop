@@ -23,10 +23,10 @@ export const modelsToolManifests: ToolManifest[] = [
   },
   {
     name:        'models_usage',
-    description: 'Read locally tracked model usage captured by Sulla. Supports Codex and Claude Code rolling usage today; other provider billing APIs are not queried.',
+    description: 'Read locally tracked usage, API-equivalent cost estimates, model breakdowns, trends, and the latest subscription limit windows emitted by provider CLIs.',
     category:    'models',
     schemaDef:   {
-      provider: { type: 'string', optional: true, description: 'Optional provider filter, e.g. codex or claude-code.' },
+      provider: { type: 'string', optional: true, description: 'Optional provider filter, e.g. codex, claude-code, grok, or openai.' },
       model:    { type: 'string', optional: true, description: 'Optional exact model id filter.' },
       profile_id: { type: 'string', optional: true, description: 'Profile boundary for durable meterable usage totals. Defaults to default.' },
       hours:    { type: 'number', optional: true, description: 'Lookback window in hours. Defaults to 24.' },

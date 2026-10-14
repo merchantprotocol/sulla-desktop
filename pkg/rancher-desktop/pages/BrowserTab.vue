@@ -287,6 +287,12 @@
       </div>
     </template>
 
+    <template v-else-if="tabMode === 'usage'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <UsagePage />
+      </div>
+    </template>
+
     <!-- Routines: playbill landing page, switches to canvas when a routine is opened -->
     <template v-else-if="tabMode === 'routines' || tabMode === 'marketplace'">
       <div class="flex-1 min-h-0 overflow-hidden relative">
@@ -365,6 +371,7 @@ import DecidePage from './DecidePage.vue';
 import RoutinesHome from './RoutinesHome.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import TerminalTab from './TerminalTab.vue';
+import UsagePage from './UsagePage.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 
@@ -395,6 +402,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   agents:        'Agents',
   projects:      'Projects',
   decide:        'Decide',
+  usage:         'Usage',
 };
 
 const props = defineProps<{

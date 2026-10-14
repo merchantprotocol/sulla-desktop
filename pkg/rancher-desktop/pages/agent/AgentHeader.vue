@@ -611,6 +611,13 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
     return;
   }
 
+  // Cmd+Shift+U: provider usage and subscription windows
+  if (meta && e.shiftKey && e.key.toLowerCase() === 'u') {
+    e.preventDefault();
+    openModeTab('usage');
+    return;
+  }
+
   // Cmd+` (backtick): open a terminal tab (PTY into the Lima VM)
   if (meta && e.key === '`') {
     e.preventDefault();
@@ -893,6 +900,7 @@ const MODE_ICON_PATHS: Record<BrowserTabMode, string> = {
   routines:     'M6 3h4v4H6zM14 3h4v4h-4zM6 17h4v4H6zM14 17h4v4h-4zM10 5h4M10 19h4M12 7v10M6 11h12',
   marketplace:  'M3 9h18l-1 10a2 2 0 01-2 2H6a2 2 0 01-2-2L3 9zM3 9l2-5h14l2 5M9 13a3 3 0 006 0',
   terminal:     'M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM7 9l3 3-3 3M13 15h4',
+  usage:        'M4 19V9M10 19V5M16 19v-7M22 19V3M2 19h20',
 };
 
 /** Build the unordered set of all tabs from their sources */
@@ -915,7 +923,7 @@ const allTabsById = computed(() => {
   }
 
   // Browser tabs — non-browser modes (calendar, integrations, marketplace) get pill style
-  const pillModes = new Set(['chat', 'calendar', 'integrations', 'vault', 'account', 'routines', 'marketplace']);
+  const pillModes = new Set(['chat', 'calendar', 'integrations', 'vault', 'account', 'routines', 'marketplace', 'usage']);
 
   for (const bt of browserTabs) {
     const id = `browser-${ bt.id }`;
