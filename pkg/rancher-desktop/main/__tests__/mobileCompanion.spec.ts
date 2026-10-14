@@ -16,6 +16,9 @@ const stopAgentJob = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedVal
 const agentJob = { jobId: 'agent-job-1', status: 'running', tasks: [{ threadId: 'thread-1', status: 'running' }] };
 const getJob = jest.fn<(...args: any[]) => Promise<any>>().mockImplementation(async id => id === agentJob.jobId ? agentJob : undefined);
 const findTaskByThread = jest.fn<(...args: any[]) => Promise<any>>().mockImplementation(async id => id === 'thread-1' ? { job: agentJob, taskIndex: 0 } : undefined);
+const getAllJobs = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue([]);
+const telemetryForJob = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({});
+const getAllAgents = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue([]);
 const set = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue(undefined);
 const resolveQuestion = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
 const resolve = jest.fn<(...args: any[]) => boolean>().mockReturnValue(true);
@@ -49,6 +52,8 @@ mockModules({
   '@pkg/agent/database/models/SullaSettingsModel': { SullaSettingsModel: { set, get: jest.fn<() => Promise<any>>().mockResolvedValue(false) } },
   '@pkg/agent/services/ModelProviderService': { getModelProviderService: () => modelProviders },
   '@pkg/agent/services/HeartbeatService': { getHeartbeatService: () => ({ getStatus: () => ({ isExecuting: false }), getHistory: () => [] }) },
+  '@pkg/agent/services/ActiveAgentsRegistry': { getActiveAgentsRegistry: () => ({ getAllAgents }) },
+  '@pkg/agent/database/models/AgentJobMessagingModel': { AgentJobMessagingModel: { telemetryForJob } },
   '@pkg/agent/projects/application/ProjectsApplicationService': { getProjectsApplicationService: () => ({
     addComment,
     ready:      jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -59,7 +64,7 @@ mockModules({
     updateTask: projectServiceUpdateTask,
   }) },
   '@pkg/agent/tools/agents/send_job_message': { sendJobMessage },
-  '@pkg/agent/tools/agents/jobRegistry': { getJob, findTaskByThread },
+  '@pkg/agent/tools/agents/jobRegistry': { getJob, getAllJobs, findTaskByThread },
   '@pkg/agent/tools/agents/stop_agent_job': { stopAgentJob },
   '@pkg/agent/services/ApprovalService': { ApprovalService: { getInstance: () => ({ resolveQuestion, resolve }) } },
   '@pkg/agent/database/models/BrowserBookmarkModel': { BrowserBookmarkModel: { list: listBookmarks } },
@@ -76,6 +81,9 @@ beforeEach(() => {
   projectServiceListEpics.mockResolvedValue([{ id: 'e1', project_id: 'p1' }]);
   sendJobMessage.mockResolvedValue({ successBoolean: true, responseString: '{}' });
   stopAgentJob.mockResolvedValue({ successBoolean: true, responseString: 'stopped' });
+  getAllJobs.mockResolvedValue([]);
+  telemetryForJob.mockResolvedValue({});
+  getAllAgents.mockResolvedValue([]);
 });
 test('rejects arbitrary remote commands', async() => {
   await expect(request('exec', { command: 'anything' })).rejects.toThrow('Unsupported');
@@ -177,6 +185,47 @@ test('cloud agent controls resolve a job or thread and use the existing job inte
   await expect(request('agents.stop', { jobId: 'agent-job-1' }))
     .resolves.toMatchObject({ stopped: true, mode: 'cooperative-stop' });
   expect(stopAgentJob).toHaveBeenCalledWith('agent-job-1');
+});
+test('cloud fleet lists live agents and bounded recent job telemetry without prompts or results', async() => {
+  const now = Date.now();
+  getAllAgents.mockResolvedValue([
+    { agentId: 'heartbeat', name: 'Heartbeat', channel: 'heartbeat', type: 'heartbeat', status: 'running', startedAt: now - 5_000, statusNote: `Auditing ${ 'x'.repeat(500) }` },
+    { agentId: 'human', name: 'Jonathon', channel: 'human', type: 'human', status: 'idle', startedAt: now - 5_000 },
+  ]);
+  getAllJobs.mockResolvedValue([
+    {
+      jobId: 'agent-job-old', status: 'completed', createdAt: now - 48 * 60 * 60 * 1000,
+      finishedAt: now - 47 * 60 * 60 * 1000, visibility: 'hidden', parentThreadId: 'parent-old', tasks: [],
+      prompt: 'never expose me', results: [{ output: 'nor me' }],
+    },
+    {
+      jobId: 'agent-job-live', status: 'running', createdAt: now - 10_000, finishedAt: null,
+      visibility: 'tab', parentThreadId: 'parent-1', prompt: 'private brief', results: [{ output: 'private transcript' }],
+      tasks: [{ agentId: 'codex-sol-worker', label: 'Fleet API', status: 'running', threadId: 'thread-live', prompt: 'private task prompt' }],
+    },
+  ]);
+  telemetryForJob.mockResolvedValue({
+    0: { latestCheckin: { step: 'implementation', summary: 's'.repeat(500), percent: 60, blockers: ['none'], createdAt: now - 1_000 } },
+  });
+
+  const result = await request('agents.list', { includeFinishedHours: 24, limit: 1 }) as any;
+  expect(result).toEqual({
+    generatedAt: expect.any(String),
+    agents: [{ channel: 'heartbeat', name: 'Heartbeat', status: 'running', uptimeMs: expect.any(Number), current: expect.any(String) }],
+    jobs: [{
+      jobId: 'agent-job-live', status: 'running', startedAt: expect.any(String), elapsedMs: expect.any(Number), parentThreadId: 'parent-1',
+      tasks: [{
+        taskIndex: 0, agentId: 'codex-sol-worker', label: 'Fleet API', status: 'running', visibility: 'tab', threadId: 'thread-live',
+        latestCheckin: { step: 'implementation', summary: 's'.repeat(400), percent: 60, blockers: ['none'], time: expect.any(String) },
+      }],
+    }],
+    heartbeat: { enabled: false, status: { isExecuting: false } },
+  });
+  expect(result.agents[0].current).toHaveLength(400);
+  expect(JSON.stringify(result)).not.toContain('private');
+  expect(JSON.stringify(result)).not.toContain('agent-job-old');
+  await expect(request('agents.list', { includeFinishedHours: 73 })).rejects.toThrow('Invalid includeFinishedHours');
+  await expect(request('agents.list', { limit: 0 })).rejects.toThrow('Invalid limit');
 });
 test('cloud agent controls return clear errors for unknown ids', async() => {
   await expect(request('agents.message', { jobId: 'missing', message: 'hello' })).rejects.toThrow('Agent job "missing" not found');
