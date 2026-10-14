@@ -52,6 +52,8 @@ export interface OAuthRunResult {
 interface StartResponse {
   authorizeUrl: string;
   state:        string;
+  /** One-time credential proving this client started the flow (newer workers). */
+  pollToken?:   string;
 }
 
 interface ResultResponse {
@@ -77,12 +79,16 @@ async function startFlow(provider: string, returnTo?: string): Promise<StartResp
   return res.json() as Promise<StartResponse>;
 }
 
-async function pollResult(state: string, signal: { cancelled: boolean }): Promise<OAuthRunResult> {
+async function pollResult(state: string, signal: { cancelled: boolean }, pollToken?: string): Promise<OAuthRunResult> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (signal.cancelled) throw new Error('user_cancelled');
 
-    const res = await fetch(`${ API_BASE }/oauth/result/${ encodeURIComponent(state) }`);
+    // The worker only hands the session to the client that started the flow.
+    // Main-process fetch has no cookie jar, so send the poll token explicitly.
+    const res = await fetch(`${ API_BASE }/oauth/result/${ encodeURIComponent(state) }`, {
+      headers: pollToken ? { 'X-OAuth-Poll': pollToken } : {},
+    });
     if (!res.ok) {
       await wait(POLL_INTERVAL_MS);
       continue;
@@ -103,7 +109,7 @@ async function pollResult(state: string, signal: { cancelled: boolean }): Promis
  * to sign in with the provider, then polls the worker for the result.
  */
 export async function runOAuthFlow(provider: string, returnTo?: string): Promise<OAuthRunResult> {
-  const { authorizeUrl, state } = await startFlow(provider, returnTo);
+  const { authorizeUrl, state, pollToken } = await startFlow(provider, returnTo);
   console.log(`[SullaOAuth] Starting ${ provider } flow (state=${ state.slice(0, 8) }…)`);
 
   const signal = { cancelled: false };
@@ -120,7 +126,7 @@ export async function runOAuthFlow(provider: string, returnTo?: string): Promise
 
   try {
     await win.loadURL(authorizeUrl);
-    const result = await pollResult(state, signal);
+    const result = await pollResult(state, signal, pollToken);
     return result;
   } finally {
     try { if (!win.isDestroyed()) win.close(); } catch { /* ignore */ }
