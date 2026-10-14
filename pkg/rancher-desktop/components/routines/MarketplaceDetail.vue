@@ -1,5 +1,5 @@
 <template>
-  <div class="page">
+  <div class="page" :style="{ '--kind-color': kindInfo?.color }">
     <button
       type="button"
       class="back"
@@ -14,7 +14,7 @@
           <span
             class="kind-badge"
             :class="`kind-${row.kind}`"
-          >{{ row.kind }}</span>
+          >{{ kindLabel }}</span>
           <span class="chip">v{{ row.version }}</span>
           <span
             v-if="row.featured"
@@ -46,16 +46,16 @@
             {{ installButtonLabel }}
           </button>
           <button
-            v-else-if="row.kind !== 'routine'"
+            v-else-if="row.kind !== 'routine' && row.kind !== 'agent'"
             type="button"
             class="btn primary big"
             :disabled="forking"
             @click="$emit('fork')"
           >
-            {{ forking ? 'Forking…' : `Fork ${row.kind}` }}
+            {{ forking ? 'Forking…' : `Fork ${kindLabel.toLowerCase()}` }}
           </button>
           <button
-            v-else
+            v-else-if="row.kind === 'routine'"
             type="button"
             class="btn primary big"
             :disabled="forking"
@@ -143,11 +143,27 @@
       >{{ t }}</span>
     </div>
 
+    <nav v-if="row.kind === 'routine'" class="detail-tabs" aria-label="Workflow details">
+      <button type="button" :class="{ active: detailTab === 'graph' }" @click="detailTab = 'graph'">Workflow</button>
+      <button type="button" :class="{ active: detailTab === 'docs' }" @click="detailTab = 'docs'">Documentation</button>
+    </nav>
+
     <section
       v-if="summaryItems.length > 0"
       class="block"
     >
-      <h3>What it needs</h3>
+      <div class="block-head">
+        <h3>What it needs</h3>
+        <button
+          v-if="row.kind === 'routine' && source === 'marketplace'"
+          type="button"
+          class="btn primary"
+          :disabled="installing"
+          @click="$emit('install-all')"
+        >
+          {{ installing ? 'Installing…' : 'Install all' }}
+        </button>
+      </div>
       <ul class="summary">
         <li
           v-for="item in summaryItems"
@@ -157,10 +173,89 @@
           <span class="value">{{ item.value }}</span>
         </li>
       </ul>
+      <div v-if="workflowDependencies.length" class="dependency-links">
+        <button
+          v-for="dependency in workflowDependencies"
+          :key="`${dependency.kind}:${dependency.slug}`"
+          type="button"
+          class="dependency-link"
+          @click="$emit('open-dependency', dependency)"
+        >
+          {{ dependency.label }} · {{ dependency.slug }}
+        </button>
+      </div>
+    </section>
+
+    <section v-if="row.kind === 'routine' && detailTab === 'graph' && workflowNodes.length" class="section workflow-preview">
+      <div class="section-head">
+        <span class="section-num">Workflow</span>
+        <h2 class="section-title">How it runs</h2>
+      </div>
+      <div class="workflow-layout">
+        <VueFlow
+          :nodes="workflowNodes"
+          :edges="workflowEdges"
+          :nodes-draggable="false"
+          :nodes-connectable="false"
+          :edges-updatable="false"
+          :delete-key-code="null"
+          :default-edge-options="{ type: 'routine' }"
+          fit-view-on-init
+          class="workflow-canvas"
+          @node-click="onWorkflowNodeClick"
+        >
+          <template #node-routine="nodeProps"><RoutineNode v-bind="nodeProps" /></template>
+          <template #node-workflow="nodeProps"><RoutineNode v-bind="nodeProps" /></template>
+          <template #node-loop-frame="nodeProps"><LoopFrameNode v-bind="nodeProps" /></template>
+          <template #node-sticky-note="nodeProps"><StickyNoteNode v-bind="nodeProps" /></template>
+          <template #edge-routine="edgeProps"><RoutineEdge v-bind="edgeProps" /></template>
+          <Background :variant="BackgroundVariant.Lines" :gap="32" :size="1" pattern-color="rgba(140,172,210,0.08)" />
+        </VueFlow>
+        <aside v-if="selectedWorkflowNode" class="node-inspector">
+          <div class="node-inspector-head">
+            <div>
+              <span>{{ selectedWorkflowNode.data?.kicker || selectedWorkflowNode.data?.category || 'Node' }}</span>
+              <h3>{{ selectedWorkflowNode.data?.title || selectedWorkflowNode.data?.label || selectedWorkflowNode.id }}</h3>
+            </div>
+            <button type="button" class="back" @click="selectedWorkflowNode = null">✕</button>
+          </div>
+          <dl v-if="selectedNodeConfig.length">
+            <template v-for="field in selectedNodeConfig" :key="field.label">
+              <dt>{{ field.label }}</dt>
+              <dd>{{ field.value }}</dd>
+            </template>
+          </dl>
+          <p v-else class="muted">This node has no published configuration.</p>
+        </aside>
+      </div>
+    </section>
+    <div v-else-if="row.kind === 'routine' && detailTab === 'graph'" class="block muted">
+      This listing doesn't include a workflow graph yet. Its documentation may still be available.
+    </div>
+
+    <section v-if="row.kind === 'agent' && agentSummary" class="section agent-detail">
+      <div class="section-head">
+        <span class="section-num">Agent</span>
+        <h2 class="section-title">Agent configuration</h2>
+      </div>
+      <div class="agent-grid">
+        <div><span>Provider</span><strong>{{ agentSummary.provider || '—' }}</strong></div>
+        <div><span>Model</span><strong>{{ agentSummary.model || '—' }}</strong></div>
+      </div>
+      <div v-if="agentSummary.tools?.length" class="agent-list">
+        <h3>Tools</h3><span v-for="tool in agentSummary.tools" :key="tool" class="chip">{{ tool }}</span>
+      </div>
+      <div v-if="agentSummary.skills?.length" class="agent-list">
+        <h3>Skills</h3>
+        <button v-for="skill in agentSummary.skills" :key="skill" type="button" class="dependency-link" @click="$emit('open-dependency', { kind: 'skill', slug: skill })">{{ skill }}</button>
+      </div>
+      <div v-if="agentSummary.promptSummary" class="agent-prompt">
+        <h3>Prompt summary</h3><p>{{ agentSummary.promptSummary }}</p>
+      </div>
     </section>
 
     <section
-      v-if="screenshots.length > 0"
+      v-if="(row.kind !== 'routine' || detailTab === 'docs') && screenshots.length > 0"
       class="section accent-gallery"
     >
       <div class="section-head">
@@ -188,7 +283,7 @@
     </section>
 
     <section
-      v-if="readmeHtml"
+      v-if="(row.kind !== 'routine' || detailTab === 'docs') && readmeHtml"
       class="section accent-readme"
     >
       <div class="section-head">
@@ -230,7 +325,7 @@
     </section>
 
     <section
-      v-if="coreDocText"
+      v-if="(row.kind !== 'routine' || detailTab === 'docs') && coreDocText"
       class="section accent-code"
     >
       <div class="section-head">
@@ -265,7 +360,7 @@
     </section>
 
     <section
-      v-if="changelogHtml"
+      v-if="(row.kind !== 'routine' || detailTab === 'docs') && changelogHtml"
       class="section accent-changelog"
     >
       <div class="section-head">
@@ -304,7 +399,7 @@
     </section>
 
     <section
-      v-if="bundleFiles.length > 0"
+      v-if="(row.kind !== 'routine' || detailTab === 'docs') && bundleFiles.length > 0"
       class="section accent-tree"
     >
       <div class="section-head">
@@ -355,8 +450,17 @@
 <script setup lang="ts">
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
-import { computed, reactive } from 'vue';
+import { Background, BackgroundVariant } from '@vue-flow/background';
+import { VueFlow, type Edge, type Node } from '@vue-flow/core';
+import { computed, provide, reactive, ref } from 'vue';
+import '@vue-flow/core/dist/style.css';
+import '@vue-flow/core/dist/theme-default.css';
 
+import { marketplaceKindInfo, marketplaceKindLabel, type MarketplaceKind } from '@pkg/composables/marketplaceKinds';
+import LoopFrameNode from '@pkg/pages/routines/LoopFrameNode.vue';
+import RoutineEdge from '@pkg/pages/routines/RoutineEdge.vue';
+import RoutineNode from '@pkg/pages/routines/RoutineNode.vue';
+import StickyNoteNode from '@pkg/pages/routines/StickyNoteNode.vue';
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 
 const props = withDefaults(defineProps<{
@@ -382,8 +486,15 @@ const props = withDefaults(defineProps<{
 defineEmits<{
   (e: 'close'): void;
   (e: 'install'): void;
+  (e: 'install-all'): void;
+  (e: 'open-dependency', dependency: { kind: MarketplaceKind; slug: string }): void;
   (e: 'fork'): void;
 }>();
+
+provide('routines-mode', ref<'edit' | 'run'>('run'));
+const kindInfo = computed(() => marketplaceKindInfo(props.row.kind));
+const kindLabel = computed(() => props.row.kind_label || marketplaceKindLabel(props.row.kind));
+const detailTab = ref<'graph' | 'docs'>('graph');
 
 const initials = computed(() => {
   const source = props.row.name || props.row.slug || '??';
@@ -432,6 +543,62 @@ function formatBytes(n: number): string {
 
 interface SummaryItem { label: string; value: string }
 
+const routineSummary = computed<any>(() => (props.manifest as any)?.routineSummary ?? null);
+const workflowNodes = computed<Node[]>(() => Array.isArray(routineSummary.value?.nodes)
+  ? routineSummary.value.nodes.map((node: any) => ({ ...node, data: publicNodeData(node.data), draggable: false, connectable: false, selectable: true }))
+  : []);
+const workflowEdges = computed<Edge[]>(() => Array.isArray(routineSummary.value?.edges)
+  ? routineSummary.value.edges.map((edge: any) => ({ ...edge, type: edge.type || 'routine', updatable: false, selectable: false }))
+  : []);
+const selectedWorkflowNode = ref<any>(null);
+function onWorkflowNodeClick(event: { node: Node }) {
+  selectedWorkflowNode.value = event.node;
+}
+
+function publicNodeData(raw: unknown): Record<string, unknown> {
+  const data = { ...((raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}) };
+  for (const key of Object.keys(data)) {
+    if (key === 'state' || key === 'outputExcerpt' || key.startsWith('execution') || key.startsWith('lastRun') || key.startsWith('output')) delete data[key];
+  }
+
+  return data;
+}
+
+const CONFIG_LABELS: Record<string, string> = {
+  agentId: 'Agent', agentName: 'Agent name', additionalPrompt: 'Additional prompt', beforePrompt: 'Before prompt',
+  successCriteria: 'Success criteria', condition: 'Condition', expression: 'Condition', integration: 'Integration',
+  integrationId: 'Integration', operation: 'Call', function: 'Function', functionId: 'Function', triggerType: 'Trigger', schedule: 'Schedule',
+};
+const selectedNodeConfig = computed(() => {
+  const config = selectedWorkflowNode.value?.data?.config;
+  if (!config || typeof config !== 'object') return [];
+
+  return Object.entries(config)
+    .filter(([key, value]) => value !== undefined && value !== null && value !== '' && !/^(?:state|output|execution|lastRun)/i.test(key))
+    .map(([key, value]) => ({
+      label: CONFIG_LABELS[key] ?? key.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()),
+      value: typeof value === 'string' ? value : JSON.stringify(value, null, 2),
+    }));
+});
+
+function dependencyValues(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((entry: any) => typeof entry === 'string' ? entry : entry?.slug).filter(Boolean) : [];
+}
+const workflowDependencies = computed(() => {
+  const summary = routineSummary.value;
+  if (!summary) return [];
+  const groups: { kind: MarketplaceKind; key: string; label: string }[] = [
+    { kind: 'agent', key: 'requiredAgents', label: 'Agent' },
+    { kind: 'skill', key: 'requiredSkills', label: 'Skill' },
+    { kind: 'integration', key: 'requiredIntegrations', label: 'Integration' },
+    { kind: 'function', key: 'requiredFunctions', label: 'Function' },
+  ];
+
+  return groups.flatMap(group => dependencyValues(summary[group.key]).map(slug => ({ kind: group.kind, slug, label: group.label })));
+});
+
+const agentSummary = computed<any>(() => (props.manifest as any)?.agentSummary ?? null);
+
 const summaryItems = computed<SummaryItem[]>(() => {
   const items: SummaryItem[] = [];
   const m = props.manifest as any;
@@ -448,6 +615,8 @@ const summaryItems = computed<SummaryItem[]>(() => {
     addList('Triggers', s.triggerTypes);
     addList('Integrations', s.requiredIntegrations);
     addList('Functions', s.requiredFunctions);
+    addList('Agents', dependencyValues(s.requiredAgents));
+    addList('Skills', dependencyValues(s.requiredSkills));
   }
   if (m?.skillSummary) {
     const s = m.skillSummary;
@@ -475,7 +644,7 @@ const installButtonLabel = computed(() => {
   if (props.installedInfo && props.updateAvailable) return `Update to v${ props.row.version }`;
   if (props.installedInfo) return 'Installed ✓';
 
-  return `Install ${ props.row.kind }`;
+  return `Install ${ marketplaceKindLabel(props.row.kind).toLowerCase() }`;
 });
 
 // ─── Detail sections (screenshots, README, core doc, changelog, file tree)
@@ -656,10 +825,7 @@ h1 {
   place-items: center;
   border: 1px solid rgba(168, 192, 220, 0.18);
 }
-.right.kind-routine  { background: linear-gradient(135deg, #2c4871, #4a6fa5); }
-.right.kind-skill    { background: linear-gradient(135deg, #d97706, #f59e0b); }
-.right.kind-function { background: linear-gradient(135deg, #0891b2, #06b6d4); }
-.right.kind-recipe   { background: linear-gradient(135deg, #a21caf, #c026d3); }
+.right { background: color-mix(in srgb, var(--kind-color) 70%, #10182a); }
 .right img { width: 100%; height: 100%; object-fit: cover; }
 .hero-placeholder {
   font-family: var(--mono);
@@ -775,10 +941,7 @@ h1 {
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: white;
 }
-.kind-badge.kind-routine  { background: rgba(74, 111, 165, 0.35); border-color: rgba(74, 111, 165, 0.6); }
-.kind-badge.kind-skill    { background: rgba(245, 158, 11, 0.35); border-color: rgba(245, 158, 11, 0.6); }
-.kind-badge.kind-function { background: rgba(6, 182, 212, 0.35);  border-color: rgba(6, 182, 212, 0.6); }
-.kind-badge.kind-recipe   { background: rgba(192, 38, 211, 0.35); border-color: rgba(192, 38, 211, 0.6); }
+.kind-badge { background: color-mix(in srgb, var(--kind-color) 28%, transparent); border-color: var(--kind-color); }
 
 // ─── Detail sections — Gallery / README / Core doc / Changelog / Tree
 // Shared section chrome: a numbered kicker + italic title with a coloured
@@ -1164,5 +1327,97 @@ h1 {
 .theme-noir-light .right,
 .theme-noir-light .right[class*="kind-"] {
   box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.04), 0 18px 38px color-mix(in srgb, var(--nx-ink) 8%, transparent);
+}
+
+.block-head,
+.node-inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.detail-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 22px 0;
+  border-bottom: 1px solid rgba(168, 192, 220, .16);
+}
+.detail-tabs button {
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--steel-300);
+  background: transparent;
+  font: 11px/1 var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.detail-tabs button.active { color: white; border-bottom-color: var(--kind-color); }
+.block-head h3 { margin: 0; }
+.dependency-links,
+.agent-list {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.dependency-link {
+  border: 1px solid color-mix(in srgb, var(--kind-color, var(--accent)) 50%, transparent);
+  border-radius: 7px;
+  padding: 6px 9px;
+  color: var(--steel-100);
+  background: color-mix(in srgb, var(--kind-color, var(--accent)) 14%, transparent);
+  cursor: pointer;
+}
+.workflow-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  min-height: 520px;
+  border: 1px solid rgba(168, 192, 220, 0.18);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0b1120;
+}
+.workflow-canvas { min-height: 520px; }
+.node-inspector {
+  padding: 20px;
+  border-left: 1px solid rgba(168, 192, 220, 0.16);
+  background: rgba(13, 20, 35, 0.96);
+  overflow: auto;
+}
+.node-inspector-head span,
+.agent-grid span {
+  color: var(--steel-300);
+  font: 10px/1.3 var(--mono);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.node-inspector-head h3 { margin: 4px 0 0; color: white; }
+.node-inspector dl { margin: 22px 0 0; }
+.node-inspector dt { margin-top: 16px; color: var(--steel-300); font: 10px/1.3 var(--mono); text-transform: uppercase; }
+.node-inspector dd { margin: 5px 0 0; color: var(--steel-100); white-space: pre-wrap; overflow-wrap: anywhere; }
+.muted { color: var(--steel-300); }
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.agent-grid > div,
+.agent-prompt {
+  padding: 16px;
+  border: 1px solid rgba(168, 192, 220, 0.18);
+  border-radius: 8px;
+  background: rgba(20, 30, 54, .5);
+}
+.agent-grid strong { display: block; margin-top: 5px; color: white; }
+.agent-prompt { margin-top: 14px; }
+.agent-prompt h3 { margin-top: 0; }
+.agent-prompt p { margin-bottom: 0; color: var(--steel-100); line-height: 1.6; white-space: pre-wrap; }
+
+@media (max-width: 980px) {
+  .workflow-layout { grid-template-columns: 1fr; }
+  .node-inspector { border-left: 0; border-top: 1px solid rgba(168, 192, 220, 0.16); }
 }
 </style>

@@ -35,7 +35,7 @@
             ref="inputEl"
             v-model="text"
             type="text"
-            placeholder="Describe the routine you want…"
+            placeholder="Describe the workflow you want…"
             class="cmdp-input"
             spellcheck="false"
             autocomplete="off"

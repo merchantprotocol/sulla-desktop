@@ -3,6 +3,7 @@
     class="strip"
     :class="`kind-${kind}`"
     :data-kind="kind"
+    :style="{ '--kind-color': kindColor }"
   >
     <div
       class="icon"
@@ -64,6 +65,7 @@
         View
       </button>
       <button
+        v-if="kind !== 'agents'"
         type="button"
         class="btn ghost"
         @click="$emit('reveal')"
@@ -85,6 +87,7 @@
 import { computed } from 'vue';
 
 import type { LibraryArtifactKind, LibraryItem } from '@pkg/composables/useLibrary';
+import { marketplaceKindInfo, marketplaceKindLabel } from '@pkg/composables/marketplaceKinds';
 
 const props = defineProps<{
   kind:          LibraryArtifactKind;
@@ -99,15 +102,8 @@ defineEmits<{
   (e: 'publish'): void;
 }>();
 
-const KIND_LABELS: Record<LibraryArtifactKind, string> = {
-  routines:     'Routine',
-  skills:       'Skill',
-  functions:    'Function',
-  recipes:      'Recipe',
-  integrations: 'Integration',
-};
-
-const kindLabel = computed(() => KIND_LABELS[props.kind]);
+const kindLabel = computed(() => marketplaceKindLabel(props.kind === 'routines' ? 'routine' : props.kind));
+const kindColor = computed(() => marketplaceKindInfo(props.kind === 'routines' ? 'routine' : props.kind)?.color ?? '#8a94a6');
 
 const initials = computed(() => {
   const source = props.item.name || props.item.slug || '??';
@@ -157,10 +153,7 @@ const initials = computed(() => {
   transition: opacity 0.18s, width 0.18s;
 }
 .strip:hover::before { opacity: 1; width: 4px; }
-.strip[data-kind="routines"]::before  { background: linear-gradient(180deg, #6b8fc4, #4a6fa5 50%, #2c4871); }
-.strip[data-kind="skills"]::before    { background: linear-gradient(180deg, #fbbf24, #f59e0b 50%, #b45309); }
-.strip[data-kind="functions"]::before { background: linear-gradient(180deg, #5eead4, #14b8a6 50%, #0e7490); }
-.strip[data-kind="recipes"]::before   { background: linear-gradient(180deg, #f472b6, #db2777 50%, #9d174d); }
+.strip::before { background: var(--kind-color); }
 
 .strip::after {
   content: '';
@@ -181,10 +174,7 @@ const initials = computed(() => {
   font-size: 14px;
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
-.icon.kind-routines  { background: linear-gradient(135deg, #2c4871, #4a6fa5); }
-.icon.kind-skills    { background: linear-gradient(135deg, #d97706, #f59e0b); }
-.icon.kind-functions { background: linear-gradient(135deg, #0891b2, #06b6d4); }
-.icon.kind-recipes   { background: linear-gradient(135deg, #a21caf, #c026d3); }
+.icon { background: color-mix(in srgb, var(--kind-color) 65%, #10182a); }
 
 .body { min-width: 0; }
 .top {
@@ -204,10 +194,7 @@ const initials = computed(() => {
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: white;
 }
-.kind-badge.kind-routines  { background: rgba(74, 111, 165, 0.35); border-color: rgba(74, 111, 165, 0.6); }
-.kind-badge.kind-skills    { background: rgba(245, 158, 11, 0.35); border-color: rgba(245, 158, 11, 0.6); }
-.kind-badge.kind-functions { background: rgba(6, 182, 212, 0.35);  border-color: rgba(6, 182, 212, 0.6); }
-.kind-badge.kind-recipes   { background: rgba(192, 38, 211, 0.35); border-color: rgba(192, 38, 211, 0.6); }
+.kind-badge { background: color-mix(in srgb, var(--kind-color) 28%, transparent); border-color: var(--kind-color); }
 
 .slug {
   font-family: var(--mono);

@@ -3,6 +3,7 @@
     class="strip"
     :class="{ featured: row.featured }"
     :data-kind="row.kind"
+    :style="{ '--kind-color': kindColor }"
     @click="$emit('open')"
   >
     <div
@@ -17,7 +18,7 @@
         <span
           class="kind-badge"
           :class="`kind-${row.kind}`"
-        >{{ row.kind }}</span>
+        >{{ kindLabel }}</span>
         <span class="chip">v{{ row.version }}</span>
         <span
           v-if="row.featured"
@@ -94,6 +95,7 @@
 import { computed } from 'vue';
 
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
+import { marketplaceKindInfo, marketplaceKindLabel } from '@pkg/composables/marketplaceKinds';
 
 const props = defineProps<{
   row:           MarketplaceBrowseRow;
@@ -107,6 +109,8 @@ defineEmits<{
 }>();
 
 const MAX_VISIBLE_TAGS = 3;
+const kindLabel = computed(() => props.row.kind_label || marketplaceKindLabel(props.row.kind));
+const kindColor = computed(() => marketplaceKindInfo(props.row.kind)?.color ?? '#8a94a6');
 
 const initials = computed(() => {
   const source = props.row.name || props.row.slug || '??';
@@ -194,10 +198,7 @@ const installButtonLabel = computed(() => {
   transition: opacity 0.18s, width 0.18s;
 }
 .strip:hover::before { opacity: 1; width: 4px; }
-.strip[data-kind="routine"]::before  { background: linear-gradient(180deg, #6b8fc4, #4a6fa5 50%, #2c4871); }
-.strip[data-kind="skill"]::before    { background: linear-gradient(180deg, #fbbf24, #f59e0b 50%, #b45309); }
-.strip[data-kind="function"]::before { background: linear-gradient(180deg, #5eead4, #14b8a6 50%, #0e7490); }
-.strip[data-kind="recipe"]::before   { background: linear-gradient(180deg, #f472b6, #db2777 50%, #9d174d); }
+.strip::before { background: var(--kind-color); }
 
 // Top highlight hairline — catches the eye at the top edge.
 .strip::after {
@@ -219,10 +220,7 @@ const installButtonLabel = computed(() => {
   font-size: 14px;
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
-.icon.kind-routine  { background: linear-gradient(135deg, #2c4871, #4a6fa5); }
-.icon.kind-skill    { background: linear-gradient(135deg, #d97706, #f59e0b); }
-.icon.kind-function { background: linear-gradient(135deg, #0891b2, #06b6d4); }
-.icon.kind-recipe   { background: linear-gradient(135deg, #a21caf, #c026d3); }
+.icon { background: color-mix(in srgb, var(--kind-color) 65%, #10182a); }
 
 .body { min-width: 0; }
 .top {
@@ -242,10 +240,7 @@ const installButtonLabel = computed(() => {
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: white;
 }
-.kind-badge.kind-routine  { background: rgba(74, 111, 165, 0.35); border-color: rgba(74, 111, 165, 0.6); }
-.kind-badge.kind-skill    { background: rgba(245, 158, 11, 0.35); border-color: rgba(245, 158, 11, 0.6); }
-.kind-badge.kind-function { background: rgba(6, 182, 212, 0.35);  border-color: rgba(6, 182, 212, 0.6); }
-.kind-badge.kind-recipe   { background: rgba(192, 38, 211, 0.35); border-color: rgba(192, 38, 211, 0.6); }
+.kind-badge { background: color-mix(in srgb, var(--kind-color) 25%, transparent); border-color: var(--kind-color); }
 
 .title {
   font-family: var(--serif);

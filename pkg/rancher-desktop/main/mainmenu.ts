@@ -339,17 +339,17 @@ function getFileMenu(): MenuItem {
         click:       () => sendAgentCommand('open-tab', { mode: 'marketplace' }),
       },
       {
-        label:   'Routine File',
+        label:   'Workflow File',
         enabled: userLoggedIn,
         submenu: [
           {
-            label:       'Import Routine…',
+            label:       'Import Workflow…',
             accelerator: 'CmdOrCtrl+Shift+I',
             enabled:     userLoggedIn,
             click:       () => sendAgentCommand('routines:import'),
           },
           {
-            label:       'Export Current Routine…',
+            label:       'Export Current Workflow…',
             accelerator: 'CmdOrCtrl+Shift+E',
             enabled:     userLoggedIn && currentRoutineContext?.mode === 'routine',
             click:       () => {

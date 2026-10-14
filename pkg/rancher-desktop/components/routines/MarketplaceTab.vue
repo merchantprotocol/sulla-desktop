@@ -19,7 +19,7 @@
       class="signin-gate"
     >
       <SullaCloudCard
-        rationale="You need a Sulla Cloud account to install routines, skills, functions, agents, and recipes from the marketplace — and to publish your own."
+        rationale="You need a Sulla Cloud account to install workflows, agents, skills, functions, integrations, and recipes from the marketplace — and to publish your own."
         @signed-in="onSignedIn"
         @signed-out="onSignedOut"
       />
@@ -36,6 +36,8 @@
       :update-available="detailUpdateAvailable"
       @close="onCloseDetail"
       @install="onInstall(mp.detail.value.row.id)"
+      @install-all="onInstall(mp.detail.value.row.id, true)"
+      @open-dependency="onOpenDependency"
     />
     <div
       v-else-if="mp.detailLoading.value"
@@ -99,6 +101,7 @@
                   { on: mp.kind.value === k.value },
                   `kind-${k.value}`,
                 ]"
+                :style="k.value === 'all' ? undefined : { '--kind-color': k.color }"
                 @click="onKind(k.value)"
               >
                 <span class="dot" />
@@ -131,7 +134,7 @@
             Signed-in browse — installs land in your Library.
           </p>
           <p v-else>
-            Every routine, skill, function, agent and recipe you've submitted.
+            Every workflow, agent, skill, function, integration, and recipe you've submitted.
             Status updates arrive from the reviewers.
           </p>
         </div>
@@ -289,7 +292,7 @@
           v-else-if="submissions.length === 0"
           class="status"
         >
-          You haven't published anything yet. Publish a routine from the
+          You haven't published anything yet. Publish a workflow from the
           canvas and it'll show up here with its review status.
         </div>
 
@@ -304,7 +307,8 @@
                 <span
                   class="kind-pill"
                   :class="`kind-${s.kind}`"
-                >{{ s.kind }}</span>
+                  :style="{ '--kind-color': marketplaceKindInfo(s.kind)?.color }"
+                >{{ kindLabel(s.kind) }}</span>
                 <span class="sub-name">{{ s.name }}</span>
                 <span class="sub-version">v{{ s.version }}</span>
               </div>
@@ -398,19 +402,13 @@ import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
 import MarketplaceStrip from '@pkg/components/routines/MarketplaceStrip.vue';
 import type { KindFilter, MarketplaceSort } from '@pkg/composables/useMarketplace';
 import { useMarketplace } from '@pkg/composables/useMarketplace';
+import { MARKETPLACE_KIND_OPTIONS, marketplaceKindInfo, marketplaceKindLabel, type MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type SortValue = MarketplaceSort;
 
-const KIND_OPTIONS: { value: KindFilter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'routine', label: 'Routines' },
-  { value: 'skill', label: 'Skills' },
-  { value: 'function', label: 'Functions' },
-  { value: 'agent', label: 'Agents' },
-  { value: 'recipe', label: 'Recipes' },
-  { value: 'integration', label: 'Integrations' },
-];
+const KIND_OPTIONS = MARKETPLACE_KIND_OPTIONS;
+const kindLabel = (kind: string) => marketplaceKindLabel(kind);
 
 const SORT_OPTIONS: { value: SortValue; label: string }[] = [
   { value: 'popular', label: 'Popular' },
@@ -559,11 +557,11 @@ function onCloseDetail() {
   mp.clearInstallResult();
 }
 
-async function onInstall(id: string) {
+async function onInstall(id: string, includeDependencies = false) {
   const row = mp.templates.value.find(t => t.id === id) ?? mp.detail.value?.row;
   const overwrite = !!row && mp.installStateFor(row) === 'update';
   const replaces = overwrite && row ? mp.installedEntryFor(row)?.templateId : undefined;
-  const result = await mp.install(id, { overwrite, replaces });
+  const result = await (includeDependencies ? mp.installAll(id, { overwrite, replaces }) : mp.install(id, { overwrite, replaces }));
   if (result) {
     if (result.alreadyInstalled) {
       window.alert(`${ result.name } is already installed → ${ result.path }`);
@@ -574,12 +572,17 @@ async function onInstall(id: string) {
     const warning = result.warnings?.length ? `\n\nWarning: ${ result.warnings.join('\nWarning: ') }` : '';
     window.alert((result.updated
       ? `Updated ${ result.name } to v${ result.version } → ${ result.path }`
-      : `Installed ${ result.name } (${ result.kind }) → ${ result.path }`) + warning);
+      : `Installed ${ result.name } (${ marketplaceKindLabel(result.kind) }) → ${ result.path }`) + warning);
 
     return;
   }
   const err = mp.installError.value;
   window.alert(`Install failed${ err ? `: ${ err }` : '.' }`);
+}
+
+async function onOpenDependency(dependency: { kind: MarketplaceKind; slug: string }) {
+  await mp.loadRelated(dependency.kind, dependency.slug);
+  if (mp.detailError.value) window.alert(mp.detailError.value);
 }
 
 // ── My Submissions ──
@@ -777,10 +780,7 @@ function formatRelative(iso: string): string {
   border-radius: 50%;
   background: rgba(168, 192, 220, 0.35);
 }
-.rail-item.kind-routine  .dot { background: #4a6fa5; }
-.rail-item.kind-skill    .dot { background: #f59e0b; }
-.rail-item.kind-function .dot { background: #06b6d4; }
-.rail-item.kind-recipe   .dot { background: #c026d3; }
+.rail-item[class*="kind-"] .dot { background: var(--kind-color); }
 .rail-item.kind-all      .dot { background: linear-gradient(135deg, #4a6fa5, #c026d3); }
 
 .rail-footer {
@@ -993,12 +993,8 @@ function formatRelative(iso: string): string {
   padding: 2px 8px;
   border-radius: 3px;
   color: white;
-  background: rgba(74, 111, 165, 0.6);
+  background: color-mix(in srgb, var(--kind-color, #6b7280) 58%, transparent);
 }
-.kind-pill.kind-routine  { background: rgba(74, 111, 165, 0.6); }
-.kind-pill.kind-skill    { background: rgba(245, 158, 11, 0.55); }
-.kind-pill.kind-function { background: rgba(6, 182, 212, 0.55); }
-.kind-pill.kind-recipe   { background: rgba(192, 38, 211, 0.55); }
 
 .sub-desc {
   margin-top: 6px;

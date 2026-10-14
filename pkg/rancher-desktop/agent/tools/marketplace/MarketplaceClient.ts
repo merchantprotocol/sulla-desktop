@@ -35,6 +35,7 @@ export interface MarketplaceListing {
 export interface SearchOptions {
   query?:    string;
   kind?:     ArtifactKind;
+  kinds?:    ArtifactKind[];
   category?: string;
   limit?:    number;
 }
@@ -83,6 +84,7 @@ export class MarketplaceClient {
     const { browseTemplates } = await api();
     const page = await browseTemplates({
       kind:     opts.kind ? requireMarketplaceKind(opts.kind) : undefined,
+      kinds:    opts.kinds?.map(requireMarketplaceKind),
       q:        opts.query?.trim() || undefined,
       category: opts.category?.trim() || undefined,
       limit:    Math.min(Math.max(opts.limit ?? 25, 1), 100),

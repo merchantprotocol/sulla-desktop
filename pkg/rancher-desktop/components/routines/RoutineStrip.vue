@@ -32,7 +32,7 @@
         <span
           v-if="routine.system"
           class="chip lock"
-          title="Core routine — ships with Sulla Desktop. You can disable it, but not edit or delete it."
+          title="Core workflow — ships with Sulla Desktop. You can disable it, but not edit or delete it."
         >🔒 Core</span>
       </div>
       <div class="title">
@@ -156,7 +156,7 @@
               v-else
               class="menu-locked"
             >
-              🔒 Core routine — you can disable it, but not edit or delete it.
+              🔒 Core workflow — you can disable it, but not edit or delete it.
             </div>
           </div>
         </div>

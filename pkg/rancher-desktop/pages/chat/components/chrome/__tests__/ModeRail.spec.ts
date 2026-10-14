@@ -102,3 +102,12 @@ test('keeps mode and utility emits unchanged', async() => {
   expect(wrapper.emitted('toggle-file-tree')).toHaveLength(1);
   wrapper.unmount();
 });
+
+test('labels the workflow mode with its keyboard shortcut', () => {
+  const wrapper = mount(ModeRail, { props: { active: 'routines' } });
+  const workflows = modeButton(wrapper, 'Workflows');
+
+  expect(workflows.text()).toContain('Workflows');
+  expect(workflows.text()).toContain('⌘6');
+  wrapper.unmount();
+});

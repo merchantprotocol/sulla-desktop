@@ -25,6 +25,7 @@ import * as path from 'path';
 import yaml from 'yaml';
 
 import { listBundleFiles } from './bundleFiles';
+import { findAgentSecret } from './agentPublishSafety';
 
 import type { AgentMarketplaceManifest } from '@pkg/agent/services/AgentDefinitionService';
 import Logging from '@pkg/utils/logging';
@@ -154,6 +155,12 @@ interface BuildOptions {
     version?:     string;
     tags?:        string[];
   };
+  /**
+   * Rewrite routine.yaml on disk with the sanitized copy so the zipped
+   * bundle carries no run data. Only pass this for a staged publish copy —
+   * never for the user's own workflow folder.
+   */
+  writeSanitized?: boolean;
 }
 
 /**
@@ -179,7 +186,7 @@ function readAgentFrontmatter(bundleRoot: string): Record<string, any> | null {
  * from the DAG + frontmatter.
  */
 function buildRoutineManifest(opts: BuildOptions): Record<string, unknown> {
-  const { slug, bundleRoot, overrides } = opts;
+  const { slug, bundleRoot, overrides, writeSanitized } = opts;
 
   const routineYamlPath = path.join(bundleRoot, 'routine.yaml');
   const routineYamlRaw = readOptionalFile(routineYamlPath);
@@ -194,8 +201,12 @@ function buildRoutineManifest(opts: BuildOptions): Record<string, unknown> {
     throw new Error(`routine.yaml is not valid YAML: ${ err instanceof Error ? err.message : String(err) }`);
   }
 
-  const nodes = Array.isArray(routineDoc?.nodes) ? routineDoc.nodes : [];
+  const nodes = (Array.isArray(routineDoc?.nodes) ? routineDoc.nodes : []).map(stripRoutineNodeRuntime);
   const edges = Array.isArray(routineDoc?.edges) ? routineDoc.edges : [];
+  const sanitizedRoutine = { ...routineDoc, nodes, edges };
+  delete sanitizedRoutine.viewport;
+  const sanitizedRoutineYaml = yaml.stringify(sanitizedRoutine);
+  if (writeSanitized) fs.writeFileSync(routineYamlPath, sanitizedRoutineYaml, 'utf8');
 
   const triggerTypes = Array.from(new Set(
     nodes
@@ -227,7 +238,7 @@ function buildRoutineManifest(opts: BuildOptions): Record<string, unknown> {
   if (changelogRaw) metadata.changelog = changelogRaw;
 
   const previews: Record<string, string> = {
-    coreDoc: routineYamlRaw,
+    coreDoc: sanitizedRoutineYaml,
   };
   if (readmeRaw) previews.readme = readmeRaw;
   if (agentRaw) (previews as any).agent = agentRaw;
@@ -244,15 +255,24 @@ function buildRoutineManifest(opts: BuildOptions): Record<string, unknown> {
     nodes,
     edges,
   };
-  if (routineDoc?.viewport && typeof routineDoc.viewport === 'object') {
-    routineSummary.viewport = routineDoc.viewport;
-  }
   if (Array.isArray(agent.required_integrations) && agent.required_integrations.length > 0) {
     routineSummary.requiredIntegrations = agent.required_integrations.map(String);
   }
   if (Array.isArray(agent.required_functions) && agent.required_functions.length > 0) {
     routineSummary.requiredFunctions = agent.required_functions.map(String);
   }
+  const requiredAgents = uniqueStrings(nodes
+    .filter((node: any) => node?.data?.category === 'agent' || node?.data?.subtype === 'agent')
+    .map((node: any) => node?.data?.config?.agentId));
+  if (requiredAgents.length > 0) routineSummary.requiredAgents = requiredAgents;
+  const requiredSkills = uniqueStrings([
+    ...(Array.isArray(agent.required_skills) ? agent.required_skills : []),
+    ...nodes.flatMap((node: any) => [
+      ...(Array.isArray(node?.data?.config?.skills) ? node.data.config.skills : []),
+      ...(Array.isArray(node?.data?.config?.skillRefs) ? node.data.config.skillRefs : []),
+    ]),
+  ]);
+  if (requiredSkills.length > 0) routineSummary.requiredSkills = requiredSkills;
   if (Array.isArray(agent.required_vault_accounts) && agent.required_vault_accounts.length > 0) {
     routineSummary.requiredVaultAccounts = agent.required_vault_accounts.map(String);
   }
@@ -269,6 +289,21 @@ function buildRoutineManifest(opts: BuildOptions): Record<string, unknown> {
     previews,
     routineSummary,
   };
+}
+
+function stripRoutineNodeRuntime(node: any): any {
+  const data = { ...(node?.data ?? {}) };
+  for (const key of Object.keys(data)) {
+    if (key === 'state' || key === 'outputExcerpt' || key.startsWith('execution') || key.startsWith('lastRun') || key.startsWith('output')) {
+      delete data[key];
+    }
+  }
+
+  return { ...node, data };
+}
+
+function uniqueStrings(values: unknown[]): string[] {
+  return Array.from(new Set(values.map(value => typeof value === 'string' ? value.trim() : '').filter(Boolean)));
 }
 
 /**
@@ -605,13 +640,18 @@ function buildAgentManifest(opts: BuildOptions): Record<string, unknown> {
 
   if (agent.metadata.author) metadata.author = agent.metadata.author;
 
+  const promptSummarySource = String(agent.metadata.description || agent.spec.prompt || '').trim();
+  const promptSummary = findAgentSecret(promptSummarySource) ? '' : promptSummarySource.slice(0, 500);
+
   return {
     ...baseEnvelope('agent', metadata),
     agentSummary: {
       ...(agent.spec.provider ? { provider: agent.spec.provider } : {}),
       ...(agent.spec.model ? { model: agent.spec.model } : {}),
       toolsCount: tools.length,
+      tools:      tools.map(String),
       skills,
+      ...(promptSummary ? { promptSummary } : {}),
       requires:   { skills: skills.map(skillSlug => ({ slug: skillSlug, optional: false })) },
     },
     bundle: {

@@ -379,7 +379,7 @@ export function initSullaRoutineTemplateEvents(): void {
     const now = new Date().toISOString();
     const workflow: Record<string, unknown> = {
       id,
-      name:        'Untitled Routine',
+      name:        'Untitled Workflow',
       description: '',
       version:     '0.1.0',
       enabled:     true,
@@ -423,7 +423,7 @@ export function initSullaRoutineTemplateEvents(): void {
     // the two code paths type-distinct.
     const doc = readRoutineDoc(manifestPath);
     if (!doc) {
-      throw new Error(`Template routine document is unreadable: ${ slug }`);
+      throw new Error(`Template workflow document is unreadable: ${ slug }`);
     }
 
     const workflow = buildWorkflowFromTemplate({ slug, manifest, doc });
@@ -747,7 +747,7 @@ async function executeRoutineInternal(
         ? await RoutineConcurrencyPolicy.acquireWhenAvailable(protectedKind, limit, slotContext)
         : await RoutineConcurrencyPolicy.acquire(protectedKind, limit, slotContext);
       if (!routineSlotId) {
-        throw new Error(`Routine concurrency limit reached for ${ protectedKind } work.`);
+        throw new Error(`Workflow concurrency limit reached for ${ protectedKind } work.`);
       }
     }
 

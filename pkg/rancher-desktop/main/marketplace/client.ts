@@ -29,6 +29,7 @@ import { pipeline } from 'stream/promises';
 
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import Logging from '@pkg/utils/logging';
+import type { MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 
 const console = Logging.background;
 
@@ -43,7 +44,7 @@ const API_BASE = MARKETPLACE_API_BASE;
 // Kept minimal — we only type what our callers consume. The marketplace
 // agent is authoritative for the full schemas (see docs/marketplace/).
 
-export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
+export type { MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 
 export interface MarketplaceTemplateDetail {
   id:                   string;
@@ -75,7 +76,7 @@ export interface UploadBundleResult {
   id:            string;
   bundle_status: 'uploaded';
   bundle_size:   number;
-  status:        'pending';
+  status:        'pending' | 'approved';
 }
 
 /** A row returned by GET /marketplace/mine. Superset of the public fields —
@@ -177,6 +178,7 @@ async function readJsonOrThrow<T>(res: Response, context: string): Promise<T> {
 
 export interface BrowseOptions {
   kind?:     MarketplaceKind;
+  kinds?:    MarketplaceKind[];
   q?:        string;
   category?: string;
   sort?:     'popular' | 'newest' | 'featured';
@@ -215,6 +217,7 @@ export async function publicFetch(pathAndQuery: string): Promise<Response> {
 export async function browseTemplates(opts: BrowseOptions = {}): Promise<BrowsePage> {
   const qs = new URLSearchParams();
   if (opts.kind) qs.set('kind', opts.kind);
+  if (opts.kinds?.length) qs.set('kinds', opts.kinds.join(','));
   if (opts.q) qs.set('q', opts.q);
   if (opts.category) qs.set('category', opts.category);
   if (opts.sort) qs.set('sort', opts.sort);

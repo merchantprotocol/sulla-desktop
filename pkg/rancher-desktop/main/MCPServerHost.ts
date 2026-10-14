@@ -426,7 +426,7 @@ export class MCPServerHost {
           'The commands it returns are NOT directly callable tools — you invoke each one by',
           'passing the full command string to your shell tool (`exec` or `Bash`, whichever',
           'this surface provides). NEVER call execute_workflow for anything listed here —',
-          'execute_workflow is only for named Sulla routines/workflows.',
+          'execute_workflow is only for named Sulla workflows.',
           'Call this before assuming a capability is unavailable.',
         ].join(' '),
         inputSchema: {

@@ -1,6 +1,6 @@
 <!--
   AgentsTab — live view of every running "loop" in the system: the heartbeat,
-  active agents + subagents, scheduled routines, and spawned jobs.
+  active agents + subagents, scheduled workflows, and spawned jobs.
 
   Read-only roster. Polls the main-process `agents:list` IPC every 3s (v1 — a
   push channel replaces polling in Stage 3). Clicking an agent opens its
@@ -26,7 +26,7 @@
                   Agents.
                 </p>
                 <p class="mt-3 text-2xl tracking-tight text-slate-500 dark:text-slate-400">
-                  Everything running right now — agents, heartbeat, routines, jobs.
+                  Everything running right now — agents, heartbeat, workflows, jobs.
                 </p>
               </div>
 
@@ -261,7 +261,7 @@
             <!-- ── Routines ── -->
             <section>
               <h3 class="section-label">
-                Routines
+                Workflows
                 <span class="section-count">{{ data.routines.length }}</span>
               </h3>
               <div
@@ -292,7 +292,7 @@
                 v-else
                 class="text-sm text-slate-500 dark:text-slate-500 px-1"
               >
-                No scheduled routines.
+                No scheduled workflows.
               </p>
             </section>
 

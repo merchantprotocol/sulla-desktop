@@ -85,7 +85,7 @@
           <button
             type="button"
             class="tab import-btn"
-            :title="'Import a .routine.zip or a routine folder'"
+            :title="'Import a workflow bundle or workflow folder'"
             @click="onImport"
           >
             + Import
@@ -153,9 +153,9 @@
              message instead of blowing up with a DB connection error. -->
         <EmptyState
           v-if="routinesController.isEmpty.value"
-          kicker="No routines yet"
+          kicker="No workflows yet"
           title="Your stage is empty."
-          message="You haven't built a routine yet. Start from a template — some are waiting in your Library — or compose one from scratch on the canvas."
+          message="You haven't built a workflow yet. Start from a template — some are waiting in your Library — or compose one from scratch on the canvas."
         >
           <button
             type="button"
@@ -248,7 +248,7 @@
               class="btn accent large"
               @click="onNewBlank"
             >
-              ＋ Write a new routine
+              ＋ Write a new workflow
             </button>
             <div class="closer-sub">
               Start blank · or borrow from {{ templatesController.templates.value.length }} template{{ templatesController.templates.value.length === 1 ? '' : 's' }}
@@ -263,7 +263,7 @@
           v-if="routinesController.archived.value.length === 0"
           kicker="The vault is empty"
           title="Nothing archived."
-          message="No archived routines. When you archive one from Active, it lands here."
+          message="No archived workflows. When you archive one from Active, it lands here."
         >
           <button
             type="button"
@@ -277,7 +277,7 @@
         <template v-else>
           <ActSection
             act-num="Vault"
-            title="Archived routines"
+            title="Archived workflows"
             :count-label="archivedCountLabel"
           >
             <RoutineStrip
@@ -299,7 +299,7 @@
 
           <div class="closer">
             <div class="closer-sub">
-              Archived routines stay in the database — restore any of them and they return to Active.
+              Archived workflows stay in the database — restore any of them and they return to Active.
             </div>
           </div>
         </template>
@@ -456,7 +456,7 @@ const heroDek = computed(() => {
   const count = routinesController.routines.value.length;
   if (activeTab.value === 'mywork') {
     if (myWorkView.value === 'archive') {
-      return 'Archived routines preserved from the active set. Restore them any time.';
+      return 'Archived workflows preserved from the active set. Restore them any time.';
     }
     if (count === 0) {
       return 'Nothing running, nothing scheduled, nothing idle. Start from a template in your Library, or compose something new from the canvas.';
@@ -464,13 +464,13 @@ const heroDek = computed(() => {
     const plural = count === 1 ? '' : 's';
     const reclaimed = routinesController.stats.value.reclaimed;
 
-    return `${ count } routine${ plural }. ${ reclaimed } of human-equivalent work reclaimed this week. Each one a small constellation of agents, rehearsed until they run without you.`;
+    return `${ count } workflow${ plural }. ${ reclaimed } of human-equivalent work reclaimed this week. Each one a small constellation of agents, rehearsed until they run without you.`;
   }
   if (activeTab.value === 'library') {
-    return 'Your collected routines, skills, functions, and recipes. Everything installed from the marketplace or added by hand lives here.';
+    return 'Your collected workflows, agents, skills, functions, integrations, and recipes. Everything installed from the marketplace or added by hand lives here.';
   }
   if (activeTab.value === 'marketplace') {
-    return 'Routines, skills, functions, and recipes the community has published. Install one and it drops straight into your Library — reviewed before it lands here.';
+    return 'Workflows, agents, skills, functions, integrations, and recipes the community has published. Install one and it drops straight into your Library — reviewed before it lands here.';
   }
 
   return 'Four kinds, one home.';
@@ -479,7 +479,7 @@ const heroDek = computed(() => {
 const runningCountLabel = computed(() => {
   const n = routinesController.running.value.length;
 
-  return `${ n } routine${ n === 1 ? '' : 's' } live`;
+  return `${ n } workflow${ n === 1 ? '' : 's' } live`;
 });
 
 const scheduledCountLabel = computed(() => `${ routinesController.scheduled.value.length } upcoming`);
@@ -487,7 +487,7 @@ const scheduledCountLabel = computed(() => `${ routinesController.scheduled.valu
 const archivedCountLabel = computed(() => {
   const n = routinesController.archived.value.length;
 
-  return `${ n } routine${ n === 1 ? '' : 's' } archived`;
+  return `${ n } workflow${ n === 1 ? '' : 's' } archived`;
 });
 
 const ribbonStatusLabel = computed(() => {

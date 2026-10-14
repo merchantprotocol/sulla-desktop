@@ -309,7 +309,7 @@
             class="routines-back-btn"
             @click="onBackToRoutinesHome"
           >
-            ← All routines
+            ← All workflows
           </button>
         </template>
       </div>
@@ -387,7 +387,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   vault:         'Password Manager',
   account:       'My Account',
   history:       'History',
-  routines:      'Routines',
+  routines:      'Workflows',
   marketplace:   'Sulla Studio',
   labs:          'Labs',
   'file-editor': 'Editor',

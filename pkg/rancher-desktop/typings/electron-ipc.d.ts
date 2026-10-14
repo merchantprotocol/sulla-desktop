@@ -33,6 +33,9 @@ export interface MarketplaceBrowseRow {
   download_count:       number;
   created_at:           string;
   updated_at:           string;
+  kind_label?:          string;
+  desktop_only?:        boolean;
+  summary?:             Record<string, unknown> | null;
 }
 /**
  * IpcMainEvents describes events the renderer can send to the main process,
@@ -668,6 +671,7 @@ export interface IpcMainInvokeEvents {
   // a non-2xx response.
   'marketplace-browse':  (opts?: {
     kind?:     'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
+    kinds?:    ('routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration')[];
     q?:        string;
     category?: string;
     sort?:  'popular' | 'newest' | 'featured';
@@ -692,6 +696,20 @@ export interface IpcMainInvokeEvents {
     previousVersion?:  string;
     updated?:          boolean;
     warnings?:         string[];
+  } | { error: string };
+  'marketplace-install-all': (id: string, opts?: { overwrite?: boolean; replaces?: string }) => {
+    kind:              'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
+    slug:              string;
+    path:              string;
+    name:              string;
+    version:           string;
+    alreadyInstalled?: boolean;
+    previousVersion?:  string;
+    updated?:          boolean;
+    warnings?:         string[];
+  } | { error: string };
+  'marketplace-resolve': (kind: 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration', slug: string) => {
+    template: MarketplaceBrowseRow;
   } | { error: string };
   'marketplace-installed': () => {
     installed: {

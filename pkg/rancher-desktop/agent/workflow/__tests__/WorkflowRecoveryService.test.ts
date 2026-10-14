@@ -60,7 +60,7 @@ describe('WorkflowRecoveryService', () => {
 
     expect(notifications.create).toHaveBeenCalledTimes(1);
     expect(notifications.create).toHaveBeenCalledWith('workflow-paused-wfp-1', expect.objectContaining({
-      title: 'Routine paused: Jonathon Job Search',
+      title: 'Workflow paused: Jonathon Job Search',
     }));
   });
 });

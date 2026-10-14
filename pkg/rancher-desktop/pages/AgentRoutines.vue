@@ -206,7 +206,7 @@
         <ControlButton
           class="mode-toggle"
           :class="{ 'is-edit': mode === 'edit' }"
-          :title="mode === 'edit' ? 'Save (switch to run mode)' : 'Edit routine'"
+          :title="mode === 'edit' ? 'Save (switch to run mode)' : 'Edit workflow'"
           @click="toggleMode"
         >
           <svg
@@ -413,7 +413,7 @@
         type="button"
         class="routines-fab run-fab"
         :class="{ busy: isRunBusy, 'is-stop': isStopVisible, stalled: isStalled }"
-        :aria-label="isStopVisible ? 'Stop routine' : 'Run routine'"
+        :aria-label="isStopVisible ? 'Stop workflow' : 'Run workflow'"
         @click="isStopVisible ? onStopClick() : onRunClick()"
       >
         <svg
@@ -440,7 +440,7 @@
         </svg>
       </button>
       <div class="routines-fab-tip">
-        {{ isStopVisible ? (isStalled ? 'Stop routine (stalled)' : 'Stop routine') : 'Run routine' }}
+        {{ isStopVisible ? (isStalled ? 'Stop workflow (stalled)' : 'Stop workflow') : 'Run workflow' }}
       </div>
     </template>
 
@@ -572,7 +572,7 @@
           Workflow already active
         </div>
         <div class="dc-body">
-          This routine has an <b>{{ resumeModal.status }}</b> execution
+          This workflow has an <b>{{ resumeModal.status }}</b> execution
           started {{ formatRunStamp(resumeModal.startedAt) }}
           (<code>{{ resumeModal.executionId.slice(-8) }}</code>).
           Resume it from the last checkpoint, or start fresh?
@@ -1048,7 +1048,7 @@ function beginRun() {
   hasActiveExecution.value = true;
   isRunBusy.value = true;
   runError.value = null;
-  liveEvents.value = [{ t: stamp(), k: 'thk', msg: 'Loading routine…', badge: 'booting' }];
+  liveEvents.value = [{ t: stamp(), k: 'thk', msg: 'Loading workflow…', badge: 'booting' }];
   bumpStallTimer();
 }
 
@@ -2950,7 +2950,7 @@ onMounted(async() => {
       ipcRenderer.send('app-state:set-routine-context' as any, {
         mode: 'routine',
         id:   props.workflowId,
-        name: title.value || 'Routine',
+        name: title.value || 'Workflow',
       });
     } catch { /* non-fatal */ }
   }

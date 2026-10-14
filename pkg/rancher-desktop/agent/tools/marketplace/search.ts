@@ -1,16 +1,17 @@
 import { BaseTool, ToolResponse } from '../base';
 import { getMarketplaceClient, MarketplaceListing } from './MarketplaceClient';
 import { KINDS_HELP, normalizeKind } from './types';
+import { marketplaceKindLabel } from '@pkg/composables/marketplaceKinds';
 
 export function formatListingLine(r: MarketplaceListing): string {
-  const kind = r.kind === 'workflow' ? 'routine' : r.kind;
+  const kind = marketplaceKindLabel(r.kind);
   const installed = r.installed
     ? (r.installed.templateId === r.id && r.installed.version === r.version ? ' [installed]' : ` [installed v${ r.installed.version } — update available]`)
     : '';
   const by = r.author ? ` by ${ r.author }` : '';
   const desc = r.description ? `\n     ${ r.description.slice(0, 200) }${ r.description.length > 200 ? '…' : '' }` : '';
 
-  return `- ${ kind }/${ r.slug } v${ r.version } — ${ r.name }${ by } · ${ r.downloads } downloads${ installed }${ desc }`;
+  return `- ${ kind } · ${ r.slug } v${ r.version } — ${ r.name }${ by } · ${ r.downloads } downloads${ installed }${ desc }`;
 }
 
 export class MarketplaceSearchWorker extends BaseTool {
@@ -23,10 +24,20 @@ export class MarketplaceSearchWorker extends BaseTool {
     if (kindRaw && !kind) {
       return { successBoolean: false, responseString: `Invalid kind "${ kindRaw }". Must be one of: ${ KINDS_HELP }.` };
     }
+    const kindsRaw = Array.isArray(input.kinds)
+      ? input.kinds
+      : typeof input.kinds === 'string' ? input.kinds.split(',') : [];
+    const kinds = kindsRaw.map(normalizeKind);
+    if (kinds.some(value => value === null)) {
+      const invalid = kindsRaw.filter((_value, index) => !kinds[index]);
+
+      return { successBoolean: false, responseString: `Invalid kinds: ${ invalid.join(', ') }. Must be one of: ${ KINDS_HELP }.` };
+    }
     try {
       const { listings, total } = await getMarketplaceClient().search({
         query:    typeof input.query === 'string' ? input.query : undefined,
         kind:     kind ?? undefined,
+        kinds:    kinds.length > 0 ? kinds as NonNullable<typeof kind>[] : undefined,
         category: typeof input.category === 'string' ? input.category : undefined,
         limit:    typeof input.limit === 'number' ? input.limit : 25,
       });
