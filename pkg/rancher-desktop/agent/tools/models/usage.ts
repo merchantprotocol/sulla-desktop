@@ -17,6 +17,8 @@ type UsageRecord = Record<string, unknown> & {
 const USAGE_SETTINGS: Record<string, string> = {
   'claude-code': 'claudeCodeUsage',
   codex:         'codexUsage',
+  opencode:      'opencodeUsage',
+  cursor:        'cursorUsage',
 };
 
 export class ModelsUsageWorker extends BaseTool {

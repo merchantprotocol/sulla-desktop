@@ -15,6 +15,7 @@ import { getIntegrationService } from './IntegrationService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { integrations } from '../integrations/catalog';
 import { getSelectBoxProvider } from '../integrations/select_box';
+import { getCliStatus } from '../tools/models/shared';
 
 // ── Public types ─────────────────────────────────────────────────
 
@@ -175,6 +176,11 @@ class ModelProviderService {
         // All providers (including Claude Code) check the vault for connected accounts
         connected = await integrationService.isAnyAccountConnected(integration.id);
       } catch { /* not ready */ }
+      // OpenCode and Cursor own credentials in their CLIs. A runnable CLI is
+      // enough to show the provider; spawn-time errors give the exact login step.
+      if (!connected && (integration.id === 'opencode' || integration.id === 'cursor')) {
+        connected = (await getCliStatus(integration.id)).installed;
+      }
 
       providers.push({ id: integration.id, name: integration.name, connected });
     }
@@ -230,6 +236,16 @@ class ModelProviderService {
       // "Auto" sentinel on any failure. See codexModelCatalog.ts.
       const { listCodexModels } = await import('../languagemodels/codexModelCatalog');
       return listCodexModels();
+    }
+
+    if (providerId === 'opencode') {
+      const { listOpenCodeModels } = await import('../languagemodels/openCodeModelCatalog');
+      return listOpenCodeModels();
+    }
+
+    if (providerId === 'cursor') {
+      const { listCursorModels } = await import('../languagemodels/cursorModelCatalog');
+      return listCursorModels();
     }
 
     return [];
