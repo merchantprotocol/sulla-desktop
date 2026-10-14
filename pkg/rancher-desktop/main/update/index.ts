@@ -55,7 +55,7 @@ export interface UpdateState {
   available:  boolean;
   downloaded: boolean;
   error?:     Error;
-  info?:      LonghornUpdateInfo;
+  info?:      AnyUpdateInfo;
   progress?:  ProgressInfo;
 }
 const updateState: UpdateState = {
@@ -83,9 +83,15 @@ export function installQueuedUpdate(): void {
   autoUpdater.quitAndInstall();
 }
 
-function isLonghornUpdateInfo(info: UpdateInfo | LonghornUpdateInfo): info is LonghornUpdateInfo {
-  return (info as LonghornUpdateInfo).nextUpdateTime !== undefined;
-}
+/**
+ * Update info from either provider: LonghornProvider adds nextUpdateTime and
+ * unsupportedUpdateAvailable; electron-updater's GitHub provider (what the
+ * packaged mac app uses) sends plain UpdateInfo.
+ */
+type AnyUpdateInfo = UpdateInfo & Partial<Pick<LonghornUpdateInfo, 'nextUpdateTime' | 'unsupportedUpdateAvailable'>>;
+
+/** How often to re-check when the provider doesn't say (GitHub provider). */
+const DEFAULT_UPDATE_INTERVAL = 6 * 60 * 60 * 1000;
 
 /**
  * Return a new AppUpdater; if no update configuration is available, returns
@@ -158,9 +164,6 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     updateEvents.emit('checking');
   });
   updater.on('update-available', (info) => {
-    if (!isLonghornUpdateInfo(info)) {
-      throw new Error('updater: event update-available: info is not of type LonghornUpdateInfo');
-    }
     console.debug('update: update available:', info);
     updateState.available = true;
     updateState.info = info;
@@ -169,9 +172,6 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     updateEvents.emit('raw-state', updateState);
   });
   updater.on('update-not-available', (info) => {
-    if (!isLonghornUpdateInfo(info)) {
-      throw new Error('updater: event update-not-available: info is not of type LonghornUpdateInfo');
-    }
     console.debug('update: not available:', info);
     updateState.available = false;
     updateState.info = info;
@@ -190,9 +190,6 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     updateEvents.emit('raw-state', updateState);
   });
   updater.on('update-downloaded', (info) => {
-    if (!isLonghornUpdateInfo(info)) {
-      throw new Error('updater: event update-downloaded: info is not of type LonghornUpdateInfo');
-    }
     if (state === State.DOWNLOADING) {
       state = State.UPDATE_PENDING;
     }
@@ -313,11 +310,10 @@ async function triggerUpdateCheck() {
       return;
     }
 
-    if (!isLonghornUpdateInfo(result.updateInfo)) {
-      throw new Error('result.updateInfo is not of type LonghornUpdateInfo');
-    }
-    const updateInfo = result.updateInfo;
-    const givenTimeDelta = (updateInfo.nextUpdateTime || 0) - Date.now();
+    const updateInfo: AnyUpdateInfo = result.updateInfo;
+    const givenTimeDelta = updateInfo.nextUpdateTime
+      ? updateInfo.nextUpdateTime - Date.now()
+      : DEFAULT_UPDATE_INTERVAL;
 
     // Enforce at least one minute between checks, even if the server is reporting
     // bad times.
