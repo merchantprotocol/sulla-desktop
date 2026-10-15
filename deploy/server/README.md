@@ -1,5 +1,21 @@
 # Sulla server install kit
 
+## One-line install
+
+On a fresh Ubuntu 24.04 LTS server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo bash
+```
+
+When it finishes, it prints the exact line to paste on each additional server so it joins the cluster. That line has this form:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo K3S_URL=https://FIRST_SERVER_IP:6443 K3S_TOKEN=<token> bash
+```
+
+The kit is saved to `/opt/sulla/server`, and rerunning the line is safe. The step-by-step version is below.
+
 This kit turns one or more freshly installed Ubuntu 24.04 LTS servers into a native k3s cluster and deploys Sulla's PostgreSQL, Redis, and function runtimes.
 
 Sulla Desktop's built-in k3s runs **inside a Lima virtual machine**. Other physical machines cannot join that private cluster as nodes. A multi-server cluster therefore needs k3s installed natively on Ubuntu, which is what these scripts do.
