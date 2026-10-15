@@ -2930,7 +2930,13 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * Returns true if all required containers exist and are in "running" state.
    */
   private async areSullaServicesRunning(): Promise<boolean> {
-    const requiredServices = ['sulla_postgres', 'sulla_redis'];
+    const requiredServices = [
+      'sulla_postgres',
+      'sulla_redis',
+      'sulla_python_runtime',
+      'sulla_shell_runtime',
+      'sulla_node_runtime',
+    ];
 
     try {
       for (const service of requiredServices) {
@@ -2964,7 +2970,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Fetch settings from SullaSettingsModel
     // Escape '$' as '$$' so Docker Compose doesn't interpret them as variable references
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
-    const sullaServicePassword = escapeForCompose(await SullaSettingsModel.get('sullaServicePassword') || 'sulla_dev_password');
+    const sullaServicePassword = escapeForCompose(await SullaSettingsModel.getServicePassword());
 
     // Modify dynamic values like passwords
     if (compose.services?.postgres?.environment) {
@@ -3095,7 +3101,13 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * Waits for all Sulla Docker services to be healthy by checking their container status.
    */
   private async waitForSullaDockerServices(): Promise<void> {
-    const services = ['sulla_postgres', 'sulla_redis'];
+    const services = [
+      'sulla_postgres',
+      'sulla_redis',
+      'sulla_python_runtime',
+      'sulla_shell_runtime',
+      'sulla_node_runtime',
+    ];
 
     for (const service of services) {
       await this.waitForDockerServiceHealthy(service);

@@ -462,7 +462,7 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     const deploymentPath = path.join(this.tempSullaWorkdir, 'sulla-deployments.yaml');
 
     // Fetch settings from SullaSettingsModel
-    const sullaServicePassword = await SullaSettingsModel.get('sullaServicePassword') || 'sulla_dev_password';
+    const sullaServicePassword = await SullaSettingsModel.getServicePassword();
 
     const deployments = (SULLA_DEPLOYMENTS as unknown[]).map((doc: unknown) => {
       const deployment = doc as Record<string, unknown>;
@@ -473,7 +473,7 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
         const containers = podSpec?.containers as Record<string, unknown>[];
         if (containers?.[0]?.env) {
           containers[0].env = (containers[0].env as any[]).map((envVar: any) => {
-            if (envVar.name === 'POSTGRES_PASSWORD' || envVar.name === 'DB_POSTGRESDB_PASSWORD') {
+            if (envVar.name === 'POSTGRES_PASSWORD') {
               envVar.value = sullaServicePassword;
             }
             return envVar;
@@ -583,7 +583,7 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
 
     await this.progressTracker.action('Booting Virtual Container Environment...', 60, async() => {
       this.progressTracker.numeric('Booting Virtual Container Environment', 40, 100);
-      const containers = ['redis', 'postgres'];
+      const containers = ['postgres', 'redis', 'python-runtime', 'shell-runtime', 'node-runtime'];
 
       // Track each container individually
       for (const container of containers) {
