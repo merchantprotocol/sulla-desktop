@@ -4,6 +4,9 @@ metadata:
   name: redis
 spec:
   replicas: 1
+  # One writer per data volume: never run old and new pods side by side.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: redis
