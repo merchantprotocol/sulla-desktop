@@ -240,7 +240,7 @@ onMounted(load);
 </script>
 
 <style scoped>
-.usage-page { --usage-accent: var(--steel-400, #5096b3); min-height: 100%; padding: 44px clamp(24px, 5vw, 72px) 72px; background: var(--bg-page); color: var(--text-primary); overflow: auto; }
+.usage-page { --usage-accent: var(--steel-400, #5096b3); height: 100%; box-sizing: border-box; padding: 44px clamp(24px, 5vw, 72px) 72px; background: var(--bg-page); color: var(--text-primary); overflow: auto; }
 .usage-header, .section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
 .usage-header { margin: 0 auto 28px; max-width: 1280px; }
 h1, h2, p { margin: 0; }
