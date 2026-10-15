@@ -625,11 +625,15 @@ export interface IpcMainInvokeEvents {
   // install pipeline against local assets. Does NOT auto-start recipes —
   // the user clicks Launch separately from the library UI.
   'bundles-install-from-marketplace': (templateId: string) => {
-    kind:        'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
-    slug:        string;
-    templateId:  string;
-    name:        string;
-    installedAt: string;
+    kind:              'package' | 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
+    slug:              string;
+    path:              string;
+    name:              string;
+    version:           string;
+    alreadyInstalled?: boolean;
+    previousVersion?:  string;
+    updated?:          boolean;
+    warnings?:         string[];
   } | { error: string };
   'marketplace-topics': () => {
     topics: { key: string; label: string; blurb: string; icon: string; grp: 'job' | 'industry'; sort_order: number; active: number; package_count: number }[];
@@ -675,8 +679,8 @@ export interface IpcMainInvokeEvents {
   // takedown need a session. `{ error }` comes back on network failure or
   // a non-2xx response.
   'marketplace-browse':  (opts?: {
-    kind?:     'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
-    kinds?:    ('routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration')[];
+    kind?:     'package' | 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
+    kinds?:    ('package' | 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration')[];
     q?:        string;
     category?: string;
     sort?:  'popular' | 'newest' | 'featured';
@@ -692,7 +696,7 @@ export interface IpcMainInvokeEvents {
     template: MarketplaceBrowseRow & { manifest: Record<string, unknown> };
   } | { error: string };
   'marketplace-install': (id: string, opts?: { overwrite?: boolean; replaces?: string }) => {
-    kind:              'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
+    kind:              'package' | 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
     slug:              string;
     path:              string;
     name:              string;
@@ -703,7 +707,7 @@ export interface IpcMainInvokeEvents {
     warnings?:         string[];
   } | { error: string };
   'marketplace-install-all': (id: string, opts?: { overwrite?: boolean; replaces?: string }) => {
-    kind:              'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
+    kind:              'package' | 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
     slug:              string;
     path:              string;
     name:              string;
@@ -713,13 +717,13 @@ export interface IpcMainInvokeEvents {
     updated?:          boolean;
     warnings?:         string[];
   } | { error: string };
-  'marketplace-resolve': (kind: 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration', slug: string) => {
+  'marketplace-resolve': (kind: 'package' | 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration', slug: string) => {
     template: MarketplaceBrowseRow;
   } | { error: string };
   'marketplace-installed': () => {
     installed: {
       templateId: string;
-      kind:       'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
+      kind:       'package' | 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
       slug:       string;
       version:    string;
       path:       string;
@@ -808,7 +812,7 @@ export interface IpcMainInvokeEvents {
     version:           string;
     category:          string;
     authType?:         string;
-    source:            'resources' | 'user';
+    source:            'database' | 'resources' | 'user';
     bundledFunctions?: number;
     bundledSkills?:    number;
     updatedAt:         string;

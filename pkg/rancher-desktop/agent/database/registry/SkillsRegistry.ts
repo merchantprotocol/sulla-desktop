@@ -324,7 +324,7 @@ export class SkillsRegistry {
     if (this.refreshPromise) await this.refreshPromise.catch(() => undefined);
     if (this.initPromise) await this.initPromise.catch(() => undefined);
     // The write already landed in the table; no folder scan needed.
-    await this.rebuildAndCache(this.lastInitOptions, false);
+    await this.rebuildAndCache(this.lastInitOptions);
   }
 }
 

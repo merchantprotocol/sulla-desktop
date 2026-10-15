@@ -190,7 +190,7 @@ export async function publishPackage(args: {
   fs.writeFileSync(path.join(bundleRoot, 'README.md'), `# ${ args.title.trim() }\n\n${ args.description }\n`, 'utf8');
   try {
     await zipDirectory(bundleRoot, args.slug, zipPath);
-    const submit = await submitManifest({ kind: 'package', name: args.title.trim(), description: args.description, version, tags: args.topic ? [args.topic] : [], manifest });
+    const submit = await submitManifest({ kind: 'package', name: args.title.trim(), description: args.description, version, tags: args.topic ? [args.topic] : [], manifest: manifest as unknown as Record<string, unknown> });
     const upload = await uploadBundle(submit.id, zipPath);
     return { templateId: submit.id, slug: submit.slug, bundle_status: upload.bundle_status, bundle_size: upload.bundle_size, status: upload.status };
   } finally {
