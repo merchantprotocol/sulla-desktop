@@ -71,6 +71,18 @@ export function initSullaMarketplaceEvents(): void {
     }
   });
 
+  ipcMainProxy.handle('marketplace-topics', async() => {
+    try {
+      const { fetchMarketplaceTopics } = await import('@pkg/main/marketplace/client');
+
+      return { topics: await fetchMarketplaceTopics() } as any;
+    } catch (err) {
+      console.error('[Sulla] marketplace-topics failed:', err);
+
+      return errorOf(err);
+    }
+  });
+
   // ── Template detail + full manifest ──
   ipcMainProxy.handle('marketplace-detail', async(_event, id: string) => {
     if (!id || typeof id !== 'string') {

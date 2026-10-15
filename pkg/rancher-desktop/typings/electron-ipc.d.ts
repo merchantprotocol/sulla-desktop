@@ -631,6 +631,9 @@ export interface IpcMainInvokeEvents {
     name:        string;
     installedAt: string;
   } | { error: string };
+  'marketplace-topics': () => {
+    topics: { key: string; label: string; blurb: string; icon: string; grp: 'job' | 'industry'; sort_order: number; active: number; package_count: number }[];
+  } | { error: string };
 
   // Publish: build a sulla/v3 manifest from a local bundle folder, then
   // two-step submit (POST /submit-manifest → PUT /bundle).

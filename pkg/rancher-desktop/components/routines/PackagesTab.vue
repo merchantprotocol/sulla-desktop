@@ -319,7 +319,7 @@ import SullaCloudCard from '@pkg/components/account/SullaCloudCard.vue';
 import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
 import PackageCard from '@pkg/components/routines/PackageCard.vue';
 import PackageDetail from '@pkg/components/routines/PackageDetail.vue';
-import { PACKAGE_TOPICS, packageTopicLabel } from '@pkg/composables/packageTopics';
+import { loadPackageTopics, packageTopicLabel, usePackageTopics } from '@pkg/composables/packageTopics';
 import { useMarketplace } from '@pkg/composables/useMarketplace';
 import { packageMatches, usePackages, type InstalledPackage, type PackageRow } from '@pkg/composables/usePackages';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -333,6 +333,7 @@ const emit = defineEmits<{
 
 const pk = usePackages();
 const mp = useMarketplace(); // only for old single-item deep links
+const packageTopics = usePackageTopics();
 
 const view = ref<'browse' | 'installed'>('browse');
 const query = ref('');
@@ -345,13 +346,13 @@ const showingDetail = computed(() => !!pk.detail.value || pk.detailLoading.value
 // ── Sections ─────────────────────────────────────────────────────────
 
 const groups = computed(() => {
-  const known = PACKAGE_TOPICS.map(t => ({
+  const known = packageTopics.value.map(t => ({
     key:   t.key as string,
     label: t.label as string,
     blurb: t.blurb as string,
     items: pk.packages.value.filter(p => p.topic === t.key),
   }));
-  const other = pk.packages.value.filter(p => !PACKAGE_TOPICS.some(t => t.key === p.topic));
+  const other = pk.packages.value.filter(p => !packageTopics.value.some(t => t.key === p.topic));
   if (other.length) known.push({ key: 'other', label: 'More', blurb: 'Everything else.', items: other });
 
   return known.filter(g => g.items.length > 0);
@@ -526,6 +527,7 @@ function onOpenDetailEvent(ev: Event) {
 onMounted(() => {
   window.addEventListener('sulla:marketplace-open-detail', onOpenDetailEvent);
   pk.load().catch(() => undefined);
+  loadPackageTopics().catch(() => undefined);
   pk.loadInstalled().catch(() => undefined);
 });
 

@@ -200,6 +200,11 @@ export interface BrowsePage {
   limit:     number;
 }
 
+export interface MarketplaceTopic {
+  key: string; label: string; blurb: string; icon: string; grp: 'job' | 'industry';
+  sort_order: number; active: number; package_count: number;
+}
+
 async function optionalAuthHeaders(): Promise<Record<string, string>> {
   try {
     const token = await getCurrentAccessToken();
@@ -227,6 +232,13 @@ export async function browseTemplates(opts: BrowseOptions = {}): Promise<BrowseP
   const res = await publicFetch(`/marketplace/browse${ query ? `?${ query }` : '' }`);
 
   return readJsonOrThrow<BrowsePage>(res, 'browseTemplates');
+}
+
+export async function fetchMarketplaceTopics(): Promise<MarketplaceTopic[]> {
+  const res = await publicFetch('/marketplace/topics');
+  const body = await readJsonOrThrow<{ topics: MarketplaceTopic[] }>(res, 'fetchMarketplaceTopics');
+
+  return body.topics;
 }
 
 export async function fetchPublicTemplate(templateId: string): Promise<MarketplaceTemplateDetail> {
