@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import yaml from 'yaml';
@@ -107,6 +108,16 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
     const version: string = input.version || '1.0.0';
 
     const record: RunRecord = { slug, version, inputs, success: false, startedAt: new Date() };
+    let materializedDir: string | null = null;
+    let runtimeContainerPath: string | null = null;
+
+    const cleanupMaterialized = () => {
+      if (!materializedDir) return;
+      try { fs.rmSync(materializedDir, { recursive: true, force: true }) } catch (err) {
+        console.warn(`[function_run] Failed to remove temporary DB function ${ materializedDir }:`, err);
+      }
+      materializedDir = null;
+    };
 
     const lines: string[] = [];
     const failAndRecord = async(stage: RunRecord['errorStage'], msg: string): Promise<StructuredFunctionResult> => {
@@ -115,14 +126,35 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
       record.success = false;
       record.durationMs = Date.now() - record.startedAt.getTime();
       await writeRunHistory(record);
+      cleanupMaterialized();
       return { successBoolean: false, responseString: `${ lines.join('\n') }\n\n❌ ${ msg }` };
     };
 
     // ── 1. Locate function ──
     const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
     const functionsDir = resolveSullaFunctionsDir();
-    const fnDir = path.join(functionsDir, slug);
-    const yamlPath = path.join(fnDir, 'function.yaml');
+    let fnDir = path.join(functionsDir, slug);
+    let yamlPath = path.join(fnDir, 'function.yaml');
+
+    // Database definitions win. Materialize only for this invocation into a
+    // shared temp mount understood by the isolated runtime containers.
+    try {
+      const { FunctionDefinitionModel, materializeStoredFiles } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
+      const stored = await FunctionDefinitionModel.findBySlug(slug);
+      if (stored) {
+        const tempRoot = path.join(os.homedir(), '.cache', 'sulla-runtime', 'functions');
+        fs.mkdirSync(tempRoot, { recursive: true });
+        materializedDir = fs.mkdtempSync(path.join(tempRoot, `${ slug }-`));
+        materializeStoredFiles(materializedDir, stored.files);
+        yamlPath = path.join(materializedDir, 'function.yaml');
+        if (!fs.existsSync(yamlPath)) fs.writeFileSync(yamlPath, yaml.stringify(stored.manifest), 'utf8');
+        fnDir = materializedDir;
+        runtimeContainerPath = `/var/db-functions/${ path.basename(materializedDir) }`;
+      }
+    } catch (err) {
+      cleanupMaterialized();
+      console.warn(`[function_run] Database lookup failed for ${ slug }; trying the legacy folder:`, err);
+    }
 
     lines.push(`Function: ${ slug }`);
     lines.push(`Manifest: ${ yamlPath }`);
@@ -177,7 +209,7 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
       if (fs.existsSync(depsPath)) {
         lines.push(`Step 1 — Installing dependencies from ${ depsFile }...`);
         try {
-          const installResult = await runtimePost(`${ runtimeUrl }/install`, { name: slug, version });
+          const installResult = await runtimePost(`${ runtimeUrl }/install`, { name: slug, version, ...(runtimeContainerPath ? { path: runtimeContainerPath } : {}) });
           const summary = installResult.message
             ?? (installResult.installed ? `${ installResult.packages ?? 0 } packages installed` : 'already up-to-date');
           lines.push(`✓ ${ summary }`);
@@ -198,7 +230,7 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
     lines.push(`Step ${ loadStep } — Loading function into runtime...`);
     let loadResult: any;
     try {
-      loadResult = await runtimePost(`${ runtimeUrl }/load`, { name: slug, version });
+      loadResult = await runtimePost(`${ runtimeUrl }/load`, { name: slug, version, ...(runtimeContainerPath ? { path: runtimeContainerPath } : {}) });
       lines.push(`✓ Loaded — entrypoint: ${ loadResult.entrypoint }, version: ${ loadResult.version }`);
     } catch (err) {
       return failAndRecord('load', `Load failed: ${ (err as Error).message }`);
@@ -265,6 +297,12 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
     record.outputs = outputs;
     record.durationMs = durationMs;
     await writeRunHistory(record);
+    if (runtimeContainerPath) {
+      try { await runtimePost(`${ runtimeUrl }/unload`, { name: slug, version }) } catch (err) {
+        console.warn(`[function_run] Runtime unload failed for temporary function ${ slug }:`, err);
+      }
+    }
+    cleanupMaterialized();
 
     return { successBoolean: true, responseString: lines.join('\n'), outputs };
 }

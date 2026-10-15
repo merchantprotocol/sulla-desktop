@@ -10,7 +10,7 @@
  * YAML catalog is verified in a full rebuild.
  */
 
-import { loadCatalog } from './loader';
+import { loadCatalog, loadCatalogWithDatabase } from './loader';
 import { nativeIntegrations } from './native';
 
 import type { Integration } from './types';
@@ -47,10 +47,24 @@ const bundledCliEngines = Object.fromEntries(
 
 export const integrations: Record<string, Integration> = hasYamlIntegrations
   ? { ...bundledCliEngines, ...loaded.integrations }
-  : nativeIntegrations;
+  : { ...nativeIntegrations };
 
 /** Access the raw manifests (for uninstall, bundled-artifact fan-out, UI). */
 export const integrationManifests = loaded.manifests;
 
 /** Source of each loaded manifest (used by packageDirFor / iconPathFor). */
 export const integrationSources = loaded.sources;
+
+/** Refresh the long-lived exported objects after DB startup or an install. */
+export async function refreshIntegrationCatalog(): Promise<void> {
+  const next = await loadCatalogWithDatabase();
+  const nextIntegrations = Object.keys(next.integrations).length
+    ? { ...bundledCliEngines, ...next.integrations }
+    : { ...nativeIntegrations };
+  for (const key of Object.keys(integrations)) delete integrations[key];
+  Object.assign(integrations, nextIntegrations);
+  for (const key of Object.keys(integrationManifests)) delete integrationManifests[key];
+  Object.assign(integrationManifests, next.manifests);
+  for (const key of Object.keys(integrationSources)) delete integrationSources[key];
+  Object.assign(integrationSources, next.sources);
+}

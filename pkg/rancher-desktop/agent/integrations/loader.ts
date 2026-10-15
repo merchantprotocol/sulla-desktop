@@ -36,7 +36,7 @@ import {
 
 import type { Integration } from './types';
 
-export type ManifestSource = 'resources' | 'user';
+export type ManifestSource = 'database' | 'resources' | 'user';
 
 export interface LoadResult {
   /** Merged catalog, keyed by integration id — drop-in for the previous static `integrations` export. */
@@ -75,6 +75,27 @@ export function loadCatalog(): LoadResult {
   return {
     integrations, manifests, sources, errors,
   };
+}
+
+/** Postgres definitions win; folders remain a read-only compatibility fallback. */
+export async function loadCatalogWithDatabase(): Promise<LoadResult> {
+  const loaded = loadCatalog();
+  try {
+    const { IntegrationDefinitionModel } = await import('../database/models/MarketplaceArtifactModel');
+    for (const row of await IntegrationDefinitionModel.list()) {
+      const result = validateIntegrationManifest(row.manifest, row.slug);
+      if (!result.valid || !result.data) {
+        loaded.errors.push({ slug: row.slug, source: 'database', errors: result.errors });
+        continue;
+      }
+      loaded.manifests[row.slug] = result.data;
+      loaded.sources[row.slug] = 'database';
+      loaded.integrations[row.slug] = manifestToIntegration(result.data);
+    }
+  } catch (err) {
+    console.warn('[integrations] Database catalog unavailable; using legacy folders:', err);
+  }
+  return loaded;
 }
 
 interface LoadedEntry {
@@ -134,12 +155,14 @@ export function iconPathFor(
   const manifest = manifests[slug];
 
   if (!manifest?.icon) return null;
+  if (sources[slug] === 'database') return null;
 
   return path.join(packageDirFor(slug, sources[slug] ?? 'resources'), manifest.icon);
 }
 
 /** Resolve the directory holding an integration's package contents. */
 export function packageDirFor(slug: string, source: ManifestSource): string {
+  if (source === 'database') throw new Error(`Database integration ${ slug } has no persistent package directory`);
   const root = source === 'resources'
     ? resolveSullaIntegrationsDir()
     : resolveSullaUserIntegrationsDir();

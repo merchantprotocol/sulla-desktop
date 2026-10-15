@@ -256,9 +256,10 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
            enabled      = EXCLUDED.enabled,
            system       = EXCLUDED.system,
            content_hash = EXCLUDED.content_hash,
+           user_edited  = CASE WHEN workflows.source_kind = 'marketplace' AND $11 <> 'seeder' THEN true ELSE workflows.user_edited END,
            updated_at   = CURRENT_TIMESTAMP
          RETURNING *`,
-        [id, name, description, version, status, JSON.stringify(definition), enabled, sourceTemplateSlug, system, contentHash],
+        [id, name, description, version, status, JSON.stringify(definition), enabled, sourceTemplateSlug, system, contentHash, options.actor ?? 'user'],
       );
 
       const model = new WorkflowModel();

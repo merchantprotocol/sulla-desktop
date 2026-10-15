@@ -490,12 +490,15 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     // prepareSullaComposeFile for the compose path.
     const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
     const sullaFunctionsDir = resolveSullaFunctionsDir();
+    const sullaRuntimeTempDir = path.join(os.homedir(), '.cache', 'sulla-runtime', 'functions');
     await fs.promises.mkdir(sullaFunctionsDir, { recursive: true });
+    await fs.promises.mkdir(sullaRuntimeTempDir, { recursive: true });
 
     const yamlContent = deployments
       .map(doc => yaml.stringify(doc, { defaultStringType: 'QUOTE_DOUBLE' }))
       .join('---\n')
-      .replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
+      .replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir)
+      .replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
     await fs.promises.writeFile(deploymentPath, yamlContent, 'utf-8');
     await this.vm.lima('copy', deploymentPath, `${ MACHINE_NAME }:/tmp/sulla-deployments.yaml`);
   }

@@ -7,11 +7,12 @@ export class MarketplaceDownloadWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
+    const rawKind = typeof input.kind === 'string' ? input.kind.trim().toLowerCase() : '';
     const kind = normalizeKind(input.kind);
     const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
     const overwrite = input.overwrite === true;
 
-    if (!kind) {
+    if (!kind && rawKind !== 'package') {
       return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: ${ KINDS_HELP }.` };
     }
     if (!slug) {
@@ -19,6 +20,17 @@ export class MarketplaceDownloadWorker extends BaseTool {
     }
 
     try {
+      if (rawKind === 'package') {
+        const { findTemplateBySlug } = await import('@pkg/main/marketplace/client');
+        const { installTemplate } = await import('@pkg/main/marketplace/install');
+        const listing = await findTemplateBySlug('package', slug);
+        if (!listing) return { successBoolean: false, responseString: `Package not found: ${ slug }` };
+        const result = await installTemplate(listing.id, { overwrite });
+        return {
+          successBoolean: true,
+          responseString: `Installed package ${ listing.name } v${ result.version } in Postgres.${ result.warnings?.length ? `\n${ result.warnings.join('\n') }` : '' }`,
+        };
+      }
       const { listing, result } = await getMarketplaceClient().install(kind, slug, { overwrite });
 
       if (result.alreadyInstalled) {

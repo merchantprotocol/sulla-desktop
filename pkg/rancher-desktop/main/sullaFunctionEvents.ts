@@ -103,17 +103,34 @@ function normalizeIntegrations(value: unknown): FunctionIntegrationDep[] {
 export function initSullaFunctionEvents(): void {
   ipcMainProxy.handle('functions-list', async(): Promise<FunctionListItem[]> => {
     const root = getFunctionsDir();
-
-    if (!fs.existsSync(root)) {
-      return [];
-    }
-
-    const entries = fs.readdirSync(root, { withFileTypes: true });
+    const entries = fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }) : [];
     const items: FunctionListItem[] = [];
+    const databaseSlugs = new Set<string>();
+
+    try {
+      const { FunctionDefinitionModel } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
+      for (const row of await FunctionDefinitionModel.list()) {
+        const spec = row.manifest.spec ?? {};
+        if (!isValidRuntime(row.runtime)) continue;
+        databaseSlugs.add(row.slug);
+        items.push({
+          slug: row.slug,
+          name: row.name,
+          description: row.description,
+          runtime: row.runtime,
+          inputs: normalizeSchema(spec.inputs),
+          outputs: normalizeSchema(spec.outputs),
+          integrations: normalizeIntegrations(spec.integrations),
+        });
+      }
+    } catch (err) {
+      console.warn('[Sulla] functions-list database read failed; using legacy folders:', err);
+    }
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       if (entry.name.startsWith('.')) continue;
+      if (databaseSlugs.has(entry.name)) continue;
 
       const yamlPath = path.join(root, entry.name, 'function.yaml');
       if (!fs.existsSync(yamlPath)) continue;
