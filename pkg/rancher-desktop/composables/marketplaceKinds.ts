@@ -1,5 +1,6 @@
 /** Marketplace kind contract shared by renderer, main, and agent tools. */
 export const MARKETPLACE_KINDS = [
+  { kind: 'package', aliases: [], label: 'Packages', singular: 'Package', icon: '📦', color: '#5096b3', desktopOnly: false, cloudInstallable: true },
   { kind: 'routine', aliases: ['workflow'], label: 'Workflows', singular: 'Workflow', icon: '⛓', color: '#5096b3', desktopOnly: false, cloudInstallable: true },
   { kind: 'agent', aliases: [], label: 'Agents', singular: 'Agent', icon: '🤖', color: '#8b7cf6', desktopOnly: true, cloudInstallable: false },
   { kind: 'skill', aliases: [], label: 'Skills', singular: 'Skill', icon: '✦', color: '#e0a84a', desktopOnly: false, cloudInstallable: true },

@@ -3,15 +3,13 @@
  * agent's `marketplace/*` tools, so both land artifacts in the same place
  * with the same safety checks.
  *
- *   routine     → ~/sulla/routines/<dir>/
- *   skill       → ~/sulla/skills/<dir>/
- *   function    → ~/sulla/functions/<dir>/
- *   recipe      → ~/sulla/recipes/<dir>/      (Library → Recipes; recipe-start runs compose)
- *   integration → ~/sulla/integrations/<dir>/ (+ bundled functions/skills fanned out)
+ * Marketplace installs are persisted in Postgres. Legacy filesystem readers
+ * remain below for existing user-authored artifacts, but the active install
+ * path never writes under ~/sulla.
  *
  * <dir> is the bundle's single top-level directory, which is not always the
  * marketplace slug (e.g. slug "twenty-crm" ships as "twenty/"). Every install
- * writes a `.marketplace.json` marker so "already installed" and "update
+ * records marketplace template metadata so "already installed" and "update
  * available" are keyed on the template id, not on directory names.
  *
  * Zip safety: no symlinks, no path traversal, bounded entry count / size,
@@ -572,6 +570,60 @@ export async function installTemplate(
     throw new Error(`Unknown marketplace kind "${ kind }"`);
   }
 
+  // Marketplace downloads are imported into Postgres. The extracted bundle is
+  // only a staging format and is deleted before this call returns.
+  if (kind === 'package') {
+    const { installPackageManifest } = await import('./databaseInstaller');
+    const result = await installPackageManifest(detail.id, detail.manifest, detail.author_display);
+    return {
+      kind,
+      slug:             result.package.slug,
+      path:             `database:installed_packages/${ result.package.slug }`,
+      name:             detail.name ?? result.package.slug,
+      version:          result.package.version,
+      alreadyInstalled: false,
+      warnings:         result.skipped.map(item => `${ item.kind } "${ item.slug }" skipped: ${ item.reason }`),
+    };
+  }
+
+  // Agent listings already carry their complete sulla/v3 definition in the
+  // marketplace detail response; unlike file bundles, they have no required
+  // on-disk manifest to extract.
+  if (kind === 'agent') {
+    const { installStandaloneArtifact } = await import('./databaseInstaller');
+    const outcome = await installStandaloneArtifact(detail, { manifest: detail.manifest as Record<string, any>, files: {} }, opts.overwrite === true);
+    return {
+      kind,
+      slug:             detail.slug,
+      path:             `database:agent_definitions/${ detail.slug }`,
+      name:             detail.name ?? detail.slug,
+      version:          detail.version,
+      alreadyInstalled: !outcome.installed,
+      updated:          opts.overwrite === true && outcome.installed,
+      ...(outcome.reason ? { warnings: [outcome.reason] } : {}),
+    };
+  }
+
+  const dbExtracted = await fetchAndExtract(templateId);
+  try {
+    const { bundleToArtifact, installStandaloneArtifact, readBundleFiles } = await import('./databaseInstaller');
+    const artifact = bundleToArtifact(kind, readBundleFiles(dbExtracted.rootPath), detail.slug);
+    const outcome = await installStandaloneArtifact(detail, artifact, opts.overwrite === true);
+    return {
+      kind,
+      slug:             detail.slug,
+      path:             `database:${ kind === 'routine' ? 'workflows' : `${ kind }_definitions` }/${ detail.slug }`,
+      name:             detail.name ?? detail.slug,
+      version:          detail.version,
+      alreadyInstalled: !outcome.installed,
+      updated:          opts.overwrite === true && outcome.installed,
+      ...(outcome.reason ? { warnings: [outcome.reason] } : {}),
+    };
+  } finally {
+    rmrfSync(dbExtracted.tmpdir);
+  }
+
+  /* istanbul ignore next -- retained below for old source compatibility; all installs return above. */
   if (kind === 'agent') return installAgentTemplate(detail, opts);
 
   const existing = findInstalled(templateId) ?? (opts.replaces ? findInstalled(opts.replaces) : null);
@@ -815,22 +867,7 @@ function isSkillInstalled(slug: string): boolean {
 
 /** Filesystem marketplace installs plus marketplace-sourced database agents. */
 export async function listInstalledIncludingAgents(kinds: MarketplaceKind[] = MARKETPLACE_KINDS): Promise<InstalledArtifact[]> {
-  const installed = listInstalled(kinds.filter(kind => kind !== 'agent'));
-  if (!kinds.includes('agent')) return installed;
-
-  const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-  for (const agent of await agentDefinitionService.list()) {
-    if (agent.status === 'archive' || agent.source_kind !== 'marketplace' || !agent.marketplace_template_id) continue;
-    installed.push({
-      templateId:  agent.marketplace_template_id,
-      kind:        'agent',
-      slug:        agent.marketplace_slug ?? agent.slug,
-      name:        agent.name,
-      version:     agent.marketplace_version ?? agent.version ?? '1.0.0',
-      installedAt: agent.updated_at,
-      path:        `database:agent_definitions/${ agent.slug }`,
-    });
-  }
-
-  return installed;
+  const { listInstalledArtifacts } = await import('./databaseInstaller');
+  const allowed = new Set(kinds.filter(kind => kind !== 'package'));
+  return (await listInstalledArtifacts()).filter(item => allowed.has(item.kind)) as InstalledArtifact[];
 }

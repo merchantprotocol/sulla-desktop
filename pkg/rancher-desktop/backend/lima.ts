@@ -2995,12 +2995,15 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // is valid for Docker bind mounts inside the VM.
     const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
     const sullaFunctionsDir = resolveSullaFunctionsDir();
+    const sullaRuntimeTempDir = path.join(os.homedir(), '.cache', 'sulla-runtime', 'functions');
 
     await fs.promises.mkdir(sullaFunctionsDir, { recursive: true });
+    await fs.promises.mkdir(sullaRuntimeTempDir, { recursive: true });
 
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);
     composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
+    composeYaml = composeYaml.replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
   }
 

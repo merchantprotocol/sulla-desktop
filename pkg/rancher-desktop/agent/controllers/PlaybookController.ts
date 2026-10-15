@@ -1471,6 +1471,9 @@ export class PlaybookController<TState = any> {
           // at all — only references (integrationId, accountId, property).
           // The runtime fetches plaintexts just-in-time via /secrets/fetch.
           let mintedToken: string | null = null;
+          let materializedFunctionDir: string | null = null;
+          let materializedRuntimePath: string | null = null;
+          let functionRuntimeBaseUrl: string | null = null;
           const invocationId = `fn-${ step.nodeId }-${ Date.now() }-${
             Math.random().toString(36).slice(2, 8) }`;
           let runtime = '';
@@ -1484,7 +1487,18 @@ export class PlaybookController<TState = any> {
               '@pkg/agent/services/IntegrationService');
 
             const functionsDir = resolveSullaFunctionsDir();
-            const yamlPath = pathUtil.join(functionsDir, step.functionRef, 'function.yaml');
+            let yamlPath = pathUtil.join(functionsDir, step.functionRef, 'function.yaml');
+            const { FunctionDefinitionModel, materializeStoredFiles } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
+            const storedFunction = await FunctionDefinitionModel.findBySlug(step.functionRef);
+            if (storedFunction) {
+              const tempRoot = pathUtil.join(osUtil.homedir(), '.cache', 'sulla-runtime', 'functions');
+              fsSync.mkdirSync(tempRoot, { recursive: true });
+              materializedFunctionDir = fsSync.mkdtempSync(pathUtil.join(tempRoot, `${ step.functionRef }-`));
+              materializeStoredFiles(materializedFunctionDir, storedFunction.files);
+              yamlPath = pathUtil.join(materializedFunctionDir, 'function.yaml');
+              if (!fsSync.existsSync(yamlPath)) fsSync.writeFileSync(yamlPath, yaml.stringify(storedFunction.manifest), 'utf8');
+              materializedRuntimePath = `/var/db-functions/${ pathUtil.basename(materializedFunctionDir) }`;
+            }
 
             if (!fsSync.existsSync(yamlPath)) {
               throw new Error(`Function not found: ${ step.functionRef } (no function.yaml at ${ yamlPath })`);
@@ -1493,6 +1507,7 @@ export class PlaybookController<TState = any> {
             const manifest: any = yaml.parse(fsSync.readFileSync(yamlPath, 'utf-8')) || {};
             runtime = manifest?.spec?.runtime || '';
             const baseUrl = RUNTIME_URLS[runtime];
+            functionRuntimeBaseUrl = baseUrl;
             if (!baseUrl) {
               throw new Error(`Unknown runtime "${ runtime }" for function "${ step.functionRef }"`);
             }
@@ -1663,6 +1678,17 @@ export class PlaybookController<TState = any> {
               `invocation=${ invocationId } node=${ step.nodeId } fn=${ step.functionRef } runtime=${ runtime }`,
             );
 
+            const loadResponse = await fetch(`${ baseUrl }/load`, {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({
+                name:    step.functionRef,
+                version: 'HEAD',
+                ...(materializedRuntimePath ? { path: materializedRuntimePath } : {}),
+              }),
+            });
+            if (!loadResponse.ok) throw new Error(`Function load failed: HTTP ${ loadResponse.status }`);
+
             let resp: Response;
             try {
               resp = await fetch(`${ baseUrl }/invoke`, {
@@ -1755,6 +1781,19 @@ export class PlaybookController<TState = any> {
                 // best-effort — service sweep will clean up on TTL anyway
               }
               mintedToken = null;
+            }
+            if (materializedRuntimePath && functionRuntimeBaseUrl) {
+              try {
+                await fetch(`${ functionRuntimeBaseUrl }/unload`, {
+                  method:  'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body:    JSON.stringify({ name: step.functionRef, version: 'HEAD' }),
+                });
+              } catch { /* runtime restart also clears loaded state */ }
+            }
+            if (materializedFunctionDir) {
+              try { fsSync.rmSync(materializedFunctionDir, { recursive: true, force: true }) } catch { /* next cache sweep can remove it */ }
+              materializedFunctionDir = null;
             }
           }
 

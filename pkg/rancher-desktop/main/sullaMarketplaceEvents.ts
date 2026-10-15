@@ -26,6 +26,38 @@ const ipcMainProxy = getIpcMainProxy(console);
 const errorOf = (err: unknown) => ({ error: err instanceof Error ? err.message : String(err) });
 
 export function initSullaMarketplaceEvents(): void {
+  ipcMainProxy.handle('packages:install', async(_event, input: { templateId?: string } = {}) => {
+    const templateId = typeof input?.templateId === 'string' ? input.templateId.trim() : '';
+    if (!templateId) return { ok: false, package: { slug: '', version: '' }, installed: [], error: 'packages:install requires templateId' };
+    try {
+      const { fetchPublicTemplate } = await import('@pkg/main/marketplace/client');
+      const { installPackageManifest } = await import('@pkg/main/marketplace/databaseInstaller');
+      const detail = await fetchPublicTemplate(templateId);
+      if (detail.kind !== 'package') return { ok: false, package: { slug: detail.slug, version: detail.version }, installed: [], error: `Template ${ templateId } is not a package` };
+      return await installPackageManifest(templateId, detail.manifest, detail.author_display);
+    } catch (err) {
+      console.error('[Sulla] packages:install failed:', err);
+      return { ok: false, package: { slug: '', version: '' }, installed: [], error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMainProxy.handle('packages:uninstall', async(_event, input: { slug?: string } = {}) => {
+    const slug = typeof input?.slug === 'string' ? input.slug.trim() : '';
+    if (!slug) return { ok: false, removed: [], error: 'packages:uninstall requires slug' };
+    try {
+      const { uninstallPackage } = await import('@pkg/main/marketplace/databaseInstaller');
+      return await uninstallPackage(slug);
+    } catch (err) {
+      console.error('[Sulla] packages:uninstall failed:', err);
+      return { ok: false, removed: [], error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMainProxy.handle('packages:list-installed', async() => {
+    const { listInstalledPackages } = await import('@pkg/main/marketplace/databaseInstaller');
+    return listInstalledPackages();
+  });
+
   // ── Browse approved templates ──
   ipcMainProxy.handle('marketplace-browse', async(_event, opts = {}) => {
     try {

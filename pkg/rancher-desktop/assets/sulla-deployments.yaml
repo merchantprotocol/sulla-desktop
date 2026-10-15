@@ -194,6 +194,9 @@ spec:
         - mountPath: /var/functions
           name: sulla-functions
           readOnly: true
+        - mountPath: /var/db-functions
+          name: sulla-runtime-temp
+          readOnly: true
         - mountPath: /opt/sulla/cache/deps
           name: python-runtime-cache
         resources:
@@ -221,6 +224,10 @@ spec:
       - name: sulla-functions
         hostPath:
           path: "{{sullaFunctionsDir}}"
+          type: DirectoryOrCreate
+      - name: sulla-runtime-temp
+        hostPath:
+          path: "{{sullaRuntimeTempDir}}"
           type: DirectoryOrCreate
       - name: python-runtime-cache
         hostPath:
@@ -279,6 +286,9 @@ spec:
         - mountPath: /var/functions
           name: sulla-functions
           readOnly: true
+        - mountPath: /var/db-functions
+          name: sulla-runtime-temp
+          readOnly: true
         resources:
           limits:
             memory: "512Mi"
@@ -304,6 +314,10 @@ spec:
       - name: sulla-functions
         hostPath:
           path: "{{sullaFunctionsDir}}"
+          type: DirectoryOrCreate
+      - name: sulla-runtime-temp
+        hostPath:
+          path: "{{sullaRuntimeTempDir}}"
           type: DirectoryOrCreate
 ---
 apiVersion: v1
@@ -358,6 +372,9 @@ spec:
         - mountPath: /var/functions
           name: sulla-functions
           readOnly: true
+        - mountPath: /var/db-functions
+          name: sulla-runtime-temp
+          readOnly: true
         - mountPath: /opt/sulla/cache/node_modules
           name: node-runtime-cache
         resources:
@@ -385,6 +402,10 @@ spec:
       - name: sulla-functions
         hostPath:
           path: "{{sullaFunctionsDir}}"
+          type: DirectoryOrCreate
+      - name: sulla-runtime-temp
+        hostPath:
+          path: "{{sullaRuntimeTempDir}}"
           type: DirectoryOrCreate
       - name: node-runtime-cache
         hostPath:

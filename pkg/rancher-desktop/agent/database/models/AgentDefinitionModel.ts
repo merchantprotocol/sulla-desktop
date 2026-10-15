@@ -319,6 +319,7 @@ export class AgentDefinitionModel {
     if (patch.isBuiltin !== undefined) add('is_builtin', patch.isBuiltin);
     if (patch.builtinHash !== undefined) add('builtin_hash', patch.builtinHash);
     if (sets.length === 0) return AgentDefinitionModel.get(id);
+    sets.push("user_edited = CASE WHEN source_kind = 'marketplace' THEN true ELSE user_edited END");
     sets.push('updated_at = now()');
     params.push(id);
     let where = `id = $${ params.length }`;

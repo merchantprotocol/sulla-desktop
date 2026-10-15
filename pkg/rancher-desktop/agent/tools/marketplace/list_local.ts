@@ -1,6 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import {
+  FunctionDefinitionModel,
+  IntegrationDefinitionModel,
+  RecipeDefinitionModel,
+} from '../../database/models/MarketplaceArtifactModel';
+import { WorkflowModel } from '../../database/models/WorkflowModel';
 import { BaseTool, ToolResponse } from '../base';
 import { ARTIFACT_KINDS, ArtifactKind, isArtifactKind, KIND_LAYOUTS, normalizeKind } from './types';
 
@@ -43,6 +49,17 @@ export class MarketplaceListLocalWorker extends BaseTool {
           : `### skill (${ skills.length })\n  Database\n${ skills.map(skill => `  - ${ skill.slug } (${ skill.source_kind }${ skill.enabled ? '' : ', disabled' })`).join('\n') }`);
         continue;
       }
+      const databaseSlugs = new Set<string>();
+      if (kind === 'function') {
+        for (const artifact of await FunctionDefinitionModel.list()) databaseSlugs.add(artifact.slug);
+      } else if (kind === 'integration') {
+        for (const artifact of await IntegrationDefinitionModel.list()) databaseSlugs.add(artifact.slug);
+      } else if (kind === 'recipe') {
+        for (const artifact of await RecipeDefinitionModel.list()) databaseSlugs.add(artifact.slug);
+      } else if (kind === 'workflow') {
+        for (const workflow of await WorkflowModel.listAll()) databaseSlugs.add(workflow.id);
+      }
+
       const layout = KIND_LAYOUTS[kind];
       const root = layout.rootDir();
       const items: { slug: string; manifestExists: boolean }[] = [];
@@ -52,18 +69,21 @@ export class MarketplaceListLocalWorker extends BaseTool {
         for (const entry of entries) {
           if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
           const manifestExists = fs.existsSync(path.join(root, entry.name, layout.manifest));
-          items.push({ slug: entry.name, manifestExists });
+          if (!databaseSlugs.has(entry.name)) items.push({ slug: entry.name, manifestExists });
         }
       } catch {
         // Dir doesn't exist or unreadable — show as empty.
       }
 
-      total += items.length;
-      if (items.length === 0) {
-        blocks.push(`### ${ kind } (0)\n  ${ root } — empty`);
+      total += databaseSlugs.size + items.length;
+      if (databaseSlugs.size === 0 && items.length === 0) {
+        blocks.push(`### ${ kind } (0)\n  Database and ${ root } — empty`);
       } else {
-        const lines = items.map(i => `  - ${ i.slug }${ i.manifestExists ? '' : ' ⚠️ (missing manifest)' }`);
-        blocks.push(`### ${ kind } (${ items.length })\n  ${ root }\n${ lines.join('\n') }`);
+        const lines = [
+          ...[...databaseSlugs].sort().map(slug => `  - ${ slug } (database)`),
+          ...items.map(i => `  - ${ i.slug } (legacy file)${ i.manifestExists ? '' : ' ⚠️ (missing manifest)' }`),
+        ];
+        blocks.push(`### ${ kind } (${ lines.length })\n${ lines.join('\n') }`);
       }
     }
 

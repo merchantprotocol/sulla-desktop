@@ -741,6 +741,28 @@ export interface IpcMainInvokeEvents {
     action:  'deleted' | 'withdrawn';
   } | { error: string };
 
+  'packages:install': (input: { templateId: string }) => {
+    ok: boolean;
+    package: { slug: string; version: string };
+    installed: { kind: 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe'; slug: string }[];
+    skipped?: { kind: 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe'; slug: string; reason: string }[];
+    error?: string;
+  };
+  'packages:uninstall': (input: { slug: string }) => {
+    ok: boolean;
+    removed: { kind: 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe'; slug: string }[];
+    error?: string;
+  };
+  'packages:list-installed': () => {
+    slug: string;
+    version: string;
+    name: string;
+    title: string;
+    icon: string;
+    installedAt: string;
+    items: { kind: 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe'; slug: string }[];
+  }[];
+
   // Library — reads the local on-disk registries populated by marketplace installs
   // (plus manual folders). Each returns a flat list the Studio → Library tab
   // renders in its corresponding panel.

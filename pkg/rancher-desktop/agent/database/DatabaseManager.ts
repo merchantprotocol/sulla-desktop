@@ -59,6 +59,13 @@ export class DatabaseManager {
 
     await this.runMigrations();
 
+    try {
+      const { refreshIntegrationCatalog } = await import('@pkg/agent/integrations/catalog');
+      await refreshIntegrationCatalog();
+    } catch (error) {
+      console.warn('[DB] Database integration catalog refresh failed:', error);
+    }
+
     // Legacy agent folders are a one-time compatibility input. The DB row is
     // authoritative after the first successful insert; files remain untouched.
     try {

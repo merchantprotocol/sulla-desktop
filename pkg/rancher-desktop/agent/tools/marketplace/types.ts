@@ -101,7 +101,7 @@ export function normalizeKind(raw: unknown): ArtifactKind | null {
   return isArtifactKind(k) ? k : null;
 }
 
-export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
+export type MarketplaceKind = 'package' | 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
 
 /** Marketplace kind for an artifact kind. */
 export function toMarketplaceKind(kind: ArtifactKind): MarketplaceKind | null {

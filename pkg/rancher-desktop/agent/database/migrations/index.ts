@@ -12,6 +12,7 @@ import { up as up_0112, down as down_0112 } from './0112_add_project_assigned_ag
 import { up as up_0113, down as down_0113 } from './0113_bookmark_existing_artifacts';
 import { up as up_0114, down as down_0114 } from './0114_unify_agent_tab_jobs';
 import { up as up_0115, down as down_0115 } from './0115_create_skill_definitions';
+import { up as up_0116, down as down_0116 } from './0116_create_marketplace_packages';
 import { up as up_0098, down as down_0098 } from './0098_create_decisions';
 import { up as up_0099, down as down_0099 } from './0099_create_browser_bookmarks';
 import { up as up_0100, down as down_0100 } from './0100_create_reflex_engine';
@@ -205,4 +206,5 @@ export const migrationsRegistry = [
   { name: '0113_bookmark_existing_artifacts', up: up_0113, down: down_0113 },
   { name: '0114_unify_agent_tab_jobs', up: up_0114, down: down_0114 },
   { name: '0115_create_skill_definitions', up: up_0115, down: down_0115 },
+  { name: '0116_create_marketplace_packages', up: up_0116, down: down_0116 },
 ] as const;

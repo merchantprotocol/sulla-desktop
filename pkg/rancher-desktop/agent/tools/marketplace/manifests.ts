@@ -1,6 +1,6 @@
 import type { ToolManifest } from '../registry';
 
-const KINDS_DESC = 'Artifact kind. One of: workflow (alias: routine), agent, skill, function, integration, recipe.';
+const KINDS_DESC = 'Artifact kind. One of: package, workflow (alias: routine), agent, skill, function, integration, recipe.';
 
 export const marketplaceToolManifests: ToolManifest[] = [
   {
@@ -30,7 +30,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'download',
-    description: 'Install a marketplace listing using the same safe installer as the Marketplace tab. Agents are imported into the database; other kinds land under ~/sulla/. No-op if already installed; pass overwrite:true to reinstall/replace in place.',
+    description: 'Install a marketplace listing using the same database installer as the Marketplace tab. Packages install every embedded item in one all-or-nothing transaction. No artifact is persisted under ~/sulla/.',
     category:    'marketplace',
     schemaDef:   {
       kind:      { type: 'string', description: KINDS_DESC },
@@ -91,7 +91,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'list_local',
-    description: 'List local artifacts. Agents come from the database; other kinds are listed under ~/sulla/. Filterable by kind.',
+    description: 'List local artifacts from Postgres, with existing user-owned folders included as a legacy fallback. Filterable by kind.',
     category:    'marketplace',
     schemaDef:   {
       kind: { type: 'string', optional: true, description: KINDS_DESC + ' Omit to list all kinds.' },
