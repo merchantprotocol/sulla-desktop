@@ -40,6 +40,7 @@ export function initIntegrationOAuthEvents(): void {
       clientSecret?: string;
       accountId?:    string;
       extraScopes?:  string[];
+      deferPersistence?: boolean;
     },
   ): Promise<{ success: boolean; error?: string }> => {
     try {
@@ -52,6 +53,7 @@ export function initIntegrationOAuthEvents(): void {
         payload.clientSecret || '',
         payload.accountId,
         payload.extraScopes,
+        { deferPersistence: payload.deferPersistence },
       );
 
       console.log(`${ LOG_PREFIX } OAuth flow completed for ${ payload.integrationId }`);

@@ -163,12 +163,9 @@ function findActiveContractor(session: CloudSession): CloudContractor | null {
     ?? null;
 }
 
-async function buildStatus(lastError?: string): Promise<AuthStatus> {
-  const session = await loadSession();
-  if (!session) {
-    return { signedIn: false, userId: '', activeContractorId: '', phone: '', name: '', contractorCount: 0, lastError };
-  }
+function statusForSession(session: CloudSession, lastError?: string): AuthStatus {
   const active = findActiveContractor(session);
+
   return {
     signedIn:           true,
     userId:             session.userId,
@@ -178,6 +175,14 @@ async function buildStatus(lastError?: string): Promise<AuthStatus> {
     contractorCount:    session.contractors.length,
     lastError,
   };
+}
+
+async function buildStatus(lastError?: string): Promise<AuthStatus> {
+  const session = await loadSession();
+  if (!session) {
+    return { signedIn: false, userId: '', activeContractorId: '', phone: '', name: '', contractorCount: 0, lastError };
+  }
+  return statusForSession(session, lastError);
 }
 
 // ── Server calls ────────────────────────────────────────────
@@ -419,6 +424,7 @@ export async function getCurrentUserId(): Promise<string> {
 
 export function initSullaCloudAuthEvents(): void {
   const ipcMainProxy = getIpcMainProxy(console);
+  let pendingSignInGeneration: symbol | null = null;
 
   ipcMainProxy.handle('sulla-cloud:get-status', async(): Promise<AuthStatus> => {
     return buildStatus();
@@ -463,21 +469,36 @@ export function initSullaCloudAuthEvents(): void {
     return { ok: true, status: await buildStatus() };
   };
 
-  // On first run the VM's Postgres may still be booting, so saving the session
-  // can fail for a while. Keep trying for up to ~2 minutes before giving up.
-  const completeSignInWhenReady = async(data: VerifyResponse, notReadyError: string): Promise<AuthResult> => {
-    const deadline = Date.now() + 120_000;
-    for (let delay = 2_000; ; delay = Math.min(delay * 2, 15_000)) {
-      try {
-        return await completeSignIn(data);
-      } catch (err) {
-        if (Date.now() + delay > deadline) {
-          console.warn('[SullaCloudAuth] Could not save the Sulla Cloud session:', err);
-          return { ok: false, error: notReadyError, status: await buildStatus().catch(() => ({} as any)) };
+  // First run can authenticate with Sulla Cloud before Postgres has started.
+  // Return the accepted cloud session to the wizard immediately, retain it only
+  // in main-process memory, and keep retrying the encrypted vault write for the
+  // lifetime of this app process. A newer sign-in supersedes an older retry.
+  const completeSignInWhenReady = (data: VerifyResponse): AuthResult => {
+    const session = responseToSession(data);
+    const generation = Symbol(session.userId);
+
+    pendingSignInGeneration = generation;
+    void (async() => {
+      let delayMs = 1_000;
+
+      while (pendingSignInGeneration === generation) {
+        try {
+          await completeSignIn(data);
+          if (pendingSignInGeneration === generation) {
+            pendingSignInGeneration = null;
+          }
+          console.log('[SullaCloudAuth] Deferred first-run session persistence completed');
+
+          return;
+        } catch (err) {
+          console.warn(`[SullaCloudAuth] Database not ready for the first-run session; retrying in ${ delayMs }ms:`, err);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          delayMs = Math.min(delayMs * 2, 60_000);
         }
-        await new Promise(resolve => setTimeout(resolve, delay));
       }
-    }
+    })();
+
+    return { ok: true, status: statusForSession(session) };
   };
 
   ipcMainProxy.handle('sulla-cloud:verify-otp', async(_event: unknown, phone: string, code: string): Promise<AuthResult> => {
@@ -538,7 +559,7 @@ export function initSullaCloudAuthEvents(): void {
     // The code is spent and the tokens are in hand. On first run the VM's
     // Postgres may still be booting, so keep trying to persist the session
     // instead of forcing the user to request a new code.
-    const signedIn = await completeSignInWhenReady(result.data, 'Your email is verified, but Sulla is still starting up. Wait a minute, then send a new code.');
+    const signedIn = completeSignInWhenReady(result.data);
     return { ...signedIn, isNewUser: !!result.data.isNewUser };
   });
 
@@ -576,7 +597,7 @@ export function initSullaCloudAuthEvents(): void {
     } catch {
       return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.', status: await buildStatus().catch(() => ({} as any)) };
     }
-    const signedIn = await completeSignInWhenReady(data, 'Your Sulla Cloud account is ready, but Sulla is still starting up. Wait a minute, then try again.');
+    const signedIn = completeSignInWhenReady(data);
     return { ...signedIn, isNewUser };
   });
 

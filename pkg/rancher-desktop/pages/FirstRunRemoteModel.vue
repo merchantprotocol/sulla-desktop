@@ -5,7 +5,7 @@
         Choose the AI Sulla thinks with
       </h2>
       <p class="mb-6 frm-subtext">
-        Sulla runs on a subscription you already have. You'll sign in with that account once your workspace finishes setting up. No API keys, and you can switch any time in Settings.
+        Sulla runs on a subscription you already have. Pick one and sign in now. No API keys, and you can switch any time in Settings.
       </p>
 
       <div
@@ -21,6 +21,7 @@
           :aria-checked="selected === p.id"
           class="frm-option"
           :class="{ 'is-selected': selected === p.id }"
+          :disabled="isBusy && selected !== p.id"
           @click="select(p.id)"
         >
           <span
@@ -36,6 +37,22 @@
           <span class="frm-option-text">
             <span class="frm-option-name">Sign in with {{ p.name }}</span>
             <span class="frm-option-plan">Uses your {{ p.plan }} plan</span>
+            <span
+              v-if="selected === p.id && signInState === 'waiting'"
+              class="frm-option-status"
+            >Claude sign-in opens as soon as your workspace is ready — keep going.</span>
+            <span
+              v-else-if="selected === p.id && signInState === 'signing-in'"
+              class="frm-option-status"
+            >Signing in… finish in the window that opened.</span>
+            <span
+              v-else-if="selected === p.id && signInState === 'done'"
+              class="frm-option-status frm-option-success"
+            >Signed in ✓</span>
+            <span
+              v-else-if="selected === p.id && signInState === 'failed'"
+              class="frm-option-status frm-option-error"
+            >{{ signInError }} Click this card to retry.</span>
           </span>
         </button>
       </div>
@@ -67,10 +84,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 
 import {
-  FIRST_RUN_AI_PROVIDERS, FIRST_RUN_AI_PROVIDER_KEY, firstRunAiIconSrc, getFirstRunAiProvider, type FirstRunAiProviderId,
+  FIRST_RUN_AI_PROVIDERS, FIRST_RUN_AI_PROVIDER_KEY, firstRunAiIconSrc, firstRunAiSignInError,
+  firstRunAiSignInState, firstRunSelectedAiProvider, getFirstRunAiProvider, signInFirstRunAi,
+  type FirstRunAiProviderId,
 } from './firstRunAiProviders';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -83,10 +102,25 @@ const emit = defineEmits<{
 const providers = FIRST_RUN_AI_PROVIDERS;
 const selected = ref<FirstRunAiProviderId | ''>('');
 const error = ref<string | null>(null);
+const signInState = firstRunAiSignInState;
+const signInError = firstRunAiSignInError;
+const isBusy = computed(() => signInState.value === 'waiting' || signInState.value === 'signing-in');
+
+const saveSelection = (id: FirstRunAiProviderId) => {
+  void SullaSettingsModel.set(FIRST_RUN_AI_PROVIDER_KEY, id, 'string').catch((err) => {
+    console.warn('[FirstRun] AI provider choice will be selected after sign-in:', err);
+  });
+};
 
 const select = (id: FirstRunAiProviderId) => {
+  if (isBusy.value) return;
+  const alreadyDone = firstRunSelectedAiProvider.value === id && signInState.value === 'done';
+
   selected.value = id;
+  firstRunSelectedAiProvider.value = id;
   error.value = null;
+  saveSelection(id);
+  if (!alreadyDone) void signInFirstRunAi(id);
 };
 
 const handleNext = async() => {
@@ -96,22 +130,26 @@ const handleNext = async() => {
 
     return;
   }
-  try {
-    await SullaSettingsModel.set(FIRST_RUN_AI_PROVIDER_KEY, selected.value, 'string');
-  } catch (err) {
-    console.error('[FirstRun] Failed to save AI provider choice:', err);
-    error.value = `Failed to save: ${ err instanceof Error ? err.message : String(err) }`;
-
-    return;
+  saveSelection(selected.value);
+  if (firstRunSelectedAiProvider.value !== selected.value || signInState.value === 'idle' || signInState.value === 'failed') {
+    void signInFirstRunAi(selected.value);
   }
   emit('next');
 };
 
 onMounted(async() => {
+  if (firstRunSelectedAiProvider.value) {
+    selected.value = firstRunSelectedAiProvider.value;
+
+    return;
+  }
   try {
     const saved = await SullaSettingsModel.get(FIRST_RUN_AI_PROVIDER_KEY, '');
 
-    if (getFirstRunAiProvider(saved)) selected.value = saved as FirstRunAiProviderId;
+    if (getFirstRunAiProvider(saved)) {
+      selected.value = saved as FirstRunAiProviderId;
+      firstRunSelectedAiProvider.value = selected.value;
+    }
   } catch {
     // No saved choice — fine
   }
@@ -180,6 +218,25 @@ onMounted(async() => {
 .frm-option-plan {
   font-size: 13px;
   color: var(--text-muted);
+}
+
+.frm-option-status {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.frm-option-success {
+  color: var(--text-success);
+}
+
+.frm-option-error {
+  color: var(--text-error);
+}
+
+.frm-option:disabled {
+  cursor: default;
+  opacity: .55;
 }
 
 .frm-error-box {

@@ -503,7 +503,11 @@ async function handleCloudSubmit() {
       return;
     }
     cloudPassword.value = '';
-    await SullaSettingsModel.set('sullaCloudLinked', true, 'boolean');
+    // Cloud accepted the credentials. Don't make the wizard wait for the
+    // workspace database to persist this convenience flag.
+    void SullaSettingsModel.set('sullaCloudLinked', true, 'boolean').catch((err) => {
+      console.warn('[FirstRunWelcome] Could not save the cloud-linked flag yet:', err);
+    });
     step.value = 'sync';
   } catch (err) {
     cloudError.value = 'Could not reach Sulla Cloud. Check your connection and try again.';

@@ -46,6 +46,7 @@ interface OAuthSession {
 }
 
 let activeSession: OAuthSession | null = null;
+let pendingVaultPersistence: symbol | null = null;
 
 function stripAnsi(text: string): string {
   // eslint-disable-next-line no-control-regex
@@ -109,6 +110,17 @@ async function isVMRunning(): Promise<boolean> {
   });
 }
 
+async function isClaudeCliAvailable(): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const proc = childProcess.spawn(paths.limactl, ['shell', '0', '--', 'sh', '-lc', 'command -v claude >/dev/null 2>&1'], {
+      env: { ...process.env, LIMA_HOME: paths.lima },
+    });
+
+    proc.on('close', code => resolve(code === 0));
+    proc.on('error', () => resolve(false));
+  });
+}
+
 /**
  * Write the OAuth token into the running VM's /etc/claude-env so that
  * Claude Code can pick it up without a VM restart.
@@ -152,40 +164,58 @@ async function injectTokenIntoVM(token: string): Promise<void> {
  * exclusive — OAuth supersedes a manually-pasted key).
  */
 async function persistTokenToVault(token: string): Promise<void> {
-  try {
-    const svc = getIntegrationService();
-    // Wrap connection-status write in the suppression flag so the Integrations
-    // listener in agent/integrations/index.ts doesn't try to spin up a runtime
-    // client for claude-code (there is no IntegrationRegistry factory for it —
-    // credentials are consumed directly by ClaudeCodeService).
-    await withSuppressedConnectionStatus(async() => {
-      await svc.setMultipleValues([
-        {
-          integration_id: CLAUDE_INTEGRATION_ID,
-          account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
-          property:       'oauth_token',
-          value:          token,
-        },
-        {
-          integration_id: CLAUDE_INTEGRATION_ID,
-          account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
-          property:       'api_key',
-          value:          '',
-        },
-        {
-          integration_id: CLAUDE_INTEGRATION_ID,
-          account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
-          property:       'account_label',
-          value:          'Claude Code OAuth',
-        },
-      ]);
-      await svc.setConnectionStatus(CLAUDE_INTEGRATION_ID, true, CLAUDE_OAUTH_ACCOUNT_ID);
-      await svc.setActiveAccount(CLAUDE_INTEGRATION_ID, CLAUDE_OAUTH_ACCOUNT_ID);
-    });
-    console.log('[ClaudeOAuth] Token persisted to integration vault');
-  } catch (err) {
-    console.warn('[ClaudeOAuth] Failed to persist token to integration vault:', err);
-  }
+  const svc = getIntegrationService();
+  // Wrap connection-status write in the suppression flag so the Integrations
+  // listener in agent/integrations/index.ts doesn't try to spin up a runtime
+  // client for claude-code (there is no IntegrationRegistry factory for it —
+  // credentials are consumed directly by ClaudeCodeService).
+  await withSuppressedConnectionStatus(async() => {
+    await svc.setMultipleValues([
+      {
+        integration_id: CLAUDE_INTEGRATION_ID,
+        account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
+        property:       'oauth_token',
+        value:          token,
+      },
+      {
+        integration_id: CLAUDE_INTEGRATION_ID,
+        account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
+        property:       'api_key',
+        value:          '',
+      },
+      {
+        integration_id: CLAUDE_INTEGRATION_ID,
+        account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
+        property:       'account_label',
+        value:          'Claude Code OAuth',
+      },
+    ]);
+    await svc.setConnectionStatus(CLAUDE_INTEGRATION_ID, true, CLAUDE_OAUTH_ACCOUNT_ID);
+    await svc.setActiveAccount(CLAUDE_INTEGRATION_ID, CLAUDE_OAUTH_ACCOUNT_ID);
+  });
+  console.log('[ClaudeOAuth] Token persisted to integration vault');
+}
+
+function persistTokenWhenReady(token: string): void {
+  const generation = Symbol('claude-oauth');
+
+  pendingVaultPersistence = generation;
+  void (async() => {
+    let delayMs = 1_000;
+
+    while (pendingVaultPersistence === generation) {
+      try {
+        await persistTokenToVault(token);
+        if (pendingVaultPersistence === generation) pendingVaultPersistence = null;
+
+        return;
+      } catch (err) {
+        console.warn(`[ClaudeOAuth] Database not ready for the OAuth token; retrying in ${ delayMs }ms:`, err);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        delayMs = Math.min(delayMs * 2, 60_000);
+      }
+    }
+  })();
 }
 
 // claude.ai's login session cookie.
@@ -292,12 +322,26 @@ export function initClaudeOAuthEvents(): void {
   /**
    * Start the OAuth flow. Returns the captured token, or an error message.
    */
-  ipcMainProxy.handle('claude-oauth:start', async(event: Electron.IpcMainInvokeEvent): Promise<{ token?: string; error?: string }> => {
+  ipcMainProxy.handle('claude-oauth:start', async(
+    event: Electron.IpcMainInvokeEvent,
+    options: { waitForReady?: boolean } = {},
+  ): Promise<{ token?: string; error?: string }> => {
     if (activeSession) killActiveSession();
 
-    // Bail out early with a clear message if the VM isn't ready.
-    if (!await isVMRunning()) {
-      return { error: 'The Lima VM is not running yet. Wait for Sulla Desktop to finish starting up, then try again.' };
+    if (!await isVMRunning() || !await isClaudeCliAvailable()) {
+      if (!options.waitForReady) {
+        return { error: 'Claude sign-in needs the workspace VM and Claude CLI. Wait for setup to finish, then try again.' };
+      }
+
+      try {
+        event.sender.send('claude-oauth:progress', 'Claude sign-in opens as soon as your workspace is ready — keep going.');
+      } catch { /* window closed */ }
+
+      let delayMs = 1_000;
+      while (!await isVMRunning() || !await isClaudeCliAvailable()) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        delayMs = Math.min(delayMs * 2, 10_000);
+      }
     }
 
     return await new Promise((resolve) => {
@@ -335,9 +379,7 @@ export function initClaudeOAuthEvents(): void {
           injectTokenIntoVM(result.token).catch((err) => {
             console.warn('[ClaudeOAuth] Failed to inject token into VM:', err);
           });
-          persistTokenToVault(result.token).catch((err) => {
-            console.warn('[ClaudeOAuth] Failed to persist token to vault:', err);
-          });
+          persistTokenWhenReady(result.token);
         }
         resolve(result);
       };

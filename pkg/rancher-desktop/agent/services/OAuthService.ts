@@ -20,6 +20,15 @@ const DEFAULT_REFRESH_BUFFER_SECONDS = 300;
 const UNKNOWN_EXPIRY_REFRESH_AFTER_MS = 55 * 60 * 1000;
 const REFRESH_RETRY_DELAY_MS = 60 * 1000;
 
+export interface OAuthFlowOptions {
+  /**
+   * Return as soon as the provider has issued tokens, then keep the token set
+   * in main-process memory until Postgres accepts the write. Used by first run,
+   * where the browser sign-in can finish before the workspace database boots.
+   */
+  deferPersistence?: boolean;
+}
+
 // ─── DB row shape ─────────────────────────────────────────────────
 
 interface OAuthTokenRow {
@@ -96,6 +105,8 @@ export function getOAuthService(): OAuthService {
 // ─── Service ──────────────────────────────────────────────────────
 
 export class OAuthService {
+  private pendingPersistence = new Map<string, symbol>();
+
   // ── Initiate OAuth flow ───────────────────────────────────────
 
   /**
@@ -121,6 +132,7 @@ export class OAuthService {
     clientSecret: string,
     accountId = 'default',
     extraScopes: string[] = [],
+    options: OAuthFlowOptions = {},
   ): Promise<OAuthTokenSet> {
     const provider = getOAuthProvider(providerId);
     if (!provider) {
@@ -208,15 +220,29 @@ export class OAuthService {
       // Let the provider do post-processing
       await provider.onTokenReceived(tokens, { integrationId, accountId, providerId, clientId: effectiveClientId });
 
-      // Persist tokens
-      await this.storeTokens(integrationId, accountId, providerId, tokens);
-
-      // Mark integration as connected
-      const integrationService = getIntegrationService();
-      await integrationService.setConnectionStatus(integrationId, true, accountId);
-
-      // Schedule proactive refresh
-      this.scheduleRefresh(integrationId, accountId, providerId, effectiveClientId, effectiveClientSecret, tokens);
+      if (options.deferPersistence) {
+        // First run begins while Postgres is still installing. The provider has
+        // already authenticated the user, so don't hold the UI on a database
+        // write. Tokens stay only in this process until the full persistence
+        // tail succeeds; retries continue for the lifetime of the app.
+        this.persistTokensWhenReady(
+          integrationId,
+          accountId,
+          providerId,
+          effectiveClientId,
+          effectiveClientSecret,
+          tokens,
+        );
+      } else {
+        await this.persistTokensAndConnection(
+          integrationId,
+          accountId,
+          providerId,
+          effectiveClientId,
+          effectiveClientSecret,
+          tokens,
+        );
+      }
 
       return tokens;
     } catch (err) {
@@ -229,6 +255,61 @@ export class OAuthService {
         authWindow.destroy();
       }
     }
+  }
+
+  private async persistTokensAndConnection(
+    integrationId: string,
+    accountId: string,
+    providerId: string,
+    clientId: string,
+    clientSecret: string,
+    tokens: OAuthTokenSet,
+  ): Promise<void> {
+    await this.storeTokens(integrationId, accountId, providerId, tokens);
+    await getIntegrationService().setConnectionStatus(integrationId, true, accountId);
+    this.scheduleRefresh(integrationId, accountId, providerId, clientId, clientSecret, tokens);
+  }
+
+  private persistTokensWhenReady(
+    integrationId: string,
+    accountId: string,
+    providerId: string,
+    clientId: string,
+    clientSecret: string,
+    tokens: OAuthTokenSet,
+  ): void {
+    const key = timerKey(integrationId, accountId);
+    const generation = Symbol(key);
+
+    // A second sign-in supersedes the older in-memory token set so a delayed
+    // retry can never overwrite fresher credentials.
+    this.pendingPersistence.set(key, generation);
+    void (async() => {
+      let delayMs = 1_000;
+
+      while (this.pendingPersistence.get(key) === generation) {
+        try {
+          await this.persistTokensAndConnection(
+            integrationId,
+            accountId,
+            providerId,
+            clientId,
+            clientSecret,
+            tokens,
+          );
+          if (this.pendingPersistence.get(key) === generation) {
+            this.pendingPersistence.delete(key);
+          }
+          console.log(`${ LOG_PREFIX } Deferred token persistence completed for ${ integrationId }/${ accountId }`);
+
+          return;
+        } catch (err) {
+          console.warn(`${ LOG_PREFIX } Database not ready for ${ integrationId }/${ accountId }; retrying token persistence in ${ delayMs }ms:`, err);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          delayMs = Math.min(delayMs * 2, 60_000);
+        }
+      }
+    })();
   }
 
   // ── Embedded auth window (in-app browser) ─────────────────────
@@ -837,6 +918,7 @@ export class OAuthService {
   // ── Shutdown ──────────────────────────────────────────────────
 
   shutdown(): void {
+    this.pendingPersistence.clear();
     for (const [key, timer] of refreshTimers) {
       clearTimeout(timer);
     }

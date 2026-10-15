@@ -4,8 +4,17 @@
  */
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { ref } from 'vue';
 
 export type FirstRunAiProviderId = 'claude-code' | 'codex' | 'grok';
+export type FirstRunAiSignInState = 'idle' | 'waiting' | 'signing-in' | 'done' | 'failed';
+
+// Module-scoped refs survive wizard step changes, so the Finishing screen can
+// observe an OAuth attempt started on Your AI without launching it again.
+export const firstRunSelectedAiProvider = ref<FirstRunAiProviderId | ''>('');
+export const firstRunAiSignInState = ref<FirstRunAiSignInState>('idle');
+export const firstRunAiSignInError = ref('');
+let signInAttempt: Promise<string | null> | null = null;
 
 export interface FirstRunAiProvider {
   id:   FirstRunAiProviderId;
@@ -50,26 +59,57 @@ export function firstRunAiIconSrc(icon: string): string | null {
  * failure, or null on success.
  */
 export async function signInFirstRunAi(id: FirstRunAiProviderId): Promise<string | null> {
-  try {
-    if (id === 'claude-code') {
-      // `claude setup-token` in the VM, driven over a PTY.
-      const result = await ipcRenderer.invoke('claude-oauth:start');
+  firstRunSelectedAiProvider.value = id;
+  if (signInAttempt) return signInAttempt;
 
-      if (result?.error) return result.error;
-      if (!result?.token) return 'Sign-in finished without a token. Try again.';
-    } else {
-      const result = await ipcRenderer.invoke('integration-oauth:start', {
-        integrationId: id,
-        providerId:    id,
-        accountId:     'oauth',
-      });
+  firstRunAiSignInState.value = id === 'claude-code' ? 'waiting' : 'signing-in';
+  firstRunAiSignInError.value = '';
 
-      if (!result?.success) return result?.error || 'Sign-in failed. Try again.';
+  const onClaudeUrl = () => {
+    firstRunAiSignInState.value = 'signing-in';
+  };
+
+  if (id === 'claude-code') ipcRenderer.on('claude-oauth:url', onClaudeUrl);
+
+  signInAttempt = (async() => {
+    try {
+      if (id === 'claude-code') {
+        // Claude has no direct OAuth provider implementation. Its supported
+        // path is `claude setup-token` inside Lima, so main waits for the VM +
+        // CLI and opens the auth window automatically when both are available.
+        const result = await ipcRenderer.invoke('claude-oauth:start', { waitForReady: true });
+
+        if (result?.error) throw new Error(result.error);
+        if (!result?.token) throw new Error('Sign-in finished without a token. Try again.');
+      } else {
+        const result = await ipcRenderer.invoke('integration-oauth:start', {
+          integrationId:     id,
+          providerId:        id,
+          accountId:         'oauth',
+          deferPersistence:  true,
+        });
+
+        if (!result?.success) throw new Error(result?.error || 'Sign-in failed. Try again.');
+      }
+
+      // Main acknowledges immediately, then waits in the background for the
+      // token row before selecting the provider and closing first run.
+      await ipcRenderer.invoke('first-run-ai:connected', id);
+      firstRunAiSignInState.value = 'done';
+
+      return null;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+
+      firstRunAiSignInError.value = message;
+      firstRunAiSignInState.value = 'failed';
+
+      return message;
+    } finally {
+      if (id === 'claude-code') ipcRenderer.removeListener('claude-oauth:url', onClaudeUrl);
+      signInAttempt = null;
     }
-    await ipcRenderer.invoke('first-run-ai:connected', id);
+  })();
 
-    return null;
-  } catch (err) {
-    return err instanceof Error ? err.message : String(err);
-  }
+  return signInAttempt;
 }
