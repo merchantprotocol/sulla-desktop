@@ -51,7 +51,7 @@
               Sulla Studio
             </div>
             <div class="brand-sub">
-              Agent assets + packages
+              Agent assets + use cases
             </div>
           </div>
         </div>
@@ -80,7 +80,7 @@
             :class="{ on: activeTab === 'marketplace' }"
             @click="activeTab = 'marketplace'"
           >
-            Packages
+            Use Cases
           </button>
           <button
             type="button"
@@ -439,7 +439,7 @@ const heroKicker = computed(() => {
   case 'mywork':
     return myWorkView.value === 'archive' ? 'The Vault' : 'The Cast';
   case 'library':     return 'The Library';
-  case 'marketplace': return 'Packages';
+  case 'marketplace': return 'Use Cases';
   default:            return 'The Studio';
   }
 });
@@ -448,7 +448,7 @@ const heroTitle = computed(() => {
   switch (activeTab.value) {
   case 'mywork':      return myWorkView.value === 'archive' ? 'Archive.' : 'My Work.';
   case 'library':     return 'Library.';
-  case 'marketplace': return 'Packages.';
+  case 'marketplace': return 'Use Cases.';
   default:            return 'Studio.';
   }
 });
@@ -468,10 +468,10 @@ const heroDek = computed(() => {
     return `${ count } workflow${ plural }. ${ reclaimed } of human-equivalent work reclaimed this week. Each one a small constellation of agents, rehearsed until they run without you.`;
   }
   if (activeTab.value === 'library') {
-    return 'Your collected workflows, agents, skills, functions, integrations, and recipes. Everything installed from a package or added by hand lives here.';
+    return 'Your collected workflows, agents, skills, functions, integrations, and recipes. Everything installed from a use case or added by hand lives here.';
   }
   if (activeTab.value === 'marketplace') {
-    return 'Get Sulla doing a new job in one click. Each package brings everything it needs.';
+    return 'Get Sulla doing a new job in one click. Each use case brings everything it needs.';
   }
 
   return 'Four kinds, one home.';

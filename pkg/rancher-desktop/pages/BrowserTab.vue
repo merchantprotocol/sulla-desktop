@@ -395,7 +395,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   account:       'My Account',
   history:       'History',
   routines:      'Workflows',
-  marketplace:   'Packages',
+  marketplace:   'Use Cases',
   labs:          'Labs',
   'file-editor': 'Editor',
   terminal:      'Terminal',

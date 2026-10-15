@@ -117,8 +117,8 @@ function dispatch(target: Electron.BrowserWindow, rawUrl: string): void {
   const section = parsed.hostname;
   const action = parsed.pathname.replace(/^\/+/, '');
 
-  // sulla://packages/install is the new name; marketplace stays for old links.
-  if ((section === 'marketplace' || section === 'packages') && action === 'install') {
+  // Use Cases is the current name; marketplace and packages stay working.
+  if ((section === 'marketplace' || section === 'packages' || section === 'use-cases') && action === 'install') {
     const id = parsed.searchParams.get('id');
     if (!id) {
       console.warn(`[deep-link] ${ section }/install missing id param:`, rawUrl);

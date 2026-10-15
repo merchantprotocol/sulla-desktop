@@ -87,7 +87,7 @@ function isMissingHandler(err: unknown): boolean {
   return /no handler registered/i.test(err instanceof Error ? err.message : String(err));
 }
 
-const NOT_AVAILABLE = 'Installing packages needs a newer Sulla Desktop. Update and try again.';
+const NOT_AVAILABLE = 'Installing use cases needs a newer Sulla Desktop. Update and try again.';
 
 export const packagesIpc = {
   async install(templateId: string): Promise<PackageInstallResult> {
@@ -240,7 +240,7 @@ export function usePackages() {
     try {
       const res = await invoke('marketplace-detail', id);
       if (!res || 'error' in res) {
-        detailError.value = String(res?.error ?? 'Could not load that package.');
+        detailError.value = String(res?.error ?? 'Could not load that use case.');
 
         return;
       }

@@ -3,14 +3,14 @@
     class="packages"
     :class="{ 'is-detail': showingDetail }"
   >
-    <!-- Getting a package downloads it from Sulla Cloud, which needs a
+    <!-- Getting a use case downloads it from Sulla Cloud, which needs a
          session. Browsing doesn't, so the gate only appears on Get. -->
     <div
       v-if="signInFor"
       class="signin-gate"
     >
       <SullaCloudCard
-        :rationale="`Sign in to Sulla Cloud to get ${signInFor.name}. Browsing packages doesn't need an account.`"
+        :rationale="`Sign in to Sulla Cloud to get ${signInFor.name}. Browsing use cases doesn't need an account.`"
         @signed-in="onSignedIn"
       />
       <button
@@ -18,7 +18,7 @@
         class="link-btn"
         @click="signInFor = null"
       >
-        ← Back to packages
+        ← Back to use cases
       </button>
     </div>
 
@@ -51,20 +51,20 @@
       v-else-if="pk.detailLoading.value"
       class="note"
     >
-      Loading package…
+      Loading use case…
     </div>
 
     <div
       v-else-if="pk.detailError.value"
       class="note error"
     >
-      <p>Couldn't open that package: {{ pk.detailError.value }}</p>
+      <p>Couldn't open that use case: {{ pk.detailError.value }}</p>
       <button
         type="button"
         class="link-btn"
         @click="pk.clearDetail()"
       >
-        ← Back to packages
+        ← Back to use cases
       </button>
     </div>
 
@@ -97,14 +97,14 @@
           v-if="pk.isLoading.value && pk.packages.value.length === 0"
           class="note"
         >
-          Loading packages…
+          Loading use cases…
         </div>
 
         <div
           v-else-if="pk.error.value"
           class="note error"
         >
-          <p>Couldn't load packages: {{ pk.error.value }}</p>
+          <p>Couldn't load use cases: {{ pk.error.value }}</p>
           <button
             type="button"
             class="link-btn"
@@ -118,8 +118,8 @@
           v-else-if="pk.packages.value.length === 0"
           class="empty-state"
         >
-          <h2>No packages yet</h2>
-          <p>Packages are ready-made jobs for Sulla, each one a single download with everything it needs. When the first ones are published they'll show up here.</p>
+          <h2>No use cases yet</h2>
+          <p>Use cases are ready-made jobs for Sulla, each one a single download with everything it needs. When the first ones are published they'll show up here.</p>
         </div>
 
         <template v-else>
@@ -135,7 +135,7 @@
                 type="search"
                 placeholder="What do you want Sulla to do?"
                 autocomplete="off"
-                aria-label="Search packages"
+                aria-label="Search use cases"
                 @focus="searchFocused = true"
                 @blur="onSearchBlur"
               >
@@ -274,7 +274,7 @@
           class="empty-state"
         >
           <h2>Nothing installed yet</h2>
-          <p>Packages you get show up here, with everything they added.</p>
+          <p>Use cases you get show up here, with everything they added.</p>
         </div>
         <div
           v-for="p in pk.installed.value"
@@ -497,7 +497,7 @@ async function onSignedIn() {
 }
 
 async function onUninstall(slug: string, name: string) {
-  if (!window.confirm(`Remove ${ name }?\n\nSulla takes out what this package added. Anything you've changed since stays.`)) return;
+  if (!window.confirm(`Remove ${ name }?\n\nSulla takes out what this use case added. Anything you've changed since stays.`)) return;
   const res = await pk.uninstall(slug);
   if (res.ok) {
     emit('feedback', 'success', `${ name } removed.`);
