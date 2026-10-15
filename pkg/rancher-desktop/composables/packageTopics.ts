@@ -1,20 +1,29 @@
-/**
- * Package topics — the fixed set of use-case groups the Packages browser
- * sections are built from. Keys match the `topic` field of a package
- * manifest; order here is the order sections render in.
- */
-export const PACKAGE_TOPICS = [
-  { key: 'customers', label: 'Get more customers', blurb: 'Find people and win them faster.' },
-  { key: 'service', label: 'Customer service', blurb: 'Keep the customers you have happy.' },
-  { key: 'marketing', label: 'Marketing & content', blurb: 'Posts, videos and content that go out on their own.' },
-  { key: 'money', label: 'Money & admin', blurb: 'Invoices, bills and paperwork.' },
-  { key: 'team', label: 'Hiring & team', blurb: 'Hiring and keeping the team on track.' },
-  { key: 'research', label: 'Research', blurb: 'Know what is going on without digging.' },
-  { key: 'home', label: 'Home & personal', blurb: 'Help at home, not just at work.' },
-] as const;
+import { readonly, ref } from 'vue';
 
-export type PackageTopicKey = typeof PACKAGE_TOPICS[number]['key'];
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+export interface PackageTopic {
+  key: string; label: string; blurb: string; icon: string; grp: 'job' | 'industry';
+  sort_order: number; active: number; package_count: number;
+}
+
+const topics = ref<PackageTopic[]>([]);
+let loading: Promise<void> | null = null;
+
+export async function loadPackageTopics(): Promise<void> {
+  if (loading) return loading;
+  loading = (async() => {
+    const result = await ipcRenderer.invoke('marketplace-topics');
+    if (result && !('error' in result)) topics.value = result.topics ?? [];
+  })().finally(() => { loading = null; });
+
+  return loading;
+}
+
+export function usePackageTopics() {
+  return readonly(topics);
+}
 
 export function packageTopicLabel(key: string | null | undefined): string {
-  return PACKAGE_TOPICS.find(t => t.key === key)?.label ?? '';
+  return topics.value.find(t => t.key === key)?.label ?? 'More';
 }
