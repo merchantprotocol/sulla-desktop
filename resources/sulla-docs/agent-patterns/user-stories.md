@@ -535,13 +535,6 @@ Read `~/sulla/identity/human/identity.md` and surface the user's recent observat
 
 ## Inter-Agent
 
-### "Tell the workbench agent to..."
-Wrap the message in a channel tag (no tool call needed):
-```
-<channel:workbench>Please update the status for task #42.</channel:workbench>
-```
-Fire-and-forget. Don't poll for a reply.
-
 ### "What other agents are running?"
 Check the system prompt (always lists active agents and their status). Don't query — that data is already there.
 

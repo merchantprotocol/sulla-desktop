@@ -4,7 +4,7 @@
  *
  * Pattern (from ActiveAgentsRegistry.buildContextBlock):
  *   <channel:heartbeat>Are you online?</channel:heartbeat>
- *   <channel:workbench>Update task #42</channel:workbench>
+ *   <channel:sulla-desktop>The status update is ready</channel:sulla-desktop>
  *
  * Optional action modifiers in the opening tag:
  *   <channel:heartbeat wake>body</channel:heartbeat>

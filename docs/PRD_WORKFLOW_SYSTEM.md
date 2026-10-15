@@ -14,7 +14,7 @@ The Workflow System is Sulla Desktop's automation engine. It defines, schedules,
 ### Data Flow
 
 ```
-Trigger (schedule / heartbeat / chat / desktop event / calendar / workbench / chat-completions)
+Trigger (schedule / heartbeat / chat / desktop event / calendar / chat-completions)
   → WorkflowRegistry.findCandidates(triggerType)
     → LLM selection (if multiple candidates)
       → Graph.createPlaybookState(workflow)
@@ -65,7 +65,7 @@ Trigger (schedule / heartbeat / chat / desktop event / calendar / workbench / ch
 
 | Category | Node Types | Purpose |
 |----------|-----------|---------|
-| Triggers | calendar, chat-app, heartbeat, schedule, sulla-desktop, workbench, chat-completions | Entry points that activate the workflow |
+| Triggers | calendar, chat-app, heartbeat, schedule, sulla-desktop, chat-completions | Entry points that activate the workflow |
 | Agents | agent, integration-call, tool-call, orchestrator-prompt | Execute work (LLM calls, tool runs, n8n calls) |
 | Routing | router, condition | Decision points that select outgoing edges |
 | Flow Control | wait, loop, parallel, merge, sub-workflow | Manage execution order and concurrency |
@@ -100,7 +100,7 @@ Current implementation:
 
 ### 2.3 Trigger Types
 
-**As a workflow author, I want multiple trigger types so that workflows can activate from schedules, heartbeats, user chat, desktop events, calendar events, workbench actions, and API calls.**
+**As a workflow author, I want multiple trigger types so that workflows can activate from schedules, heartbeats, user chat, desktop events, calendar events, and API calls.**
 
 Current implementation:
 - **schedule** — Cron expressions evaluated by WorkflowSchedulerService. Fires at the specified interval.
@@ -108,7 +108,6 @@ Current implementation:
 - **chat-app** — Activated when a user message matches the workflow's chat trigger pattern.
 - **sulla-desktop** — Activated by Sulla Desktop application events (app launch, window focus, etc.).
 - **calendar** — Activated by calendar events via CalendarClient integration.
-- **workbench** — Activated by workbench/editor actions.
 - **chat-completions** — Activated via the ChatCompletionsServer API (port 3000).
 - WorkflowRegistry.findCandidates() filters workflows by trigger type; when multiple match, an LLM call selects the best candidate.
 

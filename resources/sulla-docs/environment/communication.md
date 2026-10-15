@@ -48,7 +48,7 @@ Agent responses flow back the same channel as assistant messages.
 Agents message each other by wrapping content in XML channel tags:
 ```
 <channel:heartbeat>Are you online?</channel:heartbeat>
-<channel:workbench>Update status for task #42.</channel:workbench>
+<channel:sulla-desktop>The status update for task #42 is ready.</channel:sulla-desktop>
 ```
 
 **Rules:**
@@ -56,7 +56,7 @@ Agents message each other by wrapping content in XML channel tags:
 - The system detects these tags and routes them automatically
 - If no reply comes, the receiving agent hasn't responded — move on
 
-Active channels: `sulla-desktop`, `workbench`, `heartbeat`, `mobile-relay`
+Built-in channels: `sulla-desktop`, `heartbeat`, `mobile-relay`
 
 ---
 

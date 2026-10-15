@@ -503,7 +503,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     if (!this._chatController) {
       this._chatController = new ChatController({
         dispatch:        (state, type, data) => this.dispatchToWebSocket(
-          state.metadata.wsChannel || 'workbench',
+          state.metadata.wsChannel || 'sulla-desktop',
           { type, data },
         ),
         sendChatMessage: (state, content, role, kind, extras) => this.wsChatMessage(state, content, role, kind, extras),

@@ -59,7 +59,7 @@ sulla <category> --help          # what THIS install exposes right now
 - `sulla agents/send_agent_message` — DEPRECATED; returns migration guidance to `spawn_agent` / `check_agent_jobs`.
 - `sulla agents/read_agent_conversation` — Temporary read compatibility for pre-migration conversations.
 - `sulla agents/close_agent_conversation` — Temporary close compatibility for pre-migration conversations.
-- `sulla agents/list_agents` — Directory of live named agents (heartbeat, workbench, mobile-relay, …) you can `<channel:NAME>`-message.
+- `sulla agents/list_agents` — Directory of live named agents (heartbeat, mobile-relay, frontends, …) you can `<channel:NAME>`-message.
 
 **ONE delegation pattern:** `sulla meta/spawn_agent` (async results wake the parent graph). `list_agents` + `<channel:NAME>` is messaging to already-running named agents, not delegation. See [`tools/agents.md`](agents.md).
 

@@ -178,7 +178,7 @@ sulla agents/send_job_message '{"jobId":"agent-job-...","message":"Now account f
 sulla agents/list_agents '{}'
 ```
 
-Returns the live named agents (heartbeat, workbench, mobile-relay, frontends) with channel, status, and uptime — the same roster that appears in turn context, queryable on demand. To message one, emit a channel tag in your reply: `<channel:heartbeat>your message</channel:heartbeat>` (fire-and-forget; the reply arrives on a later turn). This differs from delegation: channel tags reach *already-running long-lived* agents; `spawn_agent` launches fresh bounded work.
+Returns the live named agents (heartbeat, mobile-relay, frontends) with channel, status, and uptime — the same roster that appears in turn context, queryable on demand. To message one, emit a channel tag in your reply: `<channel:heartbeat>your message</channel:heartbeat>` (fire-and-forget; the reply arrives on a later turn). This differs from delegation: channel tags reach *already-running long-lived* agents; `spawn_agent` launches fresh bounded work.
 
 ## Limits
 
@@ -193,14 +193,14 @@ Returns the live named agents (heartbeat, workbench, mobile-relay, frontends) wi
 | Pattern | Latency | Interaction model | Best for |
 |---------|---------|------------------|----------|
 | `spawn_agent(async:true)` | Returns ~100ms; results wake your graph on completion | Independent | Multi-task delegation, parallel work (the default choice) |
-| `<channel:workbench>...</channel:workbench>` | Fire-and-forget; reply may come back | Coordinated | Real-time agent-to-agent messaging when the other agent is already running |
+| `<channel:heartbeat>...</channel:heartbeat>` | Fire-and-forget; reply may come back | Coordinated | Real-time agent-to-agent messaging when the other agent is already running |
 | `sulla meta/execute_workflow` | Async, returns executionId | Fixed pipeline | Deterministic multi-step automation that doesn't need agent reasoning at each step |
 | `spawn_agent(async:false)` | Blocks until done | Synchronous | When you need the result before you can proceed |
 | `launch_agent_tab` | Background visible tab; contract return wakes parent | Durable, multi-turn, visible | Agent needs its own Playbook/sidebar or will manage sub-agents |
 
 **Quick guide:**
 - Need 5 things researched in parallel and you'll synthesize → `spawn_agent` async; the results arrive as your next turn
-- Need the workbench agent to verify something while you keep going → channel tag
+- Need an already-running named agent to verify something while you keep going → channel tag
 - Need a known repeatable pipeline → workflow
 - Need one focused task done before continuing → `spawn_agent` sync (or just do it yourself)
 

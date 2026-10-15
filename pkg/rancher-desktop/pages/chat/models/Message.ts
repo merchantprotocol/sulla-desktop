@@ -17,7 +17,7 @@ export type MessageKind =
   | 'tool_approval'
   | 'tool_question'
   | 'patch'
-  | 'channel'       // message from another agent (Heartbeat, Workbench, Mobile)
+  | 'channel'       // message from another agent (for example Heartbeat or Mobile)
   | 'subagent'      // sub-agent activity
   | 'subagent_exchange' // compact parent ↔ sub-agent handoff
   | 'citation'      // grounding sources
@@ -158,7 +158,7 @@ export interface PatchLine {
 // ─── Channel (other agent) ────────────────────────────────────────
 export interface ChannelMessage extends MessageBase {
   kind:    'channel';
-  agent:   string;          // "Heartbeat" | "Workbench" | "Mobile"
+  agent:   string;          // e.g. "Heartbeat" | "Mobile"
   channel: string;          // e.g. "heartbeat"
   text:    string;          // HTML/markdown-ish
 }

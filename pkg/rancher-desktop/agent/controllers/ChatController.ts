@@ -198,7 +198,7 @@ export class ChatController {
     return {
       state,
       threadId: state.metadata.threadId,
-      channel:  state.metadata.wsChannel || 'workbench',
+      channel:  state.metadata.wsChannel || 'sulla-desktop',
     };
   }
 }

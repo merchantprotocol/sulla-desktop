@@ -50,13 +50,13 @@ describe('observer transcript', () => {
 describe('extractRecallTerms', () => {
   it('keeps distinctive words, newest text first, without stopwords or harness tags', () => {
     const terms = extractRecallTerms([
-      'Continue the TrueUp snake demo <turn_context>agents: Heartbeat Workbench</turn_context> https://example.com/path',
+      'Continue the TrueUp snake demo <turn_context>agents: Heartbeat Mobile</turn_context> https://example.com/path',
       'We were working on the landing page for TrueUp',
     ]);
 
     expect(terms.slice(0, 3)).toEqual(['trueup', 'snake', 'demo']);
     expect(terms).toEqual(expect.arrayContaining(['landing', 'page']));
-    expect(terms).not.toEqual(expect.arrayContaining(['continue', 'working', 'heartbeat', 'workbench', 'example.com']));
+    expect(terms).not.toEqual(expect.arrayContaining(['continue', 'working', 'heartbeat', 'mobile', 'example.com']));
     expect(new Set(terms).size).toBe(terms.length);
   });
 

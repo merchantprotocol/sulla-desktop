@@ -153,11 +153,11 @@ test('empty or oversized comments are rejected before touching the task', async(
 });
 test('cloud board creates tasks through the Projects service with a fixed actor', async() => {
   await expect(request('projects.create_task', {
-    projectId: 'p1', title: '  Cloud task  ', status: 'todo', priority: 'high', assignee: 'workbench',
+    projectId: 'p1', title: '  Cloud task  ', status: 'todo', priority: 'high', assignee: 'sulla',
   })).resolves.toMatchObject({ task: { id: 't2' } });
   expect(projectServiceListEpics).toHaveBeenCalledWith({ projectId: 'p1', includeDone: true, limit: 1000 });
   expect(projectServiceCreateTask).toHaveBeenCalledWith({
-    epic_id: 'e1', title: 'Cloud task', status: 'todo', priority: 'high', assignee: 'workbench', source: 'cloud-dashboard', actor: 'cloud-dashboard',
+    epic_id: 'e1', title: 'Cloud task', status: 'todo', priority: 'high', assignee: 'sulla', source: 'cloud-dashboard', actor: 'cloud-dashboard',
   }, { actor: 'cloud-dashboard', source: 'ipc' });
 });
 test('cloud board updates status or lane through the Projects service with a fixed actor', async() => {
