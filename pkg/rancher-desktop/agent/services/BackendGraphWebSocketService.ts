@@ -1,6 +1,6 @@
 // BackendGraphWebSocketService.ts
-// Main-process agent dispatcher: routes messages on the sulla-desktop, workbench,
-// and heartbeat channels to the default agent via GraphRegistry.
+// Main-process agent dispatcher: routes messages on the sulla-desktop and
+// heartbeat channels to the default agent via GraphRegistry.
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
@@ -17,7 +17,6 @@ import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
 
-const WORKBENCH_CHANNEL_ID = 'workbench';
 const HEARTBEAT_CHANNEL_ID = 'heartbeat';
 const CALENDAR_CHANNEL_ID = 'calendar_event';
 // Dedicated channel for chats routed from a paired mobile device via the
@@ -43,7 +42,7 @@ export class BackendGraphWebSocketService {
   private readonly schedulerService = getSchedulerService();
   private unsubscribes: (() => void)[] = [];
   // Keyed by `${channelId}|${threadId}` so concurrent threads on the same
-  // channel (e.g. multiple chat tabs sharing the workbench WebSocket) can
+  // channel (e.g. multiple chat tabs sharing the desktop WebSocket) can
   // run in parallel. Previously this was keyed by channelId alone, which
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
@@ -90,12 +89,6 @@ export class BackendGraphWebSocketService {
     });
     if (sullaUnsub) this.unsubscribes.push(sullaUnsub);
 
-    this.wsService.connect(WORKBENCH_CHANNEL_ID);
-    const workbenchUnsub = this.wsService.onMessage(WORKBENCH_CHANNEL_ID, (msg) => {
-      this.handleChannelMessage(WORKBENCH_CHANNEL_ID, 'workbench', msg);
-    });
-    if (workbenchUnsub) this.unsubscribes.push(workbenchUnsub);
-
     this.wsService.connect(HEARTBEAT_CHANNEL_ID);
     const heartbeatUnsub = this.wsService.onMessage(HEARTBEAT_CHANNEL_ID, (msg) => {
       this.handleChannelMessage(HEARTBEAT_CHANNEL_ID, 'heartbeat', msg);
@@ -121,7 +114,6 @@ export class BackendGraphWebSocketService {
 
     // Track built-in channels
     this.subscribedChannels.add(SULLA_DESKTOP_CHANNEL_ID);
-    this.subscribedChannels.add(WORKBENCH_CHANNEL_ID);
     this.subscribedChannels.add(HEARTBEAT_CHANNEL_ID);
     this.subscribedChannels.add(MOBILE_RELAY_CHANNEL_ID);
     this.subscribedChannels.add(CALENDAR_CHANNEL_ID);
@@ -129,8 +121,6 @@ export class BackendGraphWebSocketService {
     // Register agents in the active agents registry
     this.registerAgent(SULLA_DESKTOP_CHANNEL_ID, 'Sulla', 'Frontend chat agent').catch(err =>
       console.warn('[BackendGraphWS] Failed to register sulla-desktop agent:', err));
-    this.registerAgent(WORKBENCH_CHANNEL_ID, 'Workbench', 'Workbench editor agent').catch(err =>
-      console.warn('[BackendGraphWS] Failed to register workbench agent:', err));
     this.registerAgent(HEARTBEAT_CHANNEL_ID, 'Heartbeat', 'Autonomous heartbeat agent').catch(err =>
       console.warn('[BackendGraphWS] Failed to register heartbeat agent:', err));
     this.registerAgent(MOBILE_RELAY_CHANNEL_ID, 'Sulla (Mobile)', 'Chat routed from paired mobile device').catch(err =>
@@ -179,7 +169,7 @@ export class BackendGraphWebSocketService {
 
   private async handleChannelMessage(
     channelId: string,
-    _triggerType: 'sulla-desktop' | 'workbench' | 'heartbeat',
+    _triggerType: 'sulla-desktop' | 'heartbeat',
     msg: WebSocketMessage,
   ): Promise<void> {
     if (msg.type === 'stop_run') {

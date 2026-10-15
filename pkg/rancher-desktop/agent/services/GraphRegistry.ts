@@ -1630,7 +1630,6 @@ export async function getDefaultAgentId(): Promise<string> {
 export async function getAgentIdForTrigger(triggerType: string): Promise<string> {
   const triggerMap: Record<string, string> = {
     'sulla-desktop': 'sulla-desktop',
-    workbench:       'sulla-desktop',
     heartbeat:       'dreaming-protocol',
   };
 

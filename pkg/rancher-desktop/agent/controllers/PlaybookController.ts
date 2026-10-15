@@ -245,7 +245,7 @@ export class PlaybookController<TState = any> {
     // non-workflow conversation flow doesn't leave these stamped.
     const prevWorkflowNodeId = (state as any).metadata?.workflowNodeId;
     const prevWorkflowParentChannel = (state as any).metadata?.workflowParentChannel;
-    (state as any).metadata.workflowParentChannel = (state as any).metadata?.wsChannel || 'workbench';
+    (state as any).metadata.workflowParentChannel = (state as any).metadata?.wsChannel || 'sulla-desktop';
 
     try {
       return await this._processWorkflowPlaybookInner(state);
@@ -1838,7 +1838,7 @@ export class PlaybookController<TState = any> {
               // the subconscious observer slot.
               subState.metadata.modelSlot = 'primary';
 
-              const parentChannel = (state as any).metadata?.wsChannel || 'workbench';
+              const parentChannel = (state as any).metadata?.wsChannel || 'sulla-desktop';
               subState.metadata.workflowNodeId = step.nodeId;
               subState.metadata.workflowParentChannel = parentChannel;
 
@@ -2106,7 +2106,7 @@ export class PlaybookController<TState = any> {
   private emitPlaybookEvent(state: TState, type: string, data: Record<string, unknown> = {}): void {
     try {
       const ws = getWebSocketClientService();
-      const channel = (state as any).metadata?.wsChannel || 'workbench';
+      const channel = (state as any).metadata?.wsChannel || 'sulla-desktop';
       const meta = (state as any).metadata ?? {};
       const playbook = meta.activeWorkflow;
 
@@ -2553,7 +2553,7 @@ export class PlaybookController<TState = any> {
     subState.metadata.modelSlot = 'primary';
     inheritSubAgentToolPolicy(_state, subState, config);
 
-    const parentChannel = (_state as any).metadata?.wsChannel || 'workbench';
+    const parentChannel = (_state as any).metadata?.wsChannel || 'sulla-desktop';
     subState.metadata.workflowNodeId = nodeId;
     subState.metadata.workflowParentChannel = parentChannel;
     // Work done by this sub-agent counts as activity for the run that owns it.
@@ -2673,7 +2673,7 @@ export class PlaybookController<TState = any> {
                   console.error('[PlaybookController] CHECKPOINT FAILED — escalation not persisted. Recovery after crash will lose this node:', e);
                   playbookLog('checkpoint_failed', { kind: 'escalation', executionId: escExecId, nodeId, error: String(e) });
                   try {
-                    getWebSocketClientService().send((state as any).metadata?.wsChannel || 'workbench', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'escalation', timestamp: new Date().toISOString() }, timestamp: Date.now() });
+                    getWebSocketClientService().send((state as any).metadata?.wsChannel || 'sulla-desktop', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'escalation', timestamp: new Date().toISOString() }, timestamp: Date.now() });
                   } catch { /* WS down — already degraded */ }
                 });
             }).catch(e => {
@@ -2684,7 +2684,7 @@ export class PlaybookController<TState = any> {
 
           try {
             const ws = getWebSocketClientService();
-            const channel = (state as any).metadata?.wsChannel || 'workbench';
+            const channel = (state as any).metadata?.wsChannel || 'sulla-desktop';
             ws.send(channel, {
               type:      'workflow_execution_event',
               data:      {
@@ -2719,7 +2719,7 @@ export class PlaybookController<TState = any> {
                   console.error('[PlaybookController] CHECKPOINT FAILED — completion not persisted. Recovery after crash will re-run this node:', e);
                   playbookLog('checkpoint_failed', { kind: 'completion', executionId: execId, nodeId, error: String(e) });
                   try {
-                    getWebSocketClientService().send((state as any).metadata?.wsChannel || 'workbench', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'completion', timestamp: new Date().toISOString() }, timestamp: Date.now() });
+                    getWebSocketClientService().send((state as any).metadata?.wsChannel || 'sulla-desktop', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'completion', timestamp: new Date().toISOString() }, timestamp: Date.now() });
                   } catch { /* WS down — already degraded */ }
                 });
             }).catch(e => {
@@ -2730,7 +2730,7 @@ export class PlaybookController<TState = any> {
 
           try {
             const ws = getWebSocketClientService();
-            const channel = (state as any).metadata?.wsChannel || 'workbench';
+            const channel = (state as any).metadata?.wsChannel || 'sulla-desktop';
             ws.send(channel, {
               type: 'workflow_execution_event',
               data: {
@@ -2770,7 +2770,7 @@ export class PlaybookController<TState = any> {
                 console.error('[PlaybookController] CHECKPOINT FAILED — failure record not persisted:', e);
                 playbookLog('checkpoint_failed', { kind: 'failure', executionId: failExecId, nodeId, error: String(e) });
                 try {
-                  getWebSocketClientService().send((state as any).metadata?.wsChannel || 'workbench', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'failure', timestamp: new Date().toISOString() }, timestamp: Date.now() });
+                  getWebSocketClientService().send((state as any).metadata?.wsChannel || 'sulla-desktop', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'failure', timestamp: new Date().toISOString() }, timestamp: Date.now() });
                 } catch { /* WS down — already degraded */ }
               });
           }).catch(e => {
@@ -2781,7 +2781,7 @@ export class PlaybookController<TState = any> {
 
         try {
           const ws = getWebSocketClientService();
-          const channel = (state as any).metadata?.wsChannel || 'workbench';
+          const channel = (state as any).metadata?.wsChannel || 'sulla-desktop';
           ws.send(channel, {
             type: 'workflow_execution_event',
             data: {
