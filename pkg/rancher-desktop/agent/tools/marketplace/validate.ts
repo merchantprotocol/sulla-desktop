@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseTool, ToolResponse } from '../base';
-import { ARTIFACT_KINDS, ArtifactKind, artifactDir, isArtifactKind, KIND_LAYOUTS, resolveArtifactManifestPath, normalizeKind } from './types';
+import { ARTIFACT_KINDS, ArtifactKind, isArtifactKind, normalizeKind, toMarketplaceKind } from './types';
 
 export class MarketplaceValidateWorker extends BaseTool {
   name = '';
@@ -34,46 +34,23 @@ export class MarketplaceValidateWorker extends BaseTool {
         : { successBoolean: true, responseString: `✓ agent/${ slug } passes sulla/v3 Agent manifest validation.` };
     }
 
-    // Skills live in the database: validate the row exported as a folder.
-    if (kind === 'skill') {
-      const { exportSkillToTempDir } = await import('../../services/SkillDefinitionService');
-      const exported = await exportSkillToTempDir(slug).catch(() => null);
-      if (exported) {
-        try {
-          const manifestPath = path.join(exported.dir, 'SKILL.md');
-          return formatValidation(kind, slug, await validateByKind(kind, slug, exported.dir, fs.readFileSync(manifestPath, 'utf-8'), manifestPath));
-        } finally {
-          exported.cleanup();
-        }
-      }
-    }
-
-    const dir = artifactDir(kind, slug);
-    if (!fs.existsSync(dir)) {
-      return { successBoolean: false, responseString: `Not installed locally: ${ dir }` };
-    }
-
-    const manifestPath = resolveArtifactManifestPath(kind, slug);
-    if (!manifestPath) {
-      const layout = KIND_LAYOUTS[kind];
-      const hint = layout.manifest === 'dynamic'
-        ? `Expected a file matching ${ layout.manifestPattern } in ${ dir }`
-        : `Expected ${ path.join(dir, layout.manifest) }`;
-      return { successBoolean: false, responseString: `Manifest missing. ${ hint }` };
-    }
-
-    const issues: string[] = [];
-    let manifestRaw = '';
+    const marketplaceKind = toMarketplaceKind(kind);
+    if (!marketplaceKind) return { successBoolean: false, responseString: `Unsupported artifact kind: ${ kind }` };
+    const { materializeDatabaseArtifact, readDatabaseArtifact } = await import('@pkg/main/marketplace/databaseArtifacts');
+    let exported: { dir: string; cleanup: () => void } | null = null;
     try {
-      manifestRaw = fs.readFileSync(manifestPath, 'utf-8');
+      exported = materializeDatabaseArtifact(await readDatabaseArtifact(marketplaceKind as any, slug));
+      const names: Record<Exclude<ArtifactKind, 'agent'>, string> = {
+        skill: 'SKILL.md', workflow: 'routine.yaml', function: 'function.yaml', recipe: 'installation.yaml', integration: 'integration.yaml',
+      };
+      const manifestPath = path.join(exported.dir, names[kind]);
+      const manifestRaw = fs.readFileSync(manifestPath, 'utf-8');
+      return formatValidation(kind, slug, await validateByKind(kind, slug, exported.dir, manifestRaw, manifestPath));
     } catch (err) {
-      return { successBoolean: false, responseString: `Could not read manifest: ${ (err as Error).message }` };
+      return { successBoolean: false, responseString: `Could not validate database artifact: ${ (err as Error).message }` };
+    } finally {
+      exported?.cleanup();
     }
-
-    const result = await validateByKind(kind, slug, dir, manifestRaw, manifestPath);
-    issues.push(...result);
-
-    return formatValidation(kind, slug, issues);
   }
 }
 
@@ -115,8 +92,8 @@ async function validateByKind(
     try {
       const yaml = await import('yaml');
       const parsed: any = yaml.parse(manifestRaw);
-      if (!parsed?.id)    issues.push('routine.yaml: missing required key "id"');
-      if (!parsed?.name)  issues.push('routine.yaml: missing required key "name"');
+      if (!parsed?.id) issues.push('routine.yaml: missing required key "id"');
+      if (!parsed?.name) issues.push('routine.yaml: missing required key "name"');
       if (!Array.isArray(parsed?.nodes) || parsed.nodes.length === 0) issues.push('routine.yaml: "nodes" must be a non-empty array');
       if (!Array.isArray(parsed?.edges)) issues.push('routine.yaml: "edges" must be an array');
       const triggers = (parsed?.nodes || []).filter((n: any) => n?.data?.category === 'trigger');
@@ -210,8 +187,8 @@ async function validateByKind(
     // Required top-level shape per IntegrationAuthConfig.
     if (!parsed?.api) issues.push('integration auth: missing required key "api"');
     else {
-      if (!parsed.api.name)     issues.push('integration auth: missing "api.name"');
-      if (!parsed.api.version)  issues.push('integration auth: missing "api.version"');
+      if (!parsed.api.name) issues.push('integration auth: missing "api.name"');
+      if (!parsed.api.version) issues.push('integration auth: missing "api.version"');
       if (!parsed.api.base_url) issues.push('integration auth: missing "api.base_url"');
       const transport = parsed.api.transport ?? 'rest';
       if (!['rest', 'mcp'].includes(transport)) issues.push(`integration auth: api.transport must be "rest" or "mcp" (got "${ transport }")`);
@@ -224,7 +201,7 @@ async function validateByKind(
       }
       if (authType === 'oauth2') {
         if (!parsed.auth.authorization_url) issues.push('integration auth: oauth2 requires auth.authorization_url');
-        if (!parsed.auth.token_url)          issues.push('integration auth: oauth2 requires auth.token_url');
+        if (!parsed.auth.token_url) issues.push('integration auth: oauth2 requires auth.token_url');
       }
       if (authType === 'apiKey' && !parsed.auth.header) {
         issues.push('integration auth: apiKey requires auth.header (e.g. "X-API-Key")');
@@ -234,7 +211,7 @@ async function validateByKind(
     // 2. Scan sibling *.v<N>.yaml endpoint files and validate their shape.
     const endpointPattern = /^[a-z0-9][a-z0-9-]*\.v\d+\.yaml$/;
     let entries: string[] = [];
-    try { entries = fs.readdirSync(dir); } catch { /* already checked existence above */ }
+    try { entries = fs.readdirSync(dir) } catch { /* already checked existence above */ }
     const endpointFiles = entries.filter(name => endpointPattern.test(name) && name !== authFilename);
 
     if (endpointFiles.length === 0) {
@@ -275,6 +252,5 @@ async function validateByKind(
     return issues;
   }
 
-  void KIND_LAYOUTS; // keeps the import referenced if all kinds short-circuit above
   return issues;
 }

@@ -2,9 +2,8 @@
  * Routine-import IPC event handler.
  *
  * Accepts either a `.routine.zip` bundle or a folder the user picks from
- * disk, and lands it at `~/sulla/routines/<slug>/` so it shows up in the
- * My Templates tab. The DB is NOT touched — instantiation into a
- * runnable routine is a separate user action from the template card.
+ * disk, validates it in a temporary directory, and stores the definition
+ * in Postgres. The selected source is never treated as a runtime source.
  *
  * Zip handling uses `yauzl` directly (pure-JS, already a transitive dep
  * of `extract-zip`) so we can validate every entry before writing a
@@ -41,15 +40,9 @@ const ipcMainProxy = getIpcMainProxy(console);
 // ─── Security caps ───────────────────────────────────────────────
 // These bound the worst-case behaviour of a malicious zip. A well-formed
 // routine bundle is <1 MB; these are very generous.
-const MAX_FILE_BYTES  = 100 * 1024 * 1024;   // 100 MB per file
+const MAX_FILE_BYTES = 100 * 1024 * 1024;   // 100 MB per file
 const MAX_TOTAL_BYTES = 500 * 1024 * 1024;   // 500 MB total per bundle
-const MAX_ENTRIES     = 10_000;              // zip-bomb sanity cap
-
-function getRoutinesDir(): string {
-  const { resolveSullaRoutinesDir } = require('@pkg/agent/utils/sullaPaths');
-
-  return resolveSullaRoutinesDir();
-}
+const MAX_ENTRIES = 10_000;              // zip-bomb sanity cap
 
 /** Kebab-case slugifier used for collision-suffix derivation. */
 function slugify(input: string): string {
@@ -90,8 +83,8 @@ function rejectNonRegularEntry(entry: yauzl.Entry): string | null {
   // created by modern tools (info-zip, libarchive, yazl). Symlink bit
   // = S_IFLNK = 0o120000 in the high word.
   const unixMode = (entry.externalFileAttributes >>> 16) & 0xffff;
-  const S_IFMT   = 0o170000;
-  const S_IFLNK  = 0o120000;
+  const S_IFMT = 0o170000;
+  const S_IFLNK = 0o120000;
   if (unixMode && (unixMode & S_IFMT) === S_IFLNK) {
     return `symlink entries are not allowed: ${ entry.fileName }`;
   }
@@ -176,15 +169,15 @@ function extractZipSafely(zipPath: string, destDir: string): Promise<void> {
         // resolved outPath lives under destDir. Catches anything
         // rejectUnsafePath might have missed.
         const resolved = path.resolve(outPath);
-        if (!resolved.startsWith(path.resolve(destDir) + path.sep)
-            && resolved !== path.resolve(destDir)) {
+        if (!resolved.startsWith(path.resolve(destDir) + path.sep) &&
+            resolved !== path.resolve(destDir)) {
           zip.close();
 
           return reject(new Error(`entry escapes destination: ${ entry.fileName }`));
         }
 
         // Trailing slash = directory entry.
-        if (/\/$/.test(entry.fileName)) {
+        if (entry.fileName.endsWith('/')) {
           fs.mkdirSync(outPath, { recursive: true });
           zip.readEntry();
 
@@ -199,9 +192,9 @@ function extractZipSafely(zipPath: string, destDir: string): Promise<void> {
             return reject(streamErr ?? new Error('openReadStream failed'));
           }
           const writeStream = fs.createWriteStream(outPath);
-          writeStream.on('error', (e) => { zip.close(); reject(e); });
+          writeStream.on('error', (e) => { zip.close(); reject(e) });
           writeStream.on('close', () => zip.readEntry());
-          readStream.on('error', (e) => { zip.close(); reject(e); });
+          readStream.on('error', (e) => { zip.close(); reject(e) });
           readStream.pipe(writeStream);
         });
       });
@@ -218,7 +211,7 @@ function extractZipSafely(zipPath: string, destDir: string): Promise<void> {
  */
 function resolveBundleRoot(tmpdir: string): { rootPath: string; dirName: string } {
   const entries = fs.readdirSync(tmpdir, { withFileTypes: true });
-  const dirs  = entries.filter(e => e.isDirectory());
+  const dirs = entries.filter(e => e.isDirectory());
   const loose = entries.filter(e => !e.isDirectory());
   if (loose.length > 0) {
     throw new Error(`bundle has loose files at the root: ${ loose.map(l => l.name).join(', ') }. All files must live under a single top-level directory.`);
@@ -264,26 +257,6 @@ function readAndValidateRoutineYaml(bundleRoot: string): Record<string, unknown>
   return doc;
 }
 
-/**
- * Pick the final installation slug. Starts from `preferred` (the zip's
- * top-level dir name, or a slugified routine name for folder imports)
- * and appends -2, -3, ... until an unused slot under ~/sulla/routines/
- * is found.
- */
-function pickAvailableSlug(routinesDir: string, preferred: string): string {
-  let candidate = preferred;
-  let counter   = 1;
-  while (fs.existsSync(path.join(routinesDir, candidate))) {
-    counter++;
-    candidate = `${ preferred }-${ counter }`;
-    if (counter > 100) {
-      throw new Error(`cannot find a free slug near "${ preferred }" after 100 attempts`);
-    }
-  }
-
-  return candidate;
-}
-
 function rmrfSync(target: string): void {
   try {
     fs.rmSync(target, { recursive: true, force: true });
@@ -293,33 +266,19 @@ function rmrfSync(target: string): void {
 }
 
 /**
- * Core import: take a staged bundle root (already validated) and move
- * it into place under `~/sulla/routines/<slug>/`. Returns the assigned
- * slug + the routine document.
+ * Core import: read a validated staged bundle and persist its definition.
  */
-function installBundle(stagedRoot: string, preferredSlug: string): {
+async function installBundle(stagedRoot: string, preferredSlug: string): Promise<{
   slug:    string;
   routine: Record<string, unknown>;
-} {
-  const routinesDir = getRoutinesDir();
-  fs.mkdirSync(routinesDir, { recursive: true });
-
+}> {
   const routine = readAndValidateRoutineYaml(stagedRoot);
-  const slug = pickAvailableSlug(routinesDir, preferredSlug);
-  const targetPath = path.join(routinesDir, slug);
-
-  // Move should be atomic on the same filesystem; fall back to copy on
-  // EXDEV (cross-device, e.g. tmpdir on a different mount).
-  try {
-    fs.renameSync(stagedRoot, targetPath);
-  } catch (err: any) {
-    if (err?.code === 'EXDEV') {
-      safeCopyTree(stagedRoot, targetPath);
-      rmrfSync(stagedRoot);
-    } else {
-      throw err;
-    }
-  }
+  const slug = slugify(String(routine.id ?? preferredSlug));
+  routine.id = slug;
+  const { WorkflowModel } = await import('@pkg/agent/database/models/WorkflowModel');
+  await WorkflowModel.upsertFromDefinition(routine, {
+    status: 'draft', sourceTemplateSlug: preferredSlug, changeReason: 'imported workflow bundle',
+  });
 
   return { slug, routine };
 }
@@ -327,8 +286,7 @@ function installBundle(stagedRoot: string, preferredSlug: string): {
 export function initSullaRoutineImportEvents(): void {
   // ── Import a routine bundle ──
   // Prompts for a .routine.zip file OR a folder, validates, installs
-  // under ~/sulla/routines/<slug>/. Collision-safe. Never touches the
-  // DB — appears as a template the user can instantiate.
+  // into Postgres. The picked folder/zip is only an explicit import source.
   ipcMainProxy.handle('routines-import', async() => {
     // Electron's `openFile,openDirectory` combo lets the user pick
     // either on macOS. On win/linux the platforms split them in
@@ -339,7 +297,7 @@ export function initSullaRoutineImportEvents(): void {
       properties: ['openFile', 'openDirectory', 'treatPackageAsDirectory'],
       filters:    [
         { name: 'Sulla Workflow Bundle', extensions: ['zip'] },
-        { name: 'All Files',            extensions: ['*'] },
+        { name: 'All Files', extensions: ['*'] },
       ],
     });
 
@@ -378,7 +336,7 @@ export function initSullaRoutineImportEvents(): void {
         }
         await extractZipSafely(picked, tmpdir);
         const resolved = resolveBundleRoot(tmpdir);
-        stagedRoot    = resolved.rootPath;
+        stagedRoot = resolved.rootPath;
         preferredSlug = slugify(resolved.dirName);
       } else {
         return { error: 'picked path is neither a file nor a directory' };
@@ -387,9 +345,9 @@ export function initSullaRoutineImportEvents(): void {
       // At this point stagedRoot holds the extracted bundle contents.
       // Validate + install. installBundle moves stagedRoot into place,
       // so we don't need to clean it up separately on success.
-      const { slug, routine } = installBundle(stagedRoot, preferredSlug);
+      const { slug, routine } = await installBundle(stagedRoot, preferredSlug);
 
-      console.log(`[Sulla] Imported routine bundle → ~/sulla/routines/${ slug }/ (name="${ routine.name }")`);
+      console.log(`[Sulla] Imported routine bundle → database:workflows/${ slug } (name="${ routine.name }")`);
 
       return {
         slug,

@@ -1,8 +1,7 @@
-import * as fs from 'fs';
-import * as path from 'path';
+import yaml from 'yaml';
 
 import { BaseTool, ToolResponse } from '../base';
-import { artifactDir, isArtifactKind, KIND_LAYOUTS, ArtifactKind, normalizeKind } from './types';
+import { isArtifactKind, KIND_LAYOUTS, ArtifactKind, normalizeKind } from './types';
 
 /**
  * Scaffold a new artifact directory with kind-appropriate skeleton files.
@@ -40,25 +39,27 @@ export class MarketplaceScaffoldWorker extends BaseTool {
       };
     }
 
-    const dir = artifactDir(kind, slug);
-    if (fs.existsSync(dir)) {
-      return { successBoolean: false, responseString: `Directory already exists: ${ dir }. Pick a different slug or remove it first.` };
-    }
-
-    fs.mkdirSync(dir, { recursive: true });
-
     const files = generateSkeleton(kind, { slug, name, description, runtime });
-    const written: string[] = [];
-    for (const [relPath, contents] of Object.entries(files)) {
-      const p = path.join(dir, relPath);
-      fs.mkdirSync(path.dirname(p), { recursive: true });
-      fs.writeFileSync(p, contents, 'utf-8');
-      written.push(relPath);
+    if (kind === 'workflow') {
+      const definition = yaml.parse(files['routine.yaml']);
+      const { WorkflowModel } = await import('../../database/models/WorkflowModel');
+      if (await WorkflowModel.findById(slug)) return { successBoolean: false, responseString: `Workflow already exists in Postgres: ${ slug }.` };
+      await WorkflowModel.upsertFromDefinition(definition, { status: 'draft', changeReason: 'marketplace scaffold' });
+
+      return { successBoolean: true, responseString: `Scaffolded database workflow/${ slug } as a draft.` };
     }
+    const { LibraryDraftModel } = await import('../../database/models/LibraryDraftModel');
+    const draft = await LibraryDraftModel.create({
+      kind,
+      slug,
+      name,
+      manifest_json: { metadata: { name, description, version: '1.0.0', tags: [] } },
+      files_json:    files,
+    });
 
     return {
       successBoolean: true,
-      responseString: `Scaffolded ${ kind }/${ slug } at ${ dir }\nFiles created (${ written.length }):\n${ written.map(f => `  - ${ f }`).join('\n') }\n\nNext: edit the manifest, then \`sulla marketplace/validate '{"kind":"${ kind }","slug":"${ slug }"}'\``,
+      responseString: `Scaffolded database draft ${ draft.id } for ${ kind }/${ slug }. Publish the draft locally to commit it to the definition table.`,
     };
   }
 }
@@ -72,7 +73,7 @@ function generateSkeleton(
   switch (kind) {
   case 'skill':
     return {
-      [KIND_LAYOUTS.skill.manifest as string]: `# ${ ctx.name }\n\n${ ctx.description || 'One-line description of what this skill does.' }\n\n## When to use this skill\n\n- Trigger condition 1\n- Trigger condition 2\n\n## Instructions\n\nStep-by-step instructions the agent follows when this skill activates.\n`,
+      [KIND_LAYOUTS.skill.manifest]: `# ${ ctx.name }\n\n${ ctx.description || 'One-line description of what this skill does.' }\n\n## When to use this skill\n\n- Trigger condition 1\n- Trigger condition 2\n\n## Instructions\n\nStep-by-step instructions the agent follows when this skill activates.\n`,
     };
 
   case 'function': {
@@ -104,7 +105,7 @@ spec:
 `;
     const handler = generateHandler(ctx.runtime);
     const out: Record<string, string> = {
-      'function.yaml': yaml,
+      'function.yaml':   yaml,
       [`main.${ ext }`]: handler,
     };
     if (ctx.runtime === 'python') out['requirements.txt'] = '';
@@ -115,7 +116,7 @@ spec:
 
   case 'workflow':
     return {
-      [KIND_LAYOUTS.workflow.manifest as string]: `id: ${ ctx.slug }
+      [KIND_LAYOUTS.workflow.manifest]: `id: ${ ctx.slug }
 name: ${ ctx.name }
 description: ${ ctx.description || 'TODO: describe what this workflow does.' }
 version: "1"
@@ -159,7 +160,7 @@ viewport: { x: 0, y: 0, zoom: 1 }
 
   case 'agent':
     return {
-      [KIND_LAYOUTS.agent.manifest as string]: `id: ${ ctx.slug }
+      [KIND_LAYOUTS.agent.manifest]: `id: ${ ctx.slug }
 name: ${ ctx.name }
 description: ${ ctx.description || 'TODO: describe what this agent does.' }
 model: claude-sonnet-4-6
@@ -173,7 +174,7 @@ tools:
 
   case 'recipe':
     return {
-      [KIND_LAYOUTS.recipe.manifest as string]: `slug: ${ ctx.slug }
+      [KIND_LAYOUTS.recipe.manifest]: `slug: ${ ctx.slug }
 name: ${ ctx.name }
 description: ${ ctx.description || 'TODO: describe what this recipe does.' }
 version: "1.0.0"
@@ -183,7 +184,7 @@ icon: icon.png
 extra_urls: []
 `,
       'docker-compose.yml': `version: "3.9"\nservices:\n  ${ ctx.slug }:\n    image: ghcr.io/your-org/${ ctx.slug }:latest\n    ports:\n      - "PORT:PORT"\n    restart: unless-stopped\n`,
-      'installation.yaml': `pre_install: []\npost_install: []\n`,
+      'installation.yaml':  `pre_install: []\npost_install: []\n`,
     };
 
   case 'integration': {
@@ -192,7 +193,7 @@ extra_urls: []
     const sampleEndpoint = `${ ctx.slug === 'example' ? 'items' : 'example' }.v1.yaml`;
     return {
       'INTEGRATION.md': `# ${ ctx.name }\n\n${ ctx.description || 'TODO: describe what this integration exposes and when the agent should reach for it.' }\n\n## Auth\n\nTODO: describe the auth model users should know about (OAuth app to create, API key to generate, etc.)\n\n## Endpoints\n\nTODO: list the main endpoints and when to use each.\n`,
-      [authFilename]: `api:\n  name: ${ ctx.slug }\n  version: "1"\n  provider: ""\n  base_url: https://api.example.com\n  transport: rest\n\nauth:\n  type: apiKey      # oauth2 | apiKey | bearer\n  header: X-API-Key\n  # For oauth2 instead, set:\n  #   type: oauth2\n  #   flow: authorization_code\n  #   authorization_url: https://.../oauth/authorize\n  #   token_url: https://.../oauth/token\n  #   scopes: ["read", "write"]\n  #   pkce: true\n`,
+      [authFilename]:   `api:\n  name: ${ ctx.slug }\n  version: "1"\n  provider: ""\n  base_url: https://api.example.com\n  transport: rest\n\nauth:\n  type: apiKey      # oauth2 | apiKey | bearer\n  header: X-API-Key\n  # For oauth2 instead, set:\n  #   type: oauth2\n  #   flow: authorization_code\n  #   authorization_url: https://.../oauth/authorize\n  #   token_url: https://.../oauth/token\n  #   scopes: ["read", "write"]\n  #   pkce: true\n`,
       [sampleEndpoint]: `endpoint:\n  name: ${ sampleEndpoint.replace('.v1.yaml', '') }\n  description: TODO\n  path: /v1/${ sampleEndpoint.replace('.v1.yaml', '') }\n  method: GET\n  auth: required\n  # quota_cost: 1\n`,
     };
   }

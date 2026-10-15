@@ -22,9 +22,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import yaml from 'yaml';
+
 import type { Graph } from '@pkg/agent/nodes/Graph';
 import { workflowTerminalResult } from '@pkg/agent/services/WorkflowTerminalResult';
-
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
 import Logging from '@pkg/utils/logging';
@@ -40,12 +40,6 @@ async function importWorkflowModel() {
   const mod = await import('@pkg/agent/database/models/WorkflowModel');
 
   return mod.WorkflowModel;
-}
-
-function getRoutinesDir(): string {
-  const { resolveSullaRoutinesDir } = require('@pkg/agent/utils/sullaPaths');
-
-  return resolveSullaRoutinesDir();
 }
 
 // ─── Manifest parsing ─────────────────────────────────────────────
@@ -99,13 +93,13 @@ export interface TemplateSummaryRow {
  * orchestrator-facing prose, not summary material.
  */
 interface AgentFrontmatter {
-  name?:                     string;
-  summary?:                  string;
-  triggers?:                 string[];
-  required_integrations?:    string[];
-  required_vault_accounts?:  string[];
-  required_functions?:       string[];
-  entry_node?:               string;
+  name?:                    string;
+  summary?:                 string;
+  triggers?:                string[];
+  required_integrations?:   string[];
+  required_vault_accounts?: string[];
+  required_functions?:      string[];
+  entry_node?:              string;
 }
 
 function readAgentMd(templateDir: string): AgentFrontmatter | null {
@@ -116,7 +110,7 @@ function readAgentMd(templateDir: string): AgentFrontmatter | null {
     const raw = fs.readFileSync(agentPath, 'utf-8');
     // Frontmatter must start at byte 0 (leading --- newline) to count.
     // Anything else and we treat the file as body-only markdown.
-    const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
     if (!match) return {}; // file exists but no frontmatter — still "has AGENT.md"
 
     const parsed = yaml.parse(match[1]);
@@ -152,17 +146,17 @@ interface RoutineNodeLike {
   type?:     string;
   position?: { x: number; y: number };
   data?: {
-    subtype?:  string;
-    category?: string;
-    label?:    string;
+    subtype?:    string;
+    category?:   string;
+    label?:      string;
     [k: string]: unknown;
   };
 }
 
 interface RoutineEdgeLike {
-  id?:     string;
-  source?: string;
-  target?: string;
+  id?:         string;
+  source?:     string;
+  target?:     string;
   [k: string]: unknown;
 }
 
@@ -208,14 +202,14 @@ function extractTriggerTypes(doc: RoutineDocument): string[] {
 function summarizePermissions(spec?: TemplateManifest['spec']): string {
   const perms = spec?.permissions ?? {};
   const parts: string[] = [];
-  const network = (perms as Record<string, unknown>).network;
+  const network = (perms).network;
   if (Array.isArray(network) && network.length > 0) {
     const first = String(network[0]);
     parts.push(`network: ${ first === '*' ? '*' : first }`);
   }
-  const env = (perms as Record<string, unknown>).env;
+  const env = (perms).env;
   if (Array.isArray(env) && env.length > 0) parts.push(`env: ${ env.length }`);
-  const secrets = (perms as Record<string, unknown>).secrets;
+  const secrets = (perms).secrets;
   if (Array.isArray(secrets) && secrets.length > 0) parts.push(`secrets: ${ secrets.length }`);
   if (parts.length === 0) return 'none';
 
@@ -228,9 +222,9 @@ function toSummary(slug: string, doc: RoutineDocument, templateDir: string): Tem
   // AGENT.md wins on display name / summary when present — it's the
   // orchestrator-curated copy, whereas `doc.name` / `doc.description`
   // come from whatever the canvas dumped. Fall back cleanly.
-  const name = (agent?.name && agent.name.trim()) || String(doc.name ?? slug);
+  const name = (agent?.name?.trim()) || String(doc.name ?? slug);
   const description = String(doc.description ?? '').trim().replace(/\s+/g, ' ');
-  const summary = (agent?.summary && agent.summary.trim()) || description;
+  const summary = (agent?.summary?.trim()) || description;
 
   // AGENT.md's `triggers:` is a hint list, not a source of truth. The
   // real triggers are the nodes in the DAG. We still extract
@@ -309,7 +303,7 @@ function buildWorkflowFromTemplate({ slug, manifest, doc }: WrapOptions): Record
 
     return {
       ...n,
-      id:       freshId,
+      id: freshId,
       // Spread preserves type/position/data/style/measured/etc. — anything
       // the template author included on the node carries through.
     };
@@ -348,27 +342,21 @@ function buildWorkflowFromTemplate({ slug, manifest, doc }: WrapOptions): Record
 // ─── Handler registration ─────────────────────────────────────────
 
 export function initSullaRoutineTemplateEvents(): void {
-  ipcMainProxy.handle('routines-template-list', () => {
-    const root = getRoutinesDir();
-    if (!fs.existsSync(root)) return [];
+  ipcMainProxy.handle('routines-template-list', async() => {
+    const WorkflowModel = await importWorkflowModel();
+    const rows = await WorkflowModel.listAll();
 
-    const entries = fs.readdirSync(root, { withFileTypes: true });
-    const summaries: TemplateSummaryRow[] = [];
-
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const templateDir = path.join(root, entry.name);
-      const docPath = path.join(templateDir, 'routine.yaml');
-      if (!fs.existsSync(docPath)) continue;
-      const doc = readRoutineDoc(docPath);
-      if (!doc) continue;
-      summaries.push(toSummary(entry.name, doc, templateDir));
-    }
-
-    // Stable ordering — alphabetical by display name.
-    summaries.sort((a, b) => a.name.localeCompare(b.name));
-
-    return summaries;
+    return rows.map(row => ({
+      slug:         row.id,
+      id:           row.id,
+      name:         row.name,
+      description:  row.description ?? '',
+      version:      '1',
+      nodeCount:    row.nodeCount,
+      edgeCount:    0,
+      triggerTypes: [],
+      updatedAt:    row.updatedAt,
+    })).sort((a, b) => a.name.localeCompare(b.name));
   });
 
   ipcMainProxy.handle('routines-create-blank', async() => {
@@ -408,31 +396,17 @@ export function initSullaRoutineTemplateEvents(): void {
       throw new Error('routines-template-instantiate: slug is required');
     }
 
-    const manifestPath = path.join(getRoutinesDir(), slug, 'routine.yaml');
-    if (!fs.existsSync(manifestPath)) {
-      throw new Error(`Template not found: ${ slug }`);
-    }
-
-    const manifest = readManifest(manifestPath);
-    if (!manifest) {
-      throw new Error(`Template manifest is unreadable: ${ slug }`);
-    }
-
-    // Same file, read twice — once as a typed manifest (metadata) and
-    // once as a RoutineDocument (full DAG). Cheap (tiny YAML) and keeps
-    // the two code paths type-distinct.
-    const doc = readRoutineDoc(manifestPath);
-    if (!doc) {
-      throw new Error(`Template workflow document is unreadable: ${ slug }`);
-    }
+    const WorkflowModel = await importWorkflowModel();
+    const source = await WorkflowModel.findById(slug);
+    if (!source) throw new Error(`Template not found in Postgres: ${ slug }`);
+    const doc = source.attributes.definition as RoutineDocument;
+    const manifest = doc as TemplateManifest;
 
     const workflow = buildWorkflowFromTemplate({ slug, manifest, doc });
 
     // DB-first write. The runtime still scans disk for execution, so a
     // YAML materialization will happen when the user hits save in the
     // editor (Phase 4 — workflow-save handler dual-writes disk + DB).
-    const WorkflowModel = await importWorkflowModel();
-
     await WorkflowModel.upsertFromDefinition(workflow, {
       status:             'draft',
       changeReason:       `instantiated from template:${ slug }`,
@@ -463,8 +437,8 @@ export function initSullaRoutineTemplateEvents(): void {
     }
 
     try {
-      const { GraphRegistry }   = await import('@pkg/agent/services/GraphRegistry');
-      const { abortPlaybook }   = await import('@pkg/agent/workflow/WorkflowPlaybook');
+      const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
+      const { abortPlaybook } = await import('@pkg/agent/workflow/WorkflowPlaybook');
       const { getWebSocketClientService } = await import('@pkg/agent/services/WebSocketClientService');
 
       const cached = GraphRegistry.get(executionId) as { state?: Record<string, any> } | null;
@@ -647,11 +621,11 @@ export function initSullaRoutineTemplateEvents(): void {
 
 export interface RoutineExecutionResult {
   /** Graph/thread execution id used by GraphRegistry. */
-  executionId:         string;
+  executionId:          string;
   /** Durable playbook execution id used by checkpoints and workflow_executions. */
   playbookExecutionId?: string;
-  skipped?: 'preflight_empty' | 'already_active';
-  workflowId:          string;
+  skipped?:             'preflight_empty' | 'already_active';
+  workflowId:           string;
 }
 
 /**
@@ -660,30 +634,30 @@ export interface RoutineExecutionResult {
  */
 export interface RoutineExecutionOptions {
   /** Start the walker at this node, skipping everything upstream. */
-  startNodeId?:       string;
+  startNodeId?:        string;
   /** Resume a specific prior execution from its stored checkpoints. */
-  resumeExecutionId?: string;
+  resumeExecutionId?:  string;
   /**
    * Bypass the concurrent-run guard (UI "Start Fresh" choice). When true
    * and an orphaned running/suspended row exists in workflow_executions,
    * activation marks it failed and starts a new run anyway.
    */
-  force?:             boolean;
+  force?:              boolean;
   /** Trusted immutable workflow definition captured by a durable dispatcher. */
   definitionSnapshot?: WorkflowDefinition;
   /** Durable lane-entry scope. Absent for ordinary user/scheduled runs. */
-  executionScope?: { taskId: string; generation: number };
+  executionScope?:     { taskId: string; generation: number };
   /** Deterministic playbook execution id for idempotent dispatch. */
-  executionId?: string;
+  executionId?:        string;
   /** Optional lifecycle callback for trusted in-process dispatchers. */
   onStarted?:          (executionId: string) => void | Promise<void>;
   onSettled?:          (result: { executionId: string; status: 'completed' | 'failed'; error?: string; outcome?: unknown }) => void | Promise<void>;
   /** Internal only: concurrency is guarded by a task-scoped durable ledger. */
-  allowConcurrent?:   boolean;
+  allowConcurrent?:    boolean;
   /** Queue behind protected-routine capacity instead of failing on backpressure. */
-  waitForCapacity?:   boolean;
+  waitForCapacity?:    boolean;
   /** Protected automation class used by the global mechanical-work limiter. */
-  routineKind?: 'planning' | 'execution' | 'review' | 'repair' | 'dreaming' | 'other';
+  routineKind?:        'planning' | 'execution' | 'review' | 'repair' | 'dreaming' | 'other';
 }
 
 export async function executeRoutine(
@@ -702,8 +676,11 @@ export async function executeRoutine(
       try {
         await WorkflowExecutionModel.markFailed(options.executionId, String(error));
       } finally {
-        await options.onSettled?.({ executionId: options.executionId, status: 'failed',
-          error: error instanceof Error ? error.message : String(error) });
+        await options.onSettled?.({
+          executionId: options.executionId,
+          status:      'failed',
+          error:       error instanceof Error ? error.message : String(error),
+        });
       }
     }
     throw error;
@@ -721,8 +698,8 @@ async function executeRoutineInternal(
   const { RoutineConcurrencyPolicy } = await import('@pkg/agent/services/RoutineConcurrencyPolicy');
   const { WorkflowModel } = await import('@pkg/agent/database/models/WorkflowModel');
   const workflow = await WorkflowModel.findById(workflowId);
-  const protectedKind = options?.routineKind
-    ?? (workflow?.attributes.system
+  const protectedKind = options?.routineKind ??
+    (workflow?.attributes.system
       ? (workflowId === 'core-routine-dream-about-human' ? 'dreaming' : 'other')
       : null);
   let routineSlotId: string | null = null;
@@ -759,23 +736,23 @@ async function executeRoutineInternal(
     let activation;
     try {
       activation = await activateWorkflowOnState(admissionState as any, {
-      workflowId,
-      message,
-      startNodeId:       options?.startNodeId,
-      resumeExecutionId: options?.resumeExecutionId,
-      force:             options?.force,
-      definitionSnapshot: options?.definitionSnapshot,
-      executionScope:    options?.executionScope,
-      executionId:       options?.executionId,
-      allowConcurrent:   options?.allowConcurrent,
+        workflowId,
+        message,
+        startNodeId:        options?.startNodeId,
+        resumeExecutionId:  options?.resumeExecutionId,
+        force:              options?.force,
+        definitionSnapshot: options?.definitionSnapshot,
+        executionScope:     options?.executionScope,
+        executionId:        options?.executionId,
+        allowConcurrent:    options?.allowConcurrent,
       });
     } catch (error) {
-      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null; }
+      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null }
       throw error;
     }
 
     if (!activation.ok) {
-      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null; }
+      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null }
       if (activation.skipped) return { workflowId, executionId: '', skipped: activation.skipped };
       throw new Error(activation.responseString);
     }
@@ -785,7 +762,7 @@ async function executeRoutineInternal(
       const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
       graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, graphExecutionId);
     } catch (error) {
-      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null; }
+      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null }
       // The outer pre-start handler retires the prebound execution and owner.
       throw error;
     }
@@ -800,7 +777,7 @@ async function executeRoutineInternal(
     } catch (error) {
       const { WorkflowExecutionModel } = await import('@pkg/agent/database/models/WorkflowExecutionModel');
       await WorkflowExecutionModel.markFailed(state.metadata.activeWorkflow.executionId, String(error));
-      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null; }
+      if (routineSlotId) { await RoutineConcurrencyPolicy.release(routineSlotId); routineSlotId = null }
       throw error;
     }
 
@@ -810,7 +787,9 @@ async function executeRoutineInternal(
     await options?.onStarted?.(executionId);
 
     const slotHeartbeat = routineSlotId
-      ? setInterval(() => { if (routineSlotId) void RoutineConcurrencyPolicy.heartbeat(routineSlotId); }, 30_000)
+      ? setInterval(() => {
+        if (routineSlotId) RoutineConcurrencyPolicy.heartbeat(routineSlotId).catch(() => undefined);
+      }, 30_000)
       : null;
     const releaseRoutineSlot = async() => {
       if (slotHeartbeat) clearInterval(slotHeartbeat);

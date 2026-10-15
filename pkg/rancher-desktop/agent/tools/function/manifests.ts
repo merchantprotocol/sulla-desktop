@@ -2,10 +2,10 @@ import type { ToolManifest } from '../registry';
 
 export const functionToolManifests: ToolManifest[] = [
   {
-    name:        'function_list',
-    description: 'List all custom functions installed in ~/sulla/functions/ — shows slug, name, runtime, entrypoint, inputs, and outputs for each.',
-    category:    'function',
-    schemaDef:   {},
+    name:           'function_list',
+    description:    'List all custom functions stored in Postgres — shows slug, name, runtime, entrypoint, inputs, and outputs for each.',
+    category:       'function',
+    schemaDef:      {},
     operationTypes: ['read'],
     loader:         () => import('./function_list'),
   },
@@ -16,7 +16,7 @@ export const functionToolManifests: ToolManifest[] = [
     schemaDef:   {
       slug: {
         type:        'string',
-        description: 'The function slug (directory name under ~/sulla/functions/).',
+        description: 'The function slug in Postgres.',
       },
       inputs: {
         type:        'object',
@@ -37,10 +37,10 @@ export const functionToolManifests: ToolManifest[] = [
     description: 'Query the function_run history. Every function_run call writes a row with slug, runtime, inputs/outputs, success, error_stage, duration. Filter by slug, only_failures, since (ISO timestamp). Default 50 rows; pass verbose:true to see inputs/outputs.',
     category:    'function',
     schemaDef:   {
-      slug:          { type: 'string',  optional: true, description: 'Filter to one function slug.' },
+      slug:          { type: 'string', optional: true, description: 'Filter to one function slug.' },
       only_failures: { type: 'boolean', optional: true, description: 'If true, return only runs where success=false.' },
-      since:         { type: 'string',  optional: true, description: 'ISO-8601 timestamp — only runs at/after this time.' },
-      limit:         { type: 'number',  optional: true, description: 'Max rows (default 50, cap 200).' },
+      since:         { type: 'string', optional: true, description: 'ISO-8601 timestamp — only runs at/after this time.' },
+      limit:         { type: 'number', optional: true, description: 'Max rows (default 50, cap 200).' },
       verbose:       { type: 'boolean', optional: true, description: 'Include full inputs + outputs in output.' },
     },
     operationTypes: ['read'],

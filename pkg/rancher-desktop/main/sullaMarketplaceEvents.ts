@@ -26,6 +26,21 @@ const ipcMainProxy = getIpcMainProxy(console);
 const errorOf = (err: unknown) => ({ error: err instanceof Error ? err.message : String(err) });
 
 export function initSullaMarketplaceEvents(): void {
+  ipcMainProxy.handle('marketplace-publish-package', async(_event, args: {
+    slug:        string;
+    title:       string;
+    description: string;
+    topic?:      string;
+    version?:    string;
+    items:       { kind: 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe'; slug: string }[];
+  }) => {
+    try {
+      const { publishPackage } = await import('@pkg/main/marketplace/publish');
+      return await publishPackage(args);
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  });
   ipcMainProxy.handle('packages:install', async(_event, input: { templateId?: string } = {}) => {
     const templateId = typeof input?.templateId === 'string' ? input.templateId.trim() : '';
     if (!templateId) return { ok: false, package: { slug: '', version: '' }, installed: [], error: 'packages:install requires templateId' };

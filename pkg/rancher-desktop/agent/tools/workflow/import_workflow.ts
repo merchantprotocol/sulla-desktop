@@ -1,18 +1,19 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 import yaml from 'yaml';
 
 import { BaseTool, ToolResponse } from '../base';
 
 export class ImportWorkflowWorker extends BaseTool {
   name = 'import_workflow';
-  description = 'Import a local routine.yaml file into the workflows database so it can be executed. Reads from ~/sulla/routines/<slug>/routine.yaml and upserts into the DB.';
+  description = 'Import an inline YAML workflow definition into Postgres so it can be executed.';
 
   schemaDef = {
     slug: {
       type:        'string' as const,
-      description: 'The workflow slug — directory name under ~/sulla/routines/ containing a routine.yaml.',
+      description: 'The workflow slug / id.',
+    },
+    yaml: {
+      type:        'string' as const,
+      description: 'The complete workflow definition as YAML.',
     },
     status: {
       type:        'string' as const,
@@ -25,31 +26,20 @@ export class ImportWorkflowWorker extends BaseTool {
     const slug: string = input.slug;
     const status: string = input.status || 'production';
 
-    const { resolveSullaRoutinesDir } = await import('@pkg/agent/utils/sullaPaths');
-    const routinesDir = resolveSullaRoutinesDir();
-    const yamlPath = path.join(routinesDir, slug, 'routine.yaml');
-
-    if (!fs.existsSync(yamlPath)) {
-      return {
-        successBoolean: false,
-        responseString: `routine.yaml not found at ${ yamlPath }. Check the slug and make sure the file exists.`,
-      };
-    }
-
     let definition: any;
     try {
-      definition = yaml.parse(fs.readFileSync(yamlPath, 'utf-8'));
+      definition = yaml.parse(String(input.yaml ?? ''));
     } catch (err) {
       return {
         successBoolean: false,
-        responseString: `Failed to parse routine.yaml: ${ (err as Error).message }`,
+        responseString: `Failed to parse workflow YAML: ${ (err as Error).message }`,
       };
     }
 
     if (!definition?.id || !definition?.name) {
       return {
         successBoolean: false,
-        responseString: `routine.yaml is missing required fields "id" and/or "name".`,
+        responseString: `Workflow YAML is missing required fields "id" and/or "name".`,
       };
     }
 

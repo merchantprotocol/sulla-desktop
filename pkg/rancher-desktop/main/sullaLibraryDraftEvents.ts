@@ -21,7 +21,6 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import * as yauzl from 'yauzl';
 import yazl from 'yazl';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -32,114 +31,7 @@ const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
 const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
-const MAX_TEXT_FILE_BYTES = 1 * 1024 * 1024;   // 1 MB per file on fork
-const MAX_FILES_ON_FORK = 2_000;
-
 type DraftKind = 'skill' | 'function' | 'recipe' | 'integration';
-type KindPlural = 'routines' | 'skills' | 'functions' | 'recipes' | 'integrations';
-
-function kindPlural(k: DraftKind): KindPlural {
-  return ({
-    skill: 'skills', function: 'functions', recipe: 'recipes', integration: 'integrations',
-  } as const)[k];
-}
-
-/**
- * Publish target for a draft. For integrations this is the USER dir — we
- * never publish back to resources/integrations/ (that's the sulla-resources
- * clone; it should stay git-managed).
- */
-function kindBaseDir(k: DraftKind): string {
-  const p = require('@pkg/agent/utils/sullaPaths');
-
-  switch (k) {
-  case 'skill': return p.resolveSullaUserSkillsDir();
-  case 'function': return p.resolveSullaFunctionsDir();
-  case 'recipe': return p.resolveSullaRecipesDir();
-  case 'integration': return p.resolveSullaUserIntegrationsDir();
-  }
-}
-
-/**
- * Source-lookup candidates for a draft at fork time. Integrations can live
- * in either resources/ (builtin) or the user dir (marketplace/local fork);
- * the others have a single canonical location.
- */
-function kindSourceDirs(k: DraftKind): string[] {
-  const p = require('@pkg/agent/utils/sullaPaths');
-
-  switch (k) {
-  case 'skill': return [p.resolveSullaUserSkillsDir()];
-  case 'function': return [p.resolveSullaFunctionsDir()];
-  case 'recipe': return [p.resolveSullaRecipesDir()];
-  case 'integration': return [p.resolveSullaUserIntegrationsDir(), p.resolveSullaIntegrationsDir()];
-  }
-}
-
-function coreDocFor(kind: DraftKind): string {
-  return ({
-    skill:       'SKILL.md',
-    function:    'function.yaml',
-    recipe:      'manifest.yaml',
-    integration: 'integration.yaml',
-  } as const)[kind];
-}
-
-/**
- * Detect whether a Buffer's bytes decode as valid UTF-8 with no
- * replacement chars. Avoids false positives on binary content that
- * happens to contain printable bytes.
- */
-function isUtf8Text(buf: Buffer): boolean {
-  // Fast path: look for the null byte, which never appears in UTF-8 text.
-  for (let i = 0; i < Math.min(buf.length, 4096); i++) {
-    if (buf[i] === 0) return false;
-  }
-  try {
-    const decoded = buf.toString('utf8');
-
-    // If there are replacement chars (U+FFFD), we decoded invalid bytes.
-    return !decoded.includes('\uFFFD');
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Walk a directory recursively, returning every file's path relative to
- * `root` along with its Buffer contents.
- */
-function walkFiles(root: string): { relPath: string; buffer: Buffer }[] {
-  const results: { relPath: string; buffer: Buffer }[] = [];
-
-  const walk = (abs: string, rel: string) => {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(abs, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const childAbs = path.join(abs, entry.name);
-      const childRel = rel ? `${ rel }/${ entry.name }` : entry.name;
-      if (entry.isDirectory()) {
-        walk(childAbs, childRel);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      try {
-        const buf = fs.readFileSync(childAbs);
-        results.push({ relPath: childRel, buffer: buf });
-      } catch (err) {
-        console.warn(`[Sulla] fork: could not read ${ childAbs }:`, err);
-      }
-      if (results.length >= MAX_FILES_ON_FORK) return;
-    }
-  };
-  walk(root, '');
-
-  return results;
-}
 
 // ─── Reference the manifest builder exposed from sullaLibraryEvents ─
 
@@ -151,7 +43,7 @@ async function readLocalManifest(
   name:     string;
 } | null> {
   const { buildLocalManifest } = require('./sullaLibraryEvents');
-  const payload = buildLocalManifest(kind, slug) as {
+  const payload = await buildLocalManifest(kind, slug) as {
     template: { name: string; manifest: Record<string, unknown> };
   } | null;
   if (!payload) return null;
@@ -160,6 +52,59 @@ async function readLocalManifest(
     manifest: payload.template.manifest,
     name:     payload.template.name,
   };
+}
+
+async function saveDraftToDatabase(draft: {
+  kind: DraftKind; slug: string; name: string; manifest_json: Record<string, any>; files_json: Record<string, string>;
+}): Promise<void> {
+  const manifest = (draft.manifest_json.definition ?? draft.manifest_json) as Record<string, any>;
+  const description = String(manifest.description ?? draft.manifest_json.metadata?.description ?? '');
+  const version = String(manifest.version ?? draft.manifest_json.metadata?.version ?? '1.0.0');
+  if (draft.kind === 'skill') {
+    const skill = draft.files_json['SKILL.md'];
+    if (!skill) throw new Error('Skill draft is missing SKILL.md');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-skill-draft-'));
+    try {
+      for (const [name, content] of Object.entries(draft.files_json)) {
+        const target = path.join(root, name);
+        if (!path.resolve(target).startsWith(`${ path.resolve(root) }${ path.sep }`)) throw new Error(`Unsafe draft path: ${ name }`);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, content, 'utf8');
+      }
+      const { importSkillFolder } = await import('@pkg/agent/services/SkillDefinitionService');
+      const { skillsRegistry } = await import('@pkg/agent/database/registry/SkillsRegistry');
+      await importSkillFolder(root, { sourceKind: 'user', force: true });
+      await skillsRegistry.invalidate();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+    return;
+  }
+
+  const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
+  if (draft.kind === 'function') {
+    const runtime = String(manifest.spec?.runtime ?? manifest.runtime ?? '');
+    await postgresClient.query(`INSERT INTO function_definitions (slug,name,description,manifest,runtime,files,source_kind,version,user_edited)
+      VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb,'user',$7,true)
+      ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,manifest=EXCLUDED.manifest,runtime=EXCLUDED.runtime,files=EXCLUDED.files,source_kind='user',version=EXCLUDED.version,user_edited=true,updated_at=now()`,
+    [draft.slug, draft.name, description, JSON.stringify(manifest), runtime, JSON.stringify(draft.files_json), version]);
+  } else if (draft.kind === 'integration') {
+    manifest.id = draft.slug;
+    await postgresClient.query(`INSERT INTO integration_definitions (slug,name,description,manifest,files,source_kind,version,user_edited)
+      VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,'user',$6,true)
+      ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,manifest=EXCLUDED.manifest,files=EXCLUDED.files,source_kind='user',version=EXCLUDED.version,user_edited=true,updated_at=now()`,
+    [draft.slug, draft.name, description, JSON.stringify(manifest), JSON.stringify(draft.files_json), version]);
+    const { refreshIntegrationCatalog } = await import('@pkg/agent/integrations/catalog');
+    await refreshIntegrationCatalog();
+  } else {
+    const composeName = String(manifest.compose?.composeFile ?? manifest.composeFile ?? 'docker-compose.yml');
+    const compose = draft.files_json[composeName] ?? draft.files_json['docker-compose.yml'] ?? draft.files_json['compose.yaml'];
+    if (!compose) throw new Error('Recipe draft is missing its compose file');
+    await postgresClient.query(`INSERT INTO recipe_definitions (slug,name,description,manifest,compose,files,source_kind,version,user_edited)
+      VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb,'user',$7,true)
+      ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,manifest=EXCLUDED.manifest,compose=EXCLUDED.compose,files=EXCLUDED.files,source_kind='user',version=EXCLUDED.version,user_edited=true,updated_at=now()`,
+    [draft.slug, draft.name, description, JSON.stringify(manifest), compose, JSON.stringify(draft.files_json), version]);
+  }
 }
 
 // ─── IPC handlers ───────────────────────────────────────────────────
@@ -171,32 +116,14 @@ export function initSullaLibraryDraftEvents(): void {
         return { error: `kind must be one of skill | function | recipe | integration (got "${ kind }")` };
       }
 
-      // Integrations have two possible source dirs (builtin + user); the
-      // others have one. kindSourceDirs encapsulates that so the rest of
-      // the flow stays uniform.
-      const base = kindSourceDirs(kind)
-        .map(root => path.join(root, slug))
-        .find(fs.existsSync);
-
-      if (!base) {
-        return { error: `no library item at ${ kindPlural(kind) }/${ slug }` };
-      }
-
       const starter = await readLocalManifest(kind, slug);
-      if (!starter) return { error: 'could not build manifest from disk' };
+      if (!starter) return { error: 'could not build manifest from Postgres' };
 
       const files: Record<string, string> = {};
-      const all = walkFiles(base);
-      for (const { relPath, buffer } of all) {
-        if (buffer.byteLength > MAX_TEXT_FILE_BYTES) {
-          console.warn(`[Sulla] fork: skipping ${ relPath } (too large)`);
-          continue;
-        }
-        if (!isUtf8Text(buffer)) {
-          console.warn(`[Sulla] fork: skipping ${ relPath } (binary — will re-pull from base_slug at publish)`);
-          continue;
-        }
-        files[relPath] = buffer.toString('utf8');
+      const { readDatabaseArtifact } = await import('@pkg/main/marketplace/databaseArtifacts');
+      const source = await readDatabaseArtifact(kind, slug);
+      for (const [name, stored] of Object.entries(source.files)) {
+        if (typeof stored === 'string') files[name] = stored;
       }
 
       const { LibraryDraftModel } = await import('@pkg/agent/database/models/LibraryDraftModel');
@@ -285,10 +212,7 @@ export function initSullaLibraryDraftEvents(): void {
   });
 
   // ── Phase 3: Publish local ────────────────────────────────
-  // Materialise a draft back to ~/sulla/<kind>s/<targetSlug>/. The
-  // original base_slug directory is untouched unless targetSlug matches
-  // it — the user can overwrite-in-place by passing the original slug,
-  // or create a new directory by passing anything else.
+  // Commit a draft into the canonical Postgres definition table.
   ipcMainProxy.handle('library-draft-publish-local', async(_event, id: string, targetSlug?: string) => {
     try {
       const { LibraryDraftModel } = await import('@pkg/agent/database/models/LibraryDraftModel');
@@ -298,66 +222,9 @@ export function initSullaLibraryDraftEvents(): void {
       const slug = (targetSlug?.trim() || draft.slug).replace(/[^a-z0-9-_.]/gi, '-').toLowerCase();
       if (!slug) return { error: 'target slug is required' };
 
-      const baseDir = kindBaseDir(draft.kind as DraftKind);
-      fs.mkdirSync(baseDir, { recursive: true });
-      const target = path.join(baseDir, slug);
+      await saveDraftToDatabase({ ...draft, slug });
 
-      // Merge with base_slug contents when the draft only carries text
-      // files — binary assets from the original bundle survive the fork.
-      // For integrations, base_slug may be a builtin (resources/) or a
-      // marketplace install (user/); kindSourceDirs covers both.
-      const fromBase = draft.base_slug
-        ? (() => {
-          const resolved = kindSourceDirs(draft.kind as DraftKind)
-            .map(root => path.join(root, draft.base_slug!))
-            .find(fs.existsSync);
-
-          return resolved ? walkFiles(resolved) : [];
-        })()
-        : [];
-      const baseMap = new Map(fromBase.map(f => [f.relPath, f.buffer]));
-
-      // Ensure target dir exists, wipe if overwriting in place.
-      if (fs.existsSync(target)) {
-        fs.rmSync(target, { recursive: true, force: true });
-      }
-      fs.mkdirSync(target, { recursive: true });
-
-      // Write draft-supplied text files first (they win over base copies).
-      const writtenPaths = new Set<string>();
-      for (const [relPath, content] of Object.entries(draft.files_json)) {
-        const outPath = path.join(target, relPath);
-        if (!path.resolve(outPath).startsWith(path.resolve(target) + path.sep)) {
-          return { error: `refusing to write outside target: ${ relPath }` };
-        }
-        fs.mkdirSync(path.dirname(outPath), { recursive: true });
-        fs.writeFileSync(outPath, content, 'utf8');
-        writtenPaths.add(relPath);
-      }
-
-      // Backfill binary files from the base_slug dir.
-      for (const [relPath, buf] of baseMap.entries()) {
-        if (writtenPaths.has(relPath)) continue;
-        const outPath = path.join(target, relPath);
-        if (!path.resolve(outPath).startsWith(path.resolve(target) + path.sep)) continue;
-        fs.mkdirSync(path.dirname(outPath), { recursive: true });
-        fs.writeFileSync(outPath, buf);
-      }
-
-      // Skills run from the database: the human just saved this one, so it
-      // replaces the row. Non-fatal; the next skills refresh retries.
-      if (draft.kind === 'skill') {
-        try {
-          const { importSkillFolder } = await import('@pkg/agent/services/SkillDefinitionService');
-          const { skillsRegistry } = await import('@pkg/agent/database/registry/SkillsRegistry');
-          await importSkillFolder(target, { sourceKind: 'user', force: true });
-          await skillsRegistry.invalidate();
-        } catch (err) {
-          console.warn('[Sulla] library-draft-publish-local: skill database import failed:', err);
-        }
-      }
-
-      return { path: target, slug };
+      return { path: `database:${ draft.kind }_definitions/${ slug }`, slug };
     } catch (err) {
       console.error('[Sulla] library-draft-publish-local failed:', err);
 
@@ -377,30 +244,13 @@ export function initSullaLibraryDraftEvents(): void {
       const draft = await LibraryDraftModel.findById(id);
       if (!draft) return { error: 'draft not found' };
 
-      // Build the zip contents: draft text files + base-slug binary files.
+      // Build the zip contents from the database draft only.
       const entries: { zipPath: string; buffer: Buffer }[] = [];
       for (const [relPath, content] of Object.entries(draft.files_json)) {
         entries.push({
           zipPath: `${ draft.slug }/${ relPath }`,
           buffer:  Buffer.from(content, 'utf8'),
         });
-      }
-      if (draft.base_slug) {
-        const baseDir = kindSourceDirs(draft.kind as DraftKind)
-          .map(root => path.join(root, draft.base_slug!))
-          .find(fs.existsSync);
-
-        if (baseDir) {
-          const existingPaths = new Set(entries.map(e => e.zipPath));
-
-          for (const { relPath, buffer } of walkFiles(baseDir)) {
-            const zipPath = `${ draft.slug }/${ relPath }`;
-
-            if (!existingPaths.has(zipPath) && !isUtf8Text(buffer)) {
-              entries.push({ zipPath, buffer });
-            }
-          }
-        }
       }
 
       const zipPath = await writeZip(entries);
@@ -489,9 +339,6 @@ async function writeZip(entries: { zipPath: string; buffer: Buffer }[]): Promise
     out.on('close', () => resolve());
     out.on('error', reject);
   });
-
-  // Prevent unused-import lint on yauzl if it's not referenced later.
-  void yauzl;
 
   return outPath;
 }

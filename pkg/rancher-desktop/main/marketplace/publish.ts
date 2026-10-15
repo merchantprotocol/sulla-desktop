@@ -1,6 +1,6 @@
 /**
- * Publish a local artifact folder to the marketplace: build the sulla/v3
- * manifest, zip the publishable files, then the two-step submit
+ * Publish a Postgres artifact to the marketplace: materialize it temporarily,
+ * build the manifest, zip the publishable files, then the two-step submit
  * (POST /submit-manifest → PUT /templates/:id/bundle). The listing lands as
  * `pending` until an admin approves it.
  *
@@ -13,12 +13,13 @@ import * as path from 'path';
 
 import * as yazl from 'yazl';
 
+import { checkAgentManifestForPublish } from './agentPublishSafety';
 import { listBundleFiles } from './bundleFiles';
 import { submitManifest, uploadBundle, type MarketplaceKind } from './client';
+import { materializeDatabaseArtifact, packageContent, readDatabaseArtifact } from './databaseArtifacts';
 import { buildManifest } from './manifestBuilder';
-import { checkAgentManifestForPublish } from './agentPublishSafety';
 
-import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
+import type { InstallableKind, PackageManifest } from './databaseInstaller';
 
 export interface PublishOverrides {
   name?:        string;
@@ -34,11 +35,6 @@ export interface PublishResult {
   bundle_size:   number;
   status:        'pending' | 'approved';
   warnings?:     string[];
-}
-
-/** Where a local artifact of this kind lives, keyed by folder name. */
-export function localArtifactDir(kind: MarketplaceKind, folder: string): string {
-  return path.join(resolveSullaHomeDir(), `${ kind }s`, folder);
 }
 
 export function zipDirectory(sourceDir: string, slug: string, zipPath: string): Promise<void> {
@@ -62,46 +58,33 @@ export function zipDirectory(sourceDir: string, slug: string, zipPath: string): 
 
 export async function publishLocalArtifact(args: {
   kind:       MarketplaceKind;
-  sourceDir?: string;
   slug:       string;
   overrides?: PublishOverrides;
 }): Promise<PublishResult> {
-  const { kind, sourceDir, slug, overrides } = args;
-  let effectiveSourceDir = sourceDir ?? '';
+  const { kind, slug, overrides } = args;
+  if (kind === 'package') throw new Error('Use publishPackage for package submissions');
+  const artifact = await readDatabaseArtifact(kind as InstallableKind, slug);
+  const materialized = materializeDatabaseArtifact(artifact);
+  let effectiveSourceDir = materialized.dir;
   let stagingDir: string | null = null;
   const warnings: string[] = [];
 
   if (kind === 'agent') {
-    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    const agent = await agentDefinitionService.findBySlug(slug);
-
-    if (!agent) throw new Error(`Agent not found in the database: ${ slug }`);
-    const manifest = agentDefinitionService.toManifest(agent);
+    const manifest = artifact.manifest as any;
     const serialized = `${ JSON.stringify(manifest, null, 2) }\n`;
     const check = checkAgentManifestForPublish(manifest);
 
     if (check.secret) {
+      materialized.cleanup();
       throw new Error(`agent.json contains a possible ${ check.secret } secret. Remove credentials from the agent before publishing.`);
     }
     warnings.push(...check.warnings);
 
-    stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-agent-publish-'));
-    try {
-      effectiveSourceDir = path.join(stagingDir, slug);
-      fs.mkdirSync(effectiveSourceDir, { recursive: true });
-      fs.writeFileSync(path.join(effectiveSourceDir, 'agent.json'), serialized, 'utf8');
-      fs.writeFileSync(
-        path.join(effectiveSourceDir, 'README.md'),
-        `# ${ manifest.metadata.title }\n\n${ manifest.metadata.description || 'Sulla database-backed custom agent.' }\n`,
-        'utf8',
-      );
-    } catch (err) {
-      fs.rmSync(stagingDir, { recursive: true, force: true });
-      throw err;
-    }
+    fs.writeFileSync(path.join(effectiveSourceDir, 'agent.json'), serialized, 'utf8');
   }
 
   if (!fs.existsSync(effectiveSourceDir) || !fs.statSync(effectiveSourceDir).isDirectory()) {
+    materialized.cleanup();
     throw new Error(`bundle source does not exist: ${ effectiveSourceDir }`);
   }
 
@@ -125,6 +108,7 @@ export async function publishLocalArtifact(args: {
     manifest = buildManifest(kind, { slug, bundleRoot: effectiveSourceDir, overrides, writeSanitized: kind === 'routine' });
   } catch (err) {
     if (stagingDir) fs.rmSync(stagingDir, { recursive: true, force: true });
+    materialized.cleanup();
     throw new Error(`manifest build failed: ${ err instanceof Error ? err.message : String(err) }`);
   }
 
@@ -156,6 +140,61 @@ export async function publishLocalArtifact(args: {
   } finally {
     fs.rmSync(tmpdir, { recursive: true, force: true });
     if (stagingDir) fs.rmSync(stagingDir, { recursive: true, force: true });
+    materialized.cleanup();
+  }
+}
+
+export async function publishPackage(args: {
+  slug:        string;
+  title:       string;
+  description: string;
+  topic?:      string;
+  version?:    string;
+  items:       { kind: InstallableKind; slug: string }[];
+}): Promise<PublishResult> {
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(args.slug)) throw new Error('Package slug must use lowercase letters, numbers, dots, underscores, or dashes');
+  if (!args.title.trim()) throw new Error('Package title is required');
+  if (!args.items.length) throw new Error('Package contents must include at least one database artifact');
+
+  const seen = new Set<string>();
+  const contents: import('./databaseInstaller').PackageContent[] = [];
+  let includesWebApp = false;
+  for (const item of args.items) {
+    const key = `${ item.kind }:${ item.slug }`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const artifact = await readDatabaseArtifact(item.kind, item.slug);
+    contents.push(packageContent(artifact));
+    if (item.kind === 'recipe' && Array.isArray(artifact.manifest.runtime?.webPorts) && artifact.manifest.runtime.webPorts.length > 0) includesWebApp = true;
+  }
+
+  const version = args.version?.trim() || '1.0.0';
+  const manifest: PackageManifest = {
+    apiVersion:     'sulla/v1',
+    kind:           'package',
+    slug:           args.slug,
+    name:           args.title.trim(),
+    title:          args.title.trim(),
+    topic:          args.topic?.trim() || undefined,
+    app:            includesWebApp ? 'app' : 'none',
+    where:          'desktop',
+    version,
+    description_md: args.description,
+    contents,
+  };
+  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-package-publish-'));
+  const bundleRoot = path.join(tmpdir, args.slug);
+  const zipPath = path.join(tmpdir, `${ args.slug }.zip`);
+  fs.mkdirSync(bundleRoot, { recursive: true });
+  fs.writeFileSync(path.join(bundleRoot, 'package.json'), `${ JSON.stringify(manifest, null, 2) }\n`, 'utf8');
+  fs.writeFileSync(path.join(bundleRoot, 'README.md'), `# ${ args.title.trim() }\n\n${ args.description }\n`, 'utf8');
+  try {
+    await zipDirectory(bundleRoot, args.slug, zipPath);
+    const submit = await submitManifest({ kind: 'package', name: args.title.trim(), description: args.description, version, tags: args.topic ? [args.topic] : [], manifest });
+    const upload = await uploadBundle(submit.id, zipPath);
+    return { templateId: submit.id, slug: submit.slug, bundle_status: upload.bundle_status, bundle_size: upload.bundle_size, status: upload.status };
+  } finally {
+    fs.rmSync(tmpdir, { recursive: true, force: true });
   }
 }
 

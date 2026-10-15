@@ -26,10 +26,11 @@ export const workflowToolManifests: ToolManifest[] = [
   },
   {
     name:        'import_workflow',
-    description: 'Import a local routine.yaml file into the workflows database so it can be executed. Reads from ~/sulla/routines/<slug>/routine.yaml and upserts into the DB. Use this after writing or editing a workflow YAML to make it available to execute_workflow.',
+    description: 'Import an inline YAML workflow definition into Postgres so it can be executed.',
     category:    'workflow',
     schemaDef:   {
-      slug:   { type: 'string', description: 'The workflow slug — directory name under ~/sulla/routines/ containing a routine.yaml.' },
+      slug:   { type: 'string', description: 'The workflow slug / id.' },
+      yaml:   { type: 'string', description: 'The complete workflow definition as YAML.' },
       status: { type: 'string', optional: true, description: 'Workflow status: draft | production | archive. Defaults to "production".' },
     },
     operationTypes: ['execute'],
@@ -100,10 +101,10 @@ export const workflowToolManifests: ToolManifest[] = [
   },
   {
     name:        'display_workflow',
-    description: 'Surface a saved routine as a workflow artifact in the chat sidebar. Reads ~/sulla/routines/<slug>/routine.yaml and publishes the full document so the frontend opens (or updates in place) a workflow artifact pane next to the conversation. Use this AFTER import_workflow whenever the user should see the routine being built, and re-run it after each material edit to keep the sidebar card in sync. Artifact is deduped by workflow name — repeat calls for the same slug update one card, not many.',
+    description: 'Surface a Postgres-backed routine as a workflow artifact in the chat sidebar.',
     category:    'workflow',
     schemaDef:   {
-      slug: { type: 'string', description: 'The routine slug — directory name under ~/sulla/routines/ containing a routine.yaml. Must match the slug used in marketplace/scaffold and workflow/import_workflow.' },
+      slug: { type: 'string', description: 'The Postgres workflow id.' },
     },
     operationTypes: ['read'],
     loader:         () => import('./display_workflow'),

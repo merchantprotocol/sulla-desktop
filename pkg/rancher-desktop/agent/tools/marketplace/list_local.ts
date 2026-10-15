@@ -1,6 +1,3 @@
-import * as fs from 'fs';
-import * as path from 'path';
-
 import {
   FunctionDefinitionModel,
   IntegrationDefinitionModel,
@@ -8,7 +5,7 @@ import {
 } from '../../database/models/MarketplaceArtifactModel';
 import { WorkflowModel } from '../../database/models/WorkflowModel';
 import { BaseTool, ToolResponse } from '../base';
-import { ARTIFACT_KINDS, ArtifactKind, isArtifactKind, KIND_LAYOUTS, normalizeKind } from './types';
+import { ARTIFACT_KINDS, ArtifactKind, isArtifactKind, normalizeKind } from './types';
 
 /**
  * Enumerate locally-installed artifacts. Filterable by kind.
@@ -60,29 +57,11 @@ export class MarketplaceListLocalWorker extends BaseTool {
         for (const workflow of await WorkflowModel.listAll()) databaseSlugs.add(workflow.id);
       }
 
-      const layout = KIND_LAYOUTS[kind];
-      const root = layout.rootDir();
-      const items: { slug: string; manifestExists: boolean }[] = [];
-
-      try {
-        const entries = fs.readdirSync(root, { withFileTypes: true });
-        for (const entry of entries) {
-          if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-          const manifestExists = fs.existsSync(path.join(root, entry.name, layout.manifest));
-          if (!databaseSlugs.has(entry.name)) items.push({ slug: entry.name, manifestExists });
-        }
-      } catch {
-        // Dir doesn't exist or unreadable — show as empty.
-      }
-
-      total += databaseSlugs.size + items.length;
-      if (databaseSlugs.size === 0 && items.length === 0) {
-        blocks.push(`### ${ kind } (0)\n  Database and ${ root } — empty`);
+      total += databaseSlugs.size;
+      if (databaseSlugs.size === 0) {
+        blocks.push(`### ${ kind } (0)\n  Database — empty`);
       } else {
-        const lines = [
-          ...[...databaseSlugs].sort().map(slug => `  - ${ slug } (database)`),
-          ...items.map(i => `  - ${ i.slug } (legacy file)${ i.manifestExists ? '' : ' ⚠️ (missing manifest)' }`),
-        ];
+        const lines = [...databaseSlugs].sort().map(slug => `  - ${ slug } (database)`);
         blocks.push(`### ${ kind } (${ lines.length })\n${ lines.join('\n') }`);
       }
     }

@@ -740,6 +740,20 @@ export interface IpcMainInvokeEvents {
     success: true;
     action:  'deleted' | 'withdrawn';
   } | { error: string };
+  'marketplace-publish-package': (args: {
+    slug: string;
+    title: string;
+    description: string;
+    topic?: string;
+    version?: string;
+    items: { kind: 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe'; slug: string }[];
+  }) => {
+    templateId: string;
+    slug: string;
+    bundle_status: 'uploaded';
+    bundle_size: number;
+    status: 'pending' | 'approved';
+  } | { error: string };
 
   'packages:install': (input: { templateId: string }) => {
     ok: boolean;

@@ -188,7 +188,7 @@ export class MCPBridge {
     }
 
     const tools = this.getToolsForAccount(accountId);
-    const diff = diffConfigs(accountId, tools);
+    const diff = await diffConfigs(accountId, tools);
 
     return { tools, diff };
   }
@@ -209,7 +209,7 @@ export class MCPBridge {
     const account = accounts.find(a => a.account_id === accountId);
     const label = account?.label || accountId;
 
-    return generateConfigs(accountId, label, client.url, client.tools);
+    return await generateConfigs(accountId, label, client.url, client.tools);
   }
 
   /**
@@ -227,7 +227,7 @@ export class MCPBridge {
     }
     await client.discoverTools();
 
-    const diff = diffConfigs(accountId, client.tools);
+    const diff = await diffConfigs(accountId, client.tools);
     const result = await this.finalizeConfigs(accountId);
 
     return { result, diff };
@@ -236,8 +236,8 @@ export class MCPBridge {
   /**
    * Remove YAML configs for an MCP account.
    */
-  removeConfigs(accountId: string): boolean {
-    return removeConfigs(accountId);
+  async removeConfigs(accountId: string): Promise<boolean> {
+    return await removeConfigs(accountId);
   }
 
   /**
@@ -254,7 +254,7 @@ export class MCPBridge {
         const account = accounts.find(a => a.account_id === accountId);
         const label = account?.label || accountId;
 
-        const result = generateConfigs(accountId, label, client.url, client.tools);
+        const result = await generateConfigs(accountId, label, client.url, client.tools);
         results.push(result);
       } catch (err: any) {
         console.error(`${ LOG } Failed to generate configs for "${ accountId }":`, err.message);

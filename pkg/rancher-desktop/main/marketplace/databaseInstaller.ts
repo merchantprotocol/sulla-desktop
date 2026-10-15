@@ -407,6 +407,16 @@ async function removePackageItem(client: PoolClient, kind: InstallableKind, slug
 }
 
 export async function uninstallPackage(slug: string): Promise<{ ok: true; removed: { kind: InstallableKind; slug: string }[] }> {
+  const recipeItems = await postgresClient.query(`SELECT i.item_slug
+    FROM installed_package_items i
+    JOIN installed_packages p ON p.slug=i.package_slug
+    JOIN recipe_definitions r ON r.slug=i.item_slug AND r.marketplace_template_id=p.template_id
+    WHERE i.package_slug=$1 AND i.kind='recipe'`, [slug]);
+  if (recipeItems.length > 0) {
+    const { stopStoredRecipe } = await import('@pkg/main/sullaRecipeDockerEvents');
+    for (const item of recipeItems) await stopStoredRecipe(String(item.item_slug));
+  }
+
   const result = await postgresClient.transaction(async(client) => {
     const pkg = await client.query('SELECT template_id FROM installed_packages WHERE slug=$1 FOR UPDATE', [slug]);
     if (!pkg.rowCount) throw new Error(`Package "${ slug }" is not installed`);

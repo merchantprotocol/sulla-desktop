@@ -1,17 +1,11 @@
 /**
  * Function IPC event handlers.
  *
- * Scans ~/sulla/functions/<slug>/ for directories containing a
- * function.yaml manifest and returns a normalized summary for the UI to
+ * Reads function definitions from Postgres and returns a normalized summary for the UI to
  * populate the Function node picker. Invocation itself happens through
  * the runtime containers (python/shell/node) — these handlers only
  * enumerate the catalog.
  */
-
-import * as fs from 'fs';
-import * as path from 'path';
-
-import yaml from 'yaml';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -29,7 +23,7 @@ export interface FunctionIntegrationDep {
    * inside the runtime; values reference property names on the chosen
    * integration account.
    */
-  env: Record<string, string>;
+  env:  Record<string, string>;
 }
 
 export interface FunctionListItem {
@@ -45,12 +39,6 @@ export interface FunctionListItem {
    * properties using each dep's `env` map. Always present (possibly empty).
    */
   integrations: FunctionIntegrationDep[];
-}
-
-function getFunctionsDir(): string {
-  const { resolveSullaFunctionsDir } = require('@pkg/agent/utils/sullaPaths');
-
-  return resolveSullaFunctionsDir();
 }
 
 function isValidRuntime(value: unknown): value is FunctionRuntime {
@@ -102,64 +90,20 @@ function normalizeIntegrations(value: unknown): FunctionIntegrationDep[] {
 
 export function initSullaFunctionEvents(): void {
   ipcMainProxy.handle('functions-list', async(): Promise<FunctionListItem[]> => {
-    const root = getFunctionsDir();
-    const entries = fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }) : [];
     const items: FunctionListItem[] = [];
-    const databaseSlugs = new Set<string>();
-
-    try {
-      const { FunctionDefinitionModel } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
-      for (const row of await FunctionDefinitionModel.list()) {
-        const spec = row.manifest.spec ?? {};
-        if (!isValidRuntime(row.runtime)) continue;
-        databaseSlugs.add(row.slug);
-        items.push({
-          slug: row.slug,
-          name: row.name,
-          description: row.description,
-          runtime: row.runtime,
-          inputs: normalizeSchema(spec.inputs),
-          outputs: normalizeSchema(spec.outputs),
-          integrations: normalizeIntegrations(spec.integrations),
-        });
-      }
-    } catch (err) {
-      console.warn('[Sulla] functions-list database read failed; using legacy folders:', err);
-    }
-
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      if (entry.name.startsWith('.')) continue;
-      if (databaseSlugs.has(entry.name)) continue;
-
-      const yamlPath = path.join(root, entry.name, 'function.yaml');
-      if (!fs.existsSync(yamlPath)) continue;
-
-      try {
-        const raw = fs.readFileSync(yamlPath, 'utf-8');
-        const parsed: any = yaml.parse(raw) || {};
-        const spec = parsed.spec ?? {};
-        const runtime = spec.runtime;
-
-        if (!isValidRuntime(runtime)) {
-          console.warn(`[Sulla] Skipping function "${ entry.name }" — invalid runtime: ${ runtime }`);
-          continue;
-        }
-
-        const slug = typeof parsed.slug === 'string' && parsed.slug.trim() ? parsed.slug.trim() : entry.name;
-
-        items.push({
-          slug,
-          name:         typeof parsed.name === 'string' ? parsed.name : slug,
-          description:  typeof parsed.description === 'string' ? parsed.description.trim() : '',
-          runtime,
-          inputs:       normalizeSchema(spec.inputs),
-          outputs:      normalizeSchema(spec.outputs),
-          integrations: normalizeIntegrations(spec.integrations),
-        });
-      } catch (err) {
-        console.warn(`[Sulla] Failed to parse function.yaml in ${ entry.name }:`, err);
-      }
+    const { FunctionDefinitionModel } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
+    for (const row of await FunctionDefinitionModel.list()) {
+      const spec = row.manifest.spec ?? {};
+      if (!isValidRuntime(row.runtime)) continue;
+      items.push({
+        slug:         row.slug,
+        name:         row.name,
+        description:  row.description,
+        runtime:      row.runtime,
+        inputs:       normalizeSchema(spec.inputs),
+        outputs:      normalizeSchema(spec.outputs),
+        integrations: normalizeIntegrations(spec.integrations),
+      });
     }
 
     items.sort((a, b) => a.slug.localeCompare(b.slug));
