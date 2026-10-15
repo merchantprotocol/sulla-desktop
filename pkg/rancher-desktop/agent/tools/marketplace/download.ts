@@ -31,7 +31,7 @@ export class MarketplaceDownloadWorker extends BaseTool {
           responseString: `Installed package ${ listing.name } v${ result.version } in Postgres.${ result.warnings?.length ? `\n${ result.warnings.join('\n') }` : '' }`,
         };
       }
-      const { listing, result } = await getMarketplaceClient().install(kind, slug, { overwrite });
+      const { listing, result } = await getMarketplaceClient().install(kind!, slug, { overwrite });
 
       if (result.alreadyInstalled) {
         const outdated = result.version !== listing.version;

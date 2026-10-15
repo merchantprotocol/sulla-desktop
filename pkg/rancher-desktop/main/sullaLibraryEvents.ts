@@ -6,6 +6,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { readDatabaseArtifact } from '@pkg/main/marketplace/databaseArtifacts';
 import type { InstallableKind } from '@pkg/main/marketplace/databaseInstaller';
 import { rewriteRecipeCompose } from '@pkg/main/marketplace/recipeRuntime';
+import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -76,7 +77,7 @@ async function listIntegrations() {
     version:          row.version ?? '1.0.0',
     category:         row.manifest.category ?? '',
     authType:         row.manifest.authType,
-    source:           row.source_kind === 'marketplace' ? 'user' : 'resources',
+    source:           (row.source_kind === 'marketplace' ? 'user' : 'resources') as 'user' | 'resources',
     bundledFunctions: Array.isArray(row.manifest.bundled?.functions) ? row.manifest.bundled.functions.length : 0,
     bundledSkills:    Array.isArray(row.manifest.bundled?.skills) ? row.manifest.bundled.skills.length : 0,
     updatedAt:        updatedAt(row.updated_at),
@@ -162,7 +163,7 @@ export function initSullaLibraryEvents(): void {
     if (!singular) return { error: `unknown kind "${ kind }"` };
     const payload = await buildLocalManifest(singular, slug);
 
-    return payload ?? { error: `no database item at ${ kind }/${ slug }` };
+    return payload ? payload as { template: MarketplaceBrowseRow & { manifest: Record<string, unknown> } } : { error: `no database item at ${ kind }/${ slug }` };
   });
 
   console.log('[Sulla] Database Library IPC handlers initialized');

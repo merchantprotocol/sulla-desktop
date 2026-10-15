@@ -10,7 +10,7 @@ import { computed, ref } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type DraftKind = 'skill' | 'function' | 'recipe';
+export type DraftKind = 'skill' | 'function' | 'recipe' | 'integration';
 
 export interface DraftSummary {
   id:         string;

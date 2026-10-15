@@ -293,14 +293,20 @@ export function decideFolderImport(
 /** Copy folder skills into the table. Folders are only read, never changed. */
 export async function importSkillFolders(
   sources: SkillFolderSource[] = defaultSkillFolderSources(),
-  options: { insertOnly?: boolean } = {},
+  options: {
+    insertOnly?: boolean;
+    /** Slugs to leave alone entirely (already imported once, maybe deleted since). */
+    skip?:       Set<string>;
+    /** Called for each slug once it is present in the table. */
+    onSeen?:     (slug: string) => Promise<void>;
+  } = {},
 ): Promise<SkillImportSummary> {
   const summary: SkillImportSummary = { imported: 0, refreshed: 0, skipped: 0, errors: [] };
   const claimed = new Set<string>();
 
   for (const source of sources) {
     for (const { parsed, sourcePath } of scanSkillDir(source.dir)) {
-      if (claimed.has(parsed.slug)) {
+      if (claimed.has(parsed.slug) || options.skip?.has(parsed.slug)) {
         summary.skipped++;
         continue;
       }
@@ -331,6 +337,7 @@ export async function importSkillFolders(
         } else {
           summary.skipped++;
         }
+        if (options.onSeen) await options.onSeen(parsed.slug);
       } catch (error) {
         summary.errors.push(`${ parsed.slug }: ${ error instanceof Error ? error.message : String(error) }`);
       }

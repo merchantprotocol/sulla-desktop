@@ -45,6 +45,16 @@ async function exists(kind: InstallableKind, slug: string): Promise<boolean> {
   return !!(await postgresClient.queryOne(`SELECT 1 FROM ${ table } WHERE ${ key }=$1 LIMIT 1`, [slug]));
 }
 
+/** Everything the folder import has already handled, even if deleted since. */
+async function seenSlugs(kind: InstallableKind): Promise<Set<string>> {
+  const rows = await postgresClient.query('SELECT slug FROM legacy_artifact_import_ledger WHERE kind=$1', [kind]);
+  return new Set(rows.map((row: { slug: string }) => row.slug));
+}
+
+async function markSeen(kind: InstallableKind, slug: string): Promise<void> {
+  await postgresClient.query('INSERT INTO legacy_artifact_import_ledger (kind, slug) VALUES ($1, $2) ON CONFLICT (kind, slug) DO NOTHING', [kind, slug]);
+}
+
 function textFile(files: Record<string, any>, ...names: string[]): string | null {
   for (const name of names) if (typeof files[name] === 'string') return files[name];
   return null;
@@ -89,7 +99,11 @@ async function insertArtifact(kind: Exclude<InstallableKind, 'agent' | 'skill'>,
   return true;
 }
 
-/** One-way compatibility import. Existing rows always win and source folders are untouched. */
+/**
+ * One-way compatibility import. Existing rows always win, source folders are
+ * untouched, and a slug is only ever imported once (see the ledger table), so
+ * deleting something in Postgres is never undone on the next start.
+ */
 export async function importLegacyArtifacts(): Promise<LegacyImportSummary> {
   const summary: LegacyImportSummary = { imported: 0, skipped: 0, errors: [] };
   const bundledSkills = bundledRoot('skills');
@@ -97,7 +111,11 @@ export async function importLegacyArtifacts(): Promise<LegacyImportSummary> {
     ...defaultSkillFolderSources(),
     ...(bundledSkills ? [{ dir: bundledSkills, sourceKind: 'resources' as const }] : []),
   ];
-  const skills = await importSkillFolders(skillSources, { insertOnly: true });
+  const skills = await importSkillFolders(skillSources, {
+    insertOnly: true,
+    skip:       await seenSlugs('skill'),
+    onSeen:     slug => markSeen('skill', slug),
+  });
   summary.imported += skills.imported;
   summary.skipped += skills.skipped;
   summary.errors.push(...skills.errors.map(error => `skill/${ error }`));
@@ -112,10 +130,12 @@ export async function importLegacyArtifacts(): Promise<LegacyImportSummary> {
     ...(bundledIntegrations ? [{ kind: 'integration' as const, root: bundledIntegrations }] : []),
   ];
   const claimed = new Set<string>();
+  const seen = new Map<string, Set<string>>();
   for (const source of sources) {
+    if (!seen.has(source.kind)) seen.set(source.kind, await seenSlugs(source.kind));
     for (const artifact of artifactFolders(source.root)) {
       const key = `${ source.kind }:${ artifact.slug }`;
-      if (claimed.has(key)) {
+      if (claimed.has(key) || seen.get(source.kind)!.has(artifact.slug)) {
         summary.skipped++;
         continue;
       }
@@ -123,6 +143,7 @@ export async function importLegacyArtifacts(): Promise<LegacyImportSummary> {
       try {
         if (await insertArtifact(source.kind, artifact.slug, artifact.dir)) summary.imported++;
         else summary.skipped++;
+        await markSeen(source.kind, artifact.slug);
       } catch (error) {
         summary.errors.push(`${ key }: ${ error instanceof Error ? error.message : String(error) }`);
       }
