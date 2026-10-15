@@ -333,7 +333,7 @@ function getFileMenu(): MenuItem {
         click:       () => sendAgentCommand('open-tab', { mode: 'vault' }),
       },
       {
-        label:       'Open Sulla Studio',
+        label:       'Open Packages',
         accelerator: 'CmdOrCtrl+4',
         enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'marketplace' }),
@@ -849,7 +849,7 @@ function getWindowsApplicationMenu(): MenuItem[] {
           click: () => sendAgentCommand('open-tab', { mode: 'vault' }),
         },
         {
-          label: 'Open Sulla Studio',
+          label: 'Open Packages',
           click: () => sendAgentCommand('open-tab', { mode: 'marketplace' }),
         },
         { type: 'separator' },

@@ -267,7 +267,7 @@ export function openMain() {
       window,
       { ...CommandOrControl, key: '4' },
       () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'marketplace' }),
-      'open sulla studio',
+      'open packages',
     );
 
     Shortcuts.register(

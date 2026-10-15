@@ -395,7 +395,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   account:       'My Account',
   history:       'History',
   routines:      'Workflows',
-  marketplace:   'Sulla Studio',
+  marketplace:   'Packages',
   labs:          'Labs',
   'file-editor': 'Editor',
   terminal:      'Terminal',

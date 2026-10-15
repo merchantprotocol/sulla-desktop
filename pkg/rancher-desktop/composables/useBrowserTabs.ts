@@ -426,7 +426,7 @@ export function useBrowserTabs() {
     account:      'My Account',
     history:      'History',
     routines:     'Routines',
-    marketplace:  'Sulla Studio',
+    marketplace:  'Packages',
     labs:         'Labs',
     'file-editor': 'Editor',
     terminal:     'Terminal',

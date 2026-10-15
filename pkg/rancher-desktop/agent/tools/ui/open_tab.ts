@@ -5,7 +5,7 @@ import { openPreferences } from '@pkg/window/preferences';
 
 /**
  * UI Open Tab — bridge between the agent and the renderer's `agent-command`
- * IPC handler. Lets the agent open / focus a built-in app view (marketplace,
+ * IPC handler. Lets the agent open / focus a built-in app view (packages,
  * vault, integrations, routines, history, secretary, chat, etc.) from chat.
  *
  * The renderer's `onAgentCommand` handler in pages/AgentRouter.vue already
@@ -16,8 +16,13 @@ import { openPreferences } from '@pkg/window/preferences';
  * extension's URL — those aren't built-in modes.
  */
 
+// `packages` is the user-facing name; the renderer still keys that view
+// as `marketplace`, which stays accepted as an alias.
+const MODE_ALIASES: Record<string, string> = { packages: 'marketplace' };
+
 const VALID_MODES = new Set([
   'chat',
+  'packages',
   'marketplace',
   'integrations',
   'vault',
@@ -99,7 +104,7 @@ export class UiOpenTabWorker extends BaseTool {
       };
     }
 
-    const sent = sendToAgentWindow({ command: 'open-tab', mode });
+    const sent = sendToAgentWindow({ command: 'open-tab', mode: MODE_ALIASES[mode] ?? mode });
     if (!sent) {
       return {
         successBoolean: false,

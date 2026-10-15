@@ -15,8 +15,8 @@
  *      poll briefly until a loaded BrowserWindow is available.
  *
  * Supported URLs:
- *   sulla://marketplace/install?id=<template-id>
- *     → opens (or focuses) the marketplace tab and auto-loads the
+ *   sulla://packages/install?id=<template-id>  (also sulla://marketplace/…)
+ *     → opens (or focuses) the Packages tab and auto-loads the
  *       detail view for the requested template.
  */
 
@@ -117,10 +117,11 @@ function dispatch(target: Electron.BrowserWindow, rawUrl: string): void {
   const section = parsed.hostname;
   const action = parsed.pathname.replace(/^\/+/, '');
 
-  if (section === 'marketplace' && action === 'install') {
+  // sulla://packages/install is the new name; marketplace stays for old links.
+  if ((section === 'marketplace' || section === 'packages') && action === 'install') {
     const id = parsed.searchParams.get('id');
     if (!id) {
-      console.warn('[deep-link] marketplace/install missing id param:', rawUrl);
+      console.warn(`[deep-link] ${ section }/install missing id param:`, rawUrl);
       return;
     }
     target.focus();
