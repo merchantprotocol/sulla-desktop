@@ -13,6 +13,20 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 const LOG = '[MCPClient]';
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === 'string' && error) {
+    return error;
+  }
+  try {
+    return JSON.stringify(error) || 'Unknown error';
+  } catch {
+    return String(error) || 'Unknown error';
+  }
+}
+
 export interface MCPToolDefinition {
   name:        string;
   description: string;
@@ -71,20 +85,31 @@ export class MCPClient {
       await this.client.connect(this.transport);
       this._connected = true;
       console.log(`${ LOG } Connected to ${ this.serverUrl }`);
-    } catch (err: any) {
+    } catch (streamableError) {
       // If StreamableHTTP failed and we haven't already tried SSE, fall back
       if (!this.serverUrl.includes('/sse') && this.transport instanceof StreamableHTTPClientTransport) {
-        console.warn(`${ LOG } StreamableHTTP failed, retrying with SSE transport: ${ err.message }`);
+        const streamableMessage = errorMessage(streamableError);
+
+        console.warn(`${ LOG } StreamableHTTP failed, retrying with SSE transport: ${ streamableMessage }`);
+        await this.transport.close().catch(() => undefined);
         this.transport = this.createSSETransport();
         this.client = new Client(
           { name: 'sulla-desktop', version: '1.0.0' },
           { capabilities: {} },
         );
-        await this.client.connect(this.transport);
-        this._connected = true;
-        console.log(`${ LOG } Connected via SSE fallback to ${ this.serverUrl }`);
+        try {
+          await this.client.connect(this.transport);
+          this._connected = true;
+          console.log(`${ LOG } Connected via SSE fallback to ${ this.serverUrl }`);
+        } catch (sseError) {
+          throw new Error(
+            `${ LOG } Could not connect to ${ this.serverUrl }. ` +
+            `Streamable HTTP failed: ${ streamableMessage }. ` +
+            `SSE fallback failed: ${ errorMessage(sseError) }`,
+          );
+        }
       } else {
-        throw err;
+        throw streamableError;
       }
     }
 
@@ -215,11 +240,29 @@ export class MCPClient {
       requestInit.headers = { Authorization: `Bearer ${ this.authToken }` };
     }
     const skipTls = this.serverUrl.startsWith('https:') && this.isLocalUrl();
+    const fetchImpl = skipTls ? this.createTlsPermissiveFetch() : fetch;
     return new StreamableHTTPClientTransport(
       new URL(this.serverUrl),
       {
         requestInit,
-        ...(skipTls ? { fetch: this.createTlsPermissiveFetch() } : {}),
+        fetch: async(url, init) => {
+          const response = await fetchImpl(url, init);
+
+          // Streamable HTTP's optional GET stream may be unsupported by a
+          // stateless server. Some small servers return their generic 404
+          // instead of the specification's 405; normalize that response so
+          // the SDK keeps using request/response POSTs rather than failing or
+          // incorrectly falling back to the legacy SSE transport.
+          if ((init?.method || 'GET').toUpperCase() === 'GET' && response.status === 404) {
+            await response.body?.cancel();
+            return new Response(null, {
+              status:     405,
+              statusText: 'Method Not Allowed',
+            });
+          }
+
+          return response;
+        },
         reconnectionOptions: {
           maxReconnectionDelay:        30000,
           initialReconnectionDelay:    1000,

@@ -1417,9 +1417,11 @@ export class ChatCompletionsServer {
         })),
         diff,
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error(`[ChatCompletionsAPI] MCP discover failed (${ accountId }):`, error);
-      res.status(500).json({ success: false, error: error.message });
+      const message = error instanceof Error ? error.message : String(error || 'MCP discovery failed');
+
+      res.status(500).json({ success: false, error: message });
     }
   }
 
