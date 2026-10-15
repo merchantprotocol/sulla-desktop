@@ -5,7 +5,7 @@ import { openPreferences } from '@pkg/window/preferences';
 
 /**
  * UI Open Tab — bridge between the agent and the renderer's `agent-command`
- * IPC handler. Lets the agent open / focus a built-in app view (packages,
+ * IPC handler. Lets the agent open / focus a built-in app view (use-cases,
  * vault, integrations, routines, history, secretary, chat, etc.) from chat.
  *
  * The renderer's `onAgentCommand` handler in pages/AgentRouter.vue already
@@ -16,12 +16,13 @@ import { openPreferences } from '@pkg/window/preferences';
  * extension's URL — those aren't built-in modes.
  */
 
-// `packages` is the user-facing name; the renderer still keys that view
-// as `marketplace`, which stays accepted as an alias.
-const MODE_ALIASES: Record<string, string> = { packages: 'marketplace' };
+// The renderer still keys that view as `marketplace`; all three public names
+// remain accepted for backwards compatibility.
+const MODE_ALIASES: Record<string, string> = { 'use-cases': 'marketplace', packages: 'marketplace' };
 
 const VALID_MODES = new Set([
   'chat',
+  'use-cases',
   'packages',
   'marketplace',
   'integrations',

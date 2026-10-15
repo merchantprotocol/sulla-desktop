@@ -5,11 +5,11 @@
       class="back"
       @click="$emit('close')"
     >
-      ← All packages
+      ← All use cases
     </button>
 
     <div class="crumbs">
-      Packages<template v-if="topicLabel">
+      Use Cases<template v-if="topicLabel">
         › {{ topicLabel }}
       </template> › {{ row.title }}
     </div>
@@ -55,7 +55,7 @@
       </p>
     </header>
 
-    <!-- Sales page body from the package's description_md. Links to
+    <!-- Sales page body from the use case's description_md. Links to
          #get (and any "YES! …" link) act as the Get button. -->
     <!-- eslint-disable vue/no-v-html -- sanitized via DOMPurify -->
     <article
@@ -70,7 +70,7 @@
       v-if="contentGroups.length"
       class="more"
     >
-      <summary>For the curious: what's in the package</summary>
+      <summary>For the curious: what's in the use case</summary>
       <div class="rows">
         <div
           v-for="g in contentGroups"

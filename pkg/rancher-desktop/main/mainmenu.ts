@@ -333,7 +333,7 @@ function getFileMenu(): MenuItem {
         click:       () => sendAgentCommand('open-tab', { mode: 'vault' }),
       },
       {
-        label:       'Open Packages',
+        label:       'Open Use Cases',
         accelerator: 'CmdOrCtrl+4',
         enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'marketplace' }),
@@ -849,7 +849,7 @@ function getWindowsApplicationMenu(): MenuItem[] {
           click: () => sendAgentCommand('open-tab', { mode: 'vault' }),
         },
         {
-          label: 'Open Packages',
+          label: 'Open Use Cases',
           click: () => sendAgentCommand('open-tab', { mode: 'marketplace' }),
         },
         { type: 'separator' },

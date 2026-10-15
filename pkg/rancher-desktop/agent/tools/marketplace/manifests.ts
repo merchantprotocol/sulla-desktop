@@ -1,6 +1,6 @@
 import type { ToolManifest } from '../registry';
 
-const KINDS_DESC = 'Artifact kind. One of: package, workflow (alias: routine), agent, skill, function, integration, recipe.';
+const KINDS_DESC = 'Artifact kind. One of: package (a use case — one bundled download containing everything needed for a job), workflow (alias: routine), agent, skill, function, integration, recipe.';
 
 export const marketplaceToolManifests: ToolManifest[] = [
   {
@@ -30,7 +30,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
   },
   {
     name:        'download',
-    description: 'Install a marketplace listing using the same database installer as the Marketplace tab. Packages install every embedded item in one all-or-nothing transaction. No artifact is persisted under ~/sulla/.',
+    description: 'Install a marketplace listing using the same database installer as the Use Cases tab. A package (use case) installs every embedded item in one all-or-nothing transaction. No artifact is persisted under ~/sulla/.',
     category:    'marketplace',
     schemaDef:   {
       kind:      { type: 'string', description: KINDS_DESC },
