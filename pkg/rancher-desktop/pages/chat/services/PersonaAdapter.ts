@@ -679,7 +679,7 @@ export class PersonaAdapter {
       } satisfies ToolMessage;
     }
 
-    // Channel message (from Heartbeat/Workbench/Mobile).
+    // Channel message (for example from Heartbeat or Mobile).
     //
     // Mobile-relay messages are intentionally NOT surfaced in the active
     // transcript — the mobile chat has its own continuity and popping
@@ -687,8 +687,7 @@ export class PersonaAdapter {
     // we persist the mobile conversation as its own thread so it shows
     // up in the history rail and the user can pick it up there.
     //
-    // Heartbeat and Workbench still render inline (they're ambient
-    // background agents that don't have their own chat surface).
+    // Other non-mobile agents still render inline.
     if (b.kind === 'channel_message') {
       const channel = b.channelMeta?.senderChannel ?? '';
       if (isMobileRelayChannel(channel)) {

@@ -35,8 +35,7 @@ Every major subsystem in Sulla -- the frontend chat UI, the backend agent dispat
     │  │          │     Consumers             │        │
     │  │  ┌───────┴────────┐                 │        │
     │  │  │ BackendGraph   │ sulla-desktop   │        │
-    │  │  │ WebSocketSvc   │ workbench       │        │
-    │  │  │                │ heartbeat       │        │
+    │  │  │ WebSocketSvc   │ heartbeat       │        │
     │  │  │                │ calendar_event  │        │
     │  │  │                │ custom agents   │        │
     │  │  └────────────────┘                 │        │
@@ -90,7 +89,6 @@ A **channel** is a named topic. Each channel maps to a separate WebSocket connec
 | Channel | Subscribers | Purpose |
 |---------|------------|---------|
 | `sulla-desktop` | FrontendGraphWebSocketService, BackendGraphWebSocketService, SchedulerService | Primary chat channel between the UI and the default agent |
-| `workbench` | BackendGraphWebSocketService | Workflow/workbench editor agent communication |
 | `heartbeat` | BackendGraphWebSocketService, SchedulerService | Autonomous heartbeat agent loop; also used for keepalive pings |
 | `calendar_event` | BackendGraphWebSocketService, CalendarClient | Calendar event scheduling, cancellation, rescheduling |
 | Custom agent IDs | BackendGraphWebSocketService (dynamic) | One channel per custom agent defined in `~/sulla/agents/` |
@@ -147,7 +145,7 @@ interface WebSocketMessage {
 
 **File:** `pkg/rancher-desktop/agent/services/BackendGraphWebSocketService.ts`
 
-The main-process agent dispatcher. It subscribes to `sulla-desktop`, `workbench`, `heartbeat`, `calendar_event`, and all custom agent channels. When a `user_message` arrives, it resolves the correct agent persona via `GraphRegistry`, creates or reuses an `AgentGraph` for the thread, and executes the graph. It handles `stop_run` (abort) and `new_conversation` (reset) as well.
+The main-process agent dispatcher. It subscribes to `sulla-desktop`, `heartbeat`, `calendar_event`, and all custom agent channels. When a `user_message` arrives, it resolves the correct agent persona via `GraphRegistry`, creates or reuses an `AgentGraph` for the thread, and executes the graph. It handles `stop_run` (abort) and `new_conversation` (reset) as well.
 
 ### FrontendGraphWebSocketService
 

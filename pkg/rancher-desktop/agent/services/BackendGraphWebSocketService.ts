@@ -125,6 +125,8 @@ export class BackendGraphWebSocketService {
       console.warn('[BackendGraphWS] Failed to register heartbeat agent:', err));
     this.registerAgent(MOBILE_RELAY_CHANNEL_ID, 'Sulla (Mobile)', 'Chat routed from paired mobile device').catch(err =>
       console.warn('[BackendGraphWS] Failed to register mobile-relay agent:', err));
+    this.deregisterAgent('workbench').catch(err =>
+      console.warn('[BackendGraphWS] Failed to clear retired agent registration:', err));
 
     // Subscribe to every enabled custom-agent channel stored in Postgres.
     this.subscribeToAgentChannels().catch(err =>
@@ -514,6 +516,12 @@ export class BackendGraphWebSocketService {
       lastActiveAt: Date.now(),
       description,
     });
+  }
+
+  /** Remove registrations written by built-in agents retired in newer releases. */
+  private async deregisterAgent(agentId: string): Promise<void> {
+    const { getActiveAgentsRegistry } = await import('./ActiveAgentsRegistry');
+    await getActiveAgentsRegistry().deregister(agentId);
   }
 
   // ------------------------------------------------------------------

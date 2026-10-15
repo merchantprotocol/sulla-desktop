@@ -128,7 +128,6 @@ The BackendGraphWebSocketService routes messages by channel name:
 | Channel | Consumer |
 |---------|---------|
 | `sulla-desktop` | Frontend chat agent |
-| `workbench` | Workbench editor agent |
 | `heartbeat` | Autonomous heartbeat agent |
 | `mobile-relay` | Paired mobile device |
 | `calendar_event` | Calendar trigger |

@@ -169,7 +169,7 @@ export class ActiveAgentsRegistry {
       `**To message another agent**, wrap your message in XML tags named after the target channel:`,
       `\`\`\``,
       `<channel:heartbeat>Are you online?</channel:heartbeat>`,
-      `<channel:workbook>Please update the status for task #42.</channel:workbook>`,
+      `<channel:sulla-desktop>The status update for task #42 is ready.</channel:sulla-desktop>`,
       `\`\`\``,
       `The system automatically detects these tags and routes the message. No tool call needed.`,
       ``,

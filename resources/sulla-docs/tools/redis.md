@@ -89,7 +89,7 @@ sulla meta/exec '{"command":"docker exec sulla_redis redis-cli KEYS \"*\""}'
 
 - Anything that needs to survive a Sulla Desktop restart → use Postgres
 - Anything more than a few KB → use Postgres or a file
-- Pub/sub between agents → use the channel-tag pattern (`<channel:workbench>...`), not Redis pub/sub
+- Pub/sub between agents → use the channel-tag pattern (`<channel:heartbeat>...`), not Redis pub/sub
 - Workflow / job state → use the Postgres `workflow_checkpoints` machinery, not Redis
 
 ## Reference

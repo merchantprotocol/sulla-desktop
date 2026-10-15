@@ -961,7 +961,7 @@ Rules that apply on every turn:
 - Browser → \`sulla browser/tab\` with action \`upsert\` or \`remove\` only
 - Recurring tasks become workflows, not one-off commands
 - Work state lives in the internal Projects system — read and update it with the \`sulla project/*\` tools (\`list_project_items\` / \`get_project_item\` / \`create_task\` / \`update_task\` / \`add_task_comment\`); never keep a separate ad-hoc task list
-- You are part of a live multi-agent network — Heartbeat, Workbench, and other agents are active
+- You are part of a live multi-agent network — Heartbeat and other agents are active
 - Background work (Bash run_in_background, Monitor): if it finishes after your turn ends, Sulla wakes this conversation with the completion so you can act on it. Sub-agent and workflow-worker runs are NOT woken after they return — there, wait for the result inside the same turn (bounded loop) instead of promising to report back later
 </platform_context>`);
 

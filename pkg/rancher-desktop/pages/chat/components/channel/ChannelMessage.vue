@@ -1,4 +1,4 @@
-<!-- Message posted by another agent (Heartbeat, Workbench, Mobile). -->
+<!-- Message posted by another agent (for example Heartbeat or Mobile). -->
 <template>
   <div class="channel-msg" :data-agent="msg.agent.toLowerCase()">
     <div class="chead">
@@ -49,6 +49,5 @@ const timeLabel = computed(() => {
   color: var(--read-2);
 }
 .channel-msg[data-agent="heartbeat"] { border-left-color: var(--steel-300); }
-.channel-msg[data-agent="workbench"] { border-left-color: var(--steel-500); }
 .channel-msg[data-agent="mobile"]    { border-left-color: var(--steel-400); }
 </style>

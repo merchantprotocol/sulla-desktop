@@ -5,7 +5,6 @@
 | Channel | Agent | Purpose |
 |---------|-------|---------|
 | `sulla-desktop` | Frontend chat agent | Primary user-facing chat |
-| `workbench` | Workbench editor agent | Workflow canvas / workbench tasks |
 | `heartbeat` | Autonomous heartbeat agent | Background autonomous tasks |
 | `mobile-relay` | Sulla Mobile | Chat routed from paired mobile device |
 
@@ -17,8 +16,6 @@ Wrap your message in an XML tag named after the target channel:
 
 ```
 <channel:heartbeat>Are you online? Reply when ready.</channel:heartbeat>
-
-<channel:workbench>Update the status for the social media workflow to production.</channel:workbench>
 
 <channel:sulla-desktop>The daily report is ready. Summary: [...]</channel:sulla-desktop>
 ```
@@ -51,11 +48,9 @@ Send message to heartbeat → continue doing other work
 Messages are plain text inside the channel tag. Include enough context for the receiving agent to act:
 
 ```
-<channel:workbench>
-Please update the daily-social-posts workflow status to production. 
-Workflow ID: workflow-daily-social-media-posts
-Location: ~/sulla/workflows/production/daily-social-media-posts.yaml
-</channel:workbench>
+<channel:sulla-desktop>
+The daily-social-posts workflow status is ready for review.
+</channel:sulla-desktop>
 ```
 
 ---

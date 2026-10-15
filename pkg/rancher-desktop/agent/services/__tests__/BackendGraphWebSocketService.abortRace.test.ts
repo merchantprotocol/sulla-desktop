@@ -163,10 +163,6 @@ describe('BackendGraphWebSocketService interruption ownership', () => {
     await svc.dispatchToAgent('sulla-desktop', 'sulla-desktop', 'chart this', 'explicit-thread', undefined, 'mockup-designer');
     expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('mockup-designer', 'explicit-thread');
     expect(routeChatAgentMock).toHaveBeenCalledTimes(1);
-
-    await svc.dispatchToAgent('workbench', 'workbench', 'chart this', 'workbench-thread');
-    expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('sulla-desktop', 'workbench-thread');
-    expect(routeChatAgentMock).toHaveBeenCalledTimes(1);
   });
 
   it('opens an unmatched first desktop message on the default front door and keeps it', async() => {
