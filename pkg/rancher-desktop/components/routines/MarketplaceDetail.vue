@@ -1166,21 +1166,13 @@ h1 {
 }
 
 .theme-noir .page {
-  position: fixed;
-  z-index: 90;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(880px, calc(100vw - 72px));
-  overflow-y: auto;
   padding: 28px 32px 52px;
   color: var(--nx-read-2);
   background:
     radial-gradient(90% 45% at 100% 0%, color-mix(in srgb, var(--nx-accent) 15%, transparent), transparent 62%),
     rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.985);
-  border-left: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
-  box-shadow: -32px 0 80px rgba(0, 0, 0, 0.62), -70vw 0 0 color-mix(in srgb, var(--nx-paper) 50%, transparent);
-  backdrop-filter: blur(28px);
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
   animation: noir-detail-drawer 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) both;
 }
 
@@ -1307,7 +1299,6 @@ h1 {
 
 @media (max-width: 760px) {
   .theme-noir .page {
-    width: calc(100vw - 16px);
     padding: 20px;
   }
 
@@ -1321,9 +1312,6 @@ h1 {
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-.theme-noir-light .page {
-  box-shadow: -32px 0 80px color-mix(in srgb, var(--nx-ink) 14%, transparent), -70vw 0 0 color-mix(in srgb, var(--nx-paper) 50%, transparent);
-}
 .theme-noir-light .right,
 .theme-noir-light .right[class*="kind-"] {
   box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.04), 0 18px 38px color-mix(in srgb, var(--nx-ink) 8%, transparent);
