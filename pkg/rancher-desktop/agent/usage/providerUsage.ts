@@ -217,14 +217,16 @@ export async function getUsageSummary(hours = 24, profileId = 'default', provide
   const records: NormalizedUsageRecord[] = [];
 
   for (const provider of definitions) {
-    if (provider.usageSource.kind === 'settings') {
-      const stored = parseRecords(await SullaSettingsModel.get(provider.usageSource.key, '[]'));
+    const source = provider.usageSource;
+
+    if (source.kind === 'settings') {
+      const stored = parseRecords(await SullaSettingsModel.get(source.key, '[]'));
       records.push(...stored.filter(record => Date.parse(record.ts) >= since.getTime()).map(record => ({
         ...record, providerId: provider.id, providerLabel: provider.label,
       })));
     } else {
       records.push(...meterable
-        .filter(record => meterableProviderId(record) === provider.usageSource.providerId)
+        .filter(record => meterableProviderId(record) === source.providerId)
         .map(record => fromMeterable(record, provider)));
     }
   }

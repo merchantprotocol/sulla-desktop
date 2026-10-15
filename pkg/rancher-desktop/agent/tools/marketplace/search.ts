@@ -24,7 +24,7 @@ export class MarketplaceSearchWorker extends BaseTool {
     if (kindRaw && !kind) {
       return { successBoolean: false, responseString: `Invalid kind "${ kindRaw }". Must be one of: ${ KINDS_HELP }.` };
     }
-    const kindsRaw = Array.isArray(input.kinds)
+    const kindsRaw: unknown[] = Array.isArray(input.kinds)
       ? input.kinds
       : typeof input.kinds === 'string' ? input.kinds.split(',') : [];
     const kinds = kindsRaw.map(normalizeKind);
