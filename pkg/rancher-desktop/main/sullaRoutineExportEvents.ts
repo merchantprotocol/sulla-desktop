@@ -47,12 +47,6 @@ async function importWorkflowModel() {
   return mod.WorkflowModel;
 }
 
-function getRoutinesDir(): string {
-  const { resolveSullaRoutinesDir } = require('@pkg/agent/utils/sullaPaths');
-
-  return resolveSullaRoutinesDir();
-}
-
 /** Minimal kebab-case slugifier for default filenames. */
 function slugify(input: string): string {
   const slug = String(input || '')
@@ -211,15 +205,7 @@ async function buildRoutineBundleToTmpdir(workflowId: string): Promise<{
   const slug = slugify(name);
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-bundle-'));
 
-  let seededFromTemplate = false;
-  if (sourceTemplateSlug) {
-    const sourceDir = path.join(getRoutinesDir(), sourceTemplateSlug);
-    if (fs.existsSync(sourceDir) && fs.statSync(sourceDir).isDirectory()) {
-      fs.cpSync(sourceDir, tmpRoot, { recursive: true });
-      seededFromTemplate = true;
-    }
-  }
-  if (!seededFromTemplate) seedMinimalBundle(tmpRoot, name);
+  seedMinimalBundle(tmpRoot, name);
 
   const cleaned = stripRuntime(definition);
   fs.writeFileSync(
@@ -275,19 +261,8 @@ export function initSullaRoutineExportEvents(): void {
     // system temp dir.
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-export-'));
     try {
-      // 1. Seed the bundle from the source template folder (if any exists)
-      //    or a minimal stub.
-      let seededFromTemplate = false;
-      if (sourceTemplateSlug) {
-        const sourceDir = path.join(getRoutinesDir(), sourceTemplateSlug);
-        if (fs.existsSync(sourceDir) && fs.statSync(sourceDir).isDirectory()) {
-          fs.cpSync(sourceDir, tmpRoot, { recursive: true });
-          seededFromTemplate = true;
-        }
-      }
-      if (!seededFromTemplate) {
-        seedMinimalBundle(tmpRoot, name);
-      }
+      // Seed a temporary export bundle from the Postgres definition only.
+      seedMinimalBundle(tmpRoot, name);
 
       // 2. Overwrite routine.yaml with the current DB definition
       //    (runtime state stripped). This is the whole point of the
@@ -311,7 +286,7 @@ export function initSullaRoutineExportEvents(): void {
       // 4. Zip to the user's chosen location.
       await zipDirectory(tmpRoot, exportSlug, targetZipPath);
 
-      console.log(`[Sulla] Exported routine "${ id }" → ${ targetZipPath } (${ seededFromTemplate ? `merged from template ${ sourceTemplateSlug }` : 'minimal seed' })`);
+      console.log(`[Sulla] Exported routine "${ id }" from Postgres → ${ targetZipPath }`);
 
       return { path: targetZipPath };
     } catch (err) {
@@ -323,18 +298,13 @@ export function initSullaRoutineExportEvents(): void {
     }
   });
 
-  // ── Export a template (zip the folder as-is) ──
-  // No DB involvement. The template on disk is already the artifact —
-  // this just wraps Finder-revealing + zipping in a single menu item.
+  // ── Export a database template ──
   ipcMainProxy.handle('routines-export-template', async(_event: unknown, slug: string) => {
     if (!slug || typeof slug !== 'string') {
       throw new Error('routines-export-template: slug is required');
     }
 
-    const sourceDir = path.join(getRoutinesDir(), slug);
-    if (!fs.existsSync(sourceDir) || !fs.statSync(sourceDir).isDirectory()) {
-      throw new Error(`Template not found: ${ slug }`);
-    }
+    const bundle = await buildRoutineBundleToTmpdir(slug);
 
     const defaultFilename = `${ slug }.routine.zip`;
     const saveResult = await dialog.showSaveDialog({
@@ -345,13 +315,14 @@ export function initSullaRoutineExportEvents(): void {
     });
 
     if (saveResult.canceled || !saveResult.filePath) {
+      rmrfSync(bundle.tmpRoot);
       return { canceled: true as const };
     }
 
     const targetZipPath = saveResult.filePath;
 
     try {
-      await zipDirectory(sourceDir, slug, targetZipPath);
+      await zipDirectory(bundle.tmpRoot, bundle.slug, targetZipPath);
       console.log(`[Sulla] Exported template "${ slug }" → ${ targetZipPath }`);
 
       return { path: targetZipPath };
@@ -359,6 +330,8 @@ export function initSullaRoutineExportEvents(): void {
       console.error(`[Sulla] Template export failed for "${ slug }":`, err);
 
       return { error: err instanceof Error ? err.message : String(err) };
+    } finally {
+      rmrfSync(bundle.tmpRoot);
     }
   });
 

@@ -59,6 +59,17 @@ export class DatabaseManager {
 
     await this.runMigrations();
 
+    // Copy legacy and bundled artifacts into Postgres once. Existing rows are
+    // never overwritten and source folders remain untouched.
+    try {
+      const { importLegacyArtifacts } = await import('./legacyArtifactImporter');
+      const result = await importLegacyArtifacts();
+      console.log(`[DB] Legacy artifacts: ${ result.imported } imported, ${ result.skipped } already present`);
+      if (result.errors.length) console.warn('[DB] Legacy artifact import errors:', result.errors);
+    } catch (error) {
+      console.warn('[DB] Legacy artifact import failed:', error);
+    }
+
     try {
       const { refreshIntegrationCatalog } = await import('@pkg/agent/integrations/catalog');
       await refreshIntegrationCatalog();

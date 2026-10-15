@@ -1,38 +1,12 @@
 /**
- * Dynamic catalog loader.
- *
- * Integration manifests live alongside the other dynamic artifacts in Sulla
- * Home. Two sources are merged into a single catalog:
- *
- *   1. `~/sulla/resources/integrations/<slug>/integration.yaml` — shipped
- *      defaults (managed as a git clone of the `sulla-resources` repo; see
- *      bootstrapSullaHome). These carry `builtin: true`.
- *
- *   2. `~/sulla/integrations/<slug>/integration.yaml` — marketplace installs.
- *      These carry `builtin: false`.
- *
- * On slug collision the user directory wins. Collision is expected to be rare
- * because marketplace install auto-renames on collision (Phase 2), but a user
- * override of a builtin's metadata is legitimate and must be allowed.
- *
- * Validation failures are logged and the offending manifest is skipped — a
- * single malformed file must never take down the whole catalog.
+ * Postgres-backed integration catalog loader.
  */
-
-import fs from 'fs';
-import path from 'path';
-
-import yaml from 'yaml';
 
 import {
   IntegrationManifest,
   manifestToIntegration,
   validateIntegrationManifest,
 } from './schema';
-import {
-  resolveSullaIntegrationsDir,
-  resolveSullaUserIntegrationsDir,
-} from '../utils/sullaPaths';
 
 import type { Integration } from './types';
 
@@ -50,100 +24,24 @@ export interface LoadResult {
 }
 
 export function loadCatalog(): LoadResult {
-  const errors:    LoadResult['errors'] = [];
-  const manifests: Record<string, IntegrationManifest> = {};
-  const sources:   Record<string, ManifestSource> = {};
-
-  const dirs: { path: string; source: ManifestSource }[] = [
-    { path: resolveSullaIntegrationsDir(), source: 'resources' },
-    { path: resolveSullaUserIntegrationsDir(), source: 'user' },
-  ];
-
-  for (const { path: dir, source } of dirs) {
-    for (const entry of readManifestDir(dir, source, errors)) {
-      manifests[entry.manifest.id] = entry.manifest;
-      sources[entry.manifest.id] = source;
-    }
-  }
-
-  const integrations: Record<string, Integration> = {};
-
-  for (const [slug, manifest] of Object.entries(manifests)) {
-    integrations[slug] = manifestToIntegration(manifest);
-  }
-
-  return {
-    integrations, manifests, sources, errors,
-  };
+  return { integrations: {}, manifests: {}, sources: {}, errors: [] };
 }
 
-/** Postgres definitions win; folders remain a read-only compatibility fallback. */
+/** Load the runtime catalog exclusively from Postgres. */
 export async function loadCatalogWithDatabase(): Promise<LoadResult> {
   const loaded = loadCatalog();
-  try {
-    const { IntegrationDefinitionModel } = await import('../database/models/MarketplaceArtifactModel');
-    for (const row of await IntegrationDefinitionModel.list()) {
-      const result = validateIntegrationManifest(row.manifest, row.slug);
-      if (!result.valid || !result.data) {
-        loaded.errors.push({ slug: row.slug, source: 'database', errors: result.errors });
-        continue;
-      }
-      loaded.manifests[row.slug] = result.data;
-      loaded.sources[row.slug] = 'database';
-      loaded.integrations[row.slug] = manifestToIntegration(result.data);
+  const { IntegrationDefinitionModel } = await import('../database/models/MarketplaceArtifactModel');
+  for (const row of await IntegrationDefinitionModel.list()) {
+    const result = validateIntegrationManifest(row.manifest, row.slug);
+    if (!result.valid || !result.data) {
+      loaded.errors.push({ slug: row.slug, source: 'database', errors: result.errors });
+      continue;
     }
-  } catch (err) {
-    console.warn('[integrations] Database catalog unavailable; using legacy folders:', err);
+    loaded.manifests[row.slug] = result.data;
+    loaded.sources[row.slug] = 'database';
+    loaded.integrations[row.slug] = manifestToIntegration(result.data);
   }
   return loaded;
-}
-
-interface LoadedEntry {
-  slug:     string;
-  manifest: IntegrationManifest;
-}
-
-function readManifestDir(
-  dir: string,
-  source: ManifestSource,
-  errors: LoadResult['errors'],
-): LoadedEntry[] {
-  if (!fs.existsSync(dir)) {
-    return [];
-  }
-
-  const results: LoadedEntry[] = [];
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-
-    const slug = entry.name;
-    const manifestPath = path.join(dir, slug, 'integration.yaml');
-
-    if (!fs.existsSync(manifestPath)) continue;
-
-    try {
-      const raw = fs.readFileSync(manifestPath, 'utf8');
-      const parsed = yaml.parse(raw);
-      const result = validateIntegrationManifest(parsed, slug);
-
-      if (!result.valid || !result.data) {
-        errors.push({ slug, source, errors: result.errors });
-        continue;
-      }
-
-      results.push({ slug, manifest: result.data });
-    } catch (err) {
-      errors.push({
-        slug,
-        source,
-        errors: [`failed to read/parse integration.yaml: ${ err instanceof Error ? err.message : String(err) }`],
-      });
-    }
-  }
-
-  return results;
 }
 
 /** Resolve the on-disk path to an integration's icon file, if any. */
@@ -155,17 +53,10 @@ export function iconPathFor(
   const manifest = manifests[slug];
 
   if (!manifest?.icon) return null;
-  if (sources[slug] === 'database') return null;
-
-  return path.join(packageDirFor(slug, sources[slug] ?? 'resources'), manifest.icon);
+  return null;
 }
 
 /** Resolve the directory holding an integration's package contents. */
 export function packageDirFor(slug: string, source: ManifestSource): string {
-  if (source === 'database') throw new Error(`Database integration ${ slug } has no persistent package directory`);
-  const root = source === 'resources'
-    ? resolveSullaIntegrationsDir()
-    : resolveSullaUserIntegrationsDir();
-
-  return path.join(root, slug);
+  throw new Error(`Database integration ${ slug } has no persistent package directory (${ source })`);
 }

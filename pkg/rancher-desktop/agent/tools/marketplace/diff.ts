@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { BaseTool, ToolResponse } from '../base';
 import { getMarketplaceClient } from './MarketplaceClient';
-import { artifactDir, KINDS_HELP, normalizeKind } from './types';
+import { KINDS_HELP, normalizeKind, toMarketplaceKind } from './types';
 
 /**
  * Compare a local artifact with the latest marketplace version, file by
@@ -34,17 +34,12 @@ export class MarketplaceDiffWorker extends BaseTool {
 
     let exported: { dir: string; cleanup: () => void } | null = null;
     try {
-      if (kind === 'agent') return await diffAgent(slug, latest);
-
-      // Skills live in the database: compare the row exported as a folder.
-      if (kind === 'skill') {
-        const { exportSkillToTempDir } = await import('../../services/SkillDefinitionService');
-        exported = await exportSkillToTempDir(slug).catch(() => null);
-      }
-      const localDir = exported?.dir ?? latest.listing.installed?.path ?? artifactDir(kind, slug);
-      if (!fs.existsSync(localDir)) {
-        return { successBoolean: false, responseString: `Not installed locally: ${ localDir }` };
-      }
+      const marketplaceKind = toMarketplaceKind(kind);
+      if (!marketplaceKind) return { successBoolean: false, responseString: `Unsupported artifact kind: ${ kind }` };
+      const { materializeDatabaseArtifact, readDatabaseArtifact } = await import('@pkg/main/marketplace/databaseArtifacts');
+      const artifact = await readDatabaseArtifact(marketplaceKind as any, slug);
+      exported = materializeDatabaseArtifact(artifact);
+      const localDir = exported.dir;
 
       const { isExcludedFromBundle } = await import('@pkg/main/marketplace/bundleFiles');
       const localFiles = readTree(localDir, isExcludedFromBundle);
@@ -82,60 +77,6 @@ export class MarketplaceDiffWorker extends BaseTool {
       latest.cleanup();
     }
   }
-}
-
-async function diffAgent(
-  slug: string,
-  latest: Awaited<ReturnType<ReturnType<typeof getMarketplaceClient>['fetchLatest']>>,
-): Promise<ToolResponse> {
-  const { agentDefinitionService } = await import('../../services/AgentDefinitionService');
-  const local = await agentDefinitionService.findBySlug(slug);
-  if (!local) return { successBoolean: false, responseString: `Agent ${ slug } is not installed in the database.` };
-
-  const remotePath = path.join(latest.rootPath, 'agent.json');
-  if (!fs.existsSync(remotePath)) {
-    return { successBoolean: false, responseString: `Marketplace bundle is missing ${ slug }/agent.json.` };
-  }
-
-  let remote: unknown;
-  try {
-    remote = JSON.parse(fs.readFileSync(remotePath, 'utf8'));
-  } catch (err) {
-    return { successBoolean: false, responseString: `Marketplace agent.json is invalid: ${ (err as Error).message }` };
-  }
-
-  const localFields = flattenFields(agentDefinitionService.toManifest(local));
-  const remoteFields = flattenFields(remote);
-  const lines: string[] = [];
-  let unchanged = 0;
-  for (const field of Array.from(new Set([...localFields.keys(), ...remoteFields.keys()])).sort()) {
-    if (!localFields.has(field)) lines.push(`  + ${ field } (marketplace only)`);
-    else if (!remoteFields.has(field)) lines.push(`  - ${ field } (local only)`);
-    else if (localFields.get(field) !== remoteFields.get(field)) lines.push(`  ~ ${ field }`);
-    else unchanged++;
-  }
-
-  const heading = `Diff: database agent/${ slug } vs marketplace v${ latest.listing.version }`;
-  if (lines.length === 0) {
-    return { successBoolean: true, responseString: `${ heading }\n  ✓ identical (${ unchanged } field(s) match)` };
-  }
-
-  return { successBoolean: true, responseString: `${ heading }\n${ lines.join('\n') }\n\n${ unchanged } field(s) identical.` };
-}
-
-function flattenFields(value: unknown, prefix = '', out = new Map<string, string>()): Map<string, string> {
-  if (Array.isArray(value)) {
-    if (value.length === 0) out.set(prefix, '[]');
-    value.forEach((entry, index) => flattenFields(entry, `${ prefix }[${ index }]`, out));
-  } else if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>);
-    if (entries.length === 0) out.set(prefix, '{}');
-    entries.forEach(([key, entry]) => flattenFields(entry, prefix ? `${ prefix }.${ key }` : key, out));
-  } else {
-    out.set(prefix, JSON.stringify(value));
-  }
-
-  return out;
 }
 
 function readTree(root: string, excluded: (name: string, isDir: boolean) => boolean): Map<string, Buffer> {

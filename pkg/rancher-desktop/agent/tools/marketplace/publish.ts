@@ -1,8 +1,6 @@
-import * as fs from 'fs';
-
 import { BaseTool, ToolResponse } from '../base';
 import { getMarketplaceClient, isAuthError, SIGN_IN_HINT } from './MarketplaceClient';
-import { artifactDir, KINDS_HELP, KIND_LAYOUTS, normalizeKind, resolveArtifactManifestPath } from './types';
+import { KINDS_HELP, normalizeKind } from './types';
 
 /**
  * Publish a local artifact folder to the marketplace using the same pipeline
@@ -15,6 +13,24 @@ export class MarketplacePublishWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
+    if (String(input.kind ?? '').trim().toLowerCase().replace(/s$/, '') === 'package') {
+      try {
+        const { publishPackage } = await import('@pkg/main/marketplace/publish');
+        const items = Array.isArray(input.items) ? input.items : [];
+        const result = await publishPackage({
+          slug:        String(input.slug ?? '').trim(),
+          title:       String(input.title ?? '').trim(),
+          description: String(input.description ?? ''),
+          topic:       typeof input.topic === 'string' ? input.topic : undefined,
+          version:     typeof input.version === 'string' ? input.version : undefined,
+          items,
+        });
+        return { successBoolean: true, responseString: `Submitted package/${ result.slug } as ${ result.templateId } (bundle ${ result.bundle_size } bytes). Status: ${ result.status }.` };
+      } catch (err) {
+        if (isAuthError(err)) return { successBoolean: false, responseString: `Publishing needs a Sulla Cloud session. ${ SIGN_IN_HINT }` };
+        return { successBoolean: false, responseString: `Publish failed: ${ (err as Error).message }` };
+      }
+    }
     const kind = normalizeKind(input.kind);
     const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
     const version = typeof input.version === 'string' && input.version.trim() ? input.version.trim() : undefined;
@@ -25,30 +41,12 @@ export class MarketplacePublishWorker extends BaseTool {
     if (!slug) {
       return { successBoolean: false, responseString: 'Missing required field: slug.' };
     }
-    // Skills live in the database: publish the row exported as a folder.
-    let exported: { dir: string; cleanup: () => void } | null = null;
-    if (kind === 'skill') {
-      const { exportSkillToTempDir } = await import('../../services/SkillDefinitionService');
-      exported = await exportSkillToTempDir(slug).catch(() => null);
-    }
-    try {
-      return await this.publishFrom(kind, slug, version, input.kind, exported?.dir);
-    } finally {
-      exported?.cleanup();
-    }
+    return this.publishFrom(kind, slug, version, input.kind);
   }
 
-  private async publishFrom(kind: NonNullable<ReturnType<typeof normalizeKind>>, slug: string, version: string | undefined, kindLabel: string, exportedDir?: string): Promise<ToolResponse> {
-    const dir = kind === 'agent' ? undefined : (exportedDir ?? artifactDir(kind, slug));
-    if (dir && !fs.existsSync(dir)) {
-      return { successBoolean: false, responseString: `Not found locally: ${ dir }` };
-    }
-    if (dir && !exportedDir && KIND_LAYOUTS[kind].manifest !== 'dynamic' && !resolveArtifactManifestPath(kind, slug)) {
-      return { successBoolean: false, responseString: `${ KIND_LAYOUTS[kind].manifest } missing in ${ dir } — run \`sulla marketplace/validate\` first.` };
-    }
-
+  private async publishFrom(kind: NonNullable<ReturnType<typeof normalizeKind>>, slug: string, version: string | undefined, kindLabel: string): Promise<ToolResponse> {
     try {
-      const res = await getMarketplaceClient().publish(kind, dir, slug, version);
+      const res = await getMarketplaceClient().publish(kind, slug, version);
 
       return {
         successBoolean: true,

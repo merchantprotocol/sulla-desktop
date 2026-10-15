@@ -5,11 +5,12 @@ import path from 'node:path';
 import cors from 'cors';
 import express, { Request, Response, NextFunction } from 'express';
 
+import { sessionAllowsTool } from './toolSessionPolicy';
+
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import paths from '@pkg/utils/paths';
-import { sessionAllowsTool } from './toolSessionPolicy';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 const API_TOKEN_FILE = 'chat-api-token.json';
@@ -196,7 +197,7 @@ export class ChatCompletionsServer {
     // and a position pointer so the calling agent gets actionable signal
     // instead of a stack trace in the console.
     this.app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-      if (err && err.type === 'entity.parse.failed') {
+      if (err?.type === 'entity.parse.failed') {
         const raw = (req as any).rawBody ?? '';
         const pos = typeof err.body === 'string' ? err.body.length : raw.length;
         const pointer = raw.length > 0
@@ -1074,7 +1075,7 @@ export class ChatCompletionsServer {
         // false and the card never appears in the UI. Wire a best-effort
         // emitter that targets the active sulla-desktop chat.
         const interactiveNames = new Set(['ask_user_question']);
-        const toolName = String((tool as any)?.name || endpoint || '').trim();
+        const toolName = String((tool)?.name || endpoint || '').trim();
         const sessionToken = req.header('X-Sulla-Tool-Session');
         if (sessionToken) {
           const { getMCPServerHost } = await import('./MCPServerHost');
@@ -1084,16 +1085,16 @@ export class ChatCompletionsServer {
           if (!sessionAllowsTool(allowed, toolName)) return res.status(403).json({ success: false, error: 'Tool not allowed for this session' });
           tool.setState?.(state);
         }
-        if (interactiveNames.has(toolName) && typeof (tool as any).sendChatMessage !== 'function') {
+        if (interactiveNames.has(toolName) && typeof (tool).sendChatMessage !== 'function') {
           try {
             const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
             const { getWebSocketClientService } = await import('@pkg/agent/services/WebSocketClientService');
-            const bound = (tool as any).state;
+            const bound = (tool).state;
             const active = bound ? { state: bound, threadId: bound.metadata.threadId, wsChannel: bound.metadata.wsChannel } : null;
             const channel = active?.wsChannel || 'sulla-desktop';
             const threadId = active?.threadId;
             const ws = getWebSocketClientService();
-            (tool as any).sendChatMessage = async(
+            (tool).sendChatMessage = async(
               content: string,
               kind = 'progress',
               extras?: Record<string, unknown>,
@@ -1114,7 +1115,7 @@ export class ChatCompletionsServer {
               });
             };
             if (active?.state) {
-              try { (tool as any).setState?.(active.state); } catch { /* best-effort */ }
+              try { (tool).setState?.(active.state) } catch { /* best-effort */ }
             }
           } catch (err) {
             console.warn('[ChatCompletionsAPI] failed to wire interactive tool chat emit:', err);
@@ -1139,7 +1140,7 @@ export class ChatCompletionsServer {
         try {
           const result = await tool.call(params);
           return res.json({ success: true, result });
-        } finally { res.off('close', onDisconnect); }
+        } finally { res.off('close', onDisconnect) }
       }
 
       // Route MCP calls to the MCPBridge instead of ConfigApiClient
@@ -1536,7 +1537,7 @@ export class ChatCompletionsServer {
     try {
       const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
       const bridge = MCPBridge.getInstance();
-      const removed = bridge.removeConfigs(accountId);
+      const removed = await bridge.removeConfigs(accountId);
 
       if (removed) {
         // Reload the config loader so the integration disappears

@@ -84,7 +84,7 @@ class RobinhoodOAuthProvider extends OAuthProvider {
       const accountId = mcpAccountId(context.accountId);
       const bridge = MCPBridge.getInstance();
       await bridge.removeAccount(accountId);
-      bridge.removeConfigs(accountId);
+      await bridge.removeConfigs(accountId);
 
       const svc = getIntegrationService();
       await svc.deleteAccount('mcp', accountId);

@@ -3,8 +3,6 @@ import * as path from 'path';
 
 import yaml from 'yaml';
 
-import { resolveSullaRoutinesDir, resolveSullaWorkflowsDir } from '@pkg/agent/utils/sullaPaths';
-
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -44,25 +42,18 @@ export class DryRunWorkflowWorker extends BaseTool {
       sourcePath = filePath;
       yamlText = fs.readFileSync(filePath, 'utf-8');
     } else if (slug) {
-      // Check routines first, then workflows/
-      const routinesPath = path.join(resolveSullaRoutinesDir(), slug, 'routine.yaml');
-      const flatPath     = path.join(resolveSullaWorkflowsDir(), `${ slug }.yaml`);
-      if (fs.existsSync(routinesPath)) {
-        sourcePath = routinesPath;
-        yamlText = fs.readFileSync(routinesPath, 'utf-8');
-      } else if (fs.existsSync(flatPath)) {
-        sourcePath = flatPath;
-        yamlText = fs.readFileSync(flatPath, 'utf-8');
-      } else {
-        return { successBoolean: false, responseString: `No routine.yaml or flat workflow found for slug "${ slug }".` };
-      }
+      const { WorkflowModel } = await import('@pkg/agent/database/models/WorkflowModel');
+      const row = await WorkflowModel.findById(slug);
+      if (!row) return { successBoolean: false, responseString: `Workflow "${ slug }" was not found in Postgres.` };
+      sourcePath = `database:workflows/${ slug }`;
+      yamlText = yaml.stringify(row.attributes.definition);
     } else {
       return { successBoolean: false, responseString: 'Pass either "slug" (routine / workflow slug) or "filePath" (absolute path to a YAML).' };
     }
 
     let def: any;
     try {
-      def = yaml.parse(yamlText!);
+      def = yaml.parse(yamlText);
     } catch (err) {
       return { successBoolean: false, responseString: `YAML parse error: ${ (err as Error).message }` };
     }

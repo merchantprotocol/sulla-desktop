@@ -1479,18 +1479,16 @@ export class PlaybookController<TState = any> {
           let runtime = '';
 
           try {
-            const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
             const yaml = await import('yaml');
             const { getSecretsCapabilityService } = await import(
               '@pkg/agent/services/SecretsCapabilityService');
             const { getIntegrationService } = await import(
               '@pkg/agent/services/IntegrationService');
 
-            const functionsDir = resolveSullaFunctionsDir();
-            let yamlPath = pathUtil.join(functionsDir, step.functionRef, 'function.yaml');
+            let yamlPath = '';
             const { FunctionDefinitionModel, materializeStoredFiles } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
             const storedFunction = await FunctionDefinitionModel.findBySlug(step.functionRef);
-            if (storedFunction) {
+            if (!storedFunction) throw new Error(`Function not found in Postgres: ${ step.functionRef }`);
               const tempRoot = pathUtil.join(osUtil.homedir(), '.cache', 'sulla-runtime', 'functions');
               fsSync.mkdirSync(tempRoot, { recursive: true });
               materializedFunctionDir = fsSync.mkdtempSync(pathUtil.join(tempRoot, `${ step.functionRef }-`));
@@ -1498,10 +1496,9 @@ export class PlaybookController<TState = any> {
               yamlPath = pathUtil.join(materializedFunctionDir, 'function.yaml');
               if (!fsSync.existsSync(yamlPath)) fsSync.writeFileSync(yamlPath, yaml.stringify(storedFunction.manifest), 'utf8');
               materializedRuntimePath = `/var/db-functions/${ pathUtil.basename(materializedFunctionDir) }`;
-            }
 
             if (!fsSync.existsSync(yamlPath)) {
-              throw new Error(`Function not found: ${ step.functionRef } (no function.yaml at ${ yamlPath })`);
+              throw new Error(`Stored function could not be materialized: ${ step.functionRef }`);
             }
 
             const manifest: any = yaml.parse(fsSync.readFileSync(yamlPath, 'utf-8')) || {};

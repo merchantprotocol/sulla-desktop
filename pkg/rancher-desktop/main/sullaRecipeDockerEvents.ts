@@ -2,7 +2,7 @@
  * Recipe Docker management IPC handlers.
  *
  * Provides container status, log streaming, and interactive PTY shell
- * sessions for recipes installed at ~/sulla/recipes/<slug>/.
+ * sessions for recipes stored in Postgres.
  *
  *   recipe-docker-status      → container running state + port info
  *   recipe-logs-start         → start streaming docker compose logs
@@ -19,13 +19,15 @@
  *   recipe-shell-exit  (sessionId, exitCode)
  */
 
-import * as child_process from 'child_process';
+import * as childProcess from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+
 import yaml from 'yaml';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import { rewriteRecipeCompose, type RecipeVolumeSeed } from '@pkg/main/marketplace/recipeRuntime';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -34,13 +36,13 @@ const ipcMainProxy = getIpcMainProxy(console);
 // ─── Session maps ────────────────────────────────────────────────────────────
 
 interface LogSession {
-  proc: child_process.ChildProcess;
-  sender: Electron.WebContents;
+  proc:     childProcess.ChildProcess;
+  sender:   Electron.WebContents;
   cleanup?: () => void;
 }
 
 interface ShellSession {
-  pty: import('node-pty').IPty;
+  pty:    import('node-pty').IPty;
   sender: Electron.WebContents;
 }
 
@@ -54,32 +56,51 @@ function nextSessionId(): string {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function getLegacyRecipeDir(slug: string): string {
-  const { resolveSullaRecipesDir } = require('@pkg/agent/utils/sullaPaths');
-
-  return path.join(resolveSullaRecipesDir(), slug);
+async function runDocker(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve) => {
+    childProcess.execFile('docker', args, { env: dockerEnv() }, (error, stdout, stderr) => {
+      resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? error?.message ?? ''), exitCode: error ? 1 : 0 });
+    });
+  });
 }
 
-async function resolveRecipeDir(slug: string): Promise<{ dir: string; database: boolean; cleanup: () => void }> {
+async function seedNamedVolume(root: string, seed: RecipeVolumeSeed): Promise<void> {
+  const source = seed.sourcePath.startsWith('~') && process.env.HOME
+    ? path.join(process.env.HOME, seed.sourcePath.slice(1))
+    : path.isAbsolute(seed.sourcePath) ? seed.sourcePath : path.join(root, seed.sourcePath);
+  if (!fs.existsSync(source)) return;
+  const created = await runDocker(['volume', 'create', seed.volumeName]);
+  if (created.exitCode !== 0) throw new Error(`Could not create Docker volume ${ seed.volumeName }: ${ created.stderr }`);
+  const result = await runDocker([
+    'run', '--rm', '-v', `${ seed.volumeName }:/target`, '-v', `${ source }:/seed:ro`, 'alpine:3.20',
+    'sh', '-c', 'if [ -z "$(ls -A /target 2>/dev/null)" ]; then cp -a /seed/. /target/; fi',
+  ]);
+  if (result.exitCode !== 0) throw new Error(`Could not seed Docker volume ${ seed.volumeName }: ${ result.stderr }`);
+}
+
+async function resolveRecipeDir(slug: string, seedVolumes = false): Promise<{ dir: string; cleanup: () => void; webPorts: number[] }> {
+  const { RecipeDefinitionModel, materializeStoredFiles } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
+  const recipe = await RecipeDefinitionModel.findBySlug(slug);
+  if (!recipe) throw new Error(`Recipe not found in Postgres: ${ slug }`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `sulla-recipe-${ slug }-`));
   try {
-    const { RecipeDefinitionModel, materializeStoredFiles } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
-    const recipe = await RecipeDefinitionModel.findBySlug(slug);
-    if (recipe) {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), `sulla-recipe-${ slug }-`));
-      materializeStoredFiles(dir, recipe.files);
-      const composeName = String(recipe.manifest?.compose?.composeFile ?? recipe.manifest?.composeFile ?? 'docker-compose.yml');
-      if (!fs.existsSync(path.join(dir, composeName))) fs.writeFileSync(path.join(dir, composeName), recipe.compose, 'utf8');
-      if (!fs.existsSync(path.join(dir, 'installation.yaml'))) fs.writeFileSync(path.join(dir, 'installation.yaml'), yaml.stringify(recipe.manifest), 'utf8');
-      return { dir, database: true, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+    materializeStoredFiles(dir, recipe.files);
+    const runtime = rewriteRecipeCompose(slug, recipe.compose, recipe.files);
+    fs.writeFileSync(path.join(dir, 'compose.yaml'), runtime.compose, 'utf8');
+    if (!fs.existsSync(path.join(dir, 'installation.yaml'))) fs.writeFileSync(path.join(dir, 'installation.yaml'), yaml.stringify(recipe.manifest), 'utf8');
+    if (seedVolumes) {
+      for (const seed of runtime.volumeSeeds) await seedNamedVolume(dir, seed);
     }
-  } catch (err) {
-    console.warn(`[RecipeDocker] Database lookup failed for ${ slug }; trying legacy folder:`, err);
+
+    return { dir, webPorts: runtime.webPorts, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+  } catch (error) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw error;
   }
-  return { dir: getLegacyRecipeDir(slug), database: false, cleanup: () => undefined };
 }
 
-function withProject(args: string[], slug: string, database: boolean): string[] {
-  return database ? ['--project-name', `sulla-${ slug }`, ...args] : args;
+function withProject(args: string[], slug: string): string[] {
+  return ['--project-name', `sulla-${ slug }`, ...args];
 }
 
 /** Augmented PATH that includes common Docker binary locations. */
@@ -97,13 +118,13 @@ async function runCompose(recipeDir: string, args: string[]): Promise<{ stdout: 
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
-    const proc = child_process.spawn('docker', ['compose', ...args], {
+    const proc = childProcess.spawn('docker', ['compose', ...args], {
       cwd: process.env.HOME ? recipeDir.replace(/^~/, process.env.HOME) : recipeDir,
       env: dockerEnv(),
     });
 
-    proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+    proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString() });
+    proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() });
     proc.on('close', (code) => resolve({ stdout, stderr, exitCode: code ?? 1 }));
     proc.on('error', (err) => {
       stderr += err.message;
@@ -123,12 +144,12 @@ export function initSullaRecipeDockerEvents(): void {
 
       // Run ps and config --services in parallel.
       const [psResult, svcResult] = await Promise.all([
-        runCompose(resolved.dir, withProject(['ps', '--all', '--format', 'json'], slug, resolved.database)),
-        runCompose(resolved.dir, withProject(['config', '--services'], slug, resolved.database)),
+        runCompose(resolved.dir, withProject(['ps', '--all', '--format', 'json'], slug)),
+        runCompose(resolved.dir, withProject(['config', '--services'], slug)),
       ]);
       resolved.cleanup();
 
-      const containers: Array<{ name: string; service: string; state: string; status: string; ports: string[] }> = [];
+      const containers: { name: string; service: string; state: string; status: string; ports: string[] }[] = [];
 
       for (const line of psResult.stdout.trim().split('\n')) {
         const trimmed = line.trim();
@@ -173,7 +194,7 @@ export function initSullaRecipeDockerEvents(): void {
 
       const running = containers.some(c => c.state === 'running');
 
-      return { running, containers };
+      return { running, containers, webPorts: resolved.webPorts };
     } catch (err) {
       console.error('[RecipeDocker] status error:', err);
 
@@ -190,9 +211,9 @@ export function initSullaRecipeDockerEvents(): void {
     const args = ['logs', '--follow', '--tail=2000', '--no-color'];
     if (service) args.push(service);
 
-    const proc = child_process.spawn(
+    const proc = childProcess.spawn(
       'docker',
-      ['compose', ...withProject(args, slug, resolved.database)],
+      ['compose', ...withProject(args, slug)],
       {
         cwd: process.env.HOME ? resolved.dir.replace(/^~/, process.env.HOME) : resolved.dir,
         env: dockerEnv(),
@@ -213,7 +234,7 @@ export function initSullaRecipeDockerEvents(): void {
     proc.on('close', () => {
       logSessions.delete(sessionId);
       resolved.cleanup();
-      try { event.sender.send('recipe-logs-end', sessionId); } catch { /* closed */ }
+      try { event.sender.send('recipe-logs-end', sessionId) } catch { /* closed */ }
     });
 
     proc.on('error', (err) => {
@@ -231,7 +252,7 @@ export function initSullaRecipeDockerEvents(): void {
   ipcMainProxy.handle('recipe-logs-stop', (_event: Electron.IpcMainInvokeEvent, sessionId: string) => {
     const session = logSessions.get(sessionId);
     if (session) {
-      try { session.proc.kill(); } catch { /* dead */ }
+      try { session.proc.kill() } catch { /* dead */ }
       session.cleanup?.();
       logSessions.delete(sessionId);
     }
@@ -254,18 +275,18 @@ export function initSullaRecipeDockerEvents(): void {
           name: 'xterm-256color',
           cols,
           rows,
-          env: dockerEnv(),
+          env:  dockerEnv(),
         });
 
         shellSessions.set(sessionId, { pty: ptyProcess, sender: event.sender });
 
         ptyProcess.onData((data: string) => {
-          try { event.sender.send('recipe-shell-data', sessionId, data); } catch { /* closed */ }
+          try { event.sender.send('recipe-shell-data', sessionId, data) } catch { /* closed */ }
         });
 
         ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
           shellSessions.delete(sessionId);
-          try { event.sender.send('recipe-shell-exit', sessionId, exitCode); } catch { /* closed */ }
+          try { event.sender.send('recipe-shell-exit', sessionId, exitCode) } catch { /* closed */ }
         });
 
         return { sessionId };
@@ -280,7 +301,7 @@ export function initSullaRecipeDockerEvents(): void {
   ipcMainProxy.handle('recipe-shell-input', (_event: Electron.IpcMainInvokeEvent, sessionId: string, data: string) => {
     const session = shellSessions.get(sessionId);
     if (session) {
-      try { session.pty.write(data); } catch { /* dead */ }
+      try { session.pty.write(data) } catch { /* dead */ }
     }
 
     return { ok: true };
@@ -289,7 +310,7 @@ export function initSullaRecipeDockerEvents(): void {
   ipcMainProxy.handle('recipe-shell-resize', (_event: Electron.IpcMainInvokeEvent, sessionId: string, cols: number, rows: number) => {
     const session = shellSessions.get(sessionId);
     if (session) {
-      try { session.pty.resize(cols, rows); } catch { /* dead */ }
+      try { session.pty.resize(cols, rows) } catch { /* dead */ }
     }
 
     return { ok: true };
@@ -298,7 +319,7 @@ export function initSullaRecipeDockerEvents(): void {
   ipcMainProxy.handle('recipe-shell-close', (_event: Electron.IpcMainInvokeEvent, sessionId: string) => {
     const session = shellSessions.get(sessionId);
     if (session) {
-      try { session.pty.kill(); } catch { /* dead */ }
+      try { session.pty.kill() } catch { /* dead */ }
       shellSessions.delete(sessionId);
     }
 
@@ -310,11 +331,11 @@ export function initSullaRecipeDockerEvents(): void {
   // Streaming start: returns sessionId immediately, pushes docker compose up output in real time.
   ipcMainProxy.handle('recipe-start-stream', async(event: Electron.IpcMainInvokeEvent, slug: string) => {
     const sessionId = nextSessionId();
-    const resolved = await resolveRecipeDir(slug);
+    const resolved = await resolveRecipeDir(slug, true);
 
-    const proc = child_process.spawn(
+    const proc = childProcess.spawn(
       'docker',
-      ['compose', ...withProject(['up', '-d', '--no-color', '--remove-orphans'], slug, resolved.database)],
+      ['compose', ...withProject(['up', '-d', '--no-color', '--remove-orphans'], slug)],
       {
         cwd: process.env.HOME ? resolved.dir.replace(/^~/, process.env.HOME) : resolved.dir,
         env: dockerEnv(),
@@ -322,7 +343,7 @@ export function initSullaRecipeDockerEvents(): void {
     );
 
     const push = (chunk: Buffer | string) => {
-      try { event.sender.send('recipe-start-output', sessionId, chunk.toString()); } catch { /**/ }
+      try { event.sender.send('recipe-start-output', sessionId, chunk.toString()) } catch { /**/ }
     };
 
     proc.stdout?.on('data', push);
@@ -330,7 +351,7 @@ export function initSullaRecipeDockerEvents(): void {
 
     proc.on('close', (code) => {
       resolved.cleanup();
-      try { event.sender.send('recipe-start-done', sessionId, code ?? 1); } catch { /**/ }
+      try { event.sender.send('recipe-start-done', sessionId, code ?? 1) } catch { /**/ }
     });
 
     proc.on('error', (err) => {
@@ -346,8 +367,8 @@ export function initSullaRecipeDockerEvents(): void {
 
   ipcMainProxy.handle('recipe-start', async(_event: Electron.IpcMainInvokeEvent, slug: string) => {
     try {
-      const resolved = await resolveRecipeDir(slug);
-      const { stdout, stderr, exitCode } = await runCompose(resolved.dir, withProject(['up', '-d', '--remove-orphans'], slug, resolved.database));
+      const resolved = await resolveRecipeDir(slug, true);
+      const { stdout, stderr, exitCode } = await runCompose(resolved.dir, withProject(['up', '-d', '--remove-orphans'], slug));
       resolved.cleanup();
 
       return { ok: exitCode === 0, stdout, stderr };
@@ -361,7 +382,7 @@ export function initSullaRecipeDockerEvents(): void {
   ipcMainProxy.handle('recipe-stop', async(_event: Electron.IpcMainInvokeEvent, slug: string) => {
     try {
       const resolved = await resolveRecipeDir(slug);
-      const { stdout, stderr, exitCode } = await runCompose(resolved.dir, withProject(['down', '--remove-orphans'], slug, resolved.database));
+      const { stdout, stderr, exitCode } = await runCompose(resolved.dir, withProject(['down', '--remove-orphans'], slug));
       resolved.cleanup();
 
       return { ok: exitCode === 0, stdout, stderr };
@@ -371,4 +392,15 @@ export function initSullaRecipeDockerEvents(): void {
       return { ok: false, error: String(err) };
     }
   });
+}
+
+/** Stop/remove a DB-backed recipe project without deleting its named volumes. */
+export async function stopStoredRecipe(slug: string): Promise<void> {
+  const resolved = await resolveRecipeDir(slug);
+  try {
+    const result = await runCompose(resolved.dir, withProject(['down', '--remove-orphans'], slug));
+    if (result.exitCode !== 0) throw new Error(result.stderr || `docker compose down failed for ${ slug }`);
+  } finally {
+    resolved.cleanup();
+  }
 }

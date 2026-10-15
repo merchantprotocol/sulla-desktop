@@ -141,12 +141,11 @@ export class MarketplaceClient {
     };
   }
 
-  async publish(kind: ArtifactKind, sourceDir: string | undefined, slug: string, version?: string) {
+  async publish(kind: ArtifactKind, slug: string, version?: string) {
     const { publishLocalArtifact } = await import('@pkg/main/marketplace/publish');
 
     return await publishLocalArtifact({
       kind:      requireMarketplaceKind(kind),
-      sourceDir,
       slug,
       overrides: version ? { version } : undefined,
     });

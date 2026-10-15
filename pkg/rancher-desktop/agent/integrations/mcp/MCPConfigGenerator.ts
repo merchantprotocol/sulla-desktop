@@ -9,12 +9,9 @@
  *     {tool-name}.v1.yaml            <- one endpoint per MCP tool
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-
 import yaml from 'yaml';
 
-import { resolveSullaIntegrationsDir } from '../../utils/sullaPaths';
+import { postgresClient } from '../../database/PostgresClient';
 
 import type { MCPToolDefinition } from './MCPClient';
 
@@ -43,84 +40,79 @@ export interface DiffResult {
 /**
  * Generate YAML integration configs from MCP tool definitions.
  */
-export function generateConfigs(
+export async function generateConfigs(
   accountId:    string,
   accountLabel: string,
   serverUrl:    string,
   tools:        MCPToolDefinition[],
-  integrationsDir?: string,
-): GenerateResult {
-  const baseDir = integrationsDir || resolveSullaIntegrationsDir();
+): Promise<GenerateResult> {
   const dirName = `${ MCP_DIR_PREFIX }${ sanitizeSlug(accountId) }`;
-  const dirPath = path.join(baseDir, dirName);
-
-  // Ensure directory exists
-  fs.mkdirSync(dirPath, { recursive: true });
-
-  // Write auth config
   const authConfig = buildAuthYaml(accountId, accountLabel, serverUrl);
   const authFileName = `${ dirName }.v1-auth.yaml`;
-  fs.writeFileSync(path.join(dirPath, authFileName), yaml.stringify(authConfig), 'utf-8');
+  const files: Record<string, string> = { [authFileName]: yaml.stringify(authConfig) };
 
   // Write one endpoint file per tool
   const toolNames: string[] = [];
   for (const tool of tools) {
     const epConfig = buildEndpointYaml(tool);
     const epFileName = `${ sanitizeSlug(tool.name) }.v1.yaml`;
-    fs.writeFileSync(path.join(dirPath, epFileName), yaml.stringify(epConfig), 'utf-8');
+    files[epFileName] = yaml.stringify(epConfig);
     toolNames.push(tool.name);
   }
 
-  // Remove stale endpoint files that no longer correspond to a tool
-  cleanStaleEndpoints(dirPath, authFileName, toolNames);
+  const manifest = {
+    apiVersion:  'sulla/v1',
+    kind:        'Integration',
+    id:          dirName,
+    name:        accountLabel,
+    description: `MCP tools for ${ accountLabel }`,
+    category:    'Developer Tools',
+    version:     '1.0.0',
+    lastUpdated: new Date().toISOString(),
+    developer:   'MCP',
+    sort:        0,
+    paid:        false,
+    beta:        false,
+    comingSoon:  false,
+    builtin:     false,
+  };
+  await postgresClient.query(`INSERT INTO integration_definitions
+    (slug,name,description,manifest,files,source_kind,version,user_edited)
+    VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,'user','1.0.0',false)
+    ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,manifest=EXCLUDED.manifest,files=EXCLUDED.files,updated_at=now()`,
+  [dirName, accountLabel, manifest.description, JSON.stringify(manifest), JSON.stringify(files)]);
+  console.log(`${ LOG } Stored ${ tools.length } endpoint(s) for "${ accountId }" in Postgres`);
 
-  console.log(`${ LOG } Generated ${ tools.length } endpoint(s) for "${ accountId }" in ${ dirPath }`);
-
-  return { dirName, dirPath, endpointCount: tools.length, toolNames };
+  return { dirName, dirPath: `database:integration_definitions/${ dirName }`, endpointCount: tools.length, toolNames };
 }
 
 /**
  * Remove a generated integration directory for an MCP account.
  */
-export function removeConfigs(accountId: string, integrationsDir?: string): boolean {
-  const baseDir = integrationsDir || resolveSullaIntegrationsDir();
+export async function removeConfigs(accountId: string): Promise<boolean> {
   const dirName = `${ MCP_DIR_PREFIX }${ sanitizeSlug(accountId) }`;
-  const dirPath = path.join(baseDir, dirName);
-
-  if (fs.existsSync(dirPath)) {
-    fs.rmSync(dirPath, { recursive: true, force: true });
-    console.log(`${ LOG } Removed configs for "${ accountId }" at ${ dirPath }`);
-    return true;
-  }
-  return false;
+  const rows = await postgresClient.query(`DELETE FROM integration_definitions WHERE slug=$1 RETURNING slug`, [dirName]);
+  return rows.length > 0;
 }
 
 /**
  * Diff current tools against what's on disk to show added/removed/changed.
  */
-export function diffConfigs(
+export async function diffConfigs(
   accountId: string,
   tools:     MCPToolDefinition[],
-  integrationsDir?: string,
-): DiffResult {
-  const baseDir = integrationsDir || resolveSullaIntegrationsDir();
+): Promise<DiffResult> {
   const dirName = `${ MCP_DIR_PREFIX }${ sanitizeSlug(accountId) }`;
-  const dirPath = path.join(baseDir, dirName);
-
   const onDisk = new Set<string>();
-  if (fs.existsSync(dirPath)) {
-    for (const f of fs.readdirSync(dirPath)) {
-      if (f.endsWith('-auth.yaml')) continue;
-      if (f.endsWith('.yaml') || f.endsWith('.yml')) {
-        // Parse the file to get the endpoint name
-        try {
-          const raw = fs.readFileSync(path.join(dirPath, f), 'utf-8');
-          const parsed = yaml.parse(raw);
-          if (parsed?.endpoint?.name) {
-            onDisk.add(parsed.endpoint.name);
-          }
-        } catch { /* skip unparseable files */ }
-      }
+  const row = await postgresClient.queryOne(`SELECT files FROM integration_definitions WHERE slug=$1`, [dirName]);
+  const files = row?.files && typeof row.files === 'object' ? row.files : {};
+  for (const [f, raw] of Object.entries(files)) {
+    if (f.endsWith('-auth.yaml')) continue;
+    if (f.endsWith('.yaml') || f.endsWith('.yml')) {
+      try {
+        const parsed = yaml.parse(String(raw));
+        if (parsed?.endpoint?.name) onDisk.add(parsed.endpoint.name);
+      } catch { /* skip unparseable files */ }
     }
   }
 
@@ -169,7 +161,7 @@ function buildAuthYaml(accountId: string, accountLabel: string, serverUrl: strin
     },
     auth: {
       type:                    'bearer',
-      client_secret:           '${MCP_AUTH_TOKEN}',
+      client_secret:           '$' + '{MCP_AUTH_TOKEN}',
       token_storage:           'local',
       refresh_automatically:   false,
     },
@@ -212,24 +204,6 @@ function buildEndpointYaml(tool: MCPToolDefinition): Record<string, any> {
   }
 
   return config;
-}
-
-/**
- * Remove .v1.yaml files in the dir that don't correspond to current tools.
- */
-function cleanStaleEndpoints(dirPath: string, authFileName: string, toolNames: string[]): void {
-  const validFiles = new Set([
-    authFileName,
-    ...toolNames.map(n => `${ sanitizeSlug(n) }.v1.yaml`),
-  ]);
-
-  for (const f of fs.readdirSync(dirPath)) {
-    if (!f.endsWith('.yaml') && !f.endsWith('.yml')) continue;
-    if (!validFiles.has(f)) {
-      fs.unlinkSync(path.join(dirPath, f));
-      console.log(`${ LOG } Removed stale endpoint file: ${ f }`);
-    }
-  }
 }
 
 /**

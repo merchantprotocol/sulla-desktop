@@ -19,6 +19,7 @@ import path from 'node:path';
 
 import yaml from 'js-yaml';
 
+import { SkillService } from './SkillService';
 import {
   SkillDefinitionModel,
   type SkillContent,
@@ -27,7 +28,6 @@ import {
   type SkillSourceKind,
 } from '../database/models/SkillDefinitionModel';
 import { resolveSullaHomeDir, resolveSullaSkillsDir, resolveSullaUserSkillsDir } from '../utils/sullaPaths';
-import { SkillService } from './SkillService';
 
 export const SKILL_MANIFEST = 'SKILL.md';
 /** Files larger than this are left out of the row (and logged). */
@@ -291,7 +291,10 @@ export function decideFolderImport(
 }
 
 /** Copy folder skills into the table. Folders are only read, never changed. */
-export async function importSkillFolders(sources: SkillFolderSource[] = defaultSkillFolderSources()): Promise<SkillImportSummary> {
+export async function importSkillFolders(
+  sources: SkillFolderSource[] = defaultSkillFolderSources(),
+  options: { insertOnly?: boolean } = {},
+): Promise<SkillImportSummary> {
   const summary: SkillImportSummary = { imported: 0, refreshed: 0, skipped: 0, errors: [] };
   const claimed = new Set<string>();
 
@@ -304,7 +307,7 @@ export async function importSkillFolders(sources: SkillFolderSource[] = defaultS
       claimed.add(parsed.slug);
       try {
         const row = await SkillDefinitionModel.findBySlug(parsed.slug);
-        const action = decideFolderImport(parsed, sourcePath, row);
+        const action = row && options.insertOnly ? 'skip' : decideFolderImport(parsed, sourcePath, row);
         const hash = hashSkillContent(parsed.content);
         if (action === 'import') {
           const marker = readMarketplaceMarker(sourcePath);
@@ -384,7 +387,7 @@ export function exportSkillToDir(skill: SkillDefinition, dir: string): string {
     const target = path.join(dir, safe);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     if (typeof file === 'string') fs.writeFileSync(target, file, 'utf8');
-    else if (file && file.encoding === 'base64') fs.writeFileSync(target, Buffer.from(String(file.content ?? ''), 'base64'));
+    else if (file?.encoding === 'base64') fs.writeFileSync(target, Buffer.from(String(file.content ?? ''), 'base64'));
   }
   return dir;
 }

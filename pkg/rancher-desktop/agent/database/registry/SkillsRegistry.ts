@@ -1,12 +1,10 @@
-import path from 'node:path';
-
 import {
   SkillService,
   type SkillSchema,
   type SkillSummarySchema,
 } from '../../services/SkillService';
-import { SkillDefinitionModel, type SkillDefinition } from '../models/SkillDefinitionModel';
 import { redisClient } from '../RedisClient';
+import { SkillDefinitionModel, type SkillDefinition } from '../models/SkillDefinitionModel';
 
 export interface SkillRegistryInitOptions {
   /** Extra folders to import SKILL.md skills from (read-only, copied into the DB). */
@@ -61,24 +59,8 @@ export class SkillsRegistry {
     }
   }
 
-  private async rebuildAndCache(options: SkillRegistryInitOptions = {}, importFolders = true): Promise<void> {
+  private async rebuildAndCache(_options: SkillRegistryInitOptions = {}): Promise<void> {
     const map = new Map<string, SkillService>();
-
-    // Folder skills the table does not have yet are copied in first. Non-fatal:
-    // the table is the runtime source either way.
-    if (importFolders) {
-      try {
-        const { defaultSkillFolderSources, importSkillFolders } = await import('../../services/SkillDefinitionService');
-        const extra = (options.filesystemSkillDirs || []).map(dir => ({ dir: path.resolve(dir), sourceKind: 'user' as const }));
-        const result = await importSkillFolders([...extra, ...defaultSkillFolderSources()]);
-        if (result.imported || result.refreshed) {
-          console.log(`[SkillsRegistry] Folder skills: ${ result.imported } imported, ${ result.refreshed } refreshed from unedited folders`);
-        }
-        if (result.errors.length) console.warn('[SkillsRegistry] Folder skill import errors:', result.errors);
-      } catch (error) {
-        console.warn('[SkillsRegistry] Folder skill import failed:', error);
-      }
-    }
 
     for (const row of await SkillDefinitionModel.list()) {
       const service = skillServiceFromDefinition(row);

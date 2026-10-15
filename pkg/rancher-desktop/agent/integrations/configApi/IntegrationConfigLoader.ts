@@ -1,165 +1,78 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 import yaml from 'yaml';
 
 import { ConfigApiClient } from './ConfigApiClient';
-import { resolveSullaIntegrationsDir } from '../../utils/sullaPaths';
+import { IntegrationDefinitionModel, type StoredFile } from '../../database/models/MarketplaceArtifactModel';
 
 import type { EndpointConfig, IntegrationAuthConfig, LoadedIntegration } from './types';
 
 const LOG = '[IntegrationConfigLoader]';
+const AUTH_FILE_PATTERN = /\.v\d+-auth\.yaml$/;
 
-// File-name patterns
-const AUTH_FILE_PATTERN = /\.v\d+-auth\.yaml$/;   // e.g. youtube.v3-auth.yaml
-const ENDPOINT_FILE_PATTERN = /\.v\d+\.yaml$/;    // e.g. search.v3.yaml, videos.v3.yaml
+function text(file: StoredFile | undefined): string | null {
+  return typeof file === 'string' ? file : null;
+}
 
-/**
- * Discovers integration YAML configs from ~/sulla/integrations and
- * builds ConfigApiClient instances for each integration.
- *
- * Directory structure expected:
- *   ~/sulla/integrations/
- *     youtube/
- *       youtube.v3-auth.yaml     <- auth config
- *       search.v3.yaml           <- endpoint
- *       videos.v3.yaml           <- endpoint
- *     github/
- *       github.v4-auth.yaml
- *       repos.v4.yaml
- *       issues.v4.yaml
- */
+/** Runtime integration configs are built exclusively from integration_definitions rows. */
 export class IntegrationConfigLoader {
   private integrations = new Map<string, LoadedIntegration>();
   private clients = new Map<string, ConfigApiClient>();
-  private integrationsDir: string;
 
-  constructor(integrationsDir?: string) {
-    this.integrationsDir = integrationsDir || resolveSullaIntegrationsDir();
-  }
-
-  /**
-   * Scan the integrations directory and load all configs.
-   * Call this on startup and when the user refreshes.
-   */
   async loadAll(): Promise<void> {
     this.integrations.clear();
     this.clients.clear();
-
-    if (!fs.existsSync(this.integrationsDir)) {
-      console.warn(`${ LOG } Integrations directory not found: ${ this.integrationsDir }`);
-      return;
-    }
-
-    const entries = fs.readdirSync(this.integrationsDir, { withFileTypes: true });
-    // Skip mcp/ base dir (MCPBridge handles raw connections), but allow mcp-* generated dirs
-    const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'mcp');
-
-    for (const dir of dirs) {
+    for (const row of await IntegrationDefinitionModel.list()) {
       try {
-        const loaded = this.loadIntegration(dir.name, path.join(this.integrationsDir, dir.name));
-        if (loaded) {
-          this.integrations.set(dir.name, loaded);
-          this.clients.set(dir.name, new ConfigApiClient(loaded, dir.name));
-          console.log(`${ LOG } Loaded integration: ${ dir.name } (${ loaded.endpoints.size } endpoints)`);
-        }
-      } catch (err) {
-        console.error(`${ LOG } Failed to load integration "${ dir.name }":`, err);
+        const loaded = this.loadIntegration(row.slug, row.files);
+        if (!loaded) continue;
+        this.integrations.set(row.slug, loaded);
+        this.clients.set(row.slug, new ConfigApiClient(loaded, row.slug));
+      } catch (error) {
+        console.error(`${ LOG } Failed to load database integration "${ row.slug }":`, error);
       }
     }
-
-    console.log(`${ LOG } Loaded ${ this.integrations.size } integration(s): ${ [...this.integrations.keys()].join(', ') }`);
+    console.log(`${ LOG } Loaded ${ this.integrations.size } database integration(s)`);
   }
 
-  /** Get a client by integration name (directory name) */
   getClient(name: string): ConfigApiClient | undefined {
     return this.clients.get(name);
   }
 
-  /** Get all loaded client names */
   getAvailableIntegrations(): string[] {
     return [...this.clients.keys()];
   }
 
-  /** Get the raw loaded config for an integration */
   getIntegration(name: string): LoadedIntegration | undefined {
     return this.integrations.get(name);
   }
 
-  /** Reload a single integration by name */
-  reloadIntegration(name: string): void {
-    const dir = path.join(this.integrationsDir, name);
-    if (!fs.existsSync(dir)) {
-      this.integrations.delete(name);
-      this.clients.delete(name);
-      return;
-    }
-
-    const loaded = this.loadIntegration(name, dir);
-    if (loaded) {
-      this.integrations.set(name, loaded);
-      this.clients.set(name, new ConfigApiClient(loaded, name));
-    }
+  reloadIntegration(_name: string): void {
+    this.loadAll().catch(error => console.error(`${ LOG } Reload failed:`, error));
   }
 
-  // ── Private ───────────────────────────────────────────────────
-
-  private loadIntegration(name: string, dir: string): LoadedIntegration | null {
-    const files = fs.readdirSync(dir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
-
-    // Find auth config file — skip silently if only integration.yaml (marketplace listing) is present
-    const authFile = files.find(f => AUTH_FILE_PATTERN.test(f));
-    if (!authFile) {
-      const hasOperationalYaml = files.some(f => f !== 'integration.yaml' && f !== 'integration.yml');
-      if (hasOperationalYaml) {
-        console.warn(`${ LOG } No auth config found in ${ dir } (expected *-auth.yaml)`);
-      }
+  private loadIntegration(name: string, files: Record<string, StoredFile>): LoadedIntegration | null {
+    const authName = Object.keys(files).find(file => AUTH_FILE_PATTERN.test(file) && text(files[file]) !== null);
+    if (!authName) return null;
+    const auth = yaml.parse(text(files[authName])!) as IntegrationAuthConfig;
+    if (!auth?.api?.base_url) {
+      console.warn(`${ LOG } ${ name } auth config is missing api.base_url`);
       return null;
     }
-
-    const authRaw = fs.readFileSync(path.join(dir, authFile), 'utf-8');
-    const authConfig = yaml.parse(authRaw) as IntegrationAuthConfig;
-
-    if (!authConfig?.api?.base_url) {
-      console.warn(`${ LOG } Auth config in ${ dir }/${ authFile } missing api.base_url`);
-      return null;
-    }
-
-    // Load endpoint files
     const endpoints = new Map<string, EndpointConfig>();
-    const endpointFiles = files.filter(f => !AUTH_FILE_PATTERN.test(f));
-
-    for (const epFile of endpointFiles) {
+    for (const [file, stored] of Object.entries(files)) {
+      const raw = text(stored);
+      if (!raw || file === authName || !/\.ya?ml$/i.test(file)) continue;
       try {
-        const epRaw = fs.readFileSync(path.join(dir, epFile), 'utf-8');
-        const epConfig = yaml.parse(epRaw) as EndpointConfig;
-
-        if (epConfig?.endpoint?.name && epConfig?.endpoint?.path) {
-          endpoints.set(epConfig.endpoint.name, epConfig);
-        } else {
-          console.warn(`${ LOG } Skipping ${ dir }/${ epFile }: missing endpoint.name or endpoint.path`);
-        }
-      } catch (err) {
-        console.error(`${ LOG } Failed to parse ${ dir }/${ epFile }:`, err);
+        const endpoint = yaml.parse(raw) as EndpointConfig;
+        if (endpoint?.endpoint?.name && endpoint.endpoint.path) endpoints.set(endpoint.endpoint.name, endpoint);
+      } catch (error) {
+        console.warn(`${ LOG } Skipped invalid endpoint ${ name }/${ file }:`, error);
       }
     }
-
-    return {
-      name: authConfig.api.name,
-      dir,
-      auth: authConfig,
-      endpoints,
-    };
+    return { name: auth.api.name, dir: `database:integration_definitions/${ name }`, auth, endpoints };
   }
 }
 
-// ── Singleton ─────────────────────────────────────────────────────
-
 let instance: IntegrationConfigLoader | null = null;
-
 export function getIntegrationConfigLoader(): IntegrationConfigLoader {
-  if (!instance) {
-    instance = new IntegrationConfigLoader();
-  }
-  return instance;
+  return instance ?? (instance = new IntegrationConfigLoader());
 }
