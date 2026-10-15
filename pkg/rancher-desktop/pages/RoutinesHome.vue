@@ -848,6 +848,11 @@ async function onImport() {
   border-bottom: 1px solid var(--line);
   margin-bottom: 40px;
 }
+// An open Library/Marketplace item detail owns the page, so drop the
+// tab hero above it. The tab component's root carries .is-detail.
+.shell:has(> .is-detail) > .hero {
+  display: none;
+}
 .kicker {
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.3em;
   color: var(--steel-200); text-transform: uppercase;
