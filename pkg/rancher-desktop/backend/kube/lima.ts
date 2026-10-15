@@ -583,12 +583,20 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
 
     await this.progressTracker.action('Booting Virtual Container Environment...', 60, async() => {
       this.progressTracker.numeric('Booting Virtual Container Environment', 40, 100);
-      const containers = ['postgres', 'redis', 'python-runtime', 'shell-runtime', 'node-runtime'];
-
-      // Track each container individually
-      for (const container of containers) {
+      // Postgres and Redis are required to boot. The function runtimes only back
+      // custom functions, so a slow or failed runtime must not block startup.
+      for (const container of ['postgres', 'redis']) {
         await this.progressTracker.action(`Downloading and Starting ${ container }`, 100, async() => {
           await this.waitForDeployment(`${ container }`, 600);
+        });
+      }
+      for (const container of ['python-runtime', 'shell-runtime', 'node-runtime']) {
+        await this.progressTracker.action(`Downloading and Starting ${ container }`, 100, async() => {
+          try {
+            await this.waitForDeployment(`${ container }`, 120);
+          } catch (err) {
+            console.warn(`[Sulla] ${ container } not ready; continuing startup without it:`, err);
+          }
         });
       }
       this.progressTracker.numeric('Container environment booted', 60, 100);

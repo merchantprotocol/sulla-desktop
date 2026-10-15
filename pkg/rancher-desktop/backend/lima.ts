@@ -3101,16 +3101,17 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * Waits for all Sulla Docker services to be healthy by checking their container status.
    */
   private async waitForSullaDockerServices(): Promise<void> {
-    const services = [
-      'sulla_postgres',
-      'sulla_redis',
-      'sulla_python_runtime',
-      'sulla_shell_runtime',
-      'sulla_node_runtime',
-    ];
-
-    for (const service of services) {
+    // Postgres and Redis are required to boot. The function runtimes only back
+    // custom functions, so a slow or failed runtime must not block startup.
+    for (const service of ['sulla_postgres', 'sulla_redis']) {
       await this.waitForDockerServiceHealthy(service);
+    }
+    for (const service of ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime']) {
+      try {
+        await this.waitForDockerServiceHealthy(service, 60);
+      } catch (err) {
+        console.warn(`[Sulla] ${ service } not ready; continuing startup without it:`, err);
+      }
     }
   }
 
