@@ -27,7 +27,7 @@ export class PostgresClient {
 
     // Settings extends BaseModel, which imports this client. Load it only on use.
     const { SullaSettingsModel } = await import('./models/SullaSettingsModel');
-    const password = await SullaSettingsModel.get('sullaServicePassword', 'sulla_dev_password');
+    const password = await SullaSettingsModel.getServicePassword();
 
     this.pool = new Pool({
       host:                    '127.0.0.1',
@@ -176,7 +176,7 @@ export class PostgresClient {
   async waitForReady(maxAttempts = Number.POSITIVE_INFINITY, intervalMs = 1000): Promise<void> {
     // Settings extends BaseModel, which imports this client. Load it only on use.
     const { SullaSettingsModel } = await import('./models/SullaSettingsModel');
-    const password = await SullaSettingsModel.get('sullaServicePassword', 'sulla_dev_password');
+    const password = await SullaSettingsModel.getServicePassword();
 
     for (let i = 1; i <= maxAttempts; i++) {
       let probe: Pool | null = null;

@@ -394,6 +394,30 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       .join('');
   }
 
+  /**
+   * Return the installation's shared service password.
+   *
+   * New installs persist a generated value during first-run setup. Older
+   * installs may predate that setting while their PostgreSQL data directory
+   * was initialized with the historical development password. Persist that
+   * legacy value when repairing such an install instead of generating a new
+   * password that would no longer match the existing database.
+   */
+  public static async getServicePassword(): Promise<string> {
+    const configured = await this.get('sullaServicePassword');
+
+    if (typeof configured === 'string' && configured.length > 0) {
+      return configured;
+    }
+
+    const legacyPassword = 'sulla_dev_password';
+
+    console.warn('[SullaSettingsModel] sullaServicePassword missing; persisting legacy value for data compatibility');
+    await this.set('sullaServicePassword', legacyPassword, 'string');
+
+    return legacyPassword;
+  }
+
   public static generateEncryptionKey(length = 32): string {
     return crypto.randomBytes(length).toString('base64');
   }
