@@ -430,7 +430,9 @@ function onAgentCommand(_event: any, args: any) {
     break;
   }
   case 'open-tab': {
-    const tab = createTab('about:blank', { mode: args.mode || 'welcome' });
+    // `packages` is the user-facing name of the `marketplace` view.
+    const mode = args.mode === 'packages' ? 'marketplace' : args.mode;
+    const tab = createTab('about:blank', { mode: mode || 'welcome' });
 
     router.push(`/Browser/${ tab.id }`);
     break;

@@ -51,7 +51,7 @@
               Sulla Studio
             </div>
             <div class="brand-sub">
-              Agent assets + marketplace
+              Agent assets + packages
             </div>
           </div>
         </div>
@@ -80,7 +80,7 @@
             :class="{ on: activeTab === 'marketplace' }"
             @click="activeTab = 'marketplace'"
           >
-            Marketplace
+            Packages
           </button>
           <button
             type="button"
@@ -312,10 +312,11 @@
         />
       </template>
 
-      <!-- ═══════ MARKETPLACE TAB ═══════ -->
+      <!-- ═══════ PACKAGES TAB (internal key stays 'marketplace') ═══════ -->
       <template v-else-if="activeTab === 'marketplace'">
-        <MarketplaceTab
-          @installed="onMarketplaceInstalled"
+        <PackagesTab
+          @installed="onPackagesInstalled"
+          @feedback="showFeedback"
         />
       </template>
         </div>
@@ -350,7 +351,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import ActSection from '@pkg/components/routines/ActSection.vue';
 import EmptyState from '@pkg/components/routines/EmptyState.vue';
 import LibraryTab from '@pkg/components/routines/LibraryTab.vue';
-import MarketplaceTab from '@pkg/components/routines/MarketplaceTab.vue';
+import PackagesTab from '@pkg/components/routines/PackagesTab.vue';
 import RoutineStrip from '@pkg/components/routines/RoutineStrip.vue';
 import { useLibrary } from '@pkg/composables/useLibrary';
 import { useRoutines } from '@pkg/composables/useRoutines';
@@ -438,7 +439,7 @@ const heroKicker = computed(() => {
   case 'mywork':
     return myWorkView.value === 'archive' ? 'The Vault' : 'The Cast';
   case 'library':     return 'The Library';
-  case 'marketplace': return 'The Commons';
+  case 'marketplace': return 'Packages';
   default:            return 'The Studio';
   }
 });
@@ -447,7 +448,7 @@ const heroTitle = computed(() => {
   switch (activeTab.value) {
   case 'mywork':      return myWorkView.value === 'archive' ? 'Archive.' : 'My Work.';
   case 'library':     return 'Library.';
-  case 'marketplace': return 'Marketplace.';
+  case 'marketplace': return 'Packages.';
   default:            return 'Studio.';
   }
 });
@@ -467,10 +468,10 @@ const heroDek = computed(() => {
     return `${ count } workflow${ plural }. ${ reclaimed } of human-equivalent work reclaimed this week. Each one a small constellation of agents, rehearsed until they run without you.`;
   }
   if (activeTab.value === 'library') {
-    return 'Your collected workflows, agents, skills, functions, integrations, and recipes. Everything installed from the marketplace or added by hand lives here.';
+    return 'Your collected workflows, agents, skills, functions, integrations, and recipes. Everything installed from a package or added by hand lives here.';
   }
   if (activeTab.value === 'marketplace') {
-    return 'Workflows, agents, skills, functions, integrations, and recipes the community has published. Install one and it drops straight into your Library — reviewed before it lands here.';
+    return 'Get Sulla doing a new job in one click. Each package brings everything it needs.';
   }
 
   return 'Four kinds, one home.';
@@ -620,14 +621,10 @@ async function onRestoreRoutine(id: string) {
   emit('restore-routine', id);
 }
 
-// When the marketplace tab installs something, refresh the relevant
-// local view so the user sees it land. Routines become templates; skills
-// + functions don't have tabs here today so the refresh is a no-op for
-// them (the filesystem scan runs next time the consuming surface opens).
-async function onMarketplaceInstalled(info: { kind: string; slug: string; path: string; name: string }) {
-  if (info.kind === 'routine') {
-    await templatesController.load();
-  }
+// A package can add workflows, skills, agents and more in one go, so
+// refresh the templates and every Library kind after install / remove.
+async function onPackagesInstalled() {
+  await Promise.all([templatesController.load(), libraryStore.loadAll()]);
 }
 
 async function onExport(id: string) {
