@@ -101,7 +101,7 @@ export function initSullaMarketplaceEvents(): void {
 
       const listing = await findTemplateBySlug(normalizedKind, slug);
 
-      return listing ? { template: listing } : { error: `No marketplace listing for ${ normalizedKind }/${ slug }` };
+      return listing ? { template: { ...listing, tags: listing.tags ?? [] } } : { error: `No marketplace listing for ${ normalizedKind }/${ slug }` };
     } catch (err) {
       return errorOf(err);
     }

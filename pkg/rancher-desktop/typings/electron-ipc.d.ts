@@ -644,7 +644,8 @@ export interface IpcMainInvokeEvents {
     slug:          string;
     bundle_status: 'uploaded';
     bundle_size:   number;
-    status:        'pending';
+    status:        'pending' | 'approved';
+    warnings?:     string[];
   } | { error: string };
 
   // Bulk publisher — iterates a directory of sibling bundle folders
