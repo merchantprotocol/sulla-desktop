@@ -635,7 +635,7 @@ export interface IpcMainInvokeEvents {
   // Publish: build a sulla/v3 manifest from a local bundle folder, then
   // two-step submit (POST /submit-manifest → PUT /bundle).
   'bundles-publish': (args: {
-    kind:         'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+    kind:         'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
     slug?:        string;
     extensionId?: string;
     overrides?:   { name?: string; description?: string; version?: string; tags?: string[] };
@@ -652,7 +652,7 @@ export interface IpcMainInvokeEvents {
   // individual errors; per-folder results + summary counts come back.
   'bundles-publish-bulk-from-dir': (args: {
     sourceDir: string;
-    kind:      'routine' | 'skill' | 'function' | 'recipe' | 'integration';
+    kind:      'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
     filter?:   string[];
     dryRun?:   boolean;
   }) => {
