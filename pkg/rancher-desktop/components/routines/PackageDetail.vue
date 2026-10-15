@@ -112,42 +112,50 @@
         </footer>
       </blockquote>
 
-      <template v-if="page.offer">
-        <hr class="sep">
-        <h2
-          v-if="page.offer.title"
-          class="center"
-        >
-          {{ page.offer.title }}
-        </h2>
-        <p
-          v-if="page.offer.tagline"
-          class="center sub"
-        >
-          {{ page.offer.tagline }}
-        </p>
-        <p
-          v-if="page.offer.perfectFor"
-          class="center"
-        >
-          {{ perfectFor }}
-        </p>
-      </template>
-
-      <template v-if="page.benefits.length">
-        <h3 class="lead-in">
-          You'll be able to:
-        </h3>
-        <ul class="bens">
-          <li
-            v-for="(b, i) in page.benefits"
-            :key="i"
+      <hr
+        v-if="page.offer || page.benefits.length"
+        class="sep"
+      >
+      <div
+        v-if="page.offer || page.benefits.length"
+        class="offer-card"
+      >
+        <template v-if="page.offer">
+          <h2
+            v-if="page.offer.title"
+            class="center"
           >
-            <b>{{ b.title }}</b>
-            <span v-if="b.note">{{ b.note }}</span>
-          </li>
-        </ul>
-      </template>
+            {{ page.offer.title }}
+          </h2>
+          <p
+            v-if="page.offer.tagline"
+            class="center sub"
+          >
+            {{ page.offer.tagline }}
+          </p>
+          <p
+            v-if="page.offer.perfectFor"
+            class="center"
+          >
+            {{ perfectFor }}
+          </p>
+        </template>
+
+        <template v-if="page.benefits.length">
+          <h3 class="lead-in">
+            You'll be able to:
+          </h3>
+          <ul class="bens">
+            <li
+              v-for="(b, i) in page.benefits"
+              :key="i"
+            >
+              <b>{{ b.title }}</b>
+              <span v-if="b.note">{{ b.note }}</span>
+            </li>
+          </ul>
+        </template>
+      </div>
 
       <PackageValueStack
         v-if="page.valueStack"
@@ -581,6 +589,18 @@ const contentGroups = computed(() => {
 .copy .lead-in { margin: 26px 0 0; font-size: 17px; font-weight: 700; color: var(--nx-read-1, var(--text-primary)); }
 .copy .imagine { margin: 14px 0 0; padding-left: 20px; line-height: 1.9; font-weight: 600; color: var(--nx-read-1, var(--text-primary)); }
 .copy .imagine li { margin-top: 0; }
+.copy .offer-card {
+  margin-top: 8px;
+  padding: 26px 28px 24px;
+  background: var(--nx-surface, var(--bg-surface));
+  border: 1px solid var(--nx-hair-strong, var(--border-default));
+  border-top: 4px solid var(--nx-accent, var(--accent-primary));
+  border-radius: 16px;
+  box-shadow: 0 1px 2px var(--nx-hair, rgba(0, 0, 0, 0.06)), 0 12px 32px -12px var(--nx-hair-strong, rgba(0, 0, 0, 0.16));
+}
+.copy .offer-card > h2:first-child { margin-top: 0; }
+.copy .offer-card .lead-in { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--nx-hair-strong, var(--border-default)); }
+@media (max-width: 640px) { .copy .offer-card { padding: 20px 18px; } }
 .copy .bens { list-style: none; display: grid; gap: 12px; margin: 10px 0 0; padding: 0; }
 .copy .bens li { margin: 0; }
 .copy .bens b { display: block; font-size: 17px; line-height: 1.45; color: var(--nx-read-1, var(--text-primary)); }
