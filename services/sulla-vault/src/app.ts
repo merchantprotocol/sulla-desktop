@@ -1,4 +1,5 @@
 import express, { type NextFunction, type Response } from 'express';
+import { agentPolicyAllows, type AgentAccessLevel } from '@sulla/vault-crypto';
 
 import {
   authenticate,
@@ -42,7 +43,7 @@ function userId(request: AuthenticatedRequest): string {
 async function authorizeItem(db: Database, actorId: string, itemId: string, right: 'view' | 'edit'): Promise<Record<string, unknown>> {
   const result = await db.query(
     `SELECT id, owner_user_id, collection_id, folder_id, item_type, ciphertext, encrypted_item_key,
-            agent_wrapped_item_key, revision, created_at, updated_at
+            agent_wrapped_item_key, agent_policy, revision, created_at, updated_at
        FROM items WHERE id = $1 AND deleted_at IS NULL`,
     [itemId],
   );
@@ -82,6 +83,19 @@ async function authorizeItemFolder(
 export function createApp(db: Database, config: VaultConfig) {
   const app = express();
   app.disable('x-powered-by');
+  app.use((request, response, next) => {
+    const origin = request.header('origin');
+    const allowed = Boolean(origin && (origin.startsWith('chrome-extension://') || config.extensionOrigins.includes(origin)));
+    if (allowed) {
+      response.setHeader('Access-Control-Allow-Origin', origin as string);
+      response.setHeader('Vary', 'Origin');
+      response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+      response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+      response.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+    if (request.method === 'OPTIONS') { response.status(allowed ? 204 : 403).end(); return; }
+    next();
+  });
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/healthz', async(_request, response) => {
@@ -222,12 +236,13 @@ export function createApp(db: Database, config: VaultConfig) {
     const folderId = typeof request.body.folderId === 'string' ? request.body.folderId : null;
     if (folderId) await authorizeItemFolder(db, actorId, folderId, collectionId);
     const result = await db.query(
-      `INSERT INTO items(id, owner_user_id, collection_id, folder_id, item_type, ciphertext, encrypted_item_key, agent_wrapped_item_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO items(id, owner_user_id, collection_id, folder_id, item_type, ciphertext, encrypted_item_key, agent_wrapped_item_key, agent_policy)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, '{"mode":"only_me","level":"metadata","agents":[],"sites":[],"expiresAt":null,"askFirst":false,"allowServerAgents":false}'::jsonb))
        RETURNING id, revision, created_at, updated_at`,
       [itemId, collectionId ? null : actorId, collectionId, folderId,
         requiredString(request.body.itemType, 'itemType'), requiredObject(request.body.ciphertext, 'ciphertext'),
-        requiredObject(request.body.encryptedItemKey, 'encryptedItemKey'), request.body.agentWrappedItemKey ?? null],
+        requiredObject(request.body.encryptedItemKey, 'encryptedItemKey'), request.body.agentWrappedItemKey ?? null,
+        request.body.agentPolicy ? requiredObject(request.body.agentPolicy, 'agentPolicy') : null],
     );
     response.status(201).json(result.rows[0]);
   });
@@ -253,12 +268,14 @@ export function createApp(db: Database, config: VaultConfig) {
           SET folder_id = CASE WHEN $1::boolean THEN $2 ELSE folder_id END, item_type = COALESCE($3, item_type),
               ciphertext = COALESCE($4, ciphertext), encrypted_item_key = COALESCE($5, encrypted_item_key),
               agent_wrapped_item_key = CASE WHEN $6::boolean THEN $7 ELSE agent_wrapped_item_key END,
+              agent_policy = COALESCE($10, agent_policy),
               revision = revision + 1, updated_at = now()
         WHERE id = $8 AND revision = $9 AND deleted_at IS NULL
         RETURNING id, revision, updated_at`,
       [updatesFolder, request.body.folderId ?? null, request.body.itemType ?? null, request.body.ciphertext ?? null,
         request.body.encryptedItemKey ?? null, Object.hasOwn(request.body, 'agentWrappedItemKey'),
-        request.body.agentWrappedItemKey ?? null, request.params.itemId, revision],
+        request.body.agentWrappedItemKey ?? null, request.params.itemId, revision,
+        request.body.agentPolicy ? requiredObject(request.body.agentPolicy, 'agentPolicy') : null],
     );
     if (!result.rowCount) {
       throw new HttpError(409, 'Item revision conflict');
@@ -515,8 +532,15 @@ export function createApp(db: Database, config: VaultConfig) {
       }
       orgId = collection.rows[0].org_id;
     }
-    if (action === 'agent_credential_use' && !collectionId && (!item?.agent_wrapped_item_key)) {
-      throw new AccessDenied('Item is not enabled for agents');
+    if (action === 'agent_credential_use' && item) {
+      const policy = item.agent_policy as Parameters<typeof agentPolicyAllows>[0];
+      const decision = agentPolicyAllows(policy, {
+        agentId: typeof request.body.agentId === 'string' ? request.body.agentId : actorId,
+        level: (request.body.level as AgentAccessLevel) ?? 'autofill',
+        host: typeof request.body.host === 'string' ? request.body.host : undefined,
+        onServer: true,
+      });
+      if (!decision.allowed || !item.agent_wrapped_item_key) throw new AccessDenied(decision.reason ?? 'Item is not enabled for agents');
     }
     if (orgId && !collectionId) {
       const membership = await db.query(

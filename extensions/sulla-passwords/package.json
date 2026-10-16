@@ -1,0 +1,8 @@
+{
+  "name": "@sulla/passwords-extension",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node build.mjs", "package": "npm run build && cd dist && zip -qr ../sulla-passwords.zip ." },
+  "dependencies": { "@sulla/vault-crypto": "file:../../packages/vault-crypto", "libsodium-wrappers-sumo": "0.8.4" },
+  "devDependencies": { "esbuild": "0.25.12" }
+}
