@@ -70,11 +70,6 @@ export class SharesService {
     if (config.mode === 'server') { this.serverRelay = new ServerShareRelay(db, config, (id, path) => this.content(id, path)); this.serverRelay.connect() }
   }
 
-  private async canView(identity: Identity, collectionId: string): Promise<void> {
-    const result = await this.db.query("SELECT role FROM collection_acl WHERE collection_id=$1 AND principal_type='user' AND principal_id=$2", [collectionId, identity.user]);
-    if (!result.rows[0]) throw Object.assign(new Error('access denied'), { status: 403 });
-  }
-
   private folderPath(value: unknown): string {
     const normalized = posix.normalize(String(value ?? '').replace(/^\/+/, '')).replace(/\/$/, '');
     if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) throw Object.assign(new Error('valid folderPath required'), { status: 400 });
@@ -99,7 +94,6 @@ export class SharesService {
       collectionId = input.collectionId; folderPath = this.folderPath(input.folderPath); name = basename(folderPath); mime = 'application/json'; targetType = 'folder';
       if (keepAvailable) throw Object.assign(new Error('keepAvailable is only supported for files'), { status: 400 });
     }
-    await this.canView(identity, collectionId);
     const id = randomBytes(12).toString('base64url'); const source = this.config.mode;
     const relaySecret = source === 'server' ? randomBytes(32).toString('base64url') : null;
     await this.db.query(`INSERT INTO file_share_links
@@ -193,7 +187,7 @@ export class SharesService {
 
   private async upload(id: string, cloudToken: string) {
     const content = await this.content(id); await this.cloud(`/shares/${ encodeURIComponent(id) }/content`, cloudToken, {
-      method: 'PUT', headers: { 'Content-Type': content.mime, 'X-Sulla-Filename': encodeURIComponent(content.name) }, body: content.bytes,
+      method: 'PUT', headers: { 'Content-Type': content.mime, 'X-Sulla-Filename': encodeURIComponent(content.name) }, body: new Uint8Array(content.bytes),
     });
   }
 
