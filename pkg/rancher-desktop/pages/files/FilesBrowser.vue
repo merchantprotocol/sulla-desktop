@@ -317,7 +317,8 @@
                   <span class="location-cell"><span
                     class="sync-icon"
                     :class="entrySync(entry)"
-                  >{{ syncMark(entry) }}</span>{{ syncText(entry) }}</span>
+                    v-html="syncIcon(entry)"
+                  />{{ syncText(entry) }}</span>
                 </td>
                 <td>
                   <div class="row-actions">
@@ -397,7 +398,8 @@
                   <span class="location-cell"><span
                     class="sync-icon"
                     :class="entrySync(entry)"
-                  >{{ syncMark(entry) }}</span>{{ syncText(entry) }}</span>
+                    v-html="syncIcon(entry)"
+                  />{{ syncText(entry) }}</span>
                 </td>
                 <td>
                   <div class="row-actions">
@@ -682,6 +684,9 @@ const icons = {
   grid:        '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>',
   more:        '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>',
   alert:       '<svg viewBox="0 0 24 24"><path d="M10.3 4.2 2.5 18a2 2 0 0 0 1.8 3h15.4a2 2 0 0 0 1.8-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
+  syncCheck:   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.7 2.7L16.5 9"/></svg>',
+  syncSpin:    '<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.8-4M4 5v5h5M4 13a8 8 0 0 0 14.8 4M20 19v-5h-5"/></svg>',
+  cloud:       '<svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.5-7.96A5.5 5.5 0 0 1 17 9.5a3.5 3.5 0 0 1 .5 7H7z"/></svg>',
   file:        '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/></svg>',
   image:       '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5L6 20"/></svg>',
   video:       '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg>',
@@ -785,7 +790,7 @@ function dateBucket(value:string) { const age = Date.now() - Date.parse(value ||
 function ownerName(entry:FilesItem) { return entry.ownerDisplayName || (entry.createdByType === 'agent-run' ? entry.createdById || 'Sulla agent' : entry.createdById || 'Unknown owner') }
 function ownerInitial(entry:FilesItem) { return ownerName(entry).charAt(0).toUpperCase() || '?' }
 function entrySync(entry:FilesItem) { return entry.syncState || (/\(conflicted copy [^)]+\)/i.exec(entry.path) ? 'conflict' : syncState.value === 'syncing' ? 'syncing' : 'synced') }
-function syncMark(entry:FilesItem) { return ({ synced: '✓', syncing: '↻', 'online-only': '☁', conflict: '⚠' }[entrySync(entry)] || '✓') }
+function syncIcon(entry:FilesItem) { return ({ synced: icons.syncCheck, syncing: icons.syncSpin, 'online-only': icons.cloud, conflict: icons.alert }[entrySync(entry)] || icons.syncCheck) }
 function syncText(entry:FilesItem) { return ({ synced: 'Synced', syncing: 'Syncing', 'online-only': 'Online only', conflict: 'Conflict' }[entrySync(entry)] || 'Synced') }
 function clearFilters() { activeFilters.value = { type: '', person: '', date: '', folder: '' } }
 function toggleSelected(key:string) { const next = new Set(selectedKeys.value); next.has(key) ? next.delete(key) : next.add(key); selectedKeys.value = next }
@@ -807,4 +812,5 @@ onBeforeUnmount(() => { stopUploadProgress?.(); if (refreshTimer) clearInterval(
 @media(max-width:700px){.search-box{max-width:none}.breadcrumbs,.title-actions .disabled-action,th:nth-child(3),td:nth-child(3),th:nth-child(4),td:nth-child(4){display:none}.files-topbar{flex-wrap:wrap}.search-box{order:2;flex-basis:calc(100% - 94px);margin-left:0}.files-content{padding:14px 12px 40px}.title-row h1{font-size:21px}.detail-panel{width:calc(100% - 64px)}.file-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}}
 .file-name strong,.tile-body strong{color:var(--f-text)}
 .account-card{display:flex;align-items:center;gap:9px;margin-top:10px;padding:10px 8px;border-top:1px solid var(--f-line);color:var(--f-text-2)}.account-card>span:nth-child(2){min-width:0;flex:1}.account-card strong,.account-card small{display:block}.account-card strong{color:var(--f-text);font-size:10.5px}.account-card small{color:var(--f-text-3);font-size:8.5px}.account-card>span:last-child{width:15px}.owner-avatar{display:grid;width:27px;height:27px;place-items:center;flex:none;border-radius:50%;color:var(--f-bg);background:var(--f-accent-2);font-size:10px;font-weight:750}.owner-avatar.small{width:22px;height:22px;color:var(--f-text);background:color-mix(in srgb,var(--f-accent) 18%,var(--f-surface));font-size:8.5px}.owner-avatar.agent{color:var(--f-accent-2);background:color-mix(in srgb,var(--f-accent) 14%,var(--f-surface))}.owner-cell{display:flex;align-items:center;gap:7px;color:var(--f-text-2);font-size:10.5px}.owner-cell img{width:22px;height:22px;border-radius:50%;object-fit:cover}.filter-select{display:flex;align-items:center;gap:4px;padding:5px 8px;border:1px solid var(--f-line);border-radius:8px;color:var(--f-text-2);background:var(--f-surface);font-size:10.5px}.filter-select select{max-width:92px;border:0;color:var(--f-text-2);background:transparent}.clear-filters{border:0;color:var(--f-accent-2);background:transparent;font-size:10.5px}.sort-control{margin-left:auto}.view-switch{margin-left:0}.check-cell{width:34px!important;padding-right:2px!important;text-align:center}.check-cell input{accent-color:var(--f-accent)}.group-row td{padding:12px 12px 6px!important;border-bottom:0!important;color:var(--f-text-3);background:var(--f-bg)!important;font-size:8.5px;font-weight:750;letter-spacing:.11em;text-transform:uppercase}.group-row span{margin-left:5px;padding:1px 5px;border-radius:99px;background:var(--f-surface-2)}.row-actions{display:flex;justify-content:flex-end;gap:2px;opacity:0}.list-card tr:hover .row-actions,.list-card tr.selected .row-actions{opacity:1}.row-actions button{display:grid;width:25px;height:25px;padding:5px;border:0;border-radius:7px;color:var(--f-text-3);background:transparent}.row-actions button:hover:not(:disabled){color:var(--f-text);background:color-mix(in srgb,var(--f-text-3) 9%,transparent)}.row-actions button:disabled{cursor:not-allowed;opacity:.4}.row-actions button.starred{color:var(--f-warn)}.row-actions svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.8}.sync-icon{display:grid;width:18px;height:18px;place-items:center;border-radius:50%;color:var(--f-ok);background:color-mix(in srgb,var(--f-ok) 12%,transparent);font-size:9px;font-weight:800}.sync-icon.syncing{color:var(--f-accent-2);background:color-mix(in srgb,var(--f-accent) 12%,transparent)}.sync-icon.online-only{color:var(--f-accent-2)}.sync-icon.conflict{color:var(--f-danger);background:color-mix(in srgb,var(--f-danger) 13%,transparent)}.conflict-copy{color:var(--f-danger)!important}.list-card tr.conflict td{background:color-mix(in srgb,var(--f-danger) 3%,transparent)}.upload-progress{position:absolute;z-index:18;right:18px;bottom:18px;width:290px;padding:13px;border:1px solid var(--f-line);border-radius:12px;color:var(--f-text);background:var(--f-surface);box-shadow:0 18px 50px color-mix(in srgb,var(--nx-ink,#000) 35%,transparent)}.upload-progress header{display:flex;justify-content:space-between}.upload-progress small{display:block;margin:5px 0 9px;color:var(--f-text-3)}.upload-progress>div{height:4px;border-radius:8px;background:color-mix(in srgb,var(--f-text-3) 14%,transparent);overflow:hidden}.upload-progress i{display:block;height:100%;background:var(--f-accent)}
+.storage-line{gap:8px}.storage-line strong{min-width:0;text-align:right}.sync-icon :deep(svg){width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.sync-icon.syncing :deep(svg){animation:spin 1.15s linear infinite}.sync-icon.conflict{border-radius:5px;background:transparent}.sync-icon.conflict :deep(svg){width:16px;height:16px}
 </style>
