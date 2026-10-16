@@ -7,3 +7,4 @@ resources:
   - postgres.yaml
   - redis.yaml
   - runtimes.yaml
+  - sulla-vault.yaml
