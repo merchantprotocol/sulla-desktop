@@ -9,6 +9,7 @@ export class FilesRevokeLinkWorker extends FilesTool {
   description = '';
   protected async _validatedCall(input:any):Promise<ToolResponse> {
     const token = await getCurrentAccessToken();
-    try { await this.containerRequest(`/v1/links/${ encodeURIComponent(input.id) }`, input, { method: 'DELETE', headers: token ? { 'X-Sulla-Cloud-Token': token } : {} }); return { successBoolean: true, responseString: 'Share link revoked.' } } catch (error) { return { successBoolean: false, responseString: error instanceof Error ? error.message : String(error) } }
+    if (!token) return { successBoolean: false, responseString: 'Sign in to Sulla Cloud before revoking a public link.' };
+    try { await this.containerRequest(`/v1/links/${ encodeURIComponent(input.id) }`, input, { method: 'DELETE', headers: { 'X-Sulla-Cloud-Token': token } }); return { successBoolean: true, responseString: 'Share link revoked.' } } catch (error) { return { successBoolean: false, responseString: error instanceof Error ? error.message : String(error) } }
   }
 }
