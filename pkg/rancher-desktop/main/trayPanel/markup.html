@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: file:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:">
+  <title>Mark up screenshot</title>
+  <link rel="stylesheet" href="markup.css">
+</head>
+<body>
+  <header><strong>Mark up screenshot</strong><nav><button class="active" data-tool="arrow">↗ Arrow</button><button data-tool="box">□ Box</button><button data-tool="text">T Text</button><button data-tool="blur">▦ Blur</button></nav><span></span><button id="cancel">Cancel</button><button id="save">Save</button></header>
+  <main><canvas id="canvas"></canvas></main>
+  <footer><span>Drag to add an annotation. Text is placed where you click.</span><strong id="status"></strong></footer>
+  <script src="markup.js"></script>
+</body>
+</html>

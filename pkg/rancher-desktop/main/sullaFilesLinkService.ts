@@ -1,4 +1,5 @@
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
+import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 
 export type ShareMode = 'view' | 'download';
@@ -47,7 +48,11 @@ function normalize(value:any):ShareLink {
 async function requestWithContractFallback(paths:string[], init:RequestInit):Promise<Response> {
   let last:Response | undefined;
   for (const path of paths) {
-    const response = await getSullaFilesWatcher().requestFiles(path, init);
+    let response:Response;
+
+    try { response = await getSullaFilesWatcher().requestFiles(path, init) } catch (error) {
+      throw new SharingUnavailableError(`Sharing service is offline: ${ error instanceof Error ? error.message : String(error) }`);
+    }
     if (![404, 405].includes(response.status)) return response;
     last = response;
   }
@@ -59,10 +64,12 @@ export class SullaFilesLinkService implements LinkService {
   async create(input:CreateShareInput):Promise<ShareLink> {
     const cloudToken = await getCurrentAccessToken();
     if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before sharing');
+    const deviceId = await getDesktopDeviceId();
     const body = JSON.stringify({
       fileId: input.fileId, permission: input.mode, accessMode: input.mode, password: input.password,
       expiresAt: input.expiresAt, keepAvailable: input.keepAvailable,
       assetKind: input.capture ? 'capture' : 'file', captureMetadata: input.captureMetadata,
+      deviceId,
     });
     const response = await requestWithContractFallback(['/v1/links', '/v1/shares'], {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-sulla-cloud-token': cloudToken }, body,

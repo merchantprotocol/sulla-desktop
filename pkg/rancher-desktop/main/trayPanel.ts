@@ -5,11 +5,15 @@
  * positioned below the tray icon, dismissed on blur.
  */
 
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 
-import { BrowserWindow, ipcMain, app } from 'electron';
+import { BrowserWindow, ipcMain, app, clipboard, globalShortcut, shell } from 'electron';
 
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import mainEvents from '@pkg/main/mainEvents';
+import { getSullaFilesCaptureService, openScreenshotMarkup, type CaptureResult, type ScreenshotMode } from '@pkg/main/sullaFilesCapture';
+import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
@@ -19,6 +23,101 @@ import { openDashboard } from '@pkg/window/dashboard';
 const console = Logging.background;
 
 let panelWindow: BrowserWindow | null = null;
+let preferencesWindow: BrowserWindow | null = null;
+let afterCaptureWindow: BrowserWindow | null = null;
+const CAPTURE_SHORTCUTS = ['CommandOrControl+Shift+5', 'CommandOrControl+Shift+U', 'CommandOrControl+Shift+S'];
+
+const preferenceDefaults = {
+  defaultAction:             'share',
+  keepCapturesAvailable:     true,
+  expiryDays:                30,
+  visitorMode:               'view',
+  screenshotLocation:        'Screenshots',
+  recordingLocation:         'Recordings',
+  ordinaryKeepAvailable:     false,
+  recordMic:                 true,
+  recordCamera:              false,
+} as const;
+
+const preferenceKeys:Record<keyof typeof preferenceDefaults, { property:string; cast:'string'|'number'|'boolean' }> = {
+  defaultAction:         { property: 'sullaFilesCaptureDefaultAction', cast: 'string' },
+  keepCapturesAvailable: { property: 'sullaFilesKeepCapturesAvailable', cast: 'boolean' },
+  expiryDays:            { property: 'sullaFilesCaptureExpiryDays', cast: 'number' },
+  visitorMode:           { property: 'sullaFilesCaptureVisitorMode', cast: 'string' },
+  screenshotLocation:    { property: 'sullaFilesScreenshotLocation', cast: 'string' },
+  recordingLocation:     { property: 'sullaFilesRecordingLocation', cast: 'string' },
+  ordinaryKeepAvailable: { property: 'sullaFilesOrdinaryKeepAvailable', cast: 'boolean' },
+  recordMic:             { property: 'sullaFilesRecordMic', cast: 'boolean' },
+  recordCamera:          { property: 'sullaFilesRecordCamera', cast: 'boolean' },
+};
+
+async function capturePreferences():Promise<Record<string, unknown>> {
+  const entries = await Promise.all(Object.entries(preferenceKeys).map(async([key, value]) => [key, await SullaSettingsModel.get(value.property, preferenceDefaults[key as keyof typeof preferenceDefaults])]));
+
+  return Object.fromEntries(entries);
+}
+
+function openFilesScreen(section?:string, filePath?:string):void {
+  openMain();
+  const agentWindow = getWindow('main-agent');
+  if (!agentWindow) return;
+  const send = () => agentWindow.webContents.send('agent-command', { command: 'open-tab', mode: 'files', section, path: filePath });
+
+  if (agentWindow.webContents.isLoading()) agentWindow.webContents.once('did-finish-load', send);
+  else send();
+  panelWindow?.hide();
+}
+
+function showCaptureResult(capture:CaptureResult):void {
+  if (afterCaptureWindow && !afterCaptureWindow.isDestroyed()) afterCaptureWindow.destroy();
+  afterCaptureWindow = new BrowserWindow({
+    width: 430, height: 455, show: false, frame: false, resizable: false, alwaysOnTop: true,
+    backgroundColor: '#101821', title: 'Sulla Files — Capture',
+    webPreferences: { contextIsolation: false, nodeIntegration: true },
+  });
+  afterCaptureWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'afterCapture.html'));
+  afterCaptureWindow.once('ready-to-show', () => {
+    afterCaptureWindow?.show();
+    afterCaptureWindow?.webContents.send('files-after-capture:show', capture);
+  });
+  afterCaptureWindow.on('closed', () => { afterCaptureWindow = null });
+}
+
+function openFilesPreferences(tab = 'capture'):void {
+  if (preferencesWindow && !preferencesWindow.isDestroyed()) {
+    preferencesWindow.show();
+    preferencesWindow.webContents.send('files-preferences:select-tab', tab);
+    return;
+  }
+  preferencesWindow = new BrowserWindow({
+    width: 680, height: 610, minWidth: 620, minHeight: 560, show: false,
+    title: 'Sulla Files — Preferences', backgroundColor: '#101821',
+    webPreferences: { contextIsolation: false, nodeIntegration: true },
+  });
+  preferencesWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'preferences.html'), { query: { tab } });
+  preferencesWindow.once('ready-to-show', () => preferencesWindow?.show());
+  preferencesWindow.on('closed', () => { preferencesWindow = null });
+  panelWindow?.hide();
+}
+
+function registerCaptureShortcuts():void {
+  const registrations:Array<[string, () => void]> = [
+    [CAPTURE_SHORTCUTS[0], () => getSullaFilesCaptureService().screenshot('area').then(showCaptureResult).catch(error => { if (!(error as any)?.cancelled) console.warn('[SullaFiles] shortcut screenshot failed:', error) })],
+    [CAPTURE_SHORTCUTS[1], () => {
+      if (!panelWindow || panelWindow.isDestroyed()) createTrayPanel();
+      panelWindow?.show();
+      const send = () => { panelWindow?.webContents.send('tray-panel:select-view', 'files'); panelWindow?.webContents.send('tray-panel:shortcut-upload') };
+
+      if (panelWindow?.webContents.isLoading()) panelWindow.webContents.once('did-finish-load', send);
+      else send();
+    }],
+    [CAPTURE_SHORTCUTS[2], () => openMain()],
+  ];
+
+  for (const [accelerator, handler] of registrations) {
+    if (!globalShortcut.isRegistered(accelerator) && !globalShortcut.register(accelerator, handler)) console.warn(`[SullaFiles] global shortcut ${ accelerator } is owned by macOS or another app`);
+  }
+}
 
 export function createTrayPanel(): BrowserWindow {
   if (panelWindow && !panelWindow.isDestroyed()) {
@@ -69,6 +168,7 @@ export function createTrayPanel(): BrowserWindow {
 
   // ── IPC handlers (panel → main) ───────────────────────────────────────
   registerPanelIpc();
+  registerCaptureShortcuts();
   getSullaFilesWatcher().initialize().catch(error => console.warn('[SullaFiles] watcher initialization failed:', error));
 
   return panelWindow;
@@ -187,6 +287,11 @@ export function sendSettingsState(state: { autoStart: boolean; startInBackground
  * Destroy the panel window (app quit).
  */
 export function destroyTrayPanel(): void {
+  for (const accelerator of CAPTURE_SHORTCUTS) globalShortcut.unregister(accelerator);
+  if (preferencesWindow && !preferencesWindow.isDestroyed()) preferencesWindow.destroy();
+  if (afterCaptureWindow && !afterCaptureWindow.isDestroyed()) afterCaptureWindow.destroy();
+  preferencesWindow = null;
+  afterCaptureWindow = null;
   if (panelWindow && !panelWindow.isDestroyed()) {
     panelWindow.removeAllListeners('close');
     panelWindow.destroy();
@@ -242,7 +347,84 @@ function registerPanelIpc(): void {
 
   ipcMain.handle('tray-panel:files-status', () => getSullaFilesWatcher().status());
   ipcMain.handle('tray-panel:files-pause', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
+  ipcMain.handle('tray-panel:files-pause-hour', () => getSullaFilesWatcher().pauseFor(60 * 60_000));
+  ipcMain.on('tray-panel:view-change', (_event, view:string) => panelWindow?.setSize(view === 'files' ? 410 : 400, view === 'files' ? 735 : 480, true));
   ipcMain.on('tray-panel:files-open', () => { getSullaFilesWatcher().openFolder().catch(error => console.warn('[SullaFiles] open folder failed:', error)); panelWindow?.hide() });
+
+  ipcMain.handle('tray-panel:files-dashboard', async() => {
+    const [status, files, preferences] = await Promise.all([
+      getSullaFilesWatcher().status(),
+      getSullaFilesWatcher().recentFiles(4).catch(() => []),
+      capturePreferences(),
+    ]);
+    let shares:any[] = []; let sharingUnavailable = false;
+
+    try { shares = await getSullaFilesLinkService().list() } catch (error) {
+      if (error instanceof SharingUnavailableError) sharingUnavailable = true;
+      else console.debug('[SullaFiles] recent shares unavailable:', error);
+    }
+
+    return { status, files, preferences, shares, sharingUnavailable };
+  });
+
+  ipcMain.handle('tray-panel:capture-screenshot', async(_event, mode:ScreenshotMode) => {
+    panelWindow?.hide();
+    const capture = await getSullaFilesCaptureService().screenshot(mode);
+
+    showCaptureResult(capture);
+    return capture;
+  });
+  ipcMain.handle('tray-panel:capture-record', async(_event, input:{ mic:boolean; camera:boolean }) => {
+    panelWindow?.hide();
+    const result = await getSullaFilesCaptureService().toggleRecording(input);
+
+    if (result.capture) showCaptureResult(result.capture);
+    else if (!result.recording) panelWindow?.show();
+
+    return result;
+  });
+  ipcMain.handle('tray-panel:capture-upload', async() => {
+    panelWindow?.hide();
+    try { return await getSullaFilesCaptureService().upload() } finally { panelWindow?.show() }
+  });
+  ipcMain.handle('tray-panel:share-capture', (_event, capture:CaptureResult, options:{ mode:ShareMode; keepAvailable:boolean }) => getSullaFilesCaptureService().share(capture, options));
+  ipcMain.on('files-after-capture:close', () => afterCaptureWindow?.close());
+  ipcMain.handle('tray-panel:copy-share', (_event, url:string) => { clipboard.writeText(url) });
+  ipcMain.on('tray-panel:set-capture-toggle', (_event, id:string, value:boolean) => {
+    const property = id === 'record-cam' ? preferenceKeys.recordCamera : preferenceKeys.recordMic;
+
+    SullaSettingsModel.set(property.property, value, property.cast).catch(error => console.warn('[SullaFiles] capture preference failed:', error));
+  });
+  ipcMain.on('tray-panel:files-preferences', (_event, tab?:string) => openFilesPreferences(tab));
+  ipcMain.on('tray-panel:open-files-screen', (_event, section?:string) => openFilesScreen(section));
+  ipcMain.on('tray-panel:resolve-file', (_event, relativePath:string) => {
+    openFilesScreen(undefined, relativePath);
+    const absolute = path.resolve(getSullaFilesWatcher().folder, relativePath);
+
+    if (absolute.startsWith(`${ getSullaFilesWatcher().folder }${ path.sep }`) && fs.existsSync(absolute)) shell.showItemInFolder(absolute);
+  });
+  ipcMain.on('tray-panel:open-file', (_event, relativePath:string) => {
+    const absolute = path.resolve(getSullaFilesWatcher().folder, relativePath);
+
+    if (!absolute.startsWith(`${ getSullaFilesWatcher().folder }${ path.sep }`)) return;
+    shell.openPath(absolute).catch(error => console.warn('[SullaFiles] open file failed:', error));
+    panelWindow?.hide();
+  });
+  ipcMain.on('tray-panel:markup', (_event, filePath:string) => {
+    const absolute = path.resolve(filePath);
+
+    if (absolute.startsWith(`${ getSullaFilesWatcher().folder }${ path.sep }`) && absolute.toLowerCase().endsWith('.png')) openScreenshotMarkup(absolute);
+  });
+
+  ipcMain.handle('tray-panel:files-preferences-get', () => capturePreferences());
+  ipcMain.handle('tray-panel:files-preferences-set', async(_event, key:keyof typeof preferenceKeys, value:unknown) => {
+    const setting = preferenceKeys[key];
+
+    if (!setting) throw new Error(`Unknown Sulla Files preference: ${ key }`);
+    await SullaSettingsModel.set(setting.property, value, setting.cast);
+
+    return capturePreferences();
+  });
 
   ipcMain.on('tray-panel:open-url', (_event: Electron.IpcMainEvent, url: string) => {
     openUrlInApp(url);
