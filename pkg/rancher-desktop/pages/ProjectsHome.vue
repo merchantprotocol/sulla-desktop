@@ -26,7 +26,26 @@
       @refresh="refreshIssueDetail"
       @comment="postDetailComment"
     />
-    <div v-show="!issueRouteId || taskMode === 'create'" class="ph-body">
+    <div
+      v-else-if="projectWorkspaceOpen && selectedId"
+      class="ph-project-workspace"
+    >
+      <ProjectBoardV2
+        v-if="projectWorkspaceView === 'board'"
+        :project-id="selectedId"
+        @open-card="openProjectCard"
+        @back-to-list="closeProjectWorkspace"
+        @view-change="projectWorkspaceView = $event"
+      />
+      <ProjectTableV2
+        v-else
+        :project-id="selectedId"
+        @open-card="openProjectCard"
+        @back-to-list="closeProjectWorkspace"
+        @view-change="projectWorkspaceView = $event"
+      />
+    </div>
+    <div v-else class="ph-body">
       <!-- project list -->
       <aside v-if="tab === 'projects'" class="ph-side ph-directory-side">
         <div class="ph-side-h">
@@ -1493,6 +1512,8 @@ import { formatDateOnly } from '@pkg/agent/utils/formatDateOnly';
 import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
 import ProjectDependencyGraph from '@pkg/components/projects/ProjectDependencyGraph.vue';
 import ProjectIssueDetail from '@pkg/components/projects/ProjectIssueDetail.vue';
+import ProjectBoardV2 from '@pkg/components/projects/v2/ProjectBoardV2.vue';
+import ProjectTableV2 from '@pkg/components/projects/v2/ProjectTableV2.vue';
 import {
   useProjects,
   type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
@@ -1524,6 +1545,8 @@ const PROJECT_VIEWS: { key: ProjectViewType; label: string; icon: string }[] = [
 type ProjectsTab = ProjectViewType | 'activity' | 'projects' | 'lanes' | 'dependencies';
 type DirectoryFilter = 'all' | 'mine' | 'waiting' | 'starred' | 'recent' | 'working';
 const tab = ref<ProjectsTab>('projects');
+const projectWorkspaceOpen = ref(false);
+const projectWorkspaceView = ref<'board' | 'table'>('board');
 const saving = ref(false);
 const activity = ref<WorkActivityRecord[]>([]);
 const activityLoading = ref(false);
@@ -1651,13 +1674,8 @@ watch([tab, selectedId], () => {
   }
 });
 
-let skipNextProjectViewRestore = false;
 watch(selectedId, () => {
   if (tab.value === 'projects') return;
-  if (skipNextProjectViewRestore) {
-    skipNextProjectViewRestore = false;
-    return;
-  }
   restoreProjectView().catch(() => undefined);
 });
 
@@ -1795,9 +1813,23 @@ async function toggleFavorite(projectId: string): Promise<void> {
 }
 
 function openProject(project: ProjectView): void {
-  skipNextProjectViewRestore = true;
   select(project.id);
-  tab.value = 'board';
+  projectWorkspaceView.value = 'board';
+  projectWorkspaceOpen.value = true;
+}
+
+function closeProjectWorkspace(): void {
+  projectWorkspaceOpen.value = false;
+  tab.value = 'projects';
+}
+
+async function openProjectCard(taskId: string): Promise<void> {
+  let task = allTasks.value.find(row => row.task.id === taskId)?.task;
+  if (!task) {
+    await load();
+    task = allTasks.value.find(row => row.task.id === taskId)?.task;
+  }
+  if (task) await openTaskDrawer(task);
 }
 
 function projectUpdatedAt(project: ProjectView): string {
@@ -2562,6 +2594,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .projects-home code { font-family: var(--pmono); font-size: 0.85em; color: #b9d3df; }
 
 .ph-body { display: flex; height: 100%; min-height: 0; }
+.ph-project-workspace { height: 100%; min-height: 0; overflow: auto; }
 
 /* buttons */
 .ph-btn {

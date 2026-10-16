@@ -170,7 +170,14 @@
                   </td>
                   <td>
                     <span
-                      v-if="waitingOnHuman(card)"
+                      v-if="card.activeAgent"
+                      class="status-pill working"
+                    >
+                      <span class="agent-pulse" />
+                      {{ card.activeAgent }} is working
+                    </span>
+                    <span
+                      v-else-if="waitingOnHuman(card)"
                       class="status-pill waiting"
                     >
                       <svg
@@ -503,7 +510,9 @@ td { padding: 8px 12px; border-bottom: 1px solid var(--border, rgba(26,35,50,.09
 .task-extra { display: inline-flex; align-items: center; gap: 3px; flex: none; color: var(--v2-dim); font-size: 11px; white-space: nowrap; }
 .task-extra svg, .status-pill svg, .pr-link svg { width: 13px; height: 13px; }
 .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; color: var(--v2-muted); background: var(--v2-soft); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.status-pill.working { color: var(--accent, #3a7fa0); background: color-mix(in srgb, var(--accent, #3a7fa0) 12%, transparent); }
 .status-pill.waiting { color: #9a6207; background: rgba(217,138,10,.13); }
+.agent-pulse { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--accent, #3a7fa0); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #3a7fa0) 14%, transparent); animation: agent-pulse 2s infinite; }
 .assignee { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .avatar { width: 20px; height: 20px; display: grid; place-items: center; flex: none; border-radius: 50%; color: #fff; background: linear-gradient(135deg, #9ec1d3, #3a7fa0); font-size: 8px; font-weight: 700; }
 .avatar.agent { border-radius: 6px; background: linear-gradient(135deg, #1a2332, #3a7fa0); }
@@ -527,6 +536,7 @@ td { padding: 8px 12px; border-bottom: 1px solid var(--border, rgba(26,35,50,.09
 .ptv2-state { padding: 36px; border: 1px solid var(--border, rgba(26,35,50,.09)); border-radius: 12px; color: var(--v2-muted); text-align: center; background: var(--v2-card); }
 .ptv2-state.error { color: #b1302b; }
 .ptv2-state button { margin-left: 8px; }
+@keyframes agent-pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, #3a7fa0) 5%, transparent); } }
 @media (max-width: 900px) { .labels-col, .linked-col { display: none; } }
 @media (max-width: 700px) { .ptv2 { padding: 12px; } .due-col { display: none; } }
 </style>

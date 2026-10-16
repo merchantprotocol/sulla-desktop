@@ -1,13 +1,5 @@
 <template>
-  <ProjectTableV2
-    v-if="view === 'table'"
-    :project-id="projectId"
-    @open-card="$emit('open-card', $event)"
-    @back-to-list="$emit('back-to-list')"
-    @view-change="view = $event"
-  />
   <section
-    v-else
     class="pbv2"
   >
     <ProjectViewHeaderV2
@@ -17,7 +9,7 @@
       :can-add="Boolean(lanes.length)"
       @back-to-list="$emit('back-to-list')"
       @add-card="startAdd(lanes[0]?.lane_key)"
-      @view-change="view = $event"
+      @view-change="$emit('view-change', $event)"
     />
 
     <div
@@ -107,6 +99,14 @@
               </div>
               <div class="card-title">
                 {{ card.task.title }}
+              </div>
+
+              <div
+                v-if="card.activeAgent"
+                class="work-strip active-agent-strip"
+              >
+                <span class="agent-pulse" />
+                {{ card.activeAgent }} is working
               </div>
 
               <div
@@ -343,7 +343,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue';
 
-import ProjectTableV2 from './ProjectTableV2.vue';
 import ProjectViewHeaderV2 from './ProjectViewHeaderV2.vue';
 import {
   dueLabel,
@@ -372,7 +371,6 @@ const {
   waitingOnHuman,
 } = useProjectViewV2(() => props.projectId);
 
-const view = ref<'board' | 'table'>('board');
 const composerLane = ref('');
 const newTitle = ref('');
 const composerInput = ref<HTMLTextAreaElement | null>(null);
@@ -449,6 +447,7 @@ function openCard(taskId: string): void {
 const emit = defineEmits<{
   (event: 'open-card', taskId: string): void;
   (event: 'back-to-list'): void;
+  (event: 'view-change', view: 'board' | 'table'): void;
 }>();
 
 function laneDotStyle(lane: EffectiveWorkLane): Record<string, string> {
@@ -499,6 +498,8 @@ function labelTone(label: string): string {
 .tone-0 { color: #b1302b; background: rgba(217,64,58,.11); } .tone-1 { color: #5a3fb0; background: rgba(107,79,191,.12); } .tone-2 { color: var(--accent, #2f6a86); background: color-mix(in srgb, var(--accent, #3a7fa0) 11%, transparent); } .tone-3 { color: #9a6207; background: rgba(217,138,10,.13); } .tone-4 { color: #167a42; background: rgba(31,157,85,.12); }
 .work-strip { display: flex; align-items: center; gap: 7px; margin-top: 8px; padding: 6px 8px; border-radius: 7px; font-size: 11.5px; font-weight: 600; line-height: 1.3; }
 .work-strip svg { width: 13px; height: 13px; flex: none; }
+.active-agent-strip { color: var(--accent, #3a7fa0); background: color-mix(in srgb, var(--accent, #3a7fa0) 12%, transparent); }
+.agent-pulse { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--accent, #3a7fa0); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #3a7fa0) 14%, transparent); animation: agent-pulse 2s infinite; }
 .waiting-strip { color: #9a6207; background: rgba(217,138,10,.13); }
 .card-footer { display: flex; align-items: center; gap: 9px; min-height: 20px; margin-top: 9px; color: var(--v2-dim); font-size: 11.5px; }
 .card-footer > span, .card-footer > a { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
@@ -525,6 +526,7 @@ function labelTone(label: string): string {
 .pbv2-state.error { color: #b1302b; }
 .pbv2-state button { margin-left: 8px; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes agent-pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, #3a7fa0) 5%, transparent); } }
 @media (max-width: 900px) { .board { grid-auto-columns: minmax(240px, 260px); } }
 @media (max-width: 700px) { .pbv2 { padding: 12px; } }
 </style>
