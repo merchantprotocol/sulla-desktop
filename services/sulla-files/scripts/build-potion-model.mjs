@@ -6,7 +6,7 @@ const revision = '6fc8051fab2a1e0ee76689cf08c853792ac285e7';
 const base = `https://huggingface.co/minishlab/potion-retrieval-32M/resolve/${ revision }`;
 const expected = {
   'model.safetensors': '07609e5bd33aad37900b3fd62f4ec96f6daec88ca4d46b9d8b928bfababf6ea0',
-  'tokenizer.json': '7d75cbc54318138807c401b0f0c9721117c628b39de8e8e0edb6cb17e0ee7d18',
+  'tokenizer.json':     '7d75cbc54318138807c401b0f0c9721117c628b39de8e8e0edb6cb17e0ee7d18',
 };
 const destination = process.argv[2]; await mkdir(destination, { recursive: true });
 

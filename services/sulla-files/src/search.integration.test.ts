@@ -34,7 +34,9 @@ async function harness() {
     await db.query("UPDATE files SET current_version_id=$2,size=$3,search_text=NULL,extraction_status='pending',deleted_at=NULL WHERE id=$1", [id, versionId, content.length]);
     await indexer.flush(); return id;
   }
-  const scopes = (userId:string, groups:string[] = []) => searchableScopes(db, { query: async() => ({ rows: groups.map(group_id => ({ group_id })) }) } as any, { userId, deviceId: 'test', kind: 'capability' });
+  const scopes = (userId:string, groups:string[] = []) => searchableScopes(db, {
+    query: () => Promise.resolve({ rows: groups.map(groupId => ({ group_id: groupId })) }),
+  } as any, { userId, deviceId: 'test', kind: 'capability' });
   return { db, search, indexer, collection, version, scopes };
 }
 
