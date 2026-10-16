@@ -47,6 +47,13 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager)
   });
   app.get('/v1/collections/:id/journal', async(request, response, next) => { try { await access(request, request.params.id, 'view'); const query = await db.query(`SELECT j.*,row_to_json(f.*) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE j.collection_id=$1 AND j.seq>$2 ORDER BY j.seq LIMIT 1000`, [request.params.id, Number(request.query.after ?? 0)]); response.json(query.rows) } catch (error) { next(error) } });
   app.get('/v1/versions/:id', async(request, response, next) => { try { const query = await db.query(`SELECT row_to_json(v.*) version,row_to_json(m.*) manifest,row_to_json(f.*) file FROM file_versions v JOIN files f ON f.id=v.file_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE v.id=$1`, [request.params.id]); if (!query.rows[0]) return response.sendStatus(404); await access(request, query.rows[0].file.collection_id, 'view'); response.json(query.rows[0]) } catch (error) { next(error) } });
+  app.get('/v1/files/:id/recording-metadata', async(request, response, next) => { try {
+    const query = await db.query(`SELECT f.collection_id,m.version_id,m.language,m.transcript,m.chapters,m.duration_seconds,m.generator,m.generated_at
+      FROM recording_metadata m JOIN files f ON f.id=m.file_id WHERE m.file_id=$1`, [request.params.id]);
+    if (!query.rows[0]) return response.sendStatus(404);
+    await access(request, query.rows[0].collection_id, 'view');
+    const { collection_id: _collectionId, ...metadata } = query.rows[0]; response.json(metadata);
+  } catch (error) { next(error) } });
   app.head('/v1/chunks/:collection/:id', async(request, response, next) => { try { await access(request, request.params.collection, 'view'); response.sendStatus(await store.has(request.params.collection, request.params.id) ? 204 : 404) } catch (error) { next(error) } });
   app.get('/v1/chunks/:collection/:id', async(request, response, next) => { try { await access(request, request.params.collection, 'view'); response.type('application/octet-stream').send(await store.get(request.params.collection, request.params.id)) } catch (error) { next(error) } });
   app.put('/v1/chunks/:collection/:id', express.raw({ type: 'application/octet-stream', limit: '8mb' }), async(request, response, next) => { try { await access(request, request.params.collection, 'edit'); await store.put(request.params.collection, request.params.id, request.body); response.sendStatus(204) } catch (error) { next(error) } });
