@@ -43,14 +43,22 @@
             :class="{ on: directoryFilter === item.key }"
             @click="directoryFilter = item.key"
           >
-            <span class="ph-directory-nav-icon" aria-hidden="true">{{ item.icon }}</span>
+            <span class="ph-directory-nav-icon" aria-hidden="true">
+              <svg v-if="item.key === 'all'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9 4v16M15 4v16"/></svg>
+              <svg v-else-if="item.key === 'mine'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>
+              <svg v-else-if="item.key === 'waiting'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4.5M12 16v.01"/></svg>
+              <svg v-else-if="item.key === 'starred'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></svg>
+              <svg v-else-if="item.key === 'recent'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="13.5" r="1.2" fill="currentColor" stroke="none"/></svg>
+            </span>
             <span>{{ item.label }}</span>
             <span v-if="item.count" class="ph-directory-count">{{ item.count }}</span>
           </button>
         </nav>
         <div class="ph-side-f">
           <button type="button" class="ph-btn primary block" @click="openNewProject">
-            ＋ New project
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            New project
           </button>
         </div>
       </aside>
@@ -109,7 +117,7 @@
         <div v-if="tab === 'projects'" class="ph-directory-top">
           <div class="ph-directory-crumb">Projects</div>
           <label class="ph-directory-search">
-            <span aria-hidden="true">⌕</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></svg>
             <input
               ref="projectSearchInput"
               v-model="projectQuery"
@@ -120,7 +128,8 @@
             <kbd>⌘K</kbd>
           </label>
           <button type="button" class="ph-btn primary" @click="openNewProject">
-            ＋ New project
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            New project
           </button>
         </div>
         <div v-else class="ph-top">
@@ -892,8 +901,14 @@
                     </select>
                   </label>
                   <div class="ph-directory-switch" aria-label="Project layout">
-                    <button type="button" :class="{ on: projectLayout === 'list' }" @click="projectLayout = 'list'">☷ List</button>
-                    <button type="button" :class="{ on: projectLayout === 'grid' }" @click="projectLayout = 'grid'">▦ Grid</button>
+                    <button type="button" :class="{ on: projectLayout === 'list' }" @click="projectLayout = 'list'">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
+                      List
+                    </button>
+                    <button type="button" :class="{ on: projectLayout === 'grid' }" @click="projectLayout = 'grid'">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>
+                      Grid
+                    </button>
                   </div>
                 </div>
               </div>
@@ -922,9 +937,14 @@
                       @click.stop="toggleFavorite(p.id)"
                       @keydown.enter.stop.prevent="toggleFavorite(p.id)"
                       @keydown.space.stop.prevent="toggleFavorite(p.id)"
-                    >{{ isFavorite(p.id) ? '★' : '☆' }}</span>
-                    <span class="ph-project-icon" :class="projectTint(p)" aria-hidden="true">▦</span>
+                    >
+                      <svg v-if="isFavorite(p.id)" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></svg>
+                      <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></svg>
+                    </span>
                     <span class="ph-project-name">
+                      <span class="ph-project-glyph" :class="projectTint(p)" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9 4v16M15 4v16"/></svg>
+                      </span>
                       <span>
                         <b>{{ shortName(p) }}</b>
                         <small v-if="p.description">{{ p.description }}</small>
@@ -940,7 +960,9 @@
                     </span>
                     <time :datetime="projectUpdatedAt(p)">{{ relativeDate(projectUpdatedAt(p)) }}</time>
                     <span class="ph-project-actions">
-                      <span title="Open project" aria-hidden="true">→</span>
+                      <span title="More" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/></svg>
+                      </span>
                     </span>
                   </button>
                 </template>
@@ -962,7 +984,10 @@
                       @click.stop="toggleFavorite(p.id)"
                       @keydown.enter.stop.prevent="toggleFavorite(p.id)"
                       @keydown.space.stop.prevent="toggleFavorite(p.id)"
-                    >{{ isFavorite(p.id) ? '★' : '☆' }}</span>
+                    >
+                      <svg v-if="isFavorite(p.id)" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></svg>
+                      <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></svg>
+                    </span>
                   </span>
                   <span class="ph-project-tile-body">
                     <b>{{ shortName(p) }}</b>
@@ -1732,12 +1757,12 @@ const projectSections = computed(() => {
 });
 
 const directoryNavItems = computed(() => [
-  { key: 'all' as const, label: 'All projects', icon: '▦', count: projects.value.length },
-  { key: 'mine' as const, label: 'My work', icon: '○', count: projects.value.filter(project => project.owner?.toLowerCase() === 'jonathon' || projectTasks(project).some(task => task.assignee === 'human')).length },
-  { key: 'waiting' as const, label: 'Waiting on you', icon: '!', count: projects.value.filter(waitingOnHuman).length },
-  { key: 'starred' as const, label: 'Starred', icon: '☆', count: projects.value.filter(project => isFavorite(project.id)).length },
-  { key: 'recent' as const, label: 'Recent', icon: '◷', count: 0 },
-  { key: 'working' as const, label: 'Working now', icon: '◇', count: new Set(activeAgents.value.map(agent => agent.agent_id)).size },
+  { key: 'all' as const, label: 'All projects', count: projects.value.length },
+  { key: 'mine' as const, label: 'My work', count: projects.value.filter(project => project.owner?.toLowerCase() === 'jonathon' || projectTasks(project).some(task => task.assignee === 'human')).length },
+  { key: 'waiting' as const, label: 'Waiting on you', count: projects.value.filter(waitingOnHuman).length },
+  { key: 'starred' as const, label: 'Starred', count: projects.value.filter(project => isFavorite(project.id)).length },
+  { key: 'recent' as const, label: 'Recent', count: 0 },
+  { key: 'working' as const, label: 'Working now', count: new Set(activeAgents.value.map(agent => agent.agent_id)).size },
 ]);
 
 const directoryHeading = computed(() => directoryNavItems.value.find(item => item.key === directoryFilter.value)?.label ?? 'All projects');
@@ -2544,6 +2569,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
   background: var(--pacc-soft); border: 1px solid var(--pacc-line); border-radius: 8px;
   padding: 7px 12px; cursor: pointer; white-space: nowrap;
 }
+.ph-directory-side .ph-btn, .ph-directory-top .ph-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.ph-directory-side .ph-btn > svg, .ph-directory-top .ph-btn > svg { width: 14px; height: 14px; flex: 0 0 14px; }
 .ph-btn:hover { background: rgba(80, 150, 179, 0.22); }
 .ph-btn:disabled { opacity: 0.5; cursor: default; }
 .ph-btn.primary { background: var(--pacc); border-color: var(--pacc); color: #06121a; }
@@ -2727,12 +2754,14 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-directory-nav button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--ptext2); text-align: left; cursor: pointer; }
 .ph-directory-nav button:hover { background: color-mix(in srgb, var(--ptext) 5%, transparent); color: var(--ptext); }
 .ph-directory-nav button.on { background: var(--pacc-soft); color: var(--pacc); font-weight: 600; }
-.ph-directory-nav-icon { display: grid; width: 17px; place-items: center; color: currentColor; font: 15px var(--pmono); }
+.ph-directory-nav-icon { display: grid; width: 17px; place-items: center; color: currentColor; }
+.ph-directory-nav-icon svg { width: 16px; height: 16px; }
 .ph-directory-count { margin-left: auto; padding: 1px 7px; border-radius: 999px; background: var(--psurface2); color: var(--ptext2); font: 600 10px var(--pmono); }
 .ph-directory-nav button.on .ph-directory-count { background: color-mix(in srgb, var(--pacc) 12%, transparent); color: var(--pacc); }
 .ph-directory-top { display: flex; align-items: center; gap: 16px; padding: 12px 28px; border-bottom: 1px solid var(--pborder-soft); background: color-mix(in srgb, var(--psurface) 55%, transparent); backdrop-filter: blur(10px); }
 .ph-directory-crumb { color: var(--ptext); font-size: 12.5px; font-weight: 600; }
 .ph-directory-search { display: flex; align-items: center; gap: 8px; width: min(560px, 55vw); margin-left: 10px; padding: 7px 10px; border: 1px solid var(--pborder); border-radius: 9px; background: var(--psurface); color: var(--ptext3); }
+.ph-directory-search > svg { width: 14px; height: 14px; flex: 0 0 14px; }
 .ph-directory-search:focus-within { border-color: var(--pacc-line); box-shadow: 0 0 0 2px var(--pacc-soft); }
 .ph-directory-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ptext); font: 12.5px var(--psans); }
 .ph-directory-search kbd { padding: 1px 5px; border: 1px solid var(--pborder); border-radius: 5px; background: var(--pbg); color: var(--ptext3); font: 10px var(--pmono); }
@@ -2748,7 +2777,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-directory-clear:hover { color: var(--ptext); }
 .ph-directory-view-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .ph-directory-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--pborder); border-radius: 8px; background: var(--psurface); }
-.ph-directory-switch button { padding: 5px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ptext2); font: 500 12px var(--psans); cursor: pointer; }
+.ph-directory-switch button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ptext2); font: 500 12px var(--psans); cursor: pointer; }
+.ph-directory-switch svg { width: 13px; height: 13px; }
 .ph-directory-switch button.on { background: var(--pacc-soft); color: var(--pacc); font-weight: 600; }
 .ph-directory-empty { padding: 34px; border: 1px solid var(--pborder-soft); border-radius: 12px; background: var(--psurface); color: var(--ptext2); text-align: center; }
 .ph-directory-empty b, .ph-directory-empty span { display: block; }
@@ -2759,11 +2789,16 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-project-row { display: grid; grid-template-columns: 32px minmax(230px, 2fr) minmax(125px, 1fr) minmax(135px, 1fr) 105px 92px 28px; gap: 12px; align-items: center; width: 100%; padding: 9px 14px; border: 0; border-top: 1px solid var(--pborder-soft); background: transparent; color: var(--ptext); text-align: left; cursor: pointer; }
 .ph-project-row:hover { background: color-mix(in srgb, var(--pacc) 5%, transparent); }
 .ph-project-star { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 6px; color: var(--ptext3); font-size: 16px; cursor: pointer; }
+.ph-project-star svg { width: 15px; height: 15px; }
 .ph-project-star:hover { background: color-mix(in srgb, var(--ptext) 6%, transparent); }
 .ph-project-star.on { color: var(--pamber); }
-.ph-project-icon { display: none; }
 .ph-project-name { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.ph-project-name::before { content: '▦'; display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border-radius: 8px; background: var(--pacc-soft); color: var(--pacc); font-size: 16px; }
+.ph-project-glyph { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border-radius: 8px; background: var(--pacc-soft); color: var(--pacc); }
+.ph-project-glyph svg { width: 17px; height: 17px; }
+.ph-project-glyph.green { background: color-mix(in srgb, var(--pgreen) 13%, transparent); color: var(--pgreen); }
+.ph-project-glyph.amber { background: color-mix(in srgb, var(--pamber) 13%, transparent); color: var(--pamber); }
+.ph-project-glyph.violet { background: color-mix(in srgb, #8068b5 13%, transparent); color: #8068b5; }
+.ph-project-glyph.slate { background: color-mix(in srgb, var(--ptext3) 13%, transparent); color: var(--ptext3); }
 .ph-project-name > span { min-width: 0; }
 .ph-project-name b, .ph-project-name small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ph-project-name b { font-size: 13px; font-weight: 600; }
@@ -2780,6 +2815,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-project-team > span.agent { background: linear-gradient(135deg, var(--ptext), var(--pacc)); }
 .ph-project-row time { color: var(--ptext2); font-size: 11.5px; white-space: nowrap; }
 .ph-project-actions { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 7px; color: var(--ptext3); opacity: 0; }
+.ph-project-actions svg { width: 15px; height: 15px; }
 .ph-project-row:hover .ph-project-actions { opacity: 1; }
 .ph-project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
 .ph-project-tile { overflow: hidden; padding: 0; border: 1px solid var(--pborder-soft); border-radius: 12px; background: var(--psurface); color: var(--ptext); text-align: left; cursor: pointer; box-shadow: 0 1px 2px rgba(26, 35, 50, 0.05); }
