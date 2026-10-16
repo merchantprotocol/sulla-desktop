@@ -140,6 +140,8 @@ async function onVaultUnlocked(masterPassword?: string): Promise<void> {
     getVaultBackupService().start(cb => getIntegrationService().onValueChange(() => cb()));
 
     if (masterPassword) {
+      const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+      await getDesktopVaultClient().unlock(masterPassword);
       const { importLegacyVault } = await import('@pkg/agent/services/VaultImportService');
       void importLegacyVault(masterPassword).catch(() => {
         console.error('[Vault] Legacy vault import failed; details omitted');
@@ -805,11 +807,40 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   ipcMainProxy.handle('vault:lock-vault', async() => {
     // Manual vault lock — zeros VMK, agent loses access to encrypted credentials
     vaultKey.lock();
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    getDesktopVaultClient().lock();
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
     setUserLoggedIn(false);
     // Clear focus so every native browser tab detaches and the login
     // screen is the topmost thing in the window.
     tabViewManager.setFocusedTab(null);
+    return true;
+  });
+
+  ipcMainProxy.handle('vault:v2-is-unlocked', async() => {
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    return getDesktopVaultClient().isUnlocked();
+  });
+  ipcMainProxy.handle('vault:v2-list', async() => {
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    return getDesktopVaultClient().list();
+  });
+  ipcMainProxy.handle('vault:v2-get', async(_event: Electron.IpcMainInvokeEvent, id: string) => {
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    return getDesktopVaultClient().get(id);
+  });
+  ipcMainProxy.handle('vault:v2-save', async(_event: Electron.IpcMainInvokeEvent, data: { id?: string; revision?: number; plaintext: unknown }) => {
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    return getDesktopVaultClient().save(data.id, data.plaintext as any, data.revision);
+  });
+  ipcMainProxy.handle('vault:v2-delete', async(_event: Electron.IpcMainInvokeEvent, data: { id: string; revision: number }) => {
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    await getDesktopVaultClient().remove(data.id, data.revision);
+    return true;
+  });
+  ipcMainProxy.handle('vault:v2-audit', async(_event: Electron.IpcMainInvokeEvent, event: Record<string, unknown>) => {
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    await getDesktopVaultClient().audit(event);
     return true;
   });
 

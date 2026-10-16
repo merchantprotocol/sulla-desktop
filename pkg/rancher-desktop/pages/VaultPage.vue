@@ -9,7 +9,7 @@
       <div class="vault-status"><span class="status-dot" /> {{ unlocked ? 'Unlocked' : 'Locked' }}</div>
       <label class="search"><span aria-hidden="true">⌕</span><input v-model="query" placeholder="Search items" aria-label="Search vault items"><kbd>⌘K</kbd></label>
       <button class="primary" type="button" @click="startCreate">＋ New item</button>
-      <button class="round" type="button" aria-label="Lock vault" @click="unlocked = false">⌑</button>
+      <button class="round" type="button" aria-label="Lock vault" @click="lockVault">⌑</button>
     </header>
 
     <section v-if="screen === 'list'" class="vault-body">
@@ -32,7 +32,7 @@
       </aside>
 
       <section class="list-column">
-        <div class="list-bar"><div class="seg"><button :class="{ on: activeFilter === 'all' }" type="button" @click="activeFilter = 'all'">All <b>84</b></button><button :class="{ on: activeFilter === 'only_me' }" type="button" @click="activeFilter = 'only_me'">⌑ Only me <b>61</b></button><button :class="{ on: activeFilter === 'agents' }" type="button" @click="activeFilter = 'agents'">♙ Agents can use <b>23</b></button></div><span class="sort">Sort: Recently used⌄</span></div>
+        <div class="list-bar"><div class="seg"><button :class="{ on: activeFilter === 'all' }" type="button" @click="activeFilter = 'all'">All <b>{{ items.length }}</b></button><button :class="{ on: activeFilter === 'only_me' }" type="button" @click="activeFilter = 'only_me'">⌑ Only me <b>{{ items.filter(item => item.agentPolicy.mode === 'only_me').length }}</b></button><button :class="{ on: activeFilter === 'agents' }" type="button" @click="activeFilter = 'agents'">♙ Agents can use <b>{{ items.filter(item => item.agentPolicy.mode === 'agents').length }}</b></button></div><span class="sort">Sort: Recently used⌄</span></div>
         <div v-if="filteredItems.length === 0" class="empty">No vault items match “{{ query }}”.</div>
         <button v-for="item in filteredItems" :key="item.id" :class="['item-row', { selected: selected?.id === item.id }]" type="button" @click="select(item)">
           <span class="tile" :class="item.color">{{ item.initials }}</span>
@@ -60,30 +60,42 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { AgentPolicy, VaultItemPlaintext } from '../../../packages/vault-crypto/src/itemSchema';
 
-type DisplayItem = Omit<VaultItemPlaintext, 'fields'> & { id: string; initials: string; subtitle: string; color: string; typeLabel: string; edited: string; lastUse: string; uses: number; historyCount: number; fields: { label: string; value: string; masked?: boolean }[]; audit: { id: string; agent: string; action: string; when: string; allowed: boolean; reason?: string }[] };
+type DisplayItem = Omit<VaultItemPlaintext, 'fields'> & { id: string; revision: number; initials: string; subtitle: string; color: string; typeLabel: string; edited: string; lastUse: string; uses: number; historyCount: number; fields: { label: string; value: string; masked?: boolean }[]; audit: { id: string; agent: string; action: string; when: string; allowed: boolean; reason?: string }[] };
 const levels: AgentPolicy['level'][] = ['metadata', 'autofill', 'full'];
 const policyDescription = { metadata: 'See that the item exists, but never use the value.', autofill: 'Sign in and call tools; the agent never sees the password.', full: 'Read the actual value. Only use where the raw key is required.' } satisfies Record<AgentPolicy['level'], string>;
 const policy = (mode: AgentPolicy['mode'], level: AgentPolicy['level'] = 'metadata'): AgentPolicy => ({ mode, level, agents: [], sites: [], expiresAt: null, askFirst: false, allowServerAgents: false });
-const items = ref<DisplayItem[]>([
-  { id: 'github', type: 'login', name: 'GitHub', favorite: false, username: 'jonathon@northwind.dev', password: '••••••••••••••', totp: '284 913', uris: [{ uri: 'github.com', match: 'domain' }], agentPolicy: policy('agents', 'autofill'), initials: 'gh', subtitle: 'jonathon@northwind.dev · github.com', color: 'c1', typeLabel: 'Login', edited: '3 weeks ago', lastUse: 'Sulla · “Ship PR #1048” · 2h ago', uses: 7, historyCount: 4, fields: [{ label: 'Username', value: 'jonathon@northwind.dev' }, { label: 'Password', value: '••••••••••••••', masked: true }, { label: 'One-time', value: '284 913' }, { label: 'Website', value: 'github.com' }], audit: [{ id: '1', agent: 'Sulla', action: 'Autofill', when: '2h ago', allowed: true }, { id: '2', agent: 'Coding Manager', action: 'Full access', when: 'Yesterday', allowed: false, reason: 'Agents are limited to autofill' }] },
-  { id: 'stripe', type: 'apiKey', name: 'Stripe secret key', favorite: false, fields: [], password: 'sk_live_••••••••4f2a', notes: 'Production API key', uris: [], agentPolicy: policy('agents', 'full'), initials: 'st', subtitle: 'Production API key · API key', color: 'c2', typeLabel: 'API key', edited: '1 week ago', lastUse: 'Sulla · “Check payments” · 1d ago', uses: 4, historyCount: 0, audit: [] },
-  { id: 'chase', type: 'login', name: 'Chase checking', favorite: false, username: 'jbyrd••••', password: '••••••', uris: [{ uri: 'chase.com' }], agentPolicy: policy('only_me'), initials: 'ch', subtitle: 'jbyrd•••• · chase.com', color: 'c5', typeLabel: 'Login', edited: '2 months ago', lastUse: 'Never', uses: 0, historyCount: 2, fields: [{ label: 'Username', value: 'jbyrd••••' }, { label: 'Password', value: '••••••', masked: true }, { label: 'Website', value: 'chase.com' }], audit: [] },
-  { id: 'cloudflare', type: 'apiKey', name: 'Cloudflare API token', favorite: false, password: '••••••••', notes: 'Pages + Workers deploy', uris: [], agentPolicy: policy('agents', 'full'), initials: 'cf', subtitle: 'Pages + Workers deploy · API key', color: 'c3', typeLabel: 'API key', edited: '5 days ago', lastUse: 'Sulla · “Deploy site” · 3h ago', uses: 2, historyCount: 0, fields: [{ label: 'Token', value: '••••••••', masked: true }, { label: 'Notes', value: 'Pages + Workers deploy' }], audit: [] },
-  { id: 'gmail', type: 'login', name: 'Gmail (personal)', favorite: true, username: 'jonathon.b••••@gmail.com', password: '••••••', uris: [{ uri: 'google.com' }], agentPolicy: policy('only_me'), initials: 'gm', subtitle: 'jonathon.b••••@gmail.com · google.com', color: 'c4', typeLabel: 'Login', edited: '3 months ago', lastUse: 'Never', uses: 0, historyCount: 1, fields: [{ label: 'Username', value: 'jonathon.b••••@gmail.com' }, { label: 'Password', value: '••••••', masked: true }], audit: [] },
-]);
-const filters = [{ key: 'all', label: 'Everything', icon: '▦', count: 84 }, { key: 'favorites', label: 'Favorites', icon: '★', count: 9 }, { key: 'login', label: 'Logins', icon: '◎', count: 52 }, { key: 'apiKey', label: 'API keys & tokens', icon: '⚿', count: 14 }, { key: 'card', label: 'Cards', icon: '▣', count: 3 }, { key: 'note', label: 'Secure notes', icon: '▤', count: 9 }];
-const query = ref(''); const activeFilter = ref('all'); const selected = ref<DisplayItem | null>(items.value[0]); const screen = ref<'list' | 'editor'>('list'); const editing = ref(false); const unlocked = ref(true); const showAudit = ref(false); const generatedPassword = 'Jv8!wR3#qT6$kL2@x'; const agentText = ref(''); const siteText = ref('');
+const items = ref<DisplayItem[]>([]);
+const filters = computed(() => [{ key: 'all', label: 'Everything', icon: '▦', count: items.value.length }, { key: 'favorites', label: 'Favorites', icon: '★', count: items.value.filter(item => item.favorite).length }, { key: 'login', label: 'Logins', icon: '◎', count: items.value.filter(item => item.type === 'login').length }, { key: 'apiKey', label: 'API keys & tokens', icon: '⚿', count: items.value.filter(item => item.type === 'apiKey').length }, { key: 'card', label: 'Cards', icon: '▣', count: items.value.filter(item => item.type === 'card').length }, { key: 'note', label: 'Secure notes', icon: '▤', count: items.value.filter(item => item.type === 'note').length }]);
+const query = ref(''); const activeFilter = ref('all'); const selected = ref<DisplayItem | null>(null); const screen = ref<'list' | 'editor'>('list'); const editing = ref(false); const unlocked = ref(true); const showAudit = ref(false); const generatedPassword = 'Jv8!wR3#qT6$kL2@x'; const agentText = ref(''); const siteText = ref('');
 const draft = ref<VaultItemPlaintext & { uriText: string; customText: string }>({ type: 'login', name: '', username: '', password: '', totp: '', uris: [], notes: '', fields: [], agentPolicy: policy('only_me'), uriText: '', customText: '' });
 const filteredItems = computed(() => items.value.filter(item => { const matchesQuery = !query.value || `${ item.name } ${ item.subtitle }`.toLowerCase().includes(query.value.toLowerCase()); const matchesFilter = activeFilter.value === 'all' || (activeFilter.value === 'favorites' ? item.favorite : activeFilter.value === 'only_me' ? item.agentPolicy.mode === 'only_me' : activeFilter.value === 'agents' ? item.agentPolicy.mode === 'agents' : item.type === activeFilter.value); return matchesQuery && matchesFilter; }));
 function initials(name: string) { return name.trim().split(/\s+/).map(part => part[0] || '').join('').slice(0, 2).toLowerCase() || '•'; }
 function select(item: DisplayItem) { selected.value = item; showAudit.value = false; }
+function displayItem(item: any, index: number): DisplayItem {
+  const p = item.plaintext as VaultItemPlaintext;
+  const fields = [{ label: 'Username', value: p.username || '' }, { label: 'Password', value: p.password || '', masked: true }, ...(p.totp ? [{ label: 'One-time', value: p.totp }] : []), ...(p.uris?.[0] ? [{ label: 'Website', value: p.uris[0].uri }] : [])].filter(field => field.value);
+  return { ...p, id: item.id, revision: item.revision, initials: initials(p.name), subtitle: `${ p.username || 'Secure item' } · ${ p.uris?.[0]?.uri || p.type }`, color: `c${ (index % 5) + 1 }`, typeLabel: p.type, edited: item.updated_at ? new Date(item.updated_at).toLocaleDateString() : 'just now', lastUse: 'Never', uses: 0, historyCount: p.passwordHistory?.length || 0, fields, audit: [] };
+}
+async function loadItems() {
+  try {
+    unlocked.value = await ipcRenderer.invoke('vault:v2-is-unlocked' as any);
+    if (!unlocked.value) return;
+    const remote = await ipcRenderer.invoke('vault:v2-list' as any) as any[];
+    items.value = remote.map(displayItem);
+    selected.value = items.value[0] || null;
+  } catch { unlocked.value = false; }
+}
+onMounted(loadItems);
+ipcRenderer.on('vault:logged-in' as any, () => { void loadItems(); });
+async function lockVault() { await ipcRenderer.invoke('vault:lock-vault' as any); unlocked.value = false; items.value = []; selected.value = null; }
 function startCreate() { editing.value = false; draft.value = { type: 'login', name: '', username: '', password: '', totp: '', uris: [], notes: '', fields: [], agentPolicy: policy('only_me'), uriText: '', customText: '' }; agentText.value = ''; siteText.value = ''; screen.value = 'editor'; }
 function startEdit() { if (!selected.value) return; editing.value = true; draft.value = { ...selected.value, uris: selected.value.uris || [], fields: selected.value.fields.map(field => ({ name: field.label, value: field.value })), agentPolicy: { ...selected.value.agentPolicy }, uriText: (selected.value.uris || []).map(uri => uri.uri).join(', '), customText: '' }; agentText.value = selected.value.agentPolicy.agents.join(', '); siteText.value = selected.value.agentPolicy.sites.join(', '); screen.value = 'editor'; }
 function cancelEdit() { screen.value = 'list'; }
-function saveDraft() { draft.value.uris = draft.value.uriText.split(',').map(uri => uri.trim()).filter(Boolean).map(uri => ({ uri, match: 'domain' })); draft.value.agentPolicy.agents = agentText.value.split(',').map(value => value.trim()).filter(Boolean); draft.value.agentPolicy.sites = siteText.value.split(',').map(value => value.trim()).filter(Boolean); const display = items.value.find(item => item.id === selected.value?.id); if (display) Object.assign(display, { ...draft.value, initials: initials(draft.value.name), subtitle: `${ draft.value.username || 'Secure item' } · ${ draft.value.uris?.[0]?.uri || draft.value.type }`, fields: draft.value.type === 'login' ? [{ label: 'Username', value: draft.value.username || '' }, { label: 'Password', value: '••••••••••••', masked: true }, { label: 'Website', value: draft.value.uris?.[0]?.uri || '' }] : [], agentPolicy: draft.value.agentPolicy }); else { items.value.unshift({ ...draft.value, id: crypto.randomUUID(), initials: initials(draft.value.name), subtitle: `${ draft.value.username || 'Secure item' } · ${ draft.value.uris?.[0]?.uri || draft.value.type }`, color: 'c1', typeLabel: draft.value.type, edited: 'just now', lastUse: 'Never', uses: 0, historyCount: 0, fields: [], audit: [] } as DisplayItem); } screen.value = 'list'; selected.value = items.value[0]; }
+async function saveDraft() { draft.value.uris = draft.value.uriText.split(',').map(uri => uri.trim()).filter(Boolean).map(uri => ({ uri, match: 'domain' })); draft.value.agentPolicy.agents = agentText.value.split(',').map(value => value.trim()).filter(Boolean); draft.value.agentPolicy.sites = siteText.value.split(',').map(value => value.trim()).filter(Boolean); const id = await ipcRenderer.invoke('vault:v2-save' as any, { id: editing.value ? selected.value?.id : undefined, revision: editing.value ? selected.value?.revision : undefined, plaintext: draft.value }); await loadItems(); screen.value = 'list'; selected.value = items.value.find(item => item.id === id) || items.value[0] || null; }
 </script>
 
 <style scoped>
