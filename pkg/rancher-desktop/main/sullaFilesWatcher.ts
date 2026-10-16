@@ -15,12 +15,21 @@ const API = 'http://127.0.0.1:30124';
 export interface SullaFilesStatus {
   state:            'synced' | 'syncing' | 'paused' | 'error' | 'conflict';
   pendingFiles:     number;
+  pendingBytes?:    number;
+  processedBytes?:  number;
+  totalBytes?:      number;
+  estimatedSeconds?: number;
   lastError?:       string;
   lastScanAt?:      string;
   lastSyncAt?:      string;
   serverConfigured: boolean;
   location?:        'local' | 'server' | 'cloud';
   serverLabel?:     string;
+}
+
+export interface RecentSullaFile {
+  id: string; path: string; mime: string; size: number; updatedAt: string; conflict: boolean;
+  syncState: 'synced' | 'syncing' | 'error';
 }
 
 function ignored(relativePath:string, patterns:string[]):boolean {
@@ -33,15 +42,19 @@ class SullaFilesWatcher {
   private watcher?:     fs.FSWatcher;
   private rescanTimer?: NodeJS.Timeout;
   private safetyTimer?: NodeJS.Timeout;
+  private resumeTimer?: NodeJS.Timeout;
   private started = false;
   async initialize():Promise<void> {
     if (this.started) return; this.started = true; await fs.promises.mkdir(this.folder, { recursive: true, mode: 0o700 });
     try { this.watcher = fs.watch(this.folder, { recursive: process.platform !== 'linux', persistent: false }, (_event, filename) => { if (filename) this.changed(filename.toString()).catch(error => console.warn('[SullaFiles] watch event failed:', error)); }) } catch (error) { console.warn('[SullaFiles] host folder watcher unavailable; periodic rescans remain active:', error) }
     this.safetyTimer = setInterval(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] periodic rescan failed:', error)), 5 * 60_000); this.safetyTimer.unref();
     setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] startup rescan failed:', error)), 2_000).unref();
+    const pauseUntil = Number(await SullaSettingsModel.get('sullaFilesPauseUntil', 0));
+    if (pauseUntil > Date.now()) await this.pauseFor(pauseUntil - Date.now());
+    else if (pauseUntil) await SullaSettingsModel.set('sullaFilesPauseUntil', 0, 'number');
   }
 
-  shutdown():void { this.watcher?.close(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); this.started = false }
+  shutdown():void { this.watcher?.close(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
   private async patterns():Promise<string[]> { try { return [...DEFAULT_IGNORES, ...(await fs.promises.readFile(path.join(this.folder, '.sullaignore'), 'utf8')).split(/\r?\n/)] } catch { return DEFAULT_IGNORES } }
   private async changed(relativePath:string):Promise<void> {
     if (ignored(relativePath, await this.patterns())) return; const absolute = path.resolve(this.folder, relativePath); if (!absolute.startsWith(`${ this.folder }${ path.sep }`)) return;
@@ -51,7 +64,7 @@ class SullaFilesWatcher {
 
   private async request(endpoint:string, init:RequestInit = {}):Promise<Response> { const token = await SullaSettingsModel.getServicePassword(); return fetch(`${ API }${ endpoint }`, { ...init, headers: { 'x-sulla-files-token': token, 'content-type': 'application/json', ...(init.headers as any) }, signal: AbortSignal.timeout(3_000) }) }
   private async capabilityToken():Promise<string> {
-    const key = await SullaSettingsModel.getServicePassword(); const now = Math.floor(Date.now() / 1_000); const encode = (value:string) => Buffer.from(value).toString('base64url'); const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+    const key = process.env.SULLA_FILES_CAPABILITY_SIGNING_KEY || process.env.SULLA_FILES_INTERNAL_TOKEN || await SullaSettingsModel.getServicePassword(); const now = Math.floor(Date.now() / 1_000); const encode = (value:string) => Buffer.from(value).toString('base64url'); const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
     const payload = encode(JSON.stringify({ sub: process.env.SULLA_FILES_USER_ID ?? 'desktop-user', device_id: os.hostname(), scopes: ['files/*'], v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 300, jti: crypto.randomUUID() }));
 
     return `${ header }.${ payload }.${ crypto.createHmac('sha256', key).update(`${ header }.${ payload }`).digest('base64url') }`;
@@ -78,6 +91,25 @@ class SullaFilesWatcher {
   }
 
   async setPaused(paused:boolean):Promise<SullaFilesStatus> { const response = await this.request('/v1/local/pause', { method: 'POST', body: JSON.stringify({ paused }) }); if (!response.ok) throw new Error(`Files pause failed (${ response.status })`); return await response.json() as SullaFilesStatus }
+  async pauseFor(ms:number):Promise<SullaFilesStatus> {
+    await SullaSettingsModel.set('sullaFilesPauseUntil', Date.now() + ms, 'number');
+    if (this.resumeTimer) clearTimeout(this.resumeTimer);
+    this.resumeTimer = setTimeout(() => {
+      this.setPaused(false).catch(error => console.warn('[SullaFiles] automatic resume failed:', error));
+      SullaSettingsModel.set('sullaFilesPauseUntil', 0, 'number').catch(() => undefined);
+    }, ms); this.resumeTimer.unref();
+    return this.setPaused(true);
+  }
+  async recentFiles(limit = 4):Promise<RecentSullaFile[]> {
+    const response = await this.request(`/v1/local/recent?limit=${ Math.max(1, Math.min(limit, 20)) }`);
+    if (!response.ok) throw new Error(`Recent Files request failed (${ response.status })`);
+    return await response.json() as RecentSullaFile[];
+  }
+  async findFile(relativePath:string):Promise<RecentSullaFile | undefined> {
+    const response = await this.request(`/v1/local/recent?limit=100&path=${ encodeURIComponent(relativePath) }`);
+    if (!response.ok) return undefined;
+    return (await response.json() as RecentSullaFile[])[0];
+  }
   async openFolder():Promise<void> { const error = await shell.openPath(this.folder); if (error) throw new Error(error); }
 }
 
