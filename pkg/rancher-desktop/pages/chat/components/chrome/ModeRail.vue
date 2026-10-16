@@ -269,6 +269,9 @@ const items: readonly ModeItem[] = Object.freeze([
     mode: 'projects', label: 'Projects', shortcut: '⌘5', icon: '<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>',
   },
   {
+    mode: 'files', label: 'Files', shortcut: '⌘⇧F', icon: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M8 12h8M8 16h5"/></svg>',
+  },
+  {
     mode: 'routines', subTab: 'mywork', label: 'Workflows', shortcut: '⌘6', groupStart: true, icon: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3.2-6.8"/><polyline points="21 3.5 21 9 15.5 9"/></svg>',
   },
   {

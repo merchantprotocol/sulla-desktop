@@ -15,6 +15,7 @@ import { initOpenAIOAuthEvents } from './openaiOAuth';
 import { initIntegrationOAuthEvents } from './integrationOAuth';
 import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
+import { initSullaFilesIpc } from './sullaFilesIpc';
 import { initBookmarksIpc } from './bookmarksIpc';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
 import { initChatHeartbeatIpc } from './chatHeartbeatIpc';
@@ -91,6 +92,7 @@ export function initSullaEvents(): void {
   initDesktopRelayEvents();
   initCloudConnectionEvents();
   initSullaCloudAuthEvents();
+  initSullaFilesIpc();
 
   // ─────────────────────────────────────────────────────────────
   // DB-gated boot tasks: workflow recovery + gateway lobby
