@@ -13,6 +13,7 @@ export interface VaultConfig {
   desktopEncryptedPrivateKey?: unknown;
   desktopEncryptedUserKey?:    unknown;
   desktopKdf?:                 unknown;
+  extensionOrigins:            string[];
 }
 
 function jsonEnvironment(name: string): unknown | undefined {
@@ -44,5 +45,6 @@ export function loadConfig(): VaultConfig {
     desktopEncryptedPrivateKey: jsonEnvironment('SULLA_VAULT_DESKTOP_ENCRYPTED_PRIVATE_KEY'),
     desktopEncryptedUserKey:    jsonEnvironment('SULLA_VAULT_DESKTOP_ENCRYPTED_USER_KEY'),
     desktopKdf:                 jsonEnvironment('SULLA_VAULT_DESKTOP_KDF'),
+    extensionOrigins:           (process.env.SULLA_VAULT_EXTENSION_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean),
   };
 }
