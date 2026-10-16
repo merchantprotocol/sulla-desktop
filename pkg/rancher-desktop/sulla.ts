@@ -263,6 +263,18 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
+  lifecycle.register('sulla-files-maintenance', ['database-manager'],
+    async() => {
+      const { getSullaFilesMaintenanceService } = await import('@pkg/agent/services/SullaFilesMaintenanceService');
+      getSullaFilesMaintenanceService().initialize();
+      console.log('[Background] Sulla Files maintenance initialized');
+    },
+    async() => {
+      const { getSullaFilesMaintenanceService } = await import('@pkg/agent/services/SullaFilesMaintenanceService');
+      getSullaFilesMaintenanceService().shutdown();
+    },
+  );
+
   lifecycle.register('workflow-scheduler', ['database-manager'],
     async() => {
       await getWorkflowSchedulerService().initialize();
