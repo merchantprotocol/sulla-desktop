@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS file_share_links (
   keep_available BOOLEAN NOT NULL DEFAULT FALSE,
   served_from TEXT NOT NULL CHECK (served_from IN ('desktop', 'server', 'cloud')),
   device_id TEXT,
+  relay_secret TEXT,
   asset_kind TEXT NOT NULL DEFAULT 'file' CHECK (asset_kind IN ('file', 'capture', 'artifact')),
   capture_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   public_url TEXT,

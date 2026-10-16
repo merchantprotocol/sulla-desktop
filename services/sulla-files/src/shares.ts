@@ -22,8 +22,53 @@ interface ShareInput {
   deviceId?:        string;
 }
 
+class ServerShareRelay {
+  private socket?:    WebSocket;
+  private reconnect?: ReturnType<typeof setTimeout>;
+
+  constructor(private db: pg.Pool, private config: Config, private content: (id: string, path: string) => Promise<{ bytes: Buffer; mime: string; name: string }>) {}
+
+  connect(): void {
+    if (this.config.mode !== 'server' || this.socket?.readyState === WebSocket.OPEN || this.socket?.readyState === WebSocket.CONNECTING) return;
+    this.open().catch(error => { console.warn('[SullaFiles] server share relay failed', error); this.retry() });
+  }
+
+  private async open(): Promise<void> {
+    const row = (await this.db.query(`SELECT id,relay_secret FROM file_share_links
+      WHERE relay_secret IS NOT NULL AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>NOW())
+      ORDER BY created_at DESC LIMIT 1`)).rows[0];
+    if (!row) return;
+    const url = new URL(`/share-relay/${ encodeURIComponent(row.id) }`, this.config.cloudUrl);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'; url.searchParams.set('secret', row.relay_secret);
+    const socket = new WebSocket(url); this.socket = socket;
+    socket.addEventListener('message', event => this.handle(String(event.data)).catch(error => console.warn('[SullaFiles] share relay request failed', error)));
+    socket.addEventListener('close', () => { if (this.socket === socket) this.socket = undefined; this.retry() });
+    socket.addEventListener('error', () => socket.close());
+  }
+
+  private retry(): void {
+    if (this.reconnect) return;
+    this.reconnect = setTimeout(() => { this.reconnect = undefined; this.connect() }, 5_000);
+  }
+
+  private async handle(raw: string): Promise<void> {
+    let frame: any; try { frame = JSON.parse(raw) } catch { return }
+    if (frame.type !== 'share_fetch' || typeof frame.requestId !== 'string' || typeof frame.linkId !== 'string') return;
+    const send = (type: string, payload: Record<string, unknown> = {}) => this.socket?.send(JSON.stringify({ type, requestId: frame.requestId, ...payload }));
+    try {
+      const content = await this.content(frame.linkId, typeof frame.path === 'string' ? frame.path : '');
+      send('share_fetch_start', { mime: content.mime, name: content.name });
+      for (let offset = 0; offset < content.bytes.length; offset += 64 * 1024) send('share_fetch_chunk', { data: content.bytes.subarray(offset, offset + 64 * 1024).toString('base64') });
+      send('share_fetch_end');
+    } catch (error) { send('share_fetch_error', { error: error instanceof Error ? error.message : String(error) }) }
+  }
+}
+
 export class SharesService {
-  constructor(private db: pg.Pool, private config: Config, private store: Store) {}
+  private serverRelay?: ServerShareRelay;
+  constructor(private db: pg.Pool, private config: Config, private store: Store) {
+    if (config.mode === 'server') { this.serverRelay = new ServerShareRelay(db, config, (id, path) => this.content(id, path)); this.serverRelay.connect() }
+  }
 
   private async canView(identity: Identity, collectionId: string): Promise<void> {
     const result = await this.db.query("SELECT role FROM collection_acl WHERE collection_id=$1 AND principal_type='user' AND principal_id=$2", [collectionId, identity.user]);
@@ -56,10 +101,11 @@ export class SharesService {
     }
     await this.canView(identity, collectionId);
     const id = randomBytes(12).toString('base64url'); const source = this.config.mode;
+    const relaySecret = source === 'server' ? randomBytes(32).toString('base64url') : null;
     await this.db.query(`INSERT INTO file_share_links
-      (id,owner_user_id,target_type,file_id,collection_id,folder_path,display_name,mime,access_mode,password_protected,expires_at,keep_available,served_from,device_id,asset_kind,capture_metadata)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-    [id, identity.user, targetType, fileId, targetType === 'folder' ? collectionId : null, folderPath, name, mime, accessMode, Boolean(input.password), expiresAt?.toISOString() ?? null, keepAvailable, source, deviceId, assetKind, input.captureMetadata ?? {}]);
+      (id,owner_user_id,target_type,file_id,collection_id,folder_path,display_name,mime,access_mode,password_protected,expires_at,keep_available,served_from,device_id,relay_secret,asset_kind,capture_metadata)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+    [id, identity.user, targetType, fileId, targetType === 'folder' ? collectionId : null, folderPath, name, mime, accessMode, Boolean(input.password), expiresAt?.toISOString() ?? null, keepAvailable, source, deviceId, relaySecret, assetKind, input.captureMetadata ?? {}]);
     let cloudCreated = false;
     try {
       const cloud = await this.cloud(`/shares`, cloudToken, {
@@ -75,11 +121,13 @@ export class SharesService {
           keepAvailable,
           servedFrom:      source,
           deviceId,
+          relaySecret,
           assetKind,
           captureMetadata: input.captureMetadata ?? {},
         }),
       });
       cloudCreated = true;
+      this.serverRelay?.connect();
       if (keepAvailable) await this.upload(id, cloudToken);
       await this.db.query('UPDATE file_share_links SET public_url=$2,cloud_registered_at=NOW(),served_from=$3,updated_at=NOW() WHERE id=$1', [id, cloud.url, keepAvailable ? 'cloud' : source]);
       return (await this.get(identity, id));
