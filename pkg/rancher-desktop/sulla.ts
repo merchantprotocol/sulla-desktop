@@ -137,11 +137,14 @@ async function onVaultUnlocked(masterPassword?: string): Promise<void> {
     const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
 
     await IntegrationValueModel.migrateToEncrypted();
+    getVaultBackupService().start(cb => getIntegrationService().onValueChange(() => cb()));
+
     if (masterPassword) {
       const { importLegacyVault } = await import('@pkg/agent/services/VaultImportService');
-      await importLegacyVault(masterPassword);
+      void importLegacyVault(masterPassword).catch(() => {
+        console.error('[Vault] Legacy vault import failed; details omitted');
+      });
     }
-    getVaultBackupService().start(cb => getIntegrationService().onValueChange(() => cb()));
   } catch (err) {
     console.error('[Vault] Post-unlock housekeeping failed:', err);
   }
