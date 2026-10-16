@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:0.8.1-pg16
     container_name: sulla_postgres
     ports:
       - "30116:5432"

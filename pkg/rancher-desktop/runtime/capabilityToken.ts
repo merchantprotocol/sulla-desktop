@@ -6,6 +6,7 @@ export interface CapabilityTokenClaims {
   aud:                    'sulla-tools';
   sub:                    string;
   org_id?:                string;
+  group_ids?:             string[];
   agent_id?:              string;
   pod_id?:                string;
   thread_id?:             string;

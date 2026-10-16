@@ -26,7 +26,7 @@ function normalize(text:string):string {
   for (const ch of text) {
     const cp = ch.codePointAt(0) ?? 0;
     if (cp === 0 || cp === 0xFFFD) continue;
-    if (ch === '\t' || ch === '\n' || ch === '\r' || SPACE_SEP_RE.test(ch)) { output += ' '; continue; }
+    if (ch === '\t' || ch === '\n' || ch === '\r' || SPACE_SEP_RE.test(ch)) { output += ' '; continue }
     if (CONTROL_RE.test(ch)) continue;
     output += isCjk(cp) ? ` ${ ch } ` : ch;
   }
@@ -36,9 +36,7 @@ function normalize(text:string):string {
 function preTokenize(text:string):string[] {
   const words:string[] = []; let current = '';
   for (const ch of text) {
-    if (WHITESPACE_RE.test(ch)) { if (current) words.push(current); current = ''; }
-    else if (isPunct(ch)) { if (current) words.push(current); current = ''; words.push(ch); }
-    else current += ch;
+    if (WHITESPACE_RE.test(ch)) { if (current) words.push(current); current = '' } else if (isPunct(ch)) { if (current) words.push(current); current = ''; words.push(ch) } else current += ch;
   }
   if (current) words.push(current);
   return words;
@@ -46,7 +44,7 @@ function preTokenize(text:string):string[] {
 
 /** Exact PTN1/Potion algorithm used by agent/memory/potionEmbedder.ts. */
 export class PotionEmbedder {
-  readonly dim:number;
+  readonly dim: number;
   private constructor(
     private readonly vocab:Map<string, number>, private readonly unkId:number, rows:number, dim:number,
     private readonly scales:Float32Array, private readonly data:Int8Array,
@@ -73,7 +71,7 @@ export class PotionEmbedder {
       let end = chars.length; let found = -1;
       while (start < end) {
         const id = this.vocab.get(`${ start ? '##' : '' }${ chars.slice(start, end).join('') }`);
-        if (id !== undefined) { found = id; break; }
+        if (id !== undefined) { found = id; break }
         end--;
       }
       if (found < 0) return;
@@ -96,10 +94,10 @@ export class PotionEmbedder {
   }
 }
 
-export function vectorLiteral(vector:Float32Array):string { return `[${ Array.from(vector).join(',') }]`; }
+export function vectorLiteral(vector:Float32Array):string { return `[${ Array.from(vector).join(',') }]` }
 export function cosine(a:Float32Array, raw:unknown):number {
   const b = Array.isArray(raw) ? raw : []; if (a.length !== b.length) return 0;
   let dot = 0; let norm = 0;
-  for (let i = 0; i < a.length; i++) { const value = Number(b[i]); dot += a[i] * value; norm += value * value; }
+  for (let i = 0; i < a.length; i++) { const value = Number(b[i]); dot += a[i] * value; norm += value * value }
   return norm ? dot / Math.sqrt(norm) : 0;
 }

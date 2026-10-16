@@ -16,6 +16,7 @@ export interface Config {
   userId:               string;
   serverUrl?:           string;
   paused:               boolean;
+  modelDir:             string;
 }
 export function loadConfig():Config {
   const databaseUrl = process.env.SULLA_FILES_DATABASE_URL;
@@ -41,5 +42,6 @@ export function loadConfig():Config {
     userId:       process.env.SULLA_FILES_USER_ID ?? 'desktop-user',
     serverUrl:    process.env.SULLA_FILES_SERVER_URL,
     paused:       process.env.SULLA_FILES_PAUSED === '1',
+    modelDir:     resolve(process.env.SULLA_FILES_EMBEDDING_MODEL_DIR ?? '/app/models/potion-retrieval-32M'),
   };
 }

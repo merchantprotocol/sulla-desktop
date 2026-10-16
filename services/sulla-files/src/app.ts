@@ -1,15 +1,16 @@
 import express from 'express';
 
+import { accessibleCollectionIds, requireCollectionAccess } from './acl.js';
 import { verifyCapabilityToken } from './auth.js';
 import { Store } from './store.js';
 
 import type { Config } from './config.js';
+import type { IndexingQueue } from './indexing.js';
 import type { LocalFilesManager } from './localManager.js';
+import type { FileSearch } from './search.js';
 import type pg from 'pg';
 
-const LEVEL:Record<string, number> = { view: 1, 'use-by-agents': 2, edit: 3, manage: 4 };
-
-export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager) {
+export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager, search?:FileSearch, indexer?:IndexingQueue) {
   const app = express(); const store = new Store(config.chunkRoot);
   app.use(express.json({ limit: '16mb' }));
   app.use((req, res, next) => {
@@ -27,8 +28,7 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager)
   const ctx = (request:any) => ({ user: request.capability?.sub || '', device: request.capability?.device_id || '' });
   async function access(request:any, collectionId:string, role:string) {
     const identity = ctx(request); if (!identity.user) throw Object.assign(new Error('identity required'), { status: 401 });
-    const query = await db.query("SELECT role FROM collection_acl WHERE collection_id=$1 AND principal_type='user' AND principal_id=$2", [collectionId, identity.user]);
-    if (!query.rows.some((value:any) => LEVEL[value.role] >= LEVEL[role])) throw Object.assign(new Error('access denied'), { status: 403 });
+    await requireCollectionAccess(db, request.capability, collectionId, role);
     return identity;
   }
   app.get('/healthz', (_request, response) => response.json({ ok: true, mode: config.mode }));
@@ -36,7 +36,13 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager)
   app.post('/v1/local/rescan', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.rescan().catch(error => console.error('[SullaFiles] rescan failed', error)); response.status(202).json({ accepted: true }) });
   app.post('/v1/local/pause', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.setPaused(Boolean(request.body.paused))) } catch (error) { next(error) } });
   app.post('/v1/local/sync', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.sync().catch(error => console.error('[SullaFiles] sync failed', error)); response.status(202).json({ accepted: true }) });
-  app.get('/v1/collections', async(request, response, next) => { try { const identity = ctx(request); if (!identity.user) return response.status(401).json({ error: 'identity required' }); const rows = await db.query(`SELECT c.* FROM collections c JOIN collection_acl a ON a.collection_id=c.id WHERE c.kind='knowledge' AND a.principal_type='user' AND a.principal_id=$1`, [identity.user]); response.json(rows.rows) } catch (error) { next(error) } });
+  app.post('/v1/search', async(request, response, next) => {
+    try {
+      if (!search) return response.status(503).json({ error: 'search unavailable' });
+      response.json(await search.search((request as any).capability, request.body));
+    } catch (error) { next(error) }
+  });
+  app.get('/v1/collections', async(request, response, next) => { try { const identity = ctx(request); if (!identity.user) return response.status(401).json({ error: 'identity required' }); const ids = await accessibleCollectionIds(db, (request as any).capability, 'view'); const rows = await db.query(`SELECT * FROM collections WHERE kind='knowledge' AND id=ANY($1::uuid[])`, [ids]); response.json(rows.rows) } catch (error) { next(error) } });
   app.post('/v1/collections', async(request, response, next) => {
     try {
       const identity = ctx(request); const collection = request.body.collection; if (collection.kind !== 'knowledge') return response.status(400).json({ error: 'only knowledge syncs' });
@@ -65,9 +71,12 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager)
       const fileId = checked.canonicalFileId; await client.query('BEGIN');
       if (bundle.manifest) await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [bundle.manifest.hash, JSON.stringify(bundle.manifest.chunk_ids), bundle.manifest.total_size]);
       for (const chunk of bundle.chunks ?? []) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,1) ON CONFLICT(collection_id,id) DO UPDATE SET refcount=chunks.refcount+1', [bundle.version.chunk_collection_id, chunk.id, chunk.size, chunk.stored_size, chunk.location]);
-      await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,search_text) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,search_text=EXCLUDED.search_text,deleted_at=$9,updated_at=NOW()`, [fileId, bundle.collectionId, bundle.file.path, bundle.file.created_by_type, bundle.file.created_by_id, bundle.file.mime, bundle.file.size, bundle.file.search_text, bundle.version.deleted ? new Date() : null]);
+      await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,extraction_status) VALUES($1,$2,$3,$4,$5,$6,$7,'pending') ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,search_text=NULL,extracted_at=NULL,extraction_status='pending',deleted_at=$8,updated_at=NOW()`, [fileId, bundle.collectionId, bundle.file.path, bundle.file.created_by_type, bundle.file.created_by_id, bundle.file.mime, bundle.file.size, bundle.version.deleted ? new Date() : null]);
       await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id,base_server_version_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING`, [bundle.version.id, fileId, bundle.version.chunk_collection_id, checked.currentVersionId, bundle.manifest?.hash ?? null, bundle.version.size, bundle.version.deleted, bundle.version.created_by_type, bundle.version.created_by_id, bundle.version.message, identity.device, checked.currentVersionId]);
-      await client.query('UPDATE files SET current_version_id=$2,deleted_at=$3 WHERE id=$1', [fileId, bundle.version.id, bundle.version.deleted ? new Date() : null]); await client.query('INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,$4)', [bundle.collectionId, fileId, bundle.version.id, bundle.version.deleted ? 'delete' : 'put']); await client.query('COMMIT'); response.json({ ok: true, versionId: bundle.version.id, fileId });
+      await client.query('UPDATE files SET current_version_id=$2,deleted_at=$3 WHERE id=$1', [fileId, bundle.version.id, bundle.version.deleted ? new Date() : null]);
+      await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [fileId]); await client.query('DELETE FROM file_index_jobs WHERE file_id=$1', [fileId]);
+      if (!bundle.version.deleted) await client.query("INSERT INTO file_index_jobs(file_id,version_id,status) VALUES($1,$2,'pending')", [fileId, bundle.version.id]);
+      await client.query('INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,$4)', [bundle.collectionId, fileId, bundle.version.id, bundle.version.deleted ? 'delete' : 'put']); await client.query('COMMIT'); indexer?.wake(); response.json({ ok: true, versionId: bundle.version.id, fileId });
     } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
   });
   app.use((error:any, _request:any, response:any, _next:any) => response.status(error.status ?? 500).json({ error: error.message ?? 'server error' }));
