@@ -62,7 +62,7 @@ function itemName(integrationId: string, accountId: string, properties: Record<s
  */
 export async function importLegacyVault(masterPassword: string): Promise<void> {
   const settings = (await import('@pkg/config/settingsImpl')).getSettings();
-  if (!settings.sullaVaultV2Enabled || !masterPassword) return;
+  if (!settings.experimental.sullaVaultV2Enabled || !masterPassword) return;
 
   const oldVault = getVaultKeyService();
   if (!oldVault.isUnlocked()) return;

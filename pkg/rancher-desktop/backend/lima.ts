@@ -2943,7 +2943,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla_node_runtime',
     ];
     requiredServices.push('sulla_workflow_manager', 'sulla_tools');
-    if (settingsImpl.getSettings().sullaVaultV2Enabled) requiredServices.push('sulla_vault');
+    if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) requiredServices.push('sulla_vault');
     try {
       for (const service of requiredServices) {
         const status = await this.execCommand(
@@ -2976,7 +2976,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     const sullaServicePassword = escapeForCompose(await SullaSettingsModel.getServicePassword());
     this.#optionalSullaFallbackImages.clear();
-    if (settingsImpl.getSettings().sullaVaultV2Enabled) {
+    if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
       const vaultImage = resolveSullaServiceImage(
         'sulla-vault', process.cwd(), Electron.app.getVersion(), process.env.SULLA_VAULT_IMAGE,
       );
@@ -3058,7 +3058,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
     let toolsAgentKeyPath: string | undefined;
 
-    if (settingsImpl.getSettings().sullaVaultV2Enabled) {
+    if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
       try {
         const nextKey = await provisionAgentKeyForContainer(
           `/dev/shm/sulla-tools-secrets/agent-key-${ crypto.randomUUID() }.json`,
@@ -3277,7 +3277,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       this.#activeOptionalSullaServices.clear();
       const optionalServices = ['workflow_manager', 'tools', 'sulla_files'];
 
-      if (settingsImpl.getSettings().sullaVaultV2Enabled) optionalServices.push('sulla_vault');
+      if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) optionalServices.push('sulla_vault');
       for (const service of optionalServices) {
         try {
           // Compose performs the normal pull/build here. --no-deps protects the
