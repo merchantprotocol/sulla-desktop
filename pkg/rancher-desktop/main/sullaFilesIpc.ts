@@ -11,8 +11,8 @@ import Logging from '@pkg/utils/logging';
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
 
-async function json(endpoint:string, init:RequestInit = {}):Promise<any> {
-  const response = await getSullaFilesWatcher().requestFiles(endpoint, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any) } });
+async function json(endpoint:string, init:RequestInit = {}, server = false):Promise<any> {
+  const response = await getSullaFilesWatcher().requestFiles(endpoint, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any) } }, server);
   if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error ?? `Files request failed (${ response.status })`) }
 
   return response.status === 204 ? undefined : response.json();
@@ -62,6 +62,11 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('sulla-files:trash-list', (_event, input:{ collectionId:string }) => json(`/v1/trash?collectionId=${ encodeURIComponent(input.collectionId) }`));
   ipcMain.handle('sulla-files:trash-restore', (_event, input:{ fileId:string }) => json(`/v1/trash/${ encodeURIComponent(input.fileId) }/restore`, { method: 'POST', body: '{}' }));
   ipcMain.handle('sulla-files:restore-version', (_event, input:{ fileId:string; versionId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/restore`, { method: 'POST', body: JSON.stringify({ versionId: input.versionId }) }));
+  ipcMain.handle('sulla-files:shares', (_event, input:{ collectionId:string }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, {}, true));
+  ipcMain.handle('sulla-files:share', (_event, input:{ collectionId:string; folderPath:string; principalType:'user' | 'group'; principalId:string; role:'view' | 'edit' }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, { method: 'POST', body: JSON.stringify(input) }, true));
+  ipcMain.handle('sulla-files:unshare', (_event, input:{ collectionId:string; folderPath:string; principalType:'user' | 'group'; principalId:string }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, { method: 'DELETE', body: JSON.stringify(input) }, true));
+  ipcMain.handle('sulla-files:members', (_event, input:{ orgId:string }) => json(`/v1/orgs/${ encodeURIComponent(input.orgId) }/members`, {}, true));
+  ipcMain.handle('sulla-files:keep', (_event, input:{ fileId:string; collectionId:string; path?:string }) => json(`/v1/agent-files/${ encodeURIComponent(input.fileId) }/keep`, { method: 'POST', body: JSON.stringify({ collectionId: input.collectionId, path: input.path }) }));
   ipcMain.handle('files-ui:status', () => getSullaFilesWatcher().status());
   ipcMain.handle('files-ui:set-paused', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
   ipcMain.handle('files-ui:open-folder', () => getSullaFilesWatcher().openFolder());

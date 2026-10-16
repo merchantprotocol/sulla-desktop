@@ -463,6 +463,11 @@ export interface IpcMainInvokeEvents {
   'sulla-files:trash':           (input: { fileId: string }) => void;
   'sulla-files:trash-restore':   (input: { fileId: string }) => { ok: boolean; versionId: string };
   'sulla-files:upload':          (input: { collectionId: string; path: string; mime?: string; data: Uint8Array }) => any;
+  'sulla-files:shares':          (input: { collectionId: string }) => any[];
+  'sulla-files:share':           (input: { collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string; role: 'view' | 'edit' }) => any;
+  'sulla-files:unshare':         (input: { collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string }) => void;
+  'sulla-files:members':         (input: { orgId: string }) => { members: any[]; groups: any[] };
+  'sulla-files:keep':            (input: { fileId: string; collectionId: string; path?: string }) => any;
 
   'filesystem-get-root':        () => string;
   'filesystem-get-git-changes': (path: string) => Promise<{ status: string, file: string }[]>;
