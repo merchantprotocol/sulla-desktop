@@ -300,6 +300,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     });
   } catch (error) {
     session.revoke();
+    await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
     if (containerId) await runtime.remove(containerId).catch(() => {});
     if (secretDir) await removeContainerSecrets(secretDir);
     throw error;

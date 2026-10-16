@@ -65,6 +65,7 @@ import paths from '@pkg/utils/paths';
 import { executable } from '@pkg/utils/resources';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { defined, RecursivePartial } from '@pkg/utils/typeUtils';
+import { provisionAgentKeyForContainer } from '@pkg/vault-broker/provisionAgentKey';
 import { openSudoPrompt } from '@pkg/window';
 
 /* eslint @typescript-eslint/switch-exhaustiveness-check: "error" */
@@ -303,6 +304,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   #containerEngineClient: ContainerEngineClient | undefined;
   #activeOptionalSullaServices = new Set<string>();
   #optionalSullaFallbackImages = new Map<string, { env: string; image: string }>();
+  #toolsAgentKey: Awaited<ReturnType<typeof provisionAgentKeyForContainer>> | undefined;
 
   get containerEngineClient() {
     if (this.#containerEngineClient) {
@@ -2940,7 +2942,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla_shell_runtime',
       'sulla_node_runtime',
     ];
-    requiredServices.push('sulla_workflow_manager');
+    requiredServices.push('sulla_workflow_manager', 'sulla_tools');
     if (settingsImpl.getSettings().sullaVaultV2Enabled) requiredServices.push('sulla_vault');
     try {
       for (const service of requiredServices) {
@@ -3054,6 +3056,24 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         env: 'SULLA_TOOLS_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-tools:latest',
       });
     }
+    let toolsAgentKeyPath: string | undefined;
+
+    if (settingsImpl.getSettings().sullaVaultV2Enabled) {
+      try {
+        const nextKey = await provisionAgentKeyForContainer(
+          `/dev/shm/sulla-tools-secrets/agent-key-${ crypto.randomUUID() }.json`,
+        );
+
+        this.#toolsAgentKey?.remove();
+        this.#toolsAgentKey = nextKey;
+        toolsAgentKeyPath = nextKey.path;
+      } catch (error) {
+        console.warn('[Sulla] Vault agent key unavailable for optional tools service:', error);
+      }
+    } else {
+      this.#toolsAgentKey?.remove();
+      this.#toolsAgentKey = undefined;
+    }
     compose.services.tools = {
       ...toolsImage,
       image: resolvedToolsImage,
@@ -3067,9 +3087,15 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_DESKTOP_EXECUTOR_URL: 'http://host.docker.internal:3000',
+        ...(toolsAgentKeyPath ? {
+          SULLA_AGENT_KEY_FILE:          '/run/secrets/sulla-agent-key',
+          SULLA_VAULT_BROKER_URL:        'http://sulla_vault:8787',
+          SULLA_VAULT_BROKER_SERVICE_ID: 'sulla-tools',
+        } : {}),
       },
       extra_hosts: ['host.docker.internal:host-gateway'],
       ports: ['127.0.0.1:30123:3000'],
+      volumes: toolsAgentKeyPath ? [`${ toolsAgentKeyPath }:/run/secrets/sulla-agent-key:ro`] : [],
       restart: 'unless-stopped',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
@@ -3510,6 +3536,8 @@ CREDFWD_URL='http://${ SLIRP.HOST_GATEWAY }:${ stateInfo.port }'
         await this.setState(State.ERROR);
         throw ex;
       } finally {
+        this.#toolsAgentKey?.remove();
+        this.#toolsAgentKey = undefined;
         this.currentAction = Action.NONE;
       }
     });

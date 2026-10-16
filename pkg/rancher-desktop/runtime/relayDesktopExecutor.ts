@@ -5,7 +5,7 @@ import type { RelayError } from './relayProtocol';
 
 export interface RelayDesktopExecutorOptions {
   relayUrl:     string;
-  deviceId:     string;
+  deviceId?:    string;
   serviceToken: string;
   fetchImpl?:   typeof fetch;
 }
@@ -30,8 +30,11 @@ export class RelayDesktopExecutor implements DesktopExecutor {
     const timer = setTimeout(() => controller.abort(), deadlineMs + 250);
     try {
       const base = this.options.relayUrl.replace(/\/$/, '');
+      const deviceId = ctx.device_id ?? this.options.deviceId;
+
+      if (!deviceId) return { success: false, error: { code: 'desktop_unavailable', message: 'No Desktop device is assigned to this capability' } };
       const response = await this.fetchImpl(
-        `${ base }/v1/devices/${ encodeURIComponent(this.options.deviceId) }/tools/${ encodeURIComponent(category) }/${ encodeURIComponent(tool) }`,
+        `${ base }/v1/devices/${ encodeURIComponent(deviceId) }/tools/${ encodeURIComponent(category) }/${ encodeURIComponent(tool) }`,
         {
           method:  'POST',
           headers: {

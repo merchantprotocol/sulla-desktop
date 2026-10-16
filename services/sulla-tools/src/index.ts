@@ -9,8 +9,10 @@ import { config, validateConfig } from './config.js';
 import { RedisRevocationStore, RequestStore } from './stores.js';
 import { CapabilityTokenError, verifyCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
 import { HttpDesktopExecutor } from '../../../pkg/rancher-desktop/runtime/desktopExecutor.js';
+import { RelayDesktopExecutor } from '../../../pkg/rancher-desktop/runtime/relayDesktopExecutor.js';
 
 import type { ToolExecutionContext } from '../../../pkg/rancher-desktop/agent/tools/executionContext.js';
+import type { DesktopExecutor } from '../../../pkg/rancher-desktop/runtime/desktopExecutor.js';
 
 validateConfig();
 process.env.SULLA_DATABASE_URL = config.databaseUrl;
@@ -21,7 +23,9 @@ const redis = new Redis(config.redisUrl, { maxRetriesPerRequest: 2 });
 const pool = new Pool({ connectionString: config.databaseUrl, max: 10, connectionTimeoutMillis: 2_000 });
 const revocations = new RedisRevocationStore(redis);
 const requests = new RequestStore(redis, pool);
-const desktop = new HttpDesktopExecutor(config.desktopExecutorUrl, config.desktopExecutorToken);
+const desktop: DesktopExecutor = config.relayUrl && config.relayToken
+  ? new RelayDesktopExecutor({ relayUrl: config.relayUrl, serviceToken: config.relayToken, deviceId: config.relayDeviceId || undefined })
+  : new HttpDesktopExecutor(config.desktopExecutorUrl, config.desktopExecutorToken);
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
@@ -107,7 +111,8 @@ async function main(): Promise<void> {
   app.listen(config.port, '0.0.0.0', () => console.log(`[sulla-tools] listening on :${ config.port }`));
 }
 
-main().catch(error => {
+main().catch(async(error) => {
   console.error('[sulla-tools] fatal', error);
+  await Promise.allSettled([redis.quit(), pool.end()]);
   process.exitCode = 1;
 });

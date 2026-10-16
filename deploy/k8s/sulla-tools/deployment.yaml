@@ -25,9 +25,15 @@ spec:
             - name: SULLA_CAPABILITY_SIGNING_KEY
               valueFrom: { secretKeyRef: { name: sulla-tools, key: capability-signing-key } }
             - name: SULLA_DESKTOP_EXECUTOR_URL
-              valueFrom: { secretKeyRef: { name: sulla-tools, key: desktop-executor-url } }
+              valueFrom: { secretKeyRef: { name: sulla-tools, key: desktop-executor-url, optional: true } }
             - name: SULLA_DESKTOP_EXECUTOR_TOKEN
-              valueFrom: { secretKeyRef: { name: sulla-tools, key: desktop-executor-token } }
+              valueFrom: { secretKeyRef: { name: sulla-tools, key: desktop-executor-token, optional: true } }
+            - name: SULLA_AGENT_KEY_FILE
+              value: /run/secrets/sulla-agent-key
+            - name: SULLA_RELAY_URL
+              valueFrom: { secretKeyRef: { name: sulla-tools, key: relay-url, optional: true } }
+            - name: SULLA_RELAY_TOKEN
+              valueFrom: { secretKeyRef: { name: sulla-tools, key: relay-token, optional: true } }
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits: { cpu: "1", memory: 512Mi }
@@ -44,3 +50,14 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
             capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: agent-key
+              mountPath: /run/secrets/sulla-agent-key
+              subPath: agent-key.json
+              readOnly: true
+      volumes:
+        - name: agent-key
+          secret:
+            secretName: sulla-tools-agent-key
+            items:
+              - { key: agent-key.json, path: agent-key.json, mode: 256 }

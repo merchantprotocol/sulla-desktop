@@ -1,6 +1,8 @@
 // src/tools/base.ts
 import { ToolResult } from '../types';
 
+import type { ToolExecutionContext } from './executionContext';
+
 export type ToolOperation = 'read' | 'create' | 'update' | 'delete' | 'execute';
 
 export interface ToolMetadata extends Record<string, unknown> {
@@ -46,7 +48,9 @@ export abstract class BaseTool<TState = any> {
   abstract description: string;
   schemaDef: InputSchemaDef = {};
 
-  metadata: ToolMetadata = { category: 'general' };
+  metadata:          ToolMetadata = { category: 'general' };
+  /** Verified caller identity for containerized or relayed execution. */
+  executionContext?: ToolExecutionContext;
 
   // ─────────────────────────────────────────────────────────────
   // Runtime validation + JSON schema generation

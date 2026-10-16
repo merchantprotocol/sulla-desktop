@@ -9,6 +9,7 @@ on:
       - 'pkg/rancher-desktop/agent/database/**'
       - 'pkg/rancher-desktop/runtime/capabilityToken.ts'
       - 'pkg/rancher-desktop/runtime/desktopExecutor.ts'
+      - 'pkg/rancher-desktop/runtime/relay*.ts'
       - '.github/workflows/sulla-tools-image.yml'
 permissions:
   contents: read

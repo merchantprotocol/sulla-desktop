@@ -330,6 +330,7 @@ export class ChatCompletionsServer {
         const { toolRegistry } = await import('@pkg/agent/tools/registry');
         const prefixed = `${ category }_${ requested }`;
         const worker = await toolRegistry.createTool(prefixed).catch(() => toolRegistry.createTool(requested));
+        worker.executionContext = ctx;
         if (typeof ctx?.thread_id === 'string') {
           const graph = GraphRegistry.get(ctx.thread_id);
           if (graph?.state) worker.setState?.(graph.state);
@@ -1386,7 +1387,7 @@ export class ChatCompletionsServer {
         let ctx: ToolExecutionContext;
         try {
           ctx = JSON.parse(Buffer.from(encodedContext, 'base64url').toString('utf8')) as ToolExecutionContext;
-          if (!ctx?.request_id || !ctx?.claims?.sub) throw new Error('missing claims');
+          if (!ctx?.request_id || !ctx?.sub) throw new Error('missing claims');
         } catch {
           return res.status(401).json({ success: false, error: 'Invalid credential broker execution context' });
         }

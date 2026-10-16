@@ -129,18 +129,16 @@ test('broker injects an allowed credential and audits every policy denial', { sk
     const echoPort = await listen(echoServer);
     const ctx: ToolExecutionContext = {
       request_id: randomUUID(),
-      claims:     {
-        v:        1,
-        iss:      'test',
-        aud:      'sulla-tools',
-        sub:      userId,
-        agent_id: agentId,
-        pod_id:   podId,
-        scopes:   ['*'],
-        iat:      1,
-        exp:      4_000_000_000,
-        jti:      randomUUID(),
-      },
+      v:          1,
+      iss:        'test',
+      aud:        'sulla-tools',
+      sub:        userId,
+      agent_id:   agentId,
+      pod_id:     podId,
+      scopes:     ['*'],
+      iat:        1,
+      exp:        4_000_000_000,
+      jti:        randomUUID(),
     };
     const broker = new VaultCredentialBroker(`http://127.0.0.1:${ vaultPort }`, 'sulla-tools', config.brokerServiceToken, new FileAgentKeySource(keyPath));
     const upstreamStatus = await broker.useCredential(ctx, { integrationId: integrationRef, field: 'api_key' }, async(secret) => {
@@ -154,7 +152,7 @@ test('broker injects an allowed credential and audits every policy denial', { sk
       const response = await fetch(`http://127.0.0.1:${ vaultPort }/v1/broker/credential`, {
         method:  'POST',
         headers: { authorization: `Bearer ${ config.brokerServiceToken }`, 'x-sulla-service-id': 'sulla-tools', 'content-type': 'application/json' },
-        body:    JSON.stringify({ claims: ctx.claims, ref: { itemId } }),
+        body:    JSON.stringify({ claims: ctx, ref: { itemId } }),
       });
       assert.equal(response.status, 403);
     };
