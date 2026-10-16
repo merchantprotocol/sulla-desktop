@@ -1,11 +1,13 @@
 /**
- * Composable — capture system audio from the audio-driver speaker socket.
+ * Composable — capture system audio with Electron loopback first and the
+ * audio-driver speaker socket as a BlackHole fallback.
  *
  * Connects to the speaker Unix socket in the main process, receives
  * length-prefixed PCM frames (16kHz, mono, s16le), and writes them
  * to a .wav file on disk. Computes RMS level for meters.
  *
- * This replaces getDisplayMedia audio for system audio capture.
+ * On macOS 13+ Electron's getDisplayMedia loopback is backed by
+ * ScreenCaptureKit and does not require a virtual audio device.
  */
 
 import { ref, onUnmounted, type Ref } from 'vue';
@@ -82,18 +84,96 @@ export function useSpeakerCapture() {
   const level: Ref<number> = ref(0);
   const active = ref(false);
   const bytesWritten = ref(0);
+  const nativeStream: Ref<MediaStream | null> = ref(null);
+  const mode: Ref<'none' | 'native' | 'blackhole'> = ref('none');
 
   let socket: any = null;
   let writeStream: any = null;
   let filePath = '';
   let totalDataBytes = 0;
   let pending = Buffer.alloc(0);
+  let analyserContext: AudioContext | null = null;
+  let analyserFrame: number | null = null;
+
+  function stopNativeMeter(): void {
+    if (analyserFrame !== null) cancelAnimationFrame(analyserFrame);
+    analyserFrame = null;
+    analyserContext?.close().catch(() => {});
+    analyserContext = null;
+    level.value = 0;
+  }
+
+  function startNativeMeter(stream: MediaStream): void {
+    stopNativeMeter();
+    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextCtor) return;
+
+    analyserContext = new AudioContextCtor();
+    const source = analyserContext.createMediaStreamSource(stream);
+    const analyser = analyserContext.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+
+    const update = () => {
+      analyser.getFloatTimeDomainData(samples);
+      let sum = 0;
+      for (const sample of samples) sum += sample * sample;
+      level.value = Math.min(1, Math.sqrt(sum / samples.length) * 3);
+      analyserFrame = requestAnimationFrame(update);
+    };
+    analyserFrame = requestAnimationFrame(update);
+  }
+
+  /** Acquire Electron/ScreenCaptureKit system audio without BlackHole. */
+  async function acquireNative(): Promise<MediaStream | null> {
+    releaseNative();
+    try {
+      // Electron's main-process display-media handler supplies the display and
+      // `audio: 'loopback'`. Chromium still requires video in this request;
+      // discard it immediately and retain only the loopback audio track.
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        audio: true,
+        video: true,
+      });
+      const audioTracks = displayStream.getAudioTracks();
+      displayStream.getVideoTracks().forEach(track => track.stop());
+      if (audioTracks.length === 0) {
+        displayStream.getTracks().forEach(track => track.stop());
+        console.warn('[useSpeakerCapture] Native loopback returned no audio track');
+        return null;
+      }
+
+      const stream = new MediaStream(audioTracks);
+      nativeStream.value = stream;
+      mode.value = 'native';
+      active.value = true;
+      audioTracks.forEach(track => track.addEventListener('ended', () => {
+        if (nativeStream.value === stream) releaseNative();
+      }, { once: true }));
+      startNativeMeter(stream);
+      console.log('[useSpeakerCapture] Native Electron loopback acquired');
+      return stream;
+    } catch (err: any) {
+      console.warn('[useSpeakerCapture] Native loopback unavailable; falling back to BlackHole:', err?.message || err);
+      return null;
+    }
+  }
+
+  function releaseNative(): void {
+    const stream = nativeStream.value;
+    nativeStream.value = null;
+    if (stream) stream.getTracks().forEach(track => track.stop());
+    stopNativeMeter();
+    if (mode.value === 'native') mode.value = 'none';
+    if (!writeStream) active.value = false;
+  }
 
   /**
    * Start capturing speaker audio to a WAV file.
    */
   async function start(outputPath: string): Promise<boolean> {
-    if (active.value) stop();
+    if (writeStream) await stop();
 
     const socketPath = await ipcRenderer.invoke('audio-driver:get-speaker-socket-path');
     if (!socketPath) {
@@ -154,21 +234,33 @@ export function useSpeakerCapture() {
     });
 
     socket.on('close', () => {
-      if (active.value) {
+      if (writeStream) {
         console.warn('[useSpeakerCapture] Socket closed unexpectedly — finalizing WAV');
-        stop();
+        stop().catch((err: any) => console.error('[useSpeakerCapture] Failed to finalize after socket close:', err.message));
       }
     });
 
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve);
+      socket.once('error', reject);
+    }).catch((err: any) => {
+      console.error('[useSpeakerCapture] Failed to connect to speaker socket:', err.message);
+    });
+    if (!socket || socket.destroyed) {
+      await stop();
+      return false;
+    }
+
     active.value = true;
+    mode.value = 'blackhole';
     return true;
   }
 
   /**
    * Stop capturing and finalize the WAV file.
    */
-  function stop(): string {
-    active.value = false;
+  async function stop(): Promise<string> {
+    if (nativeStream.value) releaseNative();
     level.value = 0;
 
     if (socket) {
@@ -176,13 +268,26 @@ export function useSpeakerCapture() {
       socket = null;
     }
 
-    if (writeStream) {
-      writeStream.end();
-      writeStream = null;
+    const ws = writeStream;
+    writeStream = null;
+    if (ws) {
+      await new Promise<void>((resolve) => {
+        let resolved = false;
+        const done = () => {
+          if (resolved) return;
+          resolved = true;
+          resolve();
+        };
+        ws.once('finish', done);
+        ws.once('close', done);
+        ws.once('error', done);
+        ws.end();
+        setTimeout(done, 5000);
+      });
     }
 
     // Patch WAV header with actual data size
-    if (filePath && totalDataBytes > 0) {
+    if (filePath) {
       try {
         finalizeWav(filePath, totalDataBytes);
       } catch (e: any) {
@@ -194,17 +299,23 @@ export function useSpeakerCapture() {
     filePath = '';
     totalDataBytes = 0;
     pending = Buffer.alloc(0);
+    active.value = false;
+    mode.value = 'none';
     return result;
   }
 
   onUnmounted(() => {
-    if (active.value) stop();
+    if (active.value) stop().catch(() => {});
   });
 
   return {
     level,
     active,
     bytesWritten,
+    nativeStream,
+    mode,
+    acquireNative,
+    releaseNative,
     start,
     stop,
   };

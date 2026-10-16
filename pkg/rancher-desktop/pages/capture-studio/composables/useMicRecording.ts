@@ -98,7 +98,7 @@ export function useMicRecording() {
    *   Connects to mic-socket, writes raw WebM/Opus chunks.
    */
   async function start(outputPath: string, mode: MicQualityMode = 'raw'): Promise<boolean> {
-    if (active.value) stop();
+    if (active.value) await stop();
 
     currentMode = mode;
     filePath = outputPath;
@@ -195,11 +195,22 @@ export function useMicRecording() {
     });
 
     socket.on('close', () => {
-      if (active.value) {
+      if (writeStream) {
         console.warn('[useMicRecording] Socket closed unexpectedly — finalizing');
-        stop();
+        stop().catch((err: any) => console.error('[useMicRecording] Failed to finalize after socket close:', err.message));
       }
     });
+
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve);
+      socket.once('error', reject);
+    }).catch((err: any) => {
+      console.error('[useMicRecording] Failed to connect to mic socket:', err.message);
+    });
+    if (!socket || socket.destroyed) {
+      await stop();
+      return false;
+    }
 
     active.value = true;
     console.log('[useMicRecording] Started', { mode, path: socketPath, file: filePath });
@@ -210,7 +221,7 @@ export function useMicRecording() {
    * Stop recording and finalize the output file.
    * Returns the file path.
    */
-  function stop(): string {
+  async function stop(): Promise<string> {
     active.value = false;
     level.value = 0;
 
@@ -219,14 +230,27 @@ export function useMicRecording() {
       socket = null;
     }
 
-    if (writeStream) {
-      writeStream.end();
-      writeStream = null;
+    const ws = writeStream;
+    writeStream = null;
+    if (ws) {
+      await new Promise<void>((resolve) => {
+        let resolved = false;
+        const done = () => {
+          if (resolved) return;
+          resolved = true;
+          resolve();
+        };
+        ws.once('finish', done);
+        ws.once('close', done);
+        ws.once('error', done);
+        ws.end();
+        setTimeout(done, 5000);
+      });
     }
 
     // Finalize WAV header for PCM modes
     const isCompressed = currentMode === 'streaming' || currentMode === 'streaming-voice';
-    if (!isCompressed && filePath && totalDataBytes > 0) {
+    if (!isCompressed && filePath) {
       try {
         finalizeWav(filePath, totalDataBytes);
       } catch (err: any) {
