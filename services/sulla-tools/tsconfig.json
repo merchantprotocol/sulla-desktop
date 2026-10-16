@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "rootDir": "../..",
+    "outDir": "dist",
+    "baseUrl": "../..",
+    "paths": { "@pkg/*": ["pkg/rancher-desktop/*"] },
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "../../pkg/rancher-desktop/runtime/capabilityToken.ts",
+    "../../pkg/rancher-desktop/runtime/desktopExecutor.ts",
+    "../../pkg/rancher-desktop/agent/tools/executionContext.ts",
+    "../../pkg/rancher-desktop/agent/tools/executionTargets.ts"
+  ]
+}

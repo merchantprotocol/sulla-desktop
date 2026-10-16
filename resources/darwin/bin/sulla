@@ -10,11 +10,13 @@
 if [ -f /etc/sulla-env ]; then
   [ -z "$SULLA_API_TOKEN" ] || _existing_token="$SULLA_API_TOKEN"
   [ -z "$SULLA_HOST" ]      || _existing_host="$SULLA_HOST"
+  [ -z "$SULLA_TOOL_API_URL" ] || _existing_tool_api_url="$SULLA_TOOL_API_URL"
   . /etc/sulla-env
   [ -n "$_existing_token" ] && SULLA_API_TOKEN="$_existing_token"
   [ -n "$_existing_host" ]  && SULLA_HOST="$_existing_host"
-  unset _existing_token _existing_host
-  export SULLA_API_TOKEN SULLA_HOST
+  [ -n "$_existing_tool_api_url" ] && SULLA_TOOL_API_URL="$_existing_tool_api_url"
+  unset _existing_token _existing_host _existing_tool_api_url
+  export SULLA_API_TOKEN SULLA_HOST SULLA_TOOL_API_URL
 fi
 
 SOCKET="/tmp/sulla-tools.sock"
@@ -33,13 +35,24 @@ if [ -z "$SULLA_TOOL_SESSION" ] && [ -r "/proc/$$/status" ]; then
   unset _p _n _s
 fi
 SULLA_HOST="${SULLA_HOST:-host.lima.internal}"
+SULLA_TOOL_API_URL="${SULLA_TOOL_API_URL%/}"
 FIRST="$1"
 BODY="$2"
 
-# Known internal tool categories. Must stay in sync with agent/tools/registry.ts
-# `categoriesList` so `sulla <category>/<tool>` routes to /v1/tools/internal
-# instead of falling through as a proxy call.
-TOOL_CATEGORIES="agents|applescript|bridge|bookmarks|browser|calendar|capture|chat|docker|extensions|fs|function|github|integrations|kubectl|ledger|lima|marketplace|memory|meta|mobile|models|notify|observation|pg|project|projects|rdctl|redis|reflex|rules|secretary|settings|skills|slack|ui|vault|work|workflow|workspace"
+tool_api_get() {
+  _path="$1"
+  if [ -n "$SULLA_TOOL_API_URL" ]; then
+    curl -fsS --max-time 2 ${SULLA_API_TOKEN:+-H "Authorization: Bearer $SULLA_API_TOKEN"} "${SULLA_TOOL_API_URL}${_path}"
+  elif [ -S "$SOCKET" ]; then
+    curl -fsS --max-time 2 --unix-socket "$SOCKET" ${SULLA_API_TOKEN:+-H "Authorization: Bearer $SULLA_API_TOKEN"} "http://localhost${_path}"
+  else
+    curl -fsS --max-time 2 ${SULLA_API_TOKEN:+-H "Authorization: Bearer $SULLA_API_TOKEN"} "http://${SULLA_HOST}:3000${_path}"
+  fi
+}
+
+is_tool_category() {
+  tool_api_get "/v1/tools/help/$1" >/dev/null 2>&1
+}
 
 # ── Help & discovery ─────────────────────────────────────────────
 # sulla --help | sulla -h | sulla help | sulla (no args) — query the backend
@@ -48,15 +61,7 @@ TOOL_CATEGORIES="agents|applescript|bridge|bookmarks|browser|calendar|capture|ch
 # unreachable (e.g. during first-run or when Sulla Desktop isn't booted).
 if [ -z "$FIRST" ] || [ "$FIRST" = "--help" ] || [ "$FIRST" = "-h" ] || [ "$FIRST" = "help" ]; then
   _help_url="/v1/tools/help"
-  if [ -S "$SOCKET" ]; then
-    _live=$(curl -s --max-time 2 --unix-socket "$SOCKET" \
-      ${SULLA_API_TOKEN:+-H "Authorization: Bearer $SULLA_API_TOKEN"} \
-      "http://localhost${_help_url}" 2>/dev/null)
-  else
-    _live=$(curl -s --max-time 2 \
-      ${SULLA_API_TOKEN:+-H "Authorization: Bearer $SULLA_API_TOKEN"} \
-      "http://${SULLA_HOST}:3000${_help_url}" 2>/dev/null)
-  fi
+  _live=$(tool_api_get "$_help_url" 2>/dev/null)
   if [ -n "$_live" ] && printf '%s' "$_live" | grep -q "Categories"; then
     printf '%s\n' "$_live"
     printf '\nRun "sulla <category> --help" or "sulla <category>" to list tools in a category.\n'
@@ -139,7 +144,7 @@ else
         echo '{"error":"Blocked: do not call sulla CLI for this function. Preventing circular tool calling. Use the native exec tool instead."}' >&2
         exit 1
       fi
-      if echo "$PART1" | grep -qE "^($TOOL_CATEGORIES)$"; then
+      if is_tool_category "$PART1"; then
         # Tool call: category/tool_name
         URL="/v1/tools/internal/${PART1}/${PART2}/call"
       else
@@ -149,7 +154,7 @@ else
       ;;
     *)
       # Bare name with no slash — check if it's a category (→ help) or a bare tool
-      if echo "$FIRST" | grep -qE "^($TOOL_CATEGORIES)$"; then
+      if is_tool_category "$FIRST"; then
         METHOD="GET"
         URL="/v1/tools/help/${FIRST}"
         BODY=""
@@ -163,7 +168,13 @@ fi
 
 # ── Execute ──────────────────────────────────────────────────────
 if [ "$METHOD" = "GET" ]; then
-  if [ -S "$SOCKET" ]; then
+  if [ -n "$SULLA_TOOL_API_URL" ]; then
+    if [ -n "$SULLA_API_TOKEN" ]; then
+      exec curl -s -H "Authorization: Bearer $SULLA_API_TOKEN" "${SULLA_TOOL_API_URL}${URL}"
+    else
+      exec curl -s "${SULLA_TOOL_API_URL}${URL}"
+    fi
+  elif [ -S "$SOCKET" ]; then
     if [ -n "$SULLA_API_TOKEN" ]; then
       exec curl -s --unix-socket "$SOCKET" -H "Authorization: Bearer $SULLA_API_TOKEN" "http://localhost${URL}"
     else
@@ -177,7 +188,20 @@ if [ "$METHOD" = "GET" ]; then
     fi
   fi
 else
-  if [ -S "$SOCKET" ]; then
+  if [ -n "$SULLA_TOOL_API_URL" ]; then
+    if [ -n "$SULLA_API_TOKEN" ]; then
+      exec curl -s -X POST "${SULLA_TOOL_API_URL}${URL}" \
+        -H "Content-Type: application/json" \
+        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
+        -H "Authorization: Bearer $SULLA_API_TOKEN" \
+        -d "$BODY"
+    else
+      exec curl -s -X POST "${SULLA_TOOL_API_URL}${URL}" \
+        -H "Content-Type: application/json" \
+        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
+        -d "$BODY"
+    fi
+  elif [ -S "$SOCKET" ]; then
     if [ -n "$SULLA_API_TOKEN" ]; then
       exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
         -H "Content-Type: application/json" \

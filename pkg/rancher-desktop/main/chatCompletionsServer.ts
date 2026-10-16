@@ -12,6 +12,7 @@ import { getConfiguredCredentialBroker, type ToolExecutionContext } from '../vau
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
+import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken } from '@pkg/runtime/capabilityToken';
 import paths from '@pkg/utils/paths';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
@@ -223,7 +224,7 @@ export class ChatCompletionsServer {
     });
 
     // Bearer token authentication
-    this.app.use((req: Request, res: Response, next: NextFunction) => {
+    this.app.use(async(req: Request, res: Response, next: NextFunction) => {
       if (req.path === '/health') {
         return next();
       }
@@ -237,9 +238,15 @@ export class ChatCompletionsServer {
       // is revoked as soon as the container exits. The internal-tool handler
       // below binds the same token to its live graph state and enforces that
       // session's tool allowlist.
-      const valid = apiRequestTokenIsValid(token, this.apiToken, candidate => {
+      let valid = apiRequestTokenIsValid(token, this.apiToken, candidate => {
         try { return !!getMCPServerHost().getToolSessionState(candidate) } catch { return false }
       }, req.path);
+      if (!valid && token && this.apiToken) {
+        try {
+          await verifyCapabilityToken(token, deriveCapabilitySigningKey(this.apiToken));
+          valid = true;
+        } catch { /* invalid capability */ }
+      }
 
       if (!valid) {
         res.status(401).json({
@@ -293,6 +300,41 @@ export class ChatCompletionsServer {
     });
     this.app.get('/v1/tools/help/:category', async(req: Request, res: Response) => {
       await this.handleHelp(req, res);
+    });
+
+    // Private target for calls the catalog has authorized but that must execute
+    // against Electron/Mac state. It accepts only Desktop's installation bearer
+    // and private/loopback source addresses; capability tokens never enter here.
+    this.app.post('/internal/desktop-executor/:category/:tool', async(req: Request, res: Response) => {
+      const remote = req.socket.remoteAddress ?? '';
+      const privateSource = /^(::1|::ffff:127\.|127\.|::ffff:10\.|10\.|::ffff:172\.|172\.|::ffff:192\.168\.|192\.168\.)/.test(remote);
+      const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, '');
+      if (!privateSource || !this.apiToken || bearer !== this.apiToken) {
+        return res.status(403).json({ success: false, error: { code: 'desktop_executor_forbidden', message: 'Desktop executor is private' } });
+      }
+      const category = String(req.params.category);
+      const requested = String(req.params.tool);
+      const args = req.body?.args ?? {};
+      const ctx = req.body?.ctx;
+      const deadlineMs = Math.max(1, Math.min(Number(req.body?.deadlineMs ?? 30_000), 60_000));
+      try {
+        const { toolRegistry } = await import('@pkg/agent/tools/registry');
+        const prefixed = `${ category }_${ requested }`;
+        const worker = await toolRegistry.createTool(prefixed).catch(() => toolRegistry.createTool(requested));
+        if (typeof ctx?.thread_id === 'string') {
+          const graph = GraphRegistry.get(ctx.thread_id);
+          if (graph?.state) worker.setState?.(graph.state);
+        }
+        const deadline = AbortSignal.timeout(deadlineMs);
+        worker.approvalSignal = deadline;
+        const result = await Promise.race([
+          worker.call(args),
+          new Promise((_resolve, reject) => deadline.addEventListener('abort', () => reject(new Error('Desktop executor deadline exceeded')), { once: true })),
+        ]);
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(500).json({ success: false, error: { code: 'desktop_execution_failed', message: error instanceof Error ? error.message : String(error) } });
+      }
     });
 
     // List all tools (integrations + MCP)
@@ -1077,6 +1119,35 @@ export class ChatCompletionsServer {
         // Accept both { params: { ... } } and flat { action: "upsert", ... } formats
         const body = req.body || {};
         const params = body.params && typeof body.params === 'object' ? body.params : body;
+
+        // Prefer the optional stateless service for catalog-target tools. A
+        // stopped/unhealthy container falls through to today's in-process path.
+        if (toolRegistry.getExecutionTarget(String(tool.name || prefixed)) === 'catalog') {
+          try {
+            const health = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(300) });
+            if (health.ok) {
+              const inbound = req.headers.authorization?.replace(/^Bearer\s+/i, '');
+              const capability = inbound && inbound !== this.apiToken
+                ? inbound
+                : issueCapabilityToken({ sub: 'desktop-cli', scopes: [`${ slug }/*`], expiresInSeconds: 60 }, deriveCapabilitySigningKey(this.apiToken!));
+              const upstream = await fetch(`http://127.0.0.1:30123/v1/tools/internal/${ encodeURIComponent(slug) }/${ encodeURIComponent(endpoint) }/call`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${ capability }`,
+                  'X-Request-Id': req.header('X-Request-Id') ?? crypto.randomUUID(),
+                },
+                body: JSON.stringify(params),
+                signal: AbortSignal.timeout(30_000),
+              });
+              const text = await upstream.text();
+              res.status(upstream.status).type(upstream.headers.get('content-type') ?? 'application/json').send(text);
+              return;
+            }
+          } catch (error) {
+            console.warn('[ChatCompletionsAPI] sulla-tools unavailable; using in-process catalog worker:', error);
+          }
+        }
 
         // The interactive tool (ask_user_question) needs a live chat channel
         // to render its card. ToolExecutor injects sendChatMessage for

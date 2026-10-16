@@ -3,7 +3,7 @@ import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 export interface ToolResult {
   success: boolean;
   result?: unknown;
-  error?: { code: string; message: string; details?: unknown };
+  error?:  { code: string; message: string; details?: unknown };
 }
 
 export interface DesktopExecutor {
@@ -18,13 +18,13 @@ export class HttpDesktopExecutor implements DesktopExecutor {
     const timeout = setTimeout(() => controller.abort(), opts.deadlineMs);
     try {
       const response = await fetch(`${ this.endpoint.replace(/\/$/, '') }/internal/desktop-executor/${ encodeURIComponent(category) }/${ encodeURIComponent(tool) }`, {
-        method: 'POST',
+        method:  'POST',
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${ this.bearerToken }`,
+          'Content-Type':       'application/json',
+          Authorization:        `Bearer ${ this.bearerToken }`,
           'X-Sulla-Request-Id': ctx.request_id,
         },
-        body: JSON.stringify({ ctx, args, deadlineMs: opts.deadlineMs }),
+        body:   JSON.stringify({ ctx, args, deadlineMs: opts.deadlineMs }),
         signal: controller.signal,
       });
       const body = await response.json().catch(() => ({ success: false, error: { code: 'invalid_response', message: `Desktop executor returned HTTP ${ response.status }` } }));
@@ -38,4 +38,3 @@ export class HttpDesktopExecutor implements DesktopExecutor {
     }
   }
 }
-

@@ -25,17 +25,19 @@ export class PostgresClient {
     if (this.shuttingDown) return; // Don't reconnect during shutdown
     if (this.pool) return; // Already initialized
 
-    // Settings extends BaseModel, which imports this client. Load it only on use.
-    const { SullaSettingsModel } = await import('./models/SullaSettingsModel');
-    const password = await SullaSettingsModel.getServicePassword();
+    const connectionString = process.env.SULLA_DATABASE_URL;
+    let password: string | undefined;
+    if (!connectionString) {
+      // Settings extends BaseModel, which imports this client. Load it only on use.
+      const { SullaSettingsModel } = await import('./models/SullaSettingsModel');
+      password = await SullaSettingsModel.getServicePassword();
+    }
 
     this.pool = new Pool({
-      host:                    '127.0.0.1',
-      port:                    30116,
-      user:                    'sulla',
-      password,
-      database:                'sulla',
-      max:                     20,                    // max connections in pool
+      ...(connectionString ? { connectionString } : {
+        host: '127.0.0.1', port: 30116, user: 'sulla', password, database: 'sulla',
+      }),
+      max:                     Number(process.env.SULLA_DATABASE_POOL_MAX ?? 20),
       idleTimeoutMillis:       30000,   // close idle after 30s
       connectionTimeoutMillis: 2000,
     });

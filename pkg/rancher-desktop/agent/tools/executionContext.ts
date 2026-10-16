@@ -4,4 +4,3 @@ import type { CapabilityTokenClaims } from '@pkg/runtime/capabilityToken';
 export interface ToolExecutionContext extends CapabilityTokenClaims {
   request_id: string;
 }
-

@@ -1,7 +1,8 @@
 // src/tools/registry.ts
 
-import type { ToolOperation } from './base';
 import { executionTargetFor, type ToolExecutionTarget } from './executionTargets';
+
+import type { ToolOperation } from './base';
 
 type ToolLoader = () => Promise<any>;
 

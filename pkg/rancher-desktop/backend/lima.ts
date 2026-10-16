@@ -3045,6 +3045,35 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
+    const toolsImage = resolveSullaServiceImage(
+      'sulla-tools', process.cwd(), Electron.app.getVersion(), process.env.SULLA_TOOLS_IMAGE,
+    );
+    const resolvedToolsImage = toolsImage.build ? toolsImage.image : `\${SULLA_TOOLS_IMAGE:-${ toolsImage.image }}`;
+    if (!toolsImage.build && !process.env.SULLA_TOOLS_IMAGE && !toolsImage.image.endsWith(':latest')) {
+      this.#optionalSullaFallbackImages.set('tools', {
+        env: 'SULLA_TOOLS_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-tools:latest',
+      });
+    }
+    compose.services.tools = {
+      ...toolsImage,
+      image: resolvedToolsImage,
+      container_name: 'sulla_tools',
+      depends_on: {
+        postgres: { condition: 'service_healthy' },
+        redis: { condition: 'service_healthy' },
+      },
+      env_file: ['/etc/sulla-env'],
+      environment: {
+        SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+        SULLA_REDIS_URL: 'redis://redis:6379',
+        SULLA_DESKTOP_EXECUTOR_URL: 'http://host.docker.internal:3000',
+      },
+      extra_hosts: ['host.docker.internal:host-gateway'],
+      ports: ['127.0.0.1:30123:3000'],
+      restart: 'unless-stopped',
+      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/healthz'], interval: '5s', timeout: '3s', retries: 10 },
+    };
+
     // Modify dynamic values like passwords
     if (compose.services?.postgres?.environment) {
       compose.services.postgres.environment = compose.services.postgres.environment.map((env: string) => {
@@ -3179,7 +3208,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       );
 
       this.#activeOptionalSullaServices.clear();
-      const optionalServices = ['workflow_manager'];
+      const optionalServices = ['workflow_manager', 'tools'];
 
       if (settingsImpl.getSettings().sullaVaultV2Enabled) optionalServices.push('sulla_vault');
       for (const service of optionalServices) {
@@ -3223,6 +3252,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime'];
 
     if (this.#activeOptionalSullaServices.has('workflow_manager')) optionalServices.push('sulla_workflow_manager');
+    if (this.#activeOptionalSullaServices.has('tools')) optionalServices.push('sulla_tools');
     if (this.#activeOptionalSullaServices.has('sulla_vault')) optionalServices.push('sulla_vault');
     for (const service of optionalServices) {
       try {

@@ -1,14 +1,18 @@
 import * as childProcess from 'node:child_process';
+import crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import Electron from 'electron';
 
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { redisClient } from '../database/RedisClient';
 import { ensureCodexAuthFile, codexAuthPath } from '../util/codexAuthFile';
 
 import { resolveSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
+import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
+import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/containerRuntime';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -144,18 +148,19 @@ async function claudeCredentials(): Promise<{ oauthToken: string; apiKey: string
   return { oauthToken, apiKey };
 }
 
-async function containerEnvironment(run: AgentContainerRun, token: string): Promise<{
+async function containerEnvironment(run: AgentContainerRun, token: string, sessionId: string, toolApiUrl: string): Promise<{
   env:     Record<string, string>;
   secrets: Record<string, string>;
 }> {
   const env: Record<string, string> = {
     SULLA_HOST:                   'host.lima.internal',
+    SULLA_TOOL_API_URL:           toolApiUrl,
     SULLA_AGENT_PROVIDER:         run.provider,
     SULLA_AGENT_MODEL:            run.model ?? '',
   };
   const secrets: Record<string, string> = {
     SULLA_API_TOKEN:              token,
-    SULLA_TOOL_SESSION:           token,
+    SULLA_TOOL_SESSION:           sessionId,
     SULLA_AGENT_INSTRUCTIONS_B64: Buffer.from(run.instructions).toString('base64'),
   };
   if (run.provider === 'codex') {
@@ -195,9 +200,33 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
   const session = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   let secretDir: string | undefined;
+  const capabilityJti = crypto.randomUUID();
+  const capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil((IDLE_MS + 5 * 60_000) / 1000);
   let containerId: string | undefined;
   try {
-    const configuration = await containerEnvironment(run, session.id);
+    const installationSecret = getChatCompletionsServer().getApiToken();
+    if (!installationSecret) throw new Error('Desktop tool API is not initialized');
+    const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
+    const allowed = metadata.allowedToolNames ?? [];
+    const scopes = allowed.length === 0 || allowed.includes('exec') ? ['*'] : allowed;
+    const capability = issueCapabilityToken({
+      sub: metadata.userId ?? 'desktop-user',
+      org_id: metadata.orgId,
+      agent_id: metadata.agentId,
+      pod_id: containerName,
+      thread_id: metadata.threadId,
+      job_id: run.jobId,
+      device_id: metadata.deviceId,
+      scopes,
+      jti: capabilityJti,
+      expiresInSeconds: Math.ceil((IDLE_MS + 5 * 60_000) / 1000),
+    }, deriveCapabilitySigningKey(installationSecret));
+    const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(300) })
+      .then(response => response.ok).catch(() => false);
+    const configuration = await containerEnvironment(
+      run, capability, session.id,
+      toolsServiceHealthy ? 'http://sulla_tools:3000' : 'http://host.lima.internal:3000',
+    );
     const desktopHostIp = (await limactl(['sh', '-c', "getent hosts host.lima.internal | awk 'NR==1 {print $1}'"])).stdout.trim();
     if (!desktopHostIp) throw new Error('Could not resolve Desktop host from the Lima VM');
     secretDir = await provisionContainerSecrets(containerName, configuration.secrets);
@@ -213,14 +242,16 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       stdinOpen:   true,
       env:         configuration.env,
       binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`],
+      network:     'sulla_default',
       extraHosts:  [`host.lima.internal:${ desktopHostIp }`],
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
     });
+    const startedContainerId = containerId;
 
     return await new Promise((resolve, reject) => {
       const args = [
-        'shell', '0', '--', 'docker', 'start', '--attach', '--interactive', containerId,
+        'shell', '0', '--', 'docker', 'start', '--attach', '--interactive', startedContainerId,
       ];
       const proc = childProcess.spawn(paths.limactl, args, {
         env:   { ...process.env, LIMA_HOME: paths.lima },
@@ -242,6 +273,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         settled = true;
         clearTimeout(idleTimer);
         session.revoke();
+        await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
         if (secretDir) await removeContainerSecrets(secretDir);
         if (error) reject(error);
         else resolve({ output: output.slice(-200_000), containerName });

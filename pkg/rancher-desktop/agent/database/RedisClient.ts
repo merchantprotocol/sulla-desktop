@@ -4,7 +4,7 @@
 
 import Redis, { Pipeline, ChainableCommander } from 'ioredis';
 
-const REDIS_URL = 'redis://127.0.0.1:30117';
+const REDIS_URL = process.env.SULLA_REDIS_URL ?? 'redis://127.0.0.1:30117';
 
 export class RedisClient {
   private client: Redis;

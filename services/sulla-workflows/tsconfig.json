@@ -18,6 +18,7 @@
     "../../pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.ts",
     "../../pkg/rancher-desktop/agent/workflow/types.ts",
     "../../pkg/rancher-desktop/pages/editor/workflow/types.ts",
-    "../../pkg/rancher-desktop/runtime/containerRuntime.ts"
+    "../../pkg/rancher-desktop/runtime/containerRuntime.ts",
+    "../../pkg/rancher-desktop/runtime/capabilityToken.ts"
   ]
 }

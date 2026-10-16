@@ -1,26 +1,26 @@
 import crypto from 'node:crypto';
 
 export interface CapabilityTokenClaims {
-  v: 1;
-  iss: string;
-  aud: 'sulla-tools';
-  sub: string;
-  org_id?: string;
-  agent_id?: string;
-  pod_id?: string;
-  thread_id?: string;
-  job_id?: string;
+  v:                      1;
+  iss:                    string;
+  aud:                    'sulla-tools';
+  sub:                    string;
+  org_id?:                string;
+  agent_id?:              string;
+  pod_id?:                string;
+  thread_id?:             string;
+  job_id?:                string;
   workflow_execution_id?: string;
-  device_id?: string;
-  scopes: string[];
-  iat: number;
-  exp: number;
-  jti: string;
+  device_id?:             string;
+  scopes:                 string[];
+  iat:                    number;
+  exp:                    number;
+  jti:                    string;
 }
 
 export interface CapabilityTokenInput extends Omit<CapabilityTokenClaims, 'v' | 'iss' | 'aud' | 'iat' | 'exp' | 'jti'> {
   expiresInSeconds?: number;
-  jti?: string;
+  jti?:              string;
 }
 
 export interface CapabilityRevocationStore {
@@ -38,17 +38,21 @@ export class CapabilityTokenError extends Error {
 const encode = (value: Buffer | string) => Buffer.from(value).toString('base64url');
 const decodeJson = (value: string) => JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
 
+export function deriveCapabilitySigningKey(installationSecret: string | Buffer): Buffer {
+  return crypto.createHmac('sha256', installationSecret).update('sulla-tools-capability-v1').digest();
+}
+
 export function issueCapabilityToken(input: CapabilityTokenInput, signingKey: string | Buffer, issuer = 'sulla-desktop'): string {
   if (!signingKey || Buffer.byteLength(signingKey) < 32) throw new Error('Capability signing key must be at least 32 bytes');
   const now = Math.floor(Date.now() / 1000);
   const claims: CapabilityTokenClaims = {
     ...input,
-    v: 1,
-    iss: issuer,
-    aud: 'sulla-tools',
-    iat: now,
-    exp: now + Math.max(1, Math.min(input.expiresInSeconds ?? 900, 3600)),
-    jti: input.jti ?? crypto.randomUUID(),
+    v:      1,
+    iss:    issuer,
+    aud:    'sulla-tools',
+    iat:    now,
+    exp:    now + Math.max(1, Math.min(input.expiresInSeconds ?? 900, 3600)),
+    jti:    input.jti ?? crypto.randomUUID(),
     scopes: [...new Set(input.scopes)],
   };
   delete (claims as any).expiresInSeconds;
@@ -60,7 +64,8 @@ export function issueCapabilityToken(input: CapabilityTokenInput, signingKey: st
 }
 
 export function scopeAllows(scopes: string[], category: string, tool: string): boolean {
-  const candidates = new Set([tool, `${ category }/${ tool }`, `${ category }/*`, '*']);
+  const unprefixed = tool.startsWith(`${ category }_`) ? tool.slice(category.length + 1) : tool;
+  const candidates = new Set([tool, unprefixed, `${ category }/${ tool }`, `${ category }/${ unprefixed }`, `${ category }/*`, '*']);
 
   return scopes.some(scope => candidates.has(scope));
 }
@@ -93,4 +98,3 @@ export async function verifyCapabilityToken(
 
   return claims;
 }
-
