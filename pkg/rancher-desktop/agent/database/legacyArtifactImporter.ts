@@ -2,14 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { postgresClient } from './PostgresClient';
-import { defaultSkillFolderSources, importSkillFolders, type SkillFolderSource } from '../services/SkillDefinitionService';
-import {
-  resolveSullaFunctionsDir,
-  resolveSullaIntegrationsDir,
-  resolveSullaRecipesDir,
-  resolveSullaRoutinesDir,
-  resolveSullaUserIntegrationsDir,
-} from '../utils/sullaPaths';
 
 import { bundleToArtifact, readBundleFiles } from '@pkg/main/marketplace/databaseInstaller';
 import type { InstallableKind } from '@pkg/main/marketplace/databaseInstaller';
@@ -100,53 +92,30 @@ async function insertArtifact(kind: Exclude<InstallableKind, 'agent' | 'skill'>,
 }
 
 /**
- * One-way compatibility import. Existing rows always win, source folders are
- * untouched, and a slug is only ever imported once (see the ledger table), so
- * deleting something in Postgres is never undone on the next start.
+ * Seeds the integration definitions that ship inside the app bundle.
+ *
+ * Jonathon (2026-10-15): nothing from the user's ~/sulla folders is copied
+ * into Postgres at startup. Only app-shipped integrations are inserted, and
+ * only when missing (existing rows always win; a slug is seeded once, so a
+ * row deleted in Postgres stays deleted).
  */
 export async function importLegacyArtifacts(): Promise<LegacyImportSummary> {
   const summary: LegacyImportSummary = { imported: 0, skipped: 0, errors: [] };
-  const bundledSkills = bundledRoot('skills');
-  const skillSources: SkillFolderSource[] = [
-    ...defaultSkillFolderSources(),
-    ...(bundledSkills ? [{ dir: bundledSkills, sourceKind: 'resources' as const }] : []),
-  ];
-  const skills = await importSkillFolders(skillSources, {
-    insertOnly: true,
-    skip:       await seenSlugs('skill'),
-    onSeen:     slug => markSeen('skill', slug),
-  });
-  summary.imported += skills.imported;
-  summary.skipped += skills.skipped;
-  summary.errors.push(...skills.errors.map(error => `skill/${ error }`));
-
   const bundledIntegrations = bundledRoot('integrations');
-  const sources: { kind: Exclude<InstallableKind, 'agent' | 'skill'>; root: string }[] = [
-    { kind: 'function', root: resolveSullaFunctionsDir() },
-    { kind: 'recipe', root: resolveSullaRecipesDir() },
-    { kind: 'routine', root: resolveSullaRoutinesDir() },
-    { kind: 'integration', root: resolveSullaIntegrationsDir() },
-    { kind: 'integration', root: resolveSullaUserIntegrationsDir() },
-    ...(bundledIntegrations ? [{ kind: 'integration' as const, root: bundledIntegrations }] : []),
-  ];
-  const claimed = new Set<string>();
-  const seen = new Map<string, Set<string>>();
-  for (const source of sources) {
-    if (!seen.has(source.kind)) seen.set(source.kind, await seenSlugs(source.kind));
-    for (const artifact of artifactFolders(source.root)) {
-      const key = `${ source.kind }:${ artifact.slug }`;
-      if (claimed.has(key) || seen.get(source.kind)!.has(artifact.slug)) {
-        summary.skipped++;
-        continue;
-      }
-      claimed.add(key);
-      try {
-        if (await insertArtifact(source.kind, artifact.slug, artifact.dir)) summary.imported++;
-        else summary.skipped++;
-        await markSeen(source.kind, artifact.slug);
-      } catch (error) {
-        summary.errors.push(`${ key }: ${ error instanceof Error ? error.message : String(error) }`);
-      }
+  if (!bundledIntegrations) return summary;
+
+  const seen = await seenSlugs('integration');
+  for (const artifact of artifactFolders(bundledIntegrations)) {
+    if (seen.has(artifact.slug)) {
+      summary.skipped++;
+      continue;
+    }
+    try {
+      if (await insertArtifact('integration', artifact.slug, artifact.dir)) summary.imported++;
+      else summary.skipped++;
+      await markSeen('integration', artifact.slug);
+    } catch (error) {
+      summary.errors.push(`integration:${ artifact.slug }: ${ error instanceof Error ? error.message : String(error) }`);
     }
   }
   return summary;
