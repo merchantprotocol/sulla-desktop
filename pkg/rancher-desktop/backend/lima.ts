@@ -60,6 +60,7 @@ import { instantiateSullaStart, markSullaDockerServicesStarted } from '@pkg/sull
 import * as childProcess from '@pkg/utils/childProcess';
 import clone from '@pkg/utils/clone';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
+import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { executable } from '@pkg/utils/resources';
@@ -3125,7 +3126,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_DEVICE_ID:             os.hostname(),
         SULLA_FILES_UID:                   String(os.userInfo().uid),
         SULLA_FILES_GID:                   String(os.userInfo().gid),
-        SULLA_FILES_CAPABILITY_SIGNING_KEY: process.env.SULLA_FILES_CAPABILITY_SIGNING_KEY || sullaServicePassword,
+        SULLA_FILES_CAPABILITY_SIGNING_KEY: sullaFilesCapabilityKey(sullaServicePassword),
         SULLA_FILES_LOCAL_TOKEN:           sullaServicePassword,
         ...(process.env.SULLA_FILES_SERVER_URL ? { SULLA_FILES_SERVER_URL: process.env.SULLA_FILES_SERVER_URL } : {}),
         ...(process.env.SULLA_FILES_USER_ID ? { SULLA_FILES_USER_ID: process.env.SULLA_FILES_USER_ID } : {}),
