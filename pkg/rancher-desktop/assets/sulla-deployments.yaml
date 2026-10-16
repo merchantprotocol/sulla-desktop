@@ -28,7 +28,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
       - name: postgres
-        image: pgvector/pgvector:0.8.1-pg16
+        image: postgres:16-alpine
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5432
