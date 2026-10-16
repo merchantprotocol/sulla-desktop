@@ -144,7 +144,7 @@ export function createApp(db: Database, config: VaultConfig) {
     const joinPassword = typeof request.body.joinPassword === 'string' ? request.body.joinPassword : null;
     if ((joinOrgId && !joinPassword) || (!joinOrgId && joinPassword)) throw new HttpError(400, 'orgId and joinPassword must be supplied together');
     if (joinOrgId) {
-      enforceJoinAttemptLimit(request.ip, joinOrgId);
+      enforceJoinAttemptLimit(request.ip ?? "unknown", joinOrgId);
       const org = await db.query<{ join_password_salt: Buffer; join_password_verifier: Buffer }>(
         'SELECT join_password_salt, join_password_verifier FROM orgs WHERE id = $1', [joinOrgId]);
       if (!org.rowCount || !org.rows[0].join_password_salt || !org.rows[0].join_password_verifier || !verifyLoginHash(joinPassword!, org.rows[0].join_password_salt, org.rows[0].join_password_verifier)) {
