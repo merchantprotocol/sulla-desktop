@@ -1,5 +1,4 @@
 import express, { type NextFunction, type Response } from 'express';
-import { agentPolicyAllows, type AgentAccessLevel } from '@sulla/vault-crypto';
 
 import {
   authenticate,
