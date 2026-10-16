@@ -1,0 +1,36 @@
+services:
+  sulla_workflow_manager:
+    build:
+      context: .
+      dockerfile: services/sulla-workflows/Dockerfile
+    image: sulla-workflows:local
+    container_name: sulla_workflow_manager
+    # Only the manager needs socket access; runners keep the image's node user.
+    user: root
+    command: ["dist/services/sulla-workflows/src/manager.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SULLA_WORKFLOW_ROLE: manager
+      SULLA_DATABASE_URL: postgresql://sulla:sulla_dev_password@postgres:5432/sulla
+      SULLA_REDIS_URL: redis://redis:6379
+      SULLA_MANAGER_URL: http://sulla_workflow_manager:8788
+      SULLA_TOOL_API_URL: http://host.docker.internal:3000
+      SULLA_API_TOKEN: ${SULLA_API_TOKEN}
+      SULLA_WORKFLOW_IMAGE: sulla-workflows:local
+      SULLA_DOCKER_NETWORK: ${SULLA_DOCKER_NETWORK:-sulla_default}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:30122:8788"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8788/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

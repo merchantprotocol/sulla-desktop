@@ -9,6 +9,7 @@ import { getSchedulerService } from '@pkg/agent/services/SchedulerService';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
 import { getProjectsAutoArchiveService } from '@pkg/agent/services/ProjectsAutoArchiveService';
 import { getWorkflowSchedulerService } from '@pkg/agent/services/WorkflowSchedulerService';
+import { getWorkflowContainerEventBridge } from '@pkg/agent/services/WorkflowContainerEventBridge';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getBackendGraphWebSocketService } from '@pkg/agent/services/BackendGraphWebSocketService';
 import { SullaIntegrations } from './agent/integrations';
@@ -250,6 +251,14 @@ export async function instantiateSullaStart(): Promise<void> {
       console.log('[Background] WorkflowSchedulerService initialized');
     },
     async() => { getWorkflowSchedulerService().shutdown() },
+  );
+
+  lifecycle.register('workflow-container-events', ['database-manager', 'redis'],
+    async() => {
+      await getWorkflowContainerEventBridge().initialize();
+      console.log('[Background] Workflow container event bridge initialized');
+    },
+    async() => { await getWorkflowContainerEventBridge().shutdown() },
   );
 
   lifecycle.register('chat-server', ['database-manager'],

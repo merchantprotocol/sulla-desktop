@@ -1,0 +1,28 @@
+{
+  "name": "@sulla/workflow-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "manager": "node dist/services/sulla-workflows/src/manager.js",
+    "runner": "node dist/services/sulla-workflows/src/runner.js"
+  },
+  "dependencies": {
+    "cron-parser": "4.9.0",
+    "express": "5.2.1",
+    "node-schedule": "2.1.1",
+    "pg": "8.18.0",
+    "redis": "5.9.0",
+    "tar-stream": "3.1.7",
+    "yaml": "2.8.1"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "22.19.15",
+    "@types/node-schedule": "2.1.8",
+    "@types/pg": "8.16.0",
+    "@types/tar-stream": "3.1.4",
+    "typescript": "5.9.3"
+  }
+}
