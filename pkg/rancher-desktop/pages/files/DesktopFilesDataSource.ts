@@ -91,10 +91,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
     return { ...result, data: new Uint8Array(result.data), path: this.files.find(file => file.id === fileId)?.path ?? '' };
   }
 
-  async search(query:string):Promise<FilesItem[]> {
+  search(query:string):Promise<FilesItem[]> {
     const normalized = query.toLocaleLowerCase();
 
-    return this.files.filter(file => !file.deletedAt && file.path.toLocaleLowerCase().includes(normalized));
+    return Promise.resolve(this.files.filter(file => !file.deletedAt && file.path.toLocaleLowerCase().includes(normalized)));
   }
 
   setPaused(paused:boolean):Promise<FilesSnapshot['status']> { return ipcRenderer.invoke('files-ui:set-paused', paused) }

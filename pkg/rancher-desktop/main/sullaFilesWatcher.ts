@@ -56,11 +56,13 @@ class SullaFilesWatcher {
 
     return `${ header }.${ payload }.${ crypto.createHmac('sha256', key).update(`${ header }.${ payload }`).digest('base64url') }`;
   }
+
   async requestFiles(endpoint:string, init:RequestInit = {}, server = false):Promise<Response> {
     const base = server && process.env.SULLA_FILES_SERVER_URL ? process.env.SULLA_FILES_SERVER_URL : API; const token = await this.capabilityToken();
 
     return fetch(new URL(endpoint, base), { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, signal: AbortSignal.timeout(30_000) });
   }
+
   async notifyRescan():Promise<void> { try { const response = await this.request('/v1/local/rescan', { method: 'POST' }); if (!response.ok) throw new Error(`HTTP ${ response.status }`); } catch (error) { console.debug('[SullaFiles] optional container is offline; folder remains local-only:', error) } }
   async status():Promise<SullaFilesStatus> {
     try {
@@ -74,6 +76,7 @@ class SullaFilesWatcher {
       return { state: 'error', pendingFiles: 0, lastError: 'Files container is off; files remain safely in ~/sulla/Files', serverConfigured: false, location: 'local' };
     }
   }
+
   async setPaused(paused:boolean):Promise<SullaFilesStatus> { const response = await this.request('/v1/local/pause', { method: 'POST', body: JSON.stringify({ paused }) }); if (!response.ok) throw new Error(`Files pause failed (${ response.status })`); return await response.json() as SullaFilesStatus }
   async openFolder():Promise<void> { const error = await shell.openPath(this.folder); if (error) throw new Error(error); }
 }
