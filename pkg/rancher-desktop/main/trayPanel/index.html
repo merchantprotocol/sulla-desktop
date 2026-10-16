@@ -46,6 +46,9 @@
           <button class="sidebar-btn" data-panel="extensions" title="Extensions">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>
           </button>
+          <button class="sidebar-btn" data-panel="files" title="Files">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"/><path d="M8 13h8M12 10v6"/></svg>
+          </button>
           <div class="sidebar-spacer"></div>
           <button class="sidebar-btn sidebar-bottom" data-panel="settings" title="Settings">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -118,7 +121,29 @@
             </div>
           </div>
 
-          <!-- ═══ Settings panel ═══════════════════════════════ -->
+          <!-- ═══ Files panel ═══════════════════════════════ -->
+          <div id="panel-files" class="panel files-panel">
+            <div class="files-sync-head">
+              <span id="files-sync-dot" class="dot off"></span>
+              <div class="files-sync-copy"><b id="files-sync-title">Sulla Files</b><small id="files-sync-detail">Checking sync…</small></div>
+              <button id="files-preferences" class="files-icon-btn" title="Files preferences">⚙</button>
+            </div>
+            <div class="files-progress"><i id="files-progress-bar"></i></div>
+            <div class="files-section-title">Capture <span>⇧⌘5</span></div>
+            <div class="files-capture-grid">
+              <div class="files-capture-card"><b>Screenshot</b><small>Save to Screenshots</small><div class="files-choice-row"><button data-shot="area">Area</button><button data-shot="window">Window</button><button data-shot="full">Full</button></div></div>
+              <div class="files-capture-card"><button id="files-record" class="files-record-main"><span class="files-record-dot"></span><b>Record screen</b></button><small id="files-record-state">Capture Studio recorder</small><div class="files-choice-row"><button id="files-mic" class="on">Mic</button><button id="files-cam">Cam</button></div></div>
+            </div>
+            <div class="files-upload-row"><button id="files-upload"><b>Upload &amp; copy link</b><small>⇧⌘U</small></button><select id="files-upload-mode" aria-label="Visitor permission"><option value="view">View</option><option value="download">Download</option></select></div>
+            <div class="files-section-title">Recent files <button id="files-all-files">All files</button></div>
+            <div id="files-recent" class="files-list"><div class="files-empty">Loading recent files…</div></div>
+            <div class="files-section-title">Recent shares <button id="files-all-shares">All shares</button></div>
+            <div id="files-shares" class="files-list"><div class="files-empty">Loading recent shares…</div></div>
+            <div class="files-footer"><button id="files-pause-hour">Pause sync 1h</button><button id="files-open-folder">Open Files folder</button><button id="files-open-sulla">Open Sulla <span>⌘⇧S</span></button></div>
+            <div id="files-toast" class="files-toast" role="status"></div>
+          </div>
+
+          <!-- ═══ Settings panel ══════════════════════════════ -->
           <div id="panel-settings" class="panel">
             <div class="header">
               <span class="title">Settings</span>

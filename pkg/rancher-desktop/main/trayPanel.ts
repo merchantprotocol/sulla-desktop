@@ -369,10 +369,15 @@ function registerPanelIpc(): void {
 
   ipcMain.handle('tray-panel:capture-screenshot', async(_event, mode:ScreenshotMode) => {
     panelWindow?.hide();
-    const capture = await getSullaFilesCaptureService().screenshot(mode);
+    try {
+      const capture = await getSullaFilesCaptureService().screenshot(mode);
 
-    showCaptureResult(capture);
-    return capture;
+      showCaptureResult(capture);
+      return capture;
+    } catch (error) {
+      panelWindow?.show();
+      throw error;
+    }
   });
   ipcMain.handle('tray-panel:capture-record', async(_event, input:{ mic:boolean; camera:boolean }) => {
     panelWindow?.hide();

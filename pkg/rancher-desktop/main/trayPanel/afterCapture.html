@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sulla Files — Capture</title><link rel="stylesheet" href="afterCapture.css"></head>
+<body>
+  <main class="card">
+    <header><div id="preview" class="preview">▣</div><div class="name"><b id="capture-name">Capture saved</b><small id="capture-path">Screenshots</small></div><button id="close" title="Close">×</button></header>
+    <section class="choices">
+      <button id="share" class="choice selected"><span class="icon">↗</span><span><b>Share online · copy link</b><small id="share-detail">Anyone with the link can view</small></span><kbd>Enter</kbd></button>
+      <button id="save" class="choice"><span class="icon">↓</span><span><b>Save to Files only</b><small>Keep this capture private</small></span><kbd>Esc</kbd></button>
+    </section>
+    <label class="keep"><span><b>Keep available when my computer is off</b><small>Upload an encrypted copy for reliable playback</small></span><input id="keep" type="checkbox" checked><i></i></label>
+    <footer><button id="markup">Mark up</button><button id="preferences">Settings</button><span id="countdown">Sharing in 4 s</span></footer>
+    <div id="message" class="message"></div>
+  </main>
+  <script src="afterCapture.js"></script>
+</body></html>

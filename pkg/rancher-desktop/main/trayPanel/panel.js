@@ -85,20 +85,23 @@ document.getElementById('login-open-main').addEventListener('click', () => {
 const sidebarBtns = document.querySelectorAll('.sidebar-btn[data-panel]');
 const panels = document.querySelectorAll('.panel');
 
-sidebarBtns.forEach(btn => {
-  btn.addEventListener('click', () => {
-    const target = btn.getAttribute('data-panel');
-
-    // Update sidebar active state
+function selectPanel(target) {
     sidebarBtns.forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
+    document.querySelector(`.sidebar-btn[data-panel="${ target }"]`)?.classList.add('active');
 
     // Show target panel
     panels.forEach(p => p.classList.remove('active'));
     const panel = document.getElementById(`panel-${ target }`);
     if (panel) panel.classList.add('active');
-  });
+    ipcRenderer.send('tray-panel:view-change', target);
+    if (target === 'files') void refreshFilesDashboard();
+}
+
+sidebarBtns.forEach(btn => {
+  btn.addEventListener('click', () => selectPanel(btn.getAttribute('data-panel')));
 });
+
+ipcRenderer.on('tray-panel:select-view', (_event, target) => selectPanel(target));
 
 // ── Audio driver renderer layer ─────────────────────────────────────────
 // Sets up window.audioDriver IPC bridge, then loads the full renderer
@@ -254,4 +257,118 @@ ipcRenderer.on('tray-panel:state-update', (_event, state) => {
     document.getElementById('k8s-status').textContent += ` (${ state.k8sContext })`;
   }
 
+});
+
+// ── Sulla Files view ───────────────────────────────────────────
+let filesRecording = false;
+let filesMic = true;
+let filesCam = false;
+let filesToastTimer;
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(Number(bytes)) || Number(bytes) <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(Math.floor(Math.log(Number(bytes)) / Math.log(1024)), units.length - 1);
+
+  return `${ (Number(bytes) / (1024 ** index)).toFixed(index > 1 ? 1 : 0) } ${ units[index] }`;
+}
+
+function relativeTime(value) {
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1_000));
+  if (seconds < 60) return 'just now';
+  if (seconds < 3_600) return `${ Math.floor(seconds / 60) }m ago`;
+  if (seconds < 86_400) return `${ Math.floor(seconds / 3_600) }h ago`;
+
+  return `${ Math.floor(seconds / 86_400) }d ago`;
+}
+
+function escapeText(value) {
+  const node = document.createElement('span'); node.textContent = String(value ?? '');
+
+  return node.innerHTML;
+}
+
+function showFilesToast(message) {
+  const toast = document.getElementById('files-toast');
+  toast.textContent = message; toast.classList.add('on'); clearTimeout(filesToastTimer);
+  filesToastTimer = setTimeout(() => toast.classList.remove('on'), 3_500);
+}
+
+function renderRecentFiles(files) {
+  const list = document.getElementById('files-recent');
+  if (!files.length) { list.innerHTML = '<div class="files-empty">No recent files yet</div>'; return }
+  list.innerHTML = files.slice(0, 4).map(file => `
+    <div class="files-item ${ file.conflict ? 'files-conflict' : '' }">
+      <span class="files-item-icon">${ file.conflict ? '!' : file.mime?.startsWith('video/') ? '▶' : file.mime?.startsWith('image/') ? '▣' : '☰' }</span>
+      <div class="files-item-copy"><b>${ escapeText(file.path.split('/').pop()) }</b><small>${ file.conflict ? 'Edited on two desktops · pick a version' : `${ relativeTime(file.updatedAt) } · ${ formatBytes(file.size) }` }</small></div>
+      <button class="files-item-action" data-${ file.conflict ? 'resolve' : 'open' }="${ encodeURIComponent(file.path) }">${ file.conflict ? 'Resolve' : 'Open' }</button>
+    </div>`).join('');
+}
+
+function renderRecentShares(shares, unavailable) {
+  const list = document.getElementById('files-shares');
+  if (unavailable) { list.innerHTML = '<div class="files-empty">Sharing comes online when links ship</div>'; return }
+  if (!shares.length) { list.innerHTML = '<div class="files-empty">No shared links yet</div>'; return }
+  list.innerHTML = shares.slice(0, 3).map(share => {
+    const expiry = share.expiresAt ? `expires ${ relativeTime(share.expiresAt).replace(' ago', '') }` : 'no expiry';
+    const mode = share.password ? 'password' : share.mode;
+
+    return `<div class="files-item"><span class="files-item-icon">↗</span><div class="files-item-copy"><b>${ escapeText(share.name) }</b><small>${ escapeText(mode) } · ${ escapeText(expiry) } · ${ Number(share.viewCount) || 0 } views</small></div><button class="files-item-action" data-copy="${ encodeURIComponent(share.url) }">Copy</button></div>`;
+  }).join('');
+}
+
+function updateFilesSync(status) {
+  const state = status.state || 'error';
+  document.getElementById('files-sync-dot').className = `dot ${ state === 'synced' ? 'running' : state === 'syncing' ? 'starting' : state === 'paused' ? 'off' : 'error' }`;
+  document.getElementById('files-sync-title').textContent = state === 'synced' ? 'Everything is synced' : state === 'paused' ? 'Sync paused' : state === 'conflict' ? 'Sync needs attention' : state === 'syncing' ? `Syncing ${ status.pendingFiles } file${ status.pendingFiles === 1 ? '' : 's' }` : 'Files are local-only';
+  const total = Number(status.totalBytes) || 0; const done = Number(status.processedBytes) || 0;
+  document.getElementById('files-sync-detail').textContent = state === 'syncing' && total ? `${ formatBytes(done) } of ${ formatBytes(total) } · about ${ Math.max(1, Math.round(status.estimatedSeconds || 0)) } s left` : status.lastError || (status.serverLabel ? `Available on ${ status.serverLabel }` : 'Available on this computer');
+  document.getElementById('files-progress-bar').style.width = total ? `${ Math.min(100, Math.round(done / total * 100)) }%` : state === 'synced' ? '100%' : '0%';
+}
+
+async function refreshFilesDashboard() {
+  try {
+    const dashboard = await ipcRenderer.invoke('tray-panel:files-dashboard');
+    updateFilesSync(dashboard.status); renderRecentFiles(dashboard.files || []); renderRecentShares(dashboard.shares || [], dashboard.sharingUnavailable);
+    filesMic = dashboard.preferences.recordMic !== false; filesCam = dashboard.preferences.recordCamera === true;
+    document.getElementById('files-mic').classList.toggle('on', filesMic); document.getElementById('files-cam').classList.toggle('on', filesCam);
+  } catch (error) { showFilesToast(error.message || 'Files are temporarily unavailable') }
+}
+
+document.querySelectorAll('[data-shot]').forEach(button => button.addEventListener('click', async() => {
+  try { await ipcRenderer.invoke('tray-panel:capture-screenshot', button.dataset.shot) } catch (error) { if (!error.cancelled) showFilesToast(error.message || 'Screenshot failed') }
+}));
+document.getElementById('files-record').addEventListener('click', async() => {
+  try {
+    const result = await ipcRenderer.invoke('tray-panel:capture-record', { mic: filesMic, camera: filesCam }); filesRecording = result.recording;
+    document.getElementById('files-record-state').textContent = filesRecording ? 'Recording · click again to stop' : result.error || 'Capture Studio recorder';
+    document.getElementById('files-record').classList.toggle('on', filesRecording);
+  } catch (error) { showFilesToast(error.message || 'Recording failed') }
+});
+for (const [id, key] of [['files-mic', 'record-mic'], ['files-cam', 'record-cam']]) document.getElementById(id).addEventListener('click', () => {
+  if (id === 'files-mic') filesMic = !filesMic; else filesCam = !filesCam;
+  document.getElementById(id).classList.toggle('on', id === 'files-mic' ? filesMic : filesCam);
+  ipcRenderer.send('tray-panel:set-capture-toggle', key, id === 'files-mic' ? filesMic : filesCam);
+});
+
+async function uploadAndShare() {
+  try {
+    const capture = await ipcRenderer.invoke('tray-panel:capture-upload'); if (!capture) return;
+    const result = await ipcRenderer.invoke('tray-panel:share-capture', capture, { mode: document.getElementById('files-upload-mode').value, keepAvailable: false });
+    showFilesToast(result.message); void refreshFilesDashboard();
+  } catch (error) { showFilesToast(error.message || 'Upload failed') }
+}
+document.getElementById('files-upload').addEventListener('click', uploadAndShare);
+ipcRenderer.on('tray-panel:shortcut-upload', uploadAndShare);
+document.getElementById('files-pause-hour').addEventListener('click', async() => { await ipcRenderer.invoke('tray-panel:files-pause-hour'); showFilesToast('Sync paused for 1 hour'); void refreshFilesDashboard() });
+document.getElementById('files-open-folder').addEventListener('click', () => ipcRenderer.send('tray-panel:files-open'));
+document.getElementById('files-open-sulla').addEventListener('click', () => ipcRenderer.send('tray-panel:open-main'));
+document.getElementById('files-preferences').addEventListener('click', () => ipcRenderer.send('tray-panel:files-preferences', 'capture'));
+document.getElementById('files-all-files').addEventListener('click', () => ipcRenderer.send('tray-panel:open-files-screen'));
+document.getElementById('files-all-shares').addEventListener('click', () => ipcRenderer.send('tray-panel:open-files-screen', 'shared-by-me'));
+document.getElementById('panel-files').addEventListener('click', event => {
+  const button = event.target.closest('[data-open],[data-resolve],[data-copy]'); if (!button) return;
+  if (button.dataset.copy) { const url = decodeURIComponent(button.dataset.copy); ipcRenderer.invoke('tray-panel:copy-share', url); showFilesToast('Link copied') }
+  else if (button.dataset.resolve) ipcRenderer.send('tray-panel:resolve-file', decodeURIComponent(button.dataset.resolve));
+  else ipcRenderer.send('tray-panel:open-file', decodeURIComponent(button.dataset.open));
 });
