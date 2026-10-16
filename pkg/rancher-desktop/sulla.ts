@@ -128,7 +128,7 @@ export async function initiateWindowContext(): Promise<void> {
  * Post-unlock vault housekeeping: encrypt any legacy plaintext rows and make
  * sure automatic encrypted backups are running. Idempotent and never throws.
  */
-async function onVaultUnlocked(): Promise<void> {
+async function onVaultUnlocked(masterPassword?: string): Promise<void> {
   try {
     const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
 
@@ -137,6 +137,10 @@ async function onVaultUnlocked(): Promise<void> {
     const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
 
     await IntegrationValueModel.migrateToEncrypted();
+    if (masterPassword) {
+      const { importLegacyVault } = await import('@pkg/agent/services/VaultImportService');
+      await importLegacyVault(masterPassword);
+    }
     getVaultBackupService().start(cb => getIntegrationService().onValueChange(() => cb()));
   } catch (err) {
     console.error('[Vault] Post-unlock housekeeping failed:', err);
@@ -733,7 +737,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const result = await vaultKey.setupFromMasterPassword(data.masterPassword);
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
     setUserLoggedIn(true);
-    await onVaultUnlocked();
+    await onVaultUnlocked(data.masterPassword);
     return { recoveryKey: result.recoveryKey };
   });
 
@@ -751,7 +755,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     if (success) {
       const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
       setUserLoggedIn(true);
-      await onVaultUnlocked();
+      await onVaultUnlocked(data.password);
     }
     return success;
   });
