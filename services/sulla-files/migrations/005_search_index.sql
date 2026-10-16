@@ -38,7 +38,7 @@ BEGIN
   CREATE EXTENSION IF NOT EXISTS vector;
   EXECUTE 'CREATE TABLE IF NOT EXISTS file_search_vectors (
     chunk_id UUID PRIMARY KEY REFERENCES file_search_chunks(id) ON DELETE CASCADE,
-    embedding vector(256) NOT NULL
+    embedding vector(512) NOT NULL
   )';
   EXECUTE 'CREATE INDEX IF NOT EXISTS idx_file_search_vectors_hnsw ON file_search_vectors USING hnsw (embedding vector_cosine_ops)';
 EXCEPTION WHEN OTHERS THEN

@@ -23,7 +23,7 @@ export class IndexingQueue {
 
   constructor(private readonly db:pg.Pool, private readonly source:(file:any) => Promise<{ path: string; cleanup?: () => Promise<void> }>, model:PotionEmbedder | string) {
     this.embedder = typeof model === 'string' ? PotionEmbedder.load(model) : model;
-    if (this.embedder.dim !== 256) throw new Error(`Expected 256-dimensional Potion model, got ${ this.embedder.dim }`);
+    if (this.embedder.dim !== 512) throw new Error(`Expected 512-dimensional Potion model, got ${ this.embedder.dim }`);
   }
 
   async start():Promise<void> {
