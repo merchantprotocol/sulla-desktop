@@ -1,15 +1,17 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sulla Files — Capture</title><link rel="stylesheet" href="afterCapture.css"></head>
 <body>
-  <main class="card">
-    <header><div id="preview" class="preview">▣</div><div class="name"><b id="capture-name">Capture saved</b><small id="capture-path">Screenshots</small></div><button id="close" title="Close">×</button></header>
-    <section class="choices">
-      <button id="share" class="choice selected"><span class="icon">↗</span><span><b>Share online · copy link</b><small id="share-detail">Anyone with the link can view</small></span><kbd>Enter</kbd></button>
-      <button id="save" class="choice"><span class="icon">↓</span><span><b>Save to Files only</b><small>Keep this capture private</small></span><kbd>Esc</kbd></button>
-    </section>
-    <label class="keep"><span><b>Keep available when my computer is off</b><small>Upload an encrypted copy for reliable playback</small></span><input id="keep" type="checkbox" checked><i></i></label>
-    <footer><button id="markup">Mark up</button><button id="preferences">Settings</button><span id="countdown">Sharing in 4 s</span></footer>
-    <div id="message" class="message"></div>
-  </main>
+  <!-- Ported from mockups/files/04-tray.html (.postcap + .toast) -->
+  <div id="postcap" class="postcap">
+    <div class="pt"><span id="preview" class="th"></span><div class="n"><b id="capture-title">Screenshot captured</b><small id="capture-detail">Saving to Files…</small></div><button id="close" class="btn ico" title="Dismiss"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="choices">
+      <button id="share" class="choice"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/></svg></span><div class="n"><b>Share online · copy link</b><small id="share-detail">Public link · view only · expires in 30 days</small></div><span class="tag" data-default="share">Default</span><span class="key">⏎</span></button>
+      <button id="save" class="choice"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><div class="n"><b>Save to Files only</b><small>No link · stays on this Mac and syncs as usual</small></div><span class="tag" data-default="save">Default</span><span class="key">esc</span></button>
+    </div>
+    <div class="pkeep"><div class="n"><b>Keep available when my computer is off</b><small>On for captures · temporary copy on Sulla Cloud until the link expires or you revoke it</small></div><span id="keep" class="sw on" role="switch" aria-checked="true"></span></div>
+    <div class="pfoot">Default from <a id="preferences-link" href="#">Preferences › Capture</a><span id="countdown" class="r">auto-shares in 4 s</span></div>
+  </div>
+
+  <div id="toast" class="toast" hidden><span id="toast-preview" class="th"></span><div class="n"><b><span id="toast-icon" class="ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span id="toast-title">Link copied</span></b><small id="toast-detail"></small></div><div class="acts"><button id="markup" class="btn sm">Mark up</button><button id="preferences" class="btn sm ghost">Settings</button></div></div>
   <script src="afterCapture.js"></script>
 </body></html>

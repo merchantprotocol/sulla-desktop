@@ -1,40 +1,44 @@
 const { ipcRenderer } = require('electron');
 
 const state = {};
-const pages = [...document.querySelectorAll('[data-page]')];
 const tabs = [...document.querySelectorAll('[data-tab]')];
+const pages = [...document.querySelectorAll('[data-page]')];
+
+// macOS gets real traffic lights over the drawn bar; elsewhere the native frame is kept.
+document.documentElement.classList.add(process.platform === 'darwin' ? 'native-lights' : 'native-frame');
 
 function selectTab(tab) {
-  tabs.forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
-  pages.forEach(page => page.classList.toggle('active', page.dataset.page === tab));
+  tabs.forEach(link => link.classList.toggle('on', link.dataset.tab === tab));
+  pages.forEach(page => page.classList.toggle('on', page.dataset.page === tab));
 }
 
 function paint(settings) {
   Object.assign(state, settings);
-  document.querySelectorAll('[data-setting]').forEach(control => {
-    const key = control.dataset.setting;
-    if (control.matches('input')) control.checked = Boolean(state[key]);
-    else if (control.matches('select')) control.value = String(state[key]);
-    else control.querySelectorAll('button').forEach(button => button.classList.toggle('active', button.dataset.value === String(state[key])));
+  document.querySelectorAll('[data-setting]').forEach((control) => {
+    const value = state[control.dataset.setting];
+    if (control.classList.contains('sw')) {
+      control.classList.toggle('on', Boolean(value)); control.setAttribute('aria-checked', String(Boolean(value)));
+    } else if (control.matches('select')) control.value = String(value);
+    else control.querySelectorAll('button').forEach(button => button.classList.toggle('on', button.dataset.value === String(value)));
   });
+  document.getElementById('save-location').textContent = `Files › ${ state.screenshotLocation || 'Screenshots' }`;
 }
 
 async function save(key, value) {
-  document.getElementById('saved').textContent = 'Saving…';
+  paint({ [key]: value });
   paint(await ipcRenderer.invoke('tray-panel:files-preferences-set', key, value));
-  document.getElementById('saved').textContent = 'Saved';
-  setTimeout(() => { document.getElementById('saved').textContent = 'Changes save automatically' }, 1200);
 }
 
-tabs.forEach(button => button.addEventListener('click', () => selectTab(button.dataset.tab)));
-document.querySelectorAll('.segments[data-setting]').forEach(group => group.addEventListener('click', event => {
-  const value = event.target.dataset.value;
+tabs.forEach(link => link.addEventListener('click', (event) => { event.preventDefault(); selectTab(link.dataset.tab) }));
+document.querySelectorAll('[data-goto]').forEach(button => button.addEventListener('click', () => selectTab(button.dataset.goto)));
+document.querySelectorAll('.seg[data-setting]').forEach(group => group.addEventListener('click', (event) => {
+  const value = event.target.closest('button')?.dataset.value;
   if (value !== undefined) save(group.dataset.setting, value);
 }));
-document.querySelectorAll('input[data-setting]').forEach(input => input.addEventListener('change', () => save(input.dataset.setting, input.checked)));
+document.querySelectorAll('.sw[data-setting]').forEach(toggle => toggle.addEventListener('click', () => save(toggle.dataset.setting, !toggle.classList.contains('on'))));
 document.querySelectorAll('select[data-setting]').forEach(select => select.addEventListener('change', () => save(select.dataset.setting, Number(select.value))));
-document.getElementById('done').addEventListener('click', () => window.close());
+document.getElementById('open-folder').addEventListener('click', () => ipcRenderer.send('tray-panel:files-open'));
 ipcRenderer.on('files-preferences:select-tab', (_event, tab) => selectTab(tab));
 
-selectTab(new URLSearchParams(location.search).get('tab') || 'capture');
+selectTab(new URLSearchParams(window.location.search).get('tab') || 'capture');
 ipcRenderer.invoke('tray-panel:files-preferences-get').then(paint);

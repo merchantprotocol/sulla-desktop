@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { BrowserWindow, ipcMain, app, clipboard, globalShortcut, shell } from 'electron';
+import { BrowserWindow, ipcMain, app, clipboard, globalShortcut, screen, shell } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import mainEvents from '@pkg/main/mainEvents';
@@ -70,9 +70,12 @@ function openFilesScreen(section?:string, filePath?:string):void {
 
 function showCaptureResult(capture:CaptureResult):void {
   if (afterCaptureWindow && !afterCaptureWindow.isDestroyed()) afterCaptureWindow.destroy();
+  // 360px card from the mockup plus a 12px margin for its shadow, top-right like a capture toast.
+  const workArea = screen.getPrimaryDisplay().workArea;
   afterCaptureWindow = new BrowserWindow({
-    width: 430, height: 455, show: false, frame: false, resizable: false, alwaysOnTop: true,
-    backgroundColor: '#101821', title: 'Sulla Files — Capture',
+    width: 384, height: 307, x: workArea.x + workArea.width - 384 - 8, y: workArea.y + 8,
+    show: false, frame: false, transparent: true, hasShadow: false, resizable: false, alwaysOnTop: true, skipTaskbar: true,
+    title: 'Sulla Files — Capture',
     webPreferences: { contextIsolation: false, nodeIntegration: true },
   });
   afterCaptureWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'afterCapture.html'));
@@ -89,9 +92,12 @@ function openFilesPreferences(tab = 'capture'):void {
     preferencesWindow.webContents.send('files-preferences:select-tab', tab);
     return;
   }
+  // 410px wide like the mockup; on macOS the drawn 38px title bar hosts the real traffic lights.
+  const mac = process.platform === 'darwin';
   preferencesWindow = new BrowserWindow({
-    width: 680, height: 610, minWidth: 620, minHeight: 560, show: false,
-    title: 'Sulla Files — Preferences', backgroundColor: '#101821',
+    width: 410, height: mac ? 574 : 536, resizable: false, maximizable: false, fullscreenable: false, show: false,
+    title: 'Sulla Files — Preferences', backgroundColor: '#fafbfc',
+    ...(mac ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 14, y: 13 } } : {}),
     webPreferences: { contextIsolation: false, nodeIntegration: true },
   });
   preferencesWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'preferences.html'), { query: { tab } });
@@ -117,6 +123,20 @@ function registerCaptureShortcuts():void {
   for (const [accelerator, handler] of registrations) {
     if (!globalShortcut.isRegistered(accelerator) && !globalShortcut.register(accelerator, handler)) console.warn(`[SullaFiles] global shortcut ${ accelerator } is owned by macOS or another app`);
   }
+}
+
+/**
+ * Fit the panel to the active view. Existing views keep the original 400x480;
+ * the Files view sizes to its content. The panel stays centred under the tray.
+ */
+function resizePanelForView(view:string, size?:{ width:number; height:number }):void {
+  if (!panelWindow || panelWindow.isDestroyed()) return;
+  const bounds = panelWindow.getBounds();
+  const workArea = screen.getDisplayMatching(bounds).workArea;
+  const width = view === 'files' && size ? Math.round(size.width) : 400;
+  const height = view === 'files' && size ? Math.min(Math.round(size.height), workArea.y + workArea.height - bounds.y) : 480;
+
+  panelWindow.setBounds({ x: Math.round(bounds.x + (bounds.width - width) / 2), y: bounds.y, width, height }, false);
 }
 
 export function createTrayPanel(): BrowserWindow {
@@ -348,7 +368,7 @@ function registerPanelIpc(): void {
   ipcMain.handle('tray-panel:files-status', () => getSullaFilesWatcher().status());
   ipcMain.handle('tray-panel:files-pause', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
   ipcMain.handle('tray-panel:files-pause-hour', () => getSullaFilesWatcher().pauseFor(60 * 60_000));
-  ipcMain.on('tray-panel:view-change', (_event, view:string) => panelWindow?.setSize(view === 'files' ? 410 : 400, view === 'files' ? 735 : 480, true));
+  ipcMain.on('tray-panel:view-change', (_event, view:string, size?:{ width:number; height:number }) => resizePanelForView(view, size));
   ipcMain.on('tray-panel:files-open', () => { getSullaFilesWatcher().openFolder().catch(error => console.warn('[SullaFiles] open folder failed:', error)); panelWindow?.hide() });
 
   ipcMain.handle('tray-panel:files-dashboard', async() => {
@@ -394,6 +414,9 @@ function registerPanelIpc(): void {
   });
   ipcMain.handle('tray-panel:share-capture', (_event, capture:CaptureResult, options:{ mode:ShareMode; keepAvailable:boolean }) => getSullaFilesCaptureService().share(capture, options));
   ipcMain.on('files-after-capture:close', () => afterCaptureWindow?.close());
+  ipcMain.on('files-after-capture:resize', (_event, height:number) => {
+    if (afterCaptureWindow && !afterCaptureWindow.isDestroyed() && height > 0) afterCaptureWindow.setContentSize(384, Math.min(Math.round(height), 600));
+  });
   ipcMain.handle('tray-panel:copy-share', (_event, url:string) => { clipboard.writeText(url) });
   ipcMain.on('tray-panel:set-capture-toggle', (_event, id:string, value:boolean) => {
     const property = id === 'record-cam' ? preferenceKeys.recordCamera : preferenceKeys.recordMic;

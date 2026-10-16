@@ -6,6 +6,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' app:; script-src 'self' app: 'unsafe-inline' 'unsafe-eval'; img-src 'self' app: data:; style-src 'self' app: 'unsafe-inline'">
     <title>Sulla Panel</title>
     <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="files.css" />
   </head>
   <body>
     <div id="app">
@@ -121,29 +122,33 @@
             </div>
           </div>
 
-          <!-- ═══ Files panel ═══════════════════════════════ -->
-          <div id="panel-files" class="panel files-panel">
-            <div class="files-sync-head">
-              <span id="files-sync-dot" class="dot off"></span>
-              <div class="files-sync-copy"><b id="files-sync-title">Sulla Files</b><small id="files-sync-detail">Checking sync…</small></div>
-              <button id="files-preferences" class="files-icon-btn" title="Files preferences">⚙</button>
+          <!-- ═══ Files panel (ported from mockups/files/04-tray.html) ═══ -->
+          <div id="panel-files" class="panel">
+            <div class="hd"><span id="files-sync-dot" class="st"></span><div class="n"><b id="files-sync-title">Sulla Files</b><small id="files-sync-detail">Checking sync…</small></div><button id="files-pause-toggle" class="btn ico" title="Pause sync"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button><button id="files-preferences" class="btn ico" title="Preferences"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button></div>
+            <div class="prog"><i id="files-progress-bar"></i></div>
+
+            <div class="sec">Capture</div>
+            <div class="caps">
+              <div id="files-cap-shot" class="cap"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></svg></span><div><b>Screenshot</b><small data-capture-note="screenshot">Shares online · link copied</small></div><div class="sub"><span class="on" data-shot="area">Area</span><span data-shot="window">Window</span><span data-shot="full">Full</span></div><span class="key">⇧⌘5</span></div>
+              <div id="files-record" class="cap"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="13" rx="2"/><path d="M8 21h8"/><circle cx="12" cy="11.5" r="2.5" fill="currentColor" stroke="none"/></svg></span><div><b>Record screen</b><small id="files-record-state" data-capture-note="recording">Shares online · transcribed</small></div><div class="tg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6"/></svg> Mic <span id="files-mic" class="sw on"></span></div><div class="tg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></svg> Cam <span id="files-cam" class="sw"></span></div></div>
+              <div id="files-upload" class="cap"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/></svg></span><div><b>Upload &amp; copy link</b><small>Pick a file, get a public link</small></div><div class="sub"><span class="on" data-upload-mode="view">View</span><span data-upload-mode="download">Download</span></div><span class="key">⇧⌘U</span></div>
             </div>
-            <div class="files-progress"><i id="files-progress-bar"></i></div>
-            <div class="files-section-title">Capture <span>⇧⌘5</span></div>
-            <div class="files-capture-grid">
-              <div class="files-capture-card"><b>Screenshot</b><small>Save to Screenshots</small><div class="files-choice-row"><button data-shot="area">Area</button><button data-shot="window">Window</button><button data-shot="full">Full</button></div></div>
-              <div class="files-capture-card"><button id="files-record" class="files-record-main"><span class="files-record-dot"></span><b>Record screen</b></button><small id="files-record-state">Capture Studio recorder</small><div class="files-choice-row"><button id="files-mic" class="on">Mic</button><button id="files-cam">Cam</button></div></div>
+
+            <div class="sec">Recent files <button id="files-all-files" class="r">Open Files</button></div>
+            <div id="files-recent" class="list"><div class="it empty">Loading recent files…</div></div>
+
+            <div class="sec">Recent shares <button id="files-all-shares" class="r">All shares</button></div>
+            <div id="files-shares" class="list"><div class="it empty">Loading recent shares…</div></div>
+
+            <div class="foot">
+              <div class="row"><a id="files-pause-hour"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg> <span id="files-pause-label">Pause sync</span> <span class="key">1h</span></a><a id="files-open-folder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg> Open Files folder</a></div>
+              <div class="sep"></div>
+              <a id="files-open-sulla"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5H5V6h5"/></svg> Open Sulla <span class="key">⌘⇧S</span></a>
             </div>
-            <div class="files-upload-row"><button id="files-upload"><b>Upload &amp; copy link</b><small>⇧⌘U</small></button><select id="files-upload-mode" aria-label="Visitor permission"><option value="view">View</option><option value="download">Download</option></select></div>
-            <div class="files-section-title">Recent files <button id="files-all-files">All files</button></div>
-            <div id="files-recent" class="files-list"><div class="files-empty">Loading recent files…</div></div>
-            <div class="files-section-title">Recent shares <button id="files-all-shares">All shares</button></div>
-            <div id="files-shares" class="files-list"><div class="files-empty">Loading recent shares…</div></div>
-            <div class="files-footer"><button id="files-pause-hour">Pause sync 1h</button><button id="files-open-folder">Open Files folder</button><button id="files-open-sulla">Open Sulla <span>⌘⇧S</span></button></div>
-            <div id="files-toast" class="files-toast" role="status"></div>
+            <div id="files-toast" class="ftoast" role="status"></div>
           </div>
 
-          <!-- ═══ Settings panel ══════════════════════════════ -->
+          <!-- ═══ Settings panel ═══════════════════════════════ -->
           <div id="panel-settings" class="panel">
             <div class="header">
               <span class="title">Settings</span>

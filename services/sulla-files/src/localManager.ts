@@ -79,11 +79,12 @@ export class LocalFilesManager {
   }
 
   async recent(limit:number, exactPath?:string):Promise<any[]> {
-    const result = await this.db.query(`SELECT f.id,f.path,f.mime,f.size,f.updated_at,(f.path ILIKE '%conflicted copy%') AS conflict
+    const result = await this.db.query(`SELECT f.id,f.path,f.mime,f.size,f.updated_at,(f.path ILIKE '%conflicted copy%') AS conflict,m.duration_seconds
       FROM files f JOIN collection_acl a ON a.collection_id=f.collection_id AND a.principal_type='user' AND a.principal_id=$1
+      LEFT JOIN recording_metadata m ON m.file_id=f.id
       WHERE f.deleted_at IS NULL AND ($2::text IS NULL OR f.path=$2) ORDER BY f.updated_at DESC LIMIT $3`, [this.config.userId, exactPath ?? null, Math.max(1, Math.min(Number.isFinite(limit) ? limit : 4, 100))]);
     const syncState = this.status().state;
-    return result.rows.map(row => ({ id: row.id, path: row.path, mime: row.mime, size: Number(row.size), updatedAt: row.updated_at, conflict: row.conflict, syncState: syncState === 'error' ? 'error' : syncState === 'syncing' ? 'syncing' : 'synced' }));
+    return result.rows.map(row => ({ id: row.id, path: row.path, mime: row.mime, size: Number(row.size), updatedAt: row.updated_at, conflict: row.conflict, durationSeconds: row.duration_seconds == null ? undefined : Number(row.duration_seconds), syncState: syncState === 'error' ? 'error' : syncState === 'syncing' ? 'syncing' : 'synced' }));
   }
 
   async setPaused(paused:boolean):Promise<RuntimeState> {

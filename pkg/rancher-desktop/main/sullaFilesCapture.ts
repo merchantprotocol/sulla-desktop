@@ -146,7 +146,7 @@ let markupWindow:BrowserWindow | undefined;
 export function openScreenshotMarkup(filePath:string):void {
   if (markupWindow && !markupWindow.isDestroyed()) markupWindow.destroy();
   markupWindow = new BrowserWindow({
-    width: 1100, height: 760, title: 'Mark up screenshot', backgroundColor: '#141b24',
+    width: 1100, height: 760, title: 'Mark up screenshot', backgroundColor: '#f4f7fb',
     webPreferences: { contextIsolation: false, nodeIntegration: true },
   });
   markupWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'markup.html'), { query: { file: filePath } });

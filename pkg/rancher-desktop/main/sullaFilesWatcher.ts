@@ -31,6 +31,7 @@ export interface SullaFilesStatus {
 
 export interface RecentSullaFile {
   id: string; path: string; mime: string; size: number; updatedAt: string; conflict: boolean;
+  durationSeconds?: number;
   syncState: 'synced' | 'syncing' | 'error';
 }
 

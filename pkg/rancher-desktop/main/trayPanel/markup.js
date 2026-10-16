@@ -3,8 +3,8 @@ const { pathToFileURL } = require('node:url');
 
 const canvas = document.getElementById('canvas');
 const context = canvas.getContext('2d');
-const file = new URLSearchParams(location.search).get('file');
-const image = new Image();
+const file = new URLSearchParams(window.location.search).get('file');
+const image = new window.Image();
 let tool = 'arrow';
 let start = null;
 let snapshot = null;
@@ -23,7 +23,7 @@ function drawArrow(from, to) {
 }
 
 function draw(toolName, from, to, commit) {
-  context.putImageData(snapshot, 0, 0); context.strokeStyle = '#e1534d'; context.fillStyle = '#e1534d'; context.lineWidth = Math.max(3, canvas.width / 450); context.lineCap = 'round'; context.lineJoin = 'round';
+  context.putImageData(snapshot, 0, 0); context.strokeStyle = '#d9403a'; context.fillStyle = '#d9403a'; context.lineWidth = Math.max(3, canvas.width / 450); context.lineCap = 'round'; context.lineJoin = 'round';
   if (toolName === 'arrow') drawArrow(from, to);
   if (toolName === 'box') context.strokeRect(from.x, from.y, to.x - from.x, to.y - from.y);
   if (toolName === 'blur' && commit) {
@@ -36,14 +36,14 @@ canvas.addEventListener('pointerdown', event => {
   const current = point(event);
   if (tool === 'text') {
     const value = window.prompt('Text to add');
-    if (value) { context.fillStyle = '#e1534d'; context.font = `600 ${ Math.max(20, canvas.width / 32) }px -apple-system`; context.fillText(value, current.x, current.y) }
+    if (value) { context.fillStyle = '#d9403a'; context.font = `600 ${ Math.max(20, canvas.width / 32) }px -apple-system`; context.fillText(value, current.x, current.y) }
     return;
   }
   start = current; snapshot = context.getImageData(0, 0, canvas.width, canvas.height); canvas.setPointerCapture(event.pointerId);
 });
-canvas.addEventListener('pointermove', event => { if (start) draw(tool, start, point(event), false) });
+canvas.addEventListener('pointermove', event => { if (start) draw(tool, start, point(event), false); });
 canvas.addEventListener('pointerup', event => { if (start) draw(tool, start, point(event), true); start = null; snapshot = null });
-document.querySelectorAll('[data-tool]').forEach(button => button.addEventListener('click', () => { tool = button.dataset.tool; document.querySelectorAll('[data-tool]').forEach(item => item.classList.toggle('active', item === button)) }));
+document.querySelectorAll('[data-tool]').forEach(button => button.addEventListener('click', () => { tool = button.dataset.tool; document.querySelectorAll('[data-tool]').forEach(item => item.classList.toggle('on', item === button)) }));
 document.getElementById('cancel').addEventListener('click', () => window.close());
 document.getElementById('save').addEventListener('click', () => {
   const encoded = canvas.toDataURL('image/png').split(',')[1]; fs.writeFileSync(file, Buffer.from(encoded, 'base64')); document.getElementById('status').textContent = 'Saved to Sulla Files'; setTimeout(() => window.close(), 450);

@@ -1,40 +1,106 @@
 const { ipcRenderer } = require('electron');
 
 let capture;
-let preferences;
+let preferences = {};
 let seconds = 4;
 let timer;
+let closeTimer;
 let working = false;
+let done = false;
 
-function close() { clearInterval(timer); ipcRenderer.send('files-after-capture:close') }
-function showMessage(message, success = false) {
-  const node = document.getElementById('message'); node.textContent = message; node.className = `message on${ success ? ' success' : '' }`;
+const $ = id => document.getElementById(id);
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(Number(bytes)) || Number(bytes) <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(Math.floor(Math.log(Number(bytes)) / Math.log(1024)), units.length - 1);
+
+  return `${ (Number(bytes) / (1024 ** index)).toFixed(index > 1 ? 1 : 0) } ${ units[index] }`;
 }
+
+// Fit the transparent window to whichever card is showing.
+function fitWindow() {
+  window.requestAnimationFrame(() => ipcRenderer.send('files-after-capture:resize', Math.ceil(document.body.scrollHeight)));
+}
+
+function close() { clearInterval(timer); clearTimeout(closeTimer); ipcRenderer.send('files-after-capture:close') }
+
+function paintPreview(node) {
+  node.className = 'th'; node.innerHTML = '';
+  if (capture.kind === 'recording') { node.classList.add('dark'); return }
+  if (!/\.(png|jpe?g|gif|webp)$/i.test(capture.name)) return;
+  const image = new window.Image();
+  image.onload = () => { node.classList.add('img'); node.appendChild(image) };
+  image.src = `file://${ encodeURI(capture.path) }`;
+}
+
+function showToast(title, detail, success) {
+  $('postcap').hidden = true; $('toast').hidden = false;
+  $('toast-title').textContent = title; $('toast-detail').textContent = detail;
+  $('toast-icon').classList.toggle('warn', !success);
+  $('markup').hidden = capture.kind !== 'screenshot';
+  paintPreview($('toast-preview')); fitWindow();
+  scheduleClose(8_000);
+}
+
+function scheduleClose(ms) { clearTimeout(closeTimer); closeTimer = setTimeout(close, ms) }
+
 async function share() {
-  if (!capture || working) return; working = true; clearInterval(timer); document.getElementById('countdown').textContent = 'Creating link…';
+  if (!capture || working || done) return;
+  working = true; clearInterval(timer); $('countdown').classList.remove('err'); $('countdown').textContent = 'creating link…';
   try {
-    const result = await ipcRenderer.invoke('tray-panel:share-capture', capture, { mode: preferences.visitorMode || 'view', keepAvailable: document.getElementById('keep').checked });
-    showMessage(result.message, Boolean(result.url)); document.getElementById('countdown').textContent = result.url ? 'Link copied' : 'Saved to Files';
-  } catch (error) { showMessage(error.message || 'Sharing failed'); document.getElementById('countdown').textContent = 'Saved to Files' }
-  finally { working = false }
+    const result = await ipcRenderer.invoke('tray-panel:share-capture', capture, { mode: preferences.visitorMode || 'view', keepAvailable: $('keep').classList.contains('on') });
+    done = true;
+    if (result.url) showToast('Link copied', result.url.replace(/^https?:\/\//, ''), true);
+    else showToast('Saved to Files', result.message, false);
+  } catch (error) {
+    $('countdown').classList.add('err'); $('countdown').textContent = error.message || 'Sharing failed. The capture is saved in Files.'; fitWindow();
+  } finally { working = false }
 }
-function beginCountdown() {
-  clearInterval(timer); seconds = 4; document.getElementById('countdown').textContent = 'Sharing in 4 s';
-  timer = setInterval(() => { seconds -= 1; document.getElementById('countdown').textContent = `Sharing in ${ seconds } s`; if (seconds <= 0) share() }, 1_000);
+
+function beginCountdown(action) {
+  clearInterval(timer); seconds = 4;
+  const label = () => (action === 'save' ? `closes in ${ seconds } s` : `auto-shares in ${ seconds } s`);
+  $('countdown').textContent = label();
+  timer = setInterval(() => {
+    seconds -= 1;
+    if (seconds > 0) { $('countdown').textContent = label(); return }
+    clearInterval(timer);
+    if (action === 'save') close(); else share();
+  }, 1_000);
 }
+
+function stopCountdown() { if (!working && !done) { clearInterval(timer); $('countdown').textContent = '' } }
 
 ipcRenderer.on('files-after-capture:show', async(_event, value) => {
-  capture = value; preferences = await ipcRenderer.invoke('tray-panel:files-preferences-get');
-  document.getElementById('capture-name').textContent = capture.name; document.getElementById('capture-path').textContent = capture.relativePath;
-  document.getElementById('keep').checked = preferences.keepCapturesAvailable !== false;
-  document.getElementById('share-detail').textContent = `Visitors can ${ preferences.visitorMode === 'download' ? 'download' : 'view' } · expires in ${ preferences.expiryDays || 30 } days`;
-  if (preferences.defaultAction === 'save') { document.getElementById('share').classList.remove('selected'); document.getElementById('save').classList.add('selected'); document.getElementById('countdown').textContent = 'Saved to Files' }
-  else if (preferences.defaultAction === 'ask') document.getElementById('countdown').textContent = 'Choose an action';
-  else beginCountdown();
+  capture = value; done = false;
+  try { preferences = await ipcRenderer.invoke('tray-panel:files-preferences-get') } catch { preferences = {} }
+  const folders = String(capture.relativePath || '').split('/').slice(0, -1);
+  $('capture-title').textContent = capture.kind === 'recording' ? 'Recording captured' : capture.kind === 'upload' ? 'File added to Files' : 'Screenshot captured';
+  $('capture-detail').textContent = [capture.name, formatBytes(capture.size), ['Files', ...folders].join(' › ')].join(' · ');
+  paintPreview($('preview'));
+  const expiryDays = Number(preferences.expiryDays ?? 30);
+  $('share-detail').textContent = ['Public link', preferences.visitorMode === 'download' ? 'download' : 'view only', expiryDays > 0 ? `expires in ${ expiryDays } days` : 'never expires'].join(' · ');
+  $('keep').classList.toggle('on', preferences.keepCapturesAvailable !== false);
+  const action = preferences.defaultAction === 'save' || preferences.defaultAction === 'ask' ? preferences.defaultAction : 'share';
+  $('share').classList.toggle('on', action === 'share'); $('share').classList.toggle('default', action === 'share');
+  $('save').classList.toggle('on', action === 'save'); $('save').classList.toggle('default', action === 'save');
+  if (action === 'ask') $('countdown').textContent = 'choose an action';
+  else beginCountdown(action);
+  fitWindow();
 });
-document.getElementById('share').addEventListener('click', share);
-document.getElementById('save').addEventListener('click', close);
-document.getElementById('close').addEventListener('click', close);
-document.getElementById('markup').addEventListener('click', () => { if (capture?.kind === 'screenshot') ipcRenderer.send('tray-panel:markup', capture.path) });
-document.getElementById('preferences').addEventListener('click', () => ipcRenderer.send('tray-panel:files-preferences', 'capture'));
-document.addEventListener('keydown', event => { if (event.key === 'Enter') share(); else if (event.key === 'Escape') close() });
+
+$('share').addEventListener('click', share);
+$('save').addEventListener('click', close);
+$('close').addEventListener('click', close);
+$('keep').addEventListener('click', () => { $('keep').classList.toggle('on'); $('keep').setAttribute('aria-checked', String($('keep').classList.contains('on'))); stopCountdown() });
+$('markup').addEventListener('click', () => { if (capture?.kind === 'screenshot') ipcRenderer.send('tray-panel:markup', capture.path); close() });
+const openPreferences = (event) => { event.preventDefault(); ipcRenderer.send('tray-panel:files-preferences', 'capture'); stopCountdown() };
+$('preferences').addEventListener('click', openPreferences);
+$('preferences-link').addEventListener('click', openPreferences);
+$('toast').addEventListener('mouseenter', () => clearTimeout(closeTimer));
+$('toast').addEventListener('mouseleave', () => scheduleClose(3_000));
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !$('postcap').hidden) share();
+  else if (event.key === 'Escape') close();
+});
