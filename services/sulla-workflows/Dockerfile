@@ -10,6 +10,7 @@ COPY pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.ts ./pkg/rancher-deskto
 COPY pkg/rancher-desktop/agent/workflow/types.ts ./pkg/rancher-desktop/agent/workflow/types.ts
 COPY pkg/rancher-desktop/pages/editor/workflow/types.ts ./pkg/rancher-desktop/pages/editor/workflow/types.ts
 COPY pkg/rancher-desktop/runtime/containerRuntime.ts ./pkg/rancher-desktop/runtime/containerRuntime.ts
+COPY pkg/rancher-desktop/runtime/capabilityToken.ts ./pkg/rancher-desktop/runtime/capabilityToken.ts
 RUN cd services/sulla-workflows && npm run build && npm prune --omit=dev
 
 FROM node:22-alpine AS runtime

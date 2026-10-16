@@ -1,14 +1,17 @@
-import type { RelayError, RelayToolExecutionContext, RelayToolResult } from './relayProtocol';
+import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
+
+import type { DesktopExecutor, ToolResult } from './desktopExecutor';
+import type { RelayError } from './relayProtocol';
 
 export interface RelayDesktopExecutorOptions {
   relayUrl:     string;
-  deviceId:     string;
+  deviceId?:    string;
   serviceToken: string;
   fetchImpl?:   typeof fetch;
 }
 
-/** Server-side DesktopExecutor transport. It is structurally compatible with the shared contract. */
-export class RelayDesktopExecutor {
+/** Server-side transport for forwarding desktop-local tools through the relay. */
+export class RelayDesktopExecutor implements DesktopExecutor {
   private readonly fetchImpl: typeof fetch;
 
   constructor(private readonly options: RelayDesktopExecutorOptions) {
@@ -16,19 +19,22 @@ export class RelayDesktopExecutor {
   }
 
   async execute(
-    ctx: RelayToolExecutionContext,
+    ctx: ToolExecutionContext,
     category: string,
     tool: string,
     args: unknown,
     opts: { deadlineMs: number },
-  ): Promise<RelayToolResult> {
+  ): Promise<ToolResult> {
     const controller = new AbortController();
     const deadlineMs = Math.max(1, opts.deadlineMs);
     const timer = setTimeout(() => controller.abort(), deadlineMs + 250);
     try {
       const base = this.options.relayUrl.replace(/\/$/, '');
+      const deviceId = ctx.device_id ?? this.options.deviceId;
+
+      if (!deviceId) return { success: false, error: { code: 'desktop_unavailable', message: 'No Desktop device is assigned to this capability' } };
       const response = await this.fetchImpl(
-        `${ base }/v1/devices/${ encodeURIComponent(this.options.deviceId) }/tools/${ encodeURIComponent(category) }/${ encodeURIComponent(tool) }`,
+        `${ base }/v1/devices/${ encodeURIComponent(deviceId) }/tools/${ encodeURIComponent(category) }/${ encodeURIComponent(tool) }`,
         {
           method:  'POST',
           headers: {
@@ -39,7 +45,7 @@ export class RelayDesktopExecutor {
           signal: controller.signal,
         },
       );
-      const body = await response.json() as { result?: RelayToolResult; error?: RelayError };
+      const body = await response.json() as { result?: ToolResult; error?: RelayError };
       if (!response.ok || body.error) {
         const error = body.error ?? { code: 'INTERNAL' as const, message: `Relay returned HTTP ${ response.status }` };
         return {

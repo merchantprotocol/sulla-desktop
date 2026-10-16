@@ -9,29 +9,9 @@ import {
   type VaultItemPlaintext,
 } from '../../../packages/vault-crypto/src/index';
 
-/** Structural copy of contract 1 while worker A owns the canonical file. */
-export interface CapabilityClaims {
-  v:                      1;
-  iss:                    string;
-  aud:                    'sulla-tools';
-  sub:                    string;
-  org_id?:                string;
-  agent_id?:              string;
-  pod_id?:                string;
-  thread_id?:             string;
-  job_id?:                string;
-  workflow_execution_id?: string;
-  device_id?:             string;
-  scopes:                 string[];
-  iat:                    number;
-  exp:                    number;
-  jti:                    string;
-}
+import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
-export interface ToolExecutionContext {
-  claims:     CapabilityClaims;
-  request_id: string;
-}
+export type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
 export interface CredentialReference {
   integrationId?: string;
@@ -118,7 +98,7 @@ export class VaultCredentialBroker implements CredentialBroker {
   ) {}
 
   async useCredential<T>(ctx: ToolExecutionContext, ref: CredentialReference, fn: (secret: Buffer) => Promise<T>): Promise<T> {
-    if (!ctx.claims.agent_id || !ctx.claims.pod_id) {
+    if (!ctx.agent_id || !ctx.pod_id) {
       throw new Error('Credential broker requires agent_id and pod_id capability claims');
     }
     const response = await fetch(`${ this.endpoint.replace(/\/$/, '') }/v1/broker/credential`, {
@@ -128,7 +108,7 @@ export class VaultCredentialBroker implements CredentialBroker {
         'content-type':       'application/json',
         'x-sulla-service-id': this.serviceId,
       },
-      body: JSON.stringify({ claims: ctx.claims, ref }),
+      body: JSON.stringify({ claims: ctx, ref }),
     });
     const body = await response.json().catch(() => ({})) as BrokerEnvelope & { policyDecision?: { reason?: string } };
     if (!response.ok) {
@@ -169,7 +149,7 @@ let configuredBroker: CredentialBroker | null | undefined;
 export function getConfiguredCredentialBroker(): CredentialBroker | null {
   if (configuredBroker !== undefined) return configuredBroker;
   const endpoint = process.env.SULLA_VAULT_BROKER_URL;
-  const token = process.env.SULLA_VAULT_BROKER_TOKEN;
+  const token = process.env.SULLA_VAULT_BROKER_TOKEN ?? process.env.SULLA_API_TOKEN;
   const keyFile = process.env.SULLA_AGENT_KEY_FILE;
   configuredBroker = endpoint && token && keyFile
     ? new VaultCredentialBroker(endpoint, process.env.SULLA_VAULT_BROKER_SERVICE_ID ?? 'sulla-tools', token, new FileAgentKeySource(keyFile))

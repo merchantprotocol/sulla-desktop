@@ -1,32 +1,11 @@
-export interface RelayToolResult {
-  success: boolean;
-  result?: unknown;
-  error?: {
-    code:     string;
-    message:  string;
-    details?: unknown;
-  };
-}
+import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
-/** Serializable subset of the tool execution context carried over the relay. */
-export interface RelayToolExecutionContext {
-  v:                      1;
-  iss:                    string;
-  aud:                    'sulla-tools';
-  sub:                    string;
-  org_id?:                string;
-  agent_id?:              string;
-  pod_id?:                string;
-  thread_id?:             string;
-  job_id?:                string;
-  workflow_execution_id?: string;
-  device_id?:             string;
-  scopes:                 string[];
-  iat:                    number;
-  exp:                    number;
-  jti:                    string;
-  request_id:             string;
-}
+import type { ToolResult } from './desktopExecutor';
+
+export type RelayToolResult = ToolResult;
+
+/** Serializable execution context carried over the relay. */
+export type RelayToolExecutionContext = ToolExecutionContext;
 
 export interface RelayError {
   code:       'DEVICE_OFFLINE' | 'DEADLINE_EXCEEDED' | 'BACKPRESSURE' | 'FORBIDDEN' | 'BAD_REQUEST' | 'INTERNAL';

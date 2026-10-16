@@ -5,6 +5,7 @@ import express from 'express';
 import schedule from 'node-schedule';
 
 import { createPlaybookState, resolveDecision } from '../../../pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.js';
+import { issueCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
 import type { WorkflowPlaybookState } from '../../../pkg/rancher-desktop/agent/workflow/types.js';
 
 import { config } from './config.js';
@@ -39,7 +40,13 @@ function cronFor(configValue: Record<string, unknown>): string | null {
 }
 
 async function issueRunToken(executionId: string, allowedTools: string[] = ['*']): Promise<string> {
-  const token = crypto.randomBytes(32).toString('base64url');
+  if (!config.capabilitySigningKey) throw new Error('Workflow manager requires SULLA_CAPABILITY_SIGNING_KEY or SULLA_API_TOKEN');
+  const token = issueCapabilityToken({
+    sub:                   `workflow:${ executionId }`,
+    workflow_execution_id: executionId,
+    scopes:                allowedTools,
+    expiresInSeconds:      3600,
+  }, config.capabilitySigningKey, 'sulla-workflow-manager');
   await pool.query(
     `INSERT INTO workflow_run_tokens (token_hash, execution_id, allowed_tools, expires_at)
      VALUES ($1, $2, $3::jsonb, NOW() + INTERVAL '24 hours')`,
@@ -273,7 +280,7 @@ app.post('/internal/tools/:category/:tool', async(request, response, next) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${ config.toolApiToken }`,
+        Authorization: `Bearer ${ token }`,
         'X-Sulla-Workflow-Execution': tokenRow.execution_id,
       },
       body: JSON.stringify(request.body ?? {}),
