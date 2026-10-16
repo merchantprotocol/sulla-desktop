@@ -19,10 +19,8 @@ export async function extractIndexText(path: string, mime: string): Promise<Extr
       return { text, status: 'indexed' };
     }
     if (mime === 'application/pdf') return commandText('pdftotext', ['-layout', path, '-']);
-    if (mime === 'application/msword') return commandText('catdoc', [path]);
-    if (mime.includes('wordprocessingml')) return commandText('docx2txt', [path, '-']);
-    if (mime === 'application/vnd.ms-excel') return commandText('xls2csv', [path]);
-    if (mime === 'application/vnd.ms-powerpoint') return commandText('catppt', [path]);
+    if (mime === 'application/msword') return commandText('antiword', [path]);
+    if (mime.includes('wordprocessingml')) return ooxmlText(path, 'word/document.xml');
     if (mime.includes('spreadsheetml')) return ooxmlText(path, 'xl/sharedStrings.xml');
     if (mime.includes('presentationml')) return ooxmlText(path, 'ppt/slides/slide*.xml');
     if (mime.startsWith('image/')) return commandText('tesseract', [path, 'stdout']);

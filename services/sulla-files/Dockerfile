@@ -7,11 +7,10 @@ RUN npm install --ignore-scripts
 COPY services/sulla-files/tsconfig.json ./
 COPY services/sulla-files/src ./src
 RUN npm run build && npm prune --omit=dev
-FROM node:24-bookworm-slim
+FROM node:24-alpine
 ENV NODE_ENV=production
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends gosu ffmpeg poppler-utils tesseract-ocr tesseract-ocr-eng docx2txt catdoc unzip \
-  && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache antiword ffmpeg poppler-utils su-exec tesseract-ocr tesseract-ocr-data-eng unzip
 COPY --from=build /app/services/sulla-files/package.json ./package.json
 COPY --from=build /app/services/sulla-files/node_modules ./node_modules
 COPY --from=build /app/services/sulla-files/dist ./dist
