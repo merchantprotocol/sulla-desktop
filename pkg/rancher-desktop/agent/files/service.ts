@@ -7,6 +7,8 @@ import { issueCapabilityToken } from '../../runtime/capabilityToken';
 import { postgresClient } from '../database/PostgresClient';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
+import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
+
 import type { ChunkStore, CollectionKind, CollectionRole, ToolExecutionContext } from './types';
 import type { PoolClient } from 'pg';
 
@@ -198,7 +200,7 @@ export class SullaFilesService {
   }
 
   private async containerSearch(context:ToolExecutionContext, body:Record<string, unknown>, timeoutMs = 2_000):Promise<any[]> {
-    const signingKey = await SullaSettingsModel.getServicePassword();
+    const signingKey = sullaFilesCapabilityKey(await SullaSettingsModel.getServicePassword());
     const token = issueCapabilityToken({
       sub:              context.sub,
       org_id:           context.org_id,
