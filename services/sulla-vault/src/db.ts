@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,25 +34,36 @@ export async function connectDatabase(config: VaultConfig): Promise<Database> {
 
 export async function migrate(db: Database): Promise<void> {
   const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [resolve(here, '../migrations/001_initial.sql'), resolve(here, '../../migrations/001_initial.sql')];
-  let sql: string | undefined;
-  for (const candidate of candidates) {
+  let dir: string | undefined;
+  let files: string[] = [];
+  for (const candidate of [resolve(here, '../migrations'), resolve(here, '../../migrations')]) {
     try {
-      sql = await readFile(candidate, 'utf8');
-      break;
+      files = (await readdir(candidate)).filter((f) => /^\d{3}_.+\.sql$/.test(f)).sort();
+      if (files.length) {
+        dir = candidate;
+        break;
+      }
     } catch {
       // Try the source-tree path after the container path.
     }
   }
-  if (!sql) {
-    throw new Error('Could not find migration 001_initial.sql');
+  if (!dir) {
+    throw new Error('Could not find vault migrations');
   }
   const client = await db.connect();
   try {
     await client.query('BEGIN');
     await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-vault-migrations'))");
-    await client.query(sql);
-    await client.query("INSERT INTO vault_schema_migrations(version) VALUES ('001_initial') ON CONFLICT DO NOTHING");
+    for (const file of files) {
+      const version = file.replace(/\.sql$/, '');
+      // 001 creates vault_schema_migrations itself, so it always runs (it is idempotent).
+      if (version !== '001_initial') {
+        const done = await client.query('SELECT 1 FROM vault_schema_migrations WHERE version = $1', [version]);
+        if (done.rowCount) continue;
+      }
+      await client.query(await readFile(resolve(dir, file), 'utf8'));
+      await client.query('INSERT INTO vault_schema_migrations(version) VALUES ($1) ON CONFLICT DO NOTHING', [version]);
+    }
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
