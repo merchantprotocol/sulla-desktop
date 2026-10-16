@@ -862,3 +862,49 @@ html, body {
 .login-link:hover {
   color: var(--accent);
 }
+
+/* ─── Sulla Files view (additive; existing tray views stay unchanged) ─── */
+.files-panel { padding-bottom: 4px; }
+.files-sync-head { display:flex; align-items:center; gap:9px; padding:13px 13px 8px; }
+.files-sync-copy { flex:1; min-width:0; }
+.files-sync-copy b,.files-sync-copy small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.files-sync-copy b { font-size:13px; font-weight:600; }
+.files-sync-copy small { color:var(--text-dim); font-size:10.5px; margin-top:2px; }
+.files-icon-btn { width:25px; height:25px; border:0; border-radius:6px; background:transparent; color:var(--text-dim); cursor:pointer; }
+.files-icon-btn:hover { background:var(--surface); color:var(--text); }
+.files-progress { height:3px; margin:0 13px 9px; background:var(--surface); border-radius:3px; overflow:hidden; }
+.files-progress i { display:block; width:0; height:100%; background:var(--accent); transition:width .2s; }
+.files-section-title { display:flex; align-items:center; padding:7px 13px 4px; color:var(--text-dim); font-size:9.5px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; }
+.files-section-title > span,.files-section-title > button { margin-left:auto; }
+.files-section-title > button { border:0; background:none; color:var(--accent); cursor:pointer; font-size:10px; text-transform:none; letter-spacing:0; }
+.files-capture-grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; padding:2px 12px 7px; }
+.files-capture-card { min-width:0; padding:9px; background:var(--surface); border:1px solid var(--border); border-radius:9px; }
+.files-capture-card > b,.files-record-main b { font-size:11.5px; font-weight:600; }
+.files-capture-card > small { display:block; color:var(--text-dim); font-size:9.5px; margin:2px 0 7px; }
+.files-choice-row { display:flex; gap:3px; }
+.files-choice-row button { flex:1; padding:3px 2px; border:1px solid var(--border); border-radius:5px; background:var(--bg); color:var(--text-dim); font-size:9px; cursor:pointer; }
+.files-choice-row button:hover,.files-choice-row button.on { border-color:var(--accent); color:var(--accent-hover); background:rgba(80,150,179,.1); }
+.files-record-main { display:flex; align-items:center; gap:6px; width:100%; padding:0; border:0; background:none; color:var(--text); cursor:pointer; }
+.files-record-dot { width:8px; height:8px; border-radius:50%; background:var(--error); box-shadow:0 0 0 3px rgba(255,69,58,.12); }
+.files-upload-row { display:flex; gap:6px; padding:0 12px 4px; }
+.files-upload-row > button { flex:1; display:flex; justify-content:space-between; padding:7px 9px; border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--text); cursor:pointer; }
+.files-upload-row small { color:var(--text-dim); }
+.files-upload-row select { border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--text); padding:0 6px; font-size:10px; }
+.files-list { margin:0 7px; border-top:1px solid var(--border); min-height:42px; }
+.files-item { display:flex; align-items:center; gap:8px; min-height:39px; padding:5px 6px; border-bottom:1px solid var(--border); }
+.files-item-icon { width:27px; height:27px; display:grid; place-items:center; flex:none; border-radius:6px; color:var(--accent-hover); background:rgba(80,150,179,.12); }
+.files-item-copy { min-width:0; flex:1; }
+.files-item-copy b,.files-item-copy small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.files-item-copy b { font-size:10.5px; font-weight:500; }
+.files-item-copy small { color:var(--text-dim); font-size:9.5px; margin-top:1px; }
+.files-item-action { border:1px solid var(--border); border-radius:5px; background:transparent; color:var(--text-dim); padding:3px 6px; font-size:9px; cursor:pointer; }
+.files-conflict .files-item-icon { color:var(--warning); background:rgba(255,159,10,.12); }
+.files-conflict .files-item-copy small { color:var(--warning); }
+.files-empty { color:var(--text-dim); padding:12px 6px; font-size:10px; }
+.files-footer { display:grid; grid-template-columns:1fr 1fr; gap:2px; margin-top:5px; padding:5px 7px; border-top:1px solid var(--border); }
+.files-footer button { text-align:left; border:0; border-radius:6px; background:none; color:var(--text); padding:6px; font-size:10px; cursor:pointer; }
+.files-footer button:hover { background:var(--surface); }
+.files-footer button:last-child { grid-column:1 / -1; }
+.files-footer button span { float:right; color:var(--text-dim); }
+.files-toast { display:none; position:absolute; left:48px; right:8px; bottom:8px; padding:8px 10px; border:1px solid var(--accent); border-radius:8px; background:var(--surface); box-shadow:0 8px 24px rgba(0,0,0,.35); font-size:10.5px; }
+.files-toast.on { display:block; }
