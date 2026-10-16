@@ -1,1070 +1,838 @@
-<!--
-  AgentsTab — live view of every running "loop" in the system: the heartbeat,
-  active agents + subagents, scheduled workflows, and spawned jobs.
-
-  Read-only roster. Polls the main-process `agents:list` IPC every 3s (v1 — a
-  push channel replaces polling in Stage 3). Clicking an agent opens its
-  stored conversations (AgentConversations). Kill/message controls are not
-  built yet.
--->
 <template>
   <div
-    class="text-sm font-sans page-root h-full agents-page"
+    class="agents-page"
     :class="{ dark: isDark }"
   >
-    <div class="flex flex-col h-full">
-      <!-- Hero header -->
-      <div
-        v-if="!selectedAgent"
-        class="overflow-hidden agents-header"
-      >
-        <div class="py-12 sm:px-2 lg:relative lg:px-0 lg:py-16">
-          <div class="mx-auto max-w-6xl px-4 md:px-6 lg:px-8">
-            <div class="flex items-center justify-between gap-8">
-              <div>
-                <p class="inline bg-linear-to-r from-indigo-500 via-sky-500 to-indigo-500 dark:from-indigo-200 dark:via-sky-400 dark:to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
-                  Agents.
-                </p>
-                <p class="mt-3 text-2xl tracking-tight text-slate-500 dark:text-slate-400">
-                  Everything running right now — agents, heartbeat, workflows, jobs.
-                </p>
-              </div>
+    <AgentConversations
+      v-if="selectedAgent"
+      class="conversation-view"
+      :channel="selectedAgent.channel"
+      :agent-name="selectedAgent.name"
+      :tick="pollTick"
+      @close="selectedAgent = null"
+    />
 
-              <div class="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-500">
-                <span
-                  class="inline-block w-2 h-2 rounded-full"
-                  :class="polling ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400'"
-                />
-                <span>{{ polling ? 'Live · refreshes every 3s' : 'Paused' }}</span>
-              </div>
-            </div>
+    <main
+      v-else
+      class="live-view"
+    >
+      <header class="page-head">
+        <div>
+          <h1>Live</h1>
+          <p>Every agent running on this desktop right now, grouped by lead agent and chat.</p>
+        </div>
+        <div
+          class="stream-state"
+          :class="{ offline: !polling }"
+        >
+          <i aria-hidden="true" />
+          <span>{{ polling ? `streaming · updated ${updatedAgo}` : 'updates paused' }}</span>
+        </div>
+      </header>
+
+      <section
+        class="summary-grid"
+        aria-label="Live agent summary"
+      >
+        <article class="summary-card">
+          <div class="summary-label">
+            <i class="status-dot running" />Agents running
+          </div>
+          <strong>{{ runningCount }}</strong>
+          <span>{{ leadRunningCount }} leads · {{ subagentRunningCount }} sub-agents</span>
+        </article>
+        <article class="summary-card">
+          <div class="summary-label">
+            Sub-agents
+          </div>
+          <strong>{{ subagentCount }}</strong>
+          <span>{{ depthLabel }}</span>
+        </article>
+        <article class="summary-card warning">
+          <div class="summary-label">
+            <i class="status-dot waiting" />Waiting on a person
+          </div>
+          <strong>{{ waitingCount }}</strong>
+          <span>{{ waitingCount ? 'A reply can unblock this work' : 'Nothing needs a reply' }}</span>
+        </article>
+        <article class="summary-card danger">
+          <div class="summary-label">
+            <i class="status-dot problem" />Stuck / failed
+          </div>
+          <strong>{{ problemCount }}</strong>
+          <span>{{ problemSummary }}</span>
+        </article>
+        <article
+          v-if="tokenTotal !== null"
+          class="summary-card"
+        >
+          <div class="summary-label">
+            Tokens · 24h
+          </div>
+          <strong>{{ compactNumber(tokenTotal) }}</strong>
+          <span>Recorded local usage</span>
+        </article>
+      </section>
+
+      <section
+        class="filters"
+        aria-label="Agent filters"
+      >
+        <div class="segments">
+          <button
+            v-for="option in filterOptions"
+            :key="option.key"
+            type="button"
+            :class="{ active: activeFilter === option.key }"
+            @click="activeFilter = option.key"
+          >
+            {{ option.label }} <span>{{ option.count }}</span>
+          </button>
+        </div>
+        <label class="search-box">
+          <svg
+            viewBox="0 0 20 20"
+            aria-hidden="true"
+          ><circle
+            cx="8.5"
+            cy="8.5"
+            r="5.5"
+          /><path d="m13 13 4 4" /></svg>
+          <input
+            v-model.trim="search"
+            type="search"
+            placeholder="Search agents or work"
+            aria-label="Search live agents"
+          >
+        </label>
+      </section>
+
+      <section
+        class="tree-card"
+        aria-label="Live agents"
+      >
+        <div class="table-row table-head">
+          <div>Agent</div>
+          <div class="working-column">
+            Working on
+          </div>
+          <div>Activity</div>
+          <div>Check-in</div>
+          <div>Elapsed</div>
+          <div class="actions-heading">
+            Actions
           </div>
         </div>
-      </div>
 
-      <!-- Agent detail: stored conversations -->
-      <div
-        v-if="selectedAgent"
-        class="flex-1 min-h-0"
-      >
-        <AgentConversations
-          :channel="selectedAgent.channel"
-          :agent-name="selectedAgent.name"
-          :tick="pollTick"
-          @close="selectedAgent = null"
-        />
-      </div>
+        <div
+          v-if="loading"
+          class="empty-state"
+        >
+          Loading live agents…
+        </div>
+        <div
+          v-else-if="filteredGroups.length === 0"
+          class="empty-state"
+        >
+          {{ search || activeFilter !== 'all' ? 'No agents match these filters.' : 'Nothing is running right now.' }}
+        </div>
 
-      <!-- Body -->
-      <div
-        v-else
-        class="flex-1 overflow-auto"
-      >
-        <div class="mx-auto max-w-6xl px-4 py-6 space-y-8">
-          <section>
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="section-label !mb-0">
-                Custom agents <span class="section-count">{{ definitions.length }}</span>
-              </h3>
-              <div class="flex gap-2">
-                <input
-                  ref="manifestInput"
-                  class="hidden"
-                  type="file"
-                  accept="application/json,.json"
-                  @change="importManifest"
-                >
-                <button
-                  class="agent-link"
-                  type="button"
-                  @click="manifestInput?.click()"
-                >
-                  Import manifest
-                </button>
-                <button
-                  class="agent-action"
-                  type="button"
-                  @click="openCreate"
-                >
-                  New agent
-                </button>
-              </div>
-            </div>
-            <div class="agents-card rounded-lg overflow-hidden">
-              <div
-                v-if="!definitions.length"
-                class="px-4 py-5 text-slate-500"
-              >
-                No custom agents yet.
-              </div>
-              <div
-                v-for="agent in definitions"
-                :key="agent.id"
-                class="agents-row flex items-center gap-4 px-4 py-3 border-b border-slate-200/10"
-              >
-                <div
-                  class="agent-avatar-tile"
-                  aria-hidden="true"
-                >
-                  {{ agent.name.slice(0, 1).toUpperCase() }}
-                </div>
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm text-slate-800 dark:text-slate-200 truncate">
-                    {{ agent.name }}
-                  </p>
-                  <p class="text-xs text-slate-500 truncate">
-                    {{ agent.description || 'No description' }}
-                  </p>
-                </div>
-                <span class="text-xs font-mono text-slate-500">{{ agent.model || 'default model' }}</span>
-                <span class="badge">{{ agent.runLocation === 'container' ? 'Container' : 'VM' }}</span>
-                <span class="badge">{{ agent.sourceKind === 'marketplace' ? `Marketplace ${agent.marketplaceVersion || ''}` : 'Local' }}</span>
-                <button
-                  class="agent-link"
-                  type="button"
-                  :disabled="publishingSlug === agent.slug"
-                  @click="publishAgent(agent)"
-                >
-                  {{ publishingSlug === agent.slug ? 'Publishing…' : 'Publish' }}
-                </button>
-                <button
-                  class="agent-link"
-                  type="button"
-                  @click="exportManifest(agent)"
-                >
-                  Export
-                </button>
-                <button
-                  class="agent-link"
-                  type="button"
-                  @click="openEdit(agent)"
-                >
-                  Edit
-                </button>
-                <button
-                  class="agent-link text-red-400"
-                  type="button"
-                  @click="removeDefinition(agent)"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <!-- Loading state -->
+        <article
+          v-for="group in filteredGroups"
+          :key="group.id"
+          class="agent-group"
+        >
           <div
-            v-if="loading"
-            class="flex items-center justify-center py-20 text-slate-500"
+            class="table-row lead-row"
+            :class="rowClass(group.leadStatus)"
           >
-            Loading agents...
+            <div class="agent-cell">
+              <button
+                v-if="group.children.length"
+                class="chevron"
+                type="button"
+                :aria-label="collapsedGroups.has(group.id) ? 'Expand group' : 'Collapse group'"
+                @click="toggleGroup(group.id)"
+              >
+                <svg
+                  :class="{ collapsed: collapsedGroups.has(group.id) }"
+                  viewBox="0 0 10 10"
+                ><path d="M2 3.5 5 6.5 8 3.5" /></svg>
+              </button>
+              <span
+                v-else
+                class="chevron-spacer"
+              />
+              <i
+                class="status-dot"
+                :class="group.leadStatus"
+              />
+              <span class="agent-copy">
+                <b>{{ group.name }}</b>
+                <small>{{ group.meta }}</small>
+              </span>
+            </div>
+            <div class="working-column truncate">
+              {{ group.workingOn }}
+            </div>
+            <div class="activity-cell truncate">
+              {{ group.activity }}
+            </div>
+            <div class="checkin-cell muted">
+              —
+            </div>
+            <div class="elapsed-cell">
+              {{ formatDuration(group.startedAt) }}
+            </div>
+            <div class="row-actions">
+              <button
+                v-if="group.agent"
+                class="small-button"
+                type="button"
+                @click="openAgent(group.agent)"
+              >
+                Open
+              </button>
+            </div>
           </div>
 
-          <template v-else>
-            <!-- ── Heartbeat ── -->
-            <section>
-              <h3 class="section-label">
-                Heartbeat
-              </h3>
-              <div
-                v-if="data.heartbeat"
-                class="agents-card px-4 py-3 rounded-lg flex items-center gap-4"
-              >
-                <span
-                  class="flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full"
-                  :class="heartbeatDot"
+          <template v-if="!collapsedGroups.has(group.id)">
+            <div
+              v-for="(child, index) in group.children"
+              :key="child.id"
+              class="table-row child-row"
+              :class="[rowClass(child.status), { last: index === group.children.length - 1 }]"
+            >
+              <div class="agent-cell child-agent">
+                <i
+                  class="status-dot"
+                  :class="child.status"
                 />
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm text-slate-800 dark:text-slate-200">
-                    {{ data.heartbeat.isExecuting ? 'Executing a cycle' : data.heartbeat.schedulerRunning ? 'Idle — scheduler running' : 'Stopped' }}
-                  </p>
-                  <p class="text-xs text-slate-500 dark:text-slate-500 mt-0.5">
-                    {{ data.heartbeat.totalTriggers }} triggers · {{ data.heartbeat.totalErrors }} errors · {{ data.heartbeat.totalSkips }} skips
-                    <template v-if="data.heartbeat.lastTriggerMs">
-                      · last {{ relTime(data.heartbeat.lastTriggerMs) }}
-                    </template>
-                  </p>
-                </div>
-                <span class="flex-shrink-0 text-xs text-slate-500 dark:text-slate-600">
-                  up {{ formatDuration(data.heartbeat.uptimeMs) }}
+                <span class="agent-copy">
+                  <b>{{ child.name }}</b>
+                  <small>{{ child.meta }}</small>
                 </span>
               </div>
-              <p
-                v-else
-                class="text-sm text-slate-500 dark:text-slate-500 px-1"
-              >
-                Heartbeat is not initialized.
-              </p>
-            </section>
-
-            <!-- ── Agents & subagents ── -->
-            <section>
-              <h3 class="section-label">
-                Agents &amp; Subagents
-                <span class="section-count">{{ data.agents.length }}</span>
-              </h3>
               <div
-                v-if="data.agents.length"
-                class="space-y-1"
+                class="working-column truncate"
+                :title="child.workingOn"
               >
-                <div
-                  v-for="agent in data.agents"
-                  :key="agent.channel"
-                  class="agents-row group flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer"
-                  role="button"
-                  tabindex="0"
-                  :title="`View ${agent.name} conversations`"
-                  @click="openAgent(agent)"
-                  @keydown.enter="openAgent(agent)"
-                >
-                  <div
-                    class="agent-avatar-tile agent-avatar-live"
-                    aria-hidden="true"
-                  >
-                    {{ agent.name.slice(0, 1).toUpperCase() }}
-                    <span
-                      class="agent-live-dot"
-                      :class="[statusDot(agent.status), { 'agent-live-dot-running': agent.status === 'running' }]"
-                    />
-                  </div>
-                  <div class="flex-1 min-w-0">
-                    <p class="text-sm text-slate-800 dark:text-slate-200 truncate flex items-center gap-2">
-                      {{ agent.name }}
-                      <span
-                        v-if="isSubconscious(agent.channel)"
-                        class="badge"
-                      >subconscious</span>
-                      <span class="badge badge-type">{{ agent.type }}</span>
-                    </p>
-                    <p class="text-xs text-slate-500 dark:text-slate-500 truncate mt-0.5">
-                      <span class="font-mono">{{ agent.channel }}</span>
-                      <template v-if="agent.statusNote">
-                        · {{ agent.statusNote }}
-                      </template>
-                    </p>
-                  </div>
-                  <span class="flex-shrink-0 text-xs text-slate-500 dark:text-slate-600 text-right">
-                    up {{ formatDuration(Date.now() - agent.startedAt) }}
-                    <template v-if="idleMins(agent.lastActiveAt) >= 1">
-                      <br>idle {{ idleMins(agent.lastActiveAt) }}m
-                    </template>
-                  </span>
-                </div>
+                {{ child.workingOn }}
               </div>
-              <p
-                v-else
-                class="text-sm text-slate-500 dark:text-slate-500 px-1"
-              >
-                No active agents.
-              </p>
-            </section>
-
-            <!-- ── Routines ── -->
-            <section>
-              <h3 class="section-label">
-                Workflows
-                <span class="section-count">{{ data.routines.length }}</span>
-              </h3>
               <div
-                v-if="data.routines.length"
-                class="space-y-1"
+                class="activity-cell truncate"
+                :title="child.activity"
               >
-                <div
-                  v-for="routine in data.routines"
-                  :key="`${routine.workflowId}:${routine.nodeId}`"
-                  class="agents-row flex items-center gap-3 px-4 py-3 rounded-lg"
-                >
-                  <span class="flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full bg-purple-400" />
-                  <div class="flex-1 min-w-0">
-                    <p class="text-sm text-slate-800 dark:text-slate-200 truncate">
-                      {{ routine.workflowName }}
-                    </p>
-                    <p class="text-xs text-slate-500 dark:text-slate-500 truncate mt-0.5 font-mono">
-                      {{ routine.cronExpression }} · {{ routine.timezone }}
-                    </p>
-                  </div>
-                  <span class="flex-shrink-0 text-xs text-slate-500 dark:text-slate-600">
-                    <template v-if="routine.nextInvocation">next {{ formatTime(routine.nextInvocation) }}</template>
-                    <template v-else>—</template>
-                  </span>
-                </div>
+                <span
+                  v-if="child.status === 'waiting'"
+                  class="activity-reason waiting-text"
+                >Waiting</span>
+                <span
+                  v-else-if="child.status === 'problem'"
+                  class="activity-reason problem-text"
+                >{{ child.failed ? 'Failed' : 'Stuck' }}</span>
+                {{ child.activity }}
               </div>
-              <p
-                v-else
-                class="text-sm text-slate-500 dark:text-slate-500 px-1"
-              >
-                No scheduled workflows.
-              </p>
-            </section>
-
-            <!-- ── Jobs ── -->
-            <section>
-              <h3 class="section-label">
-                Jobs
-                <span class="section-count">{{ data.jobs.length }}</span>
-              </h3>
-              <div
-                v-if="data.jobs.length"
-                class="space-y-1"
-              >
-                <div
-                  v-for="job in data.jobs"
-                  :key="job.jobId"
-                  class="agents-row flex items-center gap-3 px-4 py-3 rounded-lg"
-                >
+              <div class="checkin-cell">
+                <template v-if="child.progress !== null">
                   <span
-                    class="flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full"
-                    :class="jobDot(job.status)"
-                  />
-                  <div class="flex-1 min-w-0">
-                    <p class="text-sm text-slate-800 dark:text-slate-200 truncate font-mono">
-                      {{ job.jobId }}
-                    </p>
-                    <p class="text-xs text-slate-500 dark:text-slate-500 truncate mt-0.5">
-                      {{ job.status }} · {{ job.taskCount }} task{{ job.taskCount === 1 ? '' : 's' }}
-                      <template v-if="job.error">
-                        · <span class="text-red-500 dark:text-red-400">{{ job.error }}</span>
-                      </template>
-                    </p>
-                  </div>
-                  <span class="flex-shrink-0 text-xs text-slate-500 dark:text-slate-600">
-                    {{ relTime(job.createdAt) }}
-                  </span>
-                </div>
+                    class="progress-track"
+                    :class="child.status"
+                  ><i :style="{ width: `${child.progress}%` }" /></span>
+                  <span>{{ child.progress }}%</span>
+                </template>
+                <span
+                  v-else
+                  class="muted"
+                >—</span>
               </div>
-              <p
-                v-else
-                class="text-sm text-slate-500 dark:text-slate-500 px-1"
-              >
-                No active jobs.
-              </p>
-            </section>
+              <div class="elapsed-cell">
+                {{ formatDuration(child.startedAt, child.finishedAt) }}
+              </div>
+              <div class="row-actions">
+                <button
+                  v-if="child.canOpen"
+                  class="small-button"
+                  type="button"
+                  @click="openTask(child)"
+                >
+                  Open
+                </button>
+                <button
+                  v-if="child.canMessage"
+                  class="small-button"
+                  type="button"
+                  @click="messageTarget = child"
+                >
+                  Message
+                </button>
+                <button
+                  v-if="child.canStop"
+                  class="small-button danger-button"
+                  type="button"
+                  @click="stopTarget = child"
+                >
+                  Stop
+                </button>
+              </div>
+            </div>
           </template>
+        </article>
+
+        <footer class="legend">
+          <span><i class="status-dot running" />running</span>
+          <span><i class="status-dot waiting" />waiting on a person</span>
+          <span><i class="status-dot problem" />stuck / failed</span>
+          <span><i class="status-dot idle" />idle</span>
+          <span><i class="status-dot paused" />paused</span>
+          <span><i class="status-dot workflow" />workflow run</span>
+          <span class="legend-total">{{ visibleRowCount }} shown</span>
+        </footer>
+      </section>
+    </main>
+
+    <div
+      v-if="messageTarget"
+      class="modal-backdrop"
+      @click.self="closeMessage"
+    >
+      <form
+        class="action-modal"
+        @submit.prevent="sendMessage"
+      >
+        <span class="modal-kicker">Message agent</span>
+        <h2>{{ messageTarget.name }}</h2>
+        <p>Send new direction to this running task. It’ll be delivered live or at the next model boundary.</p>
+        <textarea
+          v-model="messageText"
+          autofocus
+          rows="4"
+          placeholder="What should this agent know?"
+        />
+        <p
+          v-if="actionError"
+          class="modal-error"
+        >
+          {{ actionError }}
+        </p>
+        <div class="modal-actions">
+          <button
+            class="small-button"
+            type="button"
+            @click="closeMessage"
+          >
+            Cancel
+          </button>
+          <button
+            class="small-button primary-button"
+            type="submit"
+            :disabled="!messageText.trim() || actionBusy"
+          >
+            {{ actionBusy ? 'Sending…' : 'Send message' }}
+          </button>
         </div>
-      </div>
+      </form>
     </div>
 
     <div
-      v-if="editing"
-      class="agent-modal-backdrop"
-      @click.self="editing = null"
+      v-if="stopTarget"
+      class="modal-backdrop"
+      @click.self="closeStop"
     >
-      <form
-        class="agent-modal"
-        @submit.prevent="saveDefinition"
-      >
-        <aside
-          class="agent-modal-nav"
-          aria-hidden="true"
+      <section class="action-modal">
+        <span class="modal-kicker danger-copy">Stop job</span>
+        <h2>Stop {{ stopTarget.name }}?</h2>
+        <p>This uses the real cooperative kill switch. The current tool call may finish first, then the entire job{{ stopTarget.jobTaskCount > 1 ? ` and its ${stopTarget.jobTaskCount} tasks` : '' }} will unwind.</p>
+        <p
+          v-if="actionError"
+          class="modal-error"
         >
-          <p class="agent-modal-kicker">
-            AGENT STUDIO
-          </p>
-          <h2>{{ editing.id ? 'Edit agent' : 'Create agent' }}</h2>
-          <p>Shape how this agent introduces itself, thinks, and responds.</p>
-          <div class="agent-modal-nav-item agent-modal-nav-current">
-            <span>01</span>Identity
-          </div>
-          <div class="agent-modal-nav-item">
-            <span>02</span>Model
-          </div>
-          <div class="agent-modal-nav-item">
-            <span>03</span>Instructions
-          </div>
-          <div class="agent-modal-nav-state">
-            <span /> Draft configuration
-          </div>
-        </aside>
-        <div class="agent-modal-content">
-          <h2 class="agent-modal-legacy-title text-xl text-slate-100">
-            {{ editing.id ? 'Edit agent' : 'Create agent' }}
-          </h2>
-          <div class="agent-modal-heading">
-            <p>AGENT PROFILE</p>
-            <h3>Give this agent a clear point of view.</h3>
-            <span>Identity, model, and instructions stay exactly where you save them today.</span>
-          </div>
-          <label>Name<input
-            v-model="editing.name"
-            required
-          ></label>
-          <label v-if="!editing.id">Slug<input
-            v-model="editing.slug"
-            required
-            pattern="[a-z0-9][a-z0-9-]*"
-          ></label>
-          <label>Description<input v-model="editing.description"></label>
-          <label>Model
-            <select
-              v-model="editing.modelKey"
-              required
-            >
-              <option
-                v-for="model in availableModels"
-                :key="`${model.providerId}:${model.modelId}`"
-                :value="`${model.providerId}:${model.modelId}`"
-              >{{ model.providerName }} · {{ model.label }}</option>
-            </select>
-          </label>
-          <label>Run location
-            <select v-model="editing.runLocation">
-              <option value="vm">VM (default)</option>
-              <option value="container">Container</option>
-            </select>
-          </label>
-          <label>Prompt<textarea
-            v-model="editing.prompt"
-            required
-            rows="12"
-          /></label>
-          <div class="agent-modal-actions flex justify-end gap-2">
-            <button
-              class="agent-link"
-              type="button"
-              @click="editing = null"
-            >
-              Cancel
-            </button>
-            <button
-              class="agent-action"
-              type="submit"
-              :disabled="saving"
-            >
-              {{ saving ? 'Saving…' : 'Save' }}
-            </button>
-          </div>
+          {{ actionError }}
+        </p>
+        <div class="modal-actions">
+          <button
+            class="small-button"
+            type="button"
+            @click="closeStop"
+          >
+            Cancel
+          </button>
+          <button
+            class="small-button solid-danger"
+            type="button"
+            :disabled="actionBusy"
+            @click="stopJob"
+          >
+            {{ actionBusy ? 'Stopping…' : 'Stop job' }}
+          </button>
         </div>
-      </form>
+      </section>
+    </div>
+
+    <div
+      v-if="toast"
+      class="toast"
+      role="status"
+    >
+      {{ toast }}
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 import { useTheme } from '@pkg/composables/useTheme';
-import type { AgentDefinitionResponse, AgentsListResponse } from '@pkg/main/agentsIpc';
+import type { AgentsListResponse } from '@pkg/main/agentsIpc';
 import AgentConversations from '@pkg/pages/agents/AgentConversations.vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-const POLL_MS = 3_000;
+type Agent = AgentsListResponse['agents'][number];
+type Job = AgentsListResponse['jobs'][number];
+type JobTask = Job['tasks'][number];
+type RowStatus = 'running' | 'waiting' | 'problem' | 'paused' | 'idle' | 'workflow';
+type FilterKey = 'all' | 'running' | 'waiting' | 'problems' | 'paused';
 
-const { isDark } = useTheme();
-
-const loading = ref(true);
-const polling = ref(true);
-const data = ref<AgentsListResponse>({
-  agents: [], heartbeat: null, jobs: [], routines: [],
-});
-const definitions = ref<AgentDefinitionResponse[]>([]);
-const availableModels = ref<{ providerId: string; providerName: string; modelId: string; label: string }[]>([]);
-const saving = ref(false);
-const publishingSlug = ref<string | null>(null);
-const manifestInput = ref<HTMLInputElement | null>(null);
-const editing = ref<null | { id?: string; slug: string; name: string; description: string; modelKey: string; prompt: string; runLocation: 'vm' | 'container' }>(null);
-
-const selectedAgent = ref<{ channel: string; name: string } | null>(null);
-// Bumped every poll so the open conversation view refreshes on the same beat.
-const pollTick = ref(0);
-
-let pollTimer: ReturnType<typeof setInterval> | undefined;
-
-function openAgent(agent: AgentsListResponse['agents'][number]) {
-  selectedAgent.value = { channel: agent.channel, name: agent.name };
+interface ChildRow {
+  id:              string;
+  kind:            'task' | 'workflow';
+  status:          RowStatus;
+  failed:          boolean;
+  name:            string;
+  meta:            string;
+  workingOn:       string;
+  activity:        string;
+  progress:        number | null;
+  startedAt:       number;
+  finishedAt?:     number;
+  jobId?:          string;
+  taskIndex?:      number;
+  parentThreadId?: string;
+  threadId?:       string;
+  jobTaskCount:    number;
+  canOpen:         boolean;
+  canMessage:      boolean;
+  canStop:         boolean;
 }
 
-// ── Data loading ──
+interface AgentGroup {
+  id:         string;
+  name:       string;
+  meta:       string;
+  workingOn:  string;
+  activity:   string;
+  startedAt:  number;
+  leadStatus: RowStatus;
+  agent?:     Agent;
+  children:   ChildRow[];
+}
 
-async function loadAgents() {
-  pollTick.value++;
-  // The roster isn't visible while an agent's conversations are open.
+const POLL_MS = 3_000;
+const STUCK_MS = 15 * 60_000;
+const { isDark } = useTheme();
+
+const data = ref<AgentsListResponse>({ agents: [], heartbeat: null, jobs: [], workflowRuns: [], updatedAt: 0 });
+const loading = ref(true);
+const polling = ref(true);
+const pollTick = ref(0);
+const now = ref(Date.now());
+const tokenTotal = ref<number | null>(null);
+const activeFilter = ref<FilterKey>('all');
+const search = ref('');
+const collapsedGroups = ref(new Set<string>());
+const selectedAgent = ref<{ channel: string; name: string } | null>(null);
+const messageTarget = ref<ChildRow | null>(null);
+const stopTarget = ref<ChildRow | null>(null);
+const messageText = ref('');
+const actionBusy = ref(false);
+const actionError = ref('');
+const toast = ref('');
+let pollTimer: ReturnType<typeof setInterval> | undefined;
+let clockTimer: ReturnType<typeof setInterval> | undefined;
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+function taskStatus(job: Job, task: JobTask): { status: RowStatus; failed: boolean } {
+  const failed = job.status === 'failed' || task.status === 'error' || task.status === 'blocked';
+  if (failed) return { status: 'problem', failed: true };
+  if (task.waitingForHuman) return { status: 'waiting', failed: false };
+  if (task.status === 'stopped') return { status: 'idle', failed: false };
+  if (['running', 'queued'].includes(task.status)) {
+    const checkinAt = task.latestCheckin?.createdAt ?? task.startedAt;
+    if (now.value - checkinAt >= STUCK_MS) return { status: 'problem', failed: false };
+    return { status: 'running', failed: false };
+  }
+  return { status: 'idle', failed: false };
+}
+
+function taskRow(job: Job, task: JobTask): ChildRow {
+  const classification = taskStatus(job, task);
+  const ageSource = task.latestCheckin?.createdAt ?? task.startedAt;
+  let activity = task.latestCheckin?.summary || task.lastActivity || 'Working';
+  if (classification.status === 'waiting') activity = task.latestCheckin?.summary || task.lastActivity || 'Needs a reply';
+  if (classification.status === 'problem' && !classification.failed) activity = `no check-in for ${ formatAge(ageSource) }`;
+  if (classification.failed) activity = task.latestCheckin?.blockers?.[0] || job.error || activity;
+  return {
+    id:             `${ job.jobId }:${ task.taskIndex }`,
+    kind:           'task',
+    status:         classification.status,
+    failed:         classification.failed,
+    name:           task.label || task.agentId,
+    meta:           `${ task.model || task.agentId } · ${ task.kind } · depth ${ task.depth }`,
+    workingOn:      task.taskId || job.parentTitle || shortJobId(job.jobId),
+    activity,
+    progress:       typeof task.latestCheckin?.percent === 'number' ? Math.max(0, Math.min(100, Math.round(task.latestCheckin.percent))) : null,
+    startedAt:      task.startedAt,
+    finishedAt:     task.finishedAt,
+    jobId:          job.jobId,
+    taskIndex:      task.taskIndex,
+    parentThreadId: job.parentThreadId,
+    threadId:       task.threadId,
+    jobTaskCount:   job.taskCount,
+    canOpen:        !!(job.parentThreadId && task.threadId),
+    canMessage:     job.status === 'running' && ['queued', 'running'].includes(task.status),
+    canStop:        job.status === 'running' && ['queued', 'running'].includes(task.status),
+  };
+}
+
+const groups = computed<AgentGroup[]>(() => {
+  const activeJobs = data.value.jobs.filter(job => !['completed', 'stopped'].includes(job.status));
+  const grouped = new Map<string, Job[]>();
+  for (const job of activeJobs) {
+    const key = job.parentThreadId || job.parentChannel || `job:${ job.jobId }`;
+    grouped.set(key, [...(grouped.get(key) || []), job]);
+  }
+  const result: AgentGroup[] = [];
+  const claimedChannels = new Set<string>();
+  for (const [key, jobs] of grouped) {
+    const first = jobs[0];
+    const agent = data.value.agents.find(item => item.channel === first.parentChannel || item.agentId === first.parentAgentId);
+    if (agent) claimedChannels.add(agent.channel);
+    const children = jobs.flatMap(job => job.tasks
+      .filter(task => !['completed', 'stopped'].includes(task.status))
+      .map(task => taskRow(job, task)));
+    if (!children.length) continue;
+    result.push({
+      id:         `chat:${ key }`,
+      name:       agent?.name || first.parentAgentId || first.parentChannel || 'Agent job',
+      meta:       `chat lead · ${ children.length } sub-agent${ children.length === 1 ? '' : 's' }`,
+      workingOn:  first.parentTitle || 'Active chat',
+      activity:   agent?.statusNote || (children.some(child => child.status === 'waiting') ? 'Waiting on a person' : 'Coordinating sub-agents'),
+      startedAt:  Math.min(agent?.startedAt ?? Infinity, ...jobs.map(job => job.createdAt)),
+      leadStatus: agent?.status === 'idle' ? 'idle' : 'running',
+      agent,
+      children,
+    });
+  }
+
+  for (const agent of data.value.agents.filter(item => item.type !== 'heartbeat' && !claimedChannels.has(item.channel))) {
+    result.push({
+      id:         `agent:${ agent.channel }`,
+      name:       agent.name,
+      meta:       `${ agent.role || agent.type } · ${ agent.channel }`,
+      workingOn:  agent.statusNote || 'Available',
+      activity:   agent.status === 'running' ? 'Active' : agent.status,
+      startedAt:  agent.startedAt,
+      leadStatus: agent.status === 'running' ? 'running' : 'idle',
+      agent,
+      children:   [],
+    });
+  }
+
+  if (data.value.heartbeat) {
+    const heartbeat = data.value.heartbeat;
+    result.push({
+      id:         'heartbeat',
+      name:       'Heartbeat',
+      meta:       'system agent · autonomous cycle',
+      workingOn:  heartbeat.isExecuting ? 'Running a cycle' : heartbeat.schedulerRunning ? 'Watching the agenda' : 'Scheduler stopped',
+      activity:   heartbeat.isExecuting ? 'Executing' : heartbeat.schedulerRunning ? `Last trigger ${ heartbeat.lastTriggerMs ? formatAge(heartbeat.lastTriggerMs) : 'not recorded' }` : 'Stopped',
+      startedAt:  now.value - heartbeat.uptimeMs,
+      leadStatus: heartbeat.isExecuting ? 'running' : 'idle',
+      agent:      data.value.agents.find(item => item.type === 'heartbeat'),
+      children:   [],
+    });
+  }
+
+  if (data.value.workflowRuns.length) {
+    result.push({
+      id:         'workflows',
+      name:       'Workflow runs',
+      meta:       `${ data.value.workflowRuns.length } active or recent`,
+      workingOn:  'Automated work',
+      activity:   'Workflow manager',
+      startedAt:  Math.min(...data.value.workflowRuns.map(run => run.startedAt)),
+      leadStatus: 'workflow',
+      children:   data.value.workflowRuns.map(run => ({
+        id:           `workflow:${ run.executionId }`,
+        kind:         'workflow',
+        status:       run.status === 'failed' ? 'problem' : run.status === 'suspended' ? 'paused' : 'workflow',
+        failed:       run.status === 'failed',
+        name:         run.name,
+        meta:         `workflow run · ${ run.slug }`,
+        workingOn:    shortId(run.executionId),
+        activity:     run.error || run.activity,
+        progress:     typeof run.progress === 'number' ? Math.max(0, Math.min(100, Math.round(run.progress))) : null,
+        startedAt:    run.startedAt,
+        jobTaskCount: 0,
+        canOpen:      false,
+        canMessage:   false,
+        canStop:      false,
+      })),
+    });
+  }
+  return result.sort((a, b) => a.startedAt - b.startedAt);
+});
+
+const allChildRows = computed(() => groups.value.flatMap(group => group.children));
+const leadRunningCount = computed(() => groups.value.filter(group => group.leadStatus === 'running').length);
+const subagentCount = computed(() => allChildRows.value.filter(row => row.kind === 'task').length);
+const subagentRunningCount = computed(() => allChildRows.value.filter(row => row.kind === 'task' && row.status === 'running').length);
+const runningCount = computed(() => leadRunningCount.value + subagentRunningCount.value);
+const waitingCount = computed(() => allChildRows.value.filter(row => row.status === 'waiting').length);
+const problemRows = computed(() => allChildRows.value.filter(row => row.status === 'problem'));
+const problemCount = computed(() => problemRows.value.length);
+const pausedCount = computed(() => allChildRows.value.filter(row => row.status === 'paused').length + groups.value.filter(group => group.leadStatus === 'paused').length);
+const problemSummary = computed(() => {
+  const failed = problemRows.value.filter(row => row.failed).length;
+  const stuck = problemRows.value.length - failed;
+  if (!failed && !stuck) return 'No stalled work';
+  return [stuck ? `${ stuck } stuck` : '', failed ? `${ failed } failed` : ''].filter(Boolean).join(' · ');
+});
+const maxDepth = computed(() => Math.max(0, ...data.value.jobs.flatMap(job => job.tasks.map(task => task.depth))));
+const depthLabel = computed(() => subagentCount.value ? `max depth ${ maxDepth.value }` : 'No delegated work');
+const updatedAgo = computed(() => data.value.updatedAt ? formatAge(data.value.updatedAt) : 'just now');
+
+const filterOptions = computed(() => [
+  { key: 'all' as const, label: 'All', count: groups.value.length + allChildRows.value.length },
+  { key: 'running' as const, label: 'Running', count: runningCount.value + allChildRows.value.filter(row => row.status === 'workflow').length },
+  { key: 'waiting' as const, label: 'Waiting', count: waitingCount.value },
+  { key: 'problems' as const, label: 'Problems', count: problemCount.value },
+  { key: 'paused' as const, label: 'Paused', count: pausedCount.value },
+]);
+
+function matchesFilter(status: RowStatus): boolean {
+  if (activeFilter.value === 'all') return true;
+  if (activeFilter.value === 'running') return status === 'running' || status === 'workflow';
+  if (activeFilter.value === 'waiting') return status === 'waiting';
+  if (activeFilter.value === 'problems') return status === 'problem';
+  return status === 'paused';
+}
+
+function matchesSearch(...values: (string | undefined)[]): boolean {
+  if (!search.value) return true;
+  const needle = search.value.toLowerCase();
+  return values.some(value => value?.toLowerCase().includes(needle));
+}
+
+const filteredGroups = computed(() => groups.value.flatMap(group => {
+  const groupMatches = matchesFilter(group.leadStatus) && matchesSearch(group.name, group.meta, group.workingOn, group.activity);
+  const children = group.children.filter(child => matchesFilter(child.status) && matchesSearch(child.name, child.meta, child.workingOn, child.activity));
+  if (!groupMatches && children.length === 0) return [];
+  return [{ ...group, children: groupMatches && activeFilter.value === 'all' && !search.value ? group.children : children }];
+}));
+
+const visibleRowCount = computed(() => filteredGroups.value.reduce((count, group) => count + 1 + (collapsedGroups.value.has(group.id) ? 0 : group.children.length), 0));
+
+async function loadAgents(): Promise<void> {
+  pollTick.value += 1;
   if (selectedAgent.value) return;
   try {
-    data.value = await ipcRenderer.invoke('agents:list' as any);
+    data.value = await ipcRenderer.invoke('agents:list');
     polling.value = true;
   } catch {
-    // Leave the last snapshot in place; flag that the refresh failed.
     polling.value = false;
   } finally {
     loading.value = false;
   }
 }
 
-async function loadDefinitions() {
-  definitions.value = await ipcRenderer.invoke('agent-definitions:list');
-}
-
-async function loadModels() {
-  const providers = await ipcRenderer.invoke('model-provider:get-providers');
-  const groups = await Promise.all(providers.filter(p => p.connected !== false).map(async provider => ({
-    provider,
-    models: await ipcRenderer.invoke('model-provider:get-models', provider.id),
-  })));
-  availableModels.value = groups.flatMap(({ provider, models }) => models.map(model => ({
-    providerId: provider.id, providerName: provider.name, modelId: model.id, label: model.name,
-  })));
-}
-
-function openCreate() {
-  const first = availableModels.value[0];
-  editing.value = { slug: '', name: '', description: '', modelKey: first ? `${ first.providerId }:${ first.modelId }` : '', prompt: '', runLocation: 'vm' };
-}
-
-function openEdit(agent: AgentDefinitionResponse) {
-  editing.value = {
-    id:          agent.id,
-    slug:        agent.slug,
-    name:        agent.name,
-    description: agent.description,
-    modelKey:    agent.provider && agent.model ? `${ agent.provider }:${ agent.model }` : '',
-    prompt:      agent.prompt,
-    runLocation: agent.runLocation,
-  };
-}
-
-async function saveDefinition() {
-  if (!editing.value) return;
-  saving.value = true;
+async function loadUsage(): Promise<void> {
   try {
-    const split = editing.value.modelKey.indexOf(':');
-    const provider = split >= 0 ? editing.value.modelKey.slice(0, split) : '';
-    const model = split >= 0 ? editing.value.modelKey.slice(split + 1) : editing.value.modelKey;
-    const payload = { name: editing.value.name, description: editing.value.description, provider, model, prompt: editing.value.prompt, runLocation: editing.value.runLocation };
-    if (editing.value.id) await ipcRenderer.invoke('agent-definitions:update', editing.value.id, payload);
-    else await ipcRenderer.invoke('agent-definitions:create', { ...payload, slug: editing.value.slug });
-    editing.value = null;
-    await loadDefinitions();
-  } finally { saving.value = false }
+    const summary = await ipcRenderer.invoke('usage:summary', { hours: 24 });
+    tokenTotal.value = summary.totals.totalTokens;
+  } catch {
+    tokenTotal.value = null;
+  }
 }
 
-async function removeDefinition(agent: AgentDefinitionResponse) {
-  if (!window.confirm(`Delete ${ agent.name }? Existing filesystem files, if any, will be left untouched.`)) return;
-  await ipcRenderer.invoke('agent-definitions:delete', agent.id);
-  await loadDefinitions();
+function openAgent(agent: Agent): void {
+  selectedAgent.value = { channel: agent.channel, name: agent.name };
 }
 
-async function exportManifest(agent: AgentDefinitionResponse) {
-  const manifest = await ipcRenderer.invoke('agent-definitions:export', agent.slug);
-  const blob = new Blob([`${ JSON.stringify(manifest, null, 2) }\n`], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${ agent.slug }.agent.json`;
-  link.click();
-  URL.revokeObjectURL(url);
+async function openTask(row: ChildRow): Promise<void> {
+  if (!row.jobId || row.taskIndex === undefined || !row.parentThreadId) return;
+  const opened = await ipcRenderer.invoke('agents:open-job-in-tab', row.jobId, row.parentThreadId, row.taskIndex);
+  if (!opened) showToast('That agent could not be opened in a tab.');
 }
 
-async function publishAgent(agent: AgentDefinitionResponse) {
-  const check = await ipcRenderer.invoke('agent-definitions:publish-check', agent.slug);
-  if ('error' in check) {
-    window.alert(`Could not check ${ agent.name } for publishing: ${ check.error }`);
-
+async function sendMessage(): Promise<void> {
+  const target = messageTarget.value;
+  if (!target?.jobId || target.taskIndex === undefined || !messageText.value.trim()) return;
+  actionBusy.value = true;
+  actionError.value = '';
+  const result = await ipcRenderer.invoke('agents:message-job', target.jobId, target.taskIndex, messageText.value.trim());
+  actionBusy.value = false;
+  if (!result.ok) {
+    actionError.value = result.error || 'The message could not be delivered.';
     return;
   }
-  if (check.secret) {
-    window.alert(`${ agent.name } contains a possible ${ check.secret } secret. Remove it before publishing.`);
+  closeMessage();
+  showToast('Message sent.');
+  loadAgents().catch(() => {});
+}
 
+async function stopJob(): Promise<void> {
+  const target = stopTarget.value;
+  if (!target?.jobId) return;
+  actionBusy.value = true;
+  actionError.value = '';
+  const result = await ipcRenderer.invoke('agents:stop-job', target.jobId);
+  actionBusy.value = false;
+  if (!result.ok) {
+    actionError.value = result.error || 'The job could not be stopped.';
     return;
   }
-  const warning = check.warnings.length ? `\n\nWarning: ${ check.warnings.join(' ') }` : '';
-  if (!window.confirm(`Publish ${ agent.name } to the Sulla Marketplace?\n\nIts full prompt, soul, goals and prompt files will be uploaded for admin review, and anyone can install it once approved.${ warning }`)) {
-    return;
-  }
-
-  publishingSlug.value = agent.slug;
-  try {
-    const result = await ipcRenderer.invoke('agent-definitions:publish', agent.slug);
-    if ('error' in result) {
-      window.alert(`Could not publish ${ agent.name }: ${ result.error }`);
-
-      return;
-    }
-    window.alert(`${ agent.name } was submitted for marketplace review.`);
-  } finally {
-    publishingSlug.value = null;
-  }
+  closeStop();
+  showToast('Stop requested.');
+  loadAgents().catch(() => {});
 }
 
-async function importManifest(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = '';
-  if (!file) return;
-  const manifest = JSON.parse(await file.text());
-  await ipcRenderer.invoke('agent-definitions:import', manifest);
-  await loadDefinitions();
+function closeMessage(): void {
+  messageTarget.value = null;
+  messageText.value = '';
+  actionError.value = '';
+  actionBusy.value = false;
 }
-
-// ── Formatting helpers ──
-
-function formatDuration(ms: number): string {
-  if (!ms || ms < 0) return '0m';
-  const mins = Math.floor(ms / 60_000);
-
-  if (mins < 60) return `${ mins }m`;
-  const hours = Math.floor(mins / 60);
-
-  if (hours < 24) return `${ hours }h ${ mins % 60 }m`;
-
-  return `${ Math.floor(hours / 24) }d ${ hours % 24 }h`;
+function closeStop(): void {
+  stopTarget.value = null;
+  actionError.value = '';
+  actionBusy.value = false;
 }
-
-function relTime(epochMs: number): string {
-  const diff = Date.now() - epochMs;
-
-  if (diff < 60_000) return 'just now';
-
-  return `${ formatDuration(diff) } ago`;
+function showToast(message: string): void {
+  toast.value = message;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.value = '' }, 3_000);
 }
-
-function idleMins(lastActiveAt: number): number {
-  return Math.floor((Date.now() - lastActiveAt) / 60_000);
+function toggleGroup(id: string): void {
+  const next = new Set(collapsedGroups.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collapsedGroups.value = next;
 }
-
-function formatTime(dateStr: string): string {
-  const d = new Date(dateStr);
-
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+function rowClass(status: RowStatus): string { return `is-${ status }` }
+function shortJobId(value: string): string { return `job …${ value.slice(-6) }` }
+function shortId(value: string): string { return value.length > 18 ? `${ value.slice(0, 9) }…${ value.slice(-6) }` : value }
+function compactNumber(value: number): string { return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value) }
+function formatAge(timestamp: number): string {
+  const seconds = Math.max(0, Math.floor((now.value - timestamp) / 1000));
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return `${ seconds }s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${ minutes }m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${ hours }h ago`;
+  return `${ Math.floor(hours / 24) }d ago`;
 }
-
-function isSubconscious(channel: string): boolean {
-  return channel.startsWith('subconscious');
+function formatDuration(startedAt: number, finishedAt?: number): string {
+  if (!Number.isFinite(startedAt)) return '—';
+  const seconds = Math.max(0, Math.floor(((finishedAt || now.value) - startedAt) / 1000));
+  if (seconds < 60) return `${ seconds }s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${ minutes }m`;
+  const hours = Math.floor(minutes / 60);
+  return `${ hours }h ${ minutes % 60 }m`;
 }
-
-// ── Status dot colors ──
-
-function statusDot(status: string): string {
-  if (status === 'running') return 'bg-emerald-400';
-  if (status === 'idle') return 'bg-amber-400';
-
-  return 'bg-slate-500';
-}
-
-function jobDot(status: string): string {
-  if (status === 'running') return 'bg-emerald-400';
-  if (status === 'completed') return 'bg-sky-400';
-  if (status === 'failed' || status === 'error') return 'bg-red-400';
-
-  return 'bg-slate-500';
-}
-
-const heartbeatDot = computed(() => {
-  const hb = data.value.heartbeat;
-
-  if (!hb) return 'bg-slate-500';
-  if (hb.isExecuting) return 'bg-emerald-400 animate-pulse';
-  if (hb.schedulerRunning) return 'bg-amber-400';
-
-  return 'bg-slate-500';
-});
-
-// ── Lifecycle ──
 
 onMounted(() => {
-  loadAgents();
-  Promise.all([loadDefinitions(), loadModels()]).catch(error => console.warn('[Agents] Failed to load definitions or models:', error));
+  Promise.all([loadAgents(), loadUsage()]).catch(() => {});
   pollTimer = setInterval(loadAgents, POLL_MS);
+  clockTimer = setInterval(() => { now.value = Date.now() }, 1_000);
 });
-
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer);
+  if (clockTimer) clearInterval(clockTimer);
+  if (toastTimer) clearTimeout(toastTimer);
 });
 </script>
 
 <style scoped>
 .agents-page {
-  background: var(--bg-page, #ffffff);
-  color: var(--text-primary, #0d0d0d);
+  --live-paper: #f4f7fb; --live-paper-2: #eaf0f6; --live-card: rgba(255,255,255,.82); --live-card-solid: #fff;
+  --live-text: #1a2332; --live-muted: #5b6778; --live-dim: #8a94a3; --live-line: rgba(26,35,50,.09); --live-line-strong: rgba(26,35,50,.14);
+  --live-accent: #3a7fa0; --live-accent-strong: #2f6a86; --live-accent-soft: rgba(58,127,160,.1);
+  --live-ok: #1f9d55; --live-ok-soft: rgba(31,157,85,.12); --live-warn: #d98a0a; --live-warn-soft: rgba(217,138,10,.13); --live-bad: #d9403a; --live-bad-soft: rgba(217,64,58,.11);
+  min-height: 100%; height: 100%; overflow: auto; color: var(--live-text);
+  background: radial-gradient(900px 500px at 15% -10%,rgba(58,127,160,.1),transparent 60%),radial-gradient(700px 400px at 100% 0%,rgba(58,127,160,.06),transparent 55%),var(--live-paper);
+  font-family: var(--font-body,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif); font-size: 13px; line-height: 1.45; font-variant-numeric: tabular-nums;
 }
-
 .agents-page.dark {
-  background: var(--bg-page, #0f172a);
-  color: var(--text-primary, #e0e0e0);
+  --live-paper: var(--bg,#0c1118); --live-paper-2: var(--surface-2,#17202c); --live-card: color-mix(in srgb,var(--surface-1,#121922) 88%,transparent); --live-card-solid: var(--surface-2,#17202c);
+  --live-text: var(--text,#edf2f7); --live-muted: var(--text-muted,#a8b1bd); --live-dim: var(--text-dim,#74808e); --live-line: var(--border-muted,rgba(255,255,255,.08)); --live-line-strong: var(--border,rgba(255,255,255,.14));
+  --live-accent: var(--accent,#5096b3); --live-accent-strong: var(--accent-hover,#68aac5); --live-accent-soft: var(--accent-dim,rgba(80,150,179,.14));
+  background: radial-gradient(900px 500px at 15% -10%,rgba(80,150,179,.12),transparent 60%),var(--live-paper);
 }
-
-.agents-header {
-  background: var(--bg-surface, #f8fafc);
-}
-
-.agents-page.dark .agents-header {
-  background: #0f172a;
-}
-
-.section-label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #64748b;
-  margin-bottom: 0.75rem;
-}
-
-.section-count {
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: #94a3b8;
-  background: rgba(100, 116, 139, 0.12);
-  border-radius: 9999px;
-  padding: 0 0.5rem;
-  line-height: 1.25rem;
-}
-
-.agents-card,
-.agents-row {
-  background: transparent;
-}
-
-.agents-card {
-  background: var(--bg-surface, rgba(0, 0, 0, 0.02));
-}
-
-.agents-page.dark .agents-card {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.agents-row:hover {
-  background: var(--bg-surface-hover, rgba(0, 0, 0, 0.04));
-}
-
-.agents-page.dark .agents-row:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.agent-action, .agent-link { border-radius: .5rem; padding: .45rem .75rem; font-size: .75rem; }
-.agent-action { background: var(--accent, #5096b3); color: white; }
-.agent-link { color: var(--text-link, #5096b3); }
-.agent-modal-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0,0,0,.68); }
-.agent-modal { width: min(680px, calc(100vw - 2rem)); display: grid; gap: 1rem; padding: 1.5rem; border: 1px solid var(--border-default); border-radius: .75rem; background: var(--bg-surface); }
-.agent-modal label { display: grid; gap: .4rem; color: var(--text-muted); font-size: .75rem; }
-.agent-modal input, .agent-modal select, .agent-modal textarea { width: 100%; border: 1px solid var(--border-default); border-radius: .5rem; padding: .65rem; background: var(--bg-page); color: var(--text-primary); }
-
-.badge {
-  display: inline-block;
-  font-size: 0.625rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #7c8db5;
-  background: rgba(124, 141, 181, 0.14);
-  border-radius: 4px;
-  padding: 0 0.35rem;
-  line-height: 1rem;
-}
-
-.badge-type {
-  color: #6aa9c4;
-  background: rgba(106, 169, 196, 0.14);
-}
-
-.agent-avatar-tile,
-.agent-modal-nav,
-.agent-modal-heading {
-  display: none;
-}
-
-.agent-modal-content {
-  display: grid;
-  gap: 1rem;
-}
-
-.theme-noir .agents-page {
-  background:
-    radial-gradient(circle at 72% -10%, color-mix(in srgb, var(--nx-accent) 9%, transparent), transparent 35%),
-    var(--nx-paper);
-  color: var(--nx-read-2);
-}
-
-.theme-noir .agents-header {
-  background: transparent;
-  border-bottom: 1px solid var(--nx-hair);
-}
-
-.theme-noir .agents-header .font-display {
-  background: none;
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
-  font-size: 3.25rem;
-  font-weight: 600;
-  letter-spacing: -0.035em;
-}
-
-.theme-noir .agents-header .text-2xl {
-  color: var(--nx-read-3);
-  font-size: 0.875rem;
-  letter-spacing: 0;
-}
-
-.theme-noir .section-label {
-  color: var(--nx-accent-2);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.66rem;
-  letter-spacing: 0.14em;
-}
-
-.theme-noir .section-count,
-.theme-noir .badge {
-  border: 1px solid var(--nx-hair);
-  background: color-mix(in srgb, var(--nx-hair-strong) 31.25%, transparent);
-  color: var(--text-info);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.theme-noir .agents-card {
-  display: grid;
-  gap: 0.65rem;
-  overflow: visible;
-  background: transparent;
-}
-
-.theme-noir .agents-card.agents-row,
-.theme-noir .agents-row {
-  position: relative;
-  border: 1px solid var(--nx-hair);
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--nx-hair-strong) 21.875%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
-  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
-}
-
-.theme-noir .agents-row:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
-  background: color-mix(in srgb, var(--nx-accent) 7.5%, transparent);
-}
-
-.theme-noir .agent-avatar-tile {
-  position: relative;
-  display: grid;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 24%, transparent);
-  border-radius: 13px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--nx-accent-2) 26%, transparent), color-mix(in srgb, var(--nx-accent) 7%, transparent));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 8%, transparent), 0 10px 30px color-mix(in srgb, var(--nx-paper) 35%, transparent);
-  color: var(--nx-read-2);
-  font-family: 'Playfair Display', Georgia, serif;
-  font-size: 1.15rem;
-  font-weight: 600;
-}
-
-.theme-noir .agent-live-dot {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--nx-surface);
-  border-radius: 50%;
-}
-
-.theme-noir .agent-live-dot-running {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-success) 10%, transparent), 0 0 10px color-mix(in srgb, var(--nx-success) 65%, transparent);
-  animation: agent-live-pulse 1.8s ease-in-out infinite;
-}
-
-.theme-noir .agent-action {
-  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 32%, transparent);
-  background: linear-gradient(135deg, var(--nx-accent), var(--nx-accent-2));
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--nx-accent) 18%, transparent);
-  color: var(--nx-paper);
-  font-weight: 650;
-}
-
-.theme-noir .agent-link {
-  color: var(--text-info);
-}
-
-.theme-noir .agent-link:hover {
-  background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
-  color: var(--nx-read-2);
-}
-
-.theme-noir .agent-modal-backdrop {
-  padding: 2rem;
-  background: color-mix(in srgb, var(--nx-paper) 78%, transparent);
-  backdrop-filter: blur(18px);
-}
-
-.theme-noir .agent-modal {
-  grid-template-columns: 230px minmax(0, 1fr);
-  gap: 0;
-  width: min(900px, calc(100vw - 4rem));
-  max-height: min(760px, calc(100vh - 4rem));
-  overflow: hidden;
-  padding: 0;
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 68.75%, transparent);
-  border-radius: 24px;
-  background: color-mix(in srgb, var(--nx-surface) 96%, transparent);
-  box-shadow: 0 28px 90px color-mix(in srgb, var(--shadow) 64.4444%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 3.5%, transparent);
-}
-
-.theme-noir .agent-modal-nav {
-  display: flex;
-  flex-direction: column;
-  padding: 30px 18px;
-  border-right: 1px solid var(--nx-hair);
-  background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
-}
-
-.theme-noir .agent-modal-nav h2 {
-  margin: 6px 8px 4px;
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
-  font-size: 1.35rem;
-  font-weight: 600;
-}
-
-.theme-noir .agent-modal-nav > p:not(.agent-modal-kicker) {
-  margin: 0 8px 28px;
-  color: var(--nx-read-4);
-  font-size: 0.7rem;
-  line-height: 1.5;
-}
-
-.theme-noir .agent-modal-kicker,
-.theme-noir .agent-modal-heading > p {
-  margin: 0 8px;
-  color: var(--nx-accent-2);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.62rem;
-  letter-spacing: 0.14em;
-}
-
-.theme-noir .agent-modal-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 40px;
-  margin-bottom: 4px;
-  padding: 0 14px;
-  border-radius: 20px;
-  color: var(--nx-read-4);
-  font-size: 0.8rem;
-}
-
-.theme-noir .agent-modal-nav-item span {
-  color: var(--nx-read-5);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.62rem;
-}
-
-.theme-noir .agent-modal-nav-current {
-  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 22%, transparent);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 18%, transparent), color-mix(in srgb, var(--nx-accent) 6%, transparent));
-  color: var(--nx-read-2);
-  box-shadow: 0 8px 28px color-mix(in srgb, var(--nx-accent) 8%, transparent);
-}
-
-.theme-noir .agent-modal-nav-state {
-  margin-top: auto;
-  padding: 12px;
-  border: 1px solid var(--nx-hair);
-  border-radius: 14px;
-  color: var(--nx-read-4);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.65rem;
-}
-
-.theme-noir .agent-modal-nav-state span {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: var(--nx-warning);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--nx-warning) 45%, transparent);
-}
-
-.theme-noir .agent-modal-content {
-  display: grid;
-  gap: 1rem;
-  overflow: auto;
-  padding: 30px 34px;
-  animation: agent-section-in 360ms ease both;
-}
-
-.theme-noir .agent-modal-legacy-title {
-  display: none;
-}
-
-.theme-noir .agent-modal-heading {
-  display: block;
-}
-
-.theme-noir .agent-modal-heading h3 {
-  margin: 5px 0;
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
-  font-size: 1.8rem;
-  font-weight: 500;
-  letter-spacing: -0.025em;
-}
-
-.theme-noir .agent-modal-heading span {
-  color: var(--nx-read-4);
-  font-size: 0.78rem;
-}
-
-.theme-noir .agent-modal label {
-  color: var(--text-info);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.62rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.theme-noir .agent-modal input,
-.theme-noir .agent-modal select,
-.theme-noir .agent-modal textarea {
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 66%, transparent);
-  color: var(--nx-read-2);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  letter-spacing: normal;
-  text-transform: none;
-}
-
-.theme-noir .agent-modal input:focus,
-.theme-noir .agent-modal select:focus,
-.theme-noir .agent-modal textarea:focus {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 42%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 9%, transparent);
-  outline: none;
-}
-
-.theme-noir .agent-modal-actions {
-  position: sticky;
-  bottom: -30px;
-  margin: 0 -34px -30px;
-  padding: 16px 34px;
-  border-top: 1px solid var(--nx-hair);
-  background: color-mix(in srgb, var(--bg-surface-alt) 90%, transparent);
-  backdrop-filter: blur(18px);
-}
-
-@keyframes agent-live-pulse {
-  50% { opacity: 0.62; transform: scale(0.82); }
-}
-
-@keyframes agent-section-in {
-  from { opacity: 0; filter: blur(8px); transform: translateY(8px); }
-  to { opacity: 1; filter: blur(0); transform: translateY(0); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .theme-noir .agent-live-dot-running,
-  .theme-noir .agent-modal-content {
-    animation: none;
-  }
-
-  .theme-noir .agents-row {
-    transition: none;
-  }
-}
+.conversation-view { min-height: 100%; }
+.live-view { max-width: 1500px; margin: 0 auto; padding: 28px 30px 56px; }
+.page-head { display: flex; align-items: flex-start; gap: 20px; margin-bottom: 20px; }
+.page-head h1 { margin: 0 0 3px; font-size: 24px; line-height: 1.2; font-weight: 680; letter-spacing: -.02em; }
+.page-head p { margin: 0; color: var(--live-muted); font-size: 12.5px; }
+.stream-state { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; padding-top: 5px; color: var(--live-muted); font-size: 11.5px; white-space: nowrap; }
+.stream-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--live-ok); box-shadow: 0 0 0 3px var(--live-ok-soft); animation: pulse 2s infinite; }
+.stream-state.offline i { background: var(--live-bad); box-shadow: 0 0 0 3px var(--live-bad-soft); animation: none; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(31,157,85,.05); } }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(175px,1fr)); gap: 12px; margin-bottom: 18px; }
+.summary-card { min-height: 105px; padding: 14px 16px 13px; border: 1px solid var(--live-line); border-radius: 12px; background: var(--live-card); box-shadow: 0 1px 2px rgba(26,35,50,.04),0 10px 30px -12px rgba(26,35,50,.12); backdrop-filter: blur(12px); }
+.summary-label { display: flex; align-items: center; gap: 7px; color: var(--live-muted); font-size: 11.5px; font-weight: 550; }
+.summary-card strong { display: block; margin: 7px 0 2px; font-size: 27px; line-height: 1.05; font-weight: 680; letter-spacing: -.03em; }
+.summary-card > span { color: var(--live-dim); font-size: 11px; }
+.summary-card.warning strong { color: var(--live-warn); } .summary-card.danger strong { color: var(--live-bad); }
+.filters { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.segments { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--live-line-strong); border-radius: 9px; background: var(--live-card-solid); }
+.segments button { padding: 5px 10px; border: 0; border-radius: 6px; color: var(--live-muted); background: transparent; font: 550 12px inherit; cursor: pointer; }
+.segments button span { color: var(--live-dim); font-size: 10.5px; }
+.segments button.active { color: var(--live-accent-strong); background: var(--live-accent-soft); font-weight: 650; }
+.search-box { margin-left: auto; display: flex; align-items: center; gap: 7px; width: min(280px,35vw); padding: 6px 10px; border: 1px solid var(--live-line-strong); border-radius: 9px; background: var(--live-card-solid); color: var(--live-dim); }
+.search-box svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.search-box input { min-width: 0; width: 100%; border: 0; outline: 0; color: var(--live-text); background: transparent; font: 12.5px inherit; }
+.search-box input::placeholder { color: var(--live-dim); }
+.tree-card { overflow: hidden; border: 1px solid var(--live-line); border-radius: 12px; background: var(--live-card); box-shadow: 0 1px 2px rgba(26,35,50,.04),0 10px 30px -12px rgba(26,35,50,.12); backdrop-filter: blur(12px); }
+.table-row { display: grid; grid-template-columns: minmax(210px,1.35fr) minmax(150px,1fr) minmax(180px,1.3fr) 105px 72px minmax(135px,auto); align-items: center; min-height: 49px; padding: 0 14px; border-bottom: 1px solid var(--live-line); gap: 12px; }
+.table-head { min-height: 38px; color: var(--live-dim); background: color-mix(in srgb,var(--live-paper-2) 54%,transparent); font-size: 10.5px; font-weight: 650; letter-spacing: .055em; text-transform: uppercase; }
+.actions-heading { text-align: right; } .agent-group:last-of-type .table-row:last-child { border-bottom: 0; }
+.lead-row { min-height: 58px; background: color-mix(in srgb,var(--live-card-solid) 42%,transparent); }
+.child-row:hover { background: color-mix(in srgb,var(--live-text) 2.5%,transparent); }
+.table-row.is-problem { background: linear-gradient(90deg,var(--live-bad-soft),transparent 48%); }
+.table-row.is-waiting { background: linear-gradient(90deg,var(--live-warn-soft),transparent 48%); }
+.agent-cell { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.agent-copy { min-width: 0; } .agent-copy b,.agent-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-copy b { font-weight: 650; } .agent-copy small { color: var(--live-dim); font-size: 11px; }
+.chevron { display: grid; width: 16px; height: 20px; place-items: center; padding: 0; border: 0; color: var(--live-dim); background: transparent; cursor: pointer; }
+.chevron svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.6; transition: transform .15s ease; }
+.chevron svg.collapsed { transform: rotate(-90deg); } .chevron-spacer { width: 16px; }
+.child-agent { position: relative; padding-left: 46px; }
+.child-agent::before { content: ''; position: absolute; left: 27px; top: -25px; bottom: 50%; width: 11px; border-left: 1.5px solid var(--live-line-strong); border-bottom: 1.5px solid var(--live-line-strong); border-bottom-left-radius: 6px; }
+.child-row:not(.last) .child-agent::after { content: ''; position: absolute; left: 27px; top: 50%; bottom: -25px; border-left: 1.5px solid var(--live-line-strong); }
+.status-dot { display: inline-block; flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--live-dim); box-shadow: 0 0 0 3px color-mix(in srgb,var(--live-dim) 16%,transparent); }
+.status-dot.running { background: var(--live-ok); box-shadow: 0 0 0 3px var(--live-ok-soft); } .status-dot.waiting { background: var(--live-warn); box-shadow: 0 0 0 3px var(--live-warn-soft); }
+.status-dot.problem { background: var(--live-bad); box-shadow: 0 0 0 3px var(--live-bad-soft); } .status-dot.idle { background: var(--live-dim); }
+.status-dot.paused { border: 2px solid var(--live-dim); background: transparent; } .status-dot.workflow { background: var(--live-accent); box-shadow: 0 0 0 3px var(--live-accent-soft); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .working-column { color: var(--live-text); }
+.activity-cell,.elapsed-cell,.checkin-cell { color: var(--live-muted); font-size: 12px; } .activity-reason { margin-right: 5px; font-weight: 650; }
+.waiting-text { color: var(--live-warn); } .problem-text { color: var(--live-bad); } .checkin-cell { display: flex; align-items: center; gap: 6px; }
+.progress-track { width: 44px; height: 4px; overflow: hidden; border-radius: 999px; background: var(--live-paper-2); }
+.progress-track i { display: block; height: 100%; border-radius: inherit; background: var(--live-accent); } .progress-track.problem i { background: var(--live-bad); } .progress-track.waiting i { background: var(--live-warn); }
+.muted { color: var(--live-dim); } .row-actions { display: flex; justify-content: flex-end; gap: 4px; }
+.small-button { padding: 4px 8px; border: 1px solid var(--live-line-strong); border-radius: 7px; color: var(--live-text); background: var(--live-card-solid); box-shadow: 0 1px 1px rgba(26,35,50,.03); font: 550 11.5px inherit; white-space: nowrap; cursor: pointer; }
+.small-button:hover { border-color: color-mix(in srgb,var(--live-accent) 45%,transparent); color: var(--live-accent-strong); } .small-button:disabled { opacity: .55; cursor: default; }
+.danger-button,.danger-copy { color: var(--live-bad); } .primary-button { border-color: var(--live-accent); color: #fff; background: var(--live-accent); } .solid-danger { border-color: var(--live-bad); color: #fff; background: var(--live-bad); }
+.legend { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; min-height: 42px; padding: 9px 16px; border-top: 1px solid var(--live-line); color: var(--live-dim); background: color-mix(in srgb,var(--live-text) 2%,transparent); font-size: 11.5px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; } .legend-total { margin-left: auto; } .empty-state { padding: 54px 20px; color: var(--live-muted); text-align: center; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px; background: rgba(6,10,16,.52); backdrop-filter: blur(5px); }
+.action-modal { width: min(460px,100%); padding: 22px; border: 1px solid var(--live-line-strong); border-radius: 14px; color: var(--live-text); background: var(--live-card-solid); box-shadow: 0 24px 70px rgba(0,0,0,.24); }
+.modal-kicker { color: var(--live-accent-strong); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; } .action-modal h2 { margin: 7px 0 5px; font-size: 20px; }
+.action-modal p { margin: 0 0 16px; color: var(--live-muted); font-size: 12.5px; } .action-modal textarea { width: 100%; resize: vertical; padding: 10px 11px; border: 1px solid var(--live-line-strong); border-radius: 9px; outline: 0; color: var(--live-text); background: var(--live-paper); font: 13px/1.45 inherit; }
+.action-modal textarea:focus { border-color: var(--live-accent); box-shadow: 0 0 0 3px var(--live-accent-soft); } .action-modal .modal-error { margin: 10px 0 0; color: var(--live-bad); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; } .toast { position: fixed; right: 24px; bottom: 24px; z-index: 60; padding: 9px 13px; border: 1px solid var(--live-line-strong); border-radius: 9px; color: var(--live-text); background: var(--live-card-solid); box-shadow: 0 10px 35px rgba(0,0,0,.18); }
+@media (max-width: 1100px) { .table-row { grid-template-columns: minmax(210px,1.2fr) minmax(170px,1fr) 100px 70px minmax(128px,auto); } .working-column { display: none; } }
+@media (max-width: 780px) { .live-view { padding: 22px 18px 46px; } .filters { align-items: stretch; flex-direction: column; } .segments { overflow-x: auto; } .search-box { margin-left: 0; width: 100%; } .table-row { grid-template-columns: minmax(185px,1fr) minmax(130px,1fr) 70px minmax(82px,auto); } .checkin-cell { display: none; } .row-actions { flex-wrap: wrap; } .legend-total { width: 100%; margin-left: 0; } }
 </style>

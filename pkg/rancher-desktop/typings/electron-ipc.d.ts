@@ -464,6 +464,8 @@ export interface IpcMainInvokeEvents {
   'git-show-staged':               (dirPath: string, file: string) => string;
   'agents-list':                   () => { id: string; name: string; description: string; type: string; templateId: string; path: string }[];
   'agents:list':                   () => import('@pkg/main/agentsIpc').AgentsListResponse;
+  'agents:message-job':            (jobId: string, taskIndex: number, message: string) => { ok: boolean; error?: string };
+  'agents:stop-job':               (jobId: string) => { ok: boolean; error?: string };
   'agents:conversations':          (channel: string, limit?: number, offset?: number) => import('@pkg/main/agentsIpc').AgentConversationSummary[];
   'agents:conversation':           (id: string) => import('@pkg/main/agentsIpc').AgentConversationDetail | null;
   'agent-definitions:list':        () => import('@pkg/main/agentsIpc').AgentDefinitionResponse[];
