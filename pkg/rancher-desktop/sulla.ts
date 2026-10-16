@@ -130,30 +130,82 @@ export async function initiateWindowContext(): Promise<void> {
  * sure automatic encrypted backups are running. Idempotent and never throws.
  */
 async function onVaultUnlocked(masterPassword?: string): Promise<void> {
-  try {
-    const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+  const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
 
-    if (!getVaultKeyService().isUnlocked()) return;
+  if (!getVaultKeyService().isUnlocked()) return;
+
+  // Legacy housekeeping needs Postgres; a login during startup can beat it.
+  // Keep it separate so it never blocks the Sulla Vault unlock below.
+  try {
     const { IntegrationValueModel } = await import('@pkg/agent/database/models/IntegrationValueModel');
     const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
 
     await IntegrationValueModel.migrateToEncrypted();
     getVaultBackupService().start(cb => getIntegrationService().onValueChange(() => cb()));
-
-    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-    const desktopVault = getDesktopVaultClient();
-    if (masterPassword) {
-      await desktopVault.unlock(masterPassword);
-      const { importLegacyVault } = await import('@pkg/agent/services/VaultImportService');
-      void importLegacyVault(masterPassword).catch(() => {
-        console.error('[Vault] Legacy vault import failed; details omitted');
-      });
-    } else {
-      await desktopVault.unlockFromKeychain();
-    }
   } catch (err) {
     console.error('[Vault] Post-unlock housekeeping failed:', err);
   }
+
+  try {
+    if (masterPassword) {
+      unlockSullaVaultWithRetry(masterPassword).catch(() => undefined);
+    } else {
+      const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+
+      await getDesktopVaultClient().unlockFromKeychain();
+    }
+  } catch (err) {
+    console.error('[Vault] Sulla Vault unlock failed:', err);
+  }
+}
+
+const VAULT_UNLOCK_RETRY_MS = 5_000;
+const VAULT_UNLOCK_DEADLINE_MS = 3 * 60_000;
+
+function isServiceNotReady(err: any): boolean {
+  const code = err?.cause?.code ?? err?.code;
+
+  return code === 'ECONNREFUSED' || code === 'ECONNRESET' || /fetch failed|ECONNREFUSED/.test(String(err?.message));
+}
+
+/**
+ * Unlock Sulla Vault and copy legacy credentials in. At login the vault server
+ * and Postgres may still be starting, so retry until they answer.
+ */
+async function unlockSullaVaultWithRetry(masterPassword: string): Promise<void> {
+  const deadline = Date.now() + VAULT_UNLOCK_DEADLINE_MS;
+
+  for (;;) {
+    try {
+      await unlockSullaVault(masterPassword, true);
+
+      return;
+    } catch (err) {
+      if (!isServiceNotReady(err) || Date.now() >= deadline) {
+        console.error('[Vault] Sulla Vault unlock failed:', err);
+
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, VAULT_UNLOCK_RETRY_MS));
+    }
+  }
+}
+
+async function unlockSullaVault(masterPassword: string, waitForImport = false): Promise<void> {
+  const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+  const { importLegacyVault } = await import('@pkg/agent/services/VaultImportService');
+
+  await getDesktopVaultClient().unlock(masterPassword);
+  const imported = importLegacyVault(masterPassword);
+
+  if (waitForImport) {
+    await imported;
+
+    return;
+  }
+  void imported.catch(() => {
+    console.error('[Vault] Legacy vault import failed; details omitted');
+  });
 }
 
 /**
@@ -856,7 +908,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   ipcMainProxy.handle('vault:v2-is-unlocked', async() => {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-    return getDesktopVaultClient().isUnlocked();
+    return getDesktopVaultClient().ensureUnlocked();
   });
   ipcMainProxy.handle('vault:v2-list', async() => {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');

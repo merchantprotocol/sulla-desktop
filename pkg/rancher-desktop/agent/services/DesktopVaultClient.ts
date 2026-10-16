@@ -19,7 +19,8 @@ import {
 import paths from '../../utils/paths';
 
 const DEFAULT_API = 'http://127.0.0.1:30121';
-const DEFAULT_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
+// Server tokens last 12h; reopen a little before that so requests never 401.
+const SESSION_LIFETIME_MS = 11 * 60 * 60 * 1000;
 
 export interface RemoteVaultItem {
   id:                      string;
@@ -67,13 +68,9 @@ interface Session {
 }
 type ApprovalPrompt = (item: VaultItemPlaintext, request: CredentialUseRequest) => Promise<boolean>;
 
-function lockTimeoutMs(): number {
-  const configured = Number(process.env.SULLA_VAULT_LOCK_TIMEOUT_MS);
-  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_LOCK_TIMEOUT_MS;
-}
-
 export class DesktopVaultClient {
   private session:              Session | null = null;
+  private reopening:            Promise<boolean> | null = null;
   private readonly recentAudit: VaultAuditEvent[] = [];
   private readonly keyCachePath = path.join(paths.appHome, 'vault-v2-key.enc');
 
@@ -83,6 +80,8 @@ export class DesktopVaultClient {
     const response = await fetch(`${ this.api }${ requestPath }`, init);
     const body = await response.json().catch(() => ({}));
     if (!response.ok && !allowFailure) {
+      // A rejected token means the session is gone; drop it so the next call reopens.
+      if (response.status === 401 && this.session) this.lock();
       const reason = typeof body.reason === 'string' ? `: ${ body.reason }` : '';
       throw new Error(`Vault request failed (${ response.status })${ reason }`);
     }
@@ -95,7 +94,6 @@ export class DesktopVaultClient {
       this.lock();
       throw new Error('Vault session expired');
     }
-    this.session.expiresAt = Date.now() + lockTimeoutMs();
     return this.session;
   }
 
@@ -169,7 +167,7 @@ export class DesktopVaultClient {
         userKey,
         publicKey: result.user.publicKey,
         privateKey,
-        expiresAt: Date.now() + lockTimeoutMs(),
+        expiresAt: Date.now() + SESSION_LIFETIME_MS,
       };
     } catch (error) {
       userKey.fill(0);
@@ -193,13 +191,31 @@ export class DesktopVaultClient {
     this.session = null;
   }
 
+  /**
+   * Sulla Vault follows the main Sulla unlock: while Sulla is unlocked, reopen
+   * the session from the keychain-cached key instead of asking for a password.
+   * A manual lock locks Sulla too, so this never undoes it.
+   */
+  async ensureUnlocked(): Promise<boolean> {
+    if (this.isUnlocked()) return true;
+    const { getVaultKeyService } = await import('./VaultKeyService');
+    if (!getVaultKeyService().isUnlocked()) return false;
+    this.reopening ??= this.unlockFromKeychain().finally(() => { this.reopening = null });
+    return this.reopening;
+  }
+
+  private async withSession(): Promise<Session> {
+    if (!await this.ensureUnlocked()) throw new Error('Vault is locked');
+    return this.requireSession();
+  }
+
   isUnlocked(): boolean {
     if (this.session && Date.now() >= this.session.expiresAt) this.lock();
     return this.session !== null;
   }
 
   async list(): Promise<RemoteVaultItem[]> {
-    const active = this.requireSession();
+    const active = await this.withSession();
     const result = await this.request('/v1/items', { headers: this.headers() });
     return Promise.all((result.items as Omit<RemoteVaultItem, 'plaintext'>[]).map(async item => ({
       ...item,
@@ -211,7 +227,7 @@ export class DesktopVaultClient {
   }
 
   async get(id: string): Promise<RemoteVaultItem> {
-    const active = this.requireSession();
+    const active = await this.withSession();
     const item = await this.request(`/v1/items/${ encodeURIComponent(id) }`, { headers: this.headers() });
     return {
       ...item,
@@ -223,7 +239,7 @@ export class DesktopVaultClient {
   }
 
   async save(id: string | undefined, plaintext: VaultItemPlaintext, revision?: number): Promise<string> {
-    const active = this.requireSession();
+    const active = await this.withSession();
     const itemId = id || crypto.randomUUID();
     const encrypted = await encryptItem(
       JSON.stringify(plaintext), active.userKey, { itemId, ownerId: active.userId },
@@ -252,7 +268,7 @@ export class DesktopVaultClient {
 
   /** Give a trusted provisioning callback a short-lived copy of the agent key. */
   async withAgentKeyPair<T>(fn: (key: { publicKey: string; privateKey: Buffer }) => Promise<T>): Promise<T> {
-    const active = this.requireSession();
+    const active = await this.withSession();
     const privateKey = Buffer.from(active.privateKey);
     try {
       return await fn({ publicKey: active.publicKey, privateKey });
@@ -262,6 +278,7 @@ export class DesktopVaultClient {
   }
 
   async remove(id: string, revision: number): Promise<void> {
+    await this.withSession();
     await this.request(`/v1/items/${ encodeURIComponent(id) }?revision=${ revision }`, { method: 'DELETE', headers: this.headers() });
   }
 
