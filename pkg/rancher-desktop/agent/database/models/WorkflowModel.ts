@@ -24,6 +24,7 @@ interface WorkflowAttributes {
   system:               boolean;
   /** sha-256 of the seeded definition + notes — drift detection for `system` rows. */
   content_hash:         string | null;
+  location:             'desktop' | 'server';
   created_at:           Date;
   updated_at:           Date;
 }
@@ -72,6 +73,7 @@ export interface WorkflowListRow {
   // True for locked core routines — the UI shows a lock badge and hides the
   // edit/delete/archive/publish actions (enforcement is also server-side).
   system:      boolean;
+  location:    'desktop' | 'server';
 }
 
 export class WorkflowModel extends BaseModel<WorkflowAttributes> {
@@ -90,6 +92,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
     'source_template_slug',
     'system',
     'content_hash',
+    'location',
   ];
 
   protected readonly casts: Record<string, string> = {
@@ -134,6 +137,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
               description,
               status,
               system,
+              location,
               updated_at,
               CASE
                 WHEN jsonb_typeof(definition->'nodes') = 'array'
@@ -152,6 +156,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
       updatedAt:   r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at ?? ''),
       nodeCount:   Number(r.node_count ?? 0),
       system:      r.system === true,
+      location:    r.location === 'server' ? 'server' : 'desktop',
     }));
   }
 
