@@ -25,7 +25,7 @@ function fakeDb() {
 }
 
 async function withServer(fn:(baseUrl:string) => Promise<void>) {
-  const server = createApp(fakeDb(), { chunkRoot: '/tmp/sulla-files-sharing-test', dataRoot: '/tmp/sulla-files-sharing-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, localToken: 'local-test-token', mode: 'server', deviceId: 'test', userId: 'owner-1', cloudUrl: 'https://cloud.invalid', paused: false }).listen(0);
+  const server = createApp(fakeDb(), { chunkRoot: '/tmp/sulla-files-sharing-test', dataRoot: '/tmp/sulla-files-sharing-test', modelDir: '/tmp/sulla-files-sharing-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, localToken: 'local-test-token', mode: 'server', deviceId: 'test', userId: 'owner-1', cloudUrl: 'https://cloud.invalid', paused: false }).listen(0);
   await new Promise<void>(resolve => server.once('listening', resolve));
   try { await fn(`http://127.0.0.1:${ (server.address() as any).port }`) } finally { server.close() }
 }

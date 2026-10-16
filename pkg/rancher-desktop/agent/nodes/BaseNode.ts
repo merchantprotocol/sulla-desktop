@@ -822,6 +822,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['skills_observations', 'skillsObservationContext'],
       ['installed_skills', 'skillRecallContext'],
       ['conversation_context', 'conversationContext'],
+      ['related_files', 'filesContext'],
       ['reflex_context', 'reflexContext'],
       ['team_directory', 'teamDirectoryContext'],
       ['subagent_directory', 'subagentDirectoryContext'],

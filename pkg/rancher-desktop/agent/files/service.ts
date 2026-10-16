@@ -3,7 +3,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fastCdc } from './chunking';
 import { chunkId, decryptChunk, encryptChunk } from './crypto';
 import { FileKeyring } from './keyring';
+import { issueCapabilityToken } from '../../runtime/capabilityToken';
 import { postgresClient } from '../database/PostgresClient';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+
+import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 
 import type { ChunkStore, CollectionKind, CollectionRole, ToolExecutionContext } from './types';
 import type { PoolClient } from 'pg';
@@ -122,6 +126,10 @@ export class SullaFilesService {
     const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [file.id, collection.id, file.current_version_id, mHash, input.bytes.byteLength, creatorType, context.job_id ?? context.sub, input.message ?? null, context.device_id ?? 'desktop'])).rows[0];
     await client.query('UPDATE files SET current_version_id=$2,mime=$3,size=$4,expires_at=$5,search_text=$6,deleted_at=NULL,updated_at=NOW() WHERE id=$1', [file.id, version.id, input.mime, input.bytes.byteLength, expiry, text]);
+    if (text) {
+      const parts = text.match(/[\s\S]{1,4000}/g) ?? [];
+      for (const [ordinal, content] of parts.entries()) await client.query('INSERT INTO file_search_chunks(file_id,version_id,ordinal,content) VALUES($1,$2,$3,$4) ON CONFLICT(version_id,ordinal) DO UPDATE SET content=EXCLUDED.content', [file.id, version.id, ordinal, content]);
+    }
     await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [collection.id, ids]);
     await client.query(`INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')`, [collection.id, file.id, version.id]);
     await this.replaceEdges(client, file.id, input.path, text, creatorType, context.job_id ?? context.sub, input.derivedFrom ?? []);
@@ -183,10 +191,35 @@ export class SullaFilesService {
     await postgresClient.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES('file',$1,'file',$2,$3,$4) ON CONFLICT DO NOTHING`, [fileId, targetFileId, kind, context.job_id ?? context.sub]);
   }
 
-  async search(context: ToolExecutionContext, collectionId: string, query: string): Promise<any[]> {
-    await this.collection(context, collectionId, 'view');
-    return postgresClient.query(`SELECT id,path,mime,size,updated_at,ts_rank(search_vector, plainto_tsquery('simple',$2)) rank FROM files
-      WHERE collection_id=$1 AND deleted_at IS NULL AND search_vector @@ plainto_tsquery('simple',$2) ORDER BY rank DESC, path LIMIT 100`, [collectionId, query]);
+  async search(context: ToolExecutionContext, collectionId: string, query: string, filters: { folder?: string; type?: string; person?: string; from?: Date; to?: Date } = {}): Promise<any[]> {
+    return this.containerSearch(context, { collectionId, query, ...filters });
+  }
+
+  async searchAll(context: ToolExecutionContext, query: string, filters: { folder?: string; type?: string; person?: string; from?: Date; to?: Date } = {}, options: { terms?: string[]; timeoutMs?: number } = {}): Promise<any[]> {
+    return this.containerSearch(context, { query, ...filters, terms: options.terms }, options.timeoutMs);
+  }
+
+  private async containerSearch(context:ToolExecutionContext, body:Record<string, unknown>, timeoutMs = 2_000):Promise<any[]> {
+    const signingKey = sullaFilesCapabilityKey(await SullaSettingsModel.getServicePassword());
+    const token = issueCapabilityToken({
+      sub:              context.sub,
+      org_id:           context.org_id,
+      group_ids:        context.group_ids,
+      agent_id:         context.agent_id,
+      job_id:           context.job_id,
+      thread_id:        context.thread_id,
+      device_id:        context.device_id,
+      scopes:           ['files/*'],
+      expiresInSeconds: 300,
+    }, signingKey);
+    const response = await fetch('http://127.0.0.1:30124/v1/search', {
+      method:  'POST',
+      headers: { authorization: `Bearer ${ token }`, 'content-type': 'application/json' },
+      body:    JSON.stringify(body),
+      signal:  AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) throw new Error(`Files search failed (${ response.status })`);
+    return response.json() as Promise<any[]>;
   }
 
   async promote(context: ToolExecutionContext, fileId: string, targetCollectionId: string, path?: string): Promise<void> {

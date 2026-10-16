@@ -8,6 +8,7 @@ import { chunkId, decryptChunk, encrypt, encryptChunk } from './crypto.js';
 import { Store } from './store.js';
 
 import type { Config } from './config.js';
+import type { IndexingQueue } from './indexing.js';
 import type pg from 'pg';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -18,7 +19,7 @@ interface WatchedRow { collection_id: string; path: string; file_id: string; con
 
 function mime(path:string):string {
   const extension = extname(path).toLowerCase();
-  return ({ '.txt': 'text/plain', '.md': 'text/markdown', '.json': 'application/json', '.yaml': 'application/yaml', '.yml': 'application/yaml', '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mov': 'video/quicktime' } as Record<string, string>)[extension] ?? 'application/octet-stream';
+  return ({ '.txt': 'text/plain', '.md': 'text/markdown', '.json': 'application/json', '.yaml': 'application/yaml', '.yml': 'application/yaml', '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.ppt': 'application/vnd.ms-powerpoint', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mov': 'video/quicktime' } as Record<string, string>)[extension] ?? 'application/octet-stream';
 }
 function matchIgnore(path:string, patterns:string[]):boolean {
   const parts = path.split('/');
@@ -50,7 +51,7 @@ export class LocalFilesManager {
   private lastSyncAt?:    string;
   private syncTimer?:     NodeJS.Timeout;
   private pendingFiles = 0;
-  constructor(private readonly db:pg.Pool, private readonly config:Config) { this.store = new Store(config.chunkRoot); this.paused = config.paused }
+  constructor(private readonly db:pg.Pool, private readonly config:Config, private readonly indexer?:IndexingQueue) { this.store = new Store(config.chunkRoot); this.paused = config.paused }
 
   async initialize():Promise<void> {
     if (!this.config.filesRoot) return;
@@ -142,7 +143,7 @@ export class LocalFilesManager {
       await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(ids), total]);
       for (const chunk of chunks) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING', [collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ collectionId }/${ chunk.id }`]);
       let fileId = old?.file_id ?? renameFrom?.file_id; let parent:string | null = null;
-      if (fileId) { const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0]; parent = file.current_version_id; await client.query('UPDATE files SET path=$2,mime=$3,size=$4,deleted_at=NULL,updated_at=NOW() WHERE id=$1', [fileId, path, mime(path), total]) } else { fileId = (await client.query("INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,'user',$3,$4,$5) RETURNING id", [collectionId, path, this.config.userId, mime(path), total])).rows[0].id }
+      if (fileId) { const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0]; parent = file.current_version_id; await client.query("UPDATE files SET path=$2,mime=$3,size=$4,search_text=NULL,extracted_at=NULL,extraction_status='pending',deleted_at=NULL,updated_at=NOW() WHERE id=$1", [fileId, path, mime(path), total]) } else { fileId = (await client.query("INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size,extraction_status) VALUES($1,$2,'user',$3,$4,$5,'pending') RETURNING id", [collectionId, path, this.config.userId, mime(path), total])).rows[0].id }
       const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
         VALUES($1,$2,$3,$4,$5,'user',$6,$7,$8,$3) RETURNING id`, [fileId, collectionId, parent, manifestHash, total, this.config.userId, renameFrom ? `Renamed ${ renameFrom.path } to ${ path }` : 'Watched folder change', this.config.deviceId])).rows[0];
       await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [fileId, version.id]); await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, ids]);
@@ -150,7 +151,7 @@ export class LocalFilesManager {
       if (renameFrom) await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND path=$2', [collectionId, renameFrom.path]);
       await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms) VALUES($1,$2,$3,$4,$5,$6)
         ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms`, [collectionId, path, fileId, contentHash, total, Math.trunc(mtimeMs)]);
-      await client.query('COMMIT'); if (renameFrom) missing.delete(contentHash); return true;
+      await client.query('COMMIT'); this.indexer?.wake(); if (renameFrom) missing.delete(contentHash); return true;
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
@@ -267,7 +268,7 @@ export class LocalFilesManager {
       await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [entry.file.id, entry.version.id]);
       await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms) VALUES($1,$2,$3,$4,$5,$6)
         ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms`, [collectionId, entry.file.path, entry.file.id, hash.digest('hex'), info.size, Math.trunc(info.mtimeMs)]);
-      await client.query('COMMIT');
+      await client.query('COMMIT'); this.indexer?.wake();
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 }
