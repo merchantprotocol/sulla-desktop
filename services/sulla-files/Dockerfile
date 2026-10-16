@@ -8,7 +8,7 @@ RUN npm run build && npm prune --omit=dev
 FROM node:24-alpine
 ENV NODE_ENV=production
 WORKDIR /app
-RUN apk add --no-cache su-exec
+RUN apk add --no-cache ffmpeg poppler-utils su-exec
 COPY --from=build /app/services/sulla-files/package.json ./package.json
 COPY --from=build /app/services/sulla-files/node_modules ./node_modules
 COPY --from=build /app/services/sulla-files/dist ./dist
