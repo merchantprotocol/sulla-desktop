@@ -1,45 +1,36 @@
 import { createHash } from 'node:crypto';
 
+import { getDesktopVaultClient } from './DesktopVaultClient';
+import { getVaultKeyService } from './VaultKeyService';
 import {
-  createUserKey,
-  createUserKeyPair,
-  deriveLoginHash,
-  deriveMasterKey,
+  agentPolicyFromLegacyLlmAccess,
   decryptItem,
   encryptItem,
-  unwrapUserKey,
   type EncryptedEnvelope,
   type EncryptedItem,
+  type VaultItemPlaintext,
 } from '../../../../packages/vault-crypto/src/index';
-
 import { postgresClient } from '../database/PostgresClient';
-import { getVaultKeyService } from './VaultKeyService';
 
 const API = 'http://127.0.0.1:30121';
-const ACCESS_LEVELS = new Set(['none', 'metadata', 'autofill', 'full']);
 const VAULT_PREFIX = '$VAULT$';
 
 interface LegacyRow {
-  value_id: number;
+  value_id:       number;
   integration_id: string;
-  account_id: string;
-  property: string;
-  value: string;
+  account_id:     string;
+  property:       string;
+  value:          string;
 }
 interface VaultItemResponse {
-  id: string;
-  ciphertext: EncryptedEnvelope;
+  id:                 string;
+  ciphertext:         EncryptedEnvelope;
   encrypted_item_key: EncryptedEnvelope;
 }
 
-function itemId(valueId: number): string {
-  const hex = createHash('sha256').update(`sulla-legacy-v1:${ valueId }`).digest('hex').slice(0, 32);
+export function legacyAccountItemId(integrationId: string, accountId: string): string {
+  const hex = createHash('sha256').update(`sulla-legacy-account-v2:${ integrationId }:${ accountId }`).digest('hex').slice(0, 32);
   return `${ hex.slice(0, 8) }-${ hex.slice(8, 12) }-5${ hex.slice(13, 16) }-8${ hex.slice(17, 20) }-${ hex.slice(20) }`;
-}
-
-function accessLevel(rows: LegacyRow[], integrationId: string, accountId: string): string {
-  const row = rows.find(candidate => candidate.integration_id === integrationId && candidate.account_id === accountId && candidate.property === 'llm_access');
-  return row?.value || 'autofill';
 }
 
 async function request(path: string, init: RequestInit): Promise<any> {
@@ -49,10 +40,25 @@ async function request(path: string, init: RequestInit): Promise<any> {
   return body;
 }
 
+function decryptLegacy(row: LegacyRow, oldVault: ReturnType<typeof getVaultKeyService>): string | null {
+  try {
+    return row.value.startsWith(VAULT_PREFIX) ? oldVault.decrypt(row.value) : row.value;
+  } catch {
+    return null;
+  }
+}
+
+function itemName(integrationId: string, accountId: string, properties: Record<string, string>): string {
+  if (properties.account_label) return properties.account_label;
+  if (integrationId === 'website' && properties.website_url) {
+    try { return new URL(properties.website_url).hostname } catch { /* use account id */ }
+  }
+  return accountId === 'default' ? integrationId : `${ integrationId } · ${ accountId }`;
+}
+
 /**
- * Copy legacy $VAULT$ rows into sulla-vault without changing the legacy DB.
- * The password is used only in this process to derive the new client keys;
- * neither it, the VMK, nor decrypted values cross the HTTP boundary.
+ * Copy each legacy integration account into one encrypted vault item. Stable IDs make
+ * reruns idempotent. The legacy rows are read-only and remain the rollback source.
  */
 export async function importLegacyVault(masterPassword: string): Promise<void> {
   const settings = (await import('@pkg/config/settingsImpl')).getSettings();
@@ -60,88 +66,101 @@ export async function importLegacyVault(masterPassword: string): Promise<void> {
 
   const oldVault = getVaultKeyService();
   if (!oldVault.isUnlocked()) return;
+  const client = getDesktopVaultClient();
+  if (!client.isUnlocked()) await client.unlock(masterPassword);
 
   const rows = await postgresClient.query<LegacyRow>(
     `SELECT value_id, integration_id, account_id, property, value
        FROM integration_values
-      ORDER BY value_id`, [],
+      ORDER BY integration_id, account_id, value_id`, [],
   );
-  const credentialRows = rows.filter(row => row.property !== 'llm_access' && row.value.startsWith(VAULT_PREFIX));
-  if (!credentialRows.length) return;
-
-  let kdf: { salt: string; parameters: { memoryBytes: number; operations: number } } | undefined;
-  try {
-    const existing = await request('/v1/desktop/bootstrap', { method: 'GET' });
-    if (existing.kdf?.salt && existing.kdf?.parameters) kdf = existing.kdf;
-  } catch (error) {
-    if (!(error instanceof Error) || !error.message.includes('(404)')) throw error;
+  const grouped = new Map<string, LegacyRow[]>();
+  for (const row of rows) {
+    const key = `${ row.integration_id }\u0000${ row.account_id }`;
+    grouped.set(key, [...(grouped.get(key) ?? []), row]);
   }
-  const master = await deriveMasterKey(masterPassword, kdf?.salt, kdf?.parameters);
-  const candidate = await createUserKey(master.key);
-  const pair = await createUserKeyPair(candidate.userKey);
-  const bootstrapKdf = { salt: master.salt, parameters: master.parameters };
+  if (!grouped.size) return;
 
-  await request('/v1/desktop/bootstrap', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      loginHash: await deriveLoginHash(master.key), publicKey: pair.publicKey,
-      encryptedPrivateKey: pair.encryptedPrivateKey, encryptedUserKey: candidate.encryptedUserKey, kdf: bootstrapKdf,
-    }),
+  // The client already owns key derivation and local decryption. Use a short-lived
+  // session response only for the import equality proof, never for plaintext transit.
+  const bootstrap = await request('/v1/desktop/bootstrap', { method: 'GET' });
+  const { deriveMasterKey, deriveLoginHash, unwrapUserKey } = await import('../../../../packages/vault-crypto/src/index');
+  const master = await deriveMasterKey(masterPassword, bootstrap.kdf.salt, bootstrap.kdf.parameters);
+  const remoteSession = await request('/v1/session', {
+    method:  'POST',
+    headers: { 'content-type': 'application/json' },
+    body:    JSON.stringify({ loginHash: await deriveLoginHash(master.key) }),
   });
-  const session = await request('/v1/session', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ loginHash: await deriveLoginHash(master.key) }),
-  });
-  const token = session.token as string;
-  const userKey = await unwrapUserKey(session.user.encryptedUserKey, master.key);
-  const headers = { 'content-type': 'application/json', authorization: `Bearer ${ token }` };
+  const userKey = await unwrapUserKey(remoteSession.user.encryptedUserKey, master.key);
+  master.key.fill(0);
+  const headers = { 'content-type': 'application/json', authorization: `Bearer ${ remoteSession.token }` };
   const existing = await request('/v1/items', { headers });
   const imported = new Set((existing.items as VaultItemResponse[]).map(item => item.id));
   let copied = 0;
   let skipped = 0;
   let rejected = 0;
 
-  for (const row of credentialRows) {
-    const id = itemId(row.value_id);
-    if (imported.has(id)) { skipped++; continue; }
-    let plaintext: string;
-    try {
-      plaintext = oldVault.decrypt(row.value);
-    } catch {
-      rejected++;
-      continue;
+  for (const accountRows of grouped.values()) {
+    const { integration_id: integrationId, account_id: accountId } = accountRows[0];
+    const id = legacyAccountItemId(integrationId, accountId);
+    if (imported.has(id)) { skipped++; continue }
+    const properties: Record<string, string> = {};
+    let invalid = false;
+    for (const row of accountRows) {
+      const value = decryptLegacy(row, oldVault);
+      if (value === null) { invalid = true; break }
+      properties[row.property] = value;
     }
-    const level = accessLevel(rows, row.integration_id, row.account_id);
-    if (!ACCESS_LEVELS.has(level)) {
-      rejected++;
-      continue;
-    }
-    const payload = JSON.stringify({
-      source: 'integration_values', sourceId: row.value_id,
-      integrationId: row.integration_id, accountId: row.account_id,
-      property: row.property, value: plaintext, vaultLlmAccess: level,
-    });
-    const encrypted: EncryptedItem = await encryptItem(payload, userKey, { itemId: id, ownerId: session.user.id });
+    if (invalid) { rejected++; continue }
+
+    const agentPolicy = agentPolicyFromLegacyLlmAccess(properties.llm_access);
+    delete properties.llm_access;
+    const isLogin = integrationId === 'website';
+    const uri = properties.website_url;
+    const secretProperty = ['password', 'api_key', 'bearer_token', 'client_secret', 'token'].find(key => properties[key]);
+    const plaintext: VaultItemPlaintext = {
+      type:     isLogin ? 'login' : 'apiKey',
+      name:     itemName(integrationId, accountId, properties),
+      username: properties.username,
+      password: secretProperty ? properties[secretProperty] : undefined,
+      uris:     uri ? [{ uri, match: 'domain' }] : [],
+      fields:   Object.entries(properties)
+        .filter(([key]) => !['account_label', 'website_url', 'username', secretProperty].includes(key))
+        .map(([name, value]) => ({ name, value, hidden: true })),
+      integration: { integrationId, accountId, properties },
+      agentPolicy,
+    };
+    const encrypted: EncryptedItem = await encryptItem(JSON.stringify(plaintext), userKey, { itemId: id, ownerId: remoteSession.user.id });
     await request('/v1/items', {
-      method: 'POST', headers,
-      body: JSON.stringify({ id, itemType: 'legacy_credential', ciphertext: encrypted.ciphertext, encryptedItemKey: encrypted.encryptedItemKey }),
+      method: 'POST',
+      headers,
+      body:   JSON.stringify({
+        id,
+        itemType:         plaintext.type,
+        ciphertext:       encrypted.ciphertext,
+        encryptedItemKey: encrypted.encryptedItemKey,
+        agentPolicy,
+      }),
     });
     copied++;
   }
 
-  // Read-only equality check: decrypt each imported item locally and compare to
-  // the still-present legacy ciphertext. Mismatches are counts only.
+  // Compare imported plaintext to legacy data locally. Report counts only.
   const after = await request('/v1/items', { headers });
   let mismatches = 0;
   for (const item of after.items as VaultItemResponse[]) {
-    const sourceId = Number(item.id ? credentialRows.find(row => itemId(row.value_id) === item.id)?.value_id : NaN);
-    if (!Number.isSafeInteger(sourceId)) continue;
-    const legacy = credentialRows.find(row => row.value_id === sourceId);
-    if (!legacy) continue;
+    const accountRows = [...grouped.values()].find(group => legacyAccountItemId(group[0].integration_id, group[0].account_id) === item.id);
+    if (!accountRows) continue;
     try {
-      const decoded = JSON.parse(new TextDecoder().decode(await decryptItem({ version: 1, encryptedItemKey: item.encrypted_item_key, ciphertext: item.ciphertext }, userKey, { itemId: item.id, ownerId: session.user.id })));
-      if (decoded.value !== oldVault.decrypt(legacy.value)) mismatches++;
-    } catch { mismatches++; }
+      const decoded = JSON.parse(new TextDecoder().decode(await decryptItem(
+        { version: 1, encryptedItemKey: item.encrypted_item_key, ciphertext: item.ciphertext },
+        userKey, { itemId: item.id, ownerId: remoteSession.user.id },
+      ))) as VaultItemPlaintext;
+      for (const row of accountRows.filter(candidate => candidate.property !== 'llm_access')) {
+        if (decoded.integration?.properties[row.property] !== decryptLegacy(row, oldVault)) mismatches++;
+      }
+    } catch { mismatches++ }
   }
-  console.log(`[VaultImport] rows=${ rows.length } copied=${ copied } skipped=${ skipped } rejected=${ rejected } mismatches=${ mismatches }`);
+  userKey.fill(0);
+  console.log(`[VaultImport] accounts=${ grouped.size } copied=${ copied } skipped=${ skipped } rejected=${ rejected } mismatches=${ mismatches }`);
 }

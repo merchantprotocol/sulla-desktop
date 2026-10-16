@@ -103,6 +103,9 @@ export default {
   },
 
   configureWebpack: (config) => {
+    // Shared ESM packages use NodeNext's explicit `.js` specifiers in source.
+    // During Desktop source builds, resolve those specifiers to TypeScript first.
+    config.resolve.extensionAlias = { ...(config.resolve.extensionAlias || {}), '.js': ['.ts', '.js'] };
     config.externals = {
       'puppeteer-extra-plugin': 'commonjs puppeteer-extra-plugin',
       'puppeteer-extra':        'commonjs puppeteer-extra',

@@ -8,31 +8,39 @@ export type VaultItemType = 'login' | 'note' | 'card' | 'identity' | 'apiKey';
 export type UriMatch = 'domain' | 'host' | 'startsWith' | 'exact' | 'never';
 
 export interface VaultItemUri {
-  uri: string;
+  uri:    string;
   match?: UriMatch;
 }
 
 export interface VaultCustomField {
-  name: string;
-  value: string;
+  name:    string;
+  value:   string;
   hidden?: boolean;
 }
 
 /** Plaintext of one vault item before encryption. */
 export interface VaultItemPlaintext {
-  type: VaultItemType;
-  name: string;
-  favorite?: boolean;
-  username?: string;
-  password?: string;
+  type:             VaultItemType;
+  name:             string;
+  favorite?:        boolean;
+  username?:        string;
+  password?:        string;
   /** otpauth:// URI or base32 secret. */
-  totp?: string;
-  uris?: VaultItemUri[];
-  notes?: string;
-  fields?: VaultCustomField[];
-  card?: { holder?: string; brand?: string; number?: string; expMonth?: string; expYear?: string; code?: string };
-  identity?: Record<string, string>;
+  totp?:            string;
+  uris?:            VaultItemUri[];
+  notes?:           string;
+  fields?:          VaultCustomField[];
+  card?:            { holder?: string; brand?: string; number?: string; expMonth?: string; expYear?: string; code?: string };
+  identity?:        Record<string, string>;
   passwordHistory?: { password: string; changedAt: string }[];
+  /** Optional Desktop migration link. Values remain inside the encrypted item. */
+  integration?: {
+    integrationId: string;
+    accountId:     string;
+    properties:    Record<string, string>;
+  };
+  /** Human-readable folder name, encrypted with the rest of the item. */
+  folder?:     string;
   agentPolicy: AgentPolicy;
 }
 
@@ -41,27 +49,27 @@ export type AgentAccessLevel = 'metadata' | 'autofill' | 'full';
 
 export interface AgentPolicy {
   /** 'only_me' blocks every agent regardless of the other fields. */
-  mode: 'only_me' | 'agents';
-  level: AgentAccessLevel;
+  mode:              'only_me' | 'agents';
+  level:             AgentAccessLevel;
   /** Agent ids allowed; empty = all of the owner's agents. */
-  agents: string[];
+  agents:            string[];
   /** Hostnames the credential may be used on; empty = any. */
-  sites: string[];
+  sites:             string[];
   /** ISO timestamp after which agent access stops; null = never. */
-  expiresAt: string | null;
+  expiresAt:         string | null;
   /** Ask the owner before each agent use. */
-  askFirst: boolean;
+  askFirst:          boolean;
   /** Owner's agents running on the org server may use it too. */
   allowServerAgents: boolean;
 }
 
 export const DEFAULT_AGENT_POLICY: AgentPolicy = {
-  mode: 'only_me',
-  level: 'metadata',
-  agents: [],
-  sites: [],
-  expiresAt: null,
-  askFirst: false,
+  mode:              'only_me',
+  level:             'metadata',
+  agents:            [],
+  sites:             [],
+  expiresAt:         null,
+  askFirst:          false,
   allowServerAgents: false,
 };
 
@@ -80,9 +88,9 @@ export function agentPolicyAllows(
   policy: AgentPolicy | null | undefined,
   request: { agentId: string; level: AgentAccessLevel; host?: string; onServer?: boolean; now?: Date },
 ): { allowed: boolean; reason?: string } {
-  if (!policy || policy.mode !== 'agents') return { allowed: false, reason: 'Only the owner can use this item' };
+  if (policy?.mode !== 'agents') return { allowed: false, reason: 'Only the owner can use this item' };
   const rank: Record<AgentAccessLevel, number> = { metadata: 0, autofill: 1, full: 2 };
-  if (rank[request.level] > rank[policy.level]) return { allowed: false, reason: `Agents are limited to ${policy.level}` };
+  if (rank[request.level] > rank[policy.level]) return { allowed: false, reason: `Agents are limited to ${ policy.level }` };
   if (policy.agents.length && !policy.agents.includes(request.agentId)) return { allowed: false, reason: 'This agent is not on the allowed list' };
   if (policy.expiresAt && (request.now ?? new Date()) > new Date(policy.expiresAt)) return { allowed: false, reason: 'Agent access has expired' };
   if (request.onServer && !policy.allowServerAgents) return { allowed: false, reason: 'Server agents are not allowed for this item' };

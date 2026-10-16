@@ -285,6 +285,10 @@ function workflowManagerSourceAvailable(): boolean {
   return fs.existsSync(path.join(process.cwd(), 'services', 'sulla-workflows', 'Dockerfile'));
 }
 
+function vaultContainerAvailable(): boolean {
+  return fs.existsSync(path.join(process.cwd(), 'services', 'sulla-vault', 'Dockerfile')) || Boolean(process.env.SULLA_VAULT_IMAGE);
+}
+
 export default class LimaBackend extends events.EventEmitter implements VMBackend, VMExecutor {
   constructor(arch: Architecture, kubeFactory: (backend: LimaBackend) => K8s.KubernetesBackend) {
     super();
@@ -2945,7 +2949,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla_node_runtime',
     ];
     if (workflowManagerSourceAvailable()) requiredServices.push('sulla_workflow_manager');
-    if (settingsImpl.getSettings().sullaVaultV2Enabled) requiredServices.push('sulla_vault');
+    if (settingsImpl.getSettings().sullaVaultV2Enabled && vaultContainerAvailable()) {
+      requiredServices.push('sulla_vault');
+    }
 
     try {
       for (const service of requiredServices) {
@@ -2978,10 +2984,12 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     const sullaServicePassword = escapeForCompose(await SullaSettingsModel.getServicePassword());
-    if (settingsImpl.getSettings().sullaVaultV2Enabled) {
-      // TODO: Publish sulla-vault and use the published image before enabling this flag for packaged apps.
+    if (settingsImpl.getSettings().sullaVaultV2Enabled && vaultContainerAvailable()) {
+      const sourceAvailable = fs.existsSync(path.join(process.cwd(), 'services', 'sulla-vault', 'Dockerfile'));
       compose.services.sulla_vault = {
-        build: { context: process.cwd(), dockerfile: 'services/sulla-vault/Dockerfile' },
+        ...(sourceAvailable
+          ? { build: { context: process.cwd(), dockerfile: 'services/sulla-vault/Dockerfile' }, image: 'sulla-vault:local' }
+          : { image: process.env.SULLA_VAULT_IMAGE }),
         container_name: 'sulla_vault',
         depends_on: { postgres: { condition: 'service_healthy' } },
         environment: {
@@ -3167,7 +3175,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
     const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime'];
     if (workflowManagerSourceAvailable()) optionalServices.push('sulla_workflow_manager');
-    if (settingsImpl.getSettings().sullaVaultV2Enabled) optionalServices.push('sulla_vault');
+    if (settingsImpl.getSettings().sullaVaultV2Enabled && vaultContainerAvailable()) {
+      optionalServices.push('sulla_vault');
+    }
     for (const service of optionalServices) {
       try {
         await this.waitForDockerServiceHealthy(service, 60);

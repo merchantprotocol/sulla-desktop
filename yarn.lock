@@ -14125,3 +14125,14 @@ zod@3.25.76, "zod@^3.25 || ^4.0":
   version "3.25.76"
   resolved "https://registry.npmjs.org/zod/-/zod-3.25.76.tgz"
   integrity sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==
+libsodium-sumo@^0.8.0:
+  version "0.8.4"
+  resolved "https://registry.npmjs.org/libsodium-sumo/-/libsodium-sumo-0.8.4.tgz"
+  integrity sha512-TMtHShQfVVsaxDygyapvUC3o7YsPgXa/hRWeIgzyFz6w5k/1hirGptCxp1U7XwW3rCskaTTYKgV10v86UiGgNw==
+
+libsodium-wrappers-sumo@0.8.4:
+  version "0.8.4"
+  resolved "https://registry.npmjs.org/libsodium-wrappers-sumo/-/libsodium-wrappers-sumo-0.8.4.tgz"
+  integrity sha512-ql7hcgulKZ3ekfa2DGAogcCKsWU0diA/0nArz1CFzh93WQdb46/Kj18ka/Hifq6uA3Ush34Pc6vU/6HXeRwUkg==
+  dependencies:
+    libsodium-sumo "^0.8.0"

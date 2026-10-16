@@ -345,6 +345,24 @@ export class IntegrationService {
   /** Get a value from the active account (backward-compat) */
   async getIntegrationValue(integrationId: string, property: string, accountId?: string): Promise<IntegrationValue | null> {
     const acctId = accountId || await this.getActiveAccountId(integrationId);
+    // Agent/tool execution runs in main and reads the new encrypted vault first.
+    // Renderer forms and a missing migrated item keep the legacy store as a
+    // read-only fallback during the verified migration window.
+    if (typeof process !== 'undefined' && process.type !== 'renderer') {
+      const { getDesktopVaultClient } = await import('./DesktopVaultClient');
+      const vault = getDesktopVaultClient();
+      if (vault.isUnlocked()) {
+        const value = await vault.resolveCredential({
+          integrationId, accountId: acctId, property, agentId: 'sulla', level: 'autofill',
+        });
+        if (value !== null) {
+          return {
+            value_id: -1, integration_id: integrationId, account_id: acctId,
+            property, value, is_default: false, created_at: new Date(0), updated_at: new Date(0),
+          };
+        }
+      }
+    }
     const model = await IntegrationValueModel.findByKey(integrationId, acctId, property);
     return model ? this.modelToValue(model) : null;
   }

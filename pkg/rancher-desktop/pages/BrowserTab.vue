@@ -163,44 +163,7 @@
 
     <template v-else-if="tabMode === 'vault'">
       <div class="flex-1 min-h-0 overflow-auto">
-        <!-- Vault sub-navigation: list → picker → editor -->
-        <AgentConnectedAccounts
-          v-if="vaultScreen === 'list'"
-          embedded
-          @new-account="showIntegrationPicker"
-          @edit-account="showAccountEditor"
-          @generate-password="openGeneratorStandalone"
-        />
-        <AgentIntegrations
-          v-else-if="vaultScreen === 'picker'"
-          embedded
-          @back-to-vault="returnToVaultList"
-          @create-account="showNewAccountEditor"
-        />
-        <AgentIntegrationDetail
-          v-else-if="vaultScreen === 'detail'"
-          :integration-id="editorIntegrationId"
-          embedded
-          @back="showIntegrationPicker"
-          @saved="onAccountSaved"
-        />
-        <AccountEditor
-          v-else-if="vaultScreen === 'editor'"
-          :integration-id="editorIntegrationId"
-          :account-id="editorAccountId"
-          :prefill-password="generatedPasswordForEditor"
-          embedded
-          @back="goBackFromEditor"
-          @saved="onAccountSaved"
-          @deleted="onAccountDeleted"
-          @open-generator="openGeneratorFromEditor"
-        />
-        <PasswordGenerator
-          v-else-if="vaultScreen === 'generator'"
-          :show-use-button="!!generatorTargetField"
-          @back="goBackFromGenerator"
-          @use-password="onUseGeneratedPassword"
-        />
+        <VaultPage />
       </div>
     </template>
 
@@ -350,10 +313,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 
-import AccountEditor from './AccountEditor.vue';
 import AgentCalendar from './AgentCalendar.vue';
-import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
-import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
 import AgentRoutines from './AgentRoutines.vue';
 // Swapped to the new componentized chat at ./chat/ChatPage.vue.
@@ -365,13 +325,13 @@ import HistoryTab from './HistoryTab.vue';
 import LabsPage from './LabsPage.vue';
 import MyAccount from './MyAccount.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
-import PasswordGenerator from './PasswordGenerator.vue';
 import ProjectsHome from './ProjectsHome.vue';
 import DecidePage from './DecidePage.vue';
 import RoutinesHome from './RoutinesHome.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import TerminalTab from './TerminalTab.vue';
 import UsagePage from './UsagePage.vue';
+import VaultPage from './VaultPage.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 
