@@ -74,9 +74,30 @@ interface MirrorInput {
   id?:            string;
 }
 
+// Mobile user turns relayed into a desktop thread, waiting for the logger
+// mirror to write them. The phone already saved each turn under its own id;
+// without this the mirror wrote a second, content-derived id and the phone
+// showed every message twice.
+const RELAY_ID_TTL_MS = 5 * 60_000;
+const pendingRelayUserIds = new Map<string, { content: string, id: string, at: number }[]>();
+
+function claimRelayUserId(conversationId: string, content: string): string | undefined {
+  const pending = pendingRelayUserIds.get(conversationId);
+  if (!pending) return undefined;
+  const now = Date.now();
+  const live = pending.filter(p => now - p.at < RELAY_ID_TTL_MS);
+  const text = content.trim();
+  const i = live.findIndex(p => text === p.content || text.startsWith(`${ p.content }\n`));
+  const id = i >= 0 ? live.splice(i, 1)[0].id : undefined;
+  if (live.length) pendingRelayUserIds.set(conversationId, live);
+  else pendingRelayUserIds.delete(conversationId);
+  return id;
+}
+
 export async function mirrorMessageToClaudeMessages(input: MirrorInput): Promise<void> {
   if (!isPrimaryChatConversation(input.conversationId)) return;
-  await writeTurnToSyncLog(input);
+  const id = input.id ?? (input.role === 'user' ? claimRelayUserId(input.conversationId, input.content) : undefined);
+  await writeTurnToSyncLog(id ? { ...input, id } : input);
 }
 
 /**
@@ -97,7 +118,16 @@ export async function mirrorMessageToClaudeMessages(input: MirrorInput): Promise
  * the chat turns.
  */
 export async function scribeRelayTurn(input: MirrorInput): Promise<void> {
-  if (isPrimaryChatConversation(input.conversationId)) return;
+  if (isPrimaryChatConversation(input.conversationId)) {
+    // The logger mirror writes thread turns; hand it the phone's id.
+    const content = input.content.trim();
+    if (input.role === 'user' && input.id && content) {
+      const pending = pendingRelayUserIds.get(input.conversationId) ?? [];
+      pending.push({ content, id: input.id, at: Date.now() });
+      pendingRelayUserIds.set(input.conversationId, pending);
+    }
+    return;
+  }
   await writeTurnToSyncLog(input);
 }
 
