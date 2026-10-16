@@ -33,6 +33,25 @@ CREATE TABLE IF NOT EXISTS file_index_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_file_index_jobs_pending ON file_index_jobs(available_at,created_at) WHERE status='pending';
 
+-- Every writer (watched-folder sync, server upload, restore, remote sync) updates
+-- files.current_version_id. Keep indexing correctness centralized here so a new
+-- API cannot accidentally leave stale searchable chunks behind.
+CREATE OR REPLACE FUNCTION queue_file_search_index() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.current_version_id IS DISTINCT FROM OLD.current_version_id OR NEW.deleted_at IS DISTINCT FROM OLD.deleted_at THEN
+    NEW.search_text := NULL; NEW.extracted_at := NULL;
+    NEW.extraction_status := CASE WHEN NEW.deleted_at IS NULL THEN 'pending' ELSE 'unsupported' END;
+    DELETE FROM file_search_chunks WHERE file_id=NEW.id;
+    DELETE FROM file_index_jobs WHERE file_id=NEW.id;
+    IF NEW.deleted_at IS NULL AND NEW.current_version_id IS NOT NULL THEN
+      INSERT INTO file_index_jobs(file_id,version_id,status) VALUES(NEW.id,NEW.current_version_id,'pending');
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trg_queue_file_search_index ON files;
+CREATE TRIGGER trg_queue_file_search_index BEFORE UPDATE OF current_version_id,deleted_at ON files FOR EACH ROW EXECUTE FUNCTION queue_file_search_index();
+
 DO $$
 BEGIN
   CREATE EXTENSION IF NOT EXISTS vector;

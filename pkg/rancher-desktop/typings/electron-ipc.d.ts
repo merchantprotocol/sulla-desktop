@@ -447,6 +447,29 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Filesystem
+  'files-ui:status':       () => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
+  'files-ui:set-paused':   (paused: boolean) => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
+  'files-ui:open-folder':  () => void;
+  'files-ui:open-file':    (relativePath: string) => void;
+  'files-ui:pick-upload':  () => number;
+  'files-ui:upload-paths': (paths: string[]) => number;
+  'files-ui:create-folder': (relativePath: string) => void;
+  'sulla-files:collections':     () => any[];
+  'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
+  'sulla-files:metadata':        (input: { fileId: string }) => any;
+  'sulla-files:preview':         (input: { fileId: string; versionId?: string; thumbnail?: boolean }) => { mime: string; data: Uint8Array };
+  'sulla-files:history':         (input: { fileId: string }) => any[];
+  'sulla-files:restore-version': (input: { fileId: string; versionId: string }) => { ok: boolean; versionId: string };
+  'sulla-files:trash-list':      (input: { collectionId: string }) => any[];
+  'sulla-files:trash':           (input: { fileId: string }) => void;
+  'sulla-files:trash-restore':   (input: { fileId: string }) => { ok: boolean; versionId: string };
+  'sulla-files:upload':          (input: { collectionId: string; path: string; mime?: string; data: Uint8Array }) => any;
+  'sulla-files:shares':          (input: { collectionId: string }) => any[];
+  'sulla-files:share':           (input: { collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string; role: 'view' | 'edit' }) => any;
+  'sulla-files:unshare':         (input: { collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string }) => void;
+  'sulla-files:members':         (input: { orgId: string }) => { members: any[]; groups: any[] };
+  'sulla-files:keep':            (input: { fileId: string; collectionId: string; path?: string }) => any;
+
   'filesystem-get-root':        () => string;
   'filesystem-get-git-changes': (path: string) => Promise<{ status: string, file: string }[]>;
 
@@ -1099,6 +1122,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'files-ui:upload-progress': (progress: { current: number; total: number; name: string; percent: number; done: boolean }) => void;
   'chat-artifacts:changed': (change: import('@pkg/shared/chatArtifacts').ChatArtifactChangedEvent) => void;
   'decisions:changed': (record: import('@pkg/shared/decisions').DecisionRecord) => void;
   'claude-oauth:progress':          (text: string) => void;

@@ -1,9 +1,8 @@
 import { basename } from 'node:path';
 
-import { accessibleCollectionIds } from './acl.js';
 import { cosine, PotionEmbedder, vectorLiteral } from './potionEmbedder.js';
 
-import type { CapabilityClaims } from './auth.js';
+import type { CollectionSearchScope } from './acl.js';
 import type pg from 'pg';
 
 export interface SearchInput {
@@ -20,8 +19,12 @@ export interface SearchInput {
 
 interface Candidate { file_id: string; path: string; mime: string; size: string; updated_at: string; created_by_id: string; content: string | null; signal: number }
 
-function filteredWhere(input:SearchInput, collectionIds:string[], args:any[]):string[] {
-  const where = [`f.collection_id=ANY($${ args.push(collectionIds) }::uuid[])`, 'f.deleted_at IS NULL'];
+function filteredWhere(input:SearchInput, scopes:CollectionSearchScope[], args:any[]):string[] {
+  const grants = scopes.map(scope => {
+    const collection = args.push(scope.collectionId); const paths = args.push(scope.paths);
+    return `(f.collection_id=$${ collection } AND (cardinality($${ paths }::text[])=0 OR EXISTS(SELECT 1 FROM unnest($${ paths }::text[]) p WHERE f.path=p OR starts_with(f.path,p||'/'))))`;
+  });
+  const where = [`(${ grants.join(' OR ') })`, 'f.deleted_at IS NULL'];
   if (input.folder) where.push(`f.path LIKE $${ args.push(`${ input.folder.replace(/[\\%_]/g, value => `\\${ value }`) }%`) } ESCAPE '\\'`);
   if (input.type) where.push(`f.mime=$${ args.push(input.type) }`);
   if (input.person) where.push(`(f.person_id=$${ args.push(input.person) } OR f.created_by_id=$${ args.length })`);
@@ -41,12 +44,11 @@ export class FileSearch {
     return this.vectorTable;
   }
 
-  async search(identity:CapabilityClaims, input:SearchInput):Promise<any[]> {
-    const granted = await accessibleCollectionIds(this.db, identity, 'view');
-    const collections = input.collectionId ? granted.filter(id => id === input.collectionId) : granted;
-    if (!collections.length || !input.query.trim()) return [];
+  async search(input:SearchInput, granted:CollectionSearchScope[]):Promise<any[]> {
+    const scopes = input.collectionId ? granted.filter(scope => scope.collectionId === input.collectionId) : granted;
+    if (!scopes.length || !input.query.trim()) return [];
     const queryText = input.terms?.length ? input.terms.filter(term => /^[a-z0-9_.-]+$/i.test(term)).join(' OR ') : input.query;
-    const keywordArgs:any[] = []; const keywordWhere = filteredWhere(input, collections, keywordArgs);
+    const keywordArgs:any[] = []; const keywordWhere = filteredWhere(input, scopes, keywordArgs);
     keywordArgs.push(queryText);
     const keyword = await this.db.query<Candidate>(`SELECT f.id file_id,f.path,f.mime,f.size,f.updated_at,f.created_by_id,sc.content,
       GREATEST(ts_rank_cd(sc.search_vector,websearch_to_tsquery('simple',$${ keywordArgs.length })),ts_rank_cd(f.search_vector,websearch_to_tsquery('simple',$${ keywordArgs.length }))) signal
@@ -56,7 +58,7 @@ export class FileSearch {
 
     const vector = this.embedder.embed(input.query);
     let semantic:Candidate[];
-    const semanticArgs:any[] = []; const semanticWhere = filteredWhere(input, collections, semanticArgs);
+    const semanticArgs:any[] = []; const semanticWhere = filteredWhere(input, scopes, semanticArgs);
     if (await this.hasVectorTable()) {
       semanticArgs.push(vectorLiteral(vector));
       semantic = (await this.db.query<Candidate>(`SELECT f.id file_id,f.path,f.mime,f.size,f.updated_at,f.created_by_id,sc.content,

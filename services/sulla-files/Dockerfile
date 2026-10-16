@@ -10,7 +10,7 @@ RUN npm run build && npm prune --omit=dev
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends gosu poppler-utils tesseract-ocr tesseract-ocr-eng docx2txt catdoc unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends gosu ffmpeg poppler-utils tesseract-ocr tesseract-ocr-eng docx2txt catdoc unzip \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/services/sulla-files/package.json ./package.json
 COPY --from=build /app/services/sulla-files/node_modules ./node_modules
