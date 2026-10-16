@@ -802,9 +802,11 @@ export function createApp(db: Database, config: VaultConfig) {
     const cursor = Number.isSafeInteger(Number(request.query.cursor)) ? Number(request.query.cursor) : 0;
     const result = await db.query(`
       SELECT i.id,i.owner_user_id,i.collection_id,i.folder_id,i.item_type,i.ciphertext,i.encrypted_item_key,
-             i.agent_wrapped_item_key,i.agent_policy,i.revision,i.deleted_at,i.created_at,i.updated_at,i.change_seq
+             i.agent_wrapped_item_key,i.agent_policy,i.revision,i.deleted_at,i.created_at,i.updated_at,
+             GREATEST(i.change_seq, COALESCE(uic.change_seq, 0)) AS change_seq
         FROM items i
-       WHERE i.change_seq > $2
+        LEFT JOIN user_item_changes uic ON uic.item_id = i.id AND uic.user_id = $1
+       WHERE GREATEST(i.change_seq, COALESCE(uic.change_seq, 0)) > $2
          AND (i.owner_user_id = $1 OR EXISTS (
            SELECT 1 FROM collections c
            JOIN org_members om ON om.org_id = c.org_id AND om.user_id = $1 AND om.status = 'confirmed'
@@ -816,7 +818,7 @@ export function createApp(db: Database, config: VaultConfig) {
               JOIN org_groups g ON g.id = gm.group_id AND g.org_id = c.org_id
              WHERE gm.user_id = $1 AND cgm.collection_id = c.id AND cgm.can_view = true)))
          )
-       ORDER BY i.change_seq ASC
+       ORDER BY GREATEST(i.change_seq, COALESCE(uic.change_seq, 0)) ASC
        LIMIT 501`, [actorId, cursor]);
     const hasMore = result.rows.length > 500;
     const items = hasMore ? result.rows.slice(0, 500) : result.rows;
