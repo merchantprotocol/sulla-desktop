@@ -1,8 +1,9 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { agentPolicyAllows, DEFAULT_AGENT_POLICY, DEFAULT_ARGON2ID, type AgentAccessLevel } from '@sulla/vault-crypto';
 import express, { type NextFunction, type Response } from 'express';
 
 import {
@@ -13,7 +14,6 @@ import {
   verifyLoginHash,
 } from './auth.js';
 import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } from './rbac.js';
-import { agentPolicyAllows, DEFAULT_AGENT_POLICY, DEFAULT_ARGON2ID, type AgentAccessLevel } from '@sulla/vault-crypto';
 
 import type { VaultConfig } from './config.js';
 import type { Database, Queryable } from './db.js';
@@ -66,6 +66,36 @@ function userId(request: AuthenticatedRequest): string {
     throw new HttpError(401, 'Authentication required');
   }
   return request.auth.userId;
+}
+
+interface BrokerClaims {
+  sub:                    string;
+  org_id?:                string;
+  agent_id:               string;
+  pod_id:                 string;
+  thread_id?:             string;
+  job_id?:                string;
+  workflow_execution_id?: string;
+}
+
+function brokerClaims(value: unknown): BrokerClaims {
+  const claims = requiredObject(value, 'claims');
+  return {
+    sub:                    requiredString(claims.sub, 'claims.sub'),
+    org_id:                 typeof claims.org_id === 'string' ? claims.org_id : undefined,
+    agent_id:               requiredString(claims.agent_id, 'claims.agent_id'),
+    pod_id:                 requiredString(claims.pod_id, 'claims.pod_id'),
+    thread_id:              typeof claims.thread_id === 'string' ? claims.thread_id : undefined,
+    job_id:                 typeof claims.job_id === 'string' ? claims.job_id : undefined,
+    workflow_execution_id: typeof claims.workflow_execution_id === 'string' ? claims.workflow_execution_id : undefined,
+  };
+}
+
+function safeTokenEqual(actual: string | undefined, expected: string | undefined): boolean {
+  if (!actual || !expected) return false;
+  const left = Buffer.from(actual);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
 }
 
 async function authorizeItem(db: Database, actorId: string, itemId: string, right: 'view' | 'edit'): Promise<Record<string, unknown>> {
@@ -269,6 +299,98 @@ export function createApp(db: Database, config: VaultConfig) {
     });
   });
 
+  // Service-to-service only. The tool API passes verified capability claims;
+  // this endpoint independently applies vault ownership, collection and item
+  // policy, then returns ciphertext for the broker to unwrap in-memory.
+  app.post('/v1/broker/credential', async(request, response) => {
+    const serviceId = request.header('x-sulla-service-id');
+    const token = request.header('authorization')?.replace(/^Bearer\s+/i, '');
+    if (serviceId !== config.brokerServiceId || !safeTokenEqual(token, config.brokerServiceToken)) {
+      response.status(401).json({ error: 'invalid_service_identity' });
+      return;
+    }
+
+    const claims = brokerClaims(request.body.claims);
+    const ref = requiredObject(request.body.ref, 'ref');
+    const itemId = typeof ref.itemId === 'string' ? ref.itemId : null;
+    const integrationId = typeof ref.integrationId === 'string' ? ref.integrationId : null;
+    if (!itemId && !integrationId) throw new HttpError(400, 'ref.itemId or ref.integrationId is required');
+
+    const result = await db.query(
+      `SELECT i.id,i.owner_user_id,i.collection_id,i.ciphertext,i.agent_wrapped_item_key,i.agent_policy,
+              c.org_id,om.role,cm.can_use_by_agents,
+              EXISTS (
+                SELECT 1 FROM group_members gm
+                JOIN collection_group_members cgm ON cgm.group_id=gm.group_id
+                JOIN org_groups g ON g.id=gm.group_id AND g.org_id=c.org_id
+               WHERE gm.user_id=$1 AND cgm.collection_id=i.collection_id AND cgm.can_use_by_agents=true
+              ) AS group_can_use_by_agents
+         FROM items i
+         LEFT JOIN collections c ON c.id=i.collection_id
+         LEFT JOIN org_members om ON om.org_id=c.org_id AND om.user_id=$1 AND om.status='confirmed'
+         LEFT JOIN collection_members cm ON cm.collection_id=i.collection_id AND cm.user_id=$1
+        WHERE i.deleted_at IS NULL AND (($2::uuid IS NOT NULL AND i.id=$2) OR ($3::text IS NOT NULL AND i.integration_ref=$3))
+        LIMIT 1`,
+      [claims.sub, itemId, integrationId],
+    );
+    const item = result.rows[0] as Record<string, any> | undefined;
+    let reason = 'Credential access denied';
+    let allowed = false;
+    if (item) {
+      const personalAccess = item.owner_user_id === claims.sub;
+      const collectionAccess = Boolean(item.collection_id) &&
+        (!claims.org_id || claims.org_id === item.org_id) &&
+        (item.role === 'owner' || item.role === 'admin' || item.can_use_by_agents === true || item.group_can_use_by_agents === true);
+      const policy = agentPolicyAllows(item.agent_policy, {
+        agentId:  claims.agent_id,
+        level:    'autofill',
+        host:     typeof request.body.host === 'string' ? request.body.host : undefined,
+        onServer: config.mode === 'server',
+      });
+      if (!personalAccess && !collectionAccess) reason = 'User cannot use credentials from this collection';
+      else if (!item.agent_wrapped_item_key) reason = 'Item is not enabled for agents';
+      else if (!policy.allowed) reason = policy.reason ?? reason;
+      else allowed = true;
+    } else {
+      reason = 'Item not found or inaccessible';
+    }
+
+    const audit = await db.query(
+      `INSERT INTO audit_log(actor_user_id,org_id,collection_id,item_id,action,pod_id,metadata,blocked,reason)
+       VALUES ($1,$2,$3,$4,'agent_credential_broker_use',$5,$6,$7,$8)
+       RETURNING id,created_at`,
+      [claims.sub, item?.org_id ?? claims.org_id ?? null, item?.collection_id ?? null, item?.id ?? null, claims.pod_id,
+        {
+          serviceId,
+          agentId:             claims.agent_id,
+          threadId:            claims.thread_id,
+          jobId:               claims.job_id,
+          workflowExecutionId: claims.workflow_execution_id,
+          requestedItemId:     itemId,
+          integrationId,
+        },
+        !allowed, allowed ? null : reason],
+    );
+    if (!allowed || !item) {
+      response.status(403).json({
+        error:          'credential_denied',
+        policyDecision: { allowed: false, reason },
+        auditId:        audit.rows[0].id,
+      });
+      return;
+    }
+    response.json({
+      ciphertext:             item.ciphertext,
+      agent_wrapped_item_key: item.agent_wrapped_item_key,
+      policyDecision:         {
+        allowed:        true,
+        itemId:         item.id,
+        contextOwnerId: item.collection_id ?? item.owner_user_id,
+        auditId:        audit.rows[0].id,
+      },
+    });
+  });
+
   app.use('/v1', authenticate(config));
 
   app.get('/v1/items', async(request: AuthenticatedRequest, response) => {
@@ -299,13 +421,14 @@ export function createApp(db: Database, config: VaultConfig) {
     const folderId = typeof request.body.folderId === 'string' ? request.body.folderId : null;
     if (folderId) await authorizeItemFolder(db, actorId, folderId, collectionId);
     const result = await db.query(
-      `INSERT INTO items(id, owner_user_id, collection_id, folder_id, item_type, ciphertext, encrypted_item_key, agent_wrapped_item_key, agent_policy)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO items(id, owner_user_id, collection_id, folder_id, item_type, ciphertext, encrypted_item_key, agent_wrapped_item_key, agent_policy, integration_ref)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id, revision, created_at, updated_at`,
       [itemId, collectionId ? null : actorId, collectionId, folderId,
         requiredString(request.body.itemType, 'itemType'), requiredObject(request.body.ciphertext, 'ciphertext'),
         requiredObject(request.body.encryptedItemKey, 'encryptedItemKey'), request.body.agentWrappedItemKey ?? null,
-        request.body.agentPolicy ? requiredObject(request.body.agentPolicy, 'agentPolicy') : DEFAULT_AGENT_POLICY],
+        request.body.agentPolicy ? requiredObject(request.body.agentPolicy, 'agentPolicy') : DEFAULT_AGENT_POLICY,
+        typeof request.body.integrationRef === 'string' ? request.body.integrationRef : null],
     );
     response.status(201).json(result.rows[0]);
   });
@@ -332,13 +455,15 @@ export function createApp(db: Database, config: VaultConfig) {
               ciphertext = COALESCE($4, ciphertext), encrypted_item_key = COALESCE($5, encrypted_item_key),
               agent_wrapped_item_key = CASE WHEN $6::boolean THEN $7 ELSE agent_wrapped_item_key END,
               agent_policy = COALESCE($10, agent_policy),
+              integration_ref = CASE WHEN $11::boolean THEN $12 ELSE integration_ref END,
               revision = revision + 1, updated_at = now()
         WHERE id = $8 AND revision = $9 AND deleted_at IS NULL
         RETURNING id, revision, updated_at`,
       [updatesFolder, request.body.folderId ?? null, request.body.itemType ?? null, request.body.ciphertext ?? null,
         request.body.encryptedItemKey ?? null, Object.hasOwn(request.body, 'agentWrappedItemKey'),
         request.body.agentWrappedItemKey ?? null, request.params.itemId, revision,
-        request.body.agentPolicy ? requiredObject(request.body.agentPolicy, 'agentPolicy') : null],
+        request.body.agentPolicy ? requiredObject(request.body.agentPolicy, 'agentPolicy') : null,
+        Object.hasOwn(request.body, 'integrationRef'), request.body.integrationRef ?? null],
     );
     if (!result.rowCount) {
       throw new HttpError(409, 'Item revision conflict');

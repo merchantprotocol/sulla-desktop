@@ -69,6 +69,8 @@ class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
     if (spec.memoryLimit) args.push('--memory', spec.memoryLimit);
     if (spec.cpuLimit) args.push('--cpus', spec.cpuLimit);
     if (spec.envFile) args.push('--env-file', spec.envFile);
+    for (const [key, value] of Object.entries(spec.env ?? {})) args.push('--env', `${ key }=${ value }`);
+    for (const bind of spec.binds ?? []) args.push('--volume', bind);
     if (spec.network) args.push('--network', spec.network);
     if (spec.workingDir) args.push('--workdir', spec.workingDir);
     args.push(spec.image, ...(spec.command ?? []));
@@ -142,34 +144,49 @@ async function claudeCredentials(): Promise<{ oauthToken: string; apiKey: string
   return { oauthToken, apiKey };
 }
 
-async function secretEnvironment(run: AgentContainerRun, token: string): Promise<Record<string, string>> {
+async function containerEnvironment(run: AgentContainerRun, token: string): Promise<{
+  env:     Record<string, string>;
+  secrets: Record<string, string>;
+}> {
   const env: Record<string, string> = {
     SULLA_HOST:                   'host.lima.internal',
-    SULLA_API_TOKEN:              token,
-    SULLA_TOOL_SESSION:           token,
     SULLA_AGENT_PROVIDER:         run.provider,
     SULLA_AGENT_MODEL:            run.model ?? '',
+  };
+  const secrets: Record<string, string> = {
+    SULLA_API_TOKEN:              token,
+    SULLA_TOOL_SESSION:           token,
     SULLA_AGENT_INSTRUCTIONS_B64: Buffer.from(run.instructions).toString('base64'),
   };
   if (run.provider === 'codex') {
     if (!await ensureCodexAuthFile()) throw new Error('No Codex credentials configured');
-    env.CODEX_AUTH_JSON_B64 = fs.readFileSync(codexAuthPath()).toString('base64');
+    secrets.CODEX_AUTH_JSON_B64 = fs.readFileSync(codexAuthPath()).toString('base64');
   } else if (run.provider === 'claude-code') {
     const creds = await claudeCredentials();
     if (!creds.oauthToken && !creds.apiKey) throw new Error('No Claude Code credentials configured');
-    if (creds.oauthToken) env.CLAUDE_CODE_OAUTH_TOKEN = creds.oauthToken;
-    if (creds.apiKey) env.ANTHROPIC_API_KEY = creds.apiKey;
+    if (creds.oauthToken) secrets.CLAUDE_CODE_OAUTH_TOKEN = creds.oauthToken;
+    if (creds.apiKey) secrets.ANTHROPIC_API_KEY = creds.apiKey;
   }
-  return env;
+  return { env, secrets };
 }
 
-function envFileBody(env: Record<string, string>): string {
-  // Docker env-files are line based. Base64 values and tokens contain no LF;
-  // reject unexpected newlines so a credential can never inject another key.
-  return Object.entries(env).map(([key, value]) => {
-    if (/[\r\n]/.test(value)) throw new Error(`Container environment value ${ key } contains a newline`);
-    return `${ key }=${ value }`;
-  }).join('\n') + '\n';
+async function provisionContainerSecrets(containerName: string, secrets: Record<string, string>): Promise<string> {
+  const secretDir = `/dev/shm/sulla-agent-secrets/${ containerName }`;
+  await limactl(['sh', '-c', 'sudo install -d -m 0700 -o 10001 -g 10001 "$1"', 'sh', secretDir]);
+  for (const [key, value] of Object.entries(secrets)) {
+    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`Invalid container secret name ${ key }`);
+    const target = `${ secretDir }/${ key }`;
+    await limactl(
+      ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown 10001:10001 "$1"; sudo chmod 0400 "$1"', 'sh', target],
+      Buffer.from(value).toString('base64'),
+    );
+  }
+  return secretDir;
+}
+
+async function removeContainerSecrets(secretDir: string): Promise<void> {
+  if (!secretDir.startsWith('/dev/shm/sulla-agent-secrets/')) throw new Error('Refusing to remove an unexpected secret path');
+  await limactl(['sh', '-c', 'sudo find "$1" -maxdepth 1 -type f -delete; sudo rmdir "$1" 2>/dev/null || true', 'sh', secretDir]).catch(() => {});
 }
 
 export async function runAgentContainer(run: AgentContainerRun): Promise<AgentContainerResult> {
@@ -177,13 +194,13 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
   const runtime = new LimaDockerRuntimeDriver();
   const session = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
-  const envPath = `/tmp/${ containerName }.env`;
+  let secretDir: string | undefined;
   let containerId: string | undefined;
   try {
-    const env = await secretEnvironment(run, session.id);
+    const configuration = await containerEnvironment(run, session.id);
     const desktopHostIp = (await limactl(['sh', '-c', "getent hosts host.lima.internal | awk 'NR==1 {print $1}'"])).stdout.trim();
     if (!desktopHostIp) throw new Error('Could not resolve Desktop host from the Lima VM');
-    await limactl(['sh', '-c', 'umask 077; base64 -d > "$1"', 'sh', envPath], Buffer.from(envFileBody(env)).toString('base64'));
+    secretDir = await provisionContainerSecrets(containerName, configuration.secrets);
     containerId = await runtime.create({
       name:   containerName,
       image,
@@ -194,7 +211,8 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       },
       autoRemove:  true,
       stdinOpen:   true,
-      envFile:     envPath,
+      env:         configuration.env,
+      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`],
       extraHosts:  [`host.lima.internal:${ desktopHostIp }`],
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
@@ -224,7 +242,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         settled = true;
         clearTimeout(idleTimer);
         session.revoke();
-        await limactl(['rm', '-f', envPath]).catch(() => {});
+        if (secretDir) await removeContainerSecrets(secretDir);
         if (error) reject(error);
         else resolve({ output: output.slice(-200_000), containerName });
       };
@@ -251,7 +269,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
   } catch (error) {
     session.revoke();
     if (containerId) await runtime.remove(containerId).catch(() => {});
-    await limactl(['rm', '-f', envPath]).catch(() => {});
+    if (secretDir) await removeContainerSecrets(secretDir);
     throw error;
   }
 }

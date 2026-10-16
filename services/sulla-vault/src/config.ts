@@ -14,6 +14,8 @@ export interface VaultConfig {
   desktopEncryptedUserKey?:    unknown;
   desktopKdf?:                 unknown;
   extensionOrigins:            string[];
+  brokerServiceId?:            string;
+  brokerServiceToken?:         string;
 }
 
 function jsonEnvironment(name: string): unknown | undefined {
@@ -46,5 +48,7 @@ export function loadConfig(): VaultConfig {
     desktopEncryptedUserKey:    jsonEnvironment('SULLA_VAULT_DESKTOP_ENCRYPTED_USER_KEY'),
     desktopKdf:                 jsonEnvironment('SULLA_VAULT_DESKTOP_KDF'),
     extensionOrigins:           (process.env.SULLA_VAULT_EXTENSION_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean),
+    brokerServiceId:            process.env.SULLA_VAULT_BROKER_SERVICE_ID ?? 'sulla-tools',
+    brokerServiceToken:         process.env.SULLA_VAULT_BROKER_TOKEN,
   };
 }

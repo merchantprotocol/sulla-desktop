@@ -4,6 +4,7 @@ export interface ContainerSpec {
   name:         string;
   image:        string;
   command?:     string[];
+  entrypoint?:  string[];
   env?:         Record<string, string>;
   labels?:      Record<string, string>;
   network?:     string;
@@ -18,6 +19,7 @@ export interface ContainerSpec {
   extraHosts?:  string[];
   memoryLimit?: string;
   cpuLimit?:    string;
+  tmpfs?:       Record<string, string>;
 }
 
 interface DockerResponse<T> {
@@ -72,6 +74,7 @@ export class DockerRuntimeDriver implements ContainerRuntimeDriver {
     const response = await this.request<{ Id: string }>('POST', `/containers/create?name=${ encodeURIComponent(spec.name) }`, {
       Image:      spec.image,
       Cmd:        spec.command,
+      Entrypoint: spec.entrypoint,
       Env:        Object.entries(spec.env ?? {}).map(([key, value]) => `${ key }=${ value }`),
       Labels:     spec.labels,
       WorkingDir: spec.workingDir,
@@ -84,6 +87,7 @@ export class DockerRuntimeDriver implements ContainerRuntimeDriver {
         GroupAdd:    spec.groupAdd,
         Memory:      spec.memoryBytes,
         NanoCpus:    spec.nanoCpus,
+        Tmpfs:       spec.tmpfs,
       },
     });
     return response.body.Id;

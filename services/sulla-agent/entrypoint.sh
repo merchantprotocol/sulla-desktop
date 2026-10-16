@@ -1,8 +1,19 @@
 #!/bin/sh
 set -eu
 
-# Credentials are injected only for this container. Decode into its ephemeral
-# filesystem, then erase the transport variables before starting the model CLI.
+# Credentials are mounted from a VM tmpfs directory, never recorded in Docker's
+# environment config. Read each file once and unlink it before starting the CLI.
+secret_dir=/run/secrets/sulla-agent
+for secret_name in SULLA_API_TOKEN SULLA_TOOL_SESSION SULLA_AGENT_INSTRUCTIONS_B64 CODEX_AUTH_JSON_B64 CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY; do
+  secret_file="$secret_dir/$secret_name"
+  if [ -f "$secret_file" ]; then
+    secret_value=$(cat "$secret_file")
+    rm -f "$secret_file"
+    export "$secret_name=$secret_value"
+    unset secret_value
+  fi
+done
+
 if [ -n "${CODEX_AUTH_JSON_B64:-}" ]; then
   install -d -m 700 "$CODEX_HOME"
   printf '%s' "$CODEX_AUTH_JSON_B64" | base64 -d > "$CODEX_HOME/auth.json"

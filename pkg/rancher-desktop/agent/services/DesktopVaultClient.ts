@@ -9,6 +9,7 @@ import {
   deriveLoginHash,
   deriveMasterKey,
   encryptItem,
+  unwrapUserPrivateKey,
   unwrapUserKey,
   type AgentAccessLevel,
   type AgentPolicy,
@@ -56,7 +57,14 @@ export interface CredentialUseRequest {
   onServer?:      boolean;
 }
 
-interface Session { token: string; userId: string; userKey: Uint8Array; expiresAt: number }
+interface Session {
+  token:      string;
+  userId:     string;
+  userKey:    Uint8Array;
+  publicKey:  string;
+  privateKey: Uint8Array;
+  expiresAt:  number;
+}
 type ApprovalPrompt = (item: VaultItemPlaintext, request: CredentialUseRequest) => Promise<boolean>;
 
 function lockTimeoutMs(): number {
@@ -152,8 +160,21 @@ export class DesktopVaultClient {
       body:    JSON.stringify({ loginHash: await deriveLoginHash(masterKey) }),
     });
     const userKey = await unwrapUserKey(result.user.encryptedUserKey, masterKey);
-    this.lock();
-    this.session = { token: result.token, userId: result.user.id, userKey, expiresAt: Date.now() + lockTimeoutMs() };
+    try {
+      const privateKey = await unwrapUserPrivateKey(result.user.encryptedPrivateKey, userKey);
+      this.lock();
+      this.session = {
+        token:     result.token,
+        userId:    result.user.id,
+        userKey,
+        publicKey: result.user.publicKey,
+        privateKey,
+        expiresAt: Date.now() + lockTimeoutMs(),
+      };
+    } catch (error) {
+      userKey.fill(0);
+      throw error;
+    }
   }
 
   private async cacheMasterKey(masterKey: Uint8Array): Promise<void> {
@@ -168,6 +189,7 @@ export class DesktopVaultClient {
 
   lock(): void {
     this.session?.userKey.fill(0);
+    this.session?.privateKey.fill(0);
     this.session = null;
   }
 
@@ -203,7 +225,10 @@ export class DesktopVaultClient {
   async save(id: string | undefined, plaintext: VaultItemPlaintext, revision?: number): Promise<string> {
     const active = this.requireSession();
     const itemId = id || crypto.randomUUID();
-    const encrypted = await encryptItem(JSON.stringify(plaintext), active.userKey, { itemId, ownerId: active.userId });
+    const encrypted = await encryptItem(
+      JSON.stringify(plaintext), active.userKey, { itemId, ownerId: active.userId },
+      plaintext.agentPolicy.mode === 'agents' ? active.publicKey : undefined,
+    );
     const body = {
       id:                  itemId,
       itemType:            plaintext.type,
@@ -211,6 +236,9 @@ export class DesktopVaultClient {
       encryptedItemKey:    encrypted.encryptedItemKey,
       agentWrappedItemKey: encrypted.agentWrappedItemKey ?? null,
       agentPolicy:         plaintext.agentPolicy,
+      integrationRef:      plaintext.integration
+        ? `${ plaintext.integration.integrationId }/${ plaintext.integration.accountId }`
+        : null,
     };
     if (id) {
       await this.request(`/v1/items/${ encodeURIComponent(id) }`, {
@@ -220,6 +248,17 @@ export class DesktopVaultClient {
       await this.request('/v1/items', { method: 'POST', headers: this.headers(), body: JSON.stringify(body) });
     }
     return itemId;
+  }
+
+  /** Give a trusted provisioning callback a short-lived copy of the agent key. */
+  async withAgentKeyPair<T>(fn: (key: { publicKey: string; privateKey: Buffer }) => Promise<T>): Promise<T> {
+    const active = this.requireSession();
+    const privateKey = Buffer.from(active.privateKey);
+    try {
+      return await fn({ publicKey: active.publicKey, privateKey });
+    } finally {
+      privateKey.fill(0);
+    }
   }
 
   async remove(id: string, revision: number): Promise<void> {
