@@ -1,6 +1,7 @@
 // src/tools/registry.ts
 
 import type { ToolOperation } from './base';
+import { executionTargetFor, type ToolExecutionTarget } from './executionTargets';
 
 type ToolLoader = () => Promise<any>;
 
@@ -9,6 +10,7 @@ export interface ToolEntry {
   description: string;
   category:    string;
   loader:      ToolLoader;
+  executionTarget?: ToolExecutionTarget;
 }
 
 export interface ToolRegistration {
@@ -31,6 +33,7 @@ export interface ToolManifest {
   schemaDef:                Record<string, any>;
   operationTypes?:          ToolOperation[];
   loader:                   () => Promise<any>;
+  executionTarget?:         ToolExecutionTarget;
   /** When true, this tool uses a provider-native format (e.g. Anthropic computer_20250124) */
   isAnthropicNative?:       boolean;
   /** Raw Anthropic tool definition — injected directly, not converted. */
@@ -46,6 +49,7 @@ export class ToolRegistry {
   private descriptions = new Map<string, string>();
   private schemaDefs = new Map<string, Record<string, any>>();
   private operationTypesMap = new Map<string, ToolOperation[]>();
+  private executionTargets = new Map<string, ToolExecutionTarget>();
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
@@ -148,6 +152,8 @@ export class ToolRegistry {
         this.nativeToolDefs.set(m.name, m.anthropicToolDefinition);
       }
       this.operationTypesMap.set(m.name, Array.isArray(m.operationTypes) ? [...m.operationTypes] : []);
+      m.executionTarget ??= executionTargetFor(m.category, m.name);
+      this.executionTargets.set(m.name, m.executionTarget);
       this.register(m.name, m.description, m.category, async() => {
         const mod = await m.loader();
         const workerClass: any = mod && typeof mod === 'object'
@@ -169,6 +175,10 @@ export class ToolRegistry {
       });
     }
     console.log(`[ToolRegistry] Registered ${ manifests.length } tool manifests`);
+  }
+
+  getExecutionTarget(name: string): ToolExecutionTarget | undefined {
+    return this.executionTargets.get(name);
   }
 
   registerAllRegistrations(registrations: ToolRegistration[]) {
