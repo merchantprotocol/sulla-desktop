@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sulla Vault · Desktop · list + detail</title>
+<link rel="stylesheet" href="vault.css">
+<style>
+  body { width: 1440px; height: 1000px; }
+  .body { flex: 1; display: grid; grid-template-columns: 240px minmax(0, 1fr) 440px; gap: 22px; padding: 22px 28px 28px; min-height: 0; }
+  .head { display: flex; align-items: flex-end; gap: 24px; padding: 26px 28px 20px; border-bottom: 1px solid var(--hair); }
+  .head .grow { flex: 1; }
+  .head .search { width: 380px; }
+  .vault-switch { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 14px 0 6px; border-radius: 20px; background: var(--surface); border: 1px solid var(--hair-strong); font-size: 13px; }
+  .vault-switch .tile { width: 28px; height: 28px; border-radius: 14px; font-size: 10px; }
+  .side { padding: 10px; }
+  .listcol { display: flex; flex-direction: column; min-height: 0; }
+  .seg { display: inline-flex; padding: 4px; gap: 4px; border-radius: 22px; background: rgba(26,35,50,.05); }
+  .seg span { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px; border-radius: 16px; font-size: 12.5px; color: var(--read-3); font-weight: 500; }
+  .seg span b { font: 500 11px var(--mono); color: var(--read-4); }
+  .seg span.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(26,35,50,.12); }
+  .listbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .row { display: flex; align-items: center; gap: 14px; min-height: 66px; padding: 11px 16px; margin-bottom: 8px; border-radius: 16px; border: 1px solid var(--hair); background: rgba(255,255,255,.5); }
+  .row.sel { background: rgba(58,127,160,.08); border-color: rgba(80,150,179,.35); box-shadow: 0 0 0 3px rgba(58,127,160,.07); }
+  .row .meta { flex: 1; min-width: 0; }
+  .row .name { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .row .sub { color: var(--read-4); font: 400 11px var(--mono); margin-top: 3px; }
+  .row .right { display: flex; align-items: center; gap: 14px; }
+  .row .right .lvl { width: 78px; }
+  .grp { margin: 16px 4px 8px; }
+  .detail { padding: 24px; display: flex; flex-direction: column; gap: 16px; overflow: hidden; }
+  .dhead { display: flex; gap: 14px; align-items: center; }
+  .dhead h2 { margin: 0; font: 600 22px var(--display); letter-spacing: -.01em; }
+  .field { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: 12px; background: rgba(255,255,255,.7); border: 1px solid var(--hair); }
+  .field .k { width: 92px; color: var(--read-4); font: 500 10px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+  .field .v { flex: 1; font-size: 13.5px; }
+  .field .icon-btn { width: 28px; height: 28px; border-radius: 8px; }
+  .totp { display: flex; align-items: center; gap: 8px; }
+  .totp .code { font: 600 17px var(--mono); letter-spacing: .12em; color: var(--accent); }
+  .ring { width: 18px; height: 18px; border-radius: 50%; background: conic-gradient(var(--accent-2) 0 62%, var(--read-5) 62% 100%); -webkit-mask: radial-gradient(circle, transparent 5px, #000 6px); }
+  .access { border-radius: 18px; padding: 18px; background: linear-gradient(160deg, rgba(58,127,160,.13), rgba(58,127,160,.04)); border: 1px solid rgba(80,150,179,.3); }
+  .access .top { display: flex; align-items: center; gap: 12px; }
+  .access .top .t { flex: 1; }
+  .access .top .t b { display: block; font-size: 15px; }
+  .access .top .t span { font-size: 12.5px; color: var(--read-3); }
+  .ladder { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 16px 0 12px; }
+  .ladder div { text-align: center; padding: 8px 4px; border-radius: 10px; font-size: 11.5px; color: var(--read-4); background: rgba(255,255,255,.55); border: 1px solid var(--hair); }
+  .ladder div.on { color: #fff; font-weight: 600; background: linear-gradient(180deg, var(--accent-2), var(--accent)); border-color: transparent; box-shadow: 0 0 14px rgba(58,127,160,.3); }
+  .kv { display: flex; justify-content: space-between; padding: 7px 0; font-size: 12.5px; border-top: 1px solid var(--hair); }
+  .kv span:first-child { color: var(--read-3); }
+</style></head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></symbol>
+  <symbol id="unlock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 7.6-1.8"/></symbol>
+  <symbol id="bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01M9.5 17h5"/><circle cx="12" cy="3.5" r="1"/></symbol>
+  <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+  <symbol id="key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M16 7l2.5 2.5M14 9l2 2"/></symbol>
+  <symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z"/></symbol>
+  <symbol id="star" viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9Z"/></symbol>
+  <symbol id="card" viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3 10h18M7 15h4"/></symbol>
+  <symbol id="note" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></symbol>
+  <symbol id="shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5.5c0 4.6 3 8.3 7 9.5 4-1.2 7-4.9 7-9.5V6z"/></symbol>
+  <symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="users" viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5M16 5.2a3.5 3.5 0 0 1 0 6.6M18.5 14.8c1.7.8 2.8 2.5 3 5.2"/></symbol>
+  <symbol id="building" viewBox="0 0 24 24"><path d="M4 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16M16 9h3a1 1 0 0 1 1 1v11M2 21h20M8 7h4M8 11h4M8 15h4"/></symbol>
+  <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1M18.7 18.7l-2.1-2.1M7.4 7.4 5.3 5.3"/></symbol>
+  <symbol id="list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></symbol>
+  <symbol id="link" viewBox="0 0 24 24"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></symbol>
+  <symbol id="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="chevd" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="terminal" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="m7 10 3 2.5L7 15M12.5 15h4.5"/></symbol>
+  <symbol id="server" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="7" rx="2"/><rect x="3.5" y="13" width="17" height="7" rx="2"/><path d="M7.5 7.5h.01M7.5 16.5h.01"/></symbol>
+  <symbol id="desktop" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16v4"/></symbol>
+  <symbol id="filter" viewBox="0 0 24 24"><path d="M4 5h16l-6.2 7.5V19l-3.6 1.5v-8z"/></symbol>
+  <symbol id="download" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="spark" viewBox="0 0 24 24"><path d="M12 3c.6 4.3 2.7 6.4 7 7-4.3.6-6.4 2.7-7 7-.6-4.3-2.7-6.4-7-7 4.3-.6 6.4-2.7 7-7Z"/><path d="M19 15.5c.3 1.7 1 2.4 2.5 2.5-1.6.2-2.3.9-2.5 2.5-.2-1.6-.9-2.3-2.5-2.5 1.6-.2 2.3-.9 2.5-2.5Z"/></symbol>
+  <symbol id="trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+  <symbol id="history" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 4v4.5H8M12 8v4.5l3 1.8"/></symbol>
+  <symbol id="refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14.2 5M4 12a8 8 0 0 1 14.2-5"/><path d="M18.5 3v4.2h-4.2M5.5 21v-4.2h4.2"/></symbol>
+  <symbol id="dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M9 9h.01M15 9h.01M12 12h.01M9 15h.01M15 15h.01"/></symbol>
+  <symbol id="ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.7 5.7 12.6 12.6"/></symbol>
+  <symbol id="hash" viewBox="0 0 24 24"><path d="M5 9h15M4 15h15M10 3 8 21M16 3l-2 18"/></symbol>
+  <symbol id="more" viewBox="0 0 24 24"><path d="M5.5 12h.01M12 12h.01M18.5 12h.01"/></symbol>
+  <symbol id="mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/></symbol>
+  <symbol id="grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="flow" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M8.5 6h7M6 8.5v5a4.5 4.5 0 0 0 4.5 4.5h5"/></symbol>
+  <symbol id="box" viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7z"/><path d="m4 7 8 4 8-4M12 11v10"/></symbol>
+  <symbol id="warn" viewBox="0 0 24 24"><path d="M12 4 2.8 20h18.4z"/><path d="M12 10v4.5M12 17.5h.01"/></symbol>
+  <symbol id="fingerprint" viewBox="0 0 24 24"><path d="M6.5 7.5A7 7 0 0 1 19 12v1.5M5 12a7 7 0 0 1 .4-2.3M8.5 20c1-2 1.5-4 1.5-7a2 2 0 0 1 4 0c0 3.5-.6 6-1.6 8M16.5 19.5c.6-1.6 1-3.4 1-5.5M5 15.5c.5-1 .9-2.2 1-3.5"/></symbol>
+</svg>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="tabs">
+      <div class="tab"><svg class="i sm"><use href="#spark"/></svg>Chat</div>
+      <div class="tab"><svg class="i sm"><use href="#grid"/></svg>Projects</div>
+      <div class="tab active"><svg class="i sm"><use href="#shield"/></svg>Vault</div>
+    </div>
+    <div style="margin-left:auto" class="pill ok"><span class="dot"></span>Unlocked · locks in 14 min</div>
+  </div>
+
+  <div class="head">
+    <div class="grow">
+      <p class="eyebrow">Password Vault</p>
+      <h1 class="title">Your passwords, locked and yours.</h1>
+      <p class="lead">Sulla's agents can only use the ones you switch on.</p>
+    </div>
+    <div class="vault-switch"><span class="tile">JB</span>My vault<svg class="i sm dim"><use href="#chevd"/></svg></div>
+    <div class="search"><svg class="i"><use href="#search"/></svg>Search 84 items<kbd>⌘K</kbd></div>
+    <span class="btn primary"><svg class="i"><use href="#plus"/></svg>New item</span>
+    <span class="icon-btn" style="width:40px;height:40px;border-radius:20px"><svg class="i"><use href="#lock"/></svg></span>
+  </div>
+
+  <div class="body">
+    <aside class="card side">
+      <div class="nav">
+        <h4 class="label">Vault</h4>
+        <a class="on"><svg class="i"><use href="#grid"/></svg>Everything<span class="n">84</span></a>
+        <a><svg class="i"><use href="#star"/></svg>Favorites<span class="n">9</span></a>
+        <a><svg class="i"><use href="#globe"/></svg>Logins<span class="n">52</span></a>
+        <a><svg class="i"><use href="#key"/></svg>API keys &amp; tokens<span class="n">14</span></a>
+        <a><svg class="i"><use href="#card"/></svg>Cards<span class="n">3</span></a>
+        <a><svg class="i"><use href="#note"/></svg>Secure notes<span class="n">9</span></a>
+        <a><svg class="i"><use href="#terminal"/></svg>SSH keys<span class="n">4</span></a>
+        <h4 class="label">Shared with me</h4>
+        <a><svg class="i"><use href="#building"/></svg>Northwind · Engineering<span class="n">31</span></a>
+        <a><svg class="i"><use href="#building"/></svg>Northwind · Marketing<span class="n">12</span></a>
+        <h4 class="label">Health</h4>
+        <a><svg class="i"><use href="#warn"/></svg>Weak or reused<span class="n" style="color:var(--danger)">5</span></a>
+        <a><svg class="i"><use href="#trash"/></svg>Trash<span class="n">2</span></a>
+      </div>
+    </aside>
+
+    <section class="listcol">
+      <div class="listbar">
+        <div class="seg">
+          <span class="on">All <b>84</b></span>
+          <span><svg class="i sm"><use href="#lock"/></svg>Only me <b>61</b></span>
+          <span><svg class="i sm"><use href="#bot"/></svg>Agents can use <b>23</b></span>
+        </div>
+        <span class="small muted">Sort: Recently used <svg class="i sm" style="vertical-align:-2px"><use href="#chevd"/></svg></span>
+      </div>
+
+      <div class="row sel">
+        <span class="tile">gh</span>
+        <div class="meta"><div class="name">GitHub</div><div class="sub">jonathon@northwind.dev · github.com</div></div>
+        <div class="right"><span class="lvl l2"><span class="bars"><i></i><i></i><i></i></span>AUTOFILL</span><span class="who agents"><svg class="i sm"><use href="#bot"/></svg>Agents can use</span></div>
+      </div>
+      <div class="row">
+        <span class="tile c2">st</span>
+        <div class="meta"><div class="name">Stripe secret key <span class="pill">Live</span></div><div class="sub">sk_live_••••••••4f2a · API key</div></div>
+        <div class="right"><span class="lvl l3"><span class="bars"><i></i><i></i><i></i></span>FULL</span><span class="who agents"><svg class="i sm"><use href="#bot"/></svg>Agents can use</span></div>
+      </div>
+      <div class="row">
+        <span class="tile c5">ch</span>
+        <div class="meta"><div class="name">Chase checking</div><div class="sub">jbyrd•••• · chase.com</div></div>
+        <div class="right"><span class="lvl"><span class="bars"><i></i><i></i><i></i></span>NONE</span><span class="who personal"><svg class="i sm"><use href="#lock"/></svg>Only me</span></div>
+      </div>
+      <div class="row">
+        <span class="tile c3">cf</span>
+        <div class="meta"><div class="name">Cloudflare API token</div><div class="sub">Pages + Workers deploy · API key</div></div>
+        <div class="right"><span class="lvl l3"><span class="bars"><i></i><i></i><i></i></span>FULL</span><span class="who agents"><svg class="i sm"><use href="#bot"/></svg>Agents can use</span></div>
+      </div>
+      <div class="row">
+        <span class="tile c4">gm</span>
+        <div class="meta"><div class="name">Gmail (personal) <svg class="i sm" style="color:var(--accent)"><use href="#star"/></svg></div><div class="sub">jonathon.b••••@gmail.com · google.com</div></div>
+        <div class="right"><span class="lvl"><span class="bars"><i></i><i></i><i></i></span>NONE</span><span class="who personal"><svg class="i sm"><use href="#lock"/></svg>Only me</span></div>
+      </div>
+      <div class="row">
+        <span class="tile">hs</span>
+        <div class="meta"><div class="name">HubSpot</div><div class="sub">ops@northwind.dev · app.hubspot.com</div></div>
+        <div class="right"><span class="lvl l1"><span class="bars"><i></i><i></i><i></i></span>METADATA</span><span class="who agents"><svg class="i sm"><use href="#bot"/></svg>Agents can use</span></div>
+      </div>
+      <div class="row">
+        <span class="tile c2">vi</span>
+        <div class="meta"><div class="name">Visa •••• 4417</div><div class="sub">Expires 08/29 · card</div></div>
+        <div class="right"><span class="lvl"><span class="bars"><i></i><i></i><i></i></span>NONE</span><span class="who personal"><svg class="i sm"><use href="#lock"/></svg>Only me</span></div>
+      </div>
+      <div class="row">
+        <span class="tile c3">aw</span>
+        <div class="meta"><div class="name">AWS root recovery codes</div><div class="sub">10 codes · secure note</div></div>
+        <div class="right"><span class="lvl"><span class="bars"><i></i><i></i><i></i></span>NONE</span><span class="who personal"><svg class="i sm"><use href="#lock"/></svg>Only me</span></div>
+      </div>
+    </section>
+
+    <aside class="card detail">
+      <div class="dhead">
+        <span class="tile xl">gh</span>
+        <div style="flex:1"><h2>GitHub</h2><div class="small muted">Login · edited 3 weeks ago</div></div>
+        <span class="btn sm">Edit</span>
+        <span class="icon-btn"><svg class="i"><use href="#more"/></svg></span>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div class="field"><span class="k">Username</span><span class="v">jonathon@northwind.dev</span><span class="icon-btn"><svg class="i sm"><use href="#copy"/></svg></span></div>
+        <div class="field"><span class="k">Password</span><span class="v mono" style="letter-spacing:.2em">••••••••••••••</span><span class="icon-btn"><svg class="i sm"><use href="#eye"/></svg></span><span class="icon-btn"><svg class="i sm"><use href="#copy"/></svg></span></div>
+        <div class="field"><span class="k">One-time</span><span class="v totp"><span class="code">284 913</span><span class="ring"></span><span class="tiny dim mono">19s</span></span><span class="icon-btn"><svg class="i sm"><use href="#copy"/></svg></span></div>
+        <div class="field"><span class="k">Website</span><span class="v" style="color:var(--accent)">github.com</span><span class="icon-btn"><svg class="i sm"><use href="#link"/></svg></span></div>
+      </div>
+
+      <div class="access">
+        <div class="top">
+          <span class="avatar agent" style="width:36px;height:36px"><svg class="i"><use href="#bot"/></svg></span>
+          <div class="t"><b>Agents can use this</b><span>Sulla can sign in for you. Agents never see the password.</span></div>
+          <span class="switch on"></span>
+        </div>
+        <div class="ladder">
+          <div>None</div><div>Metadata</div><div class="on">Autofill</div><div>Full</div>
+        </div>
+        <div class="kv"><span>Which agents</span><span>All my agents</span></div>
+        <div class="kv"><span>Only on</span><span class="mono small">github.com</span></div>
+        <div class="kv"><span>Last used</span><span>Sulla · "Ship PR #1048" · 2h ago</span></div>
+        <div class="kv"><span>Uses this week</span><span>7 · <a style="color:var(--accent)">see log</a></span></div>
+      </div>
+
+      <div class="kv" style="border:0;padding-top:0"><span><svg class="i sm" style="vertical-align:-2px"><use href="#history"/></svg> 4 earlier passwords</span><span style="color:var(--accent)">View history</span></div>
+    </aside>
+  </div>
+</div>
+</body></html>
