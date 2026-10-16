@@ -176,7 +176,10 @@ export class SullaFilesService {
   async link(context: ToolExecutionContext, fileId: string, targetFileId: string, kind: 'links_to' | 'derived_from'): Promise<void> {
     const file = await postgresClient.queryOne<any>('SELECT collection_id FROM files WHERE id=$1', [fileId]);
     if (!file) throw new Error('File not found');
+    const target = await postgresClient.queryOne<any>('SELECT collection_id FROM files WHERE id=$1 AND deleted_at IS NULL', [targetFileId]);
+    if (!target) throw new Error('Target file not found');
     await this.collection(context, file.collection_id, 'edit');
+    await this.collection(context, target.collection_id, 'view');
     await postgresClient.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES('file',$1,'file',$2,$3,$4) ON CONFLICT DO NOTHING`, [fileId, targetFileId, kind, context.job_id ?? context.sub]);
   }
 
@@ -201,14 +204,27 @@ export class SullaFilesService {
   }
 
   async expireAndGc(now = new Date()): Promise<{ expiredFiles: number; deletedChunks: number }> {
-    const expired = await postgresClient.query<any>(`UPDATE files SET deleted_at=$1,updated_at=NOW() WHERE expires_at<$1 AND deleted_at IS NULL RETURNING id`, [now]);
+    const expired = await postgresClient.transaction(async(client) => {
+      const rows = (await client.query<any>('SELECT * FROM files WHERE expires_at<$1 AND deleted_at IS NULL FOR UPDATE', [now])).rows;
+      for (const file of rows) {
+        const deleted = (await client.query<any>(`INSERT INTO file_versions
+          (file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id)
+          VALUES($1,$2,$3,NULL,0,TRUE,'agent-run','scratch-maintenance','Scratch TTL expired','scratch-maintenance') RETURNING id`,
+        [file.id, file.collection_id, file.current_version_id])).rows[0];
+        await client.query('UPDATE files SET current_version_id=$2,deleted_at=$3,updated_at=$3 WHERE id=$1', [file.id, deleted.id, now]);
+        await client.query(`INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'delete')`, [file.collection_id, file.id, deleted.id]);
+      }
+      return rows;
+    });
     await postgresClient.query(`UPDATE chunks c SET refcount=q.refs FROM (
-      SELECT v.chunk_collection_id collection_id, value#>>'{}' id, count(*) refs FROM files f JOIN file_versions v ON v.id=f.current_version_id
-      JOIN manifests m ON m.hash=v.manifest_hash CROSS JOIN jsonb_array_elements(m.chunk_ids) value WHERE f.deleted_at IS NULL GROUP BY 1,2
-    ) q WHERE c.collection_id=q.collection_id AND c.id=q.id`);
+      SELECT v.chunk_collection_id collection_id, ids.chunk_id, count(*) refs FROM files f JOIN file_versions v ON v.file_id=f.id
+      JOIN manifests m ON m.hash=v.manifest_hash CROSS JOIN jsonb_array_elements_text(m.chunk_ids) AS ids(chunk_id)
+      WHERE f.deleted_at IS NULL AND v.deleted=FALSE GROUP BY v.chunk_collection_id, ids.chunk_id
+    ) q WHERE c.collection_id=q.collection_id AND c.id=q.chunk_id`);
     await postgresClient.query(`UPDATE chunks c SET refcount=0 WHERE NOT EXISTS (
-      SELECT 1 FROM files f JOIN file_versions v ON v.id=f.current_version_id JOIN manifests m ON m.hash=v.manifest_hash
-      CROSS JOIN jsonb_array_elements_text(m.chunk_ids) id WHERE f.deleted_at IS NULL AND v.chunk_collection_id=c.collection_id AND id=c.id)`);
+      SELECT 1 FROM files f JOIN file_versions v ON v.file_id=f.id JOIN manifests m ON m.hash=v.manifest_hash
+      CROSS JOIN jsonb_array_elements_text(m.chunk_ids) AS ids(chunk_id)
+      WHERE f.deleted_at IS NULL AND v.deleted=FALSE AND v.chunk_collection_id=c.collection_id AND ids.chunk_id=c.id)`);
     const dead = await postgresClient.query<any>('DELETE FROM chunks WHERE refcount=0 RETURNING collection_id,id');
     for (const chunk of dead) await this.store.delete(chunk.collection_id, chunk.id);
     return { expiredFiles: expired.length, deletedChunks: dead.length };
