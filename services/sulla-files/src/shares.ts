@@ -117,7 +117,8 @@ export class SharesService {
     if (!share) throw Object.assign(new Error('share not found or inactive'), { status: 404 });
     if (share.target_type === 'folder' && !requestedPath) {
       const prefix = `${ share.folder_path }/`;
-      const files = (await this.db.query('SELECT path,mime,size FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND path LIKE $2 ORDER BY path', [share.collection_id, `${ prefix }%`])).rows
+      const escapedPrefix = prefix.replace(/[\\%_]/g, '\\$&');
+      const files = (await this.db.query("SELECT path,mime,size FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND path LIKE $2 ESCAPE E'\\\\' ORDER BY path", [share.collection_id, `${ escapedPrefix }%`])).rows
         .map(row => ({ ...row, path: row.path.slice(prefix.length) }));
       return { bytes: Buffer.from(JSON.stringify({ name: share.display_name, files })), mime: 'application/json', name: `${ share.display_name }.json` };
     }
