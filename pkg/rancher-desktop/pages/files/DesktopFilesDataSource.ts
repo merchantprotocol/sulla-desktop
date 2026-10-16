@@ -1,28 +1,39 @@
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { FilesDataSource, FilesItem, FilesPreview, FilesSnapshot, FilesVersion } from './types';
+import type { IpcRendererEvent } from 'electron';
 
 interface ContainerCollection {
-  id:string;
-  name:string;
-  kind:string;
-  home:string;
-  retention_policy?:Record<string, unknown>;
+  id:                    string;
+  name:                  string;
+  kind:                  string;
+  home:                  string;
+  retention_policy?:     Record<string, unknown>;
+  storage_quota?:        number | string;
+  kept_bytes?:           number | string;
+  desktop_count?:        number | string;
+  member_count?:         number | string;
+  account_display_name?: string;
+  access_role?:          string;
 }
 
 interface ContainerFile {
-  id:string;
-  path:string;
-  mime:string;
-  size:number | string;
-  updated_at?:string;
-  deleted_at?:string;
-  current_version_id:string;
-  version_count?:number | string;
-  created_by_type?:string;
-  created_by_id?:string;
-  version_created_by_type?:string;
-  version_created_by_id?:string;
+  id:                       string;
+  path:                     string;
+  mime:                     string;
+  size:                     number | string;
+  updated_at?:              string;
+  deleted_at?:              string;
+  current_version_id:       string;
+  version_count?:           number | string;
+  created_by_type?:         string;
+  created_by_id?:           string;
+  version_created_by_type?: string;
+  version_created_by_id?:   string;
+  owner_display_name?:      string;
+  owner_avatar_url?:        string;
+  sync_state?:              FilesItem['syncState'];
+  conflict_devices?:        number | string;
 }
 
 export class DesktopFilesDataSource implements FilesDataSource {
@@ -36,7 +47,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     onlineOnly:      false,
   } as const;
 
-  private files:FilesItem[] = [];
+  private files: FilesItem[] = [];
   private currentVersions = new Map<string, string>();
 
   private toItem(file:ContainerFile):FilesItem {
@@ -51,6 +62,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
       versionCount:     Number(file.version_count ?? 1),
       createdByType:    file.created_by_type ?? file.version_created_by_type ?? 'user',
       createdById:      file.created_by_id ?? file.version_created_by_id ?? '',
+      ownerDisplayName: file.owner_display_name,
+      ownerAvatarUrl:   file.owner_avatar_url,
+      syncState:        file.sync_state,
+      conflictDevices:  file.conflict_devices === undefined ? undefined : Number(file.conflict_devices),
     };
 
     this.currentVersions.set(item.id, item.currentVersionId);
@@ -73,7 +88,18 @@ export class DesktopFilesDataSource implements FilesDataSource {
     if (this.files.some(file => /\(conflicted copy [^)]+\)/i.test(file.path))) status.state = 'conflict';
 
     return {
-      collection: { id: collection.id, name: collection.name, home: collection.home, retentionPolicy: collection.retention_policy ?? { trashDays: 90 } },
+      collection: {
+        id:              collection.id,
+        name:            collection.name,
+        home:            collection.home,
+        retentionPolicy: collection.retention_policy ?? { trashDays: 90 },
+        storageQuota:    collection.storage_quota === undefined ? undefined : Number(collection.storage_quota),
+        keptBytes:       collection.kept_bytes === undefined ? undefined : Number(collection.kept_bytes),
+        desktopCount:    collection.desktop_count === undefined ? undefined : Number(collection.desktop_count),
+        memberCount:     collection.member_count === undefined ? undefined : Number(collection.member_count),
+        accountName:     collection.account_display_name,
+        accountRole:     collection.access_role,
+      },
       files: this.files,
       status,
     };
@@ -86,7 +112,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   async preview(fileId:string, versionId?:string):Promise<FilesPreview> {
-    const result = await ipcRenderer.invoke('sulla-files:preview', { fileId, versionId }) as { mime:string; data:Uint8Array };
+    const result = await ipcRenderer.invoke('sulla-files:preview', { fileId, versionId }) as { mime: string; data: Uint8Array };
 
     return { ...result, data: new Uint8Array(result.data), path: this.files.find(file => file.id === fileId)?.path ?? '' };
   }
@@ -100,6 +126,14 @@ export class DesktopFilesDataSource implements FilesDataSource {
   setPaused(paused:boolean):Promise<FilesSnapshot['status']> { return ipcRenderer.invoke('files-ui:set-paused', paused) }
   chooseUpload():Promise<number> { return ipcRenderer.invoke('files-ui:pick-upload') }
   uploadPaths(paths:string[]):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', paths) }
+  createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', path) }
+  onUploadProgress(listener:(progress:{ current: number; total: number; name: string; percent: number; done: boolean }) => void):() => void {
+    const wrapped = (_event:IpcRendererEvent, progress:{ current: number; total: number; name: string; percent: number; done: boolean }) => listener(progress);
+
+    ipcRenderer.on('files-ui:upload-progress', wrapped);
+    return () => ipcRenderer.removeListener('files-ui:upload-progress', wrapped);
+  }
+
   openFolder():Promise<void> { return ipcRenderer.invoke('files-ui:open-folder') }
   openFile(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:open-file', path) }
   restoreVersion(fileId:string, versionId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:restore-version', { fileId, versionId }) }

@@ -16,6 +16,10 @@ export interface FilesItem {
   versionCount: number;
   createdByType: string;
   createdById: string;
+  ownerDisplayName?: string;
+  ownerAvatarUrl?: string;
+  syncState?: 'synced' | 'syncing' | 'online-only' | 'conflict';
+  conflictDevices?: number;
 }
 
 export interface FilesVersion {
@@ -32,7 +36,7 @@ export interface FilesVersion {
 }
 
 export interface FilesSnapshot {
-  collection: { id: string; name: string; home: string; retentionPolicy: Record<string, unknown> };
+  collection: { id: string; name: string; home: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string };
   files: FilesItem[];
   status: {
     state: FilesSyncState;
@@ -71,6 +75,8 @@ export interface FilesDataSource {
   setPaused(paused:boolean): Promise<FilesSnapshot['status']>;
   chooseUpload(): Promise<number>;
   uploadPaths(paths:string[]): Promise<number>;
+  createFolder(path:string): Promise<void>;
+  onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
   openFile(path:string): Promise<void>;
   restoreVersion(fileId:string, versionId:string): Promise<void>;

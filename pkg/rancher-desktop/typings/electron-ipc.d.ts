@@ -453,6 +453,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:open-file':    (relativePath: string) => void;
   'files-ui:pick-upload':  () => number;
   'files-ui:upload-paths': (paths: string[]) => number;
+  'files-ui:create-folder': (relativePath: string) => void;
   'sulla-files:collections':     () => any[];
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
   'sulla-files:metadata':        (input: { fileId: string }) => any;
@@ -1113,6 +1114,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'files-ui:upload-progress': (progress: { current: number; total: number; name: string; percent: number; done: boolean }) => void;
   'chat-artifacts:changed': (change: import('@pkg/shared/chatArtifacts').ChatArtifactChangedEvent) => void;
   'decisions:changed': (record: import('@pkg/shared/decisions').DecisionRecord) => void;
   'claude-oauth:progress':          (text: string) => void;

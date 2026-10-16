@@ -33,13 +33,15 @@ async function availableTarget(root:string, name:string):Promise<string> {
   }
 }
 
-async function importPaths(paths:string[]):Promise<number> {
+async function importPaths(paths:string[], progress?:(value:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):Promise<number> {
   const watcher = getSullaFilesWatcher(); let imported = 0;
-  for (const source of paths) {
+  for (const [index, source] of paths.entries()) {
     const info = await fs.promises.stat(source);
     if (!info.isFile()) continue;
+    progress?.({ current: index + 1, total: paths.length, name: path.basename(source), percent: 12, done: false });
     await fs.promises.copyFile(source, await availableTarget(watcher.folder, source), fs.constants.COPYFILE_EXCL);
     imported++;
+    progress?.({ current: index + 1, total: paths.length, name: path.basename(source), percent: 100, done: index + 1 === paths.length });
   }
   if (imported) await watcher.notifyRescan();
 
@@ -65,6 +67,12 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:status', () => getSullaFilesWatcher().status());
   ipcMain.handle('files-ui:set-paused', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
   ipcMain.handle('files-ui:open-folder', () => getSullaFilesWatcher().openFolder());
+  ipcMain.handle('files-ui:create-folder', async(_event, relativePath:string) => {
+    const root = getSullaFilesWatcher().folder; const target = path.resolve(root, relativePath);
+    if (!target.startsWith(`${ root }${ path.sep }`)) throw new Error('Folder path escapes ~/sulla/Files');
+    await fs.promises.mkdir(target, { recursive: false });
+    await getSullaFilesWatcher().notifyRescan();
+  });
   ipcMain.handle('files-ui:open-file', async(_event, relativePath:string) => {
     const root = getSullaFilesWatcher().folder; const target = path.resolve(root, relativePath);
     if (!target.startsWith(`${ root }${ path.sep }`)) throw new Error('File path escapes ~/sulla/Files');
@@ -77,7 +85,7 @@ export function initSullaFilesIpc():void {
       : await dialog.showOpenDialog({ title: 'Upload to Sulla Files', properties: ['openFile', 'multiSelections'] });
     if (picked.canceled) return 0;
 
-    return importPaths(picked.filePaths);
+    return importPaths(picked.filePaths, progress => event.sender.send('files-ui:upload-progress', progress));
   });
-  ipcMain.handle('files-ui:upload-paths', (_event, paths:string[]) => importPaths(paths));
+  ipcMain.handle('files-ui:upload-paths', (event, paths:string[]) => importPaths(paths, progress => event.sender.send('files-ui:upload-progress', progress)));
 }
