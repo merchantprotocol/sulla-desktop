@@ -6,6 +6,9 @@ import { postgresClient } from '../database/PostgresClient';
 import { getSullaFilesRuntime, getSullaFilesService } from '../files/runtime';
 import { SullaFilesSyncClient } from '../files/sync';
 
+import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
+import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
+
 import type { ToolExecutionContext } from '../tools/executionContext';
 
 let instance: SullaFilesMaintenanceService | undefined;
@@ -43,10 +46,16 @@ export class SullaFilesMaintenanceService {
       this.syncJob = schedule.scheduleJob('*/1 * * * *', async() => {
         try {
           const runtime = getSullaFilesRuntime();
-          const client = new SullaFilesSyncClient(serverUrl, runtime.store, runtime.keyring, runtime.files, process.env.SULLA_FILES_INTERNAL_TOKEN);
-          await client.discoverCollections(backgroundContext(process.env.SULLA_FILES_USER_ID ?? 'desktop-user'));
+          const installationSecret = getChatCompletionsServer().getApiToken();
+          if (!installationSecret) throw new Error('Desktop tool API is not initialized');
+          const configuredSigningKey = process.env.SULLA_FILES_CAPABILITY_SIGNING_KEY || process.env.SULLA_FILES_INTERNAL_TOKEN;
+          const signingKey = configuredSigningKey || deriveCapabilitySigningKey(installationSecret);
+          const tokenFor = (context: ToolExecutionContext) => issueCapabilityToken({ sub: context.sub, device_id: context.device_id, scopes: ['files/*'], expiresInSeconds: 300 }, signingKey);
+          const discoveryContext = backgroundContext(process.env.SULLA_FILES_USER_ID ?? 'desktop-user');
+          const client = new SullaFilesSyncClient(serverUrl, runtime.store, runtime.keyring, runtime.files, tokenFor(discoveryContext));
+          await client.discoverCollections(discoveryContext);
           const collections = await postgresClient.query<{ id: string; owner_user_id: string }>("SELECT id,owner_user_id FROM collections WHERE kind='knowledge' AND home='synced'");
-          for (const collection of collections) await client.sync(backgroundContext(collection.owner_user_id), collection.id);
+          for (const collection of collections) { const context = backgroundContext(collection.owner_user_id); await new SullaFilesSyncClient(serverUrl, runtime.store, runtime.keyring, runtime.files, tokenFor(context)).sync(context, collection.id) }
         } catch (error) { console.warn('[SullaFiles] background sync failed:', error) }
       }) ?? undefined;
     }

@@ -13,7 +13,7 @@ spec:
           ports: [{ name: http, containerPort: 8792 }]
           env:
             - { name: SULLA_FILES_DATABASE_URL, valueFrom: { secretKeyRef: { name: sulla-server, key: files-database-url } } }
-            - { name: SULLA_FILES_INTERNAL_TOKEN, valueFrom: { secretKeyRef: { name: sulla-server, key: files-internal-token } } }
+            - { name: SULLA_FILES_CAPABILITY_SIGNING_KEY, valueFrom: { secretKeyRef: { name: sulla-server, key: files-internal-token } } }
           volumeMounts: [{ name: chunks, mountPath: /var/lib/sulla-files }]
           readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 10, periodSeconds: 10 }
