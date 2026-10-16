@@ -1,4 +1,7 @@
 import express, { type NextFunction, type Response } from 'express';
+import { readFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   authenticate,
@@ -34,6 +37,26 @@ class HttpError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message);
   }
+}
+
+const signupAttempts = new Map<string, { count: number; resetAt: number }>();
+const JOIN_ATTEMPT_LIMIT = 10;
+const JOIN_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+
+function enforceJoinAttemptLimit(ip: string, orgId: string): void {
+  const key = `${ip}:${orgId}`;
+  const now = Date.now();
+  const current = signupAttempts.get(key);
+  if (!current || current.resetAt <= now) {
+    signupAttempts.set(key, { count: 1, resetAt: now + JOIN_ATTEMPT_WINDOW_MS });
+    return;
+  }
+  if (current.count >= JOIN_ATTEMPT_LIMIT) throw new HttpError(429, 'Too many join attempts; try again later');
+  current.count += 1;
+}
+
+async function auditEvent(db: Database, actorId: string, orgId: string, action: string, metadata: Record<string, unknown> = {}): Promise<void> {
+  await db.query('INSERT INTO audit_log(actor_user_id, org_id, action, metadata) VALUES ($1, $2, $3, $4)', [actorId, orgId, action, metadata]);
 }
 
 function userId(request: AuthenticatedRequest): string {
@@ -121,6 +144,7 @@ export function createApp(db: Database, config: VaultConfig) {
     const joinPassword = typeof request.body.joinPassword === 'string' ? request.body.joinPassword : null;
     if ((joinOrgId && !joinPassword) || (!joinOrgId && joinPassword)) throw new HttpError(400, 'orgId and joinPassword must be supplied together');
     if (joinOrgId) {
+      enforceJoinAttemptLimit(request.ip ?? "unknown", joinOrgId);
       const org = await db.query<{ join_password_salt: Buffer; join_password_verifier: Buffer }>(
         'SELECT join_password_salt, join_password_verifier FROM orgs WHERE id = $1', [joinOrgId]);
       if (!org.rowCount || !org.rows[0].join_password_salt || !org.rows[0].join_password_verifier || !verifyLoginHash(joinPassword!, org.rows[0].join_password_salt, org.rows[0].join_password_verifier)) {
@@ -140,7 +164,14 @@ export function createApp(db: Database, config: VaultConfig) {
     response.status(201).json({ id: result.rows[0].id });
   });
 
-  app.get('/console', (_request, response) => response.type('html').send(CONSOLE_HTML));
+  app.get('/console', async (_request, response) => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    for (const candidate of [resolve(here, '../console/index.html'), resolve(here, '../../console/index.html')]) {
+      try { response.type('html').send(await readFile(candidate, 'utf8')); return; } catch { /* source tree vs image */ }
+    }
+    response.type('html').send(CONSOLE_HTML);
+  });
+  app.use('/console', express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../console')));
 
   // Desktop bootstrap is deliberately limited to the local, single-user
   // mode. The client sends only derived login material and wrapped keys.
@@ -499,7 +530,10 @@ export function createApp(db: Database, config: VaultConfig) {
   });
 
   app.put('/v1/collections/:collectionId/members/:memberId', async(request: AuthenticatedRequest, response) => {
-    await requireCollectionRight(db, userId(request), requiredString(request.params.collectionId, 'collectionId'), 'manage');
+    const collectionId = requiredString(request.params.collectionId, 'collectionId');
+    await requireCollectionRight(db, userId(request), collectionId, 'manage');
+    const memberOrg = await db.query(`SELECT 1 FROM collections c JOIN org_members om ON om.org_id = c.org_id AND om.user_id = $2 WHERE c.id = $1`, [collectionId, request.params.memberId]);
+    if (!memberOrg.rowCount) throw new HttpError(400, 'Member must belong to the collection organization');
     const view = Boolean(request.body.view);
     const useByAgents = Boolean(request.body.useByAgents);
     const edit = Boolean(request.body.edit);
@@ -514,7 +548,7 @@ export function createApp(db: Database, config: VaultConfig) {
        SET can_view = EXCLUDED.can_view, can_use_by_agents = EXCLUDED.can_use_by_agents,
            can_edit = EXCLUDED.can_edit, can_manage = EXCLUDED.can_manage, updated_at = now()
        RETURNING *`,
-      [request.params.collectionId, request.params.memberId, view, useByAgents, edit, manage],
+      [collectionId, request.params.memberId, view, useByAgents, edit, manage],
     );
     response.json(result.rows[0]);
   });
@@ -532,6 +566,7 @@ export function createApp(db: Database, config: VaultConfig) {
     await requireOrgManager(db, userId(request), orgId);
     const { salt, verifier } = makeLoginVerifier(requiredString(request.body.password, 'password'));
     await db.query('UPDATE orgs SET join_password_salt = $1, join_password_verifier = $2, updated_at = now() WHERE id = $3', [salt, verifier, orgId]);
+    await auditEvent(db, userId(request), orgId, 'join_password_set');
     response.status(204).end();
   });
 
@@ -540,6 +575,7 @@ export function createApp(db: Database, config: VaultConfig) {
     await requireOrgManager(db, userId(request), orgId);
     const { salt, verifier } = makeLoginVerifier(requiredString(request.body.password, 'password'));
     await db.query('UPDATE orgs SET join_password_salt = $1, join_password_verifier = $2, updated_at = now() WHERE id = $3', [salt, verifier, orgId]);
+    await auditEvent(db, userId(request), orgId, 'join_password_rotated');
     response.status(204).end();
   });
 
@@ -557,19 +593,76 @@ export function createApp(db: Database, config: VaultConfig) {
     response.status(201).json(result.rows[0]);
   });
 
+  // Recovery is a ciphertext relay. The browser unwraps the member key with
+  // the recovery private key and re-encrypts credentials; this service never
+  // receives a plaintext user key or master password.
+  app.post('/v1/orgs/:orgId/recovery/opt-in', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredString(request.params.orgId, 'orgId');
+    const actorId = userId(request);
+    if (!await getOrgRole(db, actorId, orgId)) throw new AccessDenied('Organization access denied');
+    const wrappedUserKey = requiredObject(request.body.wrappedUserKey, 'wrappedUserKey');
+    await db.query(`INSERT INTO org_recovery_keys(org_id, user_id, wrapped_user_key) VALUES ($1,$2,$3)
+      ON CONFLICT (org_id,user_id) DO UPDATE SET wrapped_user_key = EXCLUDED.wrapped_user_key, created_at = now()`, [orgId, actorId, wrappedUserKey]);
+    await auditEvent(db, actorId, orgId, 'recovery_opt_in');
+    response.status(204).end();
+  });
+
+  app.delete('/v1/orgs/:orgId/recovery/opt-in', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredString(request.params.orgId, 'orgId');
+    const actorId = userId(request);
+    if (!await getOrgRole(db, actorId, orgId)) throw new AccessDenied('Organization access denied');
+    await db.query('DELETE FROM org_recovery_keys WHERE org_id = $1 AND user_id = $2', [orgId, actorId]);
+    await auditEvent(db, actorId, orgId, 'recovery_opt_out');
+    response.status(204).end();
+  });
+
+  app.get('/v1/orgs/:orgId/recovery', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredString(request.params.orgId, 'orgId');
+    await requireOrgManager(db, userId(request), orgId);
+    const result = await db.query(`SELECT r.user_id, r.wrapped_user_key, r.created_at, u.email, u.public_key
+      FROM org_recovery_keys r JOIN users u ON u.id = r.user_id WHERE r.org_id = $1 ORDER BY r.created_at`, [orgId]);
+    response.json({ recoveryPublicKey: (await db.query('SELECT recovery_public_key FROM orgs WHERE id = $1', [orgId])).rows[0]?.recovery_public_key ?? null, members: result.rows });
+  });
+
+  app.put('/v1/orgs/:orgId/recovery/public-key', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredString(request.params.orgId, 'orgId');
+    await requireOrgManager(db, userId(request), orgId);
+    const publicKey = requiredString(request.body.publicKey, 'publicKey');
+    const result = await db.query('UPDATE orgs SET recovery_public_key = $1, recovery_enabled = true, updated_at = now() WHERE id = $2 RETURNING recovery_public_key', [publicKey, orgId]);
+    await auditEvent(db, userId(request), orgId, 'recovery_key_rotated');
+    response.json(result.rows[0]);
+  });
+
+  app.patch('/v1/account/credentials', async(request: AuthenticatedRequest, response) => {
+    const actorId = userId(request);
+    const loginHash = requiredString(request.body.loginHash, 'loginHash');
+    const { salt, verifier } = makeLoginVerifier(loginHash);
+    await db.query(`UPDATE users SET login_hash_salt=$1, login_hash_verifier=$2, public_key=$3,
+      encrypted_private_key=$4, encrypted_user_key=$5, kdf=$6, updated_at=now() WHERE id=$7`,
+      [salt, verifier, requiredString(request.body.publicKey, 'publicKey'), requiredObject(request.body.encryptedPrivateKey, 'encryptedPrivateKey'), requiredObject(request.body.encryptedUserKey, 'encryptedUserKey'), requiredObject(request.body.kdf, 'kdf'), actorId]);
+    const orgs = await db.query('SELECT org_id FROM org_members WHERE user_id = $1', [actorId]);
+    for (const org of orgs.rows) await auditEvent(db, actorId, org.org_id, 'account_recovered');
+    response.status(204).end();
+  });
+
   app.put('/v1/groups/:groupId/members/:memberId', async(request: AuthenticatedRequest, response) => {
     const group = await db.query<{ org_id: string }>('SELECT org_id FROM org_groups WHERE id = $1', [request.params.groupId]);
     if (!group.rowCount) throw new HttpError(404, 'Group not found');
     await requireOrgManager(db, userId(request), group.rows[0].org_id);
+    const member = await db.query('SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2', [group.rows[0].org_id, request.params.memberId]);
+    if (!member.rowCount) throw new HttpError(400, 'Member must belong to the group organization');
     await db.query('INSERT INTO group_members(group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [request.params.groupId, request.params.memberId]);
     response.status(204).end();
   });
 
   app.put('/v1/collections/:collectionId/groups/:groupId', async(request: AuthenticatedRequest, response) => {
-    await requireCollectionRight(db, userId(request), requiredString(request.params.collectionId, 'collectionId'), 'manage');
+    const collectionId = requiredString(request.params.collectionId, 'collectionId');
+    await requireCollectionRight(db, userId(request), collectionId, 'manage');
+    const sameOrg = await db.query('SELECT 1 FROM collections c JOIN org_groups g ON g.org_id = c.org_id WHERE c.id = $1 AND g.id = $2', [collectionId, request.params.groupId]);
+    if (!sameOrg.rowCount) throw new HttpError(400, 'Group must belong to the collection organization');
     const values = [Boolean(request.body.view), Boolean(request.body.useByAgents), Boolean(request.body.edit), Boolean(request.body.manage)];
     if (!values[0] && values.slice(1).some(Boolean)) throw new HttpError(400, 'view is required for all other collection rights');
-    const result = await db.query(`INSERT INTO collection_group_members(collection_id, group_id, can_view, can_use_by_agents, can_edit, can_manage) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (collection_id,group_id) DO UPDATE SET can_view=$3,can_use_by_agents=$4,can_edit=$5,can_manage=$6 RETURNING *`, [request.params.collectionId, request.params.groupId, ...values]);
+    const result = await db.query(`INSERT INTO collection_group_members(collection_id, group_id, can_view, can_use_by_agents, can_edit, can_manage) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (collection_id,group_id) DO UPDATE SET can_view=$3,can_use_by_agents=$4,can_edit=$5,can_manage=$6 RETURNING *`, [collectionId, request.params.groupId, ...values]);
     response.json(result.rows[0]);
   });
 
@@ -592,9 +685,29 @@ export function createApp(db: Database, config: VaultConfig) {
   });
 
   app.get('/v1/sync', async(request: AuthenticatedRequest, response) => {
-    const actorId = userId(request); const cursor = Number(request.query.cursor) || 0;
-    const result = await db.query(`SELECT id,owner_user_id,collection_id,folder_id,item_type,ciphertext,encrypted_item_key,agent_wrapped_item_key,agent_policy,revision,deleted_at,created_at,updated_at FROM items i WHERE extract(epoch FROM i.updated_at) > $2 AND (i.owner_user_id=$1 OR EXISTS (SELECT 1 FROM collections c JOIN org_members om ON om.org_id=c.org_id AND om.user_id=$1 WHERE c.id=i.collection_id)) ORDER BY i.updated_at,id LIMIT 500`, [actorId, cursor]);
-    response.json({ cursor: Math.floor(Date.now() / 1000), items: result.rows });
+    const actorId = userId(request);
+    const cursor = Number.isSafeInteger(Number(request.query.cursor)) ? Number(request.query.cursor) : 0;
+    const result = await db.query(`
+      SELECT i.id,i.owner_user_id,i.collection_id,i.folder_id,i.item_type,i.ciphertext,i.encrypted_item_key,
+             i.agent_wrapped_item_key,i.agent_policy,i.revision,i.deleted_at,i.created_at,i.updated_at,i.change_seq
+        FROM items i
+       WHERE i.change_seq > $2
+         AND (i.owner_user_id = $1 OR EXISTS (
+           SELECT 1 FROM collections c
+           JOIN org_members om ON om.org_id = c.org_id AND om.user_id = $1
+           LEFT JOIN collection_members cm ON cm.collection_id = c.id AND cm.user_id = $1
+          WHERE c.id = i.collection_id AND (
+            om.role IN ('owner','admin') OR cm.can_view = true OR EXISTS (
+              SELECT 1 FROM group_members gm
+              JOIN collection_group_members cgm ON cgm.group_id = gm.group_id
+              JOIN org_groups g ON g.id = gm.group_id AND g.org_id = c.org_id
+             WHERE gm.user_id = $1 AND cgm.collection_id = c.id AND cgm.can_view = true)))
+         )
+       ORDER BY i.change_seq ASC
+       LIMIT 501`, [actorId, cursor]);
+    const hasMore = result.rows.length > 500;
+    const items = hasMore ? result.rows.slice(0, 500) : result.rows;
+    response.json({ cursor: items.length ? items[items.length - 1].change_seq : cursor, hasMore, items });
   });
 
   app.post('/v1/audit', async(request: AuthenticatedRequest, response) => {

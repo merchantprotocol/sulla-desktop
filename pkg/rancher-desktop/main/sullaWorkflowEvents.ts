@@ -232,6 +232,22 @@ export function initSullaWorkflowEvents(): void {
     }
 
     try {
+      const { getWorkflowManagerClient } = await import('@pkg/agent/services/WorkflowManagerClient');
+      const manager = getWorkflowManagerClient();
+      if (await manager.isHealthy(true)) {
+        const existingModel = await (await importWorkflowModel()).findById(workflow.id);
+        const status = (existingModel?.attributes.status ?? workflow._status ?? 'draft') as WorkflowStatus;
+        await manager.request('PUT', `/v1/workflows/${ encodeURIComponent(workflow.id) }`, {
+          ...workflow,
+          definition: workflow,
+          status,
+          location: existingModel?.attributes.location ?? workflow.location ?? 'desktop',
+        });
+        console.log(`[workflow-save] ← manager ok id=${ workflow.id } status=${ status } in ${ Date.now() - started }ms`);
+        return true;
+      }
+      manager.logFallback('workflow-save');
+
       const WorkflowModel = await importWorkflowModel();
       // Let the model reuse the row's existing status when this is an
       // update; only brand-new rows default to 'draft' via upsertFromDefinition.
@@ -362,6 +378,10 @@ export function initSullaWorkflowEvents(): void {
   // the primary read path until Phase 2 cuts reads over to the DB.
 
   ipcMainProxy.handle('workflow-db-list', async() => {
+    const { getWorkflowManagerClient } = await import('@pkg/agent/services/WorkflowManagerClient');
+    const manager = getWorkflowManagerClient();
+    if (await manager.isHealthy()) return manager.request('GET', '/v1/workflows');
+
     // Do NOT swallow errors here — returning [] silently makes the
     // playbill look empty when the real problem is a broken query or a
     // dead DB connection. The renderer catches into useRoutines.error
@@ -373,6 +393,13 @@ export function initSullaWorkflowEvents(): void {
 
   ipcMainProxy.handle('workflow-db-get', async(_event: unknown, workflowId: string) => {
     try {
+      const { getWorkflowManagerClient } = await import('@pkg/agent/services/WorkflowManagerClient');
+      const manager = getWorkflowManagerClient();
+      if (await manager.isHealthy()) {
+        const model: any = await manager.request('GET', `/v1/workflows/${ encodeURIComponent(workflowId) }`);
+        return { ...model.definition, _status: model.status, location: model.location };
+      }
+
       const WorkflowModel = await importWorkflowModel();
       const model = await WorkflowModel.findById(workflowId);
 

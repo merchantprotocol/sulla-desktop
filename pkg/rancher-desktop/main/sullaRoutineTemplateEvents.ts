@@ -665,6 +665,28 @@ export async function executeRoutine(
   triggerPayload?: string,
   options?: RoutineExecutionOptions,
 ): Promise<RoutineExecutionResult> {
+  // User-triggered and scheduled Desktop runs are owned by the container
+  // manager when it is healthy. Task-scoped immutable snapshots keep the
+  // legacy path until their dispatcher contract is represented by the
+  // manager API; this is the explicit startup/compatibility fallback.
+  if (!options?.definitionSnapshot && !options?.executionScope && !options?.onSettled) {
+    try {
+      const { getWorkflowManagerClient } = await import('@pkg/agent/services/WorkflowManagerClient');
+      const manager = getWorkflowManagerClient();
+      if (await manager.isHealthy(true)) {
+        const launched: any = options?.resumeExecutionId
+          ? await manager.request('POST', `/v1/runs/${ encodeURIComponent(options.resumeExecutionId) }/resume`, {})
+          : await manager.startRun({ workflowId, message: triggerPayload ?? '' });
+        await options?.onStarted?.(launched.executionId);
+        return { workflowId, executionId: launched.executionId };
+      }
+      manager.logFallback('Run button execution');
+    } catch (error) {
+      const { getWorkflowManagerClient } = await import('@pkg/agent/services/WorkflowManagerClient');
+      getWorkflowManagerClient().logFallback('Run button execution', error);
+    }
+  }
+
   let started = false;
   try {
     return await executeRoutineInternal(workflowId, triggerPayload, options, () => { started = true });

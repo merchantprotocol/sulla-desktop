@@ -278,6 +278,13 @@ const PREVIOUS_LIMA_SUDOERS_LOCATION = '/private/etc/sudoers.d/rancher-desktop-l
 // (though this loses the type guarantees around it not modifying the instance).
 // [1]: https://www.typescriptlang.org/docs/handbook/2/classes.html#this-parameters
 // [2]: https://github.com/microsoft/TypeScript/issues/46802
+// The workflow manager image is built from the source checkout until a published
+// image exists. Packaged apps have no services/ folder, so they keep the in-app
+// engine (the manager client falls back when the container is absent).
+function workflowManagerSourceAvailable(): boolean {
+  return fs.existsSync(path.join(process.cwd(), 'services', 'sulla-workflows', 'Dockerfile'));
+}
+
 export default class LimaBackend extends events.EventEmitter implements VMBackend, VMExecutor {
   constructor(arch: Architecture, kubeFactory: (backend: LimaBackend) => K8s.KubernetesBackend) {
     super();
@@ -2937,6 +2944,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla_shell_runtime',
       'sulla_node_runtime',
     ];
+    if (workflowManagerSourceAvailable()) requiredServices.push('sulla_workflow_manager');
     if (settingsImpl.getSettings().sullaVaultV2Enabled) requiredServices.push('sulla_vault');
 
     try {
@@ -2985,6 +2993,39 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8787/healthz'], interval: '10s', timeout: '3s', retries: 5 },
       };
     }
+
+    // Desktop is a single-node Sulla Server. The manager and its ephemeral
+    // runners use the same image that the server deployment will use; only
+    // the launcher driver differs (Docker here, Kubernetes on k3s).
+    if (workflowManagerSourceAvailable()) compose.services.workflow_manager = {
+      build: { context: process.cwd(), dockerfile: 'services/sulla-workflows/Dockerfile' },
+      image: 'sulla-workflows:local',
+      container_name: 'sulla_workflow_manager',
+      // The manager alone needs Docker socket access to launch short-lived
+      // runners. Runners retain the image's unprivileged `node` user and are
+      // granted only the socket GID discovered by the manager.
+      user: 'root',
+      command: ['dist/services/sulla-workflows/src/manager.js'],
+      depends_on: {
+        postgres: { condition: 'service_healthy' },
+        redis: { condition: 'service_healthy' },
+      },
+      env_file: ['/etc/sulla-env'],
+      environment: {
+        SULLA_WORKFLOW_ROLE: 'manager',
+        SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+        SULLA_REDIS_URL: 'redis://redis:6379',
+        SULLA_MANAGER_URL: 'http://workflow_manager:8788',
+        SULLA_TOOL_API_URL: 'http://host.docker.internal:3000',
+        SULLA_WORKFLOW_IMAGE: 'sulla-workflows:local',
+        SULLA_DOCKER_NETWORK: 'sulla_default',
+      },
+      extra_hosts: ['host.docker.internal:host-gateway'],
+      ports: ['127.0.0.1:30122:8788'],
+      volumes: ['/var/run/docker.sock:/var/run/docker.sock'],
+      restart: 'unless-stopped',
+      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
+    };
 
     // Modify dynamic values like passwords
     if (compose.services?.postgres?.environment) {
@@ -3124,6 +3165,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       await this.waitForDockerServiceHealthy(service);
     }
     const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime'];
+    if (workflowManagerSourceAvailable()) optionalServices.push('sulla_workflow_manager');
     if (settingsImpl.getSettings().sullaVaultV2Enabled) optionalServices.push('sulla_vault');
     for (const service of optionalServices) {
       try {

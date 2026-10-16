@@ -7,6 +7,22 @@ export class RefreshSchedulesWorker extends BaseTool {
   schemaDef = {};
 
   protected async _validatedCall(_input: any): Promise<ToolResponse> {
+    try {
+      const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
+      const manager = getWorkflowManagerClient();
+      if (await manager.isHealthy(true)) {
+        const result = await manager.request<{ schedules: any[] }>('POST', '/v1/schedules/refresh', {});
+        return {
+          successBoolean: true,
+          responseString: `Workflow manager refreshed — ${ result.schedules.length } schedule trigger(s) armed:\n${ result.schedules.map(job => `  • ${ job.workflowName } — cron "${ job.cronExpression }" ${ job.timezone } — next: ${ job.nextInvocation ?? 'none' }`).join('\n') }`,
+        };
+      }
+      manager.logFallback('schedule refresh');
+    } catch (error) {
+      const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
+      getWorkflowManagerClient().logFallback('schedule refresh', error);
+    }
+
     let scheduler;
     try {
       const { getWorkflowSchedulerService } = await import('@pkg/agent/services/WorkflowSchedulerService');

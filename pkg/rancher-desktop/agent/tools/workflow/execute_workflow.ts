@@ -533,6 +533,24 @@ export class ExecuteWorkflowWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
+    try {
+      const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
+      const manager = getWorkflowManagerClient();
+      if (await manager.isHealthy(true)) {
+        const launched = input.resumeExecutionId
+          ? await manager.request('POST', `/v1/runs/${ encodeURIComponent(input.resumeExecutionId) }/resume`, {})
+          : await manager.startRun({ workflowId: input.workflowId, message: input.message ?? '' });
+        return {
+          successBoolean: true,
+          responseString: JSON.stringify({ ...launched, status: 'launched-by-workflow-manager' }, null, 2),
+        };
+      }
+      manager.logFallback('execute_workflow');
+    } catch (error) {
+      const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
+      getWorkflowManagerClient().logFallback('execute_workflow', error);
+    }
+
     if (!this.state) {
       return {
         successBoolean: false,
