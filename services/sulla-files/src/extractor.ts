@@ -19,7 +19,12 @@ export async function extractIndexText(path: string, mime: string): Promise<Extr
       return { text, status: 'indexed' };
     }
     if (mime === 'application/pdf') return commandText('pdftotext', ['-layout', path, '-']);
-    if (mime.includes('word') || mime.includes('officedocument')) return commandText('docx2txt', [path, '-']);
+    if (mime === 'application/msword') return commandText('catdoc', [path]);
+    if (mime.includes('wordprocessingml')) return commandText('docx2txt', [path, '-']);
+    if (mime === 'application/vnd.ms-excel') return commandText('xls2csv', [path]);
+    if (mime === 'application/vnd.ms-powerpoint') return commandText('catppt', [path]);
+    if (mime.includes('spreadsheetml')) return ooxmlText(path, 'xl/sharedStrings.xml');
+    if (mime.includes('presentationml')) return ooxmlText(path, 'ppt/slides/slide*.xml');
     if (mime.startsWith('image/')) return commandText('tesseract', [path, 'stdout']);
     if (mime.startsWith('audio/') || mime.startsWith('video/')) {
       for (const binary of ['whisper-cli', 'whisper-cpp']) {
@@ -32,6 +37,12 @@ export async function extractIndexText(path: string, mime: string): Promise<Extr
   } catch {
     return { text: null, status: 'failed' };
   }
+}
+
+async function ooxmlText(path:string, member:string):Promise<ExtractedText> {
+  const result = await commandText('unzip', ['-p', path, member]);
+  if (!result.text) return result;
+  return { ...result, text: result.text.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim() };
 }
 
 async function commandText(binary: string, args: string[]): Promise<ExtractedText> {

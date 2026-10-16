@@ -16,10 +16,11 @@
  * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
  */
 
-import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ConversationKeywordsModel } from '../database/models/ConversationKeywordsModel';
+import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { getSullaFilesService } from '../files/runtime';
 import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '../memory/MemoryRecallService';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
@@ -29,7 +30,6 @@ import { sanitizeConversationContext } from '../utils/conversationContext';
 import { formatDateOnly } from '../utils/formatDateOnly';
 import { latestUserText } from '../utils/latestUserText';
 import { extractRecallTerms } from '../utils/recallTerms';
-import { getSullaFilesService } from '../files/runtime';
 
 import Logging from '@pkg/utils/logging';
 
@@ -943,14 +943,33 @@ async function runFilesRecall(state: BaseThreadState): Promise<string> {
     const query = extractLatestUserText(state);
     if (!query) return '';
     const meta = state.metadata as any;
-    const userId = String(meta.userId ?? meta.ownerUserId ?? meta.humanId ?? 'desktop-cli');
+    const userId = meta.userId ?? meta.ownerUserId;
+    if (!userId) return '';
+    const terms = extractRecallTerms([query], 16);
+    if (!terms.length) return '';
     const now = Math.floor(Date.now() / 1000);
-    const rows = await getSullaFilesService().searchAll({
-      v: 1, iss: 'sulla-desktop', aud: 'sulla-tools', sub: userId,
-      org_id: meta.orgId, device_id: meta.deviceId, scopes: ['files/*'],
-      iat: now, exp: now + 300, jti: `recall-${ now }`, request_id: `recall-${ now }`,
-    }, query);
-    return rows.slice(0, 5).map((row: any) => `${ row.path } — matched ${ Number(row.rank ?? 0).toFixed(2) }${ row.snippet ? `: ${ row.snippet.replace(/\s+/g, ' ').slice(0, 140) }` : '' }`).join('\n');
+    const recall = getSullaFilesService().searchAll({
+      v:          1,
+      iss:        'sulla-desktop',
+      aud:        'sulla-tools',
+      sub:        userId,
+      org_id:     meta.orgId,
+      device_id:  meta.deviceId,
+      scopes:     ['files/*'],
+      iat:        now,
+      exp:        now + 300,
+      jti:        `recall-${ now }`,
+      request_id: `recall-${ now }`,
+    }, query, {}, { terms, timeoutMs: 250 });
+    const rows = await Promise.race([
+      recall,
+      new Promise<any[]>((resolve) => {
+        const timer = setTimeout(() => resolve([]), 300);
+
+        timer.unref();
+      }),
+    ]);
+    return rows.slice(0, 5).map((row: any) => `${ row.title } (${ row.path }) — ${ row.why }${ row.snippet ? `: ${ row.snippet.replace(/\s+/g, ' ').slice(0, 140) }` : '' }`).join('\n');
   } catch (error) {
     console.warn('[SubconsciousMiddleware] files recall unavailable:', error instanceof Error ? error.message : error);
     return '';
@@ -1127,7 +1146,7 @@ export async function runConversationReader(state: BaseThreadState): Promise<str
 const IDENTITY_RECALL_MAX_CHARS = 3_000;
 
 /** `[id] L<level>·<category> date — content (basis: …)`, within the char budget. */
-export function formatIdentityRecallLines(hits: Array<{ id: string; level: number; category: string | null; content: string; basis: string | null; created_at: string | Date }>): string {
+export function formatIdentityRecallLines(hits: { id: string; level: number; category: string | null; content: string; basis: string | null; created_at: string | Date }[]): string {
   const lines: string[] = [];
   let used = 0;
 
@@ -1144,7 +1163,7 @@ export function formatIdentityRecallLines(hits: Array<{ id: string; level: numbe
 }
 
 /** One line per prior thread; the primary agent drills in with recall_conversations. */
-export function formatConversationRecallLines(hits: Array<{ thread_id: string; title: string | null; summary: string | null; last_seen: string | Date; matched_terms: string[] }>): string {
+export function formatConversationRecallLines(hits: { thread_id: string; title: string | null; summary: string | null; last_seen: string | Date; matched_terms: string[] }[]): string {
   return hits.map((h) => {
     const title = (h.title || 'Untitled conversation').replace(/\s+/g, ' ').trim().slice(0, 120);
     const summary = h.summary ? ` — ${ h.summary.replace(/\s+/g, ' ').trim().slice(0, 240) }` : '';

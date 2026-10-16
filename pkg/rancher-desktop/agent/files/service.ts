@@ -3,7 +3,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fastCdc } from './chunking';
 import { chunkId, decryptChunk, encryptChunk } from './crypto';
 import { FileKeyring } from './keyring';
+import { issueCapabilityToken } from '../../runtime/capabilityToken';
 import { postgresClient } from '../database/PostgresClient';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 import type { ChunkStore, CollectionKind, CollectionRole, ToolExecutionContext } from './types';
 import type { PoolClient } from 'pg';
@@ -188,26 +190,34 @@ export class SullaFilesService {
   }
 
   async search(context: ToolExecutionContext, collectionId: string, query: string, filters: { folder?: string; type?: string; person?: string; from?: Date; to?: Date } = {}): Promise<any[]> {
-    await this.collection(context, collectionId, 'view');
-    const args: any[] = [collectionId, query];
-    const where = ['collection_id=$1', 'deleted_at IS NULL', `search_vector @@ websearch_to_tsquery('simple',$2)`];
-    if (filters.folder) { args.push(`${ filters.folder.replace(/%/g, '\\%') }%`); where.push(`path LIKE $${ args.length } ESCAPE '\\'`); }
-    if (filters.type) { args.push(filters.type); where.push(`mime=$${ args.length }`); }
-    if (filters.person) { args.push(filters.person); where.push(`(person_id=$${ args.length } OR created_by_id=$${ args.length })`); }
-    if (filters.from) { args.push(filters.from); where.push(`updated_at >= $${ args.length }`); }
-    if (filters.to) { args.push(filters.to); where.push(`updated_at <= $${ args.length }`); }
-    return postgresClient.query(`SELECT id,path,mime,size,updated_at,created_by_id,
-      ts_rank_cd(search_vector, websearch_to_tsquery('simple',$2)) rank,
-      left(coalesce(search_text,''),240) snippet
-      FROM files WHERE ${ where.join(' AND ') }
-      ORDER BY rank DESC, updated_at DESC, path LIMIT 100`, args);
+    return this.containerSearch(context, { collectionId, query, ...filters });
   }
 
-  async searchAll(context: ToolExecutionContext, query: string, filters: { folder?: string; type?: string; person?: string; from?: Date; to?: Date } = {}): Promise<any[]> {
-    const collections = await postgresClient.query<{ id: string }>(`SELECT c.id FROM collections c JOIN collection_acl a ON a.collection_id=c.id
-      WHERE a.principal_type='user' AND a.principal_id=$1 AND a.role IN ('view','use-by-agents','edit','manage')`, [context.sub]);
-    const rows = await Promise.all(collections.map(c => this.search(context, c.id, query, filters)));
-    return rows.flat().sort((a, b) => Number(b.rank ?? 0) - Number(a.rank ?? 0)).slice(0, 100);
+  async searchAll(context: ToolExecutionContext, query: string, filters: { folder?: string; type?: string; person?: string; from?: Date; to?: Date } = {}, options: { terms?: string[]; timeoutMs?: number } = {}): Promise<any[]> {
+    return this.containerSearch(context, { query, ...filters, terms: options.terms }, options.timeoutMs);
+  }
+
+  private async containerSearch(context:ToolExecutionContext, body:Record<string, unknown>, timeoutMs = 2_000):Promise<any[]> {
+    const signingKey = await SullaSettingsModel.getServicePassword();
+    const token = issueCapabilityToken({
+      sub:              context.sub,
+      org_id:           context.org_id,
+      group_ids:        context.group_ids,
+      agent_id:         context.agent_id,
+      job_id:           context.job_id,
+      thread_id:        context.thread_id,
+      device_id:        context.device_id,
+      scopes:           ['files/*'],
+      expiresInSeconds: 300,
+    }, signingKey);
+    const response = await fetch('http://127.0.0.1:30124/v1/search', {
+      method:  'POST',
+      headers: { authorization: `Bearer ${ token }`, 'content-type': 'application/json' },
+      body:    JSON.stringify(body),
+      signal:  AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) throw new Error(`Files search failed (${ response.status })`);
+    return response.json() as Promise<any[]>;
   }
 
   async promote(context: ToolExecutionContext, fileId: string, targetCollectionId: string, path?: string): Promise<void> {

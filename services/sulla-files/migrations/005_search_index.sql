@@ -1,6 +1,6 @@
 -- Phase 6 search index.  The JSON embedding is the portable fallback used by
--- desktop Postgres; installations with pgvector also get a native vector
--- index through the guarded block below.
+-- installations without pgvector; shipped Desktop and Server Postgres images
+-- install the native vector extension and HNSW index below.
 ALTER TABLE files ADD COLUMN IF NOT EXISTS extracted_at TIMESTAMPTZ;
 ALTER TABLE files ADD COLUMN IF NOT EXISTS extraction_status TEXT NOT NULL DEFAULT 'pending';
 ALTER TABLE files ADD COLUMN IF NOT EXISTS person_id TEXT;
@@ -20,9 +20,19 @@ CREATE TABLE IF NOT EXISTS file_search_chunks (
 );
 CREATE INDEX IF NOT EXISTS idx_file_search_chunks_fts ON file_search_chunks USING GIN(search_vector);
 
--- pgvector is optional on Desktop's stock postgres:16 image.  Server images
--- that ship it receive a native HNSW index; the service continues to use the
--- JSON column when the extension is unavailable.
+CREATE TABLE IF NOT EXISTS file_index_jobs (
+  file_id UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  version_id UUID PRIMARY KEY REFERENCES file_versions(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK(status IN('pending','indexing','indexed','failed','unsupported')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_file_index_jobs_pending ON file_index_jobs(available_at,created_at) WHERE status='pending';
+
 DO $$
 BEGIN
   CREATE EXTENSION IF NOT EXISTS vector;

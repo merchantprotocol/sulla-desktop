@@ -22,7 +22,7 @@ function fakeDb() {
 }
 
 async function withServer(fn:(baseUrl:string) => Promise<void>) {
-  const server = createApp(fakeDb(), { chunkRoot: '/tmp/sulla-files-security-test', dataRoot: '/tmp/sulla-files-security-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, mode: 'server', deviceId: 'test', userId: 'user-1', paused: false }).listen(0);
+  const server = createApp(fakeDb(), { chunkRoot: '/tmp/sulla-files-security-test', dataRoot: '/tmp/sulla-files-security-test', modelDir: '/tmp/sulla-files-security-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, mode: 'server', deviceId: 'test', userId: 'user-1', paused: false }).listen(0);
   await new Promise<void>(resolve => server.once('listening', resolve));
   try { await fn(`http://127.0.0.1:${ (server.address() as any).port }`) } finally { server.close() }
 }
