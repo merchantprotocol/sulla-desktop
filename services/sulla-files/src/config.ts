@@ -15,6 +15,7 @@ export interface Config {
   deviceId:             string;
   userId:               string;
   serverUrl?:           string;
+  cloudUrl:             string;
   paused:               boolean;
 }
 export function loadConfig():Config {
@@ -40,6 +41,7 @@ export function loadConfig():Config {
     deviceId:     process.env.SULLA_FILES_DEVICE_ID ?? 'desktop',
     userId:       process.env.SULLA_FILES_USER_ID ?? 'desktop-user',
     serverUrl:    process.env.SULLA_FILES_SERVER_URL,
+    cloudUrl:     (process.env.SULLA_CLOUD_API_URL ?? 'https://sulla-workers.merchantprotocol.workers.dev').replace(/\/+$/, ''),
     paused:       process.env.SULLA_FILES_PAUSED === '1',
   };
 }

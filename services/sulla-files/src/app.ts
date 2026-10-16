@@ -1,6 +1,7 @@
 import express from 'express';
 
 import { verifyCapabilityToken } from './auth.js';
+import { SharesService } from './shares.js';
 import { Store } from './store.js';
 
 import type { Config } from './config.js';
@@ -10,7 +11,7 @@ import type pg from 'pg';
 const LEVEL:Record<string, number> = { view: 1, 'use-by-agents': 2, edit: 3, manage: 4 };
 
 export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager) {
-  const app = express(); const store = new Store(config.chunkRoot);
+  const app = express(); const store = new Store(config.chunkRoot); const shares = new SharesService(db, config, store);
   app.use(express.json({ limit: '16mb' }));
   app.use((req, res, next) => {
     if (req.path === '/healthz') return next();
@@ -36,6 +37,11 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager)
   app.post('/v1/local/rescan', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.rescan().catch(error => console.error('[SullaFiles] rescan failed', error)); response.status(202).json({ accepted: true }) });
   app.post('/v1/local/pause', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.setPaused(Boolean(request.body.paused))) } catch (error) { next(error) } });
   app.post('/v1/local/sync', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.sync().catch(error => console.error('[SullaFiles] sync failed', error)); response.status(202).json({ accepted: true }) });
+  app.get('/v1/local/shares/:id/content', async(request, response, next) => { try { const content = await shares.content(request.params.id, String(request.query.path ?? '')); response.type(content.mime).setHeader('X-Sulla-Filename', encodeURIComponent(content.name)).send(content.bytes) } catch (error) { next(error) } });
+  app.post('/v1/links', async(request, response, next) => { try { response.status(201).json(await shares.create(ctx(request), request.body, request.header('x-sulla-cloud-token') ?? '')) } catch (error) { next(error) } });
+  app.get('/v1/links', async(request, response, next) => { try { response.json(await shares.list(ctx(request), request.header('x-sulla-cloud-token') ?? undefined)) } catch (error) { next(error) } });
+  app.delete('/v1/links/:id', async(request, response, next) => { try { response.json(await shares.revoke(ctx(request), request.params.id, request.header('x-sulla-cloud-token') ?? undefined)) } catch (error) { next(error) } });
+  app.patch('/v1/links/:id', async(request, response, next) => { try { response.json(await shares.setKeepAvailable(ctx(request), request.params.id, Boolean(request.body.keepAvailable), request.header('x-sulla-cloud-token') ?? '')) } catch (error) { next(error) } });
   app.get('/v1/collections', async(request, response, next) => { try { const identity = ctx(request); if (!identity.user) return response.status(401).json({ error: 'identity required' }); const rows = await db.query(`SELECT c.* FROM collections c JOIN collection_acl a ON a.collection_id=c.id WHERE c.kind='knowledge' AND a.principal_type='user' AND a.principal_id=$1`, [identity.user]); response.json(rows.rows) } catch (error) { next(error) } });
   app.post('/v1/collections', async(request, response, next) => {
     try {

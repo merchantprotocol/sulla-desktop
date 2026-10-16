@@ -22,7 +22,7 @@ function fakeDb() {
 }
 
 async function withServer(fn:(baseUrl:string) => Promise<void>) {
-  const server = createApp(fakeDb(), { chunkRoot: '/tmp/sulla-files-security-test', dataRoot: '/tmp/sulla-files-security-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, mode: 'server', deviceId: 'test', userId: 'user-1', paused: false }).listen(0);
+  const server = createApp(fakeDb(), { chunkRoot: '/tmp/sulla-files-security-test', dataRoot: '/tmp/sulla-files-security-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, localToken: 'local-test-token', mode: 'server', deviceId: 'test', userId: 'user-1', cloudUrl: 'https://cloud.invalid', paused: false }).listen(0);
   await new Promise<void>(resolve => server.once('listening', resolve));
   try { await fn(`http://127.0.0.1:${ (server.address() as any).port }`) } finally { server.close() }
 }
@@ -40,5 +40,10 @@ test('files server rejects spoofed identity, collection takeover, and cross-coll
 
     const foreignChunks = await fetch(`${ baseUrl }/v1/versions/commit`, { method: 'POST', headers: { authorization: `Bearer ${ token }`, 'content-type': 'application/json' }, body: JSON.stringify({ collectionId: 'collection-a', file: { id: 'new-file' }, version: { id: 'version-2', chunk_collection_id: 'collection-b' }, manifest: { hash: 'hash-2', chunk_ids: [] } }) });
     assert.equal(foreignChunks.status, 403);
+
+    const noLocalToken = await fetch(`${ baseUrl }/v1/local/shares/not-shared/content`);
+    assert.equal(noLocalToken.status, 401);
+    const notShared = await fetch(`${ baseUrl }/v1/local/shares/not-shared/content`, { headers: { 'x-sulla-files-token': 'local-test-token' } });
+    assert.equal(notShared.status, 404);
   });
 });
