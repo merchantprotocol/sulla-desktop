@@ -1,7 +1,7 @@
 import { getChatHeartbeatService } from '../../services/ChatHeartbeatService';
 import { BaseTool, ToolResponse } from '../base';
 
-import { DEFAULT_CHAT_HEARTBEAT_MESSAGE } from '@pkg/shared/chatHeartbeat';
+import { DEFAULT_CHAT_HEARTBEAT_MESSAGE, normalizeChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
 
 export class SetChatHeartbeatWorker extends BaseTool {
   name = '';
@@ -14,10 +14,15 @@ export class SetChatHeartbeatWorker extends BaseTool {
     }
 
     const service = getChatHeartbeatService();
-    const current = service.status(threadId);
-    if (!current) {
-      return Promise.resolve({ successBoolean: false, responseString: 'This chat tab is not registered for per-thread heartbeat control.' });
-    }
+    // Threads with no open Desktop tab (relay chats, background threads) were never registered,
+    // so the agent could not wake itself. Register them here on the thread's own channel; an open
+    // tab re-registering later keeps this config and adds its UI callbacks.
+    const current = service.status(threadId) ?? service.register({
+      threadId,
+      channel: String((this.state)?.metadata?.wsChannel || '').trim() || 'sulla-desktop',
+      config:  normalizeChatHeartbeatConfig(null),
+      busy:    false,
+    });
 
     const rawMinutes = Number(input.intervalMinutes);
     const intervalMinutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? rawMinutes : null;
