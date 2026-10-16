@@ -4,7 +4,7 @@ const CONTROLLER_TOOLS = new Set(['spawn_agent', 'check_agent_jobs', 'send_job_m
 const WORKFLOW_MANAGER_TOOLS = new Set(['execute_workflow', 'pause_workflow', 'resume_workflow', 'stop_workflow', 'restart_from_checkpoint', 'catch_up_schedules', 'refresh_schedules', 'set_workflow_status', 'import_workflow']);
 const AGENT_LOCAL_CATEGORIES = new Set(['fs', 'projects', 'workspace']);
 const AGENT_LOCAL_TOOLS = new Set(['exec', 'read_file', 'write_file', 'file_search']);
-const CATALOG_CATEGORIES = new Set(['pg', 'redis', 'project']);
+const CATALOG_CATEGORIES = new Set(['files', 'pg', 'redis', 'project']);
 
 /** Phase-one target inventory. Unlisted tools stay on Desktop until extracted. */
 export function executionTargetFor(category: string, name: string): ToolExecutionTarget {

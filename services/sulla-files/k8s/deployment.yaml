@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: sulla-files, labels: { app.kubernetes.io/name: sulla-files } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: sulla-files } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: sulla-files } }
+    spec:
+      containers:
+        - name: files
+          image: ghcr.io/merchantprotocol/sulla-files:latest
+          ports: [{ name: http, containerPort: 8792 }]
+          env:
+            - { name: SULLA_FILES_DATABASE_URL, valueFrom: { secretKeyRef: { name: sulla-server, key: files-database-url } } }
+            - { name: SULLA_FILES_INTERNAL_TOKEN, valueFrom: { secretKeyRef: { name: sulla-server, key: files-internal-token } } }
+          volumeMounts: [{ name: chunks, mountPath: /var/lib/sulla-files }]
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 10, periodSeconds: 10 }
+          resources: { requests: { cpu: 50m, memory: 96Mi }, limits: { cpu: 500m, memory: 256Mi } }
+      volumes: [{ name: chunks, persistentVolumeClaim: { claimName: sulla-files } }]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: sulla-files }
+spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 20Gi } } }

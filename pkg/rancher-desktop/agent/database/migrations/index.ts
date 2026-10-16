@@ -106,6 +106,7 @@ import { up as up_0094, down as down_0094 } from './0094_durable_agent_completio
 import { up as up_0095, down as down_0095 } from './0095_add_lane_human_approval';
 import { up as up_0096, down as down_0096 } from './0096_unique_github_pr_mirrors';
 import { up as up_0097, down as down_0097 } from './0097_add_trigram_index_to_identity_observations';
+import { up as up_0120, down as down_0120 } from './0120_create_sulla_files';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -213,4 +214,5 @@ export const migrationsRegistry = [
   { name: '0117_create_legacy_artifact_import_ledger', up: up_0117, down: down_0117 },
   { name: '0118_add_workflow_container_runtime', up: up_0118, down: down_0118 },
   { name: '0119_add_agent_run_location', up: up_0119, down: down_0119 },
+  { name: '0120_create_sulla_files', up: up_0120, down: down_0120 },
 ] as const;

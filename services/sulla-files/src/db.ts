@@ -1,0 +1,5 @@
+import { readdir, readFile } from 'node:fs/promises'; import { dirname, resolve } from 'node:path'; import { fileURLToPath } from 'node:url';
+
+import pg from 'pg';
+export async function connect(url:string) { const db = new pg.Pool({ connectionString: url, max: 10 }); await db.query('SELECT 1'); return db }
+export async function migrate(db:pg.Pool) { const here = dirname(fileURLToPath(import.meta.url)); const dir = resolve(here, '../migrations'); await db.query('CREATE TABLE IF NOT EXISTS files_schema_migrations(version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())'); for (const file of (await readdir(dir)).filter(f => /^\d+_.+\.sql$/.test(f)).sort()) { if ((await db.query('SELECT 1 FROM files_schema_migrations WHERE version=$1', [file])).rowCount) continue; const c = await db.connect(); try { await c.query('BEGIN'); await c.query(await readFile(resolve(dir, file), 'utf8')); await c.query('INSERT INTO files_schema_migrations(version) VALUES($1)', [file]); await c.query('COMMIT') } catch (e) { await c.query('ROLLBACK'); throw e } finally { c.release() } } }

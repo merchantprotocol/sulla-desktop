@@ -286,6 +286,8 @@ export class SpawnAgentWorker extends BaseTool {
       contract,
       depth,
     }], parentChannel, parentThreadId, { visibility: 'tab', parentAgentId });
+    const { beginAgentScratch } = await import('../../files/scratchLifecycle');
+    await beginAgentScratch(job.jobId, String(metadata?.userId ?? metadata?.ownerUserId ?? parentChannel), metadata?.orgId);
 
     // Ownership: a tab that works a Projects task holds it until it returns.
     const inherited = inheritedTaskIds(metadata);
@@ -682,6 +684,8 @@ export class SpawnAgentWorker extends BaseTool {
     // ── Async mode: fire and forget ─────────────────────────────
     if (async_) {
       const job = ownershipJob ?? await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
+      const { beginAgentScratch, endAgentScratch } = await import('../../files/scratchLifecycle');
+      await beginAgentScratch(job.jobId, String((this.state as any)?.metadata?.userId ?? parentChannel), (this.state as any)?.metadata?.orgId);
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
       jobAbortSignal = getJobAbortSignal(job.jobId);
@@ -725,7 +729,7 @@ export class SpawnAgentWorker extends BaseTool {
           await emitProactiveCompletion(parentChannel, job.jobId, [], (err as Error).message, parentThreadId);
           wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], (err as Error).message);
         })
-        .finally(stopDeadRunWatch);
+        .finally(async() => { stopDeadRunWatch(); await endAgentScratch(job.jobId) });
 
       return {
         successBoolean: true,
@@ -743,6 +747,8 @@ export class SpawnAgentWorker extends BaseTool {
     // Sync launches need a durable job too: otherwise the rail and exchange
     // components would only exist for fire-and-forget work.
     const syncJob = ownershipJob ?? await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
+    const { beginAgentScratch, endAgentScratch } = await import('../../files/scratchLifecycle');
+    await beginAgentScratch(syncJob.jobId, String((this.state as any)?.metadata?.userId ?? parentChannel), (this.state as any)?.metadata?.orgId);
     let stopDeadRunWatch: (() => void) | undefined;
     const jobId = syncJob.jobId;
     jobAbortSignal = getJobAbortSignal(jobId);
@@ -759,6 +765,7 @@ export class SpawnAgentWorker extends BaseTool {
       throw err;
     } finally {
       stopDeadRunWatch?.();
+      await endAgentScratch(syncJob.jobId);
     }
     // The caller is reading the results right here; only the durable display /
     // ownership record needs settling, not a background wake.

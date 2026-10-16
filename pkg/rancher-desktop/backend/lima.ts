@@ -3100,6 +3100,31 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
+    const filesImage = resolveSullaServiceImage(
+      'sulla-files', process.cwd(), Electron.app.getVersion(), process.env.SULLA_FILES_IMAGE,
+    );
+    const resolvedFilesImage = filesImage.build ? filesImage.image : `\${SULLA_FILES_IMAGE:-${ filesImage.image }}`;
+
+    if (!filesImage.build && !process.env.SULLA_FILES_IMAGE && !filesImage.image.endsWith(':latest')) {
+      this.#optionalSullaFallbackImages.set('sulla_files', {
+        env: 'SULLA_FILES_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-files:latest',
+      });
+    }
+    compose.services.sulla_files = {
+      ...filesImage,
+      image: resolvedFilesImage,
+      container_name: 'sulla_files',
+      depends_on: { postgres: { condition: 'service_healthy' } },
+      environment: {
+        SULLA_FILES_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+        SULLA_FILES_CHUNK_ROOT:   '/var/lib/sulla-files/chunks',
+      },
+      ports: ['127.0.0.1:30124:8792'],
+      volumes: [`${ path.join(os.homedir(), 'sulla', 'files') }:/var/lib/sulla-files`],
+      restart: 'unless-stopped',
+      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8792/healthz'], interval: '5s', timeout: '3s', retries: 10 },
+    };
+
     // Modify dynamic values like passwords
     if (compose.services?.postgres?.environment) {
       compose.services.postgres.environment = compose.services.postgres.environment.map((env: string) => {
@@ -3114,6 +3139,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const sullaDataDir = path.join(paths.appHome, 'data');
 
     await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-postgres'), { recursive: true });
+    await fs.promises.mkdir(path.join(os.homedir(), 'sulla', 'files', 'chunks'), { recursive: true });
 
     // Ensure data directory is writable by container user (postgres=UID 70)
     await fs.promises.chmod(path.join(sullaDataDir, 'sulla-postgres'), 0o777);
@@ -3234,7 +3260,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       );
 
       this.#activeOptionalSullaServices.clear();
-      const optionalServices = ['workflow_manager', 'tools'];
+      const optionalServices = ['workflow_manager', 'tools', 'sulla_files'];
 
       if (settingsImpl.getSettings().sullaVaultV2Enabled) optionalServices.push('sulla_vault');
       for (const service of optionalServices) {
@@ -3279,6 +3305,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     if (this.#activeOptionalSullaServices.has('workflow_manager')) optionalServices.push('sulla_workflow_manager');
     if (this.#activeOptionalSullaServices.has('tools')) optionalServices.push('sulla_tools');
+    if (this.#activeOptionalSullaServices.has('sulla_files')) optionalServices.push('sulla_files');
     if (this.#activeOptionalSullaServices.has('sulla_vault')) optionalServices.push('sulla_vault');
     for (const service of optionalServices) {
       try {
