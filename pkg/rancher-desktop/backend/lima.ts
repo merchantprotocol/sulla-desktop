@@ -278,6 +278,13 @@ const PREVIOUS_LIMA_SUDOERS_LOCATION = '/private/etc/sudoers.d/rancher-desktop-l
 // (though this loses the type guarantees around it not modifying the instance).
 // [1]: https://www.typescriptlang.org/docs/handbook/2/classes.html#this-parameters
 // [2]: https://github.com/microsoft/TypeScript/issues/46802
+// The workflow manager image is built from the source checkout until a published
+// image exists. Packaged apps have no services/ folder, so they keep the in-app
+// engine (the manager client falls back when the container is absent).
+function workflowManagerSourceAvailable(): boolean {
+  return fs.existsSync(path.join(process.cwd(), 'services', 'sulla-workflows', 'Dockerfile'));
+}
+
 export default class LimaBackend extends events.EventEmitter implements VMBackend, VMExecutor {
   constructor(arch: Architecture, kubeFactory: (backend: LimaBackend) => K8s.KubernetesBackend) {
     super();
@@ -2936,8 +2943,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla_python_runtime',
       'sulla_shell_runtime',
       'sulla_node_runtime',
-      'sulla_workflow_manager',
     ];
+    if (workflowManagerSourceAvailable()) requiredServices.push('sulla_workflow_manager');
     if (settingsImpl.getSettings().sullaVaultV2Enabled) requiredServices.push('sulla_vault');
 
     try {
@@ -2991,7 +2998,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Desktop is a single-node Sulla Server. The manager and its ephemeral
     // runners use the same image that the server deployment will use; only
     // the launcher driver differs (Docker here, Kubernetes on k3s).
-    compose.services.workflow_manager = {
+    if (workflowManagerSourceAvailable()) compose.services.workflow_manager = {
       build: { context: process.cwd(), dockerfile: 'services/sulla-workflows/Dockerfile' },
       image: 'sulla-workflows:local',
       container_name: 'sulla_workflow_manager',
@@ -3158,7 +3165,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     for (const service of ['sulla_postgres', 'sulla_redis']) {
       await this.waitForDockerServiceHealthy(service);
     }
-    const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime', 'sulla_workflow_manager'];
+    const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime'];
+    if (workflowManagerSourceAvailable()) optionalServices.push('sulla_workflow_manager');
     if (settingsImpl.getSettings().sullaVaultV2Enabled) optionalServices.push('sulla_vault');
     for (const service of optionalServices) {
       try {
