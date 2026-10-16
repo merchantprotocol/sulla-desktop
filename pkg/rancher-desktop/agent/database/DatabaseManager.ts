@@ -59,15 +59,15 @@ export class DatabaseManager {
 
     await this.runMigrations();
 
-    // Copy legacy and bundled artifacts into Postgres once. Existing rows are
-    // never overwritten and source folders remain untouched.
+    // Seed only the integrations that ship inside the app. Nothing from the
+    // user's ~/sulla folders is copied in at startup (Jonathon, 2026-10-15).
     try {
       const { importLegacyArtifacts } = await import('./legacyArtifactImporter');
       const result = await importLegacyArtifacts();
-      console.log(`[DB] Legacy artifacts: ${ result.imported } imported, ${ result.skipped } already present`);
-      if (result.errors.length) console.warn('[DB] Legacy artifact import errors:', result.errors);
+      console.log(`[DB] Bundled integrations: ${ result.imported } seeded, ${ result.skipped } already present`);
+      if (result.errors.length) console.warn('[DB] Bundled integration seed errors:', result.errors);
     } catch (error) {
-      console.warn('[DB] Legacy artifact import failed:', error);
+      console.warn('[DB] Bundled integration seed failed:', error);
     }
 
     try {
@@ -75,17 +75,6 @@ export class DatabaseManager {
       await refreshIntegrationCatalog();
     } catch (error) {
       console.warn('[DB] Database integration catalog refresh failed:', error);
-    }
-
-    // Legacy agent folders are a one-time compatibility input. The DB row is
-    // authoritative after the first successful insert; files remain untouched.
-    try {
-      const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-      const result = await agentDefinitionService.importLegacyDirectories();
-      console.log(`[DB] Legacy agents: ${ result.imported } imported, ${ result.skipped } already present`);
-      if (result.errors.length) console.warn('[DB] Legacy agent import errors:', result.errors);
-    } catch (error) {
-      console.warn('[DB] Legacy agent import failed:', error);
     }
 
     // Built-in agents ship in the app bundle. Re-asserted every boot: inserts

@@ -18,9 +18,8 @@ export function skillServiceFromDefinition(row: SkillDefinition): SkillService |
 
 /**
  * SkillsRegistry — every runtime skill read goes through here, and every read
- * comes from the skill_definitions table. SKILL.md folders are only an import
- * source: each rebuild copies folder skills the table does not have yet (see
- * SkillDefinitionService.importSkillFolders) and then loads the table.
+ * comes from the skill_definitions table. Nothing is copied in from SKILL.md
+ * folders at startup; skills arrive via built-in seeding, install or save.
  */
 export class SkillsRegistry {
   private readonly cacheKey = 'sulla:skills:summary';
