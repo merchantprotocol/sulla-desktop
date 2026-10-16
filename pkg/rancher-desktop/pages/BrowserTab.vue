@@ -250,6 +250,12 @@
       </div>
     </template>
 
+    <template v-else-if="tabMode === 'files'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <FilesPage />
+      </div>
+    </template>
+
     <template v-else-if="tabMode === 'usage'">
       <div class="flex-1 min-h-0 overflow-hidden">
         <UsagePage />
@@ -319,6 +325,7 @@ import AgentRoutines from './AgentRoutines.vue';
 // Swapped to the new componentized chat at ./chat/ChatPage.vue.
 // Old implementation at ./BrowserTabChat.vue is kept for rollback.
 import FileEditorTab from './FileEditorTab.vue';
+import FilesPage from './FilesPage.vue';
 import BrowserTabChat from './chat/ChatPage.vue';
 import AgentsTab from './AgentsTab.vue';
 import HistoryTab from './HistoryTab.vue';
@@ -361,6 +368,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   terminal:      'Terminal',
   agents:        'Agents',
   projects:      'Projects',
+  files:         'Files',
   decide:        'Decide',
   usage:         'Usage',
 };

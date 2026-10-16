@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,7 +12,16 @@ const console = Logging.background;
 const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/'];
 const API = 'http://127.0.0.1:30124';
 
-export interface SullaFilesStatus { state: 'synced' | 'syncing' | 'paused' | 'error'; pendingFiles: number; lastError?: string; serverConfigured: boolean }
+export interface SullaFilesStatus {
+  state:            'synced' | 'syncing' | 'paused' | 'error' | 'conflict';
+  pendingFiles:     number;
+  lastError?:       string;
+  lastScanAt?:      string;
+  lastSyncAt?:      string;
+  serverConfigured: boolean;
+  location?:        'local' | 'server' | 'cloud';
+  serverLabel?:     string;
+}
 
 function ignored(relativePath:string, patterns:string[]):boolean {
   const normalized = relativePath.split(path.sep).join('/'); const parts = normalized.split('/');
@@ -40,8 +50,30 @@ class SullaFilesWatcher {
   }
 
   private async request(endpoint:string, init:RequestInit = {}):Promise<Response> { const token = await SullaSettingsModel.getServicePassword(); return fetch(`${ API }${ endpoint }`, { ...init, headers: { 'x-sulla-files-token': token, 'content-type': 'application/json', ...(init.headers as any) }, signal: AbortSignal.timeout(3_000) }) }
+  private async capabilityToken():Promise<string> {
+    const key = await SullaSettingsModel.getServicePassword(); const now = Math.floor(Date.now() / 1_000); const encode = (value:string) => Buffer.from(value).toString('base64url'); const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+    const payload = encode(JSON.stringify({ sub: process.env.SULLA_FILES_USER_ID ?? 'desktop-user', device_id: os.hostname(), scopes: ['files/*'], v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 300, jti: crypto.randomUUID() }));
+
+    return `${ header }.${ payload }.${ crypto.createHmac('sha256', key).update(`${ header }.${ payload }`).digest('base64url') }`;
+  }
+  async requestFiles(endpoint:string, init:RequestInit = {}, server = false):Promise<Response> {
+    const base = server && process.env.SULLA_FILES_SERVER_URL ? process.env.SULLA_FILES_SERVER_URL : API; const token = await this.capabilityToken();
+
+    return fetch(new URL(endpoint, base), { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, signal: AbortSignal.timeout(30_000) });
+  }
   async notifyRescan():Promise<void> { try { const response = await this.request('/v1/local/rescan', { method: 'POST' }); if (!response.ok) throw new Error(`HTTP ${ response.status }`); } catch (error) { console.debug('[SullaFiles] optional container is offline; folder remains local-only:', error) } }
-  async status():Promise<SullaFilesStatus> { try { const response = await this.request('/v1/local/status'); if (!response.ok) throw new Error(`HTTP ${ response.status }`); return await response.json() as SullaFilesStatus } catch { return { state: 'error', pendingFiles: 0, lastError: 'Files container is off; files remain local', serverConfigured: false } } }
+  async status():Promise<SullaFilesStatus> {
+    try {
+      const response = await this.request('/v1/local/status'); if (!response.ok) throw new Error(`HTTP ${ response.status }`);
+      const status = await response.json() as SullaFilesStatus;
+      const serverUrl = process.env.SULLA_FILES_SERVER_URL;
+      const serverLabel = serverUrl ? new URL(serverUrl).hostname : status.serverConfigured ? 'Sulla Server' : undefined;
+
+      return { ...status, location: !status.serverConfigured ? 'local' : serverLabel?.endsWith('sulla.cloud') ? 'cloud' : 'server', serverLabel: serverLabel?.endsWith('sulla.cloud') ? 'Sulla Cloud' : serverLabel };
+    } catch {
+      return { state: 'error', pendingFiles: 0, lastError: 'Files container is off; files remain safely in ~/sulla/Files', serverConfigured: false, location: 'local' };
+    }
+  }
   async setPaused(paused:boolean):Promise<SullaFilesStatus> { const response = await this.request('/v1/local/pause', { method: 'POST', body: JSON.stringify({ paused }) }); if (!response.ok) throw new Error(`Files pause failed (${ response.status })`); return await response.json() as SullaFilesStatus }
   async openFolder():Promise<void> { const error = await shell.openPath(this.folder); if (error) throw new Error(error); }
 }

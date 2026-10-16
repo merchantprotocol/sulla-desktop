@@ -447,6 +447,23 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Filesystem
+  'files-ui:status':       () => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
+  'files-ui:set-paused':   (paused: boolean) => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
+  'files-ui:open-folder':  () => void;
+  'files-ui:open-file':    (relativePath: string) => void;
+  'files-ui:pick-upload':  () => number;
+  'files-ui:upload-paths': (paths: string[]) => number;
+  'sulla-files:collections':     () => any[];
+  'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
+  'sulla-files:metadata':        (input: { fileId: string }) => any;
+  'sulla-files:preview':         (input: { fileId: string; versionId?: string; thumbnail?: boolean }) => { mime: string; data: Uint8Array };
+  'sulla-files:history':         (input: { fileId: string }) => any[];
+  'sulla-files:restore-version': (input: { fileId: string; versionId: string }) => { ok: boolean; versionId: string };
+  'sulla-files:trash-list':      (input: { collectionId: string }) => any[];
+  'sulla-files:trash':           (input: { fileId: string }) => void;
+  'sulla-files:trash-restore':   (input: { fileId: string }) => { ok: boolean; versionId: string };
+  'sulla-files:upload':          (input: { collectionId: string; path: string; mime?: string; data: Uint8Array }) => any;
+
   'filesystem-get-root':        () => string;
   'filesystem-get-git-changes': (path: string) => Promise<{ status: string, file: string }[]>;
 
