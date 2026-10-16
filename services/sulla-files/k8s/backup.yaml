@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata: { name: sulla-files-backup }
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: ghcr.io/merchantprotocol/sulla-files:latest
+              command: ["node", "dist/index.js", "backup"]
+              env:
+                - { name: SULLA_FILES_DATABASE_URL, value: "postgresql://unused" }
+                - { name: SULLA_FILES_CAPABILITY_SIGNING_KEY, valueFrom: { secretKeyRef: { name: sulla-server, key: files-internal-token } } }
+                - { name: SULLA_FILES_BACKUP_TARGET, value: /backup }
+              volumeMounts:
+                - { name: files, mountPath: /var/lib/sulla-files, readOnly: true }
+                - { name: backup, mountPath: /backup }
+          volumes:
+            - { name: files, persistentVolumeClaim: { claimName: sulla-files } }
+            - { name: backup, persistentVolumeClaim: { claimName: sulla-files-backup } }

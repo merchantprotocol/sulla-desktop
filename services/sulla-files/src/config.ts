@@ -1,7 +1,22 @@
 import { resolve } from 'node:path';
 
-import { deriveCapabilitySigningKey } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
-export interface Config { port: number; databaseUrl: string; chunkRoot: string; capabilitySigningKey: string | Buffer }
+import { deriveCapabilitySigningKey } from './auth.js';
+
+export interface Config {
+  port:                 number;
+  databaseUrl:          string;
+  chunkRoot:            string;
+  dataRoot:             string;
+  filesRoot?:           string;
+  backupTarget?:        string;
+  capabilitySigningKey: string | Buffer;
+  localToken?:          string;
+  mode:                 'desktop' | 'server';
+  deviceId:             string;
+  userId:               string;
+  serverUrl?:           string;
+  paused:               boolean;
+}
 export function loadConfig():Config {
   const databaseUrl = process.env.SULLA_FILES_DATABASE_URL;
   if (!databaseUrl) throw new Error('SULLA_FILES_DATABASE_URL is required');
@@ -10,5 +25,21 @@ export function loadConfig():Config {
     process.env.SULLA_FILES_INTERNAL_TOKEN ||
     (installationSecret ? deriveCapabilitySigningKey(installationSecret) : '');
   if (Buffer.byteLength(capabilitySigningKey) < 32) throw new Error('SULLA_FILES_CAPABILITY_SIGNING_KEY or SULLA_API_TOKEN is required');
-  return { port: Number(process.env.SULLA_FILES_PORT ?? 8792), databaseUrl, chunkRoot: resolve(process.env.SULLA_FILES_CHUNK_ROOT ?? '/var/lib/sulla-files/chunks'), capabilitySigningKey };
+  const mode = process.env.SULLA_FILES_MODE === 'server' ? 'server' : 'desktop';
+
+  return {
+    port:         Number(process.env.SULLA_FILES_PORT ?? 8792),
+    databaseUrl,
+    chunkRoot:    resolve(process.env.SULLA_FILES_CHUNK_ROOT ?? '/var/lib/sulla-files/chunks'),
+    dataRoot:     resolve(process.env.SULLA_FILES_DATA_ROOT ?? '/var/lib/sulla-files'),
+    filesRoot:    mode === 'desktop' ? resolve(process.env.SULLA_FILES_FOLDER ?? '/data/files') : undefined,
+    backupTarget: process.env.SULLA_FILES_BACKUP_TARGET ? resolve(process.env.SULLA_FILES_BACKUP_TARGET) : undefined,
+    capabilitySigningKey,
+    localToken:   process.env.SULLA_FILES_LOCAL_TOKEN,
+    mode,
+    deviceId:     process.env.SULLA_FILES_DEVICE_ID ?? 'desktop',
+    userId:       process.env.SULLA_FILES_USER_ID ?? 'desktop-user',
+    serverUrl:    process.env.SULLA_FILES_SERVER_URL,
+    paused:       process.env.SULLA_FILES_PAUSED === '1',
+  };
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createApp } from './app.js';
-import { issueCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
+import { issueCapabilityToken } from './auth.js';
 
 const signingKey = 'sulla-files-test-signing-key-32-bytes!';
 const token = issueCapabilityToken({ sub: 'user-1', device_id: 'device-1', scopes: ['files/*'] }, signingKey);
@@ -13,7 +13,7 @@ function fakeDb() {
       if (sql.includes('INSERT INTO collections')) return Promise.resolve({ rows: [], rowCount: 0 });
       if (sql.includes('FROM collection_acl') && params[0] === 'collection-a') return Promise.resolve({ rows: [{ role: 'edit' }], rowCount: 1 });
       if (sql.includes('FROM collection_acl')) return Promise.resolve({ rows: [], rowCount: 0 });
-      if (sql.includes('SELECT collection_id,current_version_id FROM files') && params[0] === 'foreign-file') return Promise.resolve({ rows: [{ collection_id: 'collection-b', current_version_id: null }], rowCount: 1 });
+      if (sql.includes('FROM files WHERE id=$1') && params[0] === 'foreign-file') return Promise.resolve({ rows: [{ id: 'foreign-file', collection_id: 'collection-b', current_version_id: null }], rowCount: 1 });
       return Promise.resolve({ rows: [], rowCount: 0 });
     },
     connect() { return Promise.resolve({ query: (sql:string, params:any[] = []) => sql.includes('SELECT collection_id,current_version_id FROM files') && params[0] === 'foreign-file' ? Promise.resolve({ rows: [{ collection_id: 'collection-b', current_version_id: null }], rowCount: 1 }) : Promise.resolve({ rows: [], rowCount: 0 }), release() {} }) },
@@ -22,7 +22,7 @@ function fakeDb() {
 }
 
 async function withServer(fn:(baseUrl:string) => Promise<void>) {
-  const server = createApp(fakeDb(), { chunkRoot: '/tmp/sulla-files-security-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey }).listen(0);
+  const server = createApp(fakeDb(), { chunkRoot: '/tmp/sulla-files-security-test', dataRoot: '/tmp/sulla-files-security-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, mode: 'server', deviceId: 'test', userId: 'user-1', paused: false }).listen(0);
   await new Promise<void>(resolve => server.once('listening', resolve));
   try { await fn(`http://127.0.0.1:${ (server.address() as any).port }`) } finally { server.close() }
 }

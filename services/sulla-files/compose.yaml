@@ -1,0 +1,34 @@
+services:
+  sulla-files:
+    image: ghcr.io/merchantprotocol/sulla-files:latest
+    restart: unless-stopped
+    environment:
+      SULLA_FILES_MODE: server
+      SULLA_FILES_DATABASE_URL: ${SULLA_FILES_DATABASE_URL}
+      SULLA_FILES_CAPABILITY_SIGNING_KEY: ${SULLA_FILES_CAPABILITY_SIGNING_KEY}
+      SULLA_FILES_BACKUP_TARGET: /backup
+    ports:
+      - "8792:8792"
+    volumes:
+      - sulla-files-data:/var/lib/sulla-files
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8792/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  sulla-files-backup:
+    image: ghcr.io/merchantprotocol/sulla-files:latest
+    restart: unless-stopped
+    command: ["node", "dist/index.js", "backup", "--watch"]
+    environment:
+      SULLA_FILES_DATABASE_URL: ${SULLA_FILES_DATABASE_URL}
+      SULLA_FILES_CAPABILITY_SIGNING_KEY: ${SULLA_FILES_CAPABILITY_SIGNING_KEY}
+      SULLA_FILES_BACKUP_TARGET: /backup
+    volumes:
+      - sulla-files-data:/var/lib/sulla-files:ro
+      - sulla-files-backup:/backup
+volumes:
+  sulla-files-data:
+    name: sulla-files-data
+  sulla-files-backup:
+    name: sulla-files-backup

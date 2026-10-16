@@ -83,3 +83,4 @@ volumes:
   sulla_postgres_data:
   sulla_python_runtime_cache:
   sulla_node_runtime_cache:
+  sulla-files-data:

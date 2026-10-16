@@ -1,42 +1,75 @@
 import express from 'express';
 
+import { verifyCapabilityToken } from './auth.js';
 import { Store } from './store.js';
-import { verifyCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
 
 import type { Config } from './config.js';
+import type { LocalFilesManager } from './localManager.js';
 import type pg from 'pg';
-const LEVEL:any = { view: 1, 'use-by-agents': 2, edit: 3, manage: 4 };
-export function createApp(db:pg.Pool, config:Config) {
-  const app = express(); const store = new Store(config.chunkRoot); app.use(express.json({ limit: '16mb' }));
-  app.use(async(req, res, next) => {
+
+const LEVEL:Record<string, number> = { view: 1, 'use-by-agents': 2, edit: 3, manage: 4 };
+
+export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager) {
+  const app = express(); const store = new Store(config.chunkRoot);
+  app.use(express.json({ limit: '16mb' }));
+  app.use((req, res, next) => {
     if (req.path === '/healthz') return next();
+    if (req.path.startsWith('/v1/local/')) {
+      if (!config.localToken || req.header('x-sulla-files-token') !== config.localToken) return res.status(401).json({ error: 'unauthorized local request' });
+      return next();
+    }
     try {
       const authorization = req.header('authorization');
-      const token = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : undefined;
-      (req as any).capability = await verifyCapabilityToken(token, config.capabilitySigningKey, { category: 'files', tool: '*' });
+      (req as any).capability = verifyCapabilityToken(authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined, config.capabilitySigningKey);
       next();
     } catch { res.status(401).json({ error: 'unauthorized' }) }
   });
-  const ctx = (r:any) => ({ user: r.capability?.sub || '', device: r.capability?.device_id || '' });
-  async function access(r:any, c:string, role:string) { const x = ctx(r); if (!x.user) throw Object.assign(new Error('identity required'), { status: 401 }); const q = await db.query('SELECT role FROM collection_acl WHERE collection_id=$1 AND principal_type=\'user\' AND principal_id=$2', [c, x.user]); if (!q.rows.some((v:any) => LEVEL[v.role] >= LEVEL[role])) throw Object.assign(new Error('access denied'), { status: 403 }); return x }
-  app.get('/healthz', (_q, r) => r.json({ ok: true }));
-  app.get('/v1/collections', async(req, res, next) => {
+  const ctx = (request:any) => ({ user: request.capability?.sub || '', device: request.capability?.device_id || '' });
+  async function access(request:any, collectionId:string, role:string) {
+    const identity = ctx(request); if (!identity.user) throw Object.assign(new Error('identity required'), { status: 401 });
+    const query = await db.query("SELECT role FROM collection_acl WHERE collection_id=$1 AND principal_type='user' AND principal_id=$2", [collectionId, identity.user]);
+    if (!query.rows.some((value:any) => LEVEL[value.role] >= LEVEL[role])) throw Object.assign(new Error('access denied'), { status: 403 });
+    return identity;
+  }
+  app.get('/healthz', (_request, response) => response.json({ ok: true, mode: config.mode }));
+  app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
+  app.post('/v1/local/rescan', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.rescan().catch(error => console.error('[SullaFiles] rescan failed', error)); response.status(202).json({ accepted: true }) });
+  app.post('/v1/local/pause', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.setPaused(Boolean(request.body.paused))) } catch (error) { next(error) } });
+  app.post('/v1/local/sync', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.sync().catch(error => console.error('[SullaFiles] sync failed', error)); response.status(202).json({ accepted: true }) });
+  app.get('/v1/collections', async(request, response, next) => { try { const identity = ctx(request); if (!identity.user) return response.status(401).json({ error: 'identity required' }); const rows = await db.query(`SELECT c.* FROM collections c JOIN collection_acl a ON a.collection_id=c.id WHERE c.kind='knowledge' AND a.principal_type='user' AND a.principal_id=$1`, [identity.user]); response.json(rows.rows) } catch (error) { next(error) } });
+  app.post('/v1/collections', async(request, response, next) => {
     try {
-      const x = ctx(req);
-      if (!x.user) return res.status(401).json({ error: 'identity required' });
-      const rows = await db.query(`SELECT c.* FROM collections c JOIN collection_acl a ON a.collection_id=c.id
-        WHERE c.kind='knowledge' AND a.principal_type='user' AND a.principal_id=$1`, [x.user]);
-      res.json(rows.rows);
-    } catch (e) { next(e) }
+      const identity = ctx(request); const collection = request.body.collection; if (collection.kind !== 'knowledge') return response.status(400).json({ error: 'only knowledge syncs' });
+      const created = await db.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encryption,encrypted_data_key,dedup_key_ciphertext,retention_policy) VALUES($1,$2,$3,$4,'knowledge','synced','org-readable',$5,$6,$7) ON CONFLICT(id) DO NOTHING RETURNING id`, [collection.id, collection.org_id, identity.user, collection.name, collection.encrypted_data_key, collection.dedup_key_ciphertext, collection.retention_policy ?? {}]);
+      if (!created.rowCount) { const acl = await db.query("SELECT role FROM collection_acl WHERE collection_id=$1 AND principal_type='user' AND principal_id=$2", [collection.id, identity.user]); if (!acl.rows.some((value:any) => value.role === 'manage')) return response.status(409).json({ error: 'collection already exists' }); } else await db.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')", [collection.id, identity.user]); response.json({ ok: true });
+    } catch (error) { next(error) }
   });
-  app.post('/v1/collections', async(req, res, next) => { try { const x = ctx(req); const c = req.body.collection; if (c.kind !== 'knowledge') return res.status(400).json({ error: 'only knowledge syncs' }); const created = await db.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encryption,encrypted_data_key,dedup_key_ciphertext,retention_policy) VALUES($1,$2,$3,$4,'knowledge','synced','org-readable',$5,$6,$7) ON CONFLICT(id) DO NOTHING RETURNING id`, [c.id, c.org_id, x.user, c.name, c.encrypted_data_key, c.dedup_key_ciphertext, c.retention_policy ?? {}]); if (!created.rowCount) { const acl = await db.query(`SELECT role FROM collection_acl WHERE collection_id=$1 AND principal_type='user' AND principal_id=$2`, [c.id, x.user]); if (!acl.rows.some((v:any) => v.role === 'manage')) return res.status(409).json({ error: 'collection already exists' }); } else await db.query(`INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')`, [c.id, x.user]); res.json({ ok: true }) } catch (e) { next(e) } });
-  app.get('/v1/collections/:id/journal', async(req, res, next) => { try { await access(req, req.params.id, 'view'); const q = await db.query(`SELECT j.*,row_to_json(f.*) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE j.collection_id=$1 AND j.seq>$2 ORDER BY j.seq LIMIT 1000`, [req.params.id, Number(req.query.after ?? 0)]); res.json(q.rows) } catch (e) { next(e) } });
-  app.get('/v1/versions/:id', async(req, res, next) => { try { const q = await db.query(`SELECT row_to_json(v.*) version,row_to_json(m.*) manifest,row_to_json(f.*) file FROM file_versions v JOIN files f ON f.id=v.file_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE v.id=$1`, [req.params.id]); if (!q.rows[0]) return res.sendStatus(404); await access(req, q.rows[0].file.collection_id, 'view'); res.json(q.rows[0]) } catch (e) { next(e) } });
-  app.head('/v1/chunks/:collection/:id', async(req, res, next) => { try { await access(req, req.params.collection, 'view'); res.sendStatus(await store.has(req.params.collection, req.params.id) ? 204 : 404) } catch (e) { next(e) } });
-  app.get('/v1/chunks/:collection/:id', async(req, res, next) => { try { await access(req, req.params.collection, 'view'); res.type('application/octet-stream').send(await store.get(req.params.collection, req.params.id)) } catch (e) { next(e) } });
-  app.put('/v1/chunks/:collection/:id', express.raw({ type: 'application/octet-stream', limit: '8mb' }), async(req, res, next) => { try { await access(req, req.params.collection, 'edit'); await store.put(req.params.collection, req.params.id, req.body); res.sendStatus(204) } catch (e) { next(e) } });
-  const validateBundle = async(r:any, b:any) => { await access(r, b.collectionId, 'edit'); if (b.version.chunk_collection_id !== b.collectionId) await access(r, b.version.chunk_collection_id, 'edit'); const existing = (await db.query('SELECT collection_id,current_version_id FROM files WHERE id=$1', [b.file.id])).rows[0]; if (existing && existing.collection_id !== b.collectionId) throw Object.assign(new Error('file belongs to another collection'), { status: 403 }); const missing = []; for (const id of b.manifest.chunk_ids) if (!await store.has(b.version.chunk_collection_id, id)) missing.push(id); return { existing, missing } };
-  app.post('/v1/versions/prepare', async(req, res, next) => { try { const b = req.body; const { existing, missing } = await validateBundle(req, b); res.json({ missing, currentVersionId: existing?.current_version_id ?? null, conflict: Boolean(existing?.current_version_id && b.baseServerVersionId && existing.current_version_id !== b.baseServerVersionId) }) } catch (e) { next(e) } });
-  app.post('/v1/versions/commit', async(req, res, next) => { const c = await db.connect(); try { const b = req.body; const x = await access(req, b.collectionId, 'edit'); if (b.version.chunk_collection_id !== b.collectionId) await access(req, b.version.chunk_collection_id, 'edit'); const missing = []; for (const id of b.manifest.chunk_ids) if (!await store.has(b.version.chunk_collection_id, id)) missing.push(id); if (missing.length) return res.status(400).json({ error: 'manifest chunks missing', missing }); await c.query('BEGIN'); const fileRow = (await c.query('SELECT collection_id,current_version_id FROM files WHERE id=$1 FOR UPDATE', [b.file.id])).rows[0]; if (fileRow && fileRow.collection_id !== b.collectionId) { await c.query('ROLLBACK'); return res.status(403).json({ error: 'file belongs to another collection' }) } const existing = fileRow?.current_version_id ?? null; if (existing && b.baseServerVersionId && existing !== b.baseServerVersionId) { await c.query('ROLLBACK'); return res.status(409).json({ conflict: true, currentVersionId: existing }) } await c.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [b.manifest.hash, JSON.stringify(b.manifest.chunk_ids), b.manifest.total_size]); for (const chunk of b.chunks ?? []) await c.query(`INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,1) ON CONFLICT(collection_id,id) DO UPDATE SET refcount=chunks.refcount+1`, [b.version.chunk_collection_id, chunk.id, chunk.size, chunk.stored_size, chunk.location]); await c.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,search_text) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,search_text=EXCLUDED.search_text,updated_at=NOW()`, [b.file.id, b.collectionId, b.file.path, b.file.created_by_type, b.file.created_by_id, b.file.mime, b.file.size, b.file.search_text]); await c.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id,base_server_version_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING`, [b.version.id, b.file.id, b.version.chunk_collection_id, b.baseServerVersionId, b.manifest.hash, b.version.size, b.version.deleted, b.version.created_by_type, b.version.created_by_id, b.version.message, x.device, b.baseServerVersionId]); await c.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [b.file.id, b.version.id]); await c.query(`INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')`, [b.collectionId, b.file.id, b.version.id]); await c.query('COMMIT'); res.json({ ok: true, versionId: b.version.id }) } catch (e) { await c.query('ROLLBACK'); next(e) } finally { c.release() } });
-  app.use((e:any, _q:any, r:any, _n:any) => r.status(e.status ?? 500).json({ error: e.message ?? 'server error' })); return app;
+  app.get('/v1/collections/:id/journal', async(request, response, next) => { try { await access(request, request.params.id, 'view'); const query = await db.query(`SELECT j.*,row_to_json(f.*) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE j.collection_id=$1 AND j.seq>$2 ORDER BY j.seq LIMIT 1000`, [request.params.id, Number(request.query.after ?? 0)]); response.json(query.rows) } catch (error) { next(error) } });
+  app.get('/v1/versions/:id', async(request, response, next) => { try { const query = await db.query(`SELECT row_to_json(v.*) version,row_to_json(m.*) manifest,row_to_json(f.*) file FROM file_versions v JOIN files f ON f.id=v.file_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE v.id=$1`, [request.params.id]); if (!query.rows[0]) return response.sendStatus(404); await access(request, query.rows[0].file.collection_id, 'view'); response.json(query.rows[0]) } catch (error) { next(error) } });
+  app.head('/v1/chunks/:collection/:id', async(request, response, next) => { try { await access(request, request.params.collection, 'view'); response.sendStatus(await store.has(request.params.collection, request.params.id) ? 204 : 404) } catch (error) { next(error) } });
+  app.get('/v1/chunks/:collection/:id', async(request, response, next) => { try { await access(request, request.params.collection, 'view'); response.type('application/octet-stream').send(await store.get(request.params.collection, request.params.id)) } catch (error) { next(error) } });
+  app.put('/v1/chunks/:collection/:id', express.raw({ type: 'application/octet-stream', limit: '8mb' }), async(request, response, next) => { try { await access(request, request.params.collection, 'edit'); await store.put(request.params.collection, request.params.id, request.body); response.sendStatus(204) } catch (error) { next(error) } });
+  async function prepare(request:any, bundle:any) {
+    await access(request, bundle.collectionId, 'edit');
+    if (bundle.version.chunk_collection_id !== bundle.collectionId) await access(request, bundle.version.chunk_collection_id, 'edit');
+    const existing = (await db.query('SELECT id,collection_id,current_version_id FROM files WHERE id=$1 OR (collection_id=$2 AND path=$3) ORDER BY id=$1 DESC LIMIT 1', [bundle.file.id, bundle.collectionId, bundle.file.path])).rows[0];
+    if (existing && existing.collection_id !== bundle.collectionId) throw Object.assign(new Error('file belongs to another collection'), { status: 403 });
+    const missing:string[] = []; for (const id of bundle.manifest?.chunk_ids ?? []) if (!await store.has(bundle.version.chunk_collection_id, id)) missing.push(id);
+    const base = bundle.baseServerVersionId ?? null; const conflict = Boolean(existing?.current_version_id && existing.current_version_id !== base && (base || existing.id !== bundle.file.id));
+    return { existing, missing, conflict, currentVersionId: existing?.current_version_id ?? null, canonicalFileId: existing?.id ?? bundle.file.id };
+  }
+  app.post('/v1/versions/prepare', async(request, response, next) => { try { const result = await prepare(request, request.body); response.json({ missing: result.missing, currentVersionId: result.currentVersionId, canonicalFileId: result.canonicalFileId, conflict: result.conflict }) } catch (error) { next(error) } });
+  app.post('/v1/versions/commit', async(request, response, next) => {
+    const client = await db.connect(); try {
+      const bundle = request.body; const identity = await access(request, bundle.collectionId, 'edit'); const checked = await prepare(request, bundle); if (checked.missing.length) return response.status(400).json({ error: 'manifest chunks missing', missing: checked.missing }); if (checked.conflict) return response.status(409).json({ conflict: true, currentVersionId: checked.currentVersionId });
+      const fileId = checked.canonicalFileId; await client.query('BEGIN');
+      if (bundle.manifest) await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [bundle.manifest.hash, JSON.stringify(bundle.manifest.chunk_ids), bundle.manifest.total_size]);
+      for (const chunk of bundle.chunks ?? []) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,1) ON CONFLICT(collection_id,id) DO UPDATE SET refcount=chunks.refcount+1', [bundle.version.chunk_collection_id, chunk.id, chunk.size, chunk.stored_size, chunk.location]);
+      await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,search_text) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,search_text=EXCLUDED.search_text,deleted_at=$9,updated_at=NOW()`, [fileId, bundle.collectionId, bundle.file.path, bundle.file.created_by_type, bundle.file.created_by_id, bundle.file.mime, bundle.file.size, bundle.file.search_text, bundle.version.deleted ? new Date() : null]);
+      await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id,base_server_version_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING`, [bundle.version.id, fileId, bundle.version.chunk_collection_id, checked.currentVersionId, bundle.manifest?.hash ?? null, bundle.version.size, bundle.version.deleted, bundle.version.created_by_type, bundle.version.created_by_id, bundle.version.message, identity.device, checked.currentVersionId]);
+      await client.query('UPDATE files SET current_version_id=$2,deleted_at=$3 WHERE id=$1', [fileId, bundle.version.id, bundle.version.deleted ? new Date() : null]); await client.query('INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,$4)', [bundle.collectionId, fileId, bundle.version.id, bundle.version.deleted ? 'delete' : 'put']); await client.query('COMMIT'); response.json({ ok: true, versionId: bundle.version.id, fileId });
+    } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
+  });
+  app.use((error:any, _request:any, response:any, _next:any) => response.status(error.status ?? 500).json({ error: error.message ?? 'server error' }));
+  return app;
 }

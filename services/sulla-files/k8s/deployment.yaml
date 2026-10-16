@@ -23,4 +23,4 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata: { name: sulla-files }
-spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 20Gi } } }
+spec: { storageClassName: sulla-files, accessModes: [ReadWriteOnce], resources: { requests: { storage: 20Gi } } }

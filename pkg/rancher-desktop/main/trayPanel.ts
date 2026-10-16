@@ -10,6 +10,7 @@ import path from 'path';
 import { BrowserWindow, ipcMain, app } from 'electron';
 
 import mainEvents from '@pkg/main/mainEvents';
+import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import { openMain, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
@@ -68,6 +69,7 @@ export function createTrayPanel(): BrowserWindow {
 
   // ── IPC handlers (panel → main) ───────────────────────────────────────
   registerPanelIpc();
+  getSullaFilesWatcher().initialize().catch(error => console.warn('[SullaFiles] watcher initialization failed:', error));
 
   return panelWindow;
 }
@@ -237,6 +239,10 @@ function registerPanelIpc(): void {
 
     openCaptureStudio();
   });
+
+  ipcMain.handle('tray-panel:files-status', () => getSullaFilesWatcher().status());
+  ipcMain.handle('tray-panel:files-pause', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
+  ipcMain.on('tray-panel:files-open', () => { getSullaFilesWatcher().openFolder().catch(error => console.warn('[SullaFiles] open folder failed:', error)); panelWindow?.hide() });
 
   ipcMain.on('tray-panel:open-url', (_event: Electron.IpcMainEvent, url: string) => {
     openUrlInApp(url);
