@@ -19,6 +19,7 @@ interface ShareInput {
   keepAvailable?:   boolean;
   assetKind?:       'file' | 'capture' | 'artifact';
   captureMetadata?: Record<string, unknown>;
+  deviceId?:        string;
 }
 
 export class SharesService {
@@ -39,6 +40,7 @@ export class SharesService {
     if (!cloudToken) throw Object.assign(new Error('Sulla Cloud sign-in required'), { status: 401 });
     const assetKind = input.assetKind === 'capture' ? 'capture' : input.assetKind === 'artifact' ? 'artifact' : 'file';
     const accessMode = input.permission === 'download' || input.accessMode === 'download' ? 'download' : 'view';
+    const deviceId = this.config.mode === 'desktop' && input.deviceId ? input.deviceId : this.config.deviceId || identity.device;
     const keepAvailable = input.keepAvailable ?? assetKind === 'capture';
     const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
     if (expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) throw Object.assign(new Error('expiry must be in the future'), { status: 400 });
@@ -57,7 +59,7 @@ export class SharesService {
     await this.db.query(`INSERT INTO file_share_links
       (id,owner_user_id,target_type,file_id,collection_id,folder_path,display_name,mime,access_mode,password_protected,expires_at,keep_available,served_from,device_id,asset_kind,capture_metadata)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-    [id, identity.user, targetType, fileId, targetType === 'folder' ? collectionId : null, folderPath, name, mime, accessMode, Boolean(input.password), expiresAt?.toISOString() ?? null, keepAvailable, source, this.config.deviceId || identity.device, assetKind, input.captureMetadata ?? {}]);
+    [id, identity.user, targetType, fileId, targetType === 'folder' ? collectionId : null, folderPath, name, mime, accessMode, Boolean(input.password), expiresAt?.toISOString() ?? null, keepAvailable, source, deviceId, assetKind, input.captureMetadata ?? {}]);
     let cloudCreated = false;
     try {
       const cloud = await this.cloud(`/shares`, cloudToken, {
@@ -72,7 +74,7 @@ export class SharesService {
           expiresAt:       expiresAt?.toISOString(),
           keepAvailable,
           servedFrom:      source,
-          deviceId:        this.config.deviceId || identity.device,
+          deviceId,
           assetKind,
           captureMetadata: input.captureMetadata ?? {},
         }),

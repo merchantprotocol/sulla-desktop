@@ -1,5 +1,6 @@
 import { FilesTool, filesService } from './common';
 
+import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 
 import type { ToolResponse } from '../base';
@@ -37,6 +38,7 @@ export class FilesLinkWorker extends FilesTool {
           keepAvailable,
           assetKind,
           captureMetadata: input.capture_metadata,
+          deviceId:        await getDesktopDeviceId(),
         }),
       });
       const share = await response.json() as { public_url?: string };
