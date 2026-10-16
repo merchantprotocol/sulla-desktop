@@ -3127,6 +3127,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_GID:                   String(os.userInfo().gid),
         SULLA_FILES_CAPABILITY_SIGNING_KEY: process.env.SULLA_FILES_CAPABILITY_SIGNING_KEY || sullaServicePassword,
         SULLA_FILES_LOCAL_TOKEN:           sullaServicePassword,
+        ...(process.env.SULLA_CLOUD_API_URL ? { SULLA_CLOUD_API_URL: process.env.SULLA_CLOUD_API_URL } : {}),
         ...(process.env.SULLA_FILES_SERVER_URL ? { SULLA_FILES_SERVER_URL: process.env.SULLA_FILES_SERVER_URL } : {}),
         ...(process.env.SULLA_FILES_USER_ID ? { SULLA_FILES_USER_ID: process.env.SULLA_FILES_USER_ID } : {}),
       },
