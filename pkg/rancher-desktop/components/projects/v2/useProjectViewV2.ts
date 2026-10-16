@@ -15,6 +15,7 @@ export interface ProjectTaskCardV2 {
   subtasks:      TaskView[];
   checklistDone: number;
   commentCount:  number;
+  activeAgent:   string | null;
 }
 
 const HUMAN_ASSIGNEES = new Set(['human', 'owner', 'user']);
@@ -31,6 +32,7 @@ export function useProjectViewV2(projectId: () => string) {
     loadComments,
     createTask,
     reorder,
+    activeAgents,
   } = useProjects();
   const commentCounts = ref<Record<string, number>>({});
   const agentNames = ref<Record<string, string>>({
@@ -59,8 +61,15 @@ export function useProjectViewV2(projectId: () => string) {
         subtasks,
         checklistDone: subtasks.filter(isTerminalTask).length,
         commentCount:  commentCounts.value[task.id] ?? 0,
+        activeAgent:   activeAgentName(task.id),
       };
     }));
+
+  function activeAgentName(taskId: string): string | null {
+    const agent = activeAgents.value.find(item => item.task_id === taskId);
+
+    return agent ? agentNames.value[agent.agent_id] ?? titleCase(agent.agent_id) : null;
+  }
 
   async function loadAgentNames(): Promise<void> {
     const definitions = await ipcRenderer.invoke('agent-definitions:list').catch(() => []);
@@ -84,7 +93,6 @@ export function useProjectViewV2(projectId: () => string) {
     mutationError.value = '';
     await load();
     select(projectId());
-    await loadCommentCounts();
   }
 
   async function addCard(title: string, laneKey: string): Promise<boolean> {
@@ -133,6 +141,7 @@ export function useProjectViewV2(projectId: () => string) {
 
   onMounted(async() => {
     await Promise.all([refresh(), loadAgentNames()]);
+    await loadCommentCounts();
     refreshTimer = setInterval(() => {
       if (!document.hidden && !isLoading.value) refresh().catch(() => undefined);
     }, REFRESH_MS);
@@ -142,8 +151,9 @@ export function useProjectViewV2(projectId: () => string) {
     if (refreshTimer) clearInterval(refreshTimer);
   });
 
-  watch(projectId, () => {
-    refresh().catch(() => undefined);
+  watch(projectId, async() => {
+    await refresh();
+    await loadCommentCounts();
   });
 
   return {
