@@ -1,0 +1,28 @@
+name: Publish sulla-vault image
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: ['services/sulla-vault/**', 'packages/vault-crypto/**', '.github/workflows/sulla-vault-image.yml']
+permissions:
+  contents: read
+  packages: write
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/sulla-vault/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/merchantprotocol/sulla-vault:${{ github.ref_type == 'tag' && github.ref_name || 'latest' }}

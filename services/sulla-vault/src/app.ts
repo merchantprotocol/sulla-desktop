@@ -8,9 +8,13 @@ import {
   verifyLoginHash,
 } from './auth.js';
 import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } from './rbac.js';
+import { agentPolicyAllows, DEFAULT_AGENT_POLICY, type AgentAccessLevel } from '@sulla/vault-crypto';
 
 import type { VaultConfig } from './config.js';
 import type { Database } from './db.js';
+
+const CONSOLE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Sulla Vault Console</title><style>
+:root{color-scheme:light;--ink:#172033;--muted:#6b7788;--paper:#f5f8fb;--card:#fff;--line:#dce4ec;--accent:#5096b3;--danger:#b91c1c}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:14px system-ui,sans-serif}header{height:62px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 32px;gap:30px}header b{font:600 22px Georgia}nav{display:flex;gap:22px;color:var(--muted)}nav a{padding:22px 0;cursor:pointer}nav a.active{color:var(--ink);border-bottom:2px solid var(--accent)}main{max-width:1250px;margin:34px auto;padding:0 28px}.eyebrow{color:var(--accent);text-transform:uppercase;letter-spacing:.12em;font-size:11px}h1{font:600 34px Georgia;margin:4px 0}.lead{color:var(--muted)}.grid{display:grid;grid-template-columns:240px 1fr 270px;gap:18px;margin-top:24px}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:0 10px 30px #2030400b}.collection{padding:13px;border-radius:10px;margin:4px 0}.collection.active{background:#eaf4f7;color:#23627a}.collection small{display:block;color:var(--muted);margin-top:5px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{text-align:left;padding:13px 8px;border-top:1px solid var(--line)}th:not(:first-child),td:not(:first-child){text-align:center}.check{display:inline-grid;place-items:center;width:23px;height:23px;border-radius:7px;border:1px solid #aebdca}.check.on{background:var(--accent);border-color:var(--accent);color:white}.join{margin-top:24px;background:#eef7fa;border:1px solid #b6d9e4;border-radius:12px;padding:15px}.filters{display:flex;gap:8px;margin:20px 0}.chip,button{border:1px solid var(--line);background:white;border-radius:18px;padding:9px 14px;cursor:pointer}.chip.active,button.primary{background:var(--accent);color:white;border-color:var(--accent)}.audit{width:100%}.blocked{color:var(--danger);font-weight:600}.login{max-width:420px;margin:15vh auto}.login input{display:block;width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;margin:10px 0}</style></head><body><header><b>Sulla <span style="color:var(--accent)">Vault</span></b><nav><a class="active" data-page="collections">Collections</a><a data-page="audit">Audit log</a><a data-page="people">People</a></nav><span style="margin-left:auto;color:var(--muted)">Encrypted in your browser · <span id="status">locked</span></span></header><main id="app"><section data-view="collections"><p class="eyebrow">Org vault</p><h1>Shared collections</h1><p class="lead">Share passwords with a team. Choose who can see them, and whose agents can use them.</p><div class="grid"><div class="card"><b>Collections</b><div class="collection active">Engineering<small>31 items · 18 agent-usable</small></div><div class="collection">Cloud &amp; deploy keys<small>14 items · 14 agent-usable</small></div><div class="collection">Support desk<small>9 items · 9 agent-usable</small></div><div class="collection">Finance<small>6 items · people only</small></div></div><div class="card"><h2>Engineering</h2><p class="lead">31 items · 18 agents can use</p><table><thead><tr><th>Person or group</th><th>View</th><th>Agents use</th><th>Edit</th><th>Manage</th></tr></thead><tbody><tr><td>Engineers · group</td><td><i class="check on">✓</i></td><td><i class="check on">✓</i></td><td><i class="check"></i></td><td><i class="check"></i></td></tr><tr><td>Jonathon Byrdziak · owner</td><td><i class="check on">✓</i></td><td><i class="check on">✓</i></td><td><i class="check on">✓</i></td><td><i class="check on">✓</i></td></tr><tr><td>Sam Ortiz · member</td><td><i class="check on">✓</i></td><td><i class="check"></i></td><td><i class="check"></i></td><td><i class="check"></i></td></tr></tbody></table><div class="join"><b>Join password</b><p class="lead">Rotate the organization password. Only a verifier is stored on the server.</p><button class="primary">Rotate password</button></div></div><div class="card"><b>People</b><p>Jonathon Byrdziak<br><small>Owner · 2 desktops</small></p><p>Maria Chen<br><small>Admin · 1 desktop</small></p><p>Sam Ortiz<br><small>Member · view only</small></p></div></div></section><section data-view="audit" hidden><p class="eyebrow">Org vault</p><h1>Audit log</h1><p class="lead">Every person and agent action. Secret values are never written here.</p><div class="filters"><span class="chip active">Everyone</span><span class="chip">People</span><span class="chip">Agents</span><span class="chip">Blocked only</span><input placeholder="Filter by person, item or collection"></div><div class="card"><table class="audit"><thead><tr><th>Actor</th><th>Action</th><th>Collection / item</th><th>When</th><th>Result</th></tr></thead><tbody><tr><td>Maria Chen</td><td>Viewed item</td><td>Engineering / Deploy key</td><td>Today, 09:42</td><td>Allowed</td></tr><tr><td>Sulla agent · Sam Ortiz</td><td>Agent use</td><td>Engineering / Deploy key</td><td>Today, 09:38</td><td class="blocked">Blocked</td></tr></tbody></table><div class="join" style="background:#fff5f5;border-color:#efc2c2"><b>Blocked reason</b><p>Sam can only view, so Sam's agent was blocked too.</p></div></div></section><section data-view="people" hidden><p class="eyebrow">Organization</p><h1>People &amp; groups</h1><div class="card"><h2>Members</h2><p>Owner and admin actions wrap organization and collection keys client-side. The server stores ciphertext only.</p><button class="primary">Invite member</button> <button>New group</button></div></section></main><script>for(const a of document.querySelectorAll('nav a'))a.onclick=()=>{document.querySelectorAll('nav a').forEach(x=>x.classList.remove('active'));a.classList.add('active');document.querySelectorAll('[data-view]').forEach(x=>x.hidden=x.dataset.view!==a.dataset.page)};</script></body></html>`;
 
 function requiredString(value: unknown, name: string): string {
   if (typeof value !== 'string' || !value) {
@@ -42,7 +46,7 @@ function userId(request: AuthenticatedRequest): string {
 async function authorizeItem(db: Database, actorId: string, itemId: string, right: 'view' | 'edit'): Promise<Record<string, unknown>> {
   const result = await db.query(
     `SELECT id, owner_user_id, collection_id, folder_id, item_type, ciphertext, encrypted_item_key,
-            agent_wrapped_item_key, revision, created_at, updated_at
+            agent_wrapped_item_key, agent_policy, revision, created_at, updated_at
        FROM items WHERE id = $1 AND deleted_at IS NULL`,
     [itemId],
   );
@@ -100,14 +104,30 @@ export function createApp(db: Database, config: VaultConfig) {
     const encryptedPrivateKey = requiredObject(request.body.encryptedPrivateKey, 'encryptedPrivateKey');
     const encryptedUserKey = requiredObject(request.body.encryptedUserKey, 'encryptedUserKey');
     const kdf = requiredObject(request.body.kdf, 'kdf');
+    const joinOrgId = typeof request.body.orgId === 'string' ? request.body.orgId : null;
+    const joinPassword = typeof request.body.joinPassword === 'string' ? request.body.joinPassword : null;
+    if ((joinOrgId && !joinPassword) || (!joinOrgId && joinPassword)) throw new HttpError(400, 'orgId and joinPassword must be supplied together');
+    if (joinOrgId) {
+      const org = await db.query<{ join_password_salt: Buffer; join_password_verifier: Buffer }>(
+        'SELECT join_password_salt, join_password_verifier FROM orgs WHERE id = $1', [joinOrgId]);
+      if (!org.rowCount || !org.rows[0].join_password_salt || !org.rows[0].join_password_verifier || !verifyLoginHash(joinPassword!, org.rows[0].join_password_salt, org.rows[0].join_password_verifier)) {
+        response.status(403).json({ error: 'invalid_join_password' }); return;
+      }
+    }
     const { salt, verifier } = makeLoginVerifier(loginHash);
     const result = await db.query<{ id: string }>(
       `INSERT INTO users(email, login_hash_salt, login_hash_verifier, public_key, encrypted_private_key, encrypted_user_key, kdf)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
       [email, salt, verifier, publicKey, encryptedPrivateKey, encryptedUserKey, kdf],
     );
+    if (joinOrgId) {
+      await db.query(`INSERT INTO org_members(org_id, user_id, role, wrapped_org_key) VALUES ($1, $2, 'member', $3)`,
+        [joinOrgId, result.rows[0].id, requiredObject(request.body.wrappedOrgKey, 'wrappedOrgKey')]);
+    }
     response.status(201).json({ id: result.rows[0].id });
   });
+
+  app.get('/console', (_request, response) => response.type('html').send(CONSOLE_HTML));
 
   // Desktop bootstrap is deliberately limited to the local, single-user
   // mode. The client sends only derived login material and wrapped keys.
@@ -222,12 +242,13 @@ export function createApp(db: Database, config: VaultConfig) {
     const folderId = typeof request.body.folderId === 'string' ? request.body.folderId : null;
     if (folderId) await authorizeItemFolder(db, actorId, folderId, collectionId);
     const result = await db.query(
-      `INSERT INTO items(id, owner_user_id, collection_id, folder_id, item_type, ciphertext, encrypted_item_key, agent_wrapped_item_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO items(id, owner_user_id, collection_id, folder_id, item_type, ciphertext, encrypted_item_key, agent_wrapped_item_key, agent_policy)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id, revision, created_at, updated_at`,
       [itemId, collectionId ? null : actorId, collectionId, folderId,
         requiredString(request.body.itemType, 'itemType'), requiredObject(request.body.ciphertext, 'ciphertext'),
-        requiredObject(request.body.encryptedItemKey, 'encryptedItemKey'), request.body.agentWrappedItemKey ?? null],
+        requiredObject(request.body.encryptedItemKey, 'encryptedItemKey'), request.body.agentWrappedItemKey ?? null,
+        request.body.agentPolicy ?? DEFAULT_AGENT_POLICY],
     );
     response.status(201).json(result.rows[0]);
   });
@@ -253,12 +274,13 @@ export function createApp(db: Database, config: VaultConfig) {
           SET folder_id = CASE WHEN $1::boolean THEN $2 ELSE folder_id END, item_type = COALESCE($3, item_type),
               ciphertext = COALESCE($4, ciphertext), encrypted_item_key = COALESCE($5, encrypted_item_key),
               agent_wrapped_item_key = CASE WHEN $6::boolean THEN $7 ELSE agent_wrapped_item_key END,
+              agent_policy = COALESCE($10, agent_policy),
               revision = revision + 1, updated_at = now()
-        WHERE id = $8 AND revision = $9 AND deleted_at IS NULL
+        WHERE id = $9 AND revision = $10 AND deleted_at IS NULL
         RETURNING id, revision, updated_at`,
       [updatesFolder, request.body.folderId ?? null, request.body.itemType ?? null, request.body.ciphertext ?? null,
         request.body.encryptedItemKey ?? null, Object.hasOwn(request.body, 'agentWrappedItemKey'),
-        request.body.agentWrappedItemKey ?? null, request.params.itemId, revision],
+        request.body.agentWrappedItemKey ?? null, request.body.agentPolicy ?? null, request.params.itemId, revision],
     );
     if (!result.rowCount) {
       throw new HttpError(409, 'Item revision conflict');
@@ -491,12 +513,84 @@ export function createApp(db: Database, config: VaultConfig) {
     response.status(204).end();
   });
 
+  app.post('/v1/orgs/:orgId/join-password', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredString(request.params.orgId, 'orgId');
+    await requireOrgManager(db, userId(request), orgId);
+    const { salt, verifier } = makeLoginVerifier(requiredString(request.body.password, 'password'));
+    await db.query('UPDATE orgs SET join_password_salt = $1, join_password_verifier = $2, updated_at = now() WHERE id = $3', [salt, verifier, orgId]);
+    response.status(204).end();
+  });
+
+  app.post('/v1/orgs/:orgId/join-password/rotate', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredString(request.params.orgId, 'orgId');
+    await requireOrgManager(db, userId(request), orgId);
+    const { salt, verifier } = makeLoginVerifier(requiredString(request.body.password, 'password'));
+    await db.query('UPDATE orgs SET join_password_salt = $1, join_password_verifier = $2, updated_at = now() WHERE id = $3', [salt, verifier, orgId]);
+    response.status(204).end();
+  });
+
+  app.get('/v1/orgs/:orgId/groups', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredString(request.params.orgId, 'orgId');
+    if (!await getOrgRole(db, userId(request), orgId)) throw new AccessDenied('Organization access denied');
+    const result = await db.query(`SELECT g.*, count(gm.user_id)::int AS member_count FROM org_groups g LEFT JOIN group_members gm ON gm.group_id = g.id WHERE g.org_id = $1 GROUP BY g.id ORDER BY g.created_at`, [orgId]);
+    response.json({ groups: result.rows });
+  });
+
+  app.post('/v1/orgs/:orgId/groups', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredString(request.params.orgId, 'orgId');
+    await requireOrgManager(db, userId(request), orgId);
+    const result = await db.query('INSERT INTO org_groups(org_id, encrypted_name) VALUES ($1, $2) RETURNING *', [orgId, requiredObject(request.body.encryptedName, 'encryptedName')]);
+    response.status(201).json(result.rows[0]);
+  });
+
+  app.put('/v1/groups/:groupId/members/:memberId', async(request: AuthenticatedRequest, response) => {
+    const group = await db.query<{ org_id: string }>('SELECT org_id FROM org_groups WHERE id = $1', [request.params.groupId]);
+    if (!group.rowCount) throw new HttpError(404, 'Group not found');
+    await requireOrgManager(db, userId(request), group.rows[0].org_id);
+    await db.query('INSERT INTO group_members(group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [request.params.groupId, request.params.memberId]);
+    response.status(204).end();
+  });
+
+  app.put('/v1/collections/:collectionId/groups/:groupId', async(request: AuthenticatedRequest, response) => {
+    await requireCollectionRight(db, userId(request), requiredString(request.params.collectionId, 'collectionId'), 'manage');
+    const values = [Boolean(request.body.view), Boolean(request.body.useByAgents), Boolean(request.body.edit), Boolean(request.body.manage)];
+    if (!values[0] && values.slice(1).some(Boolean)) throw new HttpError(400, 'view is required for all other collection rights');
+    const result = await db.query(`INSERT INTO collection_group_members(collection_id, group_id, can_view, can_use_by_agents, can_edit, can_manage) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (collection_id,group_id) DO UPDATE SET can_view=$3,can_use_by_agents=$4,can_edit=$5,can_manage=$6 RETURNING *`, [request.params.collectionId, request.params.groupId, ...values]);
+    response.json(result.rows[0]);
+  });
+
+  app.get('/v1/orgs/:orgId/audit', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredString(request.params.orgId, 'orgId');
+    if (!await getOrgRole(db, userId(request), orgId)) throw new AccessDenied('Organization access denied');
+    const limit = Math.min(Math.max(Number(request.query.limit) || 50, 1), 200); const offset = Math.max(Number(request.query.offset) || 0, 0);
+    const conditions = ['a.org_id = $1']; const params: unknown[] = [orgId];
+    const add = (sql: string, value: unknown) => { params.push(value); conditions.push(sql.replace('?', `$${params.length}`)); };
+    if (typeof request.query.person === 'string') add('a.actor_user_id = ?::uuid', request.query.person);
+    if (typeof request.query.collection === 'string') add('a.collection_id = ?::uuid', request.query.collection);
+    if (typeof request.query.item === 'string') add('a.item_id = ?::uuid', request.query.item);
+    if (typeof request.query.action === 'string') add('a.action = ?', request.query.action);
+    if (request.query.blocked === 'true') conditions.push('a.blocked = true');
+    if (typeof request.query.from === 'string') add('a.created_at >= ?::timestamptz', request.query.from);
+    if (typeof request.query.to === 'string') add('a.created_at < ?::timestamptz', request.query.to);
+    params.push(limit, offset);
+    const result = await db.query(`SELECT a.id,a.actor_user_id,a.device_id,a.collection_id,a.item_id,a.action,a.pod_id,a.blocked,a.reason,a.created_at FROM audit_log a WHERE ${conditions.join(' AND ')} ORDER BY a.created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+    response.json({ events: result.rows, limit, offset });
+  });
+
+  app.get('/v1/sync', async(request: AuthenticatedRequest, response) => {
+    const actorId = userId(request); const cursor = Number(request.query.cursor) || 0;
+    const result = await db.query(`SELECT id,owner_user_id,collection_id,folder_id,item_type,ciphertext,encrypted_item_key,agent_wrapped_item_key,agent_policy,revision,deleted_at,created_at,updated_at FROM items i WHERE extract(epoch FROM i.updated_at) > $2 AND (i.owner_user_id=$1 OR EXISTS (SELECT 1 FROM collections c JOIN org_members om ON om.org_id=c.org_id AND om.user_id=$1 WHERE c.id=i.collection_id)) ORDER BY i.updated_at,id LIMIT 500`, [actorId, cursor]);
+    response.json({ cursor: Math.floor(Date.now() / 1000), items: result.rows });
+  });
+
   app.post('/v1/audit', async(request: AuthenticatedRequest, response) => {
     const actorId = userId(request);
     const itemId = typeof request.body.itemId === 'string' ? request.body.itemId : null;
     let collectionId = typeof request.body.collectionId === 'string' ? request.body.collectionId : null;
     let orgId = typeof request.body.orgId === 'string' ? request.body.orgId : null;
     const action = requiredString(request.body.action, 'action');
+    let blocked = false;
+    let reason: string | null = null;
     let item: Record<string, unknown> | undefined;
     if (itemId) {
       item = await authorizeItem(db, actorId, itemId, 'view');
@@ -508,15 +602,28 @@ export function createApp(db: Database, config: VaultConfig) {
       if (!collectionId && orgId) throw new HttpError(400, 'A personal item cannot be audited under an organization');
     }
     if (collectionId) {
-      await requireCollectionRight(db, actorId, collectionId, action === 'agent_credential_use' ? 'useByAgents' : 'view');
+      try {
+        await requireCollectionRight(db, actorId, collectionId, action === 'agent_credential_use' ? 'useByAgents' : 'view');
+      } catch (error) {
+        if (action !== 'agent_credential_use' || !(error instanceof AccessDenied)) throw error;
+        blocked = true;
+        reason = 'Your collection access does not allow agent use';
+        await requireCollectionRight(db, actorId, collectionId, 'view');
+      }
       const collection = await db.query<{ org_id: string }>('SELECT org_id FROM collections WHERE id = $1', [collectionId]);
       if (orgId && orgId !== collection.rows[0].org_id) {
         throw new HttpError(400, 'collectionId does not belong to orgId');
       }
       orgId = collection.rows[0].org_id;
     }
-    if (action === 'agent_credential_use' && !collectionId && (!item?.agent_wrapped_item_key)) {
-      throw new AccessDenied('Item is not enabled for agents');
+    if (action === 'agent_credential_use') {
+      const agentId = requiredString(request.body.agentId, 'agentId');
+      const level = (request.body.level === 'full' || request.body.level === 'autofill' ? request.body.level : 'metadata') as AgentAccessLevel;
+      const policyResult = agentPolicyAllows((item?.agent_policy ?? null) as Parameters<typeof agentPolicyAllows>[0], { agentId, level, host: typeof request.body.host === 'string' ? request.body.host : undefined, onServer: true });
+      if (!policyResult.allowed || (!collectionId && !item?.agent_wrapped_item_key)) {
+        blocked = true;
+        reason = !policyResult.allowed ? policyResult.reason ?? 'Agent policy denied this request' : 'Item is not enabled for agents';
+      }
     }
     if (orgId && !collectionId) {
       const membership = await db.query(
@@ -529,11 +636,12 @@ export function createApp(db: Database, config: VaultConfig) {
       if (!device.rowCount) throw new AccessDenied('Device access denied');
     }
     const result = await db.query(
-      `INSERT INTO audit_log(actor_user_id, device_id, org_id, collection_id, item_id, action, pod_id, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
+      `INSERT INTO audit_log(actor_user_id, device_id, org_id, collection_id, item_id, action, pod_id, metadata, blocked, reason)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at, blocked, reason`,
       [actorId, request.body.deviceId ?? null, orgId, collectionId,
-        itemId, action, request.body.podId ?? null, request.body.metadata ?? {}],
+        itemId, action, request.body.podId ?? null, request.body.metadata ?? {}, blocked, reason],
     );
+    if (blocked) { response.status(403).json({ error: 'agent_blocked', reason, auditId: result.rows[0].id }); return; }
     response.status(201).json(result.rows[0]);
   });
 
