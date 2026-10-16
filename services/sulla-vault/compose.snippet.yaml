@@ -1,0 +1,27 @@
+services:
+  sulla_vault:
+    build:
+      context: .
+      dockerfile: services/sulla-vault/Dockerfile
+    container_name: sulla_vault
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SULLA_VAULT_MODE: desktop
+      SULLA_VAULT_ADMIN_DATABASE_URL: postgresql://sulla:sulla_dev_password@postgres:5432/sulla
+      SULLA_VAULT_DATABASE_URL: postgresql://sulla:sulla_dev_password@postgres:5432/sulla_vault
+      SULLA_VAULT_JWT_SECRET: ${SULLA_VAULT_JWT_SECRET}
+      SULLA_VAULT_DESKTOP_LOGIN_HASH: ${SULLA_VAULT_DESKTOP_LOGIN_HASH}
+      SULLA_VAULT_DESKTOP_PUBLIC_KEY: ${SULLA_VAULT_DESKTOP_PUBLIC_KEY}
+      SULLA_VAULT_DESKTOP_ENCRYPTED_PRIVATE_KEY: ${SULLA_VAULT_DESKTOP_ENCRYPTED_PRIVATE_KEY}
+      SULLA_VAULT_DESKTOP_ENCRYPTED_USER_KEY: ${SULLA_VAULT_DESKTOP_ENCRYPTED_USER_KEY}
+      SULLA_VAULT_DESKTOP_KDF: ${SULLA_VAULT_DESKTOP_KDF}
+    ports:
+      - "127.0.0.1:30121:8787"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8787/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
