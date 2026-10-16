@@ -3129,6 +3129,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_LOCAL_TOKEN:           sullaServicePassword,
         ...(process.env.SULLA_FILES_SERVER_URL ? { SULLA_FILES_SERVER_URL: process.env.SULLA_FILES_SERVER_URL } : {}),
         ...(process.env.SULLA_FILES_USER_ID ? { SULLA_FILES_USER_ID: process.env.SULLA_FILES_USER_ID } : {}),
+        ...(process.env.SULLA_FILES_ORG_ID ? { SULLA_FILES_ORG_ID: process.env.SULLA_FILES_ORG_ID } : {}),
       },
       ports: ['127.0.0.1:30124:8792'],
       volumes: [
