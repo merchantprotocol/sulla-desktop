@@ -103,6 +103,24 @@ export function initWorkItemsEvents(): void {
       await app.resolveEffectiveLanes(project.id),
     ] as const));
     const laneCapability = await app.laneRuntimeCapability();
+    const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
+    const activeAgents = await postgresClient.query<{ project_id: string; task_id: string; agent_id: string }>(`
+      SELECT DISTINCT active.project_id, active.task_id, active.agent_id
+        FROM (
+          SELECT task.project_id, task.id AS task_id,
+                 COALESCE(NULLIF(worker.value->>'agentId', ''), NULLIF(task.assignee, ''), 'agent') AS agent_id
+            FROM agent_jobs job
+            CROSS JOIN LATERAL unnest(job.project_task_ids) owned(task_id)
+            JOIN work_tasks task ON task.id = owned.task_id AND task.archived = false
+            LEFT JOIN LATERAL jsonb_array_elements(job.tasks) worker(value) ON true
+           WHERE job.status = 'running'
+          UNION ALL
+          SELECT task.project_id, task.id AS task_id, dispatch.agent_id
+            FROM work_task_dispatches dispatch
+            JOIN work_tasks task ON task.id = dispatch.task_id AND task.archived = false
+           WHERE dispatch.status = 'running'
+        ) active
+    `).catch(() => []);
 
     return {
       projects:       projects.map(item => ({ ...item, knowledge_count: projectCounts[item.id] ?? 0 })),
@@ -110,6 +128,7 @@ export function initWorkItemsEvents(): void {
       tasks:          tasks.map(item => ({ ...item, knowledge_count: taskCounts[item.id] ?? 0 })),
       lanesByProject: Object.fromEntries(laneEntries),
       laneCapability,
+      activeAgents,
     };
   });
 

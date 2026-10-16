@@ -504,6 +504,7 @@ export interface IpcMainInvokeEvents {
     tasks:    (import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord & { knowledge_count: number })[];
     lanesByProject: Record<string, import('@pkg/agent/database/models/WorkLaneDefinitionModel').EffectiveWorkLane[]>;
     laneCapability: import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneRuntimeCapability;
+    activeAgents: { project_id: string; task_id: string; agent_id: string }[];
   };
   'usage:summary': (options?: { hours?: number; profileId?: string }) => import('@pkg/agent/usage/providerUsage').UsageSummary;
   'work-items:comments':        (taskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord[];
