@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run build:console && tsc -p tsconfig.json",
+    "build:console": "node console/build.mjs",
     "start": "node dist/index.js",
     "test:security": "npm run build && node --test dist/rbac.test.js"
   },
@@ -20,6 +21,7 @@
     "@types/jsonwebtoken": "9.0.10",
     "@types/node": "22.19.15",
     "@types/pg": "8.16.0",
+    "esbuild": "0.25.12",
     "typescript": "5.9.3"
   }
 }

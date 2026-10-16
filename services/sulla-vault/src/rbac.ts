@@ -31,7 +31,7 @@ export async function requireCollectionRight(
             (cm.can_edit OR EXISTS (SELECT 1 FROM group_members gm JOIN collection_group_members cgm ON cgm.group_id = gm.group_id JOIN org_groups g ON g.id = gm.group_id AND g.org_id = c.org_id WHERE gm.user_id = $1 AND cgm.collection_id = c.id AND cgm.can_edit)) AS can_edit,
             (cm.can_manage OR EXISTS (SELECT 1 FROM group_members gm JOIN collection_group_members cgm ON cgm.group_id = gm.group_id JOIN org_groups g ON g.id = gm.group_id AND g.org_id = c.org_id WHERE gm.user_id = $1 AND cgm.collection_id = c.id AND cgm.can_manage)) AS can_manage
        FROM collections c
-       LEFT JOIN org_members om ON om.org_id = c.org_id AND om.user_id = $1
+       LEFT JOIN org_members om ON om.org_id = c.org_id AND om.user_id = $1 AND om.status = 'confirmed'
        LEFT JOIN collection_members cm ON cm.collection_id = c.id AND cm.user_id = $1
       WHERE c.id = $2`,
     [userId, collectionId],
@@ -56,7 +56,7 @@ export async function requireCollectionRight(
 
 export async function getOrgRole(db: Queryable, userId: string, orgId: string): Promise<OrgRole | undefined> {
   const result = await db.query<{ role: OrgRole }>(
-    'SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2',
+    `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2 AND status = 'confirmed'`,
     [orgId, userId],
   );
   return result.rows[0]?.role;

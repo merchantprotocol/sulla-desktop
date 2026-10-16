@@ -111,6 +111,20 @@ export async function deriveLoginHash(masterKey: Uint8Array): Promise<Base64> {
   return b64(sodium.crypto_generichash(KEY_BYTES, textEncoder.encode('sulla-vault-login-v1'), masterKey));
 }
 
+export async function deriveOrgJoinHash(joinPassword: string, orgId: string): Promise<Base64> {
+  await ready();
+  if (!joinPassword || !orgId) {
+    throw new Error('Join password and organization id are required');
+  }
+  const input = textEncoder.encode(`sulla:org-join:v1:${ orgId }\0${ joinPassword }`);
+  return b64(sodium.crypto_generichash(KEY_BYTES, input, null));
+}
+
+export async function publicKeyFingerprint(publicKey: Base64): Promise<string> {
+  await ready();
+  return b64(sodium.crypto_generichash(8, bytes(publicKey), null));
+}
+
 export async function generateKey(): Promise<Uint8Array> {
   await ready();
   return sodium.randombytes_buf(KEY_BYTES);
