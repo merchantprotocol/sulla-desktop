@@ -165,7 +165,8 @@ const VAULT_UNLOCK_DEADLINE_MS = 3 * 60_000;
 function isServiceNotReady(err: any): boolean {
   const code = err?.cause?.code ?? err?.code;
 
-  return code === 'ECONNREFUSED' || code === 'ECONNRESET' || /fetch failed|ECONNREFUSED/.test(String(err?.message));
+  return code === 'ECONNREFUSED' || code === 'ECONNRESET' ||
+    /fetch failed|ECONNREFUSED|Vault request failed \(5\d\d\)/.test(String(err?.message));
 }
 
 /**

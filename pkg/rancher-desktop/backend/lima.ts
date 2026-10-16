@@ -2998,7 +2998,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           SULLA_VAULT_ADMIN_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
           SULLA_VAULT_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla_vault`,
         },
-        ports: ['127.0.0.1:30121:8787'],
+        // 30121 on the host belongs to sullaSecretsServer; the vault must not share it.
+        ports: ['127.0.0.1:30125:8787'],
         restart: 'unless-stopped',
         healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8787/healthz'], interval: '10s', timeout: '3s', retries: 5 },
       };

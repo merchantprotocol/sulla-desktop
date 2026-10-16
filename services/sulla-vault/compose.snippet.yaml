@@ -18,7 +18,7 @@ services:
       SULLA_VAULT_DESKTOP_ENCRYPTED_USER_KEY: ${SULLA_VAULT_DESKTOP_ENCRYPTED_USER_KEY}
       SULLA_VAULT_DESKTOP_KDF: ${SULLA_VAULT_DESKTOP_KDF}
     ports:
-      - "127.0.0.1:30121:8787"
+      - "127.0.0.1:30125:8787"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8787/healthz"]
