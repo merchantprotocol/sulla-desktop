@@ -6,6 +6,7 @@ import { resolveCollectionGrants, ROLE_LEVEL, searchableScopes } from './acl.js'
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, encryptChunk } from './crypto.js';
 import { loadFileContent, thumbnail } from './preview.js';
+import { SharesService } from './shares.js';
 import { Store } from './store.js';
 
 import type { Config } from './config.js';
@@ -28,7 +29,7 @@ function cleanPath(value:unknown, allowEmpty = true):string {
 function bearer(request:express.Request):string | undefined { return request.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] }
 
 export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager, identityDb?:pg.Pool, search?:FileSearch) {
-  const app = express(); const store = new Store(config.chunkRoot); const jsonParser = express.json({ limit: '16mb' });
+  const app = express(); const store = new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '16mb' });
   app.disable('x-powered-by'); app.use((request, response, next) => request.path === '/v1/files/upload' ? next() : jsonParser(request, response, next));
   app.use((request:RequestWithIdentity, response, next) => {
     if (request.path === '/healthz') return next();
@@ -77,6 +78,18 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
   app.post('/v1/local/sync', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.sync().catch(error => console.error('[SullaFiles] sync failed', error)); response.status(202).json({ accepted: true }) });
 
   app.post('/v1/search', async(request:RequestWithIdentity, response, next) => { try { if (!search) return response.status(503).json({ error: 'search unavailable' }); response.json(await search.search(request.body, await searchableScopes(db, identityDb, identity(request)))) } catch (error) { next(error) } });
+  app.get('/v1/local/shares/:id/content', async(request, response, next) => { try { const content = await shares.content(request.params.id, String(request.query.path ?? '')); response.type(content.mime).setHeader('X-Sulla-Filename', encodeURIComponent(content.name)).send(content.bytes) } catch (error) { next(error) } });
+  app.post('/v1/links', async(request:RequestWithIdentity, response, next) => {
+    try {
+      if (request.body.fileId) await requireFile(request, String(request.body.fileId), 'view');
+      else await requirePath(request, String(request.body.collectionId ?? ''), cleanPath(request.body.folderPath, false), 'view');
+      const actor = identity(request);
+      response.status(201).json(await shares.create({ user: actor.userId, device: actor.deviceId || '' }, request.body, request.header('x-sulla-cloud-token') ?? ''));
+    } catch (error) { next(error) }
+  });
+  app.get('/v1/links', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.list({ user: actor.userId, device: actor.deviceId || '' }, request.header('x-sulla-cloud-token') ?? undefined)) } catch (error) { next(error) } });
+  app.delete('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.revoke({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.header('x-sulla-cloud-token') ?? undefined)) } catch (error) { next(error) } });
+  app.patch('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.setKeepAvailable({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, Boolean(request.body.keepAvailable), request.header('x-sulla-cloud-token') ?? '')) } catch (error) { next(error) } });
 
   app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try { const rows = await db.query("SELECT * FROM collections WHERE kind='knowledge' ORDER BY name"); const visible:any[] = []; for (const collection of rows.rows) { const access = await grants(request, collection.id); if (access.role || access.paths.length) visible.push({ ...collection, access_role: access.role ?? null, shared_folders: access.paths }); } response.json(visible) } catch (error) { next(error) } });
   app.post('/v1/collections', async(request:RequestWithIdentity, response, next) => {
