@@ -2937,6 +2937,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla_shell_runtime',
       'sulla_node_runtime',
     ];
+    if (settingsImpl.getSettings().sullaVaultV2Enabled) requiredServices.push('sulla_vault');
 
     try {
       for (const service of requiredServices) {
@@ -2966,11 +2967,25 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    */
   private async prepareSullaComposeFile(): Promise<void> {
     const compose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
-
-    // Fetch settings from SullaSettingsModel
-    // Escape '$' as '$$' so Docker Compose doesn't interpret them as variable references
+    // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     const sullaServicePassword = escapeForCompose(await SullaSettingsModel.getServicePassword());
+    if (settingsImpl.getSettings().sullaVaultV2Enabled) {
+      // TODO: Publish sulla-vault and use the published image before enabling this flag for packaged apps.
+      compose.services.sulla_vault = {
+        build: { context: process.cwd(), dockerfile: 'services/sulla-vault/Dockerfile' },
+        container_name: 'sulla_vault',
+        depends_on: { postgres: { condition: 'service_healthy' } },
+        environment: {
+          SULLA_VAULT_MODE: 'desktop',
+          SULLA_VAULT_ADMIN_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+          SULLA_VAULT_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla_vault`,
+        },
+        ports: ['127.0.0.1:30121:8787'],
+        restart: 'unless-stopped',
+        healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8787/healthz'], interval: '10s', timeout: '3s', retries: 5 },
+      };
+    }
 
     // Modify dynamic values like passwords
     if (compose.services?.postgres?.environment) {
@@ -3109,7 +3124,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     for (const service of ['sulla_postgres', 'sulla_redis']) {
       await this.waitForDockerServiceHealthy(service);
     }
-    for (const service of ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime']) {
+    const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime'];
+    if (settingsImpl.getSettings().sullaVaultV2Enabled) optionalServices.push('sulla_vault');
+    for (const service of optionalServices) {
       try {
         await this.waitForDockerServiceHealthy(service, 60);
       } catch (err) {

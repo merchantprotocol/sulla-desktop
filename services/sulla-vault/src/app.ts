@@ -109,6 +109,45 @@ export function createApp(db: Database, config: VaultConfig) {
     response.status(201).json({ id: result.rows[0].id });
   });
 
+  // Desktop bootstrap is deliberately limited to the local, single-user
+  // mode. The client sends only derived login material and wrapped keys.
+  app.post('/v1/desktop/bootstrap', async(request, response) => {
+    if (config.mode !== 'desktop') {
+      response.status(404).json({ error: 'not_found' });
+      return;
+    }
+    const loginHash = requiredString(request.body.loginHash, 'loginHash');
+    const publicKey = requiredString(request.body.publicKey, 'publicKey');
+    const encryptedPrivateKey = requiredObject(request.body.encryptedPrivateKey, 'encryptedPrivateKey');
+    const encryptedUserKey = requiredObject(request.body.encryptedUserKey, 'encryptedUserKey');
+    const kdf = requiredObject(request.body.kdf, 'kdf');
+    const existing = await db.query<{ id: string }>('SELECT id FROM users LIMIT 1');
+    if (!existing.rowCount) {
+      const { salt, verifier } = makeLoginVerifier(loginHash);
+      await db.query(
+        `INSERT INTO users(email, login_hash_salt, login_hash_verifier, public_key, encrypted_private_key, encrypted_user_key, kdf)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        ['desktop@local.sulla', salt, verifier, publicKey, encryptedPrivateKey, encryptedUserKey, kdf],
+      );
+    }
+    response.status(existing.rowCount ? 200 : 201).json({ ok: true });
+  });
+
+  // The desktop client must use the persisted KDF parameters when an account
+  // already exists. This endpoint intentionally exposes only public KDF data.
+  app.get('/v1/desktop/bootstrap', async(_request, response) => {
+    if (config.mode !== 'desktop') {
+      response.status(404).json({ error: 'not_found' });
+      return;
+    }
+    const existing = await db.query<{ kdf: unknown }>('SELECT kdf FROM users WHERE disabled_at IS NULL LIMIT 1');
+    if (!existing.rowCount) {
+      response.status(404).json({ error: 'not_bootstrapped' });
+      return;
+    }
+    response.json({ kdf: existing.rows[0].kdf });
+  });
+
   app.post('/v1/session', async(request, response) => {
     const loginHash = requiredString(request.body.loginHash, 'loginHash');
     const email = config.mode === 'desktop' ? undefined : requiredString(request.body.email, 'email').trim().toLowerCase();

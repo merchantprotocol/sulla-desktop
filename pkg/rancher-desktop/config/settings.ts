@@ -192,6 +192,8 @@ export const defaultSettings = {
     sullaServicePassword:      '',
     /** Shared install secret. Historical name; marketplace recipes template it as {{sullaN8nEncryptionKey}}. */
     sullaN8nEncryptionKey:     '',
+    /** Keep the next-generation vault sidecar opt-in until migration is verified. */
+    sullaVaultV2Enabled:       false,
     /** Bearer token for chat completions API authentication */
     sullaApiToken:             '',
     /** Service account user ID created during seeding */

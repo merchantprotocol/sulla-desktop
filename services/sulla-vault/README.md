@@ -28,6 +28,8 @@ The login hash is a separate keyed BLAKE2b derivation of the master key. The ser
 
 Desktop mode has one bootstrapped user and deliberately returns 404 from `POST /v1/accounts`. Generate the master key, login hash, random user key, and X25519 keypair with `@sulla/vault-crypto`, then pass the public and encrypted values through the `SULLA_VAULT_DESKTOP_*` variables shown in `compose.snippet.yaml`.
 
+The Desktop integration is flag-off by default and currently builds this service from the source checkout. A published `sulla-vault` image is required before the flag can ship in packaged apps; image publishing is not configured yet.
+
 Run the existing Desktop compose file and the vault overlay together from the repository root:
 
 ```sh
