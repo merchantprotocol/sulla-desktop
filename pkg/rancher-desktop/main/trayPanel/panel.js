@@ -1,257 +1,190 @@
-/**
- * Tray panel renderer — sidebar switching, state updates, button handlers.
- * Uses nodeIntegration (like audio driver) — no preload needed.
- */
-
 const { ipcRenderer } = require('electron');
 
-// ── Auth state management ──────────────────────────────────────────────
-let isLoggedIn = false;
+let screenshotMode = 'area';
+let uploadMode = 'view';
+let latestCapture = null;
+let countdownTimer = null;
+let countdownRemaining = 0;
+let preferences = { defaultAction: 'share', keepCapturesAvailable: true, expiryDays: 30, visitorMode: 'view' };
 
-function setAuthUI(loggedIn, vaultSetUp) {
-  isLoggedIn = loggedIn;
-  const overlay = document.getElementById('login-overlay');
-  const layout = document.querySelector('.app-layout');
+const $ = id => document.getElementById(id);
 
-  if (!vaultSetUp || loggedIn) {
-    // Vault not set up (first run) or logged in — show normal UI
-    overlay.classList.add('hidden');
-    layout.classList.remove('locked');
+function bytes(value) {
+  const number = Number(value || 0);
+  if (number < 1024) return `${ number } B`;
+  if (number < 1024 ** 2) return `${ (number / 1024).toFixed(1) } KB`;
+  if (number < 1024 ** 3) return `${ (number / 1024 ** 2).toFixed(1) } MB`;
+  return `${ (number / 1024 ** 3).toFixed(1) } GB`;
+}
+
+function relativeTime(value) {
+  const elapsed = Math.max(0, Date.now() - new Date(value).getTime());
+  if (elapsed < 60_000) return `${ Math.max(1, Math.round(elapsed / 1_000)) } s ago`;
+  if (elapsed < 3_600_000) return `${ Math.round(elapsed / 60_000) } min ago`;
+  if (elapsed < 86_400_000) return `${ Math.round(elapsed / 3_600_000) } h ago`;
+  return `${ Math.round(elapsed / 86_400_000) } d ago`;
+}
+
+function selectSegment(container, value) {
+  container.querySelectorAll('button').forEach(button => button.classList.toggle('active', button.dataset.value === value));
+}
+
+function showToast(title, detail = '', canMarkup = false) {
+  $('toast-title').textContent = title;
+  $('toast-detail').textContent = detail;
+  $('markup-button').classList.toggle('hidden', !canMarkup);
+  $('toast').classList.remove('hidden');
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => $('toast').classList.add('hidden'), 6000);
+}
+
+function updateStatus(status) {
+  const dot = $('sync-dot'); dot.className = `status-dot ${ status.state }`;
+  const state = status.state === 'syncing' ? `Syncing ${ status.pendingFiles || 0 } file${ status.pendingFiles === 1 ? '' : 's' }` : status.state === 'synced' ? 'Everything is synced' : status.state === 'paused' ? 'Sync paused for 1 hour' : 'Files needs attention';
+  $('sync-title').textContent = state;
+  if (status.state === 'syncing') {
+    const total = Number(status.totalBytes || 0); const done = Number(status.processedBytes || 0);
+    $('sync-detail').textContent = `${ bytes(done) } of ${ bytes(total) }${ status.estimatedSeconds ? ` · about ${ status.estimatedSeconds } s left` : '' }`;
+    $('sync-progress').style.width = total ? `${ Math.min(100, done / total * 100) }%` : '18%';
   } else {
-    // Locked — show login form
-    overlay.classList.remove('hidden');
-    layout.classList.add('locked');
-    setTimeout(() => {
-      const pwInput = document.getElementById('login-password');
-      if (pwInput) pwInput.focus();
-    }, 100);
+    $('sync-detail').textContent = status.lastError || (status.serverConfigured ? 'Sulla Server · up to date' : 'This computer · versioned locally');
+    $('sync-progress').style.width = status.state === 'synced' ? '100%' : '0';
   }
 }
 
-// Check auth state on load
-ipcRenderer.invoke('tray-panel:check-auth').then((state) => {
-  setAuthUI(state.loggedIn, state.vaultSetUp);
-}).catch(() => {
-  // If check fails, default to showing login
-  setAuthUI(false, true);
-});
+function itemShell(icon, name, detail) {
+  const row = document.createElement('div'); row.className = 'item';
+  const image = document.createElement('span'); image.className = 'file-icon'; image.textContent = icon;
+  const copy = document.createElement('div'); copy.className = 'grow';
+  const strong = document.createElement('strong'); strong.textContent = name;
+  const small = document.createElement('small'); small.textContent = detail;
+  copy.append(strong, small); row.append(image, copy);
+  return row;
+}
 
-// Listen for auth state changes from main process
-ipcRenderer.on('tray-panel:auth-state', (_event, state) => {
-  setAuthUI(state.loggedIn, state.vaultSetUp);
-  const pwInput = document.getElementById('login-password');
-  const errEl = document.getElementById('login-error');
-  if (pwInput) pwInput.value = '';
-  if (errEl) errEl.textContent = '';
-});
-
-// Login form submission
-document.getElementById('login-form').addEventListener('submit', async(e) => {
-  e.preventDefault();
-  const pwInput = document.getElementById('login-password');
-  const errEl = document.getElementById('login-error');
-  const submitBtn = document.getElementById('login-submit');
-  const password = pwInput.value.trim();
-
-  if (!password) return;
-
-  submitBtn.disabled = true;
-  submitBtn.textContent = 'Unlocking...';
-  errEl.textContent = '';
-
-  try {
-    const result = await ipcRenderer.invoke('tray-panel:login', { password });
-    if (result.success) {
-      pwInput.value = '';
-    } else {
-      errEl.textContent = 'Incorrect password';
-      pwInput.select();
-    }
-  } catch (err) {
-    errEl.textContent = 'Login failed';
-  } finally {
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'Unlock';
-  }
-});
-
-// "Open main window" link on login screen
-document.getElementById('login-open-main').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-main');
-});
-
-// ── Sidebar navigation ──────────────────────────────────────────────────
-
-const sidebarBtns = document.querySelectorAll('.sidebar-btn[data-panel]');
-const panels = document.querySelectorAll('.panel');
-
-sidebarBtns.forEach(btn => {
-  btn.addEventListener('click', () => {
-    const target = btn.getAttribute('data-panel');
-
-    // Update sidebar active state
-    sidebarBtns.forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-
-    // Show target panel
-    panels.forEach(p => p.classList.remove('active'));
-    const panel = document.getElementById(`panel-${ target }`);
-    if (panel) panel.classList.add('active');
+function renderFiles(files) {
+  const list = $('recent-files'); list.replaceChildren();
+  if (!files.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = 'Files you capture or add will appear here.'; list.append(empty); return }
+  files.slice(0, 4).forEach(file => {
+    const name = file.path.split('/').pop(); const row = itemShell(file.mime?.startsWith('video/') ? '▶' : file.mime?.startsWith('image/') ? '▣' : '◇', name, `${ file.path.includes('/') ? file.path.split('/').slice(0, -1).join(' › ') : 'Files' } · ${ relativeTime(file.updatedAt) }`);
+    row.classList.toggle('conflict', file.conflict);
+    if (file.conflict) row.querySelector('small').textContent = 'Edited on two desktops · pick a version';
+    const action = document.createElement('button'); action.className = 'row-action'; action.textContent = file.conflict ? 'Resolve' : '↗';
+    action.addEventListener('click', () => ipcRenderer.send(file.conflict ? 'tray-panel:resolve-file' : 'tray-panel:open-file', file.path));
+    row.append(action); list.append(row);
   });
-});
-
-// ── Audio driver renderer layer ─────────────────────────────────────────
-// Sets up window.audioDriver IPC bridge, then loads the full renderer
-// controller (mic capture, VAD, device enumeration, meters, gateway streaming).
-try {
-  require('./renderer/bridge');
-  console.log('[panel.js] Bridge loaded');
-} catch (e) {
-  console.error('[panel.js] Failed to load bridge:', e);
 }
 
-try {
-  require('./renderer/controller/app');
-  console.log('[panel.js] Controller loaded');
-} catch (e) {
-  console.error('[panel.js] Failed to load controller:', e);
+function renderShares(shares, unavailable) {
+  const list = $('recent-shares'); list.replaceChildren();
+  if (unavailable) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = 'Sharing comes online when links ship.'; list.append(empty); return }
+  if (!shares.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = 'Shared links will appear here.'; list.append(empty); return }
+  shares.slice(0, 3).forEach(share => {
+    const mode = share.password ? 'password' : share.mode === 'download' ? 'download' : 'view only';
+    const row = itemShell('↗', share.name, `${ share.url.replace(/^https?:\/\//, '') } · ${ mode }${ share.expiresAt ? ` · expires ${ relativeTime(share.expiresAt).replace(' ago', '') }` : '' }`);
+    const views = document.createElement('span'); views.className = 'share-meta'; views.textContent = `◉ ${ share.viewCount || 0 }`;
+    const action = document.createElement('button'); action.className = 'row-action'; action.textContent = 'Copy'; action.addEventListener('click', () => ipcRenderer.invoke('tray-panel:copy-share', share.url).then(() => showToast('Link copied', share.url)));
+    row.append(views, action); list.append(row);
+  });
 }
 
-// ── Button handlers ─────────────────────────────────────────────────────
-
-document.getElementById('btn-open-sulla').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-main');
-});
-
-document.getElementById('btn-open-docker').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-docker');
-});
-
-document.getElementById('btn-open-dashboard').addEventListener('click', () => {
-  const btn = document.getElementById('btn-open-dashboard');
-  if (btn.classList.contains('disabled')) return;
-  ipcRenderer.send('tray-panel:open-dashboard');
-});
-
-document.getElementById('btn-secretary-mode').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:secretary-mode');
-});
-
-document.getElementById('btn-capture-studio').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-capture-studio');
-});
-
-let filesPaused = false;
-document.getElementById('btn-open-files').addEventListener('click', () => ipcRenderer.send('tray-panel:files-open'));
-document.getElementById('btn-pause-files').addEventListener('click', async() => {
-  try { await ipcRenderer.invoke('tray-panel:files-pause', !filesPaused); await refreshFilesStatus() } catch { /* status refresh shows the error */ }
-});
-
-async function refreshFilesStatus() {
-  const status = await ipcRenderer.invoke('tray-panel:files-status'); filesPaused = status.state === 'paused';
-  const dot = document.getElementById('files-dot'); const label = document.getElementById('files-status');
-  dot.className = `dot ${ status.state === 'synced' ? 'running' : status.state === 'syncing' ? 'starting' : status.state === 'paused' ? 'off' : 'error' }`;
-  label.textContent = status.state === 'syncing' ? `Syncing ${ status.pendingFiles || '' }`.trim() : status.state[0].toUpperCase() + status.state.slice(1);
-  label.title = status.lastError || '';
-  document.getElementById('files-action-label').textContent = filesPaused ? 'Resume sync' : 'Pause sync';
-}
-void refreshFilesStatus(); setInterval(() => void refreshFilesStatus(), 5_000);
-
-// Settings panel buttons
-document.getElementById('btn-support').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-url', 'https://sulladesktop.com/support');
-});
-
-document.getElementById('btn-documentation').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-url', 'https://sulladesktop.com/docs');
-});
-
-document.getElementById('btn-discussions').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-url', 'https://sulladesktop.com/support');
-});
-
-document.getElementById('btn-issues').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-url', 'https://sulladesktop.com/support');
-});
-
-document.getElementById('btn-check-updates').addEventListener('click', () => {
-  ipcRenderer.invoke('tray-panel:check-updates');
-});
-
-document.getElementById('btn-quit').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:quit');
-});
-
-// ── Settings toggles ───────────────────────────────────────────────────
-
-const toggleAutoStart = document.getElementById('toggle-auto-start');
-const toggleBackground = document.getElementById('toggle-start-background');
-
-// Load current settings on startup
-ipcRenderer.invoke('tray-panel:get-settings').then((settings) => {
-  toggleAutoStart.checked = settings.autoStart;
-  toggleBackground.checked = settings.startInBackground;
-}).catch(() => {});
-
-// Listen for settings state updates from main process
-ipcRenderer.on('tray-panel:settings-state', (_event, state) => {
-  toggleAutoStart.checked = state.autoStart;
-  toggleBackground.checked = state.startInBackground;
-});
-
-// Send setting changes to main process
-toggleAutoStart.addEventListener('change', () => {
-  ipcRenderer.send('tray-panel:set-setting', { key: 'autoStart', value: toggleAutoStart.checked });
-});
-
-toggleBackground.addEventListener('change', () => {
-  ipcRenderer.send('tray-panel:set-setting', { key: 'startInBackground', value: toggleBackground.checked });
-});
-
-// ── State updates from main process ─────────────────────────────────────
-
-const STATE_MAP = {
-  STOPPED:  { cls: 'off', label: 'Stopped' },
-  STARTING: { cls: 'starting', label: 'Starting...' },
-  STARTED:  { cls: 'running', label: 'Running' },
-  STOPPING: { cls: 'starting', label: 'Stopping...' },
-  ERROR:    { cls: 'error', label: 'Error' },
-  DISABLED: { cls: 'off', label: 'Disabled' },
-};
-
-function updateDot(dotEl, statusEl, state) {
-  const mapped = STATE_MAP[state] || STATE_MAP.STOPPED;
-  dotEl.className = `dot ${ mapped.cls }`;
-  statusEl.textContent = mapped.label;
+async function refresh() {
+  try {
+    const dashboard = await ipcRenderer.invoke('tray-panel:files-dashboard');
+    preferences = { ...preferences, ...dashboard.preferences };
+    $('record-mic').checked = preferences.recordMic !== false;
+    $('record-cam').checked = preferences.recordCamera === true;
+    updateStatus(dashboard.status); renderFiles(dashboard.files || []); renderShares(dashboard.shares || [], dashboard.sharingUnavailable);
+  } catch (error) { updateStatus({ state: 'error', lastError: String(error), serverConfigured: false }) }
 }
 
-ipcRenderer.on('tray-panel:state-update', (_event, state) => {
-  if (state.docker) {
-    updateDot(
-      document.getElementById('docker-dot'),
-      document.getElementById('docker-status'),
-      state.docker,
-    );
+function stopCountdown() { if (countdownTimer) clearInterval(countdownTimer); countdownTimer = null }
+
+function showCapture(capture) {
+  latestCapture = capture; stopCountdown();
+  $('capture-title').textContent = capture.kind === 'recording' ? 'Recording saved' : capture.kind === 'upload' ? 'File added' : 'Screenshot captured';
+  $('capture-meta').textContent = `${ capture.name } · ${ bytes(capture.size) } · Files › ${ capture.relativePath.split('/')[0] }`;
+  $('capture-preview').textContent = capture.kind === 'recording' ? '▶' : capture.kind === 'upload' ? '↗' : '▣';
+  $('keep-available').checked = preferences.keepCapturesAvailable !== false;
+  $('share-description').textContent = `share.sulla.cloud · ${ preferences.visitorMode === 'download' ? 'download' : 'view only' }${ preferences.expiryDays ? ` · expires in ${ preferences.expiryDays } days` : '' }`;
+  $('capture-card').classList.remove('hidden');
+  if (preferences.defaultAction === 'share') {
+    countdownRemaining = 4; $('countdown').textContent = `auto-shares in ${ countdownRemaining } s`;
+    countdownTimer = setInterval(() => { countdownRemaining--; $('countdown').textContent = countdownRemaining > 0 ? `auto-shares in ${ countdownRemaining } s` : 'sharing…'; if (countdownRemaining <= 0) { stopCountdown(); shareCapture() } }, 1000);
+  } else if (preferences.defaultAction === 'save') {
+    $('countdown').textContent = 'saved to Files';
+  } else $('countdown').textContent = 'choose an action';
+}
+
+function dismissCapture() { stopCountdown(); $('capture-card').classList.add('hidden'); latestCapture = null; refresh() }
+
+async function shareCapture() {
+  if (!latestCapture) return;
+  stopCountdown(); $('countdown').textContent = 'sharing…';
+  try {
+    const result = await ipcRenderer.invoke('tray-panel:share-capture', latestCapture, { mode: preferences.visitorMode || 'view', keepAvailable: $('keep-available').checked });
+    $('capture-card').classList.add('hidden');
+    showToast(result.message, result.url || '', latestCapture.kind === 'screenshot');
+    await refresh();
+  } catch (error) { $('countdown').textContent = String(error) }
+}
+
+async function takeScreenshot() {
+  $('screenshot-subtitle').textContent = 'Choose the area to capture…';
+  try { const result = await ipcRenderer.invoke('tray-panel:capture-screenshot', screenshotMode); if (result) showCapture(result) } catch (error) { if (!String(error).toLowerCase().includes('cancel')) showToast('Screenshot failed', String(error)) }
+  $('screenshot-subtitle').textContent = 'Shares online · link copied';
+}
+
+async function toggleRecording() {
+  $('record-title').textContent = $('record-title').textContent === 'Stop recording' ? 'Saving recording…' : 'Starting…';
+  try {
+    const result = await ipcRenderer.invoke('tray-panel:capture-record', { mic: $('record-mic').checked, camera: $('record-cam').checked });
+    $('record-title').textContent = result.recording ? 'Stop recording' : 'Record screen';
+    if (result.capture) showCapture(result.capture); else if (result.error) showToast('Recording', result.error);
+  } catch (error) { $('record-title').textContent = 'Record screen'; showToast('Recording failed', String(error)) }
+}
+
+async function upload() {
+  try {
+    const capture = await ipcRenderer.invoke('tray-panel:capture-upload'); if (!capture) return;
+    latestCapture = capture; const result = await ipcRenderer.invoke('tray-panel:share-capture', capture, { mode: uploadMode, keepAvailable: false });
+    showToast(result.message, result.url || '', false); await refresh();
+  } catch (error) { showToast('Upload saved to Files', String(error)) }
+}
+
+$('screenshot-mode').addEventListener('click', event => { event.stopPropagation(); const value = event.target?.dataset?.value; if (value) { screenshotMode = value; selectSegment($('screenshot-mode'), value) } });
+$('upload-mode').addEventListener('click', event => { event.stopPropagation(); const value = event.target?.dataset?.value; if (value) { uploadMode = value; selectSegment($('upload-mode'), value) } });
+$('screenshot-row').addEventListener('click', takeScreenshot);
+$('record-row').addEventListener('click', event => { if (!event.target.closest('label')) toggleRecording() });
+$('upload-row').addEventListener('click', upload);
+['record-mic', 'record-cam'].forEach(id => $(id).addEventListener('change', () => ipcRenderer.send('tray-panel:set-capture-toggle', id, $(id).checked)));
+$('share-capture').addEventListener('click', shareCapture);
+$('save-capture').addEventListener('click', dismissCapture);
+$('dismiss-capture').addEventListener('click', dismissCapture);
+$('pause-sync').addEventListener('click', () => ipcRenderer.invoke('tray-panel:files-pause-hour').then(refresh));
+$('footer-pause').addEventListener('click', () => ipcRenderer.invoke('tray-panel:files-pause-hour').then(refresh));
+$('open-folder').addEventListener('click', () => ipcRenderer.send('tray-panel:files-open'));
+$('open-sulla').addEventListener('click', () => ipcRenderer.send('tray-panel:open-main'));
+$('unlock-main').addEventListener('click', () => ipcRenderer.send('tray-panel:open-main'));
+$('open-preferences').addEventListener('click', () => ipcRenderer.send('tray-panel:files-preferences'));
+$('capture-preferences').addEventListener('click', () => ipcRenderer.send('tray-panel:files-preferences', 'capture'));
+$('toast-settings').addEventListener('click', () => ipcRenderer.send('tray-panel:files-preferences', 'capture'));
+$('all-files').addEventListener('click', () => ipcRenderer.send('tray-panel:open-files-screen'));
+$('all-shares').addEventListener('click', () => ipcRenderer.send('tray-panel:open-files-screen', 'shared'));
+$('markup-button').addEventListener('click', () => latestCapture && ipcRenderer.send('tray-panel:markup', latestCapture.path));
+
+document.addEventListener('keydown', event => {
+  if (!$('capture-card').classList.contains('hidden')) {
+    if (event.key === 'Enter') { event.preventDefault(); shareCapture() }
+    if (event.key === 'Escape') { event.preventDefault(); dismissCapture() }
   }
-
-  if (state.k8s) {
-    updateDot(
-      document.getElementById('k8s-dot'),
-      document.getElementById('k8s-status'),
-      state.k8s,
-    );
-
-    // Enable Cluster Dashboard only when Kubernetes is running
-    const dashBtn = document.getElementById('btn-open-dashboard');
-    if (state.k8s === 'STARTED') {
-      dashBtn.classList.remove('disabled');
-    } else {
-      dashBtn.classList.add('disabled');
-    }
-  }
-
-  if (state.k8sContext) {
-    document.getElementById('k8s-status').textContent += ` (${ state.k8sContext })`;
-  }
-
+  if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'u') { event.preventDefault(); upload() }
+  if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === '5') { event.preventDefault(); takeScreenshot() }
 });
+
+ipcRenderer.on('tray-panel:capture-created', (_event, capture) => showCapture(capture));
+ipcRenderer.on('tray-panel:shortcut-upload', () => upload());
+ipcRenderer.on('tray-panel:auth-state', (_event, state) => $('locked').classList.toggle('hidden', state.loggedIn || !state.vaultSetUp));
+ipcRenderer.invoke('tray-panel:check-auth').then(state => $('locked').classList.toggle('hidden', state.loggedIn || !state.vaultSetUp));
+
+refresh(); setInterval(refresh, 5_000);

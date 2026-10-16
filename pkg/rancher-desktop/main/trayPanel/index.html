@@ -1,183 +1,64 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' app:; script-src 'self' app: 'unsafe-inline' 'unsafe-eval'; img-src 'self' app: data:; style-src 'self' app: 'unsafe-inline'">
-    <title>Sulla Panel</title>
-    <link rel="stylesheet" href="style.css" />
-  </head>
-  <body>
-    <div id="app">
-      <!-- ─── Login overlay (shown when not authenticated) ─── -->
-      <div id="login-overlay" class="login-overlay">
-        <div class="login-content">
-          <img class="login-logo" src="sulla-icon.png" width="40" height="40" alt="Sulla" />
-          <h2 class="login-title">Sulla Desktop</h2>
-          <p class="login-subtitle">Enter your master password to unlock</p>
-          <form id="login-form" class="login-form" autocomplete="off">
-            <div class="login-input-wrap">
-              <input
-                type="password"
-                id="login-password"
-                class="login-input"
-                placeholder="Master password"
-                autocomplete="current-password"
-                spellcheck="false"
-                required
-              />
-            </div>
-            <div id="login-error" class="login-error"></div>
-            <button type="submit" id="login-submit" class="login-submit">Unlock</button>
-          </form>
-          <button id="login-open-main" class="login-link">Open main window instead</button>
-        </div>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:">
+  <title>Sulla Files</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="tray" id="tray">
+    <section class="sync-head">
+      <span id="sync-dot" class="status-dot syncing"></span>
+      <div class="grow"><strong id="sync-title">Checking Sulla Files</strong><small id="sync-detail">Connecting to the Files container…</small></div>
+      <button class="icon-btn" id="pause-sync" title="Pause sync for 1 hour">Ⅱ</button>
+      <button class="icon-btn" id="open-preferences" title="Preferences">⚙</button>
+    </section>
+    <div class="progress"><span id="sync-progress"></span></div>
+
+    <header class="section-title">Capture</header>
+    <section class="card capture-card">
+      <div class="capture-row" id="screenshot-row">
+        <span class="tile">▣</span><div class="grow"><strong>Screenshot</strong><small id="screenshot-subtitle">Shares online · link copied</small></div>
+        <div class="segments" id="screenshot-mode"><button class="active" data-value="area">Area</button><button data-value="window">Window</button><button data-value="full">Full</button></div>
+        <kbd>⇧⌘5</kbd>
       </div>
-
-      <div class="app-layout">
-        <!-- ─── Sidebar ──────────────────────────────────────── -->
-        <nav class="sidebar">
-          <button class="sidebar-btn active" data-panel="agent" title="Sulla">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
-          </button>
-          <button class="sidebar-btn" data-panel="status" title="Status">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0"/><path d="M12 8v4l2 2"/></svg>
-          </button>
-          <button class="sidebar-btn" data-panel="extensions" title="Extensions">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>
-          </button>
-          <div class="sidebar-spacer"></div>
-          <button class="sidebar-btn sidebar-bottom" data-panel="settings" title="Settings">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        </nav>
-
-        <div class="panel-content">
-          <!-- ═══ Status panel (default) ═══════════════════════ -->
-          <div id="panel-status" class="panel">
-            <div class="header">
-              <span class="title">Status</span>
-            </div>
-
-            <!-- Docker status -->
-            <div class="status-row">
-              <span id="docker-dot" class="dot off"></span>
-              <span class="status-label">Docker</span>
-              <span id="docker-status" class="status-value">Stopped</span>
-            </div>
-
-            <!-- Kubernetes status -->
-            <div class="status-row">
-              <span id="k8s-dot" class="dot off"></span>
-              <span class="status-label">Kubernetes</span>
-              <span id="k8s-status" class="status-value">Stopped</span>
-            </div>
-            <div class="status-row">
-              <span id="files-dot" class="dot off"></span>
-              <span class="status-label">Files</span>
-              <span id="files-status" class="status-value">Checking...</span>
-            </div>
-          </div>
-
-          <!-- ═══ Sulla panel (primary) ═════════════════════════ -->
-          <div id="panel-agent" class="panel active">
-            <div class="header">
-              <span class="title">Sulla</span>
-            </div>
-
-            <div class="quick-links">
-              <button class="link-btn" id="btn-open-sulla">
-                <img class="link-icon" src="sulla-icon.png" width="14" height="14" alt="" />
-                Open Sulla
-              </button>
-              <button class="link-btn" id="btn-secretary-mode">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                Secretary Mode
-              </button>
-              <button class="link-btn" id="btn-open-docker">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12.5c.85-.32 1.5-1.1 1.5-2 0-1.1-.9-2-2-2h-.5C18.5 5.5 16 3 13 3c-2 0-3.76 1.05-4.74 2.64A3.5 3.5 0 0 0 4 9a3.5 3.5 0 0 0-.74 6.92A3 3 0 0 0 6 21h12.5a2.5 2.5 0 0 0 1.5-4.5z"/><rect x="5" y="11" width="2" height="2" rx=".3" fill="currentColor"/><rect x="8" y="11" width="2" height="2" rx=".3" fill="currentColor"/><rect x="11" y="11" width="2" height="2" rx=".3" fill="currentColor"/><rect x="8" y="8" width="2" height="2" rx=".3" fill="currentColor"/><rect x="11" y="8" width="2" height="2" rx=".3" fill="currentColor"/><rect x="14" y="11" width="2" height="2" rx=".3" fill="currentColor"/><rect x="14" y="8" width="2" height="2" rx=".3" fill="currentColor"/></svg>
-                Docker Dashboard
-              </button>
-              <button class="link-btn disabled" id="btn-open-dashboard">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-                Cluster Dashboard
-              </button>
-              <button class="link-btn" id="btn-capture-studio">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
-                Capture Studio
-              </button>
-              <div class="section-divider"></div>
-              <button class="link-btn" id="btn-open-files">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h6l2 2h10v11H3z"/></svg>
-                Open Files folder
-              </button>
-              <button class="link-btn" id="btn-pause-files">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14M16 5v14"/></svg>
-                <span id="files-action-label">Pause sync</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- ═══ Settings panel ═══════════════════════════════ -->
-          <div id="panel-settings" class="panel">
-            <div class="header">
-              <span class="title">Settings</span>
-            </div>
-
-            <div class="settings-section">
-              <div class="section-header">Startup</div>
-              <div class="setting-toggle-row">
-                <span class="setting-toggle-label">Start on login</span>
-                <label class="toggle">
-                  <input type="checkbox" id="toggle-auto-start" />
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-              <div class="setting-toggle-row">
-                <span class="setting-toggle-label">Start as background service</span>
-                <label class="toggle">
-                  <input type="checkbox" id="toggle-start-background" />
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-            </div>
-
-            <div class="section-divider"></div>
-
-            <div class="settings-section">
-              <div class="section-header">Help</div>
-              <button class="link-btn" id="btn-support">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                Get Support
-              </button>
-              <button class="link-btn" id="btn-documentation">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-                Documentation
-              </button>
-              <button class="link-btn" id="btn-discussions">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                Discussions
-              </button>
-              <button class="link-btn" id="btn-issues">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                Issues
-              </button>
-
-              <div class="section-divider"></div>
-
-              <button class="link-btn" id="btn-check-updates">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
-                Check for Updates
-              </button>
-            </div>
-
-            <div class="panel-footer">
-              <button class="quit-btn" id="btn-quit">Quit Sulla Desktop</button>
-            </div>
-          </div>
-        </div>
+      <div class="capture-row" id="record-row">
+        <span class="tile">◉</span><div class="grow"><strong id="record-title">Record screen</strong><small>Shares online · transcribed</small></div>
+        <label class="mini-toggle">Mic <input id="record-mic" type="checkbox" checked><i></i></label>
+        <label class="mini-toggle">Cam <input id="record-cam" type="checkbox"><i></i></label>
       </div>
-    </div>
-    <script src="panel.js"></script>
-  </body>
+      <div class="capture-row" id="upload-row">
+        <span class="tile">↗</span><div class="grow"><strong>Upload &amp; copy link</strong><small>Pick a file, get a public link</small></div>
+        <div class="segments" id="upload-mode"><button class="active" data-value="view">View</button><button data-value="download">Download</button></div>
+        <kbd>⇧⌘U</kbd>
+      </div>
+    </section>
+
+    <header class="section-title">Recent files <button id="all-files">Open Files</button></header>
+    <section class="card list" id="recent-files"><div class="empty">Loading recent files…</div></section>
+
+    <header class="section-title">Recent shares <button id="all-shares">All shares</button></header>
+    <section class="card list" id="recent-shares"><div class="empty">Loading recent shares…</div></section>
+
+    <footer>
+      <div><button id="footer-pause">Ⅱ Pause sync <span>1h</span></button><button id="open-folder">▱ Open Files folder</button></div>
+      <button id="open-sulla">↗ Open Sulla <kbd>⌘⇧S</kbd></button>
+    </footer>
+  </main>
+
+  <aside id="capture-card" class="capture-result hidden" aria-live="polite">
+    <div class="result-head"><span class="preview" id="capture-preview"></span><div class="grow"><strong id="capture-title">Screenshot captured</strong><small id="capture-meta"></small></div><button class="icon-btn" id="dismiss-capture">×</button></div>
+    <button class="choice active" id="share-capture"><span class="choice-icon">↗</span><span class="grow"><strong>Share online · copy link</strong><small id="share-description">share.sulla.cloud · view only · expires in 30 days</small></span><em>Default</em><kbd>↵</kbd></button>
+    <button class="choice" id="save-capture"><span class="choice-icon">▱</span><span class="grow"><strong>Save to Files only</strong><small>No link · stays on this computer and syncs as usual</small></span><kbd>esc</kbd></button>
+    <label class="keep"><span class="grow"><strong>Keep available when my computer is off</strong><small>On for captures · temporary copy on Sulla Cloud until expiry</small></span><input id="keep-available" type="checkbox" checked><i></i></label>
+    <div class="result-foot">Default from <button id="capture-preferences">Preferences › Capture</button><span id="countdown">auto-shares in 4 s</span></div>
+  </aside>
+
+  <div id="toast" class="toast hidden"><span class="ok">✓</span><div class="grow"><strong id="toast-title">Link copied</strong><small id="toast-detail"></small></div><button id="markup-button">Mark up</button><button id="toast-settings">Settings</button></div>
+
+  <section id="locked" class="locked hidden"><img src="sulla-icon.png" alt=""><strong>Sulla Desktop is locked</strong><small>Open Sulla to unlock Files.</small><button id="unlock-main">Open Sulla</button></section>
+  <script src="panel.js"></script>
+</body>
 </html>
