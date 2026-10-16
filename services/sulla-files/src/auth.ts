@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 
-export interface CapabilityClaims { sub: string; device_id?: string; scopes: string[]; exp: number; aud: string; v: number }
+export interface CapabilityClaims { sub: string; org_id?: string; group_ids?: string[]; agent_id?: string; job_id?: string; device_id?: string; scopes: string[]; exp: number; aud: string; v: number }
 const encode = (value:Buffer | string) => Buffer.from(value).toString('base64url');
 export function deriveCapabilitySigningKey(secret:string | Buffer):Buffer { return crypto.createHmac('sha256', secret).update('sulla-tools-capability-v1').digest() }
-export function issueCapabilityToken(input:{ sub: string; device_id?: string; scopes: string[] }, key:string | Buffer):string {
+export function issueCapabilityToken(input:{ sub: string; org_id?: string; group_ids?: string[]; agent_id?: string; job_id?: string; device_id?: string; scopes: string[] }, key:string | Buffer):string {
   const now = Math.floor(Date.now() / 1_000);
   const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const payload = encode(JSON.stringify({ ...input, v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 300, jti: crypto.randomUUID() }));
