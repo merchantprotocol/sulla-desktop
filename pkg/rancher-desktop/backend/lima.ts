@@ -3116,11 +3116,24 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       container_name: 'sulla_files',
       depends_on: { postgres: { condition: 'service_healthy' } },
       environment: {
-        SULLA_FILES_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
-        SULLA_FILES_CHUNK_ROOT:   '/var/lib/sulla-files/chunks',
+        SULLA_FILES_DATABASE_URL:          `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+        SULLA_FILES_CHUNK_ROOT:            '/var/lib/sulla-files/chunks',
+        SULLA_FILES_DATA_ROOT:             '/var/lib/sulla-files',
+        SULLA_FILES_FOLDER:                '/data/files',
+        SULLA_FILES_MODE:                  'desktop',
+        SULLA_FILES_DEVICE_ID:             os.hostname(),
+        SULLA_FILES_UID:                   String(os.userInfo().uid),
+        SULLA_FILES_GID:                   String(os.userInfo().gid),
+        SULLA_FILES_CAPABILITY_SIGNING_KEY: process.env.SULLA_FILES_CAPABILITY_SIGNING_KEY || sullaServicePassword,
+        SULLA_FILES_LOCAL_TOKEN:           sullaServicePassword,
+        ...(process.env.SULLA_FILES_SERVER_URL ? { SULLA_FILES_SERVER_URL: process.env.SULLA_FILES_SERVER_URL } : {}),
+        ...(process.env.SULLA_FILES_USER_ID ? { SULLA_FILES_USER_ID: process.env.SULLA_FILES_USER_ID } : {}),
       },
       ports: ['127.0.0.1:30124:8792'],
-      volumes: [`${ path.join(os.homedir(), 'sulla', 'files') }:/var/lib/sulla-files`],
+      volumes: [
+        'sulla-files-data:/var/lib/sulla-files',
+        `${ path.join(os.homedir(), 'sulla', 'Files') }:/data/files`,
+      ],
       restart: 'unless-stopped',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8792/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
@@ -3139,7 +3152,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const sullaDataDir = path.join(paths.appHome, 'data');
 
     await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-postgres'), { recursive: true });
-    await fs.promises.mkdir(path.join(os.homedir(), 'sulla', 'files', 'chunks'), { recursive: true });
+    await fs.promises.mkdir(path.join(os.homedir(), 'sulla', 'Files'), { recursive: true });
+    compose.volumes ??= {};
+    compose.volumes['sulla-files-data'] ??= {};
 
     // Ensure data directory is writable by container user (postgres=UID 70)
     await fs.promises.chmod(path.join(sullaDataDir, 'sulla-postgres'), 0o777);

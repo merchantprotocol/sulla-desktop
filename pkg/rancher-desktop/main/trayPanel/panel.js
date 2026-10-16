@@ -141,6 +141,22 @@ document.getElementById('btn-capture-studio').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:open-capture-studio');
 });
 
+let filesPaused = false;
+document.getElementById('btn-open-files').addEventListener('click', () => ipcRenderer.send('tray-panel:files-open'));
+document.getElementById('btn-pause-files').addEventListener('click', async() => {
+  try { await ipcRenderer.invoke('tray-panel:files-pause', !filesPaused); await refreshFilesStatus() } catch { /* status refresh shows the error */ }
+});
+
+async function refreshFilesStatus() {
+  const status = await ipcRenderer.invoke('tray-panel:files-status'); filesPaused = status.state === 'paused';
+  const dot = document.getElementById('files-dot'); const label = document.getElementById('files-status');
+  dot.className = `dot ${ status.state === 'synced' ? 'running' : status.state === 'syncing' ? 'starting' : status.state === 'paused' ? 'off' : 'error' }`;
+  label.textContent = status.state === 'syncing' ? `Syncing ${ status.pendingFiles || '' }`.trim() : status.state[0].toUpperCase() + status.state.slice(1);
+  label.title = status.lastError || '';
+  document.getElementById('files-action-label').textContent = filesPaused ? 'Resume sync' : 'Pause sync';
+}
+void refreshFilesStatus(); setInterval(() => void refreshFilesStatus(), 5_000);
+
 // Settings panel buttons
 document.getElementById('btn-support').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:open-url', 'https://sulladesktop.com/support');

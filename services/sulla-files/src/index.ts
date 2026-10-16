@@ -1,1 +1,16 @@
-import { createApp } from './app.js'; import { loadConfig } from './config.js'; import { connect, migrate } from './db.js'; const config = loadConfig(); const db = await connect(config.databaseUrl); await migrate(db); const server = createApp(db, config).listen(config.port, '0.0.0.0'); for (const signal of ['SIGTERM', 'SIGINT'])process.on(signal, () => server.close(() => db.end().finally(() => process.exit(0))));
+import { createApp } from './app.js';
+import { backup, nightlyBackups, restore } from './backup.js';
+import { loadConfig } from './config.js';
+import { connect, migrate } from './db.js';
+import { LocalFilesManager } from './localManager.js';
+
+const config = loadConfig(); const command = process.argv[2];
+if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
+if (command === 'restore') { await restore(config, process.argv[3]); process.exit(0) }
+const db = await connect(config.databaseUrl); await migrate(db);
+const manager = config.mode === 'desktop' ? new LocalFilesManager(db, config) : undefined;
+const server = createApp(db, config, manager).listen(config.port, '0.0.0.0', () => {
+  console.log(`[SullaFiles] ${ config.mode } service listening on ${ config.port }`);
+  manager?.initialize().catch(error => console.error('[SullaFiles] watched folder initialization failed', error));
+});
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { manager?.close(); server.close(() => db.end().finally(() => process.exit(0))) });
