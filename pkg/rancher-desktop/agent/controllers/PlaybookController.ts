@@ -1658,6 +1658,7 @@ export class PlaybookController<TState = any> {
               const svc = getSecretsCapabilityService();
               const minted = svc.mint({
                 invocationId,
+                agentId: String((state as any)?.metadata?.agentId || (state as any)?.metadata?.wsChannel || 'sulla'),
                 refs,
                 ttlMs: 60_000,
               });

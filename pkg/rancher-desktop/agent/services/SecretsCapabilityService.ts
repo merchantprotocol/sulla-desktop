@@ -36,6 +36,8 @@ export interface SecretRef {
 interface Capability {
   token:        string;
   invocationId: string;
+  /** Agent the credential is released to; checked against the item's allowed-agents list. */
+  agentId:      string;
   refs:         Map<string, SecretRef>;
   consumed:     Set<string>;
   expiresAt:    number;
@@ -80,6 +82,7 @@ export class SecretsCapabilityService {
    */
   mint(params: {
     invocationId: string;
+    agentId?:     string;
     refs:         Record<string, SecretRef>;
     ttlMs?:       number;
   }): { token: string } {
@@ -98,6 +101,7 @@ export class SecretsCapabilityService {
     const cap: Capability = {
       token,
       invocationId: params.invocationId,
+      agentId:      params.agentId?.trim() || 'sulla',
       refs:         refMap,
       consumed:     new Set<string>(),
       expiresAt:    Date.now() + ttl,
@@ -147,7 +151,7 @@ export class SecretsCapabilityService {
         integrationId: ref.integrationId,
         accountId:     ref.accountId,
         property:      ref.property,
-        agentId:       cap.invocationId,
+        agentId:       cap.agentId,
         level:         ref.integrationId === 'website' ? 'full' : 'autofill',
       });
     }
