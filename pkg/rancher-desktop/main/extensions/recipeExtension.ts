@@ -49,7 +49,9 @@ export class RecipeExtensionImpl implements Extension {
     private readonly catalogEntry: MarketplaceEntry,
   ) {
     this.id = slug;
-    this.version = version;
+    // YAML parses unquoted versions like 2026.04 as numbers; fs.writeFile
+    // rejects numbers, which failed every install at "mark installed".
+    this.version = String(version);
     // dir is set after manifest is fetched — use extensionRoot/<manifest.id>
     // For now, derive a safe name from the slug (last segment)
     const safeName = slug.replace(/[/:]/g, '-').replace(/^-+|-+$/g, '');
@@ -1423,7 +1425,7 @@ export async function createRecipeExtensionFromLocalDir(
   // fall back to sensible defaults.
   const syntheticEntry: MarketplaceEntry = {
     slug:                  manifest.id,
-    version:               manifest.version,
+    version:               String(manifest.version),
     containerd_compatible: false,
     labels:                {},
     title:                 manifest.name ?? manifest.id,
