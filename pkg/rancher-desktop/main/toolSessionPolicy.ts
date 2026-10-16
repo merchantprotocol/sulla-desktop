@@ -13,3 +13,16 @@ export function sessionAllowsTool(allowed: unknown, toolName: string): boolean {
 
   return allowed.includes('exec');
 }
+
+/** Installation token or a currently-live graph-bound container token. */
+export function apiRequestTokenIsValid(
+  token: string | undefined,
+  installationToken: string | null,
+  hasScopedSession: (token: string) => boolean,
+  requestPath = '/v1/tools/internal',
+): boolean {
+  if (!token) return false;
+  if (token === installationToken) return true;
+  const toolCatalogRoute = requestPath.startsWith('/v1/tools/') || requestPath.startsWith('/v1/proxy/');
+  return toolCatalogRoute && hasScopedSession(token);
+}

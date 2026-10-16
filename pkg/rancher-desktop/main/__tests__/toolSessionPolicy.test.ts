@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { sessionAllowsTool } from '../toolSessionPolicy';
+import { apiRequestTokenIsValid, sessionAllowsTool } from '../toolSessionPolicy';
 
 // Mirrors FULL_AGENT_TOOL_NAMES minus ask_user_question: exec alone must reach everything.
 const WORKER = ['browse_tools', 'exec', 'read_file', 'write_file'];
@@ -25,6 +25,19 @@ describe('sessionAllowsTool', () => {
   it('does not restrict a session with no allowlist', () => {
     expect(sessionAllowsTool(undefined, 'git_push')).toBe(true);
     expect(sessionAllowsTool([], 'git_push')).toBe(true);
+  });
+});
+
+describe('apiRequestTokenIsValid', () => {
+  it('rejects a scoped container token immediately after its session is revoked', () => {
+    const live = new Set(['container-token']);
+    const lookup = (token: string) => live.has(token);
+
+    expect(apiRequestTokenIsValid('container-token', 'desktop-token', lookup)).toBe(true);
+    expect(apiRequestTokenIsValid('container-token', 'desktop-token', lookup, '/v1/chat/completions')).toBe(false);
+    live.delete('container-token');
+    expect(apiRequestTokenIsValid('container-token', 'desktop-token', lookup)).toBe(false);
+    expect(apiRequestTokenIsValid('desktop-token', 'desktop-token', lookup)).toBe(true);
   });
 });
 

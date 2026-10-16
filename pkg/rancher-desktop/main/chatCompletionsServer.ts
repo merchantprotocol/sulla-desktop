@@ -5,7 +5,8 @@ import path from 'node:path';
 import cors from 'cors';
 import express, { Request, Response, NextFunction } from 'express';
 
-import { sessionAllowsTool } from './toolSessionPolicy';
+import { getMCPServerHost } from './MCPServerHost';
+import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
@@ -230,7 +231,16 @@ export class ChatCompletionsServer {
       const match = /^Bearer\s+(.+)$/i.exec(authHeader);
       const token = match?.[1];
 
-      if (!token || token !== this.apiToken) {
+      // Agent containers receive a graph-bound MCP/tool-session token instead
+      // of Desktop's installation-wide API key. It expires automatically and
+      // is revoked as soon as the container exits. The internal-tool handler
+      // below binds the same token to its live graph state and enforces that
+      // session's tool allowlist.
+      const valid = apiRequestTokenIsValid(token, this.apiToken, candidate => {
+        try { return !!getMCPServerHost().getToolSessionState(candidate) } catch { return false }
+      }, req.path);
+
+      if (!valid) {
         res.status(401).json({
           error: {
             message: 'Invalid or missing bearer token. Set Authorization: Bearer <token> header.',
@@ -1078,7 +1088,6 @@ export class ChatCompletionsServer {
         const toolName = String((tool)?.name || endpoint || '').trim();
         const sessionToken = req.header('X-Sulla-Tool-Session');
         if (sessionToken) {
-          const { getMCPServerHost } = await import('./MCPServerHost');
           const state = getMCPServerHost().getToolSessionState(sessionToken);
           if (!state) return res.status(403).json({ success: false, error: 'Expired tool session' });
           const allowed = (state.metadata as { allowedToolNames?: string[] }).allowedToolNames;
@@ -1555,6 +1564,9 @@ export class ChatCompletionsServer {
 
   async start(port: number = CHAT_COMPLETIONS_PORT): Promise<void> {
     await this.loadApiToken();
+    import('@pkg/agent/services/AgentContainerLauncher')
+      .then(({ reapOrphanAgentContainers }) => reapOrphanAgentContainers())
+      .catch(error => console.warn('[ChatCompletionsAPI] Agent container orphan reap skipped:', error));
     return new Promise((resolve, reject) => {
       try {
         this.server = this.app.listen(port, '0.0.0.0', () => {

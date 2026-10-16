@@ -6,6 +6,7 @@ on:
     paths:
       - 'services/sulla-workflows/**'
       - 'pkg/rancher-desktop/agent/workflow/**'
+      - 'pkg/rancher-desktop/runtime/containerRuntime.ts'
       - 'pkg/rancher-desktop/pages/editor/workflow/types.ts'
       - '.github/workflows/sulla-workflows-image.yml'
 permissions:

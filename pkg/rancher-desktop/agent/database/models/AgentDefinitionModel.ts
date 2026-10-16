@@ -5,6 +5,7 @@ import { postgresClient } from '../PostgresClient';
 export type AgentDefinitionStatus = 'draft' | 'production' | 'archive';
 export type AgentSourceKind = 'local' | 'filesystem-import' | 'marketplace';
 export type AgentCostTier = 'low' | 'medium' | 'high';
+export type AgentRunLocation = 'vm' | 'container';
 
 export const AGENT_COST_TIERS: readonly AgentCostTier[] = ['low', 'medium', 'high'];
 
@@ -57,6 +58,7 @@ export interface AgentDefinition {
   is_builtin:              boolean;
   /** Hash of the managed content the built-in seeder last wrote. */
   builtin_hash:            string | null;
+  run_location:            AgentRunLocation;
   created_at:              string;
   updated_at:              string;
 }
@@ -96,6 +98,7 @@ export interface AgentDefinitionInput {
   frontDoor?:             boolean | null;
   isBuiltin?:             boolean;
   builtinHash?:           string | null;
+  runLocation?:           AgentRunLocation;
 }
 
 export interface AgentDefinitionPatch {
@@ -132,6 +135,7 @@ export interface AgentDefinitionPatch {
   frontDoor?:             boolean | null;
   isBuiltin?:             boolean;
   builtinHash?:           string | null;
+  runLocation?:           AgentRunLocation;
 }
 
 function toStringArray(value: unknown): string[] {
@@ -205,6 +209,7 @@ function rowToDefinition(row: any): AgentDefinition {
     front_door:              typeof row.front_door === 'boolean' ? row.front_door : null,
     is_builtin:              row.is_builtin === true,
     builtin_hash:            row.builtin_hash == null ? null : String(row.builtin_hash),
+    run_location:            row.run_location === 'container' ? 'container' : 'vm',
     created_at:              toIso(row.created_at),
     updated_at:              toIso(row.updated_at),
   };
@@ -251,10 +256,10 @@ export class AgentDefinitionModel {
         version, status, enabled, source_template_slug, content_hash,
         config, prompt_content, goals_content, prompt_files, provider, model,
         source_kind, marketplace_template_id, marketplace_slug, marketplace_version, marketplace_author,
-        when_to_call, when_not_to_call, send, returns, cost_tier, can_call, is_builtin, builtin_hash, front_door
+        when_to_call, when_not_to_call, send, returns, cost_tier, can_call, is_builtin, builtin_hash, front_door, run_location
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,
         $16::jsonb,$17,$18,$19::jsonb,$20,$21,$22,$23,$24,$25,$26,
-        $27,$28,$29,$30,$31,$32,$33,$34,$35)
+        $27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
       RETURNING *
     `, [
       `agent-${ randomUUID() }`, slug, name, input.description ?? '', input.systemPrompt ?? '', input.soulContent ?? '',
@@ -268,6 +273,7 @@ export class AgentDefinitionModel {
       input.whenToCall ?? '', input.whenNotToCall ?? '', input.send ?? '', input.returns ?? '',
       toCostTier(input.costTier), toStringArray(input.canCall), input.isBuiltin === true, input.builtinHash ?? null,
       typeof input.frontDoor === 'boolean' ? input.frontDoor : null,
+      input.runLocation ?? 'vm',
     ]);
     if (!row) throw new Error(`Failed to create agent definition ${ slug }.`);
     return rowToDefinition(row);
@@ -318,6 +324,7 @@ export class AgentDefinitionModel {
     if (patch.frontDoor !== undefined) add('front_door', typeof patch.frontDoor === 'boolean' ? patch.frontDoor : null);
     if (patch.isBuiltin !== undefined) add('is_builtin', patch.isBuiltin);
     if (patch.builtinHash !== undefined) add('builtin_hash', patch.builtinHash);
+    if (patch.runLocation !== undefined) add('run_location', patch.runLocation === 'container' ? 'container' : 'vm');
     if (sets.length === 0) return AgentDefinitionModel.get(id);
     sets.push("user_edited = CASE WHEN source_kind = 'marketplace' THEN true ELSE user_edited END");
     sets.push('updated_at = now()');

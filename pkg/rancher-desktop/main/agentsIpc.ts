@@ -68,6 +68,7 @@ export interface AgentDefinitionResponse {
   marketplaceVersion: string | null;
   status:             string;
   enabled:            boolean;
+  runLocation:        'vm' | 'container';
 }
 
 export interface AgentConversationSummary {
@@ -155,10 +156,11 @@ export function initAgentsIpc(): void {
       marketplaceVersion: a.marketplace_version,
       status:             a.status,
       enabled:            a.enabled,
+      runLocation:        a.run_location,
     }));
   });
 
-  ipcMain.handle('agent-definitions:create', async(_event, input: { slug: string; name: string; description?: string; provider?: string; model?: string; prompt: string }) => {
+  ipcMain.handle('agent-definitions:create', async(_event, input: { slug: string; name: string; description?: string; provider?: string; model?: string; prompt: string; runLocation?: 'vm' | 'container' }) => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
     return agentDefinitionService.create({
       slug:          input.slug,
@@ -171,10 +173,11 @@ export function initAgentsIpc(): void {
       promptFiles:   { 'prompt.md': input.prompt },
       status:        'production',
       sourceKind:    'local',
+      runLocation:   input.runLocation ?? 'vm',
     });
   });
 
-  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: { name?: string; description?: string; provider?: string; model?: string; prompt?: string }) => {
+  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: { name?: string; description?: string; provider?: string; model?: string; prompt?: string; runLocation?: 'vm' | 'container' }) => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
     return agentDefinitionService.update(id, {
       ...patch,

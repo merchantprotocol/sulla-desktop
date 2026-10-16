@@ -117,6 +117,7 @@
                   </p>
                 </div>
                 <span class="text-xs font-mono text-slate-500">{{ agent.model || 'default model' }}</span>
+                <span class="badge">{{ agent.runLocation === 'container' ? 'Container' : 'VM' }}</span>
                 <span class="badge">{{ agent.sourceKind === 'marketplace' ? `Marketplace ${agent.marketplaceVersion || ''}` : 'Local' }}</span>
                 <button
                   class="agent-link"
@@ -405,6 +406,12 @@
               >{{ model.providerName }} · {{ model.label }}</option>
             </select>
           </label>
+          <label>Run location
+            <select v-model="editing.runLocation">
+              <option value="vm">VM (default)</option>
+              <option value="container">Container</option>
+            </select>
+          </label>
           <label>Prompt<textarea
             v-model="editing.prompt"
             required
@@ -454,7 +461,7 @@ const availableModels = ref<{ providerId: string; providerName: string; modelId:
 const saving = ref(false);
 const publishingSlug = ref<string | null>(null);
 const manifestInput = ref<HTMLInputElement | null>(null);
-const editing = ref<null | { id?: string; slug: string; name: string; description: string; modelKey: string; prompt: string }>(null);
+const editing = ref<null | { id?: string; slug: string; name: string; description: string; modelKey: string; prompt: string; runLocation: 'vm' | 'container' }>(null);
 
 const selectedAgent = ref<{ channel: string; name: string } | null>(null);
 // Bumped every poll so the open conversation view refreshes on the same beat.
@@ -500,7 +507,7 @@ async function loadModels() {
 
 function openCreate() {
   const first = availableModels.value[0];
-  editing.value = { slug: '', name: '', description: '', modelKey: first ? `${ first.providerId }:${ first.modelId }` : '', prompt: '' };
+  editing.value = { slug: '', name: '', description: '', modelKey: first ? `${ first.providerId }:${ first.modelId }` : '', prompt: '', runLocation: 'vm' };
 }
 
 function openEdit(agent: AgentDefinitionResponse) {
@@ -511,6 +518,7 @@ function openEdit(agent: AgentDefinitionResponse) {
     description: agent.description,
     modelKey:    agent.provider && agent.model ? `${ agent.provider }:${ agent.model }` : '',
     prompt:      agent.prompt,
+    runLocation: agent.runLocation,
   };
 }
 
@@ -521,7 +529,7 @@ async function saveDefinition() {
     const split = editing.value.modelKey.indexOf(':');
     const provider = split >= 0 ? editing.value.modelKey.slice(0, split) : '';
     const model = split >= 0 ? editing.value.modelKey.slice(split + 1) : editing.value.modelKey;
-    const payload = { name: editing.value.name, description: editing.value.description, provider, model, prompt: editing.value.prompt };
+    const payload = { name: editing.value.name, description: editing.value.description, provider, model, prompt: editing.value.prompt, runLocation: editing.value.runLocation };
     if (editing.value.id) await ipcRenderer.invoke('agent-definitions:update', editing.value.id, payload);
     else await ipcRenderer.invoke('agent-definitions:create', { ...payload, slug: editing.value.slug });
     editing.value = null;

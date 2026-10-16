@@ -514,6 +514,54 @@ export class SpawnAgentWorker extends BaseTool {
           if (!active.includes(threadId)) active.push(threadId);
         }
 
+        const runLocation = String(subState.metadata.agent?.runLocation ?? 'vm');
+        if (runLocation === 'container') {
+          const provider = String(subState.metadata.agent?.provider ?? '').trim();
+          if (provider !== 'claude-code' && provider !== 'codex') {
+            throw new Error(`Agent ${ selector ?? label } uses run_location=container but provider ${ provider || '(unset)' } is not a CLI worker`);
+          }
+          if (!activityJobId) throw new Error('Container agents require a durable job identity');
+          const persistenceNotice = '\n\n[Container workspace] Your checkout lives only inside this container. Pushed work is saved; unpushed work is lost when the job ends.';
+          const promptMessage = subState.messages[subState.messages.length - 1];
+          const prompt = `${ typeof promptMessage?.content === 'string' ? promptMessage.content : task.prompt }${ persistenceNotice }`;
+          const instructions = [
+            String(subState.metadata.agent?.prompt ?? ''),
+            'Use the baked-in `sulla` CLI for Sulla tools. Call agents/return_result before exiting.',
+          ].filter(Boolean).join('\n\n');
+          const { runAgentContainer } = await import('../../services/AgentContainerLauncher');
+          const container = await runAgentContainer({
+            jobId: activityJobId,
+            taskIndex: index,
+            provider,
+            model: subState.metadata.agent?.model,
+            prompt,
+            instructions,
+            state: subState,
+            signal: jobAbortSignal,
+          });
+          const settled = (await getJob(activityJobId))?.tasks[index];
+          const result = settled?.returnedAt
+            ? returnedJobResult(settled, label, threadId)
+            : { label, status: 'error' as const, output: `failed: no_contract — container exited without returning its "${ contract.name }" contract.\n\nOutput:\n${ container.output }`, threadId, contract: contract.name };
+          await safeFinishDelegation(delegationId, {
+            outcome: result.status === 'completed' ? 'completed' : 'failed',
+            detail: result.status === 'completed' ? '' : `${ result.status }: ${ result.output }`,
+          });
+          await updateJobTask(activityJobId, index, { status: result.status, threadId, finishedAt: Date.now() });
+          await emitSubAgentExchange(parentChannel, parentThreadId, {
+            direction: 'from_agent',
+            agentId: selector || parentChannel,
+            label,
+            summary: result.status === 'completed' ? `${ label } finished` : `${ label } is ${ result.status }`,
+            detail: result.output,
+            status: result.status === 'completed' ? 'done' : 'failed',
+            jobId: activityJobId,
+            taskIndex: index,
+            conversationId: threadId,
+          });
+          return result;
+        }
+
         // Execute the sub-agent graph
         let finalState = await graph.execute(subState);
         const returnedTask = async() => {
