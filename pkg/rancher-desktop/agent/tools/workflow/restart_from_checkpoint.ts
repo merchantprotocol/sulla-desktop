@@ -16,6 +16,24 @@ export class RestartFromCheckpointWorker extends BaseTool {
       };
     }
 
+    if (executionId && nodeId) {
+      try {
+        const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
+        const manager = getWorkflowManagerClient();
+        if (await manager.isHealthy(true)) {
+          const launched = await manager.request('POST', `/v1/runs/${ encodeURIComponent(executionId) }/restart`, { nodeId });
+          return {
+            successBoolean: true,
+            responseString: JSON.stringify({ ...launched as object, status: 'restarted-by-workflow-manager' }, null, 2),
+          };
+        }
+        manager.logFallback('restart_from_checkpoint');
+      } catch (error) {
+        const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
+        getWorkflowManagerClient().logFallback('restart_from_checkpoint', error);
+      }
+    }
+
     const { WorkflowCheckpointModel } = await import('../../database/models/WorkflowCheckpointModel');
 
     // If only workflowId provided, list recent executions with their checkpoints

@@ -108,13 +108,27 @@ export function getWorkflowSchedulerService(): WorkflowSchedulerService {
 export class WorkflowSchedulerService {
   private initialized = false;
   private scheduledJobs = new Map<string, ScheduledWorkflowJob>();
+  private containerOwned = false;
+  private recoveryMonitor: ReturnType<typeof setInterval> | null = null;
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
     this.initialized = true;
-    await this.scanAndSchedule();
-    await this.catchUpMissedFires();
+    await this.refresh();
+    if (this.containerOwned) {
+      try {
+        const { getWorkflowManagerClient } = await import('./WorkflowManagerClient');
+        await getWorkflowManagerClient().request('POST', '/v1/schedules/catch-up', {});
+      } catch (err) {
+        await this.enableFallback('schedule catch-up', err);
+        await this.catchUpMissedFires();
+      }
+    } else {
+      await this.catchUpMissedFires();
+    }
+    this.recoveryMonitor = setInterval(() => void this.takeContainerOwnershipIfHealthy(), 5_000);
+    this.recoveryMonitor.unref();
   }
 
   /**
@@ -152,7 +166,21 @@ export class WorkflowSchedulerService {
    * registry. Called on `workflow-save` / promotion events.
    */
   async refresh(): Promise<void> {
-    await this.scanAndSchedule();
+    const { getWorkflowManagerClient } = await import('./WorkflowManagerClient');
+    const manager = getWorkflowManagerClient();
+    try {
+      if (await manager.isHealthy(true)) {
+        this.cancelAll();
+        await manager.request('POST', '/v1/schedules/refresh', {});
+        this.containerOwned = true;
+        console.log('[WorkflowSchedulerService] Workflow manager is healthy; in-process scheduling is disabled');
+        return;
+      }
+    } catch (err) {
+      await this.enableFallback('schedule refresh', err);
+      return;
+    }
+    await this.enableFallback('workflow scheduling');
   }
 
   /**
@@ -170,8 +198,18 @@ export class WorkflowSchedulerService {
    * double-dispatched. Never throws into the resume path.
    */
   async resumeCatchUp(): Promise<void> {
-    await this.scanAndSchedule();
-    await this.catchUpMissedFires();
+    await this.refresh();
+    if (this.containerOwned) {
+      try {
+        const { getWorkflowManagerClient } = await import('./WorkflowManagerClient');
+        await getWorkflowManagerClient().request('POST', '/v1/schedules/catch-up', {});
+      } catch (err) {
+        await this.enableFallback('resume catch-up', err);
+        await this.catchUpMissedFires();
+      }
+    } else {
+      await this.catchUpMissedFires();
+    }
   }
 
   /**
@@ -179,7 +217,10 @@ export class WorkflowSchedulerService {
    */
   shutdown(): void {
     this.cancelAll();
+    if (this.recoveryMonitor) clearInterval(this.recoveryMonitor);
+    this.recoveryMonitor = null;
     this.initialized = false;
+    this.containerOwned = false;
     console.log('[WorkflowSchedulerService] Shut down');
   }
 
@@ -205,6 +246,36 @@ export class WorkflowSchedulerService {
   }
 
   // ── Private ──
+
+  private async enableFallback(operation: string, err?: unknown): Promise<void> {
+    const { getWorkflowManagerClient } = await import('./WorkflowManagerClient');
+
+    getWorkflowManagerClient().logFallback(operation, err);
+    this.containerOwned = false;
+    await this.scanAndSchedule();
+  }
+
+  /**
+   * A manager can finish starting after Desktop has already armed its recovery
+   * scheduler. Transfer ownership as soon as it is usable, and also call this
+   * at fire time so the two schedulers can never dispatch the same tick.
+   */
+  private async takeContainerOwnershipIfHealthy(): Promise<boolean> {
+    if (this.containerOwned) return true;
+    const { getWorkflowManagerClient } = await import('./WorkflowManagerClient');
+    const manager = getWorkflowManagerClient();
+    if (!await manager.isHealthy(true)) return false;
+    try {
+      await manager.request('POST', '/v1/schedules/refresh', {});
+      this.cancelAll();
+      this.containerOwned = true;
+      console.log('[WorkflowSchedulerService] Workflow manager recovered; transferred schedule ownership and disabled in-process jobs');
+      return true;
+    } catch (err) {
+      console.warn('[WorkflowSchedulerService] Workflow manager became healthy but could not accept schedule ownership:', err);
+      return false;
+    }
+  }
 
   /**
    * Query the DB for production workflows and (re)register a cron job
@@ -267,6 +338,10 @@ export class WorkflowSchedulerService {
       async() => {
         console.log(`[WorkflowSchedulerService] Cron fired for workflow "${ workflowName }" (node ${ node.id })`);
         try {
+          if (await this.takeContainerOwnershipIfHealthy()) {
+            console.log(`[WorkflowSchedulerService] Skipped local fire for "${ workflowName }" because the manager owns schedules`);
+            return;
+          }
           // Dynamic import — avoids a hard cycle between the scheduler
           // (agent-layer) and the routine execution helper (main-layer).
           const { executeRoutine } = await import('@pkg/main/sullaRoutineTemplateEvents');

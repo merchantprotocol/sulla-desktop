@@ -14,6 +14,7 @@ import { up as up_0114, down as down_0114 } from './0114_unify_agent_tab_jobs';
 import { up as up_0115, down as down_0115 } from './0115_create_skill_definitions';
 import { up as up_0116, down as down_0116 } from './0116_create_marketplace_packages';
 import { up as up_0117, down as down_0117 } from './0117_create_legacy_artifact_import_ledger';
+import { up as up_0118, down as down_0118 } from './0118_add_workflow_container_runtime';
 import { up as up_0098, down as down_0098 } from './0098_create_decisions';
 import { up as up_0099, down as down_0099 } from './0099_create_browser_bookmarks';
 import { up as up_0100, down as down_0100 } from './0100_create_reflex_engine';
@@ -209,4 +210,5 @@ export const migrationsRegistry = [
   { name: '0115_create_skill_definitions', up: up_0115, down: down_0115 },
   { name: '0116_create_marketplace_packages', up: up_0116, down: down_0116 },
   { name: '0117_create_legacy_artifact_import_ledger', up: up_0117, down: down_0117 },
+  { name: '0118_add_workflow_container_runtime', up: up_0118, down: down_0118 },
 ] as const;

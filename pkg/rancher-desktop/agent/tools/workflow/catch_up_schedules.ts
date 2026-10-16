@@ -155,6 +155,24 @@ export class CatchUpSchedulesWorker extends BaseTool {
   };
 
   protected async _validatedCall(input: { dryRun?: boolean; lookbackDays?: number }): Promise<ToolResponse> {
+    try {
+      const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
+      const manager = getWorkflowManagerClient();
+      if (await manager.isHealthy(true)) {
+        const result = await manager.request<{ results: any[] }>('POST', '/v1/schedules/catch-up', input);
+        const missed = result.results.filter(item => item.status === 'missed' || item.status === 'dispatched');
+        const dispatched = result.results.filter(item => item.status === 'dispatched');
+        return {
+          successBoolean: true,
+          responseString: `Workflow manager catch-up: ${ missed.length } missed fire(s), ${ dispatched.length } dispatched.\n${ result.results.map(item => `  • ${ item.workflowId } — ${ item.status } (${ item.expectedAt })`).join('\n') }`,
+        };
+      }
+      manager.logFallback('schedule catch-up');
+    } catch (error) {
+      const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
+      getWorkflowManagerClient().logFallback('schedule catch-up', error);
+    }
+
     let result: CatchUpScanResult;
     try {
       result = await runCatchUpScan(input);

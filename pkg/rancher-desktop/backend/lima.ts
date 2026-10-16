@@ -2936,6 +2936,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla_python_runtime',
       'sulla_shell_runtime',
       'sulla_node_runtime',
+      'sulla_workflow_manager',
     ];
     if (settingsImpl.getSettings().sullaVaultV2Enabled) requiredServices.push('sulla_vault');
 
@@ -2986,6 +2987,39 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8787/healthz'], interval: '10s', timeout: '3s', retries: 5 },
       };
     }
+
+    // Desktop is a single-node Sulla Server. The manager and its ephemeral
+    // runners use the same image that the server deployment will use; only
+    // the launcher driver differs (Docker here, Kubernetes on k3s).
+    compose.services.workflow_manager = {
+      build: { context: process.cwd(), dockerfile: 'services/sulla-workflows/Dockerfile' },
+      image: 'sulla-workflows:local',
+      container_name: 'sulla_workflow_manager',
+      // The manager alone needs Docker socket access to launch short-lived
+      // runners. Runners retain the image's unprivileged `node` user and are
+      // granted only the socket GID discovered by the manager.
+      user: 'root',
+      command: ['dist/services/sulla-workflows/src/manager.js'],
+      depends_on: {
+        postgres: { condition: 'service_healthy' },
+        redis: { condition: 'service_healthy' },
+      },
+      env_file: ['/etc/sulla-env'],
+      environment: {
+        SULLA_WORKFLOW_ROLE: 'manager',
+        SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+        SULLA_REDIS_URL: 'redis://redis:6379',
+        SULLA_MANAGER_URL: 'http://workflow_manager:8788',
+        SULLA_TOOL_API_URL: 'http://host.docker.internal:3000',
+        SULLA_WORKFLOW_IMAGE: 'sulla-workflows:local',
+        SULLA_DOCKER_NETWORK: 'sulla_default',
+      },
+      extra_hosts: ['host.docker.internal:host-gateway'],
+      ports: ['127.0.0.1:30122:8788'],
+      volumes: ['/var/run/docker.sock:/var/run/docker.sock'],
+      restart: 'unless-stopped',
+      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
+    };
 
     // Modify dynamic values like passwords
     if (compose.services?.postgres?.environment) {
@@ -3124,7 +3158,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     for (const service of ['sulla_postgres', 'sulla_redis']) {
       await this.waitForDockerServiceHealthy(service);
     }
-    const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime'];
+    const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime', 'sulla_workflow_manager'];
     if (settingsImpl.getSettings().sullaVaultV2Enabled) optionalServices.push('sulla_vault');
     for (const service of optionalServices) {
       try {
