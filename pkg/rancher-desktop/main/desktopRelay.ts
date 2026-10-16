@@ -72,9 +72,11 @@ type Role = 'desktop' | 'mobile';
 
 interface IncomingMessage {
   type:            string;
-  requestId?: string;
-  method?: string;
-  params?: Record<string, unknown>;
+  requestId?:      string;
+  linkId?:         string;
+  path?:           string;
+  method?:         string;
+  params?:         Record<string, unknown>;
   // content is a string, or text/image/document parts when the phone
   // attached files — see mobileRelayContent.ts.
   messages?:       { role: 'user' | 'assistant' | 'system'; content: unknown }[];
@@ -494,6 +496,12 @@ export class DesktopRelayClient {
       return;
     }
 
+    if (msg.type === 'share_fetch') {
+      if (!msg.requestId || !msg.linkId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
+      await this.serveShare(msg);
+      return;
+    }
+
     if (msg.type === 'chat') {
       if (msg.conversationId) this.secureRoutes.delete(msg.conversationId);
       // When mobile targets a specific desktop, only the matching device
@@ -528,6 +536,27 @@ export class DesktopRelayClient {
     }
 
     console.log(`[DesktopRelay] Unknown message type: ${ msg.type }`);
+  }
+
+  private async serveShare(msg: IncomingMessage): Promise<void> {
+    if (!msg.requestId || !msg.linkId) return;
+    const frame = (type: string, payload: Record<string, unknown> = {}) => this.sendUnchecked({ type, requestId: msg.requestId, ...payload });
+    try {
+      const token = await SullaSettingsModel.getServicePassword();
+      const url = new URL(`/v1/local/shares/${ encodeURIComponent(msg.linkId) }/content`, 'http://127.0.0.1:30124');
+      if (msg.path) url.searchParams.set('path', msg.path);
+      const response = await fetch(url, { headers: { 'X-Sulla-Files-Token': token } });
+      if (!response.ok || !response.body) throw new Error((await response.text()).slice(0, 200) || `Sulla Files returned ${ response.status }`);
+      frame('share_fetch_start', { mime: response.headers.get('content-type') || 'application/octet-stream', name: decodeURIComponent(response.headers.get('x-sulla-filename') || 'shared-file') });
+      const reader = response.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read(); if (done) break;
+        frame('share_fetch_chunk', { data: Buffer.from(value).toString('base64') });
+      }
+      frame('share_fetch_end');
+    } catch (error) {
+      frame('share_fetch_error', { error: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   /**
