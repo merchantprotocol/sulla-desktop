@@ -236,3 +236,4 @@ export function unwrapCollectionKey(encryptedCollectionKey: EncryptedEnvelope, o
 
 export const wrapItemKeyForAgent = wrapKeyToPublicKey;
 export const unwrapItemKeyForAgent = unwrapKeyFromPublicKey;
+export * from './itemSchema.js';
