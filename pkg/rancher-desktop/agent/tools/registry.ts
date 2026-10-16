@@ -7,10 +7,10 @@ import type { ToolOperation } from './base';
 type ToolLoader = () => Promise<any>;
 
 export interface ToolEntry {
-  name:        string;
-  description: string;
-  category:    string;
-  loader:      ToolLoader;
+  name:             string;
+  description:      string;
+  category:         string;
+  loader:           ToolLoader;
   executionTarget?: ToolExecutionTarget;
 }
 

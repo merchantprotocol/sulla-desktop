@@ -7,7 +7,6 @@ import { Pool } from 'pg';
 import { executeCatalogTool, initializeCatalog, listTools, resolveTool } from './catalog.js';
 import { config, validateConfig } from './config.js';
 import { RedisRevocationStore, RequestStore } from './stores.js';
-import { INTERNAL_TOOL_CATEGORIES } from '../../../pkg/rancher-desktop/agent/tools/executionTargets.js';
 import { CapabilityTokenError, verifyCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
 import { HttpDesktopExecutor } from '../../../pkg/rancher-desktop/runtime/desktopExecutor.js';
 
@@ -38,7 +37,6 @@ app.get('/healthz', async(_request, response) => {
 function help(category?: string): string {
   const selected = listTools(category);
   if (category) {
-    if (!INTERNAL_TOOL_CATEGORIES.has(category)) return '';
     return `\n## ${ category }\n${ selected.map(tool => `  ${ tool.name }\n    ${ tool.description }\n    Target: ${ tool.executionTarget }`).join('\n') }\n`;
   }
   const counts = new Map<string, number>();
@@ -49,7 +47,7 @@ function help(category?: string): string {
 app.get('/v1/tools/help', (_request, response) => response.type('text/plain').send(help()));
 app.get('/v1/tools/help/:category', (request, response) => {
   const category = String(request.params.category);
-  if (!INTERNAL_TOOL_CATEGORIES.has(category)) return response.status(404).json({ success: false, error: { code: 'category_not_found', message: `Category ${ category } was not found` } });
+  if (listTools(category).length === 0) return response.status(404).json({ success: false, error: { code: 'category_not_found', message: `Category ${ category } was not found` } });
   response.type('text/plain').send(help(category));
 });
 
@@ -85,9 +83,9 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
         new Promise((_resolve, reject) => setTimeout(() => reject(new Error('Tool deadline exceeded')), config.requestTimeoutMs)),
       ])
       : await desktop.execute(ctx, category, requested, args, { deadlineMs: config.requestTimeoutMs });
-    const forwarded = result as any;
-    if (tool.executionTarget !== 'catalog' && typeof forwarded === 'object' && forwarded?.success === false) {
-      status = forwarded.error?.code === 'deadline_exceeded' ? 504 : 503;
+    if (tool.executionTarget !== 'catalog') {
+      const forwarded = result as Awaited<ReturnType<typeof desktop.execute>>;
+      if (!forwarded.success) status = forwarded.error?.code === 'deadline_exceeded' ? 504 : 503;
       return response.status(status).json({ ...forwarded, request_id: requestId });
     }
     response.json({ success: true, result, request_id: requestId });

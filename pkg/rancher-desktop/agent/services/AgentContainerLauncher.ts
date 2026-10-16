@@ -5,8 +5,8 @@ import * as path from 'node:path';
 
 import Electron from 'electron';
 
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { redisClient } from '../database/RedisClient';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { ensureCodexAuthFile, codexAuthPath } from '../util/codexAuthFile';
 
 import { resolveSullaServiceImage } from '@pkg/backend/sullaServiceImages';
@@ -210,15 +210,15 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const allowed = metadata.allowedToolNames ?? [];
     const scopes = allowed.length === 0 || allowed.includes('exec') ? ['*'] : allowed;
     const capability = issueCapabilityToken({
-      sub: metadata.userId ?? 'desktop-user',
-      org_id: metadata.orgId,
-      agent_id: metadata.agentId,
-      pod_id: containerName,
-      thread_id: metadata.threadId,
-      job_id: run.jobId,
-      device_id: metadata.deviceId,
+      sub:              metadata.userId ?? 'desktop-user',
+      org_id:           metadata.orgId,
+      agent_id:         metadata.agentId,
+      pod_id:           containerName,
+      thread_id:        metadata.threadId,
+      job_id:           run.jobId,
+      device_id:        metadata.deviceId,
       scopes,
-      jti: capabilityJti,
+      jti:              capabilityJti,
       expiresInSeconds: Math.ceil((IDLE_MS + 5 * 60_000) / 1000),
     }, deriveCapabilitySigningKey(installationSecret));
     const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(300) })

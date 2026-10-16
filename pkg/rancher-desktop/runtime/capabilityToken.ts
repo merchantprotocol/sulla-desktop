@@ -86,11 +86,17 @@ export async function verifyCapabilityToken(
     throw new CapabilityTokenError('invalid', 'Invalid capability signature');
   }
   let claims: CapabilityTokenClaims;
-  try { claims = decodeJson(payload) } catch { throw new CapabilityTokenError('malformed', 'Malformed capability claims') }
+  try {
+    const parsedHeader = decodeJson(header);
+    if (parsedHeader.alg !== 'HS256' || parsedHeader.typ !== 'JWT') throw new Error('Unsupported capability header');
+    claims = decodeJson(payload);
+  } catch { throw new CapabilityTokenError('malformed', 'Malformed capability token') }
   if (claims.v !== 1 || claims.aud !== 'sulla-tools') throw new CapabilityTokenError('audience', 'Capability audience is not sulla-tools');
   const now = options.now ?? Math.floor(Date.now() / 1000);
   if (!Number.isFinite(claims.exp) || claims.exp <= now) throw new CapabilityTokenError('expired', 'Capability token has expired');
-  if (!claims.sub || !claims.jti || !Array.isArray(claims.scopes)) throw new CapabilityTokenError('malformed', 'Capability token is missing required claims');
+  if (!claims.iss || !claims.sub || !claims.jti || !Number.isFinite(claims.iat) || !Array.isArray(claims.scopes) || !claims.scopes.every(scope => typeof scope === 'string')) {
+    throw new CapabilityTokenError('malformed', 'Capability token is missing required claims');
+  }
   if (options.revocations && await options.revocations.isRevoked(claims.jti)) throw new CapabilityTokenError('revoked', 'Capability token has been revoked');
   if (options.category && options.tool && !scopeAllows(claims.scopes, options.category, options.tool)) {
     throw new CapabilityTokenError('scope', `Capability does not allow ${ options.category }/${ options.tool }`);

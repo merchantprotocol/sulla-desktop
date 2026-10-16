@@ -29,7 +29,9 @@ export async function initializeCatalog(): Promise<void> {
 }
 
 export function resolveTool(category: string, requested: string): CatalogTool | undefined {
-  return tools.get(`${ category }_${ requested }`) ?? tools.get(requested);
+  const tool = tools.get(`${ category }_${ requested }`) ?? tools.get(requested);
+
+  return tool?.category === category ? tool : undefined;
 }
 
 export function listTools(category?: string): CatalogTool[] {

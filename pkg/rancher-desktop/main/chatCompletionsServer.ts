@@ -243,8 +243,17 @@ export class ChatCompletionsServer {
       }, req.path);
       if (!valid && token && this.apiToken) {
         try {
-          await verifyCapabilityToken(token, deriveCapabilitySigningKey(this.apiToken));
-          valid = true;
+          const internal = /^\/v1\/tools\/internal\/([^/]+)\/([^/]+)\/call$/.exec(req.path);
+          if (internal) {
+            await verifyCapabilityToken(token, deriveCapabilitySigningKey(this.apiToken), {
+              category: decodeURIComponent(internal[1]),
+              tool:     decodeURIComponent(internal[2]),
+            });
+            valid = true;
+          } else if (req.path === '/v1/tools/help' || req.path.startsWith('/v1/tools/help/')) {
+            await verifyCapabilityToken(token, deriveCapabilitySigningKey(this.apiToken));
+            valid = true;
+          }
         } catch { /* invalid capability */ }
       }
 
@@ -307,7 +316,7 @@ export class ChatCompletionsServer {
     // and private/loopback source addresses; capability tokens never enter here.
     this.app.post('/internal/desktop-executor/:category/:tool', async(req: Request, res: Response) => {
       const remote = req.socket.remoteAddress ?? '';
-      const privateSource = /^(::1|::ffff:127\.|127\.|::ffff:10\.|10\.|::ffff:172\.|172\.|::ffff:192\.168\.|192\.168\.)/.test(remote);
+      const privateSource = /^(::1|::ffff:127\.|127\.|::ffff:10\.|10\.|::ffff:172\.(?:1[6-9]|2\d|3[01])\.|172\.(?:1[6-9]|2\d|3[01])\.|::ffff:192\.168\.|192\.168\.)/.test(remote);
       const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, '');
       if (!privateSource || !this.apiToken || bearer !== this.apiToken) {
         return res.status(403).json({ success: false, error: { code: 'desktop_executor_forbidden', message: 'Desktop executor is private' } });
@@ -1131,13 +1140,13 @@ export class ChatCompletionsServer {
                 ? inbound
                 : issueCapabilityToken({ sub: 'desktop-cli', scopes: [`${ slug }/*`], expiresInSeconds: 60 }, deriveCapabilitySigningKey(this.apiToken!));
               const upstream = await fetch(`http://127.0.0.1:30123/v1/tools/internal/${ encodeURIComponent(slug) }/${ encodeURIComponent(endpoint) }/call`, {
-                method: 'POST',
+                method:  'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  Authorization: `Bearer ${ capability }`,
+                  Authorization:  `Bearer ${ capability }`,
                   'X-Request-Id': req.header('X-Request-Id') ?? crypto.randomUUID(),
                 },
-                body: JSON.stringify(params),
+                body:   JSON.stringify(params),
                 signal: AbortSignal.timeout(30_000),
               });
               const text = await upstream.text();
