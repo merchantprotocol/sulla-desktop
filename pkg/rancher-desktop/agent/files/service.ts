@@ -122,6 +122,10 @@ export class SullaFilesService {
     const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [file.id, collection.id, file.current_version_id, mHash, input.bytes.byteLength, creatorType, context.job_id ?? context.sub, input.message ?? null, context.device_id ?? 'desktop'])).rows[0];
     await client.query('UPDATE files SET current_version_id=$2,mime=$3,size=$4,expires_at=$5,search_text=$6,deleted_at=NULL,updated_at=NOW() WHERE id=$1', [file.id, version.id, input.mime, input.bytes.byteLength, expiry, text]);
+    if (text) {
+      const parts = text.match(/[\s\S]{1,4000}/g) ?? [];
+      for (const [ordinal, content] of parts.entries()) await client.query('INSERT INTO file_search_chunks(file_id,version_id,ordinal,content) VALUES($1,$2,$3,$4) ON CONFLICT(version_id,ordinal) DO UPDATE SET content=EXCLUDED.content', [file.id, version.id, ordinal, content]);
+    }
     await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [collection.id, ids]);
     await client.query(`INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')`, [collection.id, file.id, version.id]);
     await this.replaceEdges(client, file.id, input.path, text, creatorType, context.job_id ?? context.sub, input.derivedFrom ?? []);
@@ -183,10 +187,27 @@ export class SullaFilesService {
     await postgresClient.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES('file',$1,'file',$2,$3,$4) ON CONFLICT DO NOTHING`, [fileId, targetFileId, kind, context.job_id ?? context.sub]);
   }
 
-  async search(context: ToolExecutionContext, collectionId: string, query: string): Promise<any[]> {
+  async search(context: ToolExecutionContext, collectionId: string, query: string, filters: { folder?: string; type?: string; person?: string; from?: Date; to?: Date } = {}): Promise<any[]> {
     await this.collection(context, collectionId, 'view');
-    return postgresClient.query(`SELECT id,path,mime,size,updated_at,ts_rank(search_vector, plainto_tsquery('simple',$2)) rank FROM files
-      WHERE collection_id=$1 AND deleted_at IS NULL AND search_vector @@ plainto_tsquery('simple',$2) ORDER BY rank DESC, path LIMIT 100`, [collectionId, query]);
+    const args: any[] = [collectionId, query];
+    const where = ['collection_id=$1', 'deleted_at IS NULL', `search_vector @@ websearch_to_tsquery('simple',$2)`];
+    if (filters.folder) { args.push(`${ filters.folder.replace(/%/g, '\\%') }%`); where.push(`path LIKE $${ args.length } ESCAPE '\\'`); }
+    if (filters.type) { args.push(filters.type); where.push(`mime=$${ args.length }`); }
+    if (filters.person) { args.push(filters.person); where.push(`(person_id=$${ args.length } OR created_by_id=$${ args.length })`); }
+    if (filters.from) { args.push(filters.from); where.push(`updated_at >= $${ args.length }`); }
+    if (filters.to) { args.push(filters.to); where.push(`updated_at <= $${ args.length }`); }
+    return postgresClient.query(`SELECT id,path,mime,size,updated_at,created_by_id,
+      ts_rank_cd(search_vector, websearch_to_tsquery('simple',$2)) rank,
+      left(coalesce(search_text,''),240) snippet
+      FROM files WHERE ${ where.join(' AND ') }
+      ORDER BY rank DESC, updated_at DESC, path LIMIT 100`, args);
+  }
+
+  async searchAll(context: ToolExecutionContext, query: string, filters: { folder?: string; type?: string; person?: string; from?: Date; to?: Date } = {}): Promise<any[]> {
+    const collections = await postgresClient.query<{ id: string }>(`SELECT c.id FROM collections c JOIN collection_acl a ON a.collection_id=c.id
+      WHERE a.principal_type='user' AND a.principal_id=$1 AND a.role IN ('view','use-by-agents','edit','manage')`, [context.sub]);
+    const rows = await Promise.all(collections.map(c => this.search(context, c.id, query, filters)));
+    return rows.flat().sort((a, b) => Number(b.rank ?? 0) - Number(a.rank ?? 0)).slice(0, 100);
   }
 
   async promote(context: ToolExecutionContext, fileId: string, targetCollectionId: string, path?: string): Promise<void> {
