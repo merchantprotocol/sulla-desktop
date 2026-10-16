@@ -102,11 +102,14 @@ export class SharesService {
   }
 
   async revoke(identity: Identity, id: string, cloudToken?: string) {
-    await this.get(identity, id); if (cloudToken) await this.cloud(`/shares/${ encodeURIComponent(id) }`, cloudToken, { method: 'DELETE' });
+    await this.get(identity, id);
+    if (!cloudToken) throw Object.assign(new Error('Sulla Cloud sign-in required to revoke a public link'), { status: 401 });
+    await this.cloud(`/shares/${ encodeURIComponent(id) }`, cloudToken, { method: 'DELETE' });
     await this.db.query('UPDATE file_share_links SET revoked_at=COALESCE(revoked_at,NOW()),updated_at=NOW() WHERE id=$1', [id]); return { ok: true };
   }
 
   async setKeepAvailable(identity: Identity, id: string, enabled: boolean, cloudToken: string) {
+    if (!cloudToken) throw Object.assign(new Error('Sulla Cloud sign-in required to change link availability'), { status: 401 });
     const row = await this.get(identity, id); if (row.target_type !== 'file' && enabled) throw Object.assign(new Error('folder copies are not supported'), { status: 400 });
     await this.cloud(`/shares/${ encodeURIComponent(id) }`, cloudToken, { method: 'PATCH', body: JSON.stringify({ keepAvailable: enabled }) });
     if (enabled) await this.upload(id, cloudToken);
