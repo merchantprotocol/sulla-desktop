@@ -8,7 +8,8 @@
     "build": "npm run build:console && tsc -p tsconfig.json",
     "build:console": "node console/build.mjs",
     "start": "node dist/index.js",
-    "test:security": "npm run build && node --test dist/rbac.test.js"
+    "test:security": "npm run build && node --test dist/rbac.test.js",
+    "test:sync": "npm run build && node --test dist/sync.test.js"
   },
   "dependencies": {
     "@sulla/vault-crypto": "file:../../packages/vault-crypto",

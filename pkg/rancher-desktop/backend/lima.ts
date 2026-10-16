@@ -34,6 +34,7 @@ import BackendHelper from './backendHelper';
 import { ContainerEngineClient, MobyClient, NerdctlClient } from './containerClient';
 import * as K8s from './k8s';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
+import { resolveSullaServiceImage } from './sullaServiceImages';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import DEPENDENCY_VERSIONS from '@pkg/assets/dependencies.yaml';
@@ -278,17 +279,6 @@ const PREVIOUS_LIMA_SUDOERS_LOCATION = '/private/etc/sudoers.d/rancher-desktop-l
 // (though this loses the type guarantees around it not modifying the instance).
 // [1]: https://www.typescriptlang.org/docs/handbook/2/classes.html#this-parameters
 // [2]: https://github.com/microsoft/TypeScript/issues/46802
-// The workflow manager image is built from the source checkout until a published
-// image exists. Packaged apps have no services/ folder, so they keep the in-app
-// engine (the manager client falls back when the container is absent).
-function workflowManagerSourceAvailable(): boolean {
-  return fs.existsSync(path.join(process.cwd(), 'services', 'sulla-workflows', 'Dockerfile'));
-}
-
-function vaultContainerAvailable(): boolean {
-  return fs.existsSync(path.join(process.cwd(), 'services', 'sulla-vault', 'Dockerfile')) || Boolean(process.env.SULLA_VAULT_IMAGE);
-}
-
 export default class LimaBackend extends events.EventEmitter implements VMBackend, VMExecutor {
   constructor(arch: Architecture, kubeFactory: (backend: LimaBackend) => K8s.KubernetesBackend) {
     super();
@@ -311,6 +301,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   readonly kubeBackend:   K8s.KubernetesBackend;
   readonly executor = this;
   #containerEngineClient: ContainerEngineClient | undefined;
+  #activeOptionalSullaServices = new Set<string>();
+  #optionalSullaFallbackImages = new Map<string, { env: string; image: string }>();
 
   get containerEngineClient() {
     if (this.#containerEngineClient) {
@@ -2948,11 +2940,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla_shell_runtime',
       'sulla_node_runtime',
     ];
-    if (workflowManagerSourceAvailable()) requiredServices.push('sulla_workflow_manager');
-    if (settingsImpl.getSettings().sullaVaultV2Enabled && vaultContainerAvailable()) {
-      requiredServices.push('sulla_vault');
-    }
-
+    requiredServices.push('sulla_workflow_manager');
+    if (settingsImpl.getSettings().sullaVaultV2Enabled) requiredServices.push('sulla_vault');
     try {
       for (const service of requiredServices) {
         const status = await this.execCommand(
@@ -2984,12 +2973,22 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     const sullaServicePassword = escapeForCompose(await SullaSettingsModel.getServicePassword());
-    if (settingsImpl.getSettings().sullaVaultV2Enabled && vaultContainerAvailable()) {
-      const sourceAvailable = fs.existsSync(path.join(process.cwd(), 'services', 'sulla-vault', 'Dockerfile'));
+    this.#optionalSullaFallbackImages.clear();
+    if (settingsImpl.getSettings().sullaVaultV2Enabled) {
+      const vaultImage = resolveSullaServiceImage(
+        'sulla-vault', process.cwd(), Electron.app.getVersion(), process.env.SULLA_VAULT_IMAGE,
+      );
+
+      const image = vaultImage.build ? vaultImage.image : `\${SULLA_VAULT_IMAGE:-${ vaultImage.image }}`;
+
+      if (!vaultImage.build && !process.env.SULLA_VAULT_IMAGE && !vaultImage.image.endsWith(':latest')) {
+        this.#optionalSullaFallbackImages.set('sulla_vault', {
+          env: 'SULLA_VAULT_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-vault:latest',
+        });
+      }
       compose.services.sulla_vault = {
-        ...(sourceAvailable
-          ? { build: { context: process.cwd(), dockerfile: 'services/sulla-vault/Dockerfile' }, image: 'sulla-vault:local' }
-          : { image: process.env.SULLA_VAULT_IMAGE }),
+        ...vaultImage,
+        image,
         container_name: 'sulla_vault',
         depends_on: { postgres: { condition: 'service_healthy' } },
         environment: {
@@ -3006,9 +3005,19 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Desktop is a single-node Sulla Server. The manager and its ephemeral
     // runners use the same image that the server deployment will use; only
     // the launcher driver differs (Docker here, Kubernetes on k3s).
-    if (workflowManagerSourceAvailable()) compose.services.workflow_manager = {
-      build: { context: process.cwd(), dockerfile: 'services/sulla-workflows/Dockerfile' },
-      image: 'sulla-workflows:local',
+    const workflowImage = resolveSullaServiceImage(
+      'sulla-workflows', process.cwd(), Electron.app.getVersion(), process.env.SULLA_WORKFLOW_IMAGE,
+    );
+    const image = workflowImage.build ? workflowImage.image : `\${SULLA_WORKFLOW_IMAGE:-${ workflowImage.image }}`;
+
+    if (!workflowImage.build && !process.env.SULLA_WORKFLOW_IMAGE && !workflowImage.image.endsWith(':latest')) {
+      this.#optionalSullaFallbackImages.set('workflow_manager', {
+        env: 'SULLA_WORKFLOW_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-workflows:latest',
+      });
+    }
+    compose.services.workflow_manager = {
+      ...workflowImage,
+      image,
       container_name: 'sulla_workflow_manager',
       // The manager alone needs Docker socket access to launch short-lived
       // runners. Runners retain the image's unprivileged `node` user and are
@@ -3026,7 +3035,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_MANAGER_URL: 'http://workflow_manager:8788',
         SULLA_TOOL_API_URL: 'http://host.docker.internal:3000',
-        SULLA_WORKFLOW_IMAGE: 'sulla-workflows:local',
+        SULLA_WORKFLOW_IMAGE: image,
         SULLA_DOCKER_NETWORK: 'sulla_default',
       },
       extra_hosts: ['host.docker.internal:host-gateway'],
@@ -3160,7 +3169,45 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     });
 
     await this.progressTracker.action('Deploying new containers', 63, async() => {
-      await this.execCommand({ root: true }, 'docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla', 'up', '-d');
+      const compose = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'];
+
+      // Start the core independently so an unavailable optional published image
+      // can never prevent Postgres, Redis, or the function runtimes from starting.
+      await this.execCommand(
+        { root: true }, ...compose, 'up', '-d',
+        'postgres', 'redis', 'python_runtime', 'shell_runtime', 'node_runtime',
+      );
+
+      this.#activeOptionalSullaServices.clear();
+      const optionalServices = ['workflow_manager'];
+
+      if (settingsImpl.getSettings().sullaVaultV2Enabled) optionalServices.push('sulla_vault');
+      for (const service of optionalServices) {
+        try {
+          // Compose performs the normal pull/build here. --no-deps protects the
+          // already-running core if the image is missing or the user is offline.
+          await this.execCommand({ root: true }, ...compose, 'up', '-d', '--no-deps', service);
+          this.#activeOptionalSullaServices.add(service);
+        } catch (error) {
+          const fallback = this.#optionalSullaFallbackImages.get(service);
+          let unavailableError = error;
+
+          if (fallback) {
+            try {
+              console.warn(`[Sulla] Pinned image for ${ service } unavailable; trying ${ fallback.image }`);
+              await this.execCommand(
+                { root: true }, 'env', `${ fallback.env }=${ fallback.image }`,
+                ...compose, 'up', '-d', '--no-deps', service,
+              );
+              this.#activeOptionalSullaServices.add(service);
+              continue;
+            } catch (fallbackError) {
+              unavailableError = fallbackError;
+            }
+          }
+          console.warn(`[Sulla] Optional service ${ service } unavailable; using its in-app fallback:`, unavailableError);
+        }
+      }
     });
   }
 
@@ -3174,10 +3221,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       await this.waitForDockerServiceHealthy(service);
     }
     const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime'];
-    if (workflowManagerSourceAvailable()) optionalServices.push('sulla_workflow_manager');
-    if (settingsImpl.getSettings().sullaVaultV2Enabled && vaultContainerAvailable()) {
-      optionalServices.push('sulla_vault');
-    }
+
+    if (this.#activeOptionalSullaServices.has('workflow_manager')) optionalServices.push('sulla_workflow_manager');
+    if (this.#activeOptionalSullaServices.has('sulla_vault')) optionalServices.push('sulla_vault');
     for (const service of optionalServices) {
       try {
         await this.waitForDockerServiceHealthy(service, 60);
