@@ -7,6 +7,7 @@ import express, { Request, Response, NextFunction } from 'express';
 
 import { getMCPServerHost } from './MCPServerHost';
 import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
+import { getConfiguredCredentialBroker, type ToolExecutionContext } from '../vault-broker';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
@@ -1296,6 +1297,47 @@ export class ChatCompletionsServer {
         }
       }
 
+      const broker = getConfiguredCredentialBroker();
+      if (broker) {
+        const encodedContext = req.header('x-sulla-execution-context');
+        if (!encodedContext) {
+          return res.status(401).json({ success: false, error: 'Credential broker requires x-sulla-execution-context' });
+        }
+        let ctx: ToolExecutionContext;
+        try {
+          ctx = JSON.parse(Buffer.from(encodedContext, 'base64url').toString('utf8')) as ToolExecutionContext;
+          if (!ctx?.request_id || !ctx?.claims?.sub) throw new Error('missing claims');
+        } catch {
+          return res.status(401).json({ success: false, error: 'Invalid credential broker execution context' });
+        }
+
+        try {
+          const forwarded = await broker.useCredential(ctx, {
+            integrationId: `${ slug }/${ accountId }`, field: '__integration_auth__',
+          }, async(secret) => {
+            const auth = JSON.parse(secret.toString('utf8')) as Record<string, string>;
+            if (!headers.Authorization) {
+              const bearer = auth.bearer_token ?? auth.access_token ?? (slug === 'cloudflare' ? auth.api_token : undefined);
+              if (bearer) headers.Authorization = `Bearer ${ bearer }`;
+              else if (auth.basic_password) headers.Authorization = `Basic ${ Buffer.from(`${ auth.basic_username ?? '' }:${ auth.basic_password }`).toString('base64') }`;
+              else if (auth.api_key) url.searchParams.set('key', auth.api_key);
+            }
+            console.log(`[Proxy] ${ method } ${ url.origin }${ url.pathname }`);
+            const init: RequestInit = { method: method.toUpperCase(), headers };
+            if (body && ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) init.body = JSON.stringify(body);
+            const upstream = await fetch(url.toString(), init);
+            const responseText = await upstream.text();
+            let result: unknown;
+            try { result = JSON.parse(responseText) } catch { result = responseText }
+            return { ok: upstream.ok, status: upstream.status, result };
+          });
+          return res.status(forwarded.status).json({ success: forwarded.ok, status: forwarded.status, result: forwarded.result });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Credential broker failed';
+          return res.status(403).json({ success: false, error: message });
+        }
+      }
+
       // Resolve auth — skip if caller already provided an Authorization header
       if (!headers.Authorization) {
         const bearerValue = await svc.getIntegrationValue(slug, 'bearer_token', accountId);
@@ -1340,7 +1382,7 @@ export class ChatCompletionsServer {
         }
       }
 
-      console.log(`[Proxy] ${ method } ${ url.toString() }`);
+      console.log(`[Proxy] ${ method } ${ url.origin }${ url.pathname }`);
 
       // Forward the request
       const fetchInit: RequestInit = {
