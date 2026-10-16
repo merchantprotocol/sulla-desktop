@@ -19,6 +19,7 @@
 // consumed by the HTTP server in `main/sullaSecretsServer.ts`.
 import * as crypto from 'crypto';
 
+import { getDesktopVaultClient } from './DesktopVaultClient';
 import { mayInjectSecretIntoAgentCode, resolveLlmAccess } from './vaultAccessPolicy';
 import { IntegrationValueModel } from '../database/models/IntegrationValueModel';
 
@@ -67,7 +68,7 @@ export function getSecretsCapabilityService(): SecretsCapabilityService {
 
 export class SecretsCapabilityService {
   private capabilities = new Map<string, Capability>();
-  private sweepTimer:    NodeJS.Timeout | null = null;
+  private sweepTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     this.startSweepTimer();
@@ -147,12 +148,23 @@ export class SecretsCapabilityService {
       throw new SecretsResolveError('access-denied');
     }
 
-    const row = await IntegrationValueModel.findByKey(
-      ref.integrationId,
-      ref.accountId,
-      ref.property,
-    );
-    if (!row || row.attributes.value == null) {
+    let resolved: string | null = null;
+    const vault = getDesktopVaultClient();
+    if (vault.isUnlocked()) {
+      resolved = await vault.resolveCredential({
+        integrationId: ref.integrationId,
+        accountId:     ref.accountId,
+        property:      ref.property,
+        agentId:       cap.invocationId,
+        level:         ref.integrationId === 'website' ? 'full' : 'autofill',
+      });
+    }
+    if (resolved === null) {
+      // Read-only rollback path until the importer has verified the account.
+      const row = await IntegrationValueModel.findByKey(ref.integrationId, ref.accountId, ref.property);
+      resolved = row?.attributes.value ?? null;
+    }
+    if (resolved == null) {
       // Mark consumed even on miss to preserve single-use semantics and
       // avoid spin-probing of valid keys.
       cap.consumed.add(envKey);
@@ -162,7 +174,7 @@ export class SecretsCapabilityService {
 
     cap.consumed.add(envKey);
     this.logOutcome(cap.invocationId, envKey, 'granted');
-    return row.attributes.value as string;
+    return resolved;
   }
 
   /** Drop a capability. No-op if unknown. */

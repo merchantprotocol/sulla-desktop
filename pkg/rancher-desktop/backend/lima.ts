@@ -2971,9 +2971,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     const sullaServicePassword = escapeForCompose(await SullaSettingsModel.getServicePassword());
     if (settingsImpl.getSettings().sullaVaultV2Enabled) {
-      // TODO: Publish sulla-vault and use the published image before enabling this flag for packaged apps.
       compose.services.sulla_vault = {
-        build: { context: process.cwd(), dockerfile: 'services/sulla-vault/Dockerfile' },
+        image: 'ghcr.io/merchantprotocol/sulla-vault:latest',
         container_name: 'sulla_vault',
         depends_on: { postgres: { condition: 'service_healthy' } },
         environment: {

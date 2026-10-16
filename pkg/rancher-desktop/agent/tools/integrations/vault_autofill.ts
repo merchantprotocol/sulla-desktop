@@ -1,3 +1,4 @@
+import { getDesktopVaultClient } from '../../services/DesktopVaultClient';
 import { getIntegrationService } from '../../services/IntegrationService';
 import { BaseTool, ToolResponse } from '../base';
 import { isBridgeResolved, resolveBridge } from '../browser/resolve_bridge';
@@ -163,22 +164,10 @@ export class VaultAutofillWorker extends BaseTool {
       const llmAccessValue = await service.getIntegrationValue('website', 'llm_access', targetAccountId);
       const llmAccess = llmAccessValue?.value || 'autofill';
 
-      if (llmAccess === 'none' || llmAccess === 'metadata') {
+      if (!getDesktopVaultClient().isUnlocked() && (llmAccess === 'none' || llmAccess === 'metadata')) {
         return {
           successBoolean: false,
           responseString: `Vault access denied. AI access for this credential is set to "${ llmAccess }". The user must grant "autofill" or "full" access to allow AI-initiated autofill.`,
-        };
-      }
-
-      const usernameValue = await service.getIntegrationValue('website', 'username', targetAccountId);
-      const passwordValue = await service.getIntegrationValue('website', 'password', targetAccountId);
-      const username = usernameValue?.value || '';
-      const password = passwordValue?.value || '';
-
-      if (!username && !password) {
-        return {
-          successBoolean: false,
-          responseString: 'Saved credentials are empty for this account.',
         };
       }
 
@@ -211,6 +200,41 @@ export class VaultAutofillWorker extends BaseTool {
           successBoolean: false,
           responseString: `[${ resolution.assetId }] Target tab origin ${ targetOrigin } does not match credential origin ${ expectedOrigin }; credentials were not filled.`,
         };
+      }
+
+      const targetHost = new URL(targetUrl).hostname;
+      const agentId = String((this.state)?.metadata?.routedAgentId || (this.state)?.metadata?.wsChannel || 'sulla');
+      let username = '';
+      let password = '';
+      const vault = getDesktopVaultClient();
+      if (vault.isUnlocked()) {
+        username = await vault.resolveCredential({
+          integrationId: 'website',
+          accountId:     targetAccountId,
+          property:      'username',
+          agentId,
+          level:         'autofill',
+          host:          targetHost,
+        }) ?? '';
+        password = await vault.resolveCredential({
+          integrationId: 'website',
+          accountId:     targetAccountId,
+          property:      'password',
+          agentId,
+          level:         'autofill',
+          host:          targetHost,
+        }) ?? '';
+      }
+      if (!username && !password) {
+        // Verified migration fallback. The legacy rows remain read-only and are
+        // used only when no corresponding v2 item/value exists.
+        const usernameValue = await service.getIntegrationValue('website', 'username', targetAccountId);
+        const passwordValue = await service.getIntegrationValue('website', 'password', targetAccountId);
+        username = usernameValue?.value || '';
+        password = passwordValue?.value || '';
+      }
+      if (!username && !password) {
+        return { successBoolean: false, responseString: 'Saved credentials are empty for this account.' };
       }
 
       let fillResult: AutofillResult;

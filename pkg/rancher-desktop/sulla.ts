@@ -139,13 +139,16 @@ async function onVaultUnlocked(masterPassword?: string): Promise<void> {
     await IntegrationValueModel.migrateToEncrypted();
     getVaultBackupService().start(cb => getIntegrationService().onValueChange(() => cb()));
 
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    const desktopVault = getDesktopVaultClient();
     if (masterPassword) {
-      const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-      await getDesktopVaultClient().unlock(masterPassword);
+      await desktopVault.unlock(masterPassword);
       const { importLegacyVault } = await import('@pkg/agent/services/VaultImportService');
       void importLegacyVault(masterPassword).catch(() => {
         console.error('[Vault] Legacy vault import failed; details omitted');
       });
+    } else {
+      await desktopVault.unlockFromKeychain();
     }
   } catch (err) {
     console.error('[Vault] Post-unlock housekeeping failed:', err);
@@ -838,10 +841,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     await getDesktopVaultClient().remove(data.id, data.revision);
     return true;
   });
-  ipcMainProxy.handle('vault:v2-audit', async(_event: Electron.IpcMainInvokeEvent, event: Record<string, unknown>) => {
+  ipcMainProxy.handle('vault:v2-audit', async(_event: Electron.IpcMainInvokeEvent, itemId?: string) => {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-    await getDesktopVaultClient().audit(event);
-    return true;
+    return getDesktopVaultClient().auditFor(itemId);
   });
 
   ipcMainProxy.handle('vault:read-account', async(_event: Electron.IpcMainInvokeEvent, data: { integrationId: string; accountId: string }) => {
