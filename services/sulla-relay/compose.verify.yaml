@@ -1,0 +1,42 @@
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 1s
+      retries: 20
+
+  relay1:
+    build:
+      context: ../..
+      dockerfile: services/sulla-relay/Dockerfile
+    image: sulla-relay:verify
+    depends_on:
+      redis: { condition: service_healthy }
+    environment: &relay_environment
+      SULLA_REDIS_URL: redis://redis:6379
+      SULLA_RELAY_DEVICE_TOKEN_SECRET: verify-device-secret-at-least-32-bytes
+      SULLA_RELAY_INTERNAL_TOKEN: verify-internal-secret-at-least-32-bytes
+      SULLA_RELAY_MAX_IN_FLIGHT: 4
+    command: ["dist/services/sulla-relay/src/index.js"]
+
+  relay2:
+    image: sulla-relay:verify
+    depends_on:
+      redis: { condition: service_healthy }
+      relay1: { condition: service_started }
+    environment:
+      <<: *relay_environment
+      SULLA_RELAY_REPLICA_ID: relay-2
+    command: ["dist/services/sulla-relay/src/index.js"]
+
+  verify:
+    image: sulla-relay:verify
+    depends_on:
+      relay1: { condition: service_started }
+      relay2: { condition: service_started }
+    environment:
+      SULLA_RELAY_DEVICE_TOKEN_SECRET: verify-device-secret-at-least-32-bytes
+      SULLA_RELAY_INTERNAL_TOKEN: verify-internal-secret-at-least-32-bytes
+    command: ["verify/two-replica.mjs"]

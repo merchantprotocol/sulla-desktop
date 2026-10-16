@@ -183,6 +183,19 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { /* stateless singleton, no teardown */ },
   );
 
+  lifecycle.register('relay-tool-tunnel', [],
+    async() => {
+      const { startRelayToolTunnel } = await import('@pkg/main/relayToolTunnel');
+
+      startRelayToolTunnel();
+    },
+    async() => {
+      const { stopRelayToolTunnel } = await import('@pkg/main/relayToolTunnel');
+
+      stopRelayToolTunnel();
+    },
+  );
+
   // Register model-provider IPC handlers early so the UI can query state
   // even if Postgres/Redis never come up. State loading still gated on DB below.
   lifecycle.register('model-provider-ipc', [],

@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sulla-relay
+  labels: { app.kubernetes.io/name: sulla-relay }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: sulla-relay }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: sulla-relay }
+    spec:
+      containers:
+        - name: relay
+          image: ghcr.io/merchantprotocol/sulla-relay:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8790 }
+          env:
+            - name: SULLA_RELAY_REPLICA_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: SULLA_REDIS_URL
+              valueFrom: { secretKeyRef: { name: sulla-server, key: redis-url } }
+            - name: SULLA_RELAY_DEVICE_TOKEN_SECRET
+              valueFrom: { secretKeyRef: { name: sulla-server, key: relay-device-token-secret } }
+            - name: SULLA_RELAY_INTERNAL_TOKEN
+              valueFrom: { secretKeyRef: { name: sulla-server, key: relay-internal-token } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: sulla-relay }
