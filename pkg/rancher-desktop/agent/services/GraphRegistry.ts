@@ -1869,6 +1869,7 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
       excludeSoul:  parsed.excludeSoul === true,
       model:        definition.model || undefined,
       provider:     definition.provider || undefined,
+      runLocation:  definition.run_location,
     };
   } catch (err) {
     console.error(`[GraphRegistry] Failed to load agent config for ${ agentId }:`, err);
