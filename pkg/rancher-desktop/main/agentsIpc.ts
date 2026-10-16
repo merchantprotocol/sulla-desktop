@@ -1,10 +1,10 @@
-// agentsIpc.ts — Thin read-only IPC surface for the Agents tab in the renderer UI.
+// agentsIpc.ts — IPC surface for the Agents tab in the renderer UI.
 //
 // Flow: main owns the agent registry, heartbeat service, job registry, and
 // workflow scheduler. The UI asks "what's running?" via agents:list and
 // polls every 3s (v1 — push via a subscription channel is Stage 3).
 //
-// There is NO reactive two-way sync. Renderer mirrors main's state; that's it.
+// State is polled; scoped job message and stop actions are explicit IPC calls.
 //
 // Clicking an agent opens its stored conversations: agents:conversations lists
 // the conversation_history rows for that agent's channel, and
@@ -19,9 +19,12 @@ import type { ActiveAgent } from '@pkg/agent/services/ActiveAgentsRegistry';
 // ── Response shape ───────────────────────────────────────────────────────────
 
 export interface AgentsListResponse {
+  updatedAt: number;
   agents: {
+    agentId:      string;
     name:         string;
     channel:      string;
+    role:         string;
     type:         ActiveAgent['type'];
     status:       ActiveAgent['status'];
     statusNote?:  string;
@@ -39,20 +42,51 @@ export interface AgentsListResponse {
     uptimeMs:         number;
   } | null;
   jobs: {
-    jobId:      string;
-    status:     string;
-    createdAt:  number;
-    finishedAt: number | null;
-    taskCount:  number;
-    error?:     string;
+    jobId:          string;
+    status:         string;
+    createdAt:      number;
+    finishedAt:     number | null;
+    taskCount:      number;
+    error?:         string;
+    parentChannel?: string;
+    parentThreadId?: string;
+    parentAgentId?: string;
+    parentTitle?:   string;
+    tasks: {
+      taskIndex:      number;
+      agentId:        string;
+      label:          string;
+      taskId?:        string;
+      status:         string;
+      threadId?:      string;
+      startedAt:      number;
+      finishedAt?:    number;
+      depth:           number;
+      kind:            'job' | 'tab';
+      model?:          string;
+      lastActivity:    string;
+      lastActivityAt:  number;
+      waitingForHuman: boolean;
+      latestCheckin: {
+        step:       string;
+        summary:    string;
+        blockers:   string[];
+        percent?:   number;
+        createdAt:  number;
+      } | null;
+    }[];
   }[];
-  routines: {
-    workflowId:     string;
-    workflowName:   string;
-    nodeId:         string;
-    cronExpression: string;
-    timezone:       string;
-    nextInvocation: string | null;
+  workflowRuns: {
+    executionId: string;
+    workflowId:  string;
+    name:        string;
+    slug:        string;
+    status:      'running' | 'suspended' | 'failed';
+    startedAt:   number;
+    updatedAt:   number;
+    activity:    string;
+    progress?:   number;
+    error?:      string;
   }[];
 }
 
@@ -225,14 +259,30 @@ export function initAgentsIpc(): void {
     // Gather all four data sources in parallel. Each is wrapped so a
     // failure in one never blocks the others.
 
-    const [agents, heartbeat, jobs, routines] = await Promise.all([
+    const [agents, heartbeat, jobs, workflowRuns] = await Promise.all([
       fetchAgents(),
       fetchHeartbeat(),
       fetchJobs(),
-      fetchRoutines(),
+      fetchWorkflowRuns(),
     ]);
 
-    return { agents, heartbeat, jobs, routines };
+    return { agents, heartbeat, jobs, workflowRuns, updatedAt: Date.now() };
+  });
+
+  ipcMain.handle('agents:message-job', async(_event, jobId: string, taskIndex: number, message: string) => {
+    if (!jobId || !Number.isInteger(taskIndex) || taskIndex < 0 || !message?.trim()) {
+      return { ok: false, error: 'A job, task, and message are required.' };
+    }
+    const { sendJobMessage } = await import('@pkg/agent/tools/agents/send_job_message');
+    const result = await sendJobMessage({ jobId, taskIndex, message: message.trim() });
+    return { ok: result.successBoolean, error: result.successBoolean ? undefined : result.responseString };
+  });
+
+  ipcMain.handle('agents:stop-job', async(_event, jobId: string) => {
+    if (!jobId) return { ok: false, error: 'A job is required.' };
+    const { stopAgentJob } = await import('@pkg/agent/tools/agents/stop_agent_job');
+    const result = await stopAgentJob(jobId);
+    return { ok: result.successBoolean, error: result.successBoolean ? undefined : result.responseString };
   });
 
   ipcMain.handle('agents:conversations', async(_event, channel: string, limit = 50, offset = 0): Promise<AgentConversationSummary[]> => {
@@ -347,17 +397,23 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
       conversationId: task.threadId,
       lastActivity: clipLine(lastActivity),
       lastActivityAt,
-      kind: isTab ? 'tab' : 'job',
+      kind: isTab
+        ? 'tab'
+        : 'job',
       contract: task.contract?.name ?? 'result',
-      ...(isTab && task.threadId ? {
-        agentTab: {
-          contractId:    job.visibility === 'tab' ? job.jobId : `${ job.jobId }#${ taskIndex }`,
-          threadId:      task.threadId,
-          agentName:     task.label || task.agentId,
-          parentAgentId: job.parentAgentId || job.parentChannel || '',
-          depth:         Number(task.depth) || 1,
-        },
-      } : {}),
+      ...(isTab && task.threadId
+        ? {
+            agentTab: {
+              contractId: job.visibility === 'tab'
+                ? job.jobId
+                : `${ job.jobId }#${ taskIndex }`,
+              threadId:      task.threadId,
+              agentName:     task.label || task.agentId,
+              parentAgentId: job.parentAgentId || job.parentChannel || '',
+              depth:         Number(task.depth) || 1,
+            },
+          }
+        : {}),
     };
   })));
 
@@ -395,8 +451,10 @@ async function fetchAgents(): Promise<AgentsListResponse['agents']> {
     return all
       .filter(a => a.type !== 'human')
       .map(a => ({
+        agentId:      a.agentId,
         name:         a.name || a.agentId,
         channel:      a.channel,
+        role:         a.role,
         type:         a.type,
         status:       a.status,
         statusNote:   a.statusNote && a.statusNote !== 'idle' ? a.statusNote : undefined,
@@ -421,30 +479,137 @@ async function fetchHeartbeat(): Promise<AgentsListResponse['heartbeat']> {
 
 async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
   try {
-    const { getAllJobs } = await import(
-      '@pkg/agent/tools/agents/jobRegistry'
-    );
+    const [
+      { getAllJobs },
+      { AgentJobMessagingModel },
+      { ConversationHistoryModel },
+      { resolveSullaLogsDir },
+      { RunActivity },
+      { GraphRegistry },
+      { agentDefinitionService },
+    ] = await Promise.all([
+      import('@pkg/agent/tools/agents/jobRegistry'),
+      import('@pkg/agent/database/models/AgentJobMessagingModel'),
+      import('@pkg/agent/database/models/ConversationHistoryModel'),
+      import('@pkg/agent/utils/sullaPaths'),
+      import('@pkg/agent/services/RunActivity'),
+      import('@pkg/agent/services/GraphRegistry'),
+      import('@pkg/agent/services/AgentDefinitionService'),
+    ]);
     const allJobs = await getAllJobs();
+    const definitions = await agentDefinitionService.list();
+    const modelByAgent = new Map(definitions.map(definition => [
+      definition.slug,
+      definition.model || definition.provider || undefined,
+    ]));
+    const logsDir = resolveSullaLogsDir();
 
-    return allJobs.map(j => ({
-      jobId:      j.jobId,
-      status:     j.status,
-      createdAt:  j.createdAt,
-      finishedAt: j.finishedAt,
-      taskCount:  j.taskCount,
-      error:      j.error,
+    return Promise.all(allJobs.map(async job => {
+      const telemetry = await AgentJobMessagingModel.telemetryForJob(job.jobId);
+      const parent = job.parentThreadId ? await ConversationHistoryModel.getById(job.parentThreadId) : null;
+      const tasks = await Promise.all(job.tasks.map(async(task, taskIndex) => {
+        const latestCheckin = telemetry[taskIndex]?.latestCheckin ?? null;
+        let lastActivityAt = latestCheckin?.createdAt ?? RunActivity.lastActivityAt(job.jobId) ?? task.startedAt ?? job.createdAt;
+        let lastActivity = latestCheckin?.summary || (task.status === 'queued' ? 'Waiting to start' : 'Working');
+        if (task.threadId) {
+          const row = await ConversationHistoryModel.getById(task.threadId);
+          if (row) {
+            const log = await readConversationLog(row.log_file, logsDir);
+            const latest = log.entries.at(-1);
+            if (latest) {
+              const text = latest.text.replace(/\s+/g, ' ').trim();
+              lastActivity = latest.kind === 'tool'
+                ? `${ latest.toolName || 'Tool' }: ${ text || 'running' }`
+                : text || lastActivity;
+              const time = new Date(latest.ts).getTime();
+              if (Number.isFinite(time)) lastActivityAt = Math.max(lastActivityAt, time);
+            }
+          }
+        }
+        if (task.status === 'error' || task.status === 'blocked') lastActivity = task.summary || job.error || lastActivity;
+        const state = task.threadId ? GraphRegistry.get(task.threadId)?.state : undefined;
+
+        const kind = task.visibility === 'tab' || job.visibility === 'tab' || task.promotedToTab
+          ? 'tab' as const
+          : 'job' as const;
+        const serializedCheckin = latestCheckin
+          ? {
+              step: latestCheckin.step,
+              summary: latestCheckin.summary,
+              blockers: latestCheckin.blockers,
+              percent: latestCheckin.percent,
+              createdAt: latestCheckin.createdAt,
+            }
+          : null;
+
+        return {
+          taskIndex,
+          agentId: task.agentId,
+          label: task.label || task.agentId,
+          taskId: task.taskId,
+          status: task.status,
+          threadId: task.threadId,
+          startedAt: task.startedAt ?? job.createdAt,
+          finishedAt: task.finishedAt,
+          depth: Number(task.depth) || 1,
+          kind,
+          model: modelByAgent.get(task.agentId),
+          lastActivity: clipLine(lastActivity),
+          lastActivityAt,
+          waitingForHuman: state?.metadata?.waitingForUser === true,
+          latestCheckin: serializedCheckin,
+        };
+      }));
+
+      return {
+        jobId: job.jobId,
+        status: job.status,
+        createdAt: job.createdAt,
+        finishedAt: job.finishedAt,
+        taskCount: job.taskCount,
+        error: job.error,
+        parentChannel: job.parentChannel,
+        parentThreadId: job.parentThreadId,
+        parentAgentId: job.parentAgentId,
+        parentTitle: parent?.title || undefined,
+        tasks,
+      };
     }));
   } catch {
     return [];
   }
 }
 
-async function fetchRoutines(): Promise<AgentsListResponse['routines']> {
+async function fetchWorkflowRuns(): Promise<AgentsListResponse['workflowRuns']> {
   try {
-    const { getWorkflowSchedulerService } = await import(
-      '@pkg/agent/services/WorkflowSchedulerService'
-    );
-    return getWorkflowSchedulerService().getScheduledJobs();
+    const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
+    const rows = await postgresClient.queryAll<any>(`
+      SELECT e.execution_id, e.workflow_id, e.workflow_name, e.workflow_slug, e.status,
+             e.started_at, e.updated_at, e.error,
+             latest.node_id, latest.payload
+        FROM workflow_executions e
+        LEFT JOIN LATERAL (
+          SELECT node_id, payload
+            FROM workflow_execution_events
+           WHERE execution_id = e.execution_id
+           ORDER BY id DESC LIMIT 1
+        ) latest ON true
+       WHERE e.status IN ('running', 'suspended', 'failed')
+         AND (e.status <> 'failed' OR e.updated_at >= NOW() - INTERVAL '1 hour')
+       ORDER BY e.started_at ASC`);
+
+    return rows.map((row: any) => ({
+      executionId: row.execution_id,
+      workflowId: row.workflow_id,
+      name: row.workflow_name || row.workflow_slug || row.workflow_id,
+      slug: row.workflow_slug || row.workflow_id,
+      status: row.status,
+      startedAt: new Date(row.started_at).getTime(),
+      updatedAt: new Date(row.updated_at).getTime(),
+      activity: row.node_id ? `Step ${ row.node_id }` : row.status === 'suspended' ? 'Paused' : row.status === 'failed' ? 'Failed' : 'Running',
+      progress: typeof row.payload?.percent === 'number' ? row.payload.percent : undefined,
+      error: row.error || undefined,
+    }));
   } catch {
     return [];
   }
