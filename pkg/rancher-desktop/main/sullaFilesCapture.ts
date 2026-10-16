@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { BrowserWindow, clipboard, desktopCapturer, dialog, screen } from 'electron';
+import { BrowserWindow, app, clipboard, desktopCapturer, dialog, screen } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { callCaptureStudio } from '@pkg/main/captureStudioRpc';
@@ -97,12 +97,12 @@ export class SullaFilesCaptureService {
     if (!primary) throw new Error('Capture Studio recording contains no video track');
     const stem = `Recording ${ stamp() }`; const primaryExtension = path.extname(primary.filename) || '.webm';
     const target = await unique(destination, `${ stem }${ primaryExtension }`); const chosenStem = path.basename(target, path.extname(target));
-    await fs.promises.copyFile(path.join(sessionDir, primary.filename), target);
+    await fs.promises.copyFile(path.join(sessionDir, path.basename(primary.filename)), target);
     const copied:any[] = [{ ...primary, filename: path.basename(target) }];
     for (const stream of streams.filter(stream => stream !== primary && Number(stream.bytes) > 0)) {
       const suffix = stream.type === 'camera' ? 'camera' : stream.type === 'mic' ? 'mic' : stream.type === 'system-audio' ? 'system-audio' : String(stream.type);
       const output = path.join(destination, `${ chosenStem }-${ suffix }${ path.extname(stream.filename) || '.webm' }`);
-      await fs.promises.copyFile(path.join(sessionDir, stream.filename), output); copied.push({ ...stream, filename: path.basename(output) });
+      await fs.promises.copyFile(path.join(sessionDir, path.basename(stream.filename)), output); copied.push({ ...stream, filename: path.basename(output) });
     }
     await fs.promises.writeFile(path.join(destination, `${ chosenStem }.capture.json`), JSON.stringify({ ...raw, streams: copied }, null, 2));
     const info = await fs.promises.stat(target); const relativePath = path.relative(getSullaFilesWatcher().folder, target).split(path.sep).join('/');
@@ -149,8 +149,6 @@ export function openScreenshotMarkup(filePath:string):void {
     width: 1100, height: 760, title: 'Mark up screenshot', backgroundColor: '#141b24',
     webPreferences: { contextIsolation: false, nodeIntegration: true },
   });
-  const target = path.join(process.resourcesPath || '', 'app.asar');
-  const appRoot = target && fs.existsSync(target) ? target : require('electron').app.getAppPath();
-  markupWindow.loadFile(path.join(appRoot, 'dist', 'app', 'trayPanel', 'markup.html'), { query: { file: filePath } });
+  markupWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'markup.html'), { query: { file: filePath } });
   markupWindow.on('closed', () => { markupWindow = undefined; getSullaFilesWatcher().notifyRescan().catch(() => undefined) });
 }

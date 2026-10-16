@@ -22,7 +22,7 @@ interface WatchedRow { path: string; file_id: string; content_hash: string; size
 
 function mime(path:string):string {
   const extension = extname(path).toLowerCase();
-  return ({ '.txt': 'text/plain', '.md': 'text/markdown', '.json': 'application/json', '.yaml': 'application/yaml', '.yml': 'application/yaml', '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mov': 'video/quicktime' } as Record<string, string>)[extension] ?? 'application/octet-stream';
+  return ({ '.txt': 'text/plain', '.md': 'text/markdown', '.json': 'application/json', '.yaml': 'application/yaml', '.yml': 'application/yaml', '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.mkv': 'video/x-matroska' } as Record<string, string>)[extension] ?? 'application/octet-stream';
 }
 function matchIgnore(path:string, patterns:string[]):boolean {
   const parts = path.split('/');
@@ -189,7 +189,7 @@ export class LocalFilesManager {
         ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms`, [this.collectionId, path, fileId, contentHash, total, Math.trunc(mtimeMs)]);
       await client.query('COMMIT');
       if (renameFrom) missing.delete(contentHash);
-      if (path.startsWith('Recordings/') && mime(path).startsWith('video/')) {
+      if (path.startsWith('Recordings/') && mime(path).startsWith('video/') && !/-(?:camera|mic|system-audio)\.[^/]+$/i.test(path)) {
         await this.db.query(`INSERT INTO recording_enrichment_jobs(file_id,version_id,status)
           VALUES($1,$2,'pending') ON CONFLICT(version_id) DO NOTHING`, [fileId, version.id]).catch(error => console.warn('[SullaFiles] recording enrichment hook unavailable:', error));
       }

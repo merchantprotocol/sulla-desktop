@@ -25,6 +25,13 @@ function relativeTime(value) {
   return `${ Math.round(elapsed / 86_400_000) } d ago`;
 }
 
+function expiry(value) {
+  const remaining = new Date(value).getTime() - Date.now();
+  if (remaining <= 0) return 'expired';
+  if (remaining < 86_400_000) return `expires in ${ Math.max(1, Math.ceil(remaining / 3_600_000)) } h`;
+  return `expires in ${ Math.ceil(remaining / 86_400_000) } d`;
+}
+
 function selectSegment(container, value) {
   container.querySelectorAll('button').forEach(button => button.classList.toggle('active', button.dataset.value === value));
 }
@@ -81,7 +88,7 @@ function renderShares(shares, unavailable) {
   if (!shares.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = 'Shared links will appear here.'; list.append(empty); return }
   shares.slice(0, 3).forEach(share => {
     const mode = share.password ? 'password' : share.mode === 'download' ? 'download' : 'view only';
-    const row = itemShell('↗', share.name, `${ share.url.replace(/^https?:\/\//, '') } · ${ mode }${ share.expiresAt ? ` · expires ${ relativeTime(share.expiresAt).replace(' ago', '') }` : '' }`);
+    const row = itemShell('↗', share.name, `${ share.url.replace(/^https?:\/\//, '') } · ${ mode }${ share.expiresAt ? ` · ${ expiry(share.expiresAt) }` : '' }`);
     const views = document.createElement('span'); views.className = 'share-meta'; views.textContent = `◉ ${ share.viewCount || 0 }`;
     const action = document.createElement('button'); action.className = 'row-action'; action.textContent = 'Copy'; action.addEventListener('click', () => ipcRenderer.invoke('tray-panel:copy-share', share.url).then(() => showToast('Link copied', share.url)));
     row.append(views, action); list.append(row);
