@@ -29,6 +29,7 @@ import { sanitizeConversationContext } from '../utils/conversationContext';
 import { formatDateOnly } from '../utils/formatDateOnly';
 import { latestUserText } from '../utils/latestUserText';
 import { extractRecallTerms } from '../utils/recallTerms';
+import { getSullaFilesService } from '../files/runtime';
 
 import Logging from '@pkg/utils/logging';
 
@@ -148,6 +149,7 @@ export async function runSubconsciousMiddleware(
   meta.teamDirectoryContext = '';
   meta.skillRecallContext = '';
   meta.subagentDirectoryContext = '';
+  meta.filesContext = '';
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     console.log('[SubconsciousMiddleware] Skipped — running inside a workflow');
     return;
@@ -312,6 +314,14 @@ export async function runSubconsciousMiddleware(
     launched.push('conversation-reader');
     const conversationRecallPromise = runConversationReader(state);
     awaitedTasks.push(timed('conversation-reader', 'Recalling prior conversations', conversationRecallPromise.then(ctx => { (state.metadata as any).conversationContext = ctx })));
+  }
+
+  // R9b. Files recall — deterministic, ACL-gated and intentionally tiny.
+  // The primary agent gets references only; it must call files_get when it
+  // actually needs file contents.
+  if (options.includeObservations && analyzable) {
+    launched.push('files-recall');
+    awaitedTasks.push(timed('files-recall', 'Recalling related files', runFilesRecall(state).then(ctx => { meta.filesContext = ctx })));
   }
 
   // R10. Team recall — lead agents (non-empty can_call) get a Team directory
@@ -925,6 +935,25 @@ async function runSubagentDirectory(state: BaseThreadState): Promise<void> {
     (state.metadata as any).subagentDirectoryContext = await buildSubagentDirectoryContext((state.metadata as any).threadId);
   } catch (err) {
     console.warn('[SubconsciousMiddleware] subagent directory failed:', err instanceof Error ? err.message : err);
+  }
+}
+
+async function runFilesRecall(state: BaseThreadState): Promise<string> {
+  try {
+    const query = extractLatestUserText(state);
+    if (!query) return '';
+    const meta = state.metadata as any;
+    const userId = String(meta.userId ?? meta.ownerUserId ?? meta.humanId ?? 'desktop-cli');
+    const now = Math.floor(Date.now() / 1000);
+    const rows = await getSullaFilesService().searchAll({
+      v: 1, iss: 'sulla-desktop', aud: 'sulla-tools', sub: userId,
+      org_id: meta.orgId, device_id: meta.deviceId, scopes: ['files/*'],
+      iat: now, exp: now + 300, jti: `recall-${ now }`, request_id: `recall-${ now }`,
+    }, query);
+    return rows.slice(0, 5).map((row: any) => `${ row.path } — matched ${ Number(row.rank ?? 0).toFixed(2) }${ row.snippet ? `: ${ row.snippet.replace(/\s+/g, ' ').slice(0, 140) }` : '' }`).join('\n');
+  } catch (error) {
+    console.warn('[SubconsciousMiddleware] files recall unavailable:', error instanceof Error ? error.message : error);
+    return '';
   }
 }
 

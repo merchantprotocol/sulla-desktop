@@ -6,6 +6,7 @@ import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import { issueCapabilityToken } from './auth.js';
 import { chunkId, decryptChunk, encrypt, encryptChunk } from './crypto.js';
 import { Store } from './store.js';
+import { extractIndexText } from './extractor.js';
 
 import type { Config } from './config.js';
 import type pg from 'pg';
@@ -60,6 +61,7 @@ export class LocalFilesManager {
     const saved = await this.db.query('SELECT paused,last_error,last_scan_at,last_sync_at FROM files_runtime_state WHERE id=TRUE');
     if (saved.rows[0]) { this.paused ||= saved.rows[0].paused; this.lastError = saved.rows[0].last_error; this.lastScanAt = saved.rows[0].last_scan_at?.toISOString?.(); this.lastSyncAt = saved.rows[0].last_sync_at?.toISOString?.() }
     await this.rescan();
+    await this.backfillIndex();
     this.syncTimer = setInterval(() => this.sync().catch(error => this.fail(error)), 15_000);
     this.syncTimer.unref();
   }
@@ -131,21 +133,36 @@ export class LocalFilesManager {
     if (changed) console.log(`[SullaFiles] recorded ${ changed } watched folder change(s)`);
   }
 
+  private async backfillIndex():Promise<void> {
+    const rows = (await this.db.query('SELECT id,path,mime FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND (search_text IS NULL OR extraction_status=\'pending\') LIMIT 500', [this.collectionId])).rows;
+    for (const row of rows) {
+      try {
+        const result = await extractIndexText(this.safe(row.path), row.mime);
+        await this.db.query('UPDATE files SET search_text=$2,extracted_at=NOW(),extraction_status=$3,updated_at=NOW() WHERE id=$1', [row.id, result.text, result.status]);
+      } catch { /* a missing local placeholder is handled on its next sync */ }
+    }
+  }
+
   private async ingest(path:string, mtimeMs:number, old:WatchedRow | undefined, missing:Map<string, WatchedRow>):Promise<boolean> {
     const keys = this.keys(); const whole = createHash('sha256'); const ids:string[] = []; const chunks:any[] = []; let total = 0;
     for await (const part of createReadStream(this.safe(path), { highWaterMark: CHUNK_BYTES })) { const plain = Buffer.from(part); total += plain.length; whole.update(plain); const id = chunkId(plain, keys.dedup); ids.push(id); if (!await this.store.has(this.collectionId!, id)) { const encrypted = await encryptChunk(plain, keys.data, id); await this.store.put(this.collectionId!, id, encrypted); chunks.push({ id, size: plain.length, storedSize: encrypted.length }) } }
     if (total === 0) { const empty = Buffer.alloc(0); const id = chunkId(empty, keys.dedup); ids.push(id); if (!await this.store.has(this.collectionId!, id)) { const encrypted = await encryptChunk(empty, keys.data, id); await this.store.put(this.collectionId!, id, encrypted); chunks.push({ id, size: 0, storedSize: encrypted.length }) } }
     const contentHash = whole.digest('hex'); if (old?.content_hash === contentHash) { await this.db.query('UPDATE watched_folder_state SET size=$3,mtime_ms=$4 WHERE collection_id=$1 AND path=$2', [this.collectionId, path, total, Math.trunc(mtimeMs)]); return false }
+    const extracted = await extractIndexText(this.safe(path), mime(path));
     const renameFrom = !old ? missing.get(contentHash) : undefined; const manifestHash = createHash('sha256').update(JSON.stringify({ ids, size: total })).digest('hex');
     const client = await this.db.connect(); await client.query('BEGIN');
     try {
       await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(ids), total]);
       for (const chunk of chunks) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING', [this.collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ this.collectionId }/${ chunk.id }`]);
       let fileId = old?.file_id ?? renameFrom?.file_id; let parent:string | null = null;
-      if (fileId) { const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0]; parent = file.current_version_id; await client.query('UPDATE files SET path=$2,mime=$3,size=$4,deleted_at=NULL,updated_at=NOW() WHERE id=$1', [fileId, path, mime(path), total]) } else { fileId = (await client.query("INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,'user',$3,$4,$5) RETURNING id", [this.collectionId, path, this.config.userId, mime(path), total])).rows[0].id }
+      if (fileId) { const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0]; parent = file.current_version_id; await client.query('UPDATE files SET path=$2,mime=$3,size=$4,search_text=$5,extracted_at=NOW(),extraction_status=$6,deleted_at=NULL,updated_at=NOW() WHERE id=$1', [fileId, path, mime(path), total, extracted.text, extracted.status]) } else { fileId = (await client.query("INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size,search_text,extracted_at,extraction_status) VALUES($1,$2,'user',$3,$4,$5,$6,NOW(),$7) RETURNING id", [this.collectionId, path, this.config.userId, mime(path), total, extracted.text, extracted.status])).rows[0].id }
       const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
         VALUES($1,$2,$3,$4,$5,'user',$6,$7,$8,$3) RETURNING id`, [fileId, this.collectionId, parent, manifestHash, total, this.config.userId, renameFrom ? `Renamed ${ renameFrom.path } to ${ path }` : 'Watched folder change', this.config.deviceId])).rows[0];
       await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [fileId, version.id]); await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [this.collectionId, ids]);
+      if (extracted.text) {
+        const parts = extracted.text.match(/[\s\S]{1,4000}/g) ?? [];
+        for (const [ordinal, content] of parts.entries()) await client.query('INSERT INTO file_search_chunks(file_id,version_id,ordinal,content) VALUES($1,$2,$3,$4) ON CONFLICT(version_id,ordinal) DO UPDATE SET content=EXCLUDED.content', [fileId, version.id, ordinal, content]);
+      }
       await client.query('INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,$4)', [this.collectionId, fileId, version.id, renameFrom ? 'rename' : 'put']);
       if (renameFrom) await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND path=$2', [this.collectionId, renameFrom.path]);
       await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms) VALUES($1,$2,$3,$4,$5,$6)
