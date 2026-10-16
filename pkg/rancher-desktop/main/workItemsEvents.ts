@@ -113,6 +113,12 @@ export function initWorkItemsEvents(): void {
     };
   });
 
+  ipcMainProxy.handle('work-items:projects-archived', async() => {
+    const app = await importProjectsApplicationService();
+    const projects = await app.listProjects({ includeArchived: true, includeDone: true, limit: 500 });
+    return projects.filter(project => project.archived);
+  });
+
   ipcMainProxy.handle('work-items:comments', async(_event: unknown, taskId: string) => {
     if (!taskId) return [];
     const projects = await importProjectsApplicationService();
