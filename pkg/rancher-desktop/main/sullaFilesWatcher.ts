@@ -6,6 +6,7 @@ import path from 'node:path';
 import { shell } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import Logging from '@pkg/utils/logging';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 
@@ -66,7 +67,8 @@ class SullaFilesWatcher {
   private async request(endpoint:string, init:RequestInit = {}):Promise<Response> { const token = await SullaSettingsModel.getServicePassword(); return fetch(`${ API }${ endpoint }`, { ...init, headers: { 'x-sulla-files-token': token, 'content-type': 'application/json', ...(init.headers as any) }, signal: AbortSignal.timeout(3_000) }) }
   private async capabilityToken():Promise<string> {
     const key = sullaFilesCapabilityKey(await SullaSettingsModel.getServicePassword()); const now = Math.floor(Date.now() / 1_000); const encode = (value:string) => Buffer.from(value).toString('base64url'); const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-    const payload = encode(JSON.stringify({ sub: process.env.SULLA_FILES_USER_ID ?? 'desktop-user', device_id: os.hostname(), scopes: ['files/*'], v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 300, jti: crypto.randomUUID() }));
+    const deviceId = await getDesktopDeviceId().catch(() => os.hostname());
+    const payload = encode(JSON.stringify({ sub: process.env.SULLA_FILES_USER_ID ?? 'desktop-user', device_id: deviceId, scopes: ['files/*'], v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 300, jti: crypto.randomUUID() }));
 
     return `${ header }.${ payload }.${ crypto.createHmac('sha256', key).update(`${ header }.${ payload }`).digest('base64url') }`;
   }

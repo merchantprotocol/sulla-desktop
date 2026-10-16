@@ -82,6 +82,7 @@ export class RecordingEnrichmentQueue {
   constructor(private readonly db:pg.Pool, private readonly filesRoot:string) {}
 
   async start():Promise<void> {
+    await this.db.query("UPDATE recording_enrichment_jobs SET status='pending',available_at=NOW(),started_at=NULL WHERE status='processing'");
     if (await runtime()) await this.db.query("UPDATE recording_enrichment_jobs SET status='pending',available_at=NOW() WHERE status='waiting_runtime'");
     this.timer = setInterval(() => this.drain().catch(error => console.error('[SullaFiles] recording enrichment failed', error)), 2_000);
     this.timer.unref();
