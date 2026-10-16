@@ -496,7 +496,15 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
       import('@pkg/agent/services/GraphRegistry'),
       import('@pkg/agent/services/AgentDefinitionService'),
     ]);
-    const allJobs = await getAllJobs();
+    // Only enrich what the Live view can show: unfinished jobs, plus failures
+    // from the last hour. Enriching every historical job reads one log file
+    // per task on each 3s poll.
+    const failedCutoff = Date.now() - 60 * 60 * 1000;
+    const allJobs = (await getAllJobs()).filter(job => {
+      if (job.status === 'completed' || job.status === 'stopped') return false;
+      if (job.status === 'failed') return (job.finishedAt ?? job.createdAt) >= failedCutoff;
+      return true;
+    });
     const definitions = await agentDefinitionService.list();
     const modelByAgent = new Map(definitions.map(definition => [
       definition.slug,
