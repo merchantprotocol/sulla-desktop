@@ -64,6 +64,12 @@ export interface WorkLaneRuntimeCapability {
   degradedReason: string | null;
 }
 
+export interface ProjectActiveAgent {
+  project_id: string;
+  task_id:    string;
+  agent_id:   string;
+}
+
 /** An epic with its tasks attached, ready to render. */
 export interface EpicWithTasks extends WorkEpicRecord {
   tasks:            TaskView[];
@@ -97,6 +103,7 @@ export function useProjects() {
   const loaded = ref(false);
   const lanesByProject = ref<Record<string, EffectiveWorkLane[]>>({});
   const laneCapability = ref<WorkLaneRuntimeCapability | null>(null);
+  const activeAgents = ref<ProjectActiveAgent[]>([]);
 
   /** currently selected project id (drives the one-project-at-a-time view) */
   const selectedId = ref<string | null>(null);
@@ -167,6 +174,7 @@ export function useProjects() {
       const board = await ipcRenderer.invoke('work-items:board');
       lanesByProject.value = board.lanesByProject ?? {};
       laneCapability.value = board.laneCapability ?? null;
+      activeAgents.value = board.activeAgents ?? [];
       projects.value = buildTree(board.projects, board.epics, board.tasks, lanesByProject.value);
       if (!selectedId.value && projects.value.length) {
         selectedId.value = projects.value[0].id;
@@ -368,6 +376,7 @@ export function useProjects() {
     loaded,
     lanesByProject,
     laneCapability,
+    activeAgents,
     load,
     select,
     loadComments,

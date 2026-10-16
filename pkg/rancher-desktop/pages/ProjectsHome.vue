@@ -28,7 +28,42 @@
     />
     <div v-show="!issueRouteId || taskMode === 'create'" class="ph-body">
       <!-- project list -->
-      <aside class="ph-side">
+      <aside v-if="tab === 'projects'" class="ph-side ph-directory-side">
+        <div class="ph-side-h">
+          <div class="ph-eyebrow">
+            Project index
+          </div>
+          <h1>Projects</h1>
+        </div>
+        <nav class="ph-directory-nav" aria-label="Project filters">
+          <button
+            v-for="item in directoryNavItems"
+            :key="item.key"
+            type="button"
+            :class="{ on: directoryFilter === item.key }"
+            @click="directoryFilter = item.key"
+          >
+            <span class="ph-directory-nav-icon" aria-hidden="true">
+              <svg v-if="item.key === 'all'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9 4v16M15 4v16"/></svg>
+              <svg v-else-if="item.key === 'mine'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>
+              <svg v-else-if="item.key === 'waiting'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4.5M12 16v.01"/></svg>
+              <svg v-else-if="item.key === 'starred'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></svg>
+              <svg v-else-if="item.key === 'recent'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="13.5" r="1.2" fill="currentColor" stroke="none"/></svg>
+            </span>
+            <span>{{ item.label }}</span>
+            <span v-if="item.count" class="ph-directory-count">{{ item.count }}</span>
+          </button>
+        </nav>
+        <div class="ph-side-f">
+          <button type="button" class="ph-btn primary block" @click="openNewProject">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            New project
+          </button>
+        </div>
+      </aside>
+
+      <aside v-else class="ph-side">
         <div class="ph-side-h">
           <div class="ph-eyebrow">
             Outcome ledger
@@ -79,7 +114,25 @@
 
       <!-- main -->
       <section class="ph-main">
-        <div class="ph-top">
+        <div v-if="tab === 'projects'" class="ph-directory-top">
+          <div class="ph-directory-crumb">Projects</div>
+          <label class="ph-directory-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></svg>
+            <input
+              ref="projectSearchInput"
+              v-model="projectQuery"
+              type="search"
+              placeholder="Search projects and cards"
+              autocomplete="off"
+            >
+            <kbd>⌘K</kbd>
+          </label>
+          <button type="button" class="ph-btn primary" @click="openNewProject">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            New project
+          </button>
+        </div>
+        <div v-else class="ph-top">
           <div class="ph-tabs">
             <button
               v-for="view in PROJECT_VIEWS"
@@ -811,36 +864,137 @@
             </div>
 
             <!-- PROJECTS -->
-            <div v-show="tab === 'projects'">
-              <div class="ph-grid">
-                <div
-                  v-for="p in projects"
-                  :key="p.id"
-                  class="ph-pcard"
-                  @click="select(p.id); tab = 'list'"
-                >
-                  <div
-                    class="ph-lane"
-                    :class="{ hb: isHeartbeat(p) }"
-                  >
-                    {{ laneLabel(p) }}
-                  </div>
-                  <h3>{{ shortName(p) }}</h3>
-                  <p v-if="p.description">
-                    {{ p.description }}
-                  </p>
-                  <div
-                    class="ph-prog"
-                    :class="progClass(p)"
-                  >
-                    <i :style="{ width: pct(p) + '%' }" />
-                  </div>
-                  <div class="ph-nums">
-                    <span><b>{{ p.openCount }}</b> open</span>
-                    <span><b>{{ p.doneCount }}</b> done</span>
-                    <span><b>{{ p.epics.length }}</b> epics</span>
+            <div v-show="tab === 'projects'" class="ph-directory">
+              <div class="ph-directory-heading">
+                <div>
+                  <h2>{{ directoryHeading }}</h2>
+                  <p>{{ directoryMeta }}</p>
+                </div>
+              </div>
+
+              <div class="ph-directory-filters">
+                <label class="ph-filter-select">
+                  <span>Owner</span>
+                  <select v-model="ownerFilter">
+                    <option value="">Anyone</option>
+                    <option v-for="owner in projectOwners" :key="owner" :value="owner">{{ owner }}</option>
+                  </select>
+                </label>
+                <label class="ph-filter-select">
+                  <span>Status</span>
+                  <select v-model="statusFilter">
+                    <option value="active">Active</option>
+                    <option value="paused">Paused</option>
+                    <option value="all">All</option>
+                  </select>
+                </label>
+                <button v-if="directoryFiltersActive" type="button" class="ph-directory-clear" @click="clearDirectoryFilters">
+                  Clear
+                </button>
+                <div class="ph-directory-view-controls">
+                  <label class="ph-filter-select">
+                    <span>Sort</span>
+                    <select v-model="projectSort">
+                      <option value="updated">Last updated</option>
+                      <option value="name">Name</option>
+                      <option value="open">Most open work</option>
+                    </select>
+                  </label>
+                  <div class="ph-directory-switch" aria-label="Project layout">
+                    <button type="button" :class="{ on: projectLayout === 'list' }" @click="projectLayout = 'list'">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
+                      List
+                    </button>
+                    <button type="button" :class="{ on: projectLayout === 'grid' }" @click="projectLayout = 'grid'">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>
+                      Grid
+                    </button>
                   </div>
                 </div>
+              </div>
+
+              <div v-if="!filteredProjects.length" class="ph-directory-empty">
+                <b>No projects match.</b>
+                <span>Try another search or clear the filters.</span>
+              </div>
+
+              <div v-else-if="projectLayout === 'list'" class="ph-project-list">
+                <template v-for="section in projectSections" :key="section.label">
+                  <div v-if="section.items.length" class="ph-project-section">{{ section.label }}</div>
+                  <button
+                    v-for="p in section.items"
+                    :key="p.id"
+                    type="button"
+                    class="ph-project-row"
+                    @click="openProject(p)"
+                  >
+                    <span
+                      class="ph-project-star"
+                      :class="{ on: isFavorite(p.id) }"
+                      role="button"
+                      tabindex="0"
+                      :aria-label="isFavorite(p.id) ? `Unstar ${shortName(p)}` : `Star ${shortName(p)}`"
+                      @click.stop="toggleFavorite(p.id)"
+                      @keydown.enter.stop.prevent="toggleFavorite(p.id)"
+                      @keydown.space.stop.prevent="toggleFavorite(p.id)"
+                    >
+                      <svg v-if="isFavorite(p.id)" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></svg>
+                      <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></svg>
+                    </span>
+                    <span class="ph-project-name">
+                      <span class="ph-project-glyph" :class="projectTint(p)" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9 4v16M15 4v16"/></svg>
+                      </span>
+                      <span>
+                        <b>{{ shortName(p) }}</b>
+                        <small v-if="p.description">{{ p.description }}</small>
+                      </span>
+                    </span>
+                    <span class="ph-project-activity" :class="activityFor(p).tone">{{ activityFor(p).label }}</span>
+                    <span class="ph-project-progress">
+                      <span class="ph-project-progress-bar"><i :style="{ width: pct(p) + '%' }" /></span>
+                      <span>{{ p.doneCount }} of {{ p.openCount + p.doneCount }}</span>
+                    </span>
+                    <span class="ph-project-team" aria-label="Project team">
+                      <span v-for="member in projectTeam(p)" :key="member.id" :title="member.label" :class="{ agent: member.agent }">{{ member.initials }}</span>
+                    </span>
+                    <time :datetime="projectUpdatedAt(p)">{{ relativeDate(projectUpdatedAt(p)) }}</time>
+                    <span class="ph-project-actions">
+                      <span title="More" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/></svg>
+                      </span>
+                    </span>
+                  </button>
+                </template>
+              </div>
+
+              <div v-else class="ph-project-grid">
+                <button v-for="p in filteredProjects" :key="p.id" type="button" class="ph-project-tile" @click="openProject(p)">
+                  <span class="ph-project-preview" :class="projectTint(p)">
+                    <span v-for="lane in projectPreview(p)" :key="lane.label">
+                      <b>{{ lane.label }}</b>
+                      <i v-for="n in lane.count" :key="n" :class="{ live: lane.live && n === 1 }" />
+                    </span>
+                    <span
+                      class="ph-project-star tile"
+                      :class="{ on: isFavorite(p.id) }"
+                      role="button"
+                      tabindex="0"
+                      :aria-label="isFavorite(p.id) ? `Unstar ${shortName(p)}` : `Star ${shortName(p)}`"
+                      @click.stop="toggleFavorite(p.id)"
+                      @keydown.enter.stop.prevent="toggleFavorite(p.id)"
+                      @keydown.space.stop.prevent="toggleFavorite(p.id)"
+                    >
+                      <svg v-if="isFavorite(p.id)" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></svg>
+                      <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></svg>
+                    </span>
+                  </span>
+                  <span class="ph-project-tile-body">
+                    <b>{{ shortName(p) }}</b>
+                    <small>{{ p.openCount }} open · {{ relativeDate(projectUpdatedAt(p)) }}</small>
+                    <span class="ph-project-activity" :class="activityFor(p).tone">{{ activityFor(p).label }}</span>
+                  </span>
+                </button>
               </div>
             </div>
 
@@ -1353,7 +1507,7 @@ const {
   loadComments, loadActivity, createProject, updateProject, archiveProject,
   createEpic, updateEpic, archiveEpic,
   createTask, updateTask, archiveTask, addComment, reorder,
-  lanesByProject, laneCapability,
+  lanesByProject, laneCapability, activeAgents,
   resolveView, saveView,
   listTaskDependencies, setTaskDependency, removeTaskDependency,
 } = useProjects();
@@ -1368,7 +1522,8 @@ const PROJECT_VIEWS: { key: ProjectViewType; label: string; icon: string }[] = [
   { key: 'list', label: 'List', icon: '☷' },
 ];
 type ProjectsTab = ProjectViewType | 'activity' | 'projects' | 'lanes' | 'dependencies';
-const tab = ref<ProjectsTab>('board');
+type DirectoryFilter = 'all' | 'mine' | 'waiting' | 'starred' | 'recent' | 'working';
+const tab = ref<ProjectsTab>('projects');
 const saving = ref(false);
 const activity = ref<WorkActivityRecord[]>([]);
 const activityLoading = ref(false);
@@ -1379,6 +1534,15 @@ const PROJECTION_RENDER_LIMIT = 500;
 const isDataView = computed(() => PROJECT_VIEWS.some(view => view.key === tab.value));
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 const laneSettings = ref<InstanceType<typeof LaneSettings> | null>(null);
+const projectSearchInput = ref<HTMLInputElement | null>(null);
+const projectQuery = ref('');
+const ownerFilter = ref('');
+const statusFilter = ref<'active' | 'paused' | 'all'>('active');
+const projectSort = ref<'updated' | 'name' | 'open'>('updated');
+const projectLayout = ref<'list' | 'grid'>('list');
+const directoryFilter = ref<DirectoryFilter>('all');
+const favoriteProjectIds = ref(new Set<string>());
+const FAVORITES_SETTING = 'projects:favorites';
 
 const selectedLanes = computed(() => selectedId.value ? (lanesByProject.value[selectedId.value] ?? []) : []);
 // Server-owned only: no literal coding-lane fallback. A project's status options are
@@ -1413,12 +1577,16 @@ async function loadAgentOptions(): Promise<void> {
 }
 
 onMounted(async() => {
-  await load().catch((err) => {
-    console.error('[ProjectsHome] initial load failed:', err);
-  });
-  await restoreProjectView();
+  const [, savedFavorites] = await Promise.all([
+    load().catch((err) => {
+      console.error('[ProjectsHome] initial load failed:', err);
+    }),
+    ipcRenderer.invoke('sulla-settings:get', FAVORITES_SETTING).catch(() => []),
+  ]);
+  if (Array.isArray(savedFavorites)) favoriteProjectIds.value = new Set(savedFavorites.filter((id: unknown): id is string => typeof id === 'string'));
   await openIssueFromRoute();
   await loadAgentOptions();
+  window.addEventListener('keydown', onDirectoryKeydown);
   refreshTimer = setInterval(() => {
     if (!document.hidden && !saving.value) {
       load().catch(() => undefined);
@@ -1428,7 +1596,19 @@ onMounted(async() => {
 
 onBeforeUnmount(() => {
   if (refreshTimer) clearInterval(refreshTimer);
+  window.removeEventListener('keydown', onDirectoryKeydown);
 });
+
+function onDirectoryKeydown(event: KeyboardEvent): void {
+  if (tab.value !== 'projects') return;
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    projectSearchInput.value?.focus();
+  } else if (event.key === 'Escape' && document.activeElement === projectSearchInput.value) {
+    projectQuery.value = '';
+    projectSearchInput.value?.blur();
+  }
+}
 
 async function restoreProjectView(): Promise<void> {
   const saved = await resolveView(selectedId.value).catch(() => null);
@@ -1471,7 +1651,13 @@ watch([tab, selectedId], () => {
   }
 });
 
+let skipNextProjectViewRestore = false;
 watch(selectedId, () => {
+  if (tab.value === 'projects') return;
+  if (skipNextProjectViewRestore) {
+    skipNextProjectViewRestore = false;
+    return;
+  }
   restoreProjectView().catch(() => undefined);
 });
 
@@ -1511,16 +1697,177 @@ const groups = computed(() => {
   ];
 });
 
+function projectTasks(project: ProjectView): TaskView[] {
+  return project.epics.flatMap(epic => epic.tasks);
+}
+
+function isProjectPaused(project: ProjectView): boolean {
+  return project.status === 'paused' || project.status === 'parked';
+}
+
+function isProjectClosed(project: ProjectView): boolean {
+  return project.status === 'done' || project.status === 'cancelled';
+}
+
+function waitingOnHuman(project: ProjectView): boolean {
+  return projectTasks(project).some(task => task.assignee?.toLowerCase() === 'human' &&
+    (task.lane?.semantic_role === 'review' || task.lane?.semantic_role === 'blocked'));
+}
+
+function projectAgents(project: ProjectView) {
+  return activeAgents.value.filter(agent => agent.project_id === project.id);
+}
+
+const projectOwners = computed(() => Array.from(new Set(projects.value
+  .map(project => project.owner?.trim())
+  .filter((owner): owner is string => Boolean(owner))))
+  .sort((left, right) => left.localeCompare(right)));
+
+const filteredProjects = computed(() => {
+  const query = projectQuery.value.trim().toLowerCase();
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1_000;
+  const filtered = projects.value.filter((project) => {
+    const tasks = projectTasks(project);
+    const matchesQuery = !query || [project.title, project.description, ...tasks.flatMap(task => [task.title, task.description])]
+      .some(value => value?.toLowerCase().includes(query));
+    if (!matchesQuery || (ownerFilter.value && project.owner !== ownerFilter.value)) return false;
+    if (statusFilter.value === 'active' && (isProjectPaused(project) || isProjectClosed(project))) return false;
+    if (statusFilter.value === 'paused' && !isProjectPaused(project)) return false;
+    if (directoryFilter.value === 'mine' && project.owner?.toLowerCase() !== 'jonathon' && !tasks.some(task => task.assignee === 'human')) return false;
+    if (directoryFilter.value === 'waiting' && !waitingOnHuman(project)) return false;
+    if (directoryFilter.value === 'starred' && !isFavorite(project.id)) return false;
+    if (directoryFilter.value === 'recent' && new Date(projectUpdatedAt(project)).getTime() < sevenDaysAgo) return false;
+    if (directoryFilter.value === 'working' && projectAgents(project).length === 0) return false;
+    return true;
+  });
+  return filtered.sort((left, right) => {
+    if (projectSort.value === 'name') return shortName(left).localeCompare(shortName(right));
+    if (projectSort.value === 'open') return right.openCount - left.openCount || shortName(left).localeCompare(shortName(right));
+    return new Date(projectUpdatedAt(right)).getTime() - new Date(projectUpdatedAt(left)).getTime();
+  });
+});
+
+const projectSections = computed(() => {
+  const starred = filteredProjects.value.filter(project => isFavorite(project.id));
+  const others = filteredProjects.value.filter(project => !isFavorite(project.id));
+  return [
+    { label: 'Starred', items: starred },
+    { label: starred.length ? 'All projects' : 'Projects', items: others },
+  ];
+});
+
+const directoryNavItems = computed(() => [
+  { key: 'all' as const, label: 'All projects', count: projects.value.length },
+  { key: 'mine' as const, label: 'My work', count: projects.value.filter(project => project.owner?.toLowerCase() === 'jonathon' || projectTasks(project).some(task => task.assignee === 'human')).length },
+  { key: 'waiting' as const, label: 'Waiting on you', count: projects.value.filter(waitingOnHuman).length },
+  { key: 'starred' as const, label: 'Starred', count: projects.value.filter(project => isFavorite(project.id)).length },
+  { key: 'recent' as const, label: 'Recent', count: 0 },
+  { key: 'working' as const, label: 'Working now', count: new Set(activeAgents.value.map(agent => agent.agent_id)).size },
+]);
+
+const directoryHeading = computed(() => directoryNavItems.value.find(item => item.key === directoryFilter.value)?.label ?? 'All projects');
+const directoryMeta = computed(() => {
+  const open = filteredProjects.value.reduce((total, project) => total + project.openCount, 0);
+  const agents = new Set(filteredProjects.value.flatMap(project => projectAgents(project).map(agent => agent.agent_id))).size;
+  return `${ filteredProjects.value.length } project${ filteredProjects.value.length === 1 ? '' : 's' } · ${ open } open card${ open === 1 ? '' : 's' } · ${ agents } agent${ agents === 1 ? '' : 's' } working`;
+});
+const directoryFiltersActive = computed(() => Boolean(projectQuery.value || ownerFilter.value || statusFilter.value !== 'active' || directoryFilter.value !== 'all'));
+
+function clearDirectoryFilters(): void {
+  projectQuery.value = '';
+  ownerFilter.value = '';
+  statusFilter.value = 'active';
+  directoryFilter.value = 'all';
+}
+
+function isFavorite(projectId: string): boolean {
+  return favoriteProjectIds.value.has(projectId);
+}
+
+async function toggleFavorite(projectId: string): Promise<void> {
+  const next = new Set(favoriteProjectIds.value);
+  if (next.has(projectId)) next.delete(projectId);
+  else next.add(projectId);
+  favoriteProjectIds.value = next;
+  await ipcRenderer.invoke('sulla-settings:set', FAVORITES_SETTING, [...next], 'json').catch((err) => {
+    console.warn('[ProjectsHome] Could not save favorite projects:', err);
+  });
+}
+
+function openProject(project: ProjectView): void {
+  skipNextProjectViewRestore = true;
+  select(project.id);
+  tab.value = 'board';
+}
+
+function projectUpdatedAt(project: ProjectView): string {
+  return project.updated_at || project.last_moved_at || project.created_at;
+}
+
+function relativeDate(iso: string): string {
+  const timestamp = new Date(iso).getTime();
+  if (!Number.isFinite(timestamp)) return '';
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${ minutes } min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${ hours } hr ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${ days } days ago`;
+  return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function activityFor(project: ProjectView): { label: string; tone: string } {
+  const agents = new Set(projectAgents(project).map(agent => agent.agent_id)).size;
+  if (agents) return { label: `${ agents } agent${ agents === 1 ? '' : 's' } working`, tone: 'working' };
+  if (waitingOnHuman(project)) return { label: 'Waiting on you', tone: 'waiting' };
+  if (isProjectPaused(project)) return { label: 'Paused', tone: 'paused' };
+  return { label: 'Quiet', tone: 'quiet' };
+}
+
+function initials(value: string): string {
+  const parts = value.trim().split(/[\s_-]+/).filter(Boolean);
+  return (parts.length > 1 ? `${ parts[0][0] }${ parts[1][0] }` : parts[0]?.slice(0, 2) || '?').toUpperCase();
+}
+
+function projectTeam(project: ProjectView): { id: string; label: string; initials: string; agent: boolean }[] {
+  const knownAgents = new Set(agentOptions.value.map(agent => agent.value));
+  const members = new Map<string, { id: string; label: string; initials: string; agent: boolean }>();
+  const add = (id: string | null | undefined, agent: boolean) => {
+    const value = id?.trim();
+    if (!value || members.has(value)) return;
+    const label = agentOptions.value.find(option => option.value === value)?.label || (value === 'human' ? 'Jonathon' : value);
+    members.set(value, { id: value, label, initials: initials(label), agent });
+  };
+  add(project.owner, knownAgents.has(project.owner || ''));
+  add(project.assigned_agent, true);
+  projectTasks(project).forEach(task => add(task.assignee, knownAgents.has(task.assignee || '') || task.assignee === 'heartbeat' || task.assignee === 'sulla'));
+  projectAgents(project).forEach(agent => add(agent.agent_id, true));
+  return [...members.values()].slice(0, 5);
+}
+
+function projectTint(project: ProjectView): string {
+  const tints = ['blue', 'green', 'amber', 'violet', 'slate'];
+  const hash = [...project.slug].reduce((total, char) => total + char.charCodeAt(0), 0);
+  return tints[hash % tints.length];
+}
+
+function projectPreview(project: ProjectView): { label: string; count: number; live: boolean }[] {
+  const activeTaskIds = new Set(projectAgents(project).map(agent => agent.task_id));
+  return (lanesByProject.value[project.id] ?? []).slice(0, 4).map(lane => {
+    const tasks = projectTasks(project).filter(task => task.status === lane.lane_key);
+    return {
+      label: lane.display_name,
+      count: Math.min(tasks.length, 4),
+      live:  tasks.some(task => activeTaskIds.has(task.id)),
+    };
+  });
+}
+
 function isHeartbeat(p: ProjectView): boolean {
   return p.slug === 'goal-operator-transition' || /operator platform/i.test(p.title);
 }
-function laneLabel(p: ProjectView): string {
-  if (p.status === 'done') return 'Closed';
-  if (isHeartbeat(p)) return 'Heartbeat lane';
-
-  return 'Your stack';
-}
-
 // ── display helpers ───────────────────────────────────────────────────
 function shortName(p: ProjectView): string {
   return p.title.split(' (')[0].split(' — ')[0].trim();
@@ -1581,12 +1928,6 @@ function pct(p: ProjectView): number {
   const total = p.openCount + p.doneCount;
 
   return total ? Math.round((100 * p.doneCount) / total) : 0;
-}
-function progClass(p: ProjectView): string {
-  if (p.status === 'blocked') return 'amber';
-  if (p.status === 'backlog' || p.status === 'done') return 'gray';
-
-  return '';
 }
 function shortDate(iso: string): string {
   if (!iso) return '';
@@ -2210,10 +2551,10 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
   font-family: var(--psans);
 }
 :global(html.light) .projects-home, :global(body.light) .projects-home {
-  --pbg: #f5f7fa; --psurface: #ffffff; --psurface2: #edf1f5;
-  --pborder: #c5ced8; --pborder-soft: #dce2e8;
-  --ptext: #17212b; --ptext2: #4d5e6f; --ptext3: #5b6d7e;
-  --pacc-soft: rgba(46, 111, 140, 0.12); --pacc-line: rgba(46, 111, 140, 0.48); --pacc: #2e6f8c;
+  --pbg: #f4f7fb; --psurface: rgba(255, 255, 255, 0.82); --psurface2: #eaf0f6;
+  --pborder: rgba(26, 35, 50, 0.14); --pborder-soft: rgba(26, 35, 50, 0.09);
+  --ptext: #1a2332; --ptext2: #5b6778; --ptext3: #7a8798;
+  --pacc-soft: rgba(58, 127, 160, 0.10); --pacc-line: rgba(58, 127, 160, 0.32); --pacc: #3a7fa0;
   --pgreen: #347558; --pamber: #8b611f; --pred: #a34641;
 }
 .projects-home * { box-sizing: border-box; }
@@ -2228,6 +2569,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
   background: var(--pacc-soft); border: 1px solid var(--pacc-line); border-radius: 8px;
   padding: 7px 12px; cursor: pointer; white-space: nowrap;
 }
+.ph-directory-side .ph-btn, .ph-directory-top .ph-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.ph-directory-side .ph-btn > svg, .ph-directory-top .ph-btn > svg { width: 14px; height: 14px; flex: 0 0 14px; }
 .ph-btn:hover { background: rgba(80, 150, 179, 0.22); }
 .ph-btn:disabled { opacity: 0.5; cursor: default; }
 .ph-btn.primary { background: var(--pacc); border-color: var(--pacc); color: #06121a; }
@@ -2405,20 +2748,106 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-activity-task { display: block; color: var(--ptext); font-size: 14px; font-weight: 600; line-height: 1.4; transition: color 0.12s ease; }
 .ph-activity-text { display: -webkit-box; max-width: 780px; overflow: hidden; color: var(--ptext2); font-size: 13px; line-height: 1.55; white-space: pre-wrap; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
 
-/* projects overview */
-.ph-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.ph-pcard { border: 1px solid var(--pborder); border-radius: 13px; padding: 20px 22px; background: var(--psurface); cursor: pointer; }
-.ph-pcard:hover { border-color: var(--pacc-line); }
-.ph-lane { display: inline-block; font-family: var(--pmono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; padding: 3px 9px; border-radius: 5px; border: 1px solid var(--pborder); color: var(--ptext2); margin-bottom: 12px; }
-.ph-lane.hb { color: var(--pacc); border-color: var(--pacc-line); background: var(--pacc-soft); }
-.ph-pcard h3 { font-family: var(--pserif); font-weight: 500; font-size: 21px; margin: 0 0 10px; color: var(--ptext); }
-.ph-pcard p { font-size: 13px; color: var(--ptext2); line-height: 1.6; margin: 0 0 18px; }
-.ph-prog { height: 6px; border-radius: 4px; background: var(--psurface2); overflow: hidden; margin-bottom: 12px; }
-.ph-prog > i { display: block; height: 100%; background: var(--pacc); }
-.ph-prog.amber > i { background: var(--pamber); }
-.ph-prog.gray > i { background: var(--ptext3); }
-.ph-nums { display: flex; gap: 22px; font-size: 13px; color: var(--ptext3); }
-.ph-nums b { color: var(--ptext); font-weight: 600; font-family: var(--pmono); }
+/* projects directory */
+.ph-directory-side { background: color-mix(in srgb, var(--psurface) 78%, transparent); backdrop-filter: blur(14px); }
+.ph-directory-nav { flex: 1; min-height: 0; overflow: auto; padding: 7px 12px; }
+.ph-directory-nav button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--ptext2); text-align: left; cursor: pointer; }
+.ph-directory-nav button:hover { background: color-mix(in srgb, var(--ptext) 5%, transparent); color: var(--ptext); }
+.ph-directory-nav button.on { background: var(--pacc-soft); color: var(--pacc); font-weight: 600; }
+.ph-directory-nav-icon { display: grid; width: 17px; place-items: center; color: currentColor; }
+.ph-directory-nav-icon svg { width: 16px; height: 16px; }
+.ph-directory-count { margin-left: auto; padding: 1px 7px; border-radius: 999px; background: var(--psurface2); color: var(--ptext2); font: 600 10px var(--pmono); }
+.ph-directory-nav button.on .ph-directory-count { background: color-mix(in srgb, var(--pacc) 12%, transparent); color: var(--pacc); }
+.ph-directory-top { display: flex; align-items: center; gap: 16px; padding: 12px 28px; border-bottom: 1px solid var(--pborder-soft); background: color-mix(in srgb, var(--psurface) 55%, transparent); backdrop-filter: blur(10px); }
+.ph-directory-crumb { color: var(--ptext); font-size: 12.5px; font-weight: 600; }
+.ph-directory-search { display: flex; align-items: center; gap: 8px; width: min(560px, 55vw); margin-left: 10px; padding: 7px 10px; border: 1px solid var(--pborder); border-radius: 9px; background: var(--psurface); color: var(--ptext3); }
+.ph-directory-search > svg { width: 14px; height: 14px; flex: 0 0 14px; }
+.ph-directory-search:focus-within { border-color: var(--pacc-line); box-shadow: 0 0 0 2px var(--pacc-soft); }
+.ph-directory-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ptext); font: 12.5px var(--psans); }
+.ph-directory-search kbd { padding: 1px 5px; border: 1px solid var(--pborder); border-radius: 5px; background: var(--pbg); color: var(--ptext3); font: 10px var(--pmono); }
+.ph-directory-top > .ph-btn { margin-left: auto; color: #fff; }
+.ph-directory { min-width: 760px; }
+.ph-directory-heading { display: flex; align-items: flex-start; margin-bottom: 15px; }
+.ph-directory-heading h2 { margin: 0 0 3px; color: var(--ptext); font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
+.ph-directory-heading p { margin: 0; color: var(--ptext2); font-size: 12.5px; }
+.ph-directory-filters { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.ph-filter-select { display: inline-flex; align-items: center; gap: 6px; min-height: 31px; padding: 0 8px 0 10px; border: 1px solid var(--pborder); border-radius: 8px; background: var(--psurface); color: var(--ptext3); font-size: 12px; }
+.ph-filter-select select { border: 0; outline: 0; background: transparent; color: var(--ptext); font: 500 12px var(--psans); cursor: pointer; }
+.ph-directory-clear { border: 0; background: transparent; color: var(--ptext2); font: 12px var(--psans); cursor: pointer; }
+.ph-directory-clear:hover { color: var(--ptext); }
+.ph-directory-view-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.ph-directory-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--pborder); border-radius: 8px; background: var(--psurface); }
+.ph-directory-switch button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ptext2); font: 500 12px var(--psans); cursor: pointer; }
+.ph-directory-switch svg { width: 13px; height: 13px; }
+.ph-directory-switch button.on { background: var(--pacc-soft); color: var(--pacc); font-weight: 600; }
+.ph-directory-empty { padding: 34px; border: 1px solid var(--pborder-soft); border-radius: 12px; background: var(--psurface); color: var(--ptext2); text-align: center; }
+.ph-directory-empty b, .ph-directory-empty span { display: block; }
+.ph-directory-empty b { margin-bottom: 4px; color: var(--ptext); }
+.ph-project-list { overflow: hidden; border: 1px solid var(--pborder-soft); border-radius: 12px; background: var(--psurface); box-shadow: 0 1px 2px rgba(26, 35, 50, 0.04), 0 10px 30px -18px rgba(26, 35, 50, 0.22); backdrop-filter: blur(12px); }
+.ph-project-section { padding: 12px 16px 6px; color: var(--ptext3); font: 600 10.5px var(--pmono); letter-spacing: 0.08em; text-transform: uppercase; }
+.ph-project-section:not(:first-child) { padding-top: 16px; border-top: 1px solid var(--pborder-soft); }
+.ph-project-row { display: grid; grid-template-columns: 32px minmax(230px, 2fr) minmax(125px, 1fr) minmax(135px, 1fr) 105px 92px 28px; gap: 12px; align-items: center; width: 100%; padding: 9px 14px; border: 0; border-top: 1px solid var(--pborder-soft); background: transparent; color: var(--ptext); text-align: left; cursor: pointer; }
+.ph-project-row:hover { background: color-mix(in srgb, var(--pacc) 5%, transparent); }
+.ph-project-star { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 6px; color: var(--ptext3); font-size: 16px; cursor: pointer; }
+.ph-project-star svg { width: 15px; height: 15px; }
+.ph-project-star:hover { background: color-mix(in srgb, var(--ptext) 6%, transparent); }
+.ph-project-star.on { color: var(--pamber); }
+.ph-project-name { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.ph-project-glyph { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border-radius: 8px; background: var(--pacc-soft); color: var(--pacc); }
+.ph-project-glyph svg { width: 17px; height: 17px; }
+.ph-project-glyph.green { background: color-mix(in srgb, var(--pgreen) 13%, transparent); color: var(--pgreen); }
+.ph-project-glyph.amber { background: color-mix(in srgb, var(--pamber) 13%, transparent); color: var(--pamber); }
+.ph-project-glyph.violet { background: color-mix(in srgb, #8068b5 13%, transparent); color: #8068b5; }
+.ph-project-glyph.slate { background: color-mix(in srgb, var(--ptext3) 13%, transparent); color: var(--ptext3); }
+.ph-project-name > span { min-width: 0; }
+.ph-project-name b, .ph-project-name small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-project-name b { font-size: 13px; font-weight: 600; }
+.ph-project-name small { margin-top: 2px; color: var(--ptext3); font-size: 11px; }
+.ph-project-activity { display: inline-flex; width: fit-content; align-items: center; padding: 2px 8px; border-radius: 999px; color: var(--ptext2); background: color-mix(in srgb, var(--ptext3) 15%, transparent); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.ph-project-activity.working { color: var(--pacc); background: var(--pacc-soft); }
+.ph-project-activity.waiting { color: var(--pamber); background: color-mix(in srgb, var(--pamber) 13%, transparent); }
+.ph-project-activity.paused { color: var(--ptext2); }
+.ph-project-progress { display: flex; align-items: center; gap: 9px; color: var(--ptext2); font-size: 12px; white-space: nowrap; }
+.ph-project-progress-bar { display: block; width: 78px; height: 5px; overflow: hidden; border-radius: 3px; background: var(--psurface2); }
+.ph-project-progress-bar i { display: block; height: 100%; border-radius: inherit; background: var(--pgreen); }
+.ph-project-team { display: flex; padding-left: 5px; }
+.ph-project-team > span { display: grid; width: 23px; height: 23px; margin-left: -5px; place-items: center; border: 2px solid var(--psurface); border-radius: 50%; background: linear-gradient(135deg, color-mix(in srgb, var(--pamber) 35%, var(--psurface)), var(--pamber)); color: #fff; font: 600 8px var(--pmono); }
+.ph-project-team > span.agent { background: linear-gradient(135deg, var(--ptext), var(--pacc)); }
+.ph-project-row time { color: var(--ptext2); font-size: 11.5px; white-space: nowrap; }
+.ph-project-actions { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 7px; color: var(--ptext3); opacity: 0; }
+.ph-project-actions svg { width: 15px; height: 15px; }
+.ph-project-row:hover .ph-project-actions { opacity: 1; }
+.ph-project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
+.ph-project-tile { overflow: hidden; padding: 0; border: 1px solid var(--pborder-soft); border-radius: 12px; background: var(--psurface); color: var(--ptext); text-align: left; cursor: pointer; box-shadow: 0 1px 2px rgba(26, 35, 50, 0.05); }
+.ph-project-tile:hover { border-color: var(--pacc-line); transform: translateY(-1px); }
+.ph-project-preview { position: relative; display: grid; height: 116px; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 14px; background: linear-gradient(180deg, color-mix(in srgb, var(--pacc) 7%, var(--psurface2)), color-mix(in srgb, var(--pacc) 15%, var(--psurface2))); }
+.ph-project-preview > span:not(.ph-project-star) { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 5px 4px; border-radius: 6px; background: color-mix(in srgb, var(--psurface) 65%, transparent); }
+.ph-project-preview b { overflow: hidden; padding-bottom: 2px; color: var(--ptext3); font: 600 8px var(--psans); letter-spacing: 0.04em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.ph-project-preview i { display: block; height: 7px; border-radius: 2px; background: var(--psurface); box-shadow: 0 1px 1px rgba(26, 35, 50, 0.08); }
+.ph-project-preview i.live { background: var(--pacc); opacity: 0.75; }
+.ph-project-star.tile { position: absolute; top: 7px; right: 7px; }
+.ph-project-tile-body { display: flex; flex-direction: column; gap: 3px; padding: 11px 12px 12px; }
+.ph-project-tile-body > b { overflow: hidden; font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.ph-project-tile-body > small { margin-bottom: 7px; color: var(--ptext3); font-size: 11px; }
+.ph-project-preview.green { background-color: color-mix(in srgb, var(--pgreen) 10%, var(--psurface2)); }
+.ph-project-preview.amber { background-color: color-mix(in srgb, var(--pamber) 10%, var(--psurface2)); }
+.ph-project-preview.violet { background-color: color-mix(in srgb, #8068b5 10%, var(--psurface2)); }
+.ph-project-preview.slate { background-color: color-mix(in srgb, var(--ptext3) 10%, var(--psurface2)); }
+
+@media (max-width: 1100px) {
+  .ph-directory-top { padding-inline: 18px; }
+  .ph-project-row { grid-template-columns: 32px minmax(220px, 2fr) minmax(120px, 1fr) minmax(125px, 1fr) 88px 28px; }
+  .ph-project-team { display: none; }
+}
+
+@media (max-width: 850px) {
+  .ph-directory-side { width: 176px; }
+  .ph-directory { min-width: 610px; }
+  .ph-directory-search { width: auto; flex: 1; }
+  .ph-directory-crumb { display: none; }
+  .ph-project-row { grid-template-columns: 32px minmax(220px, 2fr) minmax(120px, 1fr) 90px 28px; }
+  .ph-project-progress { display: none; }
+}
 
 /* forms */
 .ph-fl { display: block; font-family: var(--pmono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ptext3); margin: 12px 0 5px; }
