@@ -1,4 +1,5 @@
 import express, { type NextFunction, type Response } from 'express';
+import { agentPolicyAllows, type AgentAccessLevel } from '@sulla/vault-crypto';
 
 import {
   authenticate,
@@ -86,6 +87,19 @@ async function authorizeItemFolder(
 export function createApp(db: Database, config: VaultConfig) {
   const app = express();
   app.disable('x-powered-by');
+  app.use((request, response, next) => {
+    const origin = request.header('origin');
+    const allowed = Boolean(origin && (origin.startsWith('chrome-extension://') || config.extensionOrigins.includes(origin)));
+    if (allowed) {
+      response.setHeader('Access-Control-Allow-Origin', origin as string);
+      response.setHeader('Vary', 'Origin');
+      response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+      response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+      response.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+    if (request.method === 'OPTIONS') { response.status(allowed ? 204 : 403).end(); return; }
+    next();
+  });
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/healthz', async(_request, response) => {
@@ -248,7 +262,7 @@ export function createApp(db: Database, config: VaultConfig) {
       [itemId, collectionId ? null : actorId, collectionId, folderId,
         requiredString(request.body.itemType, 'itemType'), requiredObject(request.body.ciphertext, 'ciphertext'),
         requiredObject(request.body.encryptedItemKey, 'encryptedItemKey'), request.body.agentWrappedItemKey ?? null,
-        request.body.agentPolicy ?? DEFAULT_AGENT_POLICY],
+        request.body.agentPolicy ? requiredObject(request.body.agentPolicy, 'agentPolicy') : DEFAULT_AGENT_POLICY],
     );
     response.status(201).json(result.rows[0]);
   });
@@ -276,11 +290,12 @@ export function createApp(db: Database, config: VaultConfig) {
               agent_wrapped_item_key = CASE WHEN $6::boolean THEN $7 ELSE agent_wrapped_item_key END,
               agent_policy = COALESCE($10, agent_policy),
               revision = revision + 1, updated_at = now()
-        WHERE id = $9 AND revision = $10 AND deleted_at IS NULL
+        WHERE id = $8 AND revision = $9 AND deleted_at IS NULL
         RETURNING id, revision, updated_at`,
       [updatesFolder, request.body.folderId ?? null, request.body.itemType ?? null, request.body.ciphertext ?? null,
         request.body.encryptedItemKey ?? null, Object.hasOwn(request.body, 'agentWrappedItemKey'),
-        request.body.agentWrappedItemKey ?? null, request.body.agentPolicy ?? null, request.params.itemId, revision],
+        request.body.agentWrappedItemKey ?? null, request.params.itemId, revision,
+        request.body.agentPolicy ? requiredObject(request.body.agentPolicy, 'agentPolicy') : null],
     );
     if (!result.rowCount) {
       throw new HttpError(409, 'Item revision conflict');
