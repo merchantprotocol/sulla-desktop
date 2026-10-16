@@ -139,6 +139,8 @@ export default {
       resolve:     {
         alias:      { '@pkg': path.resolve(this.rootDir, 'pkg', 'rancher-desktop') },
         extensions: ['.ts', '.js', '.json', '.node'],
+        // ESM-style './x.js' imports of TypeScript sources (packages/vault-crypto).
+        extensionAlias: { '.js': ['.ts', '.js'] },
         modules:    ['node_modules'],
       },
       output: {

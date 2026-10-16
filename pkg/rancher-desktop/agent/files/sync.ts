@@ -55,7 +55,7 @@ export class SullaFilesSyncClient {
     const payload = { collectionId, file: item.file, version: item.version, manifest: item.manifest, chunks, baseServerVersionId: item.version.base_server_version_id ?? item.version.parent_version_id };
     const prep = await this.json(context, '/v1/versions/prepare', { method: 'POST', body: JSON.stringify(payload) });
     if (prep.conflict) { await this.resolveConflict(context, collectionId, item, prep.currentVersionId, result); return }
-    for (const id of prep.missing) { const r = await fetch(new URL(`/v1/chunks/${ item.version.chunk_collection_id }/${ id }`, this.baseUrl), { method: 'PUT', headers: this.headers(context, { 'content-type': 'application/octet-stream' }), body: await this.store.get(item.version.chunk_collection_id, id) }); if (!r.ok) throw new Error(`chunk upload failed ${ r.status }`); }
+    for (const id of prep.missing) { const r = await fetch(new URL(`/v1/chunks/${ item.version.chunk_collection_id }/${ id }`, this.baseUrl), { method: 'PUT', headers: this.headers(context, { 'content-type': 'application/octet-stream' }), body: await this.store.get(item.version.chunk_collection_id, id) as unknown as BodyInit }); if (!r.ok) throw new Error(`chunk upload failed ${ r.status }`); }
     await this.json(context, '/v1/versions/commit', { method: 'POST', body: JSON.stringify(payload) }); result.pushed++;
   }
 
