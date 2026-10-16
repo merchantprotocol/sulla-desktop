@@ -15,6 +15,10 @@ function gearTable(): bigint[] {
 const GEAR = gearTable();
 const MASK_SMALL = BigInt((AVG * 2) - 1);
 const MASK_LARGE = BigInt((AVG / 2) - 1);
+// BigInt() instead of literals: the main build targets below ES2020.
+const ZERO = BigInt(0);
+const ONE = BigInt(1);
+const U64 = BigInt('0xffffffffffffffff');
 
 /** FastCDC-style normalized content-defined chunking. */
 export function fastCdc(data: Uint8Array): Uint8Array[] {
@@ -27,16 +31,16 @@ export function fastCdc(data: Uint8Array): Uint8Array[] {
       chunks.push(data.subarray(start, end));
       break;
     }
-    let hash = 0n;
+    let hash = ZERO;
     let cursor = start + MIN;
     const normal = Math.min(start + AVG, end);
     for (; cursor < normal; cursor++) {
-      hash = ((hash << 1n) + GEAR[data[cursor]]) & 0xffffffffffffffffn;
-      if ((hash & MASK_SMALL) === 0n) break;
+      hash = ((hash << ONE) + GEAR[data[cursor]]) & U64;
+      if ((hash & MASK_SMALL) === ZERO) break;
     }
     for (; cursor < end; cursor++) {
-      hash = ((hash << 1n) + GEAR[data[cursor]]) & 0xffffffffffffffffn;
-      if ((hash & MASK_LARGE) === 0n) break;
+      hash = ((hash << ONE) + GEAR[data[cursor]]) & U64;
+      if ((hash & MASK_LARGE) === ZERO) break;
     }
     const cut = Math.min(cursor + 1, end);
     chunks.push(data.subarray(start, cut));
