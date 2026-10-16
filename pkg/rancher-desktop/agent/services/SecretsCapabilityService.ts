@@ -140,14 +140,6 @@ export class SecretsCapabilityService {
       throw new SecretsResolveError('key-already-consumed');
     }
 
-    // Respect the account's human-chosen AI access level.
-    const accessRow = await IntegrationValueModel.findByKey(ref.integrationId, ref.accountId, 'llm_access');
-    if (!mayInjectSecretIntoAgentCode(ref.integrationId, resolveLlmAccess(accessRow?.attributes.value))) {
-      cap.consumed.add(envKey);
-      this.logOutcome(cap.invocationId, envKey, 'access-denied');
-      throw new SecretsResolveError('access-denied');
-    }
-
     let resolved: string | null = null;
     const vault = getDesktopVaultClient();
     if (vault.isUnlocked()) {
@@ -161,6 +153,14 @@ export class SecretsCapabilityService {
     }
     if (resolved === null) {
       // Read-only rollback path until the importer has verified the account.
+      // The legacy access flag only applies on this fallback path; migrated
+      // items are governed by their encrypted v2 agent policy above.
+      const accessRow = await IntegrationValueModel.findByKey(ref.integrationId, ref.accountId, 'llm_access');
+      if (!mayInjectSecretIntoAgentCode(ref.integrationId, resolveLlmAccess(accessRow?.attributes.value))) {
+        cap.consumed.add(envKey);
+        this.logOutcome(cap.invocationId, envKey, 'access-denied');
+        throw new SecretsResolveError('access-denied');
+      }
       const row = await IntegrationValueModel.findByKey(ref.integrationId, ref.accountId, ref.property);
       resolved = row?.attributes.value ?? null;
     }
