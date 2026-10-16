@@ -27,60 +27,21 @@
       @comment="postDetailComment"
     />
     <div v-show="!issueRouteId || taskMode === 'create'" class="ph-body">
-      <!-- project list -->
-      <aside class="ph-side">
-        <div class="ph-side-h">
-          <div class="ph-eyebrow">
-            Outcome ledger
-          </div>
-          <h1>Projects</h1>
-        </div>
-        <div class="ph-list">
-          <template
-            v-for="group in groups"
-            :key="group.label"
-          >
-            <div
-              v-if="group.items.length"
-              class="ph-grp"
-            >
-              {{ group.label }}
-            </div>
-            <button
-              v-for="p in group.items"
-              :key="p.id"
-              type="button"
-              class="ph-p"
-              :class="{ on: p.id === selectedId }"
-              @click="select(p.id)"
-            >
-              <span
-                class="ph-nav-glass"
-                aria-hidden="true"
-              />
-              <span class="ph-pn"><span
-                class="ph-st"
-                :class="dotClass(p)"
-              />{{ shortName(p) }}</span>
-              <span class="ph-pc">{{ p.status === 'done' ? 'Closed' : `${p.openCount} open · ${p.doneCount} done` }}</span>
-            </button>
-          </template>
-        </div>
-        <div class="ph-side-f">
-          <button
-            type="button"
-            class="ph-btn block"
-            @click="openNewProject"
-          >
-            ＋ New project
-          </button>
-        </div>
-      </aside>
-
       <!-- main -->
       <section class="ph-main">
         <div class="ph-top">
-          <div class="ph-tabs">
+          <button
+            v-if="tab !== 'projects'"
+            type="button"
+            class="ph-btn ghost"
+            @click="showProjects"
+          >
+            ← All projects
+          </button>
+          <div v-if="tab !== 'projects'" class="ph-current-project">
+            {{ sel ? shortName(sel) : 'Project' }}
+          </div>
+          <div v-if="tab !== 'projects'" class="ph-tabs">
             <button
               v-for="view in PROJECT_VIEWS"
               :key="view.key"
@@ -101,18 +62,27 @@
             >
               Activity
             </button>
-            <button
-              type="button"
-              class="ph-tab"
-              :class="{ on: tab === 'projects' }"
-              @click="tab = 'projects'"
-            >
-              Projects
-            </button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'lanes' }" @click="tab = 'lanes'">Lanes</button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'dependencies' }" @click="tab = 'dependencies'">Dependencies</button>
           </div>
-          <div class="ph-sp" />
+          <template v-if="tab === 'projects'">
+            <div class="ph-projects-heading">
+              <div class="ph-eyebrow">Workspace</div>
+              <h1>Projects</h1>
+            </div>
+            <div class="ph-sp" />
+            <input
+              v-model="projectSearch"
+              class="ph-project-search"
+              type="search"
+              placeholder="Find a project…"
+              aria-label="Find a project"
+            >
+            <button type="button" class="ph-btn primary" @click="openNewProject">
+              ＋ New project
+            </button>
+          </template>
+          <div v-else class="ph-sp" />
           <button
             type="button"
             class="ph-btn ghost"
@@ -146,7 +116,7 @@
             Loading the ledger…
           </div>
           <div
-            v-else-if="!projects.length"
+            v-else-if="!projects.length && !archivedProjects.length"
             class="ph-state"
           >
             No projects yet. <button
@@ -812,34 +782,53 @@
 
             <!-- PROJECTS -->
             <div v-show="tab === 'projects'">
+              <div
+                class="ph-directory-filters"
+                role="tablist"
+                aria-label="Project status"
+              >
+                <button
+                  v-for="filter in projectFilters"
+                  :key="filter.key"
+                  type="button"
+                  class="ph-directory-filter"
+                  :class="{ on: projectFilter === filter.key }"
+                  :aria-pressed="projectFilter === filter.key"
+                  @click="projectFilter = filter.key"
+                >
+                  {{ filter.label }} <span>{{ filter.count }}</span>
+                </button>
+              </div>
+              <div v-if="!visibleDirectory.length" class="ph-state">
+                No {{ projectFilter === 'all' ? '' : `${projectFilter} ` }}projects{{ projectSearch ? ' match your search.' : ' yet.' }}
+              </div>
               <div class="ph-grid">
                 <div
-                  v-for="p in projects"
+                  v-for="p in visibleDirectory"
                   :key="p.id"
-                  class="ph-pcard"
-                  @click="select(p.id); tab = 'list'"
+                  class="ph-pcard ph-directory-card"
+                  :class="{ archived: p.archived }"
+                  :role="p.archived ? undefined : 'button'"
+                  :tabindex="p.archived ? undefined : 0"
+                  @click="!p.archived && openProject(p.id)"
+                  @keydown.enter="!p.archived && openProject(p.id)"
                 >
                   <div
                     class="ph-lane"
-                    :class="{ hb: isHeartbeat(p) }"
+                    :class="{ hb: !p.archived && isHeartbeat(p) }"
                   >
-                    {{ laneLabel(p) }}
+                    {{ directoryStatus(p) }}
                   </div>
                   <h3>{{ shortName(p) }}</h3>
                   <p v-if="p.description">
                     {{ p.description }}
                   </p>
-                  <div
-                    class="ph-prog"
-                    :class="progClass(p)"
-                  >
-                    <i :style="{ width: pct(p) + '%' }" />
+                  <div v-if="!p.archived" class="ph-directory-meta">
+                    <span>{{ p.openCount }} open</span>
+                    <span>{{ p.doneCount }} done</span>
+                  <span>Activity {{ ageLabel(p.activityAt) }}</span>
                   </div>
-                  <div class="ph-nums">
-                    <span><b>{{ p.openCount }}</b> open</span>
-                    <span><b>{{ p.doneCount }}</b> done</span>
-                    <span><b>{{ p.epics.length }}</b> epics</span>
-                  </div>
+                  <div v-else class="ph-directory-meta">Archived {{ ageLabel(p.activityAt) }}</div>
                 </div>
               </div>
             </div>
@@ -1341,7 +1330,7 @@ import ProjectDependencyGraph from '@pkg/components/projects/ProjectDependencyGr
 import ProjectIssueDetail from '@pkg/components/projects/ProjectIssueDetail.vue';
 import {
   useProjects,
-  type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
+  type EpicWithTasks, type TaskView, type WorkProjectRecord, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
   type WorkTaskDependencyRecord,
   type UpsertProjectInput, type UpsertEpicInput, type UpsertTaskInput, type ReorderUpdate,
   type ProjectViewType,
@@ -1368,7 +1357,10 @@ const PROJECT_VIEWS: { key: ProjectViewType; label: string; icon: string }[] = [
   { key: 'list', label: 'List', icon: '☷' },
 ];
 type ProjectsTab = ProjectViewType | 'activity' | 'projects' | 'lanes' | 'dependencies';
-const tab = ref<ProjectsTab>('board');
+const tab = ref<ProjectsTab>('projects');
+const archivedProjects = ref<WorkProjectRecord[]>([]);
+const projectFilter = ref<'all' | 'active' | 'stale' | 'done' | 'archived'>('all');
+const projectSearch = ref('');
 const saving = ref(false);
 const activity = ref<WorkActivityRecord[]>([]);
 const activityLoading = ref(false);
@@ -1416,12 +1408,13 @@ onMounted(async() => {
   await load().catch((err) => {
     console.error('[ProjectsHome] initial load failed:', err);
   });
-  await restoreProjectView();
+  await loadArchivedProjects();
+  await restoreProjectView(false);
   await openIssueFromRoute();
   await loadAgentOptions();
   refreshTimer = setInterval(() => {
     if (!document.hidden && !saving.value) {
-      load().catch(() => undefined);
+      Promise.all([load(), loadArchivedProjects()]).catch(() => undefined);
     }
   }, 15_000);
 });
@@ -1430,10 +1423,10 @@ onBeforeUnmount(() => {
   if (refreshTimer) clearInterval(refreshTimer);
 });
 
-async function restoreProjectView(): Promise<void> {
+async function restoreProjectView(applyView = true): Promise<void> {
   const saved = await resolveView(selectedId.value).catch(() => null);
   if (!saved) return;
-  tab.value = saved.view_type;
+  if (applyView) tab.value = saved.view_type;
   collapsedEpics.value = new Set(saved.configuration.collapsedIds ?? []);
   ganttZoom.value = saved.configuration.zoom ?? 'week';
   if (saved.configuration.dateAnchor) {
@@ -1472,12 +1465,27 @@ watch([tab, selectedId], () => {
 });
 
 watch(selectedId, () => {
-  restoreProjectView().catch(() => undefined);
+  if (tab.value !== 'projects') restoreProjectView().catch(() => undefined);
 });
 
 async function refresh(): Promise<void> {
-  await load();
+  await Promise.all([load(), loadArchivedProjects()]);
   if (tab.value === 'activity') await refreshActivity();
+}
+
+async function loadArchivedProjects(): Promise<void> {
+  archivedProjects.value = await ipcRenderer.invoke('work-items:projects-archived').catch(() => []);
+}
+
+function showProjects(): void {
+  projectFilter.value = 'all';
+  tab.value = 'projects';
+}
+
+async function openProject(id: string): Promise<void> {
+  select(id);
+  await restoreProjectView();
+  if (!isDataView.value) tab.value = 'board';
 }
 
 async function refreshActivity(): Promise<void> {
@@ -1493,44 +1501,64 @@ async function refreshActivity(): Promise<void> {
   }
 }
 
-// ── grouping for the sidebar ──────────────────────────────────────────
-const groups = computed(() => {
-  const heartbeat: ProjectView[] = [];
-  const stack: ProjectView[] = [];
-  const closed: ProjectView[] = [];
-  for (const p of projects.value) {
-    if (p.status === 'done') closed.push(p);
-    else if (isHeartbeat(p)) heartbeat.push(p);
-    else stack.push(p);
-  }
-
-  return [
-    { label: 'Heartbeat’s lane', items: heartbeat },
-    { label: 'Your stack', items: stack },
-    { label: 'Closed', items: closed },
-  ];
+type ProjectDirectoryRow = Pick<WorkProjectRecord, 'id' | 'title' | 'description' | 'status' | 'archived' | 'last_moved_at' | 'updated_at'> & {
+  openCount: number;
+  doneCount: number;
+  activityAt: string;
+};
+const projectDirectory = computed<ProjectDirectoryRow[]>(() => [
+  ...projects.value.map((project) => {
+    const activityDates = [project.updated_at, project.last_moved_at];
+    for (const epic of project.epics) {
+      activityDates.push(epic.updated_at, epic.last_moved_at);
+      for (const task of epic.tasks) activityDates.push(task.last_activity_at, task.updated_at);
+    }
+    const activityAt = activityDates.filter((date): date is string => Boolean(date)).sort().slice(-1)[0] ?? project.last_moved_at;
+    return { ...project, activityAt };
+  }),
+  ...archivedProjects.value.map(project => ({
+    ...project,
+    openCount: 0,
+    doneCount: 0,
+    activityAt: project.updated_at || project.last_moved_at,
+  })),
+]);
+const matchingDirectory = computed(() => {
+  const query = projectSearch.value.trim().toLocaleLowerCase();
+  return projectDirectory.value.filter(project => !query || `${ project.title } ${ project.description }`.toLocaleLowerCase().includes(query));
 });
+function directoryGroup(project: ProjectDirectoryRow): 'active' | 'stale' | 'done' | 'archived' {
+  if (project.archived) return 'archived';
+  if (project.status === 'done') return 'done';
+  if (['cancelled', 'parked'].includes(project.status) || Date.now() - new Date(project.activityAt).getTime() > 30 * 24 * 60 * 60 * 1000) return 'stale';
+  return 'active';
+}
+const projectFilters = computed(() => ([
+  { key: 'all' as const, label: 'All', count: matchingDirectory.value.length },
+  { key: 'active' as const, label: 'Active', count: matchingDirectory.value.filter(project => directoryGroup(project) === 'active').length },
+  { key: 'stale' as const, label: 'Stale', count: matchingDirectory.value.filter(project => directoryGroup(project) === 'stale').length },
+  { key: 'done' as const, label: 'Done', count: matchingDirectory.value.filter(project => directoryGroup(project) === 'done').length },
+  { key: 'archived' as const, label: 'Archived', count: matchingDirectory.value.filter(project => directoryGroup(project) === 'archived').length },
+]));
+const visibleDirectory = computed(() => matchingDirectory.value
+  .filter(project => projectFilter.value === 'all' || directoryGroup(project) === projectFilter.value)
+  .sort((left, right) => left.title.localeCompare(right.title)));
+function directoryStatus(project: ProjectDirectoryRow): string {
+  const group = directoryGroup(project);
+  return group === 'stale' ? 'Stale / abandoned' : group === 'active' ? project.status : group;
+}
+function ageLabel(iso?: string | null): string {
+  if (!iso) return 'unknown';
+  const days = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000)));
+  return days === 0 ? 'today' : `${ days }d ago`;
+}
 
-function isHeartbeat(p: ProjectView): boolean {
+function isHeartbeat(p: Pick<WorkProjectRecord, 'slug' | 'title'>): boolean {
   return p.slug === 'goal-operator-transition' || /operator platform/i.test(p.title);
 }
-function laneLabel(p: ProjectView): string {
-  if (p.status === 'done') return 'Closed';
-  if (isHeartbeat(p)) return 'Heartbeat lane';
-
-  return 'Your stack';
-}
-
 // ── display helpers ───────────────────────────────────────────────────
-function shortName(p: ProjectView): string {
+function shortName(p: Pick<WorkProjectRecord, 'title'>): string {
   return p.title.split(' (')[0].split(' — ')[0].trim();
-}
-function dotClass(p: ProjectView): string {
-  if (p.status === 'done') return 'done';
-  if (p.status === 'blocked') return 'block';
-  if (p.status === 'backlog') return 'hold';
-
-  return 'go';
 }
 
 const CLEAN_ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
@@ -1576,17 +1604,6 @@ function epicSummary(epic: EpicWithTasks): string {
   if (done) parts.push(`${ done } done`);
 
   return parts.join(' · ') || 'empty';
-}
-function pct(p: ProjectView): number {
-  const total = p.openCount + p.doneCount;
-
-  return total ? Math.round((100 * p.doneCount) / total) : 0;
-}
-function progClass(p: ProjectView): string {
-  if (p.status === 'blocked') return 'amber';
-  if (p.status === 'backlog' || p.status === 'done') return 'gray';
-
-  return '';
 }
 function shortDate(iso: string): string {
   if (!iso) return '';
@@ -2239,24 +2256,10 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-btn.danger { color: var(--pred); border-color: rgba(201, 115, 111, 0.35); }
 .ph-btn.danger:hover { color: #e59a96; border-color: rgba(201, 115, 111, 0.6); background: rgba(201, 115, 111, 0.08); }
 
-/* sidebar */
-.ph-side { width: 248px; flex-shrink: 0; border-right: 1px solid var(--pborder); background: var(--psurface); display: flex; flex-direction: column; min-height: 0; }
-.ph-side-h { padding: 22px 20px 10px; }
 .ph-eyebrow { font-family: var(--pmono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--pacc); margin-bottom: 6px; }
-.ph-side-h h1 { font-family: var(--pserif); font-weight: 500; font-size: 24px; margin: 0; color: var(--ptext); }
-.ph-list { padding: 6px 12px 12px; overflow: auto; min-height: 0; flex: 1; }
-.ph-side-f { padding: 10px 12px 14px; border-top: 1px solid var(--pborder-soft); }
-.ph-grp { font-family: var(--pmono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ptext3); padding: 14px 8px 6px; }
-.ph-p { display: block; width: 100%; text-align: left; padding: 9px 10px; border-radius: 9px; margin-bottom: 2px; border: 1px solid transparent; background: transparent; cursor: pointer; color: var(--ptext); }
-.ph-p:hover { background: rgba(255, 255, 255, 0.03); }
-.ph-p.on { background: var(--pacc-soft); border-color: var(--pacc-line); }
-.ph-pn { font-size: 13.5px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
-.ph-st { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.ph-st.go { background: var(--pacc); }
-.ph-st.hold { background: var(--ptext3); }
-.ph-st.block { background: var(--pamber); }
-.ph-st.done { background: var(--pgreen); }
-.ph-pc { display: block; font-size: 11.5px; color: var(--ptext3); margin: 4px 0 0 15px; }
+.ph-projects-heading h1 { font-family: var(--pserif); font-weight: 500; font-size: 24px; margin: 0; color: var(--ptext); }
+.ph-project-search { width: min(250px, 24vw); background: var(--psurface2); border: 1px solid var(--pborder); border-radius: 8px; color: var(--ptext); padding: 8px 11px; font: 13px var(--psans); }
+.ph-current-project { color: var(--ptext); font-weight: 600; white-space: nowrap; }
 
 /* main */
 .ph-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
@@ -2376,9 +2379,17 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-day button { width: 100%; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 3px 0; padding: 4px 5px; border: 1px solid var(--pacc-line); border-radius: 5px; background: var(--pacc-soft); color: var(--ptext); text-align: left; font-size: 10px; cursor: grab; }
 
 @media (max-width: 1100px) {
-  .ph-side { width: 210px; }
   .ph-top { padding-inline: 16px; }
   .ph-canvas { padding-inline: 16px; }
+}
+
+@media (max-width: 700px) {
+  .ph-top { gap: 9px; flex-wrap: wrap; }
+  .ph-projects-heading { flex: 1; }
+  .ph-project-search { width: 100%; order: 3; }
+  .ph-directory-card { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .ph-directory-meta { grid-column: 1; justify-content: flex-start; }
+  .ph-current-project { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 }
 
 /* activity */
@@ -2406,9 +2417,19 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-activity-text { display: -webkit-box; max-width: 780px; overflow: hidden; color: var(--ptext2); font-size: 13px; line-height: 1.55; white-space: pre-wrap; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
 
 /* projects overview */
-.ph-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.ph-directory-filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 18px; }
+.ph-directory-filter { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--pborder); border-radius: 999px; padding: 7px 12px; background: transparent; color: var(--ptext2); font: 12px var(--psans); cursor: pointer; }
+.ph-directory-filter span { color: var(--ptext3); font: 11px var(--pmono); }
+.ph-directory-filter.on { color: var(--ptext); background: var(--pacc-soft); border-color: var(--pacc-line); }
+.ph-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
 .ph-pcard { border: 1px solid var(--pborder); border-radius: 13px; padding: 20px 22px; background: var(--psurface); cursor: pointer; }
 .ph-pcard:hover { border-color: var(--pacc-line); }
+.ph-directory-card { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(180px, 2fr) minmax(260px, 1.5fr); align-items: center; gap: 16px; padding: 14px 18px; }
+.ph-directory-card.archived { cursor: default; opacity: .78; }
+.ph-directory-card .ph-lane { margin: 0; justify-self: start; }
+.ph-directory-card h3 { font: 600 14px var(--psans); margin: 0; }
+.ph-directory-card p { display: none; }
+.ph-directory-meta { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 14px; color: var(--ptext3); font-size: 12px; }
 .ph-lane { display: inline-block; font-family: var(--pmono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; padding: 3px 9px; border-radius: 5px; border: 1px solid var(--pborder); color: var(--ptext2); margin-bottom: 12px; }
 .ph-lane.hb { color: var(--pacc); border-color: var(--pacc-line); background: var(--pacc-soft); }
 .ph-pcard h3 { font-family: var(--pserif); font-weight: 500; font-size: 21px; margin: 0 0 10px; color: var(--ptext); }

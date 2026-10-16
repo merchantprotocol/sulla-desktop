@@ -290,6 +290,7 @@ export interface ListOpts {
   status?:      string;
   priority?:    string;
   includeDone?: boolean;
+  includeArchived?:   boolean;
   limit?:       number;
 }
 
@@ -581,7 +582,7 @@ export class WorkItemsModel {
   }
 
   static async listProjects(opts: ListOpts = {}): Promise<WorkProjectRecord[]> {
-    const conds = ['archived = false'];
+    const conds = opts.includeArchived ? [] : ['archived = false'];
     const values: any[] = [];
     let idx = 1;
     WorkItemsModel.pushClosedFilter(conds, opts);
