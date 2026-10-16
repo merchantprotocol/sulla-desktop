@@ -1,0 +1,22 @@
+{
+  "name": "@sulla/relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/services/sulla-relay/src/index.js",
+    "verify": "node dist/services/sulla-relay/verify/two-replica.mjs"
+  },
+  "dependencies": {
+    "ioredis": "5.9.3",
+    "jsonwebtoken": "9.0.3",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "9.0.10",
+    "@types/node": "22.19.15",
+    "@types/ws": "8.18.1",
+    "typescript": "5.9.3"
+  }
+}

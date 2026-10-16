@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "outDir": "dist",
+    "rootDir": "../..",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "../../pkg/rancher-desktop/runtime/relayProtocol.ts",
+    "../../pkg/rancher-desktop/runtime/relayTunnelClient.ts"
+  ]
+}

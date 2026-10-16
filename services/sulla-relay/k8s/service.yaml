@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sulla-relay
+  labels: { app.kubernetes.io/name: sulla-relay }
+spec:
+  selector: { app.kubernetes.io/name: sulla-relay }
+  ports:
+    - { name: http, port: 8790, targetPort: http }
