@@ -42,6 +42,11 @@ export interface EncryptedItem {
   agentWrappedItemKey?: PublicKeyEnvelope;
 }
 
+export interface ItemContext {
+  itemId:  string;
+  ownerId: string;
+}
+
 export interface PublicKeyEnvelope {
   version:    typeof VERSION;
   algorithm:  'x25519-sealed-box';
@@ -67,6 +72,13 @@ function assertKey(key: Uint8Array, label: string): void {
   if (key.byteLength !== KEY_BYTES) {
     throw new Error(`${ label } must be ${ KEY_BYTES } bytes`);
   }
+}
+
+export function itemAssociatedData(purpose: 'key' | 'ciphertext', context: ItemContext): string {
+  if (!context.itemId || !context.ownerId) {
+    throw new Error('Item context requires an item id and owner id');
+  }
+  return `sulla:item:${ purpose }:v1:${ JSON.stringify([context.ownerId, context.itemId]) }`;
 }
 
 export async function deriveMasterKey(
@@ -153,28 +165,29 @@ export function unwrapUserKey(encryptedUserKey: EncryptedEnvelope, masterKey: Ui
 export async function encryptItem(
   plaintext: Uint8Array | string,
   ownerKey: Uint8Array,
+  context: ItemContext,
   agentPublicKey?: Base64,
 ): Promise<EncryptedItem> {
   const itemKey = await generateKey();
   const payload = typeof plaintext === 'string' ? textEncoder.encode(plaintext) : plaintext;
   return {
     version:             VERSION,
-    encryptedItemKey:    await encryptWithKey(itemKey, ownerKey, 'sulla:item-key:v1'),
-    ciphertext:          await encryptWithKey(payload, itemKey, 'sulla:item:v1'),
+    encryptedItemKey:    await encryptWithKey(itemKey, ownerKey, itemAssociatedData('key', context)),
+    ciphertext:          await encryptWithKey(payload, itemKey, itemAssociatedData('ciphertext', context)),
     agentWrappedItemKey: agentPublicKey ? await wrapItemKeyForAgent(itemKey, agentPublicKey) : undefined,
   };
 }
 
-export async function decryptItem(item: EncryptedItem, ownerKey: Uint8Array): Promise<Uint8Array> {
+export async function decryptItem(item: EncryptedItem, ownerKey: Uint8Array, context: ItemContext): Promise<Uint8Array> {
   if (item.version !== VERSION) {
     throw new Error('Unsupported item version');
   }
-  const itemKey = await decryptWithKey(item.encryptedItemKey, ownerKey, 'sulla:item-key:v1');
-  return decryptWithKey(item.ciphertext, itemKey, 'sulla:item:v1');
+  const itemKey = await decryptWithKey(item.encryptedItemKey, ownerKey, itemAssociatedData('key', context));
+  return decryptWithKey(item.ciphertext, itemKey, itemAssociatedData('ciphertext', context));
 }
 
-export async function decryptItemText(item: EncryptedItem, ownerKey: Uint8Array): Promise<string> {
-  return textDecoder.decode(await decryptItem(item, ownerKey));
+export async function decryptItemText(item: EncryptedItem, ownerKey: Uint8Array, context: ItemContext): Promise<string> {
+  return textDecoder.decode(await decryptItem(item, ownerKey, context));
 }
 
 export async function createUserKeyPair(userKey: Uint8Array): Promise<WrappedKeyPair & { privateKey: Uint8Array }> {

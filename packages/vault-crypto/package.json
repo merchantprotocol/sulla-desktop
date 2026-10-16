@@ -17,5 +17,9 @@
   },
   "dependencies": {
     "libsodium-wrappers-sumo": "0.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.15",
+    "typescript": "5.9.3"
   }
 }

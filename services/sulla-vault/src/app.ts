@@ -175,6 +175,7 @@ export function createApp(db: Database, config: VaultConfig) {
 
   app.post('/v1/items', async(request: AuthenticatedRequest, response) => {
     const actorId = userId(request);
+    const itemId = requiredString(request.body.id, 'id');
     const collectionId = typeof request.body.collectionId === 'string' ? request.body.collectionId : null;
     if (collectionId) {
       await requireCollectionRight(db, actorId, collectionId, 'edit');
@@ -182,10 +183,10 @@ export function createApp(db: Database, config: VaultConfig) {
     const folderId = typeof request.body.folderId === 'string' ? request.body.folderId : null;
     if (folderId) await authorizeItemFolder(db, actorId, folderId, collectionId);
     const result = await db.query(
-      `INSERT INTO items(owner_user_id, collection_id, folder_id, item_type, ciphertext, encrypted_item_key, agent_wrapped_item_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO items(id, owner_user_id, collection_id, folder_id, item_type, ciphertext, encrypted_item_key, agent_wrapped_item_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id, revision, created_at, updated_at`,
-      [collectionId ? null : actorId, collectionId, folderId,
+      [itemId, collectionId ? null : actorId, collectionId, folderId,
         requiredString(request.body.itemType, 'itemType'), requiredObject(request.body.ciphertext, 'ciphertext'),
         requiredObject(request.body.encryptedItemKey, 'encryptedItemKey'), request.body.agentWrappedItemKey ?? null],
     );

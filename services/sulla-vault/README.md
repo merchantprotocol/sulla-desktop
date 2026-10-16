@@ -22,7 +22,7 @@ organization key --X25519 sealed box--> each member public key
 agent-enabled item key --X25519 sealed box--> server agent public key
 ```
 
-The login hash is a separate keyed BLAKE2b derivation of the master key. The service applies scrypt and a per-account salt before storing its verifier, so the database does not contain the replayable login hash. XChaCha20-Poly1305 envelopes bind a versioned context string as additional authenticated data.
+The login hash is a separate keyed BLAKE2b derivation of the master key. The service applies scrypt and a per-account salt before storing its verifier, so the database does not contain the replayable login hash. XChaCha20-Poly1305 item envelopes bind the client-generated item ID and cryptographic owner ID as additional authenticated data. Use the user ID for a personal item and the collection ID for a shared item; this prevents a stored envelope from being moved to another item or owner.
 
 ## Run in Desktop mode
 
@@ -53,7 +53,7 @@ All request and response key material described as encrypted is an opaque JSON e
 | `GET` | `/healthz` | Database and mode health |
 | `POST` | `/v1/accounts` | Create a server-mode account from a login hash and wrapped keys |
 | `POST` | `/v1/session` | Verify a login hash and return wrapped account keys plus a token |
-| `GET`, `POST` | `/v1/items` | List authorized ciphertext items or create one |
+| `GET`, `POST` | `/v1/items` | List authorized ciphertext items or create one with a client-generated UUID |
 | `GET`, `PATCH`, `DELETE` | `/v1/items/:itemId` | Read, revision-update, or soft-delete an item |
 | `GET`, `POST` | `/v1/folders` | List or create personal encrypted folders |
 | `PATCH`, `DELETE` | `/v1/folders/:folderId` | Revision-update or delete a personal folder |

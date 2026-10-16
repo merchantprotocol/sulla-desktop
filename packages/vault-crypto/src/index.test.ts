@@ -9,6 +9,7 @@ import {
   deriveMasterKey,
   encryptItem,
   generateKey,
+  itemAssociatedData,
   unwrapOrgKeyForMember,
   unwrapItemKeyForAgent,
   unwrapUserKey,
@@ -21,12 +22,27 @@ test('master key wrapping and item encryption round-trip', async() => {
   const restoredUserKey = await unwrapUserKey(encryptedUserKey, master.key);
   const agent = await createUserKeyPair(await generateKey());
   const plaintext = JSON.stringify({ username: 'jonathon', password: 'secret' });
-  const item = await encryptItem(plaintext, restoredUserKey, agent.publicKey);
+  const context = { itemId: 'item-1', ownerId: 'user-1' };
+  const item = await encryptItem(plaintext, restoredUserKey, context, agent.publicKey);
 
-  assert.equal(await decryptItemText(item, userKey), plaintext);
+  assert.equal(await decryptItemText(item, userKey, context), plaintext);
   assert.ok(item.agentWrappedItemKey);
   const agentItemKey = await unwrapItemKeyForAgent(item.agentWrappedItemKey, agent.publicKey, agent.privateKey);
-  assert.equal(new TextDecoder().decode(await decryptWithKey(item.ciphertext, agentItemKey, 'sulla:item:v1')), plaintext);
+  assert.equal(new TextDecoder().decode(
+    await decryptWithKey(item.ciphertext, agentItemKey, itemAssociatedData('ciphertext', context)),
+  ), plaintext);
+});
+
+test('item ciphertext cannot be moved to another item or owner', async() => {
+  const ownerKey = await generateKey();
+  const first = await encryptItem('first', ownerKey, { itemId: 'item-1', ownerId: 'user-1' });
+
+  await assert.rejects(
+    decryptItemText(first, ownerKey, { itemId: 'item-2', ownerId: 'user-1' }),
+  );
+  await assert.rejects(
+    decryptItemText(first, ownerKey, { itemId: 'item-1', ownerId: 'user-2' }),
+  );
 });
 
 test('an organization key can be shared to a second member', async() => {
