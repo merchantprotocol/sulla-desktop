@@ -3486,6 +3486,18 @@
     assertKey(masterKey, "Master key");
     return b64(libsodium_wrappers_default.crypto_generichash(KEY_BYTES, textEncoder.encode("sulla-vault-login-v1"), masterKey));
   }
+  async function deriveOrgJoinHash(joinPassword, orgId) {
+    await ready();
+    if (!joinPassword || !orgId) {
+      throw new Error("Join password and organization id are required");
+    }
+    const input = textEncoder.encode(`sulla:org-join:v1:${orgId}\0${joinPassword}`);
+    return b64(libsodium_wrappers_default.crypto_generichash(KEY_BYTES, input, null));
+  }
+  async function publicKeyFingerprint(publicKey) {
+    await ready();
+    return b64(libsodium_wrappers_default.crypto_generichash(8, bytes(publicKey), null));
+  }
   async function generateKey() {
     await ready();
     return libsodium_wrappers_default.randombytes_buf(KEY_BYTES);
@@ -3619,7 +3631,7 @@
     document.querySelectorAll("[data-auth]").forEach((b2) => b2.classList.toggle("active", b2.dataset.auth === mode));
     document.querySelectorAll(".create-field").forEach((x2) => x2.hidden = mode !== "create");
     document.querySelectorAll(".join-field").forEach((x2) => x2.hidden = mode !== "join");
-    const copy = { signin: ["Welcome back", "Unlock your organization without sending a master password or encryption key to the server.", "Unlock console"], create: ["Create your vault server", "Create the first owner account and an encrypted organization.", "Create owner account"], join: ["Join your organization", "Create your account and unwrap the organization key with the join password.", "Create account & join"] }[mode];
+    const copy = { signin: ["Welcome back", "Unlock your organization without sending a master password or encryption key to the server.", "Unlock console"], create: ["Create your vault server", "Create the first owner account and an encrypted organization.", "Create owner account"], join: ["Join your organization", "Create an account. An owner will confirm your public key before you can see organization data.", "Create account & request access"] }[mode];
     $2("auth-title").textContent = copy[0];
     $2("auth-lead").textContent = copy[1];
     $2("auth-submit").textContent = copy[2];
@@ -3651,18 +3663,12 @@
     const account = await makeAccount(password);
     let orgKey = null;
     let orgId = "";
-    let wrappedOrgKey;
+    let joinHash = "";
     if (mode === "join") {
       orgId = $2("auth-org-id").value.trim();
-      const joinPassword = $2("auth-join-password").value;
-      const config = await api(`/v1/orgs/${encodeURIComponent(orgId)}/join`);
-      const joinKdf = kdf(config.join_kdf);
-      const joinMaster = await deriveMasterKey(joinPassword, joinKdf.salt, joinKdf.parameters);
-      orgKey = await decryptWithKey(config.encrypted_join_org_key, joinMaster.key, "sulla:org-join-key:v1");
-      joinMaster.key.fill(0);
-      wrappedOrgKey = await wrapOrgKeyForMember(orgKey, account.publicKey);
+      joinHash = await deriveOrgJoinHash($2("auth-join-password").value, orgId);
     }
-    await api("/v1/accounts", { method: "POST", body: JSON.stringify({ email, loginHash: account.loginHash, publicKey: account.publicKey, encryptedPrivateKey: account.encryptedPrivateKey, encryptedUserKey: account.encryptedUserKey, kdf: account.kdf, ...mode === "join" ? { orgId, joinPassword: $2("auth-join-password").value, wrappedOrgKey } : {} }) });
+    await api("/v1/accounts", { method: "POST", body: JSON.stringify({ email, loginHash: account.loginHash, publicKey: account.publicKey, encryptedPrivateKey: account.encryptedPrivateKey, encryptedUserKey: account.encryptedUserKey, kdf: account.kdf, ...mode === "join" ? { orgId, joinHash } : {} }) });
     state.token = (await api("/v1/session", { method: "POST", body: JSON.stringify({ email, loginHash: account.loginHash, device: { name: "Web console" } }) })).token;
     state.email = email;
     state.user = { id: "", publicKey: account.publicKey };
@@ -3705,12 +3711,16 @@
     $2("shell").hidden = false;
     $2("session-email").textContent = state.email;
     armIdle();
-    await loadAll();
-    showPage("collections");
+    if (await loadAll()) showPage("collections");
   }
   async function loadAll() {
     const orgs = await api("/v1/orgs");
-    if (!orgs.orgs.length) throw new Error("This account does not belong to an organization");
+    if (!orgs.orgs.length) {
+      document.querySelectorAll(".page").forEach((x2) => x2.hidden = true);
+      $2("page-title").textContent = "Membership pending";
+      $2("page-lead").textContent = "You are signed in, but no organization data is available until an owner confirms your public key.";
+      return false;
+    }
     state.org = orgs.orgs[0];
     state.orgKey = await unwrapOrgKeyForMember(state.org.wrapped_org_key, state.user.publicKey, state.privateKey);
     state.org.name = await decryptText(state.org.encrypted_name, state.orgKey, "sulla:org-name:v1");
@@ -3718,6 +3728,11 @@
     state.members = members.members;
     state.groups = groups.groups;
     state.collections = collections.collections;
+    await fingerprintMembers();
+    if (state.org.auto_confirm_new_members && ["owner", "admin"].includes(state.org.role)) {
+      for (const member of state.members.filter((m2) => m2.status === "pending")) await confirmMember(member.user_id, false);
+      await refreshPeople();
+    }
     for (const group of state.groups) group.name = await safeName(group.encrypted_name, state.orgKey, "sulla:group-name:v1", "Encrypted group");
     for (const collection of state.collections) {
       collection.name = await safeName(collection.encrypted_name, state.orgKey, "sulla:collection-name:v1", "Encrypted collection");
@@ -3731,12 +3746,14 @@
     $2("member-count").textContent = String(state.members.length);
     $2("collection-count").textContent = String(state.collections.length);
     $2("people-role").textContent = state.org.role;
-    $2("join-display").textContent = await api(`/v1/orgs/${state.org.id}/join`).then(() => "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022").catch(() => "Not set");
+    $2("join-display").textContent = state.org.join_enabled ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "Not set";
+    $2("auto-confirm").checked = Boolean(state.org.auto_confirm_new_members);
     renderPeople();
     renderCollections();
     fillFilters();
     await loadItemNames();
     await loadRecovery();
+    return true;
   }
   async function safeName(envelope, key, context, fallback) {
     try {
@@ -3751,6 +3768,7 @@
     const copy = { collections: ["Shared collections", "Share passwords with a team. Choose who can see them, and whose agents can use them."], people: ["People & groups", "Invite existing accounts, assign roles and organize people into groups."], audit: ["Audit log", "Every person and agent action. Secret values are never written here."], recovery: ["Recovery", "Members choose whether organization owners can help recover their encrypted account."] };
     $2("page-title").textContent = copy[page][0];
     $2("page-lead").textContent = copy[page][1];
+    if (page === "people") void refreshPeople();
     if (page === "audit") void loadAudit();
     if (page === "recovery") void loadRecovery();
   }
@@ -3811,16 +3829,33 @@
     notice("Collection rights updated.");
   }
   function renderPeople() {
-    $2("people-preview").innerHTML = state.members.slice(0, 5).map((m2) => personHtml(m2, false)).join("");
+    $2("people-preview").innerHTML = state.members.filter((m2) => m2.status === "confirmed").slice(0, 5).map((m2) => personHtml(m2, false)).join("");
     $2("members").innerHTML = state.members.map((m2) => personHtml(m2, true)).join("");
     $2("groups").innerHTML = state.groups.length ? state.groups.map((g2) => `<div class="group-line"><span class="avatar group">\u2659</span><div><b>${esc(g2.name)}</b><small>${g2.member_count} member${g2.member_count === 1 ? "" : "s"}</small></div>${["owner", "admin"].includes(state.org?.role) ? `<button class="btn small" data-group-manage="${esc(g2.id)}">Manage</button>` : ""}</div>`).join("") : '<p class="muted">No groups yet.</p>';
     document.querySelectorAll("[data-member-role]").forEach((s2) => s2.onchange = () => void changeRole(s2));
     document.querySelectorAll("[data-member-remove]").forEach((b2) => b2.onclick = () => void removeMember(b2.dataset.memberRemove));
+    document.querySelectorAll("[data-member-confirm]").forEach((b2) => b2.onclick = () => void confirmMember(b2.dataset.memberConfirm));
     document.querySelectorAll("[data-group-manage]").forEach((b2) => b2.onclick = () => void manageGroup(b2.dataset.groupManage));
   }
   function personHtml(m2, actions) {
     const manager = ["owner", "admin"].includes(state.org?.role);
-    return `<div class="${actions ? "member" : "person"}-line"><span class="avatar">${esc(initials(m2.email))}</span><div><b>${esc(m2.email)}</b><small>${esc(m2.role)}</small></div>${actions && manager && m2.user_id !== state.user?.id ? `<div class="line-actions"><select data-member-role="${esc(m2.user_id)}"><option ${m2.role === "member" ? "selected" : ""}>member</option><option ${m2.role === "admin" ? "selected" : ""}>admin</option><option ${m2.role === "owner" ? "selected" : ""}>owner</option></select><button class="icon-btn" data-member-remove="${esc(m2.user_id)}" title="Remove">\xD7</button></div>` : ""}</div>`;
+    const pending = m2.status === "pending";
+    return `<div class="${actions ? "member" : "person"}-line"><span class="avatar">${esc(initials(m2.email))}</span><div><b>${esc(m2.email)}</b><small>${pending ? `pending \xB7 key ${esc(m2.fingerprint)}` : esc(m2.role)}</small></div>${actions && manager && pending ? `<button class="btn small primary" data-member-confirm="${esc(m2.user_id)}">Confirm</button>` : actions && manager && m2.user_id !== state.user?.id ? `<div class="line-actions"><select data-member-role="${esc(m2.user_id)}"><option ${m2.role === "member" ? "selected" : ""}>member</option><option ${m2.role === "admin" ? "selected" : ""}>admin</option><option ${m2.role === "owner" ? "selected" : ""}>owner</option></select><button class="icon-btn" data-member-remove="${esc(m2.user_id)}" title="Remove">\xD7</button></div>` : ""}</div>`;
+  }
+  async function fingerprintMembers() {
+    await Promise.all(state.members.map(async (m2) => {
+      m2.fingerprint = (await publicKeyFingerprint(m2.public_key)).slice(0, 11);
+    }));
+  }
+  async function confirmMember(id, showNotice = true) {
+    const member = state.members.find((m2) => m2.user_id === id && m2.status === "pending");
+    if (!member) return;
+    await api(`/v1/orgs/${state.org.id}/members/${id}/confirm`, { method: "POST", body: JSON.stringify({ wrappedOrgKey: await wrapOrgKeyForMember(state.orgKey, member.public_key) }) });
+    member.status = "confirmed";
+    if (showNotice) {
+      renderPeople();
+      notice("Member confirmed. Their organization key was wrapped in this browser.");
+    }
   }
   async function changeRole(select) {
     const member = state.members.find((m2) => m2.user_id === select.dataset.memberRole);
@@ -3890,35 +3925,45 @@
     const [members, groups] = await Promise.all([api(`/v1/orgs/${state.org.id}/members`), api(`/v1/orgs/${state.org.id}/groups`)]);
     state.members = members.members;
     state.groups = groups.groups;
+    await fingerprintMembers();
     for (const g2 of state.groups) g2.name = await safeName(g2.encrypted_name, state.orgKey, "sulla:group-name:v1", "Encrypted group");
     renderPeople();
   }
   async function manageGroup(id) {
     const group = state.groups.find((g2) => g2.id === id);
     if (!group) return;
+    const members = state.members.filter((m2) => m2.status === "confirmed");
     const current = await api(`/v1/groups/${id}/members`);
     const selected = new Set(current.members.map((m2) => m2.id));
-    const values = await modal(`Manage ${group.name}`, [{ name: "members", label: "Members", checks: state.members.map((m2) => ({ value: m2.user_id, label: m2.email, checked: selected.has(m2.user_id) })) }]);
+    const values = await modal(`Manage ${group.name}`, [{ name: "members", label: "Members", checks: members.map((m2) => ({ value: m2.user_id, label: m2.email, checked: selected.has(m2.user_id) })) }]);
     if (!values) return;
     const next = new Set(values.members);
-    await Promise.all(state.members.map((m2) => next.has(m2.user_id) === selected.has(m2.user_id) ? Promise.resolve() : api(`/v1/groups/${id}/members/${m2.user_id}`, { method: next.has(m2.user_id) ? "PUT" : "DELETE" })));
+    await Promise.all(members.map((m2) => next.has(m2.user_id) === selected.has(m2.user_id) ? Promise.resolve() : api(`/v1/groups/${id}/members/${m2.user_id}`, { method: next.has(m2.user_id) ? "PUT" : "DELETE" })));
     await refreshPeople();
     notice("Group membership updated.");
   }
   async function rotateJoin() {
     const values = await modal("Set join password", [{ name: "password", label: "New join password", type: "password" }], "Set password");
     if (!values) return;
-    const password = String(values.password);
-    const derived = await deriveMasterKey(password);
-    const encryptedOrgKey = await encryptWithKey(state.orgKey, derived.key, "sulla:org-join-key:v1");
-    derived.key.fill(0);
-    const body = { password, encryptedOrgKey, kdf: { salt: derived.salt, parameters: derived.parameters } };
+    const joinHash = await deriveOrgJoinHash(String(values.password), state.org.id);
+    const body = { joinHash };
     await api(`/v1/orgs/${state.org.id}/join-password/rotate`, { method: "POST", body: JSON.stringify(body) }).catch(async (error) => {
       if (error.status === 400) throw error;
       await api(`/v1/orgs/${state.org.id}/join-password`, { method: "POST", body: JSON.stringify(body) });
     });
+    state.org.join_enabled = true;
     $2("join-display").textContent = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
-    notice("Join password set. Share it separately from the organization ID.");
+    notice("Join password set. Only its derived hash left this browser.");
+  }
+  async function toggleAutoConfirm() {
+    const enabled = $2("auto-confirm").checked;
+    await api(`/v1/orgs/${state.org.id}/settings`, { method: "PATCH", body: JSON.stringify({ autoConfirmNewMembers: enabled }) });
+    state.org.auto_confirm_new_members = enabled;
+    if (enabled) {
+      for (const member of state.members.filter((m2) => m2.status === "pending")) await confirmMember(member.user_id, false);
+      await refreshPeople();
+    }
+    notice(`Automatic confirmation ${enabled ? "enabled" : "disabled"}.`);
   }
   async function loadItemNames() {
     const payload = await api("/v1/items").catch(() => ({ items: [] }));
@@ -3943,7 +3988,7 @@
     if ($2("filter-blocked").checked) params.set("blocked", "true");
     return params.toString();
   }
-  var actionLabel = (action) => ({ agent_credential_use: "Agent tried to use", join_password_set: "Set join password", join_password_rotated: "Rotated join password", recovery_opt_in: "Enabled recovery", recovery_opt_out: "Disabled recovery", account_recovered: "Recovered account" })[action] ?? action.replaceAll("_", " ");
+  var actionLabel = (action) => ({ agent_credential_use: "Agent tried to use", join_password_set: "Set join password", join_password_rotated: "Rotated join password", member_confirmed: "Confirmed member", recovery_opt_in: "Enabled recovery", recovery_opt_out: "Disabled recovery", account_recovered: "Recovered account" })[action] ?? action.replaceAll("_", " ");
   async function loadAudit() {
     if (!state.org) return;
     const result = await api(`/v1/orgs/${state.org.id}/audit?${auditParams()}`);
@@ -4011,6 +4056,7 @@
   $2("invite").onclick = () => void invite();
   $2("new-group").onclick = () => void createGroup();
   $2("rotate-join").onclick = () => void rotateJoin();
+  $2("auto-confirm").onchange = () => void toggleAutoConfirm();
   $2("copy-org").onclick = () => void navigator.clipboard.writeText(state.org?.id ?? "").then(() => notice("Organization ID copied."));
   $2("apply-audit").onclick = () => {
     state.auditOffset = 0;
