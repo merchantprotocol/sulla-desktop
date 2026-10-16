@@ -3,13 +3,8 @@ import type { ToolManifest } from '../registry';
 /**
  * Capture Studio tools — teleprompter, microphone, desktop-audio (speaker)
  * capture, screen/window enumeration, and screenshots. All dispatch into
- * main-process singletons (MicrophoneDriverController, SpeakerDriverController,
- * teleprompterWindow exports) or Electron's `desktopCapturer`, so the tools
- * run headless — the Capture Studio tab does NOT have to be open.
- *
- * Recorder + camera/screen stream acquisition live in the renderer
- * (MediaRecorder / getUserMedia) and require a renderer command bus; those
- * are intentionally out of scope for this first cut.
+ * main-process singletons, Electron's desktopCapturer, or the Capture Studio
+ * renderer RPC bus. Renderer-backed tools auto-open Capture Studio.
  */
 export const captureToolManifests: ToolManifest[] = [
   // ── Teleprompter ────────────────────────────────────────────────
@@ -86,7 +81,7 @@ export const captureToolManifests: ToolManifest[] = [
 
   {
     name:           'speaker_start',
-    description:    'Start capturing the system\'s desktop audio output (speaker loopback). Ref-counted like mic_start.',
+    description:    'Prepare system-audio capture using Electron native loopback (ScreenCaptureKit on macOS 13+), with BlackHole only as a fallback. Auto-opens Capture Studio.',
     category:       'capture',
     schemaDef:      {},
     operationTypes: ['create'],
@@ -94,7 +89,7 @@ export const captureToolManifests: ToolManifest[] = [
   },
   {
     name:           'speaker_stop',
-    description:    'Release this agent\'s hold on the speaker-loopback capture driver.',
+    description:    'Release Capture Studio\'s native or fallback speaker-loopback source.',
     category:       'capture',
     schemaDef:      {},
     operationTypes: ['delete'],
@@ -139,8 +134,8 @@ export const captureToolManifests: ToolManifest[] = [
     description: 'Start a recording session. Auto-opens Capture Studio and — when the streams aren\'t already acquired — auto-acquires whatever sources you ask for. Pass `screen: true` for the primary display, `screen: "source-id"` for a specific display/window (from list_screens), `camera: true` / `camera: "deviceId"`, and/or `mic: true` / `speaker: true`. Omit everything to record whatever sources the user already picked in the Capture Studio UI.',
     category:    'capture',
     schemaDef:   {
-      screen:  { type: 'string',  optional: true, description: 'Pass "auto" for the primary display, or a desktopCapturer source id (see capture/list_screens).' },
-      camera:  { type: 'string',  optional: true, description: 'Pass "auto" for the first camera, or a deviceId (see capture/camera_list).' },
+      screen:  { type: 'string', optional: true, description: 'Pass "auto" for the primary display, or a desktopCapturer source id (see capture/list_screens).' },
+      camera:  { type: 'string', optional: true, description: 'Pass "auto" for the first camera, or a deviceId (see capture/camera_list).' },
       mic:     { type: 'boolean', optional: true, description: 'Start mic capture before recording (ref-counted).' },
       speaker: { type: 'boolean', optional: true, description: 'Start speaker-loopback capture before recording.' },
     },

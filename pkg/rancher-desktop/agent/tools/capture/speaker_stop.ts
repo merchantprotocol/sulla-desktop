@@ -1,24 +1,20 @@
-import { SpeakerDriverController } from '@pkg/main/audio-driver/controller/SpeakerDriverController';
-
 import { BaseTool, ToolResponse } from '../base';
 
-const SERVICE_ID = 'agent-capture-tool';
+import { callCaptureStudio, isCaptureStudioReady } from '@pkg/main/captureStudioRpc';
 
 export class SpeakerStopWorker extends BaseTool {
   name = '';
   description = '';
 
   protected async _validatedCall(_input: any): Promise<ToolResponse> {
-    const speaker = SpeakerDriverController.getInstance();
-    if (!speaker.running) {
+    if (!isCaptureStudioReady()) {
       return { successBoolean: true, responseString: 'Speaker capture is already stopped.' };
     }
-    await speaker.stop(SERVICE_ID);
-    return {
-      successBoolean: true,
-      responseString: speaker.running
-        ? 'Speaker still running — other services are holding the capture open.'
-        : 'Speaker capture stopped.',
-    };
+    try {
+      await callCaptureStudio('system.disable', {}, { timeoutMs: 10_000 });
+      return { successBoolean: true, responseString: 'Speaker capture stopped.' };
+    } catch (err: any) {
+      return { successBoolean: false, responseString: `speaker_stop failed: ${ err?.message || String(err) }` };
+    }
   }
 }

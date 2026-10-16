@@ -422,18 +422,17 @@ import FloatingControls from './capture-studio/FloatingControls.vue';
 import LayoutBar from './capture-studio/LayoutBar.vue';
 import TeleprompterLayout from './capture-studio/TeleprompterLayout.vue';
 import TrackPanel from './capture-studio/TrackPanel.vue';
+import { useAgentBridge } from './capture-studio/composables/useAgentBridge';
 import { useAudioDriver } from './capture-studio/composables/useAudioDriver';
-import { listAudioDevices } from './capture-studio/composables/useMicCapture';
-import { useMediaSources, QUALITY_PRESETS, type QualityPreset } from './capture-studio/composables/useMediaSources';
-import { useRecorder } from './capture-studio/composables/useRecorder';
-import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-studio/composables/useWaveform';
-import { useSettings } from './capture-studio/composables/useSettings';
 import { useDiskSpace } from './capture-studio/composables/useDiskSpace';
-import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCapture';
-import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
 import { useInputEventTracker } from './capture-studio/composables/useInputEventTracker';
-import { useAgentBridge }       from './capture-studio/composables/useAgentBridge';
-
+import { useMediaSources, QUALITY_PRESETS, type QualityPreset } from './capture-studio/composables/useMediaSources';
+import { listAudioDevices } from './capture-studio/composables/useMicCapture';
+import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
+import { useRecorder } from './capture-studio/composables/useRecorder';
+import { useSettings } from './capture-studio/composables/useSettings';
+import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCapture';
+import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-studio/composables/useWaveform';
 
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 
@@ -468,12 +467,13 @@ const addPopupOpen = ref(false);
 const statusMessage = ref('');
 const lastSessionDir = ref('');
 interface PlaybackStream {
-  id:       string;
-  type:     string;
-  filename: string;
-  format:   string;
-  filePath: string;
-  isVideo:  boolean;
+  id:          string;
+  type:        string;
+  filename:    string;
+  format:      string;
+  startOffset: number;
+  filePath:    string;
+  isVideo:     boolean;
 }
 const playbackOpen = ref(false);
 const playbackStreams = ref<PlaybackStream[]>([]);
@@ -497,6 +497,7 @@ const sources = reactive<Source[]>([
   { id: 'screen', type: 'screen', name: 'Screen', color: 'screen', status: '—', builtin: true, on: false, isVideo: true },
   { id: 'cam', type: 'camera', name: 'Camera', color: 'cam', status: '—', builtin: true, on: false, isVideo: true },
   { id: 'mic', type: 'mic', name: 'Microphone', color: 'mic', status: '—', builtin: true, on: false, isVideo: false },
+  { id: 'system', type: 'system', name: 'System Audio', color: 'sys', status: '—', builtin: true, on: false, isVideo: false },
 ]);
 
 const builtinSources = computed(() => sources.filter(s => s.builtin));
@@ -513,6 +514,11 @@ const MIC_QUALITY_MODES = [
   { id: 'streaming-voice', label: 'Compressed — Voice' },
 ] as const;
 const micQualityMode = ref('raw');
+const QUALITY_PRESET_IDS: readonly QualityPreset[] = ['auto', '480p', '720p', '1080p', '4k'];
+
+function isQualityPreset(value: string): value is QualityPreset {
+  return QUALITY_PRESET_IDS.includes(value as QualityPreset);
+}
 
 // ── Active window tracking (records full screen + logs window bounds) ──
 const activeWindowTracking = ref(false);
@@ -584,7 +590,7 @@ function updateStreamAssignments() {
 }
 
 const totalDiskDisplay = computed(() => {
-  const total = recorder.bytesWritten.value + speakerCapture.bytesWritten.value;
+  const total = recorder.bytesWritten.value + speakerCapture.bytesWritten.value + micRecording.bytesWritten.value;
   if (total === 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
@@ -680,6 +686,31 @@ function autoAssign() {
   }
 }
 
+function hasNativeSystemAudio(): boolean {
+  const stream = speakerCapture.nativeStream.value;
+  return !!stream && stream.active && stream.getAudioTracks().some(track => track.readyState === 'live');
+}
+
+async function enableSystemAudio(): Promise<void> {
+  if (hasNativeSystemAudio()) return;
+
+  const native = await speakerCapture.acquireNative();
+  if (native) return;
+
+  // BlackHole/CoreAudio is intentionally fallback-only. It remains useful on
+  // older Electron/macOS combinations where native loopback is unavailable.
+  await audioDriver.startSpeaker();
+  if (!audioDriver.speakerRunning.value) {
+    throw new Error('Native loopback and BlackHole fallback are both unavailable');
+  }
+}
+
+async function disableSystemAudio(): Promise<void> {
+  speakerCapture.releaseNative();
+  if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
+  if (audioDriver.speakerRunning.value) await audioDriver.stopSpeaker();
+}
+
 // ─── Source toggles (wired to real capture) ───
 async function toggleSrc(src: Source) {
   console.log('[CaptureStudio] toggleSrc:', src.id, src.type, 'currently on:', src.on, '→', !src.on);
@@ -698,7 +729,7 @@ async function toggleSrc(src: Source) {
       } else if (src.type === 'mic') {
         await audioDriver.startMic(['webm-opus', 'pcm-s16le']);
       } else if (src.type === 'system') {
-        await audioDriver.startSpeaker();
+        await enableSystemAudio();
       }
     } catch (e: any) {
       console.error(`[CaptureStudio] Failed to acquire ${ src.type }:`, e.message || e);
@@ -712,7 +743,7 @@ async function toggleSrc(src: Source) {
     } else if (src.type === 'mic') {
       await audioDriver.stopMic();
     } else if (src.type === 'system') {
-      await audioDriver.stopSpeaker();
+      await disableSystemAudio();
     }
   }
 
@@ -779,21 +810,26 @@ async function toggleRecord() {
     }
 
     // Gather active streams for recording — check stream.active not just existence
-    const streams: { id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream }[] = [];
+    const streams: { id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream; quality?: QualityPreset }[] = [];
 
     // Mic recording is handled by useMicRecording via the controller's
     // mic-pcm-socket (PCM) or mic-socket (WebM). Not a MediaRecorder stream.
 
     // Screen — video only, no mic audio muxed in
     const screenVal = mediaSources.screenStream.value;
-    if (screenVal && screenVal.active) {
+    if (screenVal?.active) {
       streams.push({ id: 'screen', type: 'screen', stream: screenVal, quality: mediaSources.screenQuality.value });
     }
 
     // Camera — video only, no mic audio muxed in
     const camVal = mediaSources.cameraStream.value;
-    if (camVal && camVal.active) {
+    if (camVal?.active) {
       streams.push({ id: 'cam', type: 'camera', stream: camVal, quality: mediaSources.cameraQuality.value });
+    }
+
+    const systemAudioVal = speakerCapture.nativeStream.value;
+    if (systemAudioVal?.active) {
+      streams.push({ id: 'speaker', type: 'system-audio', stream: systemAudioVal });
     }
 
     if (streams.length === 0 && !audioDriver.micRunning.value && !audioDriver.speakerRunning.value) {
@@ -818,34 +854,46 @@ async function toggleRecord() {
       return;
     }
 
-    // Start speaker capture to WAV if audio driver is running
-    if (audioDriver.speakerRunning.value) {
-      const path = require('path');
-      const speakerPath = path.join(recorder.getSessionDir(), 'system-audio.wav');
-      await speakerCapture.start(speakerPath);
-      recorder.registerExternalStream({
-        id:              'sys',
-        type:            'system-audio',
-        filename:        'system-audio.wav',
-        format:          'wav',
-        getBytesWritten: () => speakerCapture.bytesWritten.value,
-      });
-    }
+    try {
+      // Native loopback is already a MediaRecorder stream above. The legacy
+      // audio-driver socket is used only when native capture was unavailable.
+      if (!hasNativeSystemAudio() && audioDriver.speakerRunning.value) {
+        const path = require('path');
+        const speakerPath = path.join(recorder.getSessionDir(), 'speaker.wav');
+        const started = await speakerCapture.start(speakerPath);
+        if (!started) throw new Error('BlackHole speaker stream did not start');
+        recorder.registerExternalStream({
+          id:              'speaker',
+          type:            'system-audio',
+          filename:        'speaker.wav',
+          format:          'wav',
+          getBytesWritten: () => speakerCapture.bytesWritten.value,
+        });
+      }
 
-    // Start mic recording via controller socket if mic is running
-    if (audioDriver.micRunning.value) {
-      const path = require('path');
-      const isCompressed = micQualityMode.value === 'streaming' || micQualityMode.value === 'streaming-voice';
-      const ext = isCompressed ? 'webm' : 'wav';
-      const micPath = path.join(recorder.getSessionDir(), `mic.${ ext }`);
-      await micRecording.start(micPath, micQualityMode.value as MicQualityMode);
-      recorder.registerExternalStream({
-        id:              'mic',
-        type:            'mic',
-        filename:        `mic.${ ext }`,
-        format:          ext,
-        getBytesWritten: () => micRecording.bytesWritten.value,
-      });
+      // Start mic recording via controller socket if mic is running.
+      if (audioDriver.micRunning.value) {
+        const path = require('path');
+        const isCompressed = micQualityMode.value === 'streaming' || micQualityMode.value === 'streaming-voice';
+        const ext = isCompressed ? 'webm' : 'wav';
+        const micPath = path.join(recorder.getSessionDir(), `mic.${ ext }`);
+        const started = await micRecording.start(micPath, micQualityMode.value as MicQualityMode);
+        if (!started) throw new Error('Microphone stream did not start');
+        recorder.registerExternalStream({
+          id:              'mic',
+          type:            'mic',
+          filename:        `mic.${ ext }`,
+          format:          ext,
+          getBytesWritten: () => micRecording.bytesWritten.value,
+        });
+      }
+    } catch (e: any) {
+      console.error('[CaptureStudio] Failed to attach audio stream:', e.message || e);
+      await Promise.all([micRecording.stop(), speakerCapture.mode.value === 'blackhole' ? speakerCapture.stop() : Promise.resolve('')]);
+      await recorder.stopSession();
+      statusMessage.value = `Failed to start recording audio: ${ e.message || 'unknown error' }`;
+      setTimeout(() => { statusMessage.value = '' }, 5000);
+      return;
     }
 
     recording.value = true;
@@ -866,8 +914,8 @@ async function toggleRecord() {
     const capturedSessionDir = recorder.getSessionDir();
     // Stop event tracking + mic/speaker capture
     inputTracker.stopTracking();
-    micRecording.stop();
-    speakerCapture.stop();
+    await micRecording.stop();
+    if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
     await recorder.stopSession();
     lastSessionDir.value = capturedSessionDir;
     recording.value = false;
@@ -914,11 +962,12 @@ function startInlinePlayback() {
         const isVideo = f.startsWith('screen') || f.startsWith('camera');
         const type = f.startsWith('screen') ? 'screen' : f.startsWith('camera') ? 'camera' : f.startsWith('mic') ? 'mic' : 'system-audio';
         return {
-          id:       f.replace(/\.\w+$/, ''),
+          id:          f.replace(/\.\w+$/, ''),
           type,
-          filename: f,
-          format:   f.endsWith('.wav') ? 'wav' : 'webm',
-          filePath: path.join(lastSessionDir.value, f),
+          filename:    f,
+          format:      f.endsWith('.wav') ? 'wav' : 'webm',
+          startOffset: 0,
+          filePath:    path.join(lastSessionDir.value, f),
           isVideo,
         };
       });
@@ -927,12 +976,13 @@ function startInlinePlayback() {
       playbackStreams.value = manifest.streams
         .filter((s: any) => s.bytes > 0)
         .map((s: any) => ({
-          id:       s.id,
-          type:     s.type,
-          filename: s.filename,
-          format:   s.format,
-          filePath: path.join(lastSessionDir.value, s.filename),
-          isVideo:  s.type === 'screen' || s.type === 'camera',
+          id:          s.id,
+          type:        s.type,
+          filename:    s.filename,
+          format:      s.format,
+          startOffset: Number(s.startOffset) || 0,
+          filePath:    path.join(lastSessionDir.value, s.filename),
+          isVideo:     s.type === 'screen' || s.type === 'camera',
         }));
     }
 
@@ -947,9 +997,11 @@ function startInlinePlayback() {
 }
 
 function playAllStreams() {
+  const syncOffset = Math.max(0, ...playbackStreams.value.map(stream => stream.startOffset));
   Object.values(playbackRefs.value).forEach(el => {
     if (el) {
-      el.currentTime = 0;
+      const stream = playbackStreams.value.find(candidate => playbackRefs.value[candidate.id] === el);
+      el.currentTime = stream ? Math.max(0, syncOffset - stream.startOffset) / 1000 : 0;
       el.play();
     }
   });
@@ -1009,6 +1061,13 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
       console.error('[CaptureStudio] Failed to start mic for new source:', e.message);
       newSrc.on = false;
     }
+  } else if (payload.type === 'system') {
+    try {
+      await enableSystemAudio();
+    } catch (e: any) {
+      console.error('[CaptureStudio] Failed to start system audio:', e.message);
+      newSrc.on = false;
+    }
   }
 
   if (isVideo) {
@@ -1027,6 +1086,8 @@ function removeSource(id: string) {
   const src = sources.find(s => s.id === id);
   if (src?.type === 'mic') {
     audioDriver.stopMic().catch(() => {});
+  } else if (src?.type === 'system') {
+    disableSystemAudio().catch(() => {});
   }
   const idx = sources.findIndex(s => s.id === id);
   if (idx > -1) sources.splice(idx, 1);
@@ -1076,8 +1137,8 @@ function startAudioMeter() {
       const bars = container.children;
 
       // Combine mic level (from controller VAD) + speaker level
-      const spActive = speakerCapture && speakerCapture.active ? speakerCapture.active.value : false;
-      const speakerLvl = spActive ? speakerCapture.level.value : (audioDriver.speakerLevel ? audioDriver.speakerLevel.value : 0);
+      const spActive = speakerCapture.active.value;
+      const speakerLvl = spActive ? speakerCapture.level.value : audioDriver.speakerLevel.value;
       const micLvl = audioDriver.micRunning.value ? audioDriver.micLevel.value : 0;
       const combinedLevel = Math.max(speakerLvl, micLvl);
 
@@ -1325,8 +1386,8 @@ function getCurrentLevel(src: { id: string; type: string; on: boolean }): number
     // Mic level comes from the controller's VAD pipeline
     return audioDriver.micRunning.value ? audioDriver.micLevel.value : 0;
   } else if (src.type === 'system') {
-    const spActive = speakerCapture && speakerCapture.active ? speakerCapture.active.value : false;
-    return spActive ? speakerCapture.level.value : (audioDriver.speakerLevel ? audioDriver.speakerLevel.value : 0);
+    const spActive = speakerCapture.active.value;
+    return spActive ? speakerCapture.level.value : audioDriver.speakerLevel.value;
   }
   // Video sources: return a small constant when on to show activity
   return src.on ? 0.15 : 0;
@@ -1459,7 +1520,7 @@ useAgentBridge({
   'recorder.status': () => ({
     recording:       recording.value,
     elapsedSeconds:  recorder.elapsedSeconds.value,
-    bytesWritten:    recorder.bytesWritten.value,
+    bytesWritten:    recorder.bytesWritten.value + speakerCapture.bytesWritten.value + micRecording.bytesWritten.value,
     sessionDir:      recording.value ? recorder.getSessionDir() : (lastSessionDir.value || null),
     error:           recorder.error.value || null,
   }),
@@ -1487,8 +1548,8 @@ useAgentBridge({
     if (params.mic === true && !audioDriver.micRunning.value) {
       await audioDriver.startMic();
     }
-    if (params.speaker === true && !audioDriver.speakerRunning.value) {
-      await audioDriver.startSpeaker();
+    if (params.speaker === true && !hasNativeSystemAudio()) {
+      await enableSystemAudio();
     }
 
     // Reuse the same toggleRecord() the start button calls — same
@@ -1512,6 +1573,25 @@ useAgentBridge({
     };
   },
 
+  // ── System audio ──
+  'system.enable': async() => {
+    await enableSystemAudio();
+    const source = sources.find(s => s.id === 'system');
+    if (source) source.on = true;
+    return { ok: true, mode: hasNativeSystemAudio() ? 'native' : 'blackhole' };
+  },
+  'system.disable': async() => {
+    if (recording.value) throw new Error('Cannot disable system audio while recording');
+    await disableSystemAudio();
+    const source = sources.find(s => s.id === 'system');
+    if (source) source.on = false;
+    return { ok: true };
+  },
+  'system.status': () => ({
+    active: hasNativeSystemAudio() || audioDriver.speakerRunning.value,
+    mode:   hasNativeSystemAudio() ? 'native' : audioDriver.speakerRunning.value ? 'blackhole' : 'none',
+  }),
+
   // ── Screen source ──
   'screen.list': async() => {
     return await mediaSources.listScreenSources();
@@ -1526,20 +1606,20 @@ useAgentBridge({
     mediaSources.releaseScreen();
     return { ok: true };
   },
-  'screen.quality': (params) => {
+  'screen.quality': async(params) => {
     const preset = String(params.preset || 'auto') as QualityPreset;
-    if (!QUALITY_PRESETS.includes(preset)) {
-      throw new Error(`preset must be one of: ${ QUALITY_PRESETS.join(', ') }`);
+    if (!isQualityPreset(preset)) {
+      throw new Error(`preset must be one of: ${ QUALITY_PRESET_IDS.join(', ') }`);
     }
-    mediaSources.setScreenQuality(preset);
+    await mediaSources.setScreenQuality(preset);
     return { ok: true, preset };
   },
-  'camera.quality': (params) => {
+  'camera.quality': async(params) => {
     const preset = String(params.preset || 'auto') as QualityPreset;
-    if (!QUALITY_PRESETS.includes(preset)) {
-      throw new Error(`preset must be one of: ${ QUALITY_PRESETS.join(', ') }`);
+    if (!isQualityPreset(preset)) {
+      throw new Error(`preset must be one of: ${ QUALITY_PRESET_IDS.join(', ') }`);
     }
-    mediaSources.setCameraQuality(preset);
+    await mediaSources.setCameraQuality(preset);
     return { ok: true, preset };
   },
 
@@ -1549,16 +1629,21 @@ useAgentBridge({
   },
   'camera.set': async(params) => {
     const deviceId = typeof params.deviceId === 'string' && params.deviceId ? params.deviceId : undefined;
-    const stream   = deviceId
-      ? await mediaSources.switchCamera(deviceId)
-      : await mediaSources.acquireCamera();
     if (typeof params.quality === 'string') {
       const preset = params.quality as QualityPreset;
-      if (QUALITY_PRESETS.includes(preset)) mediaSources.setCameraQuality(preset);
+      if (!isQualityPreset(preset)) {
+        throw new Error(`quality must be one of: ${ QUALITY_PRESET_IDS.join(', ') }`);
+      }
+      // Set before acquisition so the requested constraints apply to the
+      // initial stream instead of briefly opening at the previous preset.
+      mediaSources.cameraQuality.value = preset;
     }
+    const stream = deviceId
+      ? await mediaSources.switchCamera(deviceId)
+      : await mediaSources.acquireCamera();
     return { ok: !!stream, deviceId: deviceId || null };
   },
-  'camera.release': async() => {
+  'camera.release': () => {
     mediaSources.releaseCamera();
     return { ok: true };
   },
@@ -1598,26 +1683,14 @@ onMounted(async() => {
 
   // ── Boot sequence with loading screen ──
 
-  // 1. Start audio driver — always cycle stop→start so the capture helper
-  //    and mirror are freshly initialised.  Trusting a stale "running" state
-  //    led to the Swift helper sitting on silence after the aggregate device
-  //    was torn down by a previous session.
-  loadingMessage.value = 'Starting audio driver...';
-  console.log('[CaptureStudio] Boot: cycling audio driver stop→start for a clean capture...');
+  // 1. Read shared audio-driver state. System audio is acquired lazily when
+  //    selected so Electron's native loopback remains the primary path and
+  //    opening Capture Studio never mutates the Mac's output device.
+  loadingMessage.value = 'Initializing audio devices...';
   try {
-    // Stop first to clear any stale capture / mirror state
-    await Promise.race([
-      audioDriver.stopSpeaker(),
-      new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout stopping audio')), 5000)),
-    ]).catch(() => { /* already stopped — fine */ });
-
-    const result = await Promise.race([
-      audioDriver.startSpeaker(),
-      new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout starting audio capture')), 15000)),
-    ]);
-    console.log('[CaptureStudio] Audio driver start result:', JSON.stringify(result));
+    await audioDriver.getState();
   } catch (e: any) {
-    console.error('[CaptureStudio] Audio driver boot failed:', e.message || e);
+    console.warn('[CaptureStudio] Could not read audio driver state:', e.message || e);
   }
 
   // 2. Enumerate devices
@@ -1684,8 +1757,8 @@ async function cleanupCaptureStudio() {
 
   // Stop recording if active
   if (recording.value) {
-    micRecording.stop();
-    speakerCapture.stop();
+    await micRecording.stop();
+    if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
     inputTracker.stopTracking();
     await recorder.stopSession();
     recording.value = false;
@@ -1704,6 +1777,7 @@ async function cleanupCaptureStudio() {
   // Release all media streams (screen + camera)
   mediaSources.releaseScreen();
   mediaSources.releaseCamera();
+  speakerCapture.releaseNative();
 
   // Disconnect from controllers
   try { await audioDriver.stopMic() } catch { /* already stopped */ }

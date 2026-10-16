@@ -14,6 +14,7 @@ import type { QualityPreset } from './useMediaSources';
 const { randomUUID } = require('crypto');
 const fs = require('fs');
 const path = require('path');
+
 const paths = require('@pkg/utils/paths').default;
 
 interface StreamEntry {
@@ -35,6 +36,13 @@ interface ExternalStreamEntry {
   format:          string;
   getBytesWritten: () => number;
 }
+
+const STREAM_FILENAMES: Record<StreamEntry['type'], string> = {
+  screen:         'screen.webm',
+  camera:         'camera.webm',
+  mic:            'mic.webm',
+  'system-audio': 'speaker.webm',
+};
 
 export interface CaptureEvent {
   type:    'click' | 'keystroke' | 'window-focus' | 'scroll';
@@ -94,6 +102,7 @@ export function useRecorder() {
   let captureEvents: CaptureEvent[] = [];
   let timerInterval: ReturnType<typeof setInterval> | null = null;
   let sessionStartTime = 0;
+  let sessionStartedAtEpochMs = 0;
 
   /**
    * Start recording all provided streams to disk.
@@ -104,7 +113,10 @@ export function useRecorder() {
     stream:   MediaStream;
     quality?: QualityPreset;
   }[]): string {
-    if (isRecording.value) stopSession();
+    if (isRecording.value) {
+      error.value = 'A recording session is already active';
+      return '';
+    }
 
     error.value = null;
     const id = randomUUID().slice(0, 13);
@@ -130,8 +142,7 @@ export function useRecorder() {
     for (const src of streams) {
       const hasVideo = src.stream.getVideoTracks().length > 0;
       const mimeType = pickMimeType(hasVideo ? 'video' : 'audio');
-      const ext = 'webm';
-      const filename = `${ src.type }${ src.id ? `-${ src.id }` : '' }.${ ext }`;
+      const filename = STREAM_FILENAMES[src.type];
       const filePath = path.join(sessionDir, filename);
 
       let ws: any;
@@ -196,6 +207,7 @@ export function useRecorder() {
 
     // Phase 2: Start all recorders in one tight loop — same JS tick, zero offset
     sessionStartTime = performance.now();
+    sessionStartedAtEpochMs = Date.now();
     for (const { entry, recorder, ws } of prepared) {
       try {
         recorder.start(250); // 250ms chunks — smoother playback, less keyframe issues
@@ -207,7 +219,11 @@ export function useRecorder() {
       }
     }
 
-    if (entries.length === 0) {
+    // Audio-only sessions have no MediaRecorder entries yet: mic and the
+    // BlackHole fallback are attached immediately after this call as external
+    // socket writers. Only fail when media streams were requested and every
+    // recorder failed to start.
+    if (streams.length > 0 && entries.length === 0) {
       error.value = 'No streams could be recorded';
       return '';
     }
@@ -231,10 +247,11 @@ export function useRecorder() {
     filename:        string;
     format:          string;
     getBytesWritten: () => number;
+    startOffset?:    number;
   }): void {
     externalEntries.push({
       ...entry,
-      startOffset: performance.now() - sessionStartTime,
+      startOffset: entry.startOffset ?? performance.now() - sessionStartTime,
     });
   }
 
@@ -301,10 +318,27 @@ export function useRecorder() {
       new Promise<void>(resolve => setTimeout(resolve, 5000)),
     ]);
 
-    // Close all write streams
-    for (const entry of entries) {
-      entry.writeStream.end();
-    }
+    // Close all write streams and wait until every final chunk is flushed to
+    // disk. The editor may open the manifest immediately after recorder_stop,
+    // so publishing it before `finish` can expose truncated WebM files.
+    await Promise.all(entries.map(entry => new Promise<void>((resolve) => {
+      const ws = entry.writeStream;
+      if (!ws || ws.destroyed || ws.closed) {
+        resolve();
+        return;
+      }
+      let resolved = false;
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        resolve();
+      };
+      ws.once('finish', done);
+      ws.once('close', done);
+      ws.once('error', done);
+      ws.end();
+      setTimeout(done, 5000);
+    })));
 
     // Write manifest (includes both MediaRecorder and external streams)
     const allStreams = [
@@ -332,12 +366,25 @@ export function useRecorder() {
       }),
     ];
 
+    // Stat the finalized files instead of trusting queued-write counters.
+    // This includes container/header bytes and guarantees downstream editors
+    // see the size of the exact file named by each manifest entry.
+    for (const stream of allStreams) {
+      try {
+        stream.bytes = fs.statSync(path.join(sessionDir, stream.filename)).size;
+      } catch (err: any) {
+        console.warn('[useRecorder] Could not stat finalized stream', stream.filename, err.message);
+      }
+    }
+
     const totalBytes = allStreams.reduce((sum, s) => sum + s.bytes, 0);
 
+    const durationMs = Math.max(0, Math.round(performance.now() - sessionStartTime));
     const manifest = {
       sessionId: sessionId.value,
-      startedAt: new Date(Date.now() - elapsedSeconds.value * 1000).toISOString(),
-      duration:  elapsedSeconds.value,
+      startedAt: new Date(sessionStartedAtEpochMs).toISOString(),
+      duration:  durationMs / 1000,
+      durationMs,
       totalBytes,
       streams:   allStreams,
       events:    captureEvents,
