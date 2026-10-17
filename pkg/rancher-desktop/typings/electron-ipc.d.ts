@@ -454,6 +454,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:download-file': (input: { fileId: string; versionId?: string; name: string }) => boolean;
   'files-ui:media-url':     (input: { fileId: string; versionId?: string }) => string;
   'files-ui:pick-upload':  () => number;
+  'files-ui:pick-upload-references': () => import('@pkg/main/sullaFilesChatImport').ChatFilesReference[] | import('@pkg/main/sullaFilesChatImport').PartialChatFilesImport;
   'files-ui:upload-paths': (paths: string[]) => number;
   'files-ui:create-folder': (relativePath: string) => void;
   'files-ui:chat-inventory': (input: { runIds: string[]; threadId: string }) => any[];

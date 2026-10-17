@@ -9,11 +9,16 @@ import { LocalFilesManager } from './localManager.js';
 import { PotionEmbedder } from './potionEmbedder.js';
 import { RecordingEnrichmentQueue } from './recordingEnrichment.js';
 import { FileSearch } from './search.js';
+import { Store } from './store.js';
+import { cleanupStaleUploads } from './uploadCleanup.js';
 
 const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
 if (command === 'restore') { await restore(config, process.argv[3]); process.exit(0) }
 const db = await connect(config.databaseUrl); await migrate(db);
+if (config.mode === 'desktop') {
+  await cleanupStaleUploads(db, new Store(config.chunkRoot)).catch(error => { console.warn('[SullaFiles] stale upload cleanup deferred:', error) });
+}
 config.keyring = config.mode === 'desktop' ? new FilesKeyring(db) : new LegacyServerKeyring(db, config.capabilitySigningKey);
 const identityDb = await connectOptional(config.vaultDatabaseUrl);
 const embedder = PotionEmbedder.load(config.modelDir);

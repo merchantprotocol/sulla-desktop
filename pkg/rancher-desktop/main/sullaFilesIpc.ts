@@ -8,6 +8,7 @@ import { BrowserWindow, dialog, protocol, shell } from 'electron';
 
 import { getIpcMainProxy } from './ipcMain';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
+import { pickAndImportChatFiles } from './sullaFilesChatImport';
 import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
 
@@ -291,6 +292,10 @@ export function initSullaFilesIpc():void {
     if (picked.canceled) return 0;
 
     return importPaths(picked.filePaths, progress => event.sender.send('files-ui:upload-progress', progress));
+  });
+  ipcMain.handle('files-ui:pick-upload-references', async(event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    return pickAndImportChatFiles(owner);
   });
   ipcMain.handle('files-ui:upload-paths', (event, paths:string[]) => importPaths(paths, progress => event.sender.send('files-ui:upload-progress', progress)));
 }
