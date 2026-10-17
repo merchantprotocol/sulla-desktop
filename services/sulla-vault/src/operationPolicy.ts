@@ -20,6 +20,7 @@ export interface BrokerOperationPolicy {
     integration: string;
     hosts?:      string[];
     injections:  BrokerInjection[];
+    requiredInjections?: BrokerInjection[];
     pathPattern?: RegExp;
   }>;
 }
@@ -105,7 +106,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     ],
   },
   'provider.cli': {
-    integrations: ['openai', 'anthropic'],
+    integrations: ['openai', 'codex', 'anthropic'],
     methods: ['POST'],
     allowStreaming: true,
     injections: [],
@@ -115,6 +116,19 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
         hosts: ['api.openai.com'],
         injections: authHeaders(['api_key']),
         pathPattern: /^\/v1\/responses(?:\/compact)?$/,
+      },
+      {
+        integration: 'codex',
+        hosts: ['chatgpt.com'],
+        injections: [
+          { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+          { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+        ],
+        requiredInjections: [
+          { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+          { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+        ],
+        pathPattern: /^\/backend-api\/codex\/responses(?:\/compact)?$/,
       },
       {
         integration: 'anthropic',
@@ -271,6 +285,9 @@ export function validateOperation(
   for (const injection of input.injections) {
     if (!allowedInjections.some(candidate => exactInjection(candidate, injection))) throw new Error('injection_denied');
   }
+  if (binding?.requiredInjections?.some(required => !input.injections.some(candidate => exactInjection(candidate, required)))) {
+    throw new Error('injection_denied');
+  }
   if (!input.injections.length && !policy.credentialOptional) throw new Error('credential_injection_required');
   return policy;
 }
@@ -280,6 +297,7 @@ export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
   slack:     ['slack.com'],
   discord:   ['discord.com', 'discordapp.com'],
   openai:    ['api.openai.com'],
+  codex:     ['chatgpt.com'],
   anthropic: ['api.anthropic.com'],
   google:    ['generativelanguage.googleapis.com'],
   grok:      ['api.x.ai'],

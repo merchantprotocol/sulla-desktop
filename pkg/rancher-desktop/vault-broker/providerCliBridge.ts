@@ -5,7 +5,7 @@ import { pipeline } from 'node:stream/promises';
 
 import { requireConfiguredCredentialBroker } from './index';
 
-import type { ToolExecutionContext, LocalVaultBrokerClient } from './index';
+import type { BrokerInjection, ToolExecutionContext, LocalVaultBrokerClient } from './index';
 
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const SAFE_REQUEST_HEADERS = new Set([
@@ -32,32 +32,51 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
 ]);
 
 export type ProviderCliName = 'claude-code' | 'codex';
-export type ProviderCliIntegration = 'anthropic' | 'openai';
+export type ProviderCliIntegration = 'anthropic' | 'codex' | 'openai';
 
 interface ProviderDefinition {
   cli:         ProviderCliName;
   integration: ProviderCliIntegration;
   origin:      string;
-  paths:       ReadonlySet<string>;
-  injection:   { field: 'api_key'; target: 'header'; name: string; scheme: 'Bearer' | 'raw' };
+  routes:      ReadonlyMap<string, string>;
+  injections:  readonly BrokerInjection[];
 }
 
-const PROVIDERS: Readonly<Record<ProviderCliName, ProviderDefinition>> = {
-  codex: {
+const PROVIDERS: readonly ProviderDefinition[] = [
+  {
     cli:         'codex',
     integration: 'openai',
     origin:      'https://api.openai.com',
-    paths:       new Set(['/v1/responses', '/v1/responses/compact']),
-    injection:   { field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' },
+    routes:      new Map([
+      ['/v1/responses', '/v1/responses'],
+      ['/v1/responses/compact', '/v1/responses/compact'],
+    ]),
+    injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
   },
-  'claude-code': {
+  {
+    cli:         'codex',
+    integration: 'codex',
+    origin:      'https://chatgpt.com',
+    routes:      new Map([
+      ['/v1/responses', '/backend-api/codex/responses'],
+      ['/v1/responses/compact', '/backend-api/codex/responses/compact'],
+    ]),
+    injections: [
+      { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+      { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+    ],
+  },
+  {
     cli:         'claude-code',
     integration: 'anthropic',
     origin:      'https://api.anthropic.com',
-    paths:       new Set(['/v1/messages', '/v1/messages/count_tokens']),
-    injection:   { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
+    routes:      new Map([
+      ['/v1/messages', '/v1/messages'],
+      ['/v1/messages/count_tokens', '/v1/messages/count_tokens'],
+    ]),
+    injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
   },
-};
+] as const;
 
 export interface ProviderCliBridgeIdentity {
   context:   ToolExecutionContext;
@@ -97,13 +116,13 @@ export interface ProviderCliBridgeLease {
 }
 
 function assertIdentity(input: ProviderCliBridgeIdentity): ProviderDefinition {
-  const definition = PROVIDERS[input.provider];
   const ctx = input.context;
   if (!ctx.sub || !ctx.agent_id || !ctx.pod_id || !ctx.device_id || !ctx.thread_id || !ctx.job_id) {
     throw new Error('Provider CLI bridge requires live subject, agent, device, thread, and job identity');
   }
-  if (!input.accountId || ctx.credential_scope?.integration_id !== definition.integration ||
-      ctx.credential_scope.account_id !== input.accountId) {
+  const definition = PROVIDERS.find(candidate => candidate.cli === input.provider &&
+    candidate.integration === ctx.credential_scope?.integration_id);
+  if (!definition || !input.accountId || ctx.credential_scope?.account_id !== input.accountId) {
     throw new Error('Provider CLI bridge identity is outside the exact provider account scope');
   }
   if (!Number.isFinite(ctx.exp) || ctx.exp * 1000 <= Date.now()) {
@@ -256,8 +275,9 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
         sendError(response, 404, 'unsupported_provider_route');
         return;
       }
-      const upstreamPath = incoming.pathname.slice(scopedPrefix.length);
-      if (!definition.paths.has(upstreamPath)) {
+      const incomingPath = incoming.pathname.slice(scopedPrefix.length);
+      const upstreamPath = definition.routes.get(incomingPath);
+      if (!upstreamPath) {
         sendError(response, 404, 'unsupported_provider_route');
         return;
       }
@@ -291,14 +311,22 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
         sendError(response, 403, 'provider_model_denied');
         return;
       }
+      const headers = requestHeaders(request.headers);
+      if (definition.integration === 'codex') {
+        // These are routing metadata, not credentials. Bind them to trusted
+        // lifecycle identity instead of accepting container-selected values.
+        headers.originator = 'codex_cli_rs';
+        headers['session-id'] = context.thread_id!;
+        headers['thread-id'] = context.thread_id!;
+      }
       const upstream = await broker.executeStream(broker.requestFor(context, {
         operation:    'provider.cli',
         ref:          { integrationId: definition.integration, accountId: options.accountId },
         url:          `${ definition.origin }${ upstreamPath }`,
         method:       'POST',
-        headers:      requestHeaders(request.headers),
+        headers,
         body,
-        injections:   [definition.injection],
+        injections:   [...definition.injections],
         responseType: 'stream',
       }), requestAbort.signal);
       response.writeHead(upstream.status, responseHeaders(upstream.headers));

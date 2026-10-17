@@ -33,6 +33,7 @@ export {
   type ProviderCliBridgeIdentity,
   type ProviderCliBridgeLease,
   type ProviderCliBridgeOptions,
+  type ProviderCliIntegration,
   type ProviderCliName,
   type ProviderCliOpaqueConfig,
 } from './providerCliBridge';
