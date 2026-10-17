@@ -104,6 +104,26 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' },
     ],
   },
+  'provider.cli': {
+    integrations: ['openai', 'anthropic'],
+    methods: ['POST'],
+    allowStreaming: true,
+    injections: [],
+    bindings: [
+      {
+        integration: 'openai',
+        hosts: ['api.openai.com'],
+        injections: authHeaders(['api_key']),
+        pathPattern: /^\/v1\/responses(?:\/compact)?$/,
+      },
+      {
+        integration: 'anthropic',
+        hosts: ['api.anthropic.com'],
+        injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+        pathPattern: /^\/v1\/messages(?:\/count_tokens)?$/,
+      },
+    ],
+  },
   'provider.discovery': {
     integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom'],
     requireItemSites: true,
