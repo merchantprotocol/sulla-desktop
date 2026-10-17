@@ -86,14 +86,6 @@ export async function validateCatalogRequest(
   const base = new URL(auth.api.base_url);
   if (base.protocol !== 'https:' || base.origin !== target.origin) throw new Error('destination_denied');
 
-  if (input.operation === 'mcp.http') {
-    const prefix = base.pathname.replace(/\/$/, '');
-    if (!(target.pathname === prefix || target.pathname.startsWith(`${ prefix }/`)) ||
-        !['GET', 'POST', 'DELETE'].includes(input.method.toUpperCase())) throw new Error('destination_denied');
-    validateInjections(input, [{ field: 'auth_token', target: 'header', name: 'authorization', scheme: 'Bearer' }], true);
-    return { credentialFree: input.injections.length === 0 };
-  }
-
   const endpoint = Object.entries(files)
     .filter(([name]) => /\.ya?ml$/i.test(name) && name !== authName)
     .map(([, value]) => storedText(value))
@@ -101,8 +93,18 @@ export async function validateCatalogRequest(
     .map(value => yaml.parse(value) as EndpointDocument)
     .find(candidate => candidate.endpoint?.path && candidate.endpoint.method?.toUpperCase() === input.method.toUpperCase() &&
       endpointPattern(candidate.endpoint.path).test(target.pathname));
+
+  if (input.operation === 'mcp.http') {
+    const prefix = base.pathname.replace(/\/$/, '');
+    if (!(target.pathname === prefix || target.pathname.startsWith(`${ prefix }/`)) ||
+        !['GET', 'POST', 'DELETE'].includes(input.method.toUpperCase())) throw new Error('destination_denied');
+    const credentialFree = endpoint?.endpoint?.auth === 'none' || endpoint?.endpoint?.auth === 'optional';
+    validateInjections(input, [{ field: 'auth_token', target: 'header', name: 'authorization', scheme: 'Bearer' }], credentialFree);
+    return { credentialFree: input.injections.length === 0 && credentialFree };
+  }
+
   if (!endpoint?.endpoint) throw new Error('endpoint_denied');
-  const credentialFree = endpoint.endpoint.auth !== 'required';
+  const credentialFree = endpoint.endpoint.auth === 'none' || endpoint.endpoint.auth === 'optional';
   validateInjections(input, expectedInjection(auth), credentialFree);
   return { credentialFree };
 }

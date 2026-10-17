@@ -8,6 +8,7 @@ import { DEFAULT_AGENT_POLICY, deriveMasterKey } from '@sulla/vault-crypto';
 
 import { migrate } from './db.js';
 import { createApp } from './app.js';
+import { validateCatalogRequest } from './catalogPolicy.js';
 import { LocalVaultAuthority, LocalVaultError, localAuthorityTestHooks } from './localAuthority.js';
 import { validateOperation } from './operationPolicy.js';
 import {
@@ -121,6 +122,21 @@ test('bodyless MCP stream statuses do not require content type', () => {
   assert.equal(localAuthorityTestHooks.streamResponseIsBodyless('HEAD', 200, undefined), true);
   assert.equal(localAuthorityTestHooks.streamResponseIsBodyless('POST', 200, '0'), true);
   assert.equal(localAuthorityTestHooks.streamResponseIsBodyless('POST', 200, undefined), false);
+});
+
+test('MCP manifest permits credential-free calls only when explicitly public', async() => {
+  const manifest = (auth: 'none' | 'required') => ({
+    'mcp-public.v1-auth.yaml': 'api:\n  base_url: https://mcp.example.com/rpc\nauth:\n  type: bearer\n',
+    'call.v1.yaml': `endpoint:\n  path: /rpc\n  method: POST\n  auth: ${ auth }\n`,
+  });
+  const input: any = {
+    operation: 'mcp.http', ref: { integrationId: 'mcp', accountId: 'public' },
+    method: 'POST', url: 'https://mcp.example.com/rpc', injections: [],
+  };
+  const db = { query: async() => ({ rows: [{ files: manifest('none') }] }) } as any;
+  assert.deepEqual(await validateCatalogRequest(db, input, new URL(input.url)), { credentialFree: true });
+  db.query = async() => ({ rows: [{ files: manifest('required') }] });
+  await assert.rejects(validateCatalogRequest(db, input, new URL(input.url)), /injection_denied/);
 });
 
 test('stream redaction covers short, unicode, encoded, and every split boundary', () => {
