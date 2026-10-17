@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "main": "dist/index.js",
+  "bin": { "sulla-vault-bootstrap": "dist/serverBootstrapCli.js" },
   "scripts": {
     "build": "npm run build:console && tsc -p tsconfig.json",
     "build:console": "node console/build.mjs",
