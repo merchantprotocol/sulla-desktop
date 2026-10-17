@@ -35,7 +35,7 @@ function fakeDb() {
 }
 
 async function withServer(fn:(baseUrl:string) => Promise<void>, options:{ db?: any; search?: any } = {}) {
-  const server = createApp(options.db ?? fakeDb(), { keyring: { unlocked: true } as any, chunkRoot: '/tmp/sulla-files-sharing-test', dataRoot: '/tmp/sulla-files-sharing-test', modelDir: '/tmp/sulla-files-sharing-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, localToken: 'local-test-token', mode: 'server', deviceId: 'test', userId: 'owner-1', cloudUrl: 'https://cloud.invalid', paused: false }, undefined, undefined, options.search).listen(0);
+  const server = createApp(options.db ?? fakeDb(), { keyring: { unlocked: true } as any, chunkRoot: '/tmp/sulla-files-sharing-test', dataRoot: '/tmp/sulla-files-sharing-test', modelDir: '/tmp/sulla-files-sharing-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, localToken: 'local-test-token', mode: 'server', deviceId: 'test', userId: 'owner-1', cloudUrl: 'https://cloud.invalid', caseInsensitiveRoot: false, paused: false }, undefined, undefined, options.search).listen(0);
   await new Promise<void>(resolve => server.once('listening', resolve));
   try { await fn(`http://127.0.0.1:${ (server.address() as any).port }`) } finally { server.close() }
 }

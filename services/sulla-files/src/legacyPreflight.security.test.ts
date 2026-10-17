@@ -99,7 +99,7 @@ test('late ambiguous collection metadata is classified before legacy shape detec
     const db = database([], [collectionId]);
     const status = await runLegacyPreflight(db, root);
     assert.equal(status.state, 'secure-import-required');
-    assert.ok(db.queries.findIndex(sql => sql.startsWith('UPDATE collections')) < db.queries.findIndex(sql => sql.startsWith('SELECT id::text')));
+    assert.ok(db.queries.findIndex((sql:string) => sql.startsWith('UPDATE collections')) < db.queries.findIndex((sql:string) => sql.startsWith('SELECT id::text')));
   } finally { await rm(root, { recursive: true }) }
 });
 

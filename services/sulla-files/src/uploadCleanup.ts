@@ -33,7 +33,7 @@ export async function cleanupStaleUploads(db:pg.Pool, store:Store):Promise<numbe
       WHERE intents.id=candidates.id RETURNING intents.id,intents.collection_id,intents.chunk_ids`, [STALE_UPLOAD_AGE]);
   let cleaned = 0;
   for (const intent of stale.rows) {
-    const chunkIds = Array.isArray(intent.chunk_ids) ? [...new Set(intent.chunk_ids.filter((id:unknown):id is string => typeof id === 'string'))] : [];
+    const chunkIds = Array.isArray(intent.chunk_ids) ? [...new Set<string>(intent.chunk_ids.filter((id:unknown):id is string => typeof id === 'string'))] : [];
     for (const chunkId of chunkIds) {
       const state = (await db.query(`SELECT
         EXISTS(SELECT 1 FROM chunks WHERE collection_id=$1 AND id=$2) AS registered,
