@@ -6,10 +6,12 @@
 #   curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo bash
 #
 # Each additional server (joins the cluster as a node):
-#   curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo K3S_URL=https://FIRST_SERVER_IP:6443 K3S_TOKEN=<token> bash
+#   K3S_URL=https://FIRST_SERVER_IP:6443 npx sulla-desktop server
 #
-# The first server prints the exact join line when it finishes.
+# The join token is requested with terminal echo disabled.
 # Options (env): SULLA_REF=<branch|tag|sha> (default main), SULLA_DIR (default /opt/sulla/server)
+# SULLA_BUNDLE_DIR is reserved for the official npm launcher, which ships this
+# kit with the package and pins SULLA_SOURCE_SHA before invoking the installer.
 # ============================================================================
 set -euo pipefail
 
@@ -97,6 +99,10 @@ main() {
     SULLA_SOURCE_SHA="${SULLA_SOURCE_SHA%%$'\n'*}"
   fi
   [[ "$SULLA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "could not resolve SULLA_REF=${SULLA_REF} to a commit"
+  if [[ -n ${SULLA_BUNDLE_DIR:-} && ${SULLA_BUNDLE_SOURCE_SHA:-} != "$SULLA_SOURCE_SHA" ]]; then
+    log "Saved source ${SULLA_SOURCE_SHA} differs from this package; using its matching server kit."
+    SULLA_BUNDLE_DIR=
+  fi
   if [[ -z ${K3S_URL:-} && "$saved_configuration" == false ]]; then
     ask SULLA_RUNTIME "Runtime (compose or kubernetes)" compose
     default_public_url="http://$(hostname -f 2>/dev/null || hostname):8787"
@@ -150,10 +156,20 @@ main() {
     k8s/postgres.yaml k8s/sulla-vault.yaml
   )
 
-  log "Downloading the Sulla server kit (${SULLA_REF}) to ${SULLA_DIR}..."
+  if [[ -n ${SULLA_BUNDLE_DIR:-} ]]; then
+    [[ "$SULLA_BUNDLE_DIR" == /* && -d "$SULLA_BUNDLE_DIR" ]] || fail "bundled server kit path is invalid"
+    log "Installing the bundled Sulla server kit (${SULLA_SOURCE_SHA}) to ${SULLA_DIR}..."
+  else
+    log "Downloading the Sulla server kit (${SULLA_SOURCE_SHA}) to ${SULLA_DIR}..."
+  fi
   mkdir -p "${SULLA_DIR}/k8s"
   for f in "${FILES[@]}"; do
-    curl -fsSL "${RAW}/${f}" -o "${SULLA_DIR}/${f}.tmp" || fail "download failed: ${f}"
+    if [[ -n ${SULLA_BUNDLE_DIR:-} ]]; then
+      [[ -f "${SULLA_BUNDLE_DIR}/${f}" ]] || fail "bundled server kit is missing: ${f}"
+      cp -- "${SULLA_BUNDLE_DIR}/${f}" "${SULLA_DIR}/${f}.tmp" || fail "copy failed: ${f}"
+    else
+      curl -fsSL "${RAW}/${f}" -o "${SULLA_DIR}/${f}.tmp" || fail "download failed: ${f}"
+    fi
     mv "${SULLA_DIR}/${f}.tmp" "${SULLA_DIR}/${f}"
   done
   chmod +x "${SULLA_DIR}"/*.sh
