@@ -337,7 +337,7 @@ export class CodexService extends BaseLanguageModel {
       const providerCommand = this.buildProviderCommand({
         existingSession,
         readOnly,
-        environment:     providerConfig?.environment,
+        environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
         configOverrides: [...(providerConfig?.codexConfigOverrides ?? []), ...(toolConfig?.codexConfigOverrides ?? [])],
       });
       const proc = transport.spawn({
@@ -913,7 +913,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       existingSession,
       readOnly,
       instructionsPath,
-      environment:     providerConfig?.environment,
+      environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
       configOverrides: [...(providerConfig?.codexConfigOverrides ?? []), ...(toolConfig?.codexConfigOverrides ?? [])],
     });
 
