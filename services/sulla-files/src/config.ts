@@ -8,6 +8,10 @@ export interface Config {
   port:                 number;
   databaseUrl:          string;
   vaultDatabaseUrl?:    string;
+  vaultAuthorityUrl?:    string;
+  vaultAuthorityId?:     string;
+  vaultAuthorityToken?:  string;
+  vaultAuthorityCaPath?: string;
   chunkRoot:            string;
   dataRoot:             string;
   filesRoot?:           string;
@@ -37,7 +41,11 @@ export function loadConfig():Config {
   return {
     port:             Number(process.env.SULLA_FILES_PORT ?? 8792),
     databaseUrl,
-    vaultDatabaseUrl: process.env.SULLA_FILES_VAULT_DATABASE_URL,
+    vaultDatabaseUrl:    process.env.SULLA_FILES_VAULT_DATABASE_URL,
+    vaultAuthorityUrl:   process.env.SULLA_FILES_VAULT_AUTHORITY_URL,
+    vaultAuthorityId:    process.env.SULLA_FILES_VAULT_AUTHORITY_SERVICE_ID,
+    vaultAuthorityToken: process.env.SULLA_FILES_VAULT_AUTHORITY_TOKEN,
+    vaultAuthorityCaPath: process.env.SULLA_FILES_VAULT_AUTHORITY_CA_PATH,
     chunkRoot:        resolve(process.env.SULLA_FILES_CHUNK_ROOT ?? '/var/lib/sulla-files/chunks'),
     dataRoot:         resolve(process.env.SULLA_FILES_DATA_ROOT ?? '/var/lib/sulla-files'),
     filesRoot:        mode === 'desktop' ? resolve(process.env.SULLA_FILES_FOLDER ?? '/data/files') : undefined,

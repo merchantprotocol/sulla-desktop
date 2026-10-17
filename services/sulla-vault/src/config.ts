@@ -16,6 +16,8 @@ export interface VaultConfig {
   extensionOrigins:            string[];
   brokerServiceId?:            string;
   brokerServiceToken?:         string;
+  filesServiceId?:             string;
+  filesServiceToken?:          string;
 }
 
 function jsonEnvironment(name: string): unknown | undefined {
@@ -50,5 +52,7 @@ export function loadConfig(): VaultConfig {
     extensionOrigins:           (process.env.SULLA_VAULT_EXTENSION_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean),
     brokerServiceId:            process.env.SULLA_VAULT_BROKER_SERVICE_ID ?? 'sulla-tools',
     brokerServiceToken:         process.env.SULLA_VAULT_BROKER_TOKEN,
+    filesServiceId:             process.env.SULLA_VAULT_FILES_SERVICE_ID ?? 'sulla-files',
+    filesServiceToken:          process.env.SULLA_VAULT_FILES_TOKEN,
   };
 }
