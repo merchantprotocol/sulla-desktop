@@ -4,7 +4,8 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
-import { buildRemoteKillCommand, newRemotePidFile } from './claudeLaunchCommand';
+import { buildRemoteKillCommand, buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCommand';
+import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild, waitForKillHelper } from './cliFaultRecovery';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { redisClient } from '../database/RedisClient';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
@@ -22,6 +23,7 @@ const STALL_TIMEOUT_MS = 15 * 60_000;
 
 export interface CliAgentEventResult {
   text?:      string;
+  terminal?:  boolean;
   sessionId?: string;
   usage?:     Record<string, unknown>;
   activity?:  string;
@@ -32,26 +34,31 @@ export interface CliAgentEventResult {
     resultChars: number;
     isError?:    boolean;
   };
+  toolState?: {
+    toolUseId: string;
+    toolName:  string;
+    status:    'started' | 'completed';
+  };
   error?: string;
 }
 
 export interface CliAgentRunContext {
   existingSession?: string;
-  mcpSession:        RegisteredSession | null;
-  mcpConfigPath?:    string;
-  systemPrompt:      string;
-  model?:            string;
+  mcpSession:       RegisteredSession | null;
+  mcpConfigPath?:   string;
+  systemPrompt:     string;
+  model?:           string;
 }
 
 export interface CliAgentSpec {
-  id:             string;
-  name:           string;
-  autoModel:      string;
-  missingMessage: string;
-  contextWindow:  number;
+  id:                         string;
+  name:                       string;
+  autoModel:                  string;
+  missingMessage:             string;
+  contextWindow:              number;
   systemPromptInUserMessage?: boolean;
   /** True when each event reports one step rather than a cumulative turn total. */
-  accumulateUsage?: boolean;
+  accumulateUsage?:           boolean;
   buildArgs(context: CliAgentRunContext): string[];
   buildEnv?(context: CliAgentRunContext): Record<string, string>;
   parseEvent(event: any): CliAgentEventResult;
@@ -152,7 +159,11 @@ export class CliAgentService extends BaseLanguageModel {
   }
 
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    return this.runCli(messages, {}, options);
+    return runWithCliFaultRecovery(this.spec.name, attempt => this.runCli(attempt === 1 ? messages : recoveryMessages(messages), {}, options), {
+      signal:   options.signal,
+      canRetry: () => true,
+      onRetry:  (_error, attempt) => log.warn(`[${ this.spec.name }] retrying failed CLI process (attempt ${ attempt })`),
+    });
   }
 
   protected normalizeResponse(raw: any): NormalizedResponse {
@@ -165,7 +176,26 @@ export class CliAgentService extends BaseLanguageModel {
     options: { signal?: AbortSignal; conversationId?: string; profileId?: string; usageEventId?: string; state?: BaseThreadState | any } = {},
   ): Promise<NormalizedResponse | null> {
     const started = performance.now();
-    const result = await this.runCli(messages, callbacks, options);
+    const guardedCallbacks: StreamCallbacks = {
+      ...callbacks,
+      onToken: (token: string) => {
+        callbacks.onToken?.(token);
+      },
+      onToolEvent: (event) => {
+        callbacks.onToolEvent?.(event);
+      },
+    };
+    let streamedText = '';
+    guardedCallbacks.onToken = (token: string) => {
+      streamedText += token;
+      callbacks.onToken?.(token);
+    };
+    const result = await runWithCliFaultRecovery(this.spec.name, attempt => this.runCli(attempt === 1 ? messages : recoveryMessages(messages), guardedCallbacks, options), {
+      signal:   options.signal,
+      canRetry: () => true,
+      onRetry:  (_error, attempt) => log.warn(`[${ this.spec.name }] retrying failed CLI process (attempt ${ attempt })`),
+    });
+    if (streamedText) result.text = streamedText;
     const response = this.toResponse(result, Math.round(performance.now() - started));
     await this.recordMeterableTokens(response, options.profileId, options.usageEventId, this.usageEventId(messages, options, this.getModel()));
     return response;
@@ -239,6 +269,11 @@ export class CliAgentService extends BaseLanguageModel {
 
     const systemPrompt = systemPromptFromMessages(messages);
     const workerPrompt = await prepareWorkerTurnPrompt(options.state, rawPrompt);
+    if (options.signal?.aborted) {
+      const error = new Error(`${ this.spec.name } run aborted`);
+      error.name = 'AbortError';
+      throw error;
+    }
     const prompt = this.spec.systemPromptInUserMessage && systemPrompt
       ? `<system_instructions>\n${ systemPrompt }\n</system_instructions>\n\n${ workerPrompt }`
       : workerPrompt;
@@ -257,8 +292,8 @@ export class CliAgentService extends BaseLanguageModel {
 
     const args = this.spec.buildArgs(context).map(shq).join(' ');
     const env = {
-      HOME: os.homedir(),
-      PATH: '$HOME/.local/bin:/mnt/data/npm-global/bin:$PATH',
+      HOME:               os.homedir(),
+      PATH:               '$HOME/.local/bin:/mnt/data/npm-global/bin:$PATH',
       SULLA_TOOL_SESSION: mcpSession?.id ?? '',
       ...(this.spec.buildEnv?.(context) ?? {}),
     };
@@ -267,7 +302,7 @@ export class CliAgentService extends BaseLanguageModel {
       return `${ key }=${ shq(value) }`;
     }).join(' ');
     const pidFile = newRemotePidFile(`sulla-${ this.spec.id }`);
-    const innerCommand = `echo $$ > ${ shq(pidFile) }; export ${ envAssignments }; exec ${ args }`;
+    const innerCommand = `${ buildRemotePidRecordCommand(pidFile) }; export ${ envAssignments }; exec ${ args }`;
     const proc = childProcess.spawn(paths.limactl, ['shell', '0', '--', 'sh', '-c', innerCommand], {
       env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
     });
@@ -280,9 +315,15 @@ export class CliAgentService extends BaseLanguageModel {
       let sessionId = existingSession;
       let usage: any = null;
       let errorMessage = '';
+      let sawTerminalResult = false;
       let lastActivity = Date.now();
       let stopped = false;
+      let settled = false;
+      const activeToolEvents = new Map<string, { startedAt: number }>();
+      let sawToolExecution = false;
+      let unresolvedTool = false;
       let watchdog: ReturnType<typeof setInterval> | undefined;
+      let terminationPromise: Promise<void> | undefined;
 
       const cleanup = () => {
         try { mcpSession?.revoke() } catch { /* already revoked */ }
@@ -296,30 +337,63 @@ export class CliAgentService extends BaseLanguageModel {
         options.signal?.removeEventListener('abort', abort);
         if (watchdog) clearInterval(watchdog);
       };
-      const remoteKill = (signal: 'TERM' | 'KILL') => {
-        try {
-          const killer = childProcess.spawn(paths.limactl, ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, signal)], {
-            env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' }, stdio: 'ignore', detached: true,
-          });
-          killer.unref();
-        } catch { /* process already exited */ }
+      const remoteKill = async(signal: 'TERM' | 'KILL') => {
+        const killer = childProcess.spawn(paths.limactl, ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, signal)], {
+          env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' }, stdio: 'ignore', detached: true,
+        });
+        killer.unref();
+        await waitForKillHelper(killer);
       };
       const stop = () => {
-        if (stopped) return;
+        if (terminationPromise) return terminationPromise;
         stopped = true;
-        try { proc.kill('SIGTERM') } catch { /* already exited */ }
-        remoteKill('TERM');
-        const escalation = setTimeout(() => remoteKill('KILL'), 5_000);
-        escalation.unref?.();
+        try { mcpSession?.revoke() } catch { /* already revoked */ }
+        terminationPromise = terminateCliChild(proc, remoteKill);
+        return terminationPromise;
       };
-      const abort = () => stop();
+      const rejectOnce = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const abort = () => {
+        const rejectAbort = () => {
+          const error = new Error(`${ this.spec.name } run aborted`);
+          error.name = 'AbortError';
+          rejectOnce(error);
+        };
+        void stop().then(rejectAbort, rejectAbort);
+      };
       if (options.signal?.aborted) abort();
       else options.signal?.addEventListener('abort', abort);
 
+      if (stopped) return;
+
       watchdog = setInterval(() => {
-        if (Date.now() - lastActivity > STALL_TIMEOUT_MS) {
+        const silentMs = Date.now() - lastActivity;
+        if (silentMs < STALL_TIMEOUT_MS) return;
+        if (activeToolEvents.size > 0) {
+          const tools = [...activeToolEvents.values()];
+          if (tools.every(tool => Date.now() - tool.startedAt < 30 * 60_000)) return;
+          unresolvedTool = true;
+          errorMessage = `${ this.spec.name } stopped reporting activity while a tool was unresolved.`;
+          void stop().then(() => {
+            proc.removeAllListeners('error');
+            proc.on('error', () => { /* late child error after forced teardown */ });
+            if (sessionId) this.setSession(conversationId, sessionId).catch(() => {});
+            rejectOnce(new CliFaultError('stall', `${ errorMessage } Recovery was not attempted because replay could duplicate side effects.`, undefined, false, true));
+          }, error => rejectOnce(error instanceof Error ? error : new CliFaultError('transport', String(error), error, false)));
+          return;
+        }
+        if (silentMs > STALL_TIMEOUT_MS) {
           errorMessage = `${ this.spec.name } stalled with no stream activity for 15 minutes.`;
-          stop();
+          void stop().then(() => {
+            proc.removeAllListeners('error');
+            proc.on('error', () => { /* late child error after forced teardown */ });
+            if (sessionId) this.setSession(conversationId, sessionId).catch(() => {});
+            rejectOnce(new CliFaultError('stall', errorMessage));
+          }, error => rejectOnce(error instanceof Error ? error : new CliFaultError('transport', String(error), error, false)));
         }
       }, 30_000);
       watchdog.unref?.();
@@ -330,7 +404,15 @@ export class CliAgentService extends BaseLanguageModel {
         let parsed: any;
         try { parsed = JSON.parse(trimmed) } catch { return }
         const event = this.spec.parseEvent(parsed);
+        if (event.toolState?.toolUseId) {
+          if (event.toolState.status === 'completed') activeToolEvents.delete(event.toolState.toolUseId);
+          else {
+            sawToolExecution = true;
+            activeToolEvents.set(event.toolState.toolUseId, { startedAt: Date.now() });
+          }
+        }
         if (event.sessionId) sessionId = event.sessionId;
+        if (event.terminal) sawTerminalResult = true;
         if (event.usage) {
           if (this.spec.accumulateUsage) {
             usage ??= {};
@@ -359,6 +441,7 @@ export class CliAgentService extends BaseLanguageModel {
       };
 
       proc.stdout.on('data', chunk => {
+        if (settled) return;
         lastActivity = Date.now();
         stdoutBuffer += chunk.toString('utf8');
         const lines = stdoutBuffer.split('\n');
@@ -366,18 +449,51 @@ export class CliAgentService extends BaseLanguageModel {
         for (const line of lines) processLine(line);
       });
       proc.stderr.on('data', chunk => {
+        if (settled) return;
         lastActivity = Date.now();
         stderrBuffer += chunk.toString('utf8');
       });
       proc.stdin.on('error', () => { /* early CLI exit */ });
       proc.stdin.end(prompt);
 
-      proc.on('error', err => {
-        cleanup();
-        reject(err);
+      proc.on('error', async(err) => {
+        if (sessionId) {
+          try { await this.setSession(conversationId, sessionId) } catch (error) {
+            rejectOnce(new CliFaultError('transport', `${ this.spec.name } session state could not be persisted safely.`, error, false, true));
+            return;
+          }
+        }
+        const retrySafe = activeToolEvents.size === 0 && !unresolvedTool;
+        const safety = retrySafe ? '' : ' Recovery was not attempted because a tool or approval was still unresolved.';
+        rejectOnce(new CliFaultError('spawn', `${ this.spec.name } process error: ${ err.message }.${ safety }`, err, retrySafe, !retrySafe));
       });
-      proc.on('close', code => {
-        if (stdoutBuffer.trim()) processLine(stdoutBuffer);
+      proc.on('close', async(code) => {
+        if (settled) return;
+        if (stdoutBuffer.trim()) {
+          processLine(stdoutBuffer);
+          stdoutBuffer = '';
+        }
+        if (terminationPromise && (options.signal?.aborted || errorMessage)) {
+          options.signal?.removeEventListener('abort', abort);
+          if (watchdog) clearInterval(watchdog);
+          try { mcpSession?.revoke() } catch { /* already revoked */ }
+          if (mcpConfigPath) {
+            try {
+              const stat = fs.statSync(mcpConfigPath);
+              if (stat.isDirectory()) fs.rmSync(mcpConfigPath, { recursive: true });
+              else fs.unlinkSync(mcpConfigPath);
+            } catch { /* already gone */ }
+          }
+          proc.removeAllListeners('error');
+          proc.on('error', () => { /* late child error after termination */ });
+          if (sessionId) {
+            try { await this.setSession(conversationId, sessionId) } catch (error) {
+              rejectOnce(new CliFaultError('transport', `${ this.spec.name } session state could not be persisted safely.`, error, false, true));
+            }
+          }
+          return;
+        }
+        settled = true;
         cleanup();
         if (options.signal?.aborted) {
           const error = new Error(`${ this.spec.name } run aborted`);
@@ -387,25 +503,44 @@ export class CliAgentService extends BaseLanguageModel {
         }
 
         const combinedError = `${ errorMessage } ${ stderrBuffer.slice(-1_000) }`.trim();
-        if (existingSession && !retryWithoutSession && code !== 0 && this.spec.isResumeFailure?.(combinedError)) {
-          this.deleteSession(conversationId).catch(() => {});
-          this.runCli(messages, callbacks, options, true).then(resolve, reject);
+        if (sessionId) {
+          try { await this.setSession(conversationId, sessionId) } catch (error) {
+            reject(new CliFaultError('transport', `${ this.spec.name } session state could not be persisted safely.`, error, false, true));
+            return;
+          }
+        }
+        if (existingSession && !retryWithoutSession && !sawToolExecution && code !== 0 && this.spec.isResumeFailure?.(combinedError)) {
+          void this.deleteSession(conversationId).then(() => this.runCli(messages, callbacks, options, true)).then(resolve, reject);
           return;
         }
         if (code === 127) {
           reject(new Error(this.spec.missingMessage));
           return;
         }
-        if (errorMessage || (code !== 0 && !text.trim())) {
-          reject(new Error(`${ this.spec.name }: ${ combinedError || `exited with code ${ code }` }`));
+        if (errorMessage || code !== 0) {
+          const message = `${ this.spec.name }: ${ combinedError || `exited with code ${ code }` }`;
+          if (/unauthorized|invalid api key|credential|quota|usage balance|weekly limit|session limit|rate limit|too many requests/i.test(combinedError)) {
+            reject(new Error(message));
+          } else {
+            const retrySafe = activeToolEvents.size === 0 && !unresolvedTool && !isPermanentCliFailure(combinedError);
+            const safety = retrySafe ? '' : ' Recovery was not attempted because a tool or approval was still unresolved.';
+            reject(new CliFaultError(errorMessage.includes('stalled') ? 'stall' : 'process_exit', `${ message }${ safety }`, undefined, retrySafe, !retrySafe && (activeToolEvents.size > 0 || unresolvedTool)));
+          }
+          return;
+        }
+        if (!sawTerminalResult) {
+          const retrySafe = activeToolEvents.size === 0 && !unresolvedTool;
+          reject(new CliFaultError('protocol', `${ this.spec.name } exited before emitting a terminal result event.`, undefined, retrySafe, !retrySafe));
           return;
         }
         if (!text.trim()) {
-          reject(new Error(`${ this.spec.name } returned no text. ${ stderrBuffer.trim().slice(-300) }`));
+          const retrySafe = activeToolEvents.size === 0 && !unresolvedTool && !isPermanentCliFailure(stderrBuffer);
+          const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
+          reject(new CliFaultError('protocol', `${ this.spec.name } returned no text. ${ stderrBuffer.trim().slice(-300) }${ safety }`, undefined, retrySafe, !retrySafe && (activeToolEvents.size > 0 || unresolvedTool)));
           return;
         }
-        if (sessionId) this.setSession(conversationId, sessionId).catch(() => {});
         recordEngineUsage(this.spec.id, usage, this.getModel(), Date.now() - started).catch(() => {});
+        settled = true;
         resolve({ text, usage });
       });
     });

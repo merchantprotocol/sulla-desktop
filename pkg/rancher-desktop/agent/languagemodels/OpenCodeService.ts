@@ -42,20 +42,28 @@ function parseOpenCodeEvent(event: any): CliAgentEventResult {
     return {
       sessionId,
       activity:  state.status === 'completed' ? `Completed ${ title }` : `Using ${ title }`,
-      toolEvent: state.status === 'completed' || state.status === 'error' ? {
-        toolUseId:   String(part.callID ?? part.id ?? ''),
-        toolName:    String(part.tool ?? 'tool'),
-        input:       state.input,
-        resultChars: output.length,
-        isError:     state.status === 'error' || state.metadata?.exit > 0,
-      } : undefined,
+      toolState: {
+        toolUseId: String(part.callID ?? part.id ?? title),
+        toolName:  String(part.tool ?? title),
+        status:    state.status === 'completed' || state.status === 'error' ? 'completed' : 'started',
+      },
+      toolEvent: state.status === 'completed' || state.status === 'error'
+        ? {
+          toolUseId:   String(part.callID ?? part.id ?? ''),
+          toolName:    String(part.tool ?? 'tool'),
+          input:       state.input,
+          resultChars: output.length,
+          isError:     state.status === 'error' || state.metadata?.exit > 0,
+        }
+        : undefined,
     };
   }
   if (event?.type === 'step_finish') {
     const tokens = part.tokens ?? {};
     return {
       sessionId,
-      usage: {
+      terminal: true,
+      usage:    {
         input_tokens:        tokens.input,
         output_tokens:       tokens.output,
         cached_input_tokens: tokens.cache?.read,
@@ -74,16 +82,16 @@ function parseOpenCodeEvent(event: any): CliAgentEventResult {
 export class OpenCodeService extends CliAgentService {
   constructor() {
     super({
-      id:             'opencode',
-      name:           'OpenCode',
-      autoModel:      'opencode',
-      missingMessage: 'OpenCode CLI is not installed in the VM. Run: npm install --prefix /mnt/data/npm-global -g opencode-ai',
-      contextWindow:  200_000,
+      id:              'opencode',
+      name:            'OpenCode',
+      autoModel:       'opencode',
+      missingMessage:  'OpenCode CLI is not installed in the VM. Run: npm install --prefix /mnt/data/npm-global -g opencode-ai',
+      contextWindow:   200_000,
       accumulateUsage: true,
-      buildArgs:      opencodeArgs,
-      buildEnv:       opencodeEnv,
-      parseEvent:     parseOpenCodeEvent,
-      isResumeFailure: message => /session|resume|not found|invalid/i.test(message),
+      buildArgs:       opencodeArgs,
+      buildEnv:        opencodeEnv,
+      parseEvent:      parseOpenCodeEvent,
+      isResumeFailure: message => /(?:failed|unable) to (?:load|resume|find).*session|session.*(?:not found|does not exist|invalid|expired)/i.test(message),
     });
   }
 }

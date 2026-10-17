@@ -4,19 +4,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
-import { buildRemoteKillCommand, newRemotePidFile } from './claudeLaunchCommand';
+import { buildRemoteKillCommand, buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { isObserverSpawn } from './claudeToolPolicy';
+import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild, waitForKillHelper } from './cliFaultRecovery';
 import { removeFileOnExit, systemPromptFromMessages, writeSystemPromptFile } from './cliSystemPromptFile';
 import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_SESSION_TTL_MS, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
-import { emitCodexToolEvent } from './codexToolEvents';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
+import { emitCodexToolEvent } from './codexToolEvents';
 import { redisClient } from '../database/RedisClient';
-import { markSteerPending, onSteer } from '../utils/steerChannel';
-import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
-import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeCodexLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
+import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
+import { graphBrowserControllerContext } from '../utils/graphBrowserController';
+import { markSteerPending, onSteer } from '../utils/steerChannel';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
@@ -178,9 +179,9 @@ export class CodexService extends BaseLanguageModel {
    * write the prompt to stdin themselves, at different times.
    */
   private buildSpawnArgs(p: {
-    existingSession?: string;
-    mcpSession?: RegisteredSession | null;
-    readOnly?: boolean;
+    existingSession?:  string;
+    mcpSession?:       RegisteredSession | null;
+    readOnly?:         boolean;
     /**
      * Host path of a per-run instructions file (cliSystemPromptFile), passed
      * as -c model_instructions_file. It REPLACES codex's base instructions,
@@ -190,7 +191,7 @@ export class CodexService extends BaseLanguageModel {
      */
     instructionsPath?: string | null;
     /** VM-side pidfile the launched codex records its PID in. */
-    pidFile:          string;
+    pidFile:           string;
   }): string[] {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
@@ -241,7 +242,7 @@ export class CodexService extends BaseLanguageModel {
     // The pidfile lets an abort kill exactly this run; the PID line (stderr,
     // before exec — same PID after) lets a steer interrupt it. Neither
     // touches any other codex in the VM.
-    const innerCmd = `echo $$ > ${ shq(p.pidFile) }; export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
+    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
@@ -303,8 +304,8 @@ export class CodexService extends BaseLanguageModel {
       // lets Node buffer any early output so the adopting runCodex receives
       // it intact when it switches the stream to flowing mode.
       proc.stdin.on('error', () => { /* EPIPE before adoption — non-fatal */ });
-      proc.once('exit', () => { record.closed = true; });
-      proc.once('error', () => { record.closed = true; });
+      proc.once('exit', () => { record.closed = true });
+      proc.once('error', () => { record.closed = true });
       record.reapTimer = setTimeout(() => {
         if (this.prewarmed.get(convId) === record) this.disposePrewarm(convId);
       }, PREWARM_IDLE_REAP_MS);
@@ -335,7 +336,7 @@ export class CodexService extends BaseLanguageModel {
     const rec = this.prewarmed.get(convId);
     if (!rec) return null;
     this.prewarmed.delete(convId);
-    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
+    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
     if (rec.closed || rec.model !== model || rec.existingSession !== existingSession || rec.readOnly !== readOnly) {
       this.killPrewarmRecord(rec);                       // dead, model, or session mismatch
       return null;
@@ -352,8 +353,25 @@ export class CodexService extends BaseLanguageModel {
   }
 
   private killPrewarmRecord(rec: CodexPrewarmRecord): void {
-    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
-    try { rec.proc.kill('SIGTERM'); } catch { /* already dead */ }
+    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
+    try { rec.proc.kill('SIGTERM') } catch { /* already dead */ }
+    const signalRemote = (signal: 'TERM' | 'KILL') => {
+      try {
+        const killer = childProcess.spawn(
+          paths.limactl,
+          ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(rec.pidFile, signal)],
+          { env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' }, stdio: 'ignore', detached: true },
+        );
+        killer.on('error', () => { /* best effort */ });
+        killer.unref();
+      } catch { /* best effort */ }
+    };
+    signalRemote('TERM');
+    const escalation = setTimeout(() => {
+      try { if (rec.proc.exitCode === null) rec.proc.kill('SIGKILL'); } catch { /* already dead */ }
+      signalRemote('KILL');
+    }, 5_000);
+    escalation.unref?.();
     try { rec.mcpSession?.revoke() } catch { /* already revoked */ }
   }
 
@@ -380,8 +398,11 @@ export class CodexService extends BaseLanguageModel {
 
   /** Non-streaming chat — buffers the whole response and returns it. */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    const result = await this.runCodex(messages, {}, options);
-    return result;
+    return runWithCliFaultRecovery('Codex', attempt => this.runCodex(attempt === 1 ? messages : recoveryMessages(messages), {}, options), {
+      signal:   options.signal,
+      canRetry: () => true,
+      onRetry:  (_error, attempt) => log.warn(`[CodexService] retrying failed CLI process (attempt ${ attempt })`),
+    });
   }
 
   protected normalizeResponse(raw: any): NormalizedResponse {
@@ -414,7 +435,26 @@ export class CodexService extends BaseLanguageModel {
     const startTime = performance.now();
 
     try {
-      const result = await this.runCodex(messages, callbacks, options);
+      const guardedCallbacks: StreamCallbacks = {
+        ...callbacks,
+        onToken: (token: string) => {
+          callbacks.onToken?.(token);
+        },
+        onToolEvent: (event) => {
+          callbacks.onToolEvent?.(event);
+        },
+      };
+      let streamedText = '';
+      guardedCallbacks.onToken = (token: string) => {
+        streamedText += token;
+        callbacks.onToken?.(token);
+      };
+      const result = await runWithCliFaultRecovery('Codex', attempt => this.runCodex(attempt === 1 ? messages : recoveryMessages(messages), guardedCallbacks, options), {
+        signal:   options.signal,
+        canRetry: () => true,
+        onRetry:  (_error, attempt) => log.warn(`[CodexService] retrying failed CLI process (attempt ${ attempt })`),
+      });
+      if (streamedText) result.text = streamedText;
       const response: NormalizedResponse = {
         content:  result.text,
         metadata: {
@@ -565,8 +605,8 @@ export class CodexService extends BaseLanguageModel {
     const labelFor = (role: string) => {
       switch (role) {
       case 'assistant': return 'Assistant';
-      case 'user':      return 'User';
-      default:          return role;
+      case 'user': return 'User';
+      default: return role;
       }
     };
 
@@ -778,6 +818,17 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         mcpCleaned = true;
         try { mcpSession?.revoke() } catch { /* already revoked */ }
       };
+      if (options.signal?.aborted) {
+        cleanupMcp();
+        if (adopted) this.killPrewarmRecord(adopted);
+        if (instructionsPath) {
+          try { fs.unlinkSync(instructionsPath) } catch { /* already gone */ }
+        }
+        const error = new Error('Codex run aborted');
+        error.name = 'AbortError';
+        reject(error);
+        return;
+      }
       let proc: childProcess.ChildProcessWithoutNullStreams;
       let adoptedSpawned = false;
       if (adopted) {
@@ -824,23 +875,61 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       let errored = false;
       let errorMessage = '';
       let lastUsage: any = null;
+      let sawTerminalResult = false;
+      const activeToolItems = new Map<string, { startedAt: number; approval: boolean }>();
+      let sawToolExecution = false;
+      let unresolvedTool = false;
+      let settled = false;
+      let terminationPromise: Promise<void> | null = null;
+      const persistSession = async(): Promise<Error | null> => {
+        if (!capturedSessionId) return null;
+        try {
+          await this.setSession(convId, capturedSessionId);
+          return null;
+        } catch (error) {
+          return new CliFaultError('transport', 'Codex session state could not be persisted safely.', error, false, true);
+        }
+      };
+      const scheduleForcedSettlement = (makeError: () => Error) => {
+        const barrier = terminationPromise;
+        if (!barrier) return;
+        void barrier.then(async() => {
+          if (settled) return;
+          settled = true;
+          stopStallWatchdog();
+          closeSteering(true);
+          options.signal?.removeEventListener('abort', onAbort);
+          proc.stdout.removeAllListeners('data');
+          proc.stderr.removeAllListeners('data');
+          proc.removeAllListeners('error');
+          proc.on('error', () => { /* late child error after forced teardown */ });
+          proc.removeAllListeners('close');
+          const persistenceError = await persistSession();
+          cleanupMcp();
+          reject(persistenceError ?? makeError());
+        }, async(error) => {
+          if (settled) return;
+          settled = true;
+          stopStallWatchdog();
+          closeSteering(true);
+          options.signal?.removeEventListener('abort', onAbort);
+          const persistenceError = await persistSession();
+          cleanupMcp();
+          reject(options.signal?.aborted ? makeError() : (persistenceError ?? error));
+        });
+      };
 
       // Kill the spawn on both sides of the SSH boundary — mirrors
       // ClaudeCodeService.killSpawn. Used by both explicit abort and the
       // stall watchdog below.
+      let killStarted = false;
       const killSpawn = () => {
-        // 1) Kill the host-side limactl process (closes the SSH session; with
-        //    `exec` in the inner shell the remote codex usually gets SIGHUP).
-        try { proc.kill('SIGTERM') } catch { /* already dead */ }
-
-        // 2) Belt-and-suspenders: explicitly kill THIS run's codex process
-        //    inside the VM so an orphan doesn't keep burning plan quota.
-        //    Pidfile-targeted — a VM-wide `pkill -f 'codex exec'` also killed
-        //    every concurrent codex run.
-        try {
+        if (killStarted) return terminationPromise!;
+        killStarted = true;
+        const remoteKill = async(signal: 'TERM' | 'KILL') => {
           const killProc = childProcess.spawn(
             limactlPath,
-            ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, 'TERM')],
+            ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, signal)],
             {
               env:      { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
               stdio:    'ignore',
@@ -848,9 +937,10 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
             },
           );
           killProc.unref();
-        } catch (err) {
-          log.log(`[CodexService] Remote pkill failed: ${ (err as Error)?.message ?? err }`);
-        }
+          await waitForKillHelper(killProc);
+        };
+        terminationPromise = terminateCliChild(proc, remoteKill);
+        return terminationPromise;
       };
 
       // ── Stall watchdog ──────────────────────────────────────────────
@@ -876,11 +966,27 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         lastStreamActivityAt = Date.now();
         stallTimer = setInterval(() => {
           const silentMs = Date.now() - lastStreamActivityAt;
+          if (activeToolItems.size > 0) {
+            const tools = [...activeToolItems.values()];
+            if (tools.some(tool => tool.approval && Date.now() - tool.startedAt < 2 * 60 * 60_000)) return;
+            if (tools.every(tool => Date.now() - tool.startedAt < 30 * 60_000)) return;
+            unresolvedTool = true;
+          }
           if (silentMs < STALL_TIMEOUT_MS) return;
           stalled = true;
           stopStallWatchdog();
+          cleanupMcp();
           log.warn(`[CodexService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing codex (convId=${ convId })`);
           killSpawn();
+          scheduleForcedSettlement(() => new CliFaultError(
+            'stall',
+            unresolvedTool
+              ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
+              : `Codex stalled — no stream activity for ${ Math.round(STALL_TIMEOUT_MS / 60_000) } minutes, so the run was terminated.`,
+            undefined,
+            !unresolvedTool,
+            unresolvedTool,
+          ));
         }, STALL_CHECK_MS);
       };
       if (adoptedSpawned) startStallWatchdog();
@@ -935,14 +1041,20 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       const closeSteering = (handBack: boolean) => {
         steeringOpen = false;
         unsubscribeSteer();
-        if (interruptEscalation) { clearTimeout(interruptEscalation); interruptEscalation = null; }
+        if (interruptEscalation) { clearTimeout(interruptEscalation); interruptEscalation = null }
         if (handBack) for (const m of steers.splice(0)) markSteerPending(m);
       };
 
       const onAbort = () => {
         stopStallWatchdog();
         closeSteering(true);
+        cleanupMcp();
         killSpawn();
+        scheduleForcedSettlement(() => {
+          const error = new Error('Codex run aborted');
+          error.name = 'AbortError';
+          return error;
+        });
       };
       if (options.signal) {
         if (options.signal.aborted) onAbort();
@@ -991,6 +1103,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       };
 
       const processLine = (line: string) => {
+        if (terminationPromise) return;
         const trimmed = line.trim();
         if (!trimmed) return;
         let parsed: any;
@@ -1014,6 +1127,17 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           if (parsed.type === 'item.started' || parsed.type === 'item.completed') {
             const item = parsed.item ?? {};
             const kind = item.item_type ?? item.type;
+            const itemId = typeof item.id === 'string' ? item.id : typeof item.call_id === 'string' ? item.call_id : '';
+            const isTool = ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(kind);
+            if (isTool && itemId) {
+              if (parsed.type === 'item.started') {
+                activeToolItems.set(itemId, {
+                  startedAt: Date.now(),
+                  approval:  /ask_user_question|approval|permission/i.test(String(item.tool ?? kind)),
+                });
+              } else activeToolItems.delete(itemId);
+            }
+            if (isTool && parsed.type === 'item.started') sawToolExecution = true;
             if (kind === 'agent_message' && parsed.type === 'item.completed') {
               appendAgentMessage(typeof item.text === 'string' ? item.text : '');
               return;
@@ -1030,6 +1154,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
             return;
           }
           if (parsed.type === 'turn.completed') {
+            sawTerminalResult = true;
             // Recorded once on close — codex can emit several usage events
             // per run (one per model call) and each carries cumulative totals.
             lastUsage = parsed.usage;
@@ -1078,6 +1203,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           lastUsage = msg.info?.total_token_usage ?? msg.info;
           break;
         case 'task_complete':
+          sawTerminalResult = true;
           if (typeof msg.last_agent_message === 'string' && !textCollected.trim()) {
             appendAgentMessage(msg.last_agent_message);
           }
@@ -1098,6 +1224,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       };
 
       proc.stdout.on('data', (chunk) => {
+        if (settled) return;
         lastStreamActivityAt = Date.now();
         stdoutBuffer += chunk.toString('utf-8');
         const lines = stdoutBuffer.split('\n');
@@ -1106,6 +1233,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       });
 
       proc.stderr.on('data', (chunk) => {
+        if (settled) return;
         lastStreamActivityAt = Date.now();
         let text = chunk.toString('utf-8');
         if (!codexPid && text.includes(CODEX_PID_MARKER)) {
@@ -1124,18 +1252,40 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       });
 
       proc.on('error', (err) => {
+        if (settled) return;
+        settled = true;
         stopStallWatchdog();
         closeSteering(true);
         options.signal?.removeEventListener('abort', onAbort);
         cleanupMcp();
-        reject(err);
+        if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
+        const retrySafe = activeToolItems.size === 0 && !unresolvedTool;
+        const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
+        reject(new CliFaultError('spawn', `Codex process error: ${ err.message }.${ safety }`, err, retrySafe, !retrySafe));
       });
 
-      proc.on('close', (code) => {
+      proc.on('close', async(code) => {
+        if (settled) return;
+        if (stdoutBuffer.trim()) {
+          processLine(stdoutBuffer);
+          stdoutBuffer = '';
+        }
+        const awaitingForcedSettlement = !!terminationPromise && (options.signal?.aborted || stalled);
         stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
         cleanupMcp();
-        if (stdoutBuffer.trim()) processLine(stdoutBuffer);
+        if (awaitingForcedSettlement) {
+          closeSteering(true);
+          return;
+        }
+        const persistenceError = await persistSession();
+        if (persistenceError) {
+          settled = true;
+          closeSteering(true);
+          reject(persistenceError);
+          return;
+        }
+        settled = true;
 
         // Interrupted to deliver a steer — resume the same thread with it and
         // return this turn's text plus the steered continuation as one reply.
@@ -1164,7 +1314,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         // Aborted by the caller (Stop, or a new/steering message superseding
         // this run) — report an abort, not a provider failure that would
         // trigger fallback and a user-facing error for a cancelled run.
-        if (options.signal?.aborted && !stalled) {
+        if (options.signal?.aborted) {
           const abortErr = new Error('Codex run aborted');
           abortErr.name = 'AbortError';
           reject(abortErr);
@@ -1175,7 +1325,15 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         // falling through to the generic no-output message.
         if (stalled) {
           const silentMin = Math.round(STALL_TIMEOUT_MS / 60_000);
-          reject(new Error(`Codex stalled — no stream activity for ${ silentMin } minutes, so the run was terminated. Please try again.`));
+          reject(new CliFaultError(
+            'stall',
+            unresolvedTool
+              ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
+              : `Codex stalled — no stream activity for ${ silentMin } minutes, so the run was terminated.`,
+            undefined,
+            !unresolvedTool,
+            unresolvedTool,
+          ));
           return;
         }
 
@@ -1194,13 +1352,12 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         // deliberately omits generic words like 'session'/'not found':
         // limactl's SSH-mux noise ("mux_client_request_session ... Broken
         // pipe") lands in stderr and must not wipe a valid thread.
-        const resumeFailed = existingSession && !retryWithoutSession &&
+        const resumeFailed = existingSession && !retryWithoutSession && !sawToolExecution &&
           (errored || code !== 0) &&
-          /thread|rollout|conversation|resume/i.test(`${ errorMessage } ${ stderrBuffer.slice(-500) }`);
+          /(?:failed|unable) to (?:load|resume|find).*(?:thread|rollout|conversation)|(?:thread|rollout|conversation).*(?:not found|does not exist|invalid|expired)/i.test(`${ errorMessage } ${ stderrBuffer.slice(-500) }`);
         if (resumeFailed) {
           log.warn(`[CodexService] Resume of "${ existingSession }" failed; retrying with a fresh session for conversationId=${ convId }`);
-          this.deleteSession(convId).catch(() => {});
-          this.runCodex(messages, callbacks, options, true).then(
+          void this.deleteSession(convId).then(() => this.runCodex(messages, callbacks, options, true)).then(
             r => resolve(r),
             reject,
           );
@@ -1211,17 +1368,33 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           this.setSession(convId, capturedSessionId).catch(() => {});
         }
 
-        if (errored || (code !== 0 && !textCollected.trim())) {
+        if (errored) {
           const msg = errorMessage || stderrBuffer.trim().slice(-200) || `codex exited with code ${ code }`;
           log.warn(`[CodexService] runCodex errored: ${ msg.slice(0, 200) }`);
           reject(new Error(`Codex: ${ msg }`));
           return;
         }
 
+        if (code !== 0) {
+          const msg = errorMessage || stderrBuffer.trim().slice(-200) || `codex exited with code ${ code }`;
+          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(msg);
+          const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
+          reject(new CliFaultError('process_exit', `Codex: ${ msg }${ safety }`, undefined, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
+          return;
+        }
+
+        if (!sawTerminalResult) {
+          const retrySafe = activeToolItems.size === 0 && !unresolvedTool;
+          reject(new CliFaultError('protocol', 'Codex exited before emitting a terminal completion event.', undefined, retrySafe, !retrySafe));
+          return;
+        }
+
         if (!textCollected.trim()) {
           const stderrTail = stderrBuffer.trim().slice(-200);
           log.warn(`[CodexService] runCodex exited with no text (code=${ code }) stderr=${ stderrTail }`);
-          reject(new Error(`Codex returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials and VM status.' }`));
+          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(stderrTail);
+          const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
+          reject(new CliFaultError('protocol', `Codex returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, undefined, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
           return;
         }
 

@@ -1,6 +1,6 @@
-import { RunActivity } from '../services/RunActivity';
 import path from 'node:path'; // used by enrichPrompt for active_projects_file
 
+import { prepareProviderMessages } from './contextBudget';
 import { ChatController, type ChatMode } from '../controllers/ChatController';
 import { ToolExecutor } from '../controllers/ToolExecutor';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
@@ -11,18 +11,18 @@ import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { classifyLLMFailure, redactLLMFailureMessage, sameLLMRoute } from '../languagemodels/providerRecovery';
 import { SystemPromptBuilder, type PromptBuildContext, type DbPromptSection, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
 import { throwIfAborted } from '../services/AbortService';
+import { agentDefinitionService } from '../services/AgentDefinitionService';
 import { parseJson } from '../services/JsonParseService';
+import { RunActivity } from '../services/RunActivity';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { toolRegistry } from '../tools/registry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
-import { agentDefinitionService } from '../services/AgentDefinitionService';
 import { sanitizeConversationContext } from '../utils/conversationContext';
+import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
-import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
-import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
-import { prepareProviderMessages } from './contextBudget';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
@@ -379,9 +379,15 @@ export async function loadAgentPromptData(agentId: string): Promise<AgentPromptL
     if (!definition || !definition.enabled || definition.status === 'archive') return null;
     const { REGISTERED_SECTION_IDS } = await import('../prompts/sections/index');
     const agentName = definition.name || agentId;
-    const config = { ...definition.config, name: agentName, description: definition.description,
-      tools: definition.allowed_tools, skills: definition.skill_refs,
-      provider: definition.provider || undefined, model: definition.model || undefined } as AgentConfig;
+    const config = {
+      ...definition.config,
+      name:        agentName,
+      description: definition.description,
+      tools:       definition.allowed_tools,
+      skills:      definition.skill_refs,
+      provider:    definition.provider || undefined,
+      model:       definition.model || undefined,
+    } as AgentConfig;
     const mdFiles = Object.entries(definition.prompt_files)
       .filter(([name]) => name.endsWith('.md') && name !== 'environment.md')
       .sort(([a], [b]) => (a === 'soul.md' ? -1 : b === 'soul.md' ? 1 : a.localeCompare(b)));
@@ -809,7 +815,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     this.stripInjectedContextBlocks(state);
 
     const metadata = state.metadata as any;
-    const fields: Array<[string, string]> = [
+    const fields: [string, string][] = [
       ['human_identity_context', 'humanIdentityContext'],
       ['observational_memory', 'observationalMemoryContext'],
       ['observation_context', 'observationContext'],
@@ -953,10 +959,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       return {
         content:  lastNonSystemMessage.content as string || '',
         metadata: {
-          tokens_used:        0,
-          time_spent:         0,
-          finish_reason:      FinishReason.Stop,
-          rawProviderContent: lastNonSystemMessage.content,
+          tokens_used:            0,
+          time_spent:             0,
+          finish_reason:          FinishReason.Stop,
+          rawProviderContent:     lastNonSystemMessage.content,
           reusedAssistantMessage: true,
         },
       };
@@ -1127,7 +1133,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         tools:       llmTools,
         conversationId,
         nodeName,
-        profileId: (state.metadata as any).profileId,
+        profileId:   (state.metadata as any).profileId,
       }, nodeRunContext);
 
       // Detect empty response (no content AND no tool calls) and retry once with reduced context
@@ -1146,7 +1152,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           tools:       llmTools,
           conversationId,
           nodeName,
-          profileId: (state.metadata as any).profileId,
+          profileId:   (state.metadata as any).profileId,
         }, nodeRunContext);
       }
 
@@ -1169,6 +1175,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       return reply;
     } catch (err) {
+      const abortSignal = state.metadata?.options?.abort?.signal;
+      throwIfAborted(abortSignal);
       const initialRecovery = classifyLLMFailure(err);
       if (initialRecovery.kind === 'interrupted') throw err;
 
@@ -1184,6 +1192,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       if (recovery.retryPrimary) {
         try {
+          throwIfAborted(abortSignal);
           console.warn(
             `[${ this.name }:BaseNode] Retrying primary provider once ` +
             `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind })`,
@@ -1197,7 +1206,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             tools:       llmTools,
             conversationId,
             nodeName,
-            profileId: (state.metadata as any).profileId,
+            profileId:   (state.metadata as any).profileId,
           }, nodeRunContext);
           if (retryReply && (retryReply.content?.trim() || retryReply.metadata.tool_calls?.length)) {
             (retryReply.metadata as any).retry_used = true;
@@ -1209,6 +1218,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           }
           throw new Error(`LLM returned empty response on provider retry (model=${ primaryId || this.llm.getModel() }, provider=${ primaryName })`);
         } catch (retryErr) {
+          throwIfAborted(abortSignal);
           const retryRecovery = classifyLLMFailure(retryErr);
           if (retryRecovery.kind === 'interrupted') throw retryErr;
           lastErr = retryErr;
@@ -1226,7 +1236,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // a different endpoint than chat completion.
       if (recovery.fallbackAllowed) {
         try {
+          throwIfAborted(abortSignal);
           const secondary = await getSecondaryService();
+          throwIfAborted(abortSignal);
           const secondaryName = secondary.getProviderName?.() || secondary.getModel();
           const secondaryModel = secondary.getModel?.() || '';
           const sameRoute = sameLLMRoute(
@@ -1241,6 +1253,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             );
           } else {
             const initialized = await secondary.initialize();
+            throwIfAborted(abortSignal);
             if (!initialized || !secondary.isAvailable()) {
               console.warn(
                 `[${ this.name }:BaseNode] Secondary provider did not pass health check ` +
@@ -1265,7 +1278,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
               tools:       llmTools,
               conversationId,
               nodeName,
-              profileId: (state.metadata as any).profileId,
+              profileId:   (state.metadata as any).profileId,
             }, nodeRunContext, secondary);
             if (reply && (reply.content?.trim() || reply.metadata.tool_calls?.length)) {
             // Annotate the reply so downstream UI can badge it as a fallback.

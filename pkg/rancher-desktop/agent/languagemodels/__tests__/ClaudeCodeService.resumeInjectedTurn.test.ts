@@ -6,9 +6,14 @@ import { PassThrough } from 'stream';
 
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+import { CliFaultError, CLI_RECOVERY_PROMPT, runWithCliFaultRecovery } from '../cliFaultRecovery';
+import { classifyLLMFailure } from '../providerRecovery';
+
 jest.unstable_mockModule('../BaseLanguageModel', () => ({
   BaseLanguageModel: class {
     protected model = '';
+
+    setModel(model: string) { this.model = model }
   },
   FinishReason:    { Stop: 'stop' },
   usageTokenTotal: () => 0,
@@ -24,7 +29,7 @@ jest.unstable_mockModule('@pkg/utils/logging', () => {
 });
 jest.unstable_mockModule('@pkg/utils/paths', () => ({
   __esModule: true,
-  default:    { limactl: '/dev/null', lima: '/dev/null', sullaHome: '/tmp', sullaConfig: '/tmp' },
+  default:    { limactl: '/bin/true', lima: '/dev/null', sullaHome: '/tmp', sullaConfig: '/tmp' },
 }));
 jest.unstable_mockModule('../../services/WebSocketClientService', () => ({ getWebSocketClientService: jest.fn() }));
 jest.unstable_mockModule('../../prompts/generateClaudeCodeMemoryFile', () => ({ generateClaudeCodeMemoryFile: async() => {} }));
@@ -203,5 +208,96 @@ describe('ClaudeCodeService — warm pool min/max', () => {
 
     expect(s.claimPrewarm('c', 'claude-code')).toBe(r);
     expect(s.idle.size).toBe(0);
+  });
+});
+
+describe('CLI fault recovery lifecycle', () => {
+  afterEach(() => { jest.useRealTimers() });
+
+  it('settles a stalled Claude adapter even when the child never emits close', async() => {
+    jest.useFakeTimers();
+    resetClaudeProcessPool();
+    const service = new ClaudeCodeService() as any;
+    const proc = makeProc();
+    service.resolveClaudeCreds = () => Promise.resolve({ oauthToken: 'test', apiKey: undefined });
+    service.getSession = () => Promise.resolve('sess-stall');
+    service.setSession = jest.fn(async() => {});
+    service.buildUserMessageContextPrefix = () => Promise.resolve('');
+    service.warmPoolEnabled = () => Promise.resolve(true);
+    service.speculativeBootEnabled = () => Promise.resolve(true);
+    service.bgDelivery = { deliver: jest.fn(), takePending: () => [] };
+    service.refreshPoolLimits = async() => {};
+    service.waitForAutonomousTurn = async() => {};
+    service.prewarmed.set('stall-conv', {
+      proc,
+      mcpSession:    null,
+      mcpConfigPath: null,
+      pidFile:       '/tmp/sulla-claude-stall.pid',
+      model:         'claude-code',
+      createdAt:     Date.now(),
+      closed:        false,
+      busy:          false,
+      reapTimer:     null,
+    });
+
+    const started = new Promise<void>(resolve => proc.stdin.once('data', () => resolve()));
+    const run = service.runClaude(
+      [{ role: 'user', content: 'finish the task' }],
+      {},
+      { conversationId: 'stall-conv' },
+    );
+    const result = expect(run).rejects.toMatchObject({ name: 'CliFaultError', kind: 'stall' });
+    await started;
+    await jest.advanceTimersByTimeAsync(15 * 60_000 + 30_000);
+    expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+    await jest.advanceTimersByTimeAsync(6_000);
+    await result;
+  });
+
+  it('lets Stop win during retry backoff and never starts attempt two', async() => {
+    const abort = new AbortController();
+    let attempts = 0;
+    const run = runWithCliFaultRecovery('Synthetic CLI', () => {
+      attempts += 1;
+      return Promise.reject(new CliFaultError('transport', 'synthetic disconnect'));
+    }, {
+      signal:      abort.signal,
+      canRetry:    () => true,
+      backoffMs: 60_000,
+    });
+    await Promise.resolve();
+    abort.abort();
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' });
+    expect(attempts).toBe(1);
+    expect(CLI_RECOVERY_PROMPT).toContain('Do not repeat completed tool calls');
+  });
+
+  it('does not retry permanent provider failures and preserves normal fallback classification', async() => {
+    let attempts = 0;
+    const fault = new Error('invalid api key');
+    const run = runWithCliFaultRecovery('Synthetic CLI', () => {
+      attempts += 1;
+      return Promise.reject(fault);
+    }, { canRetry: () => true });
+
+    await expect(run).rejects.toBe(fault);
+    expect(attempts).toBe(1);
+    expect(classifyLLMFailure(fault)).toMatchObject({ kind: 'auth', retryPrimary: false, fallbackAllowed: true });
+  });
+
+  it('blocks provider fallback when a tool result is uncertain', () => {
+    const fault = new CliFaultError('stall', 'tool unresolved', undefined, false);
+
+    expect(classifyLLMFailure(fault)).toMatchObject({ kind: 'unavailable', retryPrimary: false, fallbackAllowed: false });
+  });
+
+  it('exhausts a non-retryable CLI safety fault and blocks every provider restart', async() => {
+    const run = runWithCliFaultRecovery('Synthetic CLI', () => Promise.reject(
+      new CliFaultError('transport', 'teardown could not establish quiescence', undefined, false),
+    ), { canRetry: () => true });
+
+    const exhausted = await run.catch(error => error);
+    expect(exhausted).toMatchObject({ name: 'CliRecoveryExhaustedError', cliRecoveryExhausted: true });
+    expect(classifyLLMFailure(exhausted)).toMatchObject({ kind: 'unavailable', retryPrimary: false, fallbackAllowed: false });
   });
 });
