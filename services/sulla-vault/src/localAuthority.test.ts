@@ -158,18 +158,20 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     oauthItem.item.integration.properties.client_id = 'synthetic-client';
     oauthItem.item.integration.properties.client_secret = 'synthetic-client-secret';
     await authority.saveHumanItem(unlocked.sessionId, unlocked.csrf, oauthItem);
-    (authority as any).send = async() => ({
-      status: 200, headers: {}, body: { access_token: 'same-access-token', refresh_token: 'same-refresh-token', expires_in: 3600, token_type: 'Bearer' },
-    });
+    (authority as any).send = async(_url: URL, _method: string, headers: Record<string, string>, body: unknown) => {
+      assert.match(headers.authorization, /^Basic /);
+      assert.ok(body instanceof URLSearchParams);
+      assert.equal(body.get('refresh_token'), 'same-refresh-token');
+      return { status: 200, headers: {}, body: { access_token: 'same-access-token', refresh_token: 'same-refresh-token', expires_in: 3600, token_type: 'Bearer' } };
+    };
     const oauthResult = await authority.execute({
       ...request,
       operation: 'oauth.refresh',
       url: 'https://api.openai.com/oauth/token',
       responseType: 'json',
       injections: [
-        { field: 'refresh_token', target: 'json', name: 'refresh_token', scheme: 'raw' },
-        { field: 'client_id', target: 'json', name: 'client_id', scheme: 'raw' },
-        { field: 'client_secret', target: 'json', name: 'client_secret', scheme: 'raw' },
+        { field: 'refresh_token', target: 'form', name: 'refresh_token', scheme: 'raw' },
+        { field: 'client_secret', target: 'header', name: 'authorization', scheme: 'BasicClient' },
       ],
     }, 'sulla-tools', TOKEN.broker);
     assert.deepEqual(Object.keys(oauthResult.body as object).sort(), ['expires_at', 'expires_in', 'refreshed', 'scope', 'token_type']);
@@ -177,6 +179,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     assert.equal(refreshed.item.integration.properties.refresh_token, 'same-refresh-token');
     assert.equal(refreshed.item.integration.properties.access_token, 'same-access-token');
     assert.notEqual(refreshed.item.integration.properties.expires_at, undefined);
+    (authority as any).send = async() => ({ status: 200, headers: {}, body: { ok: true } });
 
     authority.lock();
     assert.equal(authority.status().unlocked, false);

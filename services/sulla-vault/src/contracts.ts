@@ -224,9 +224,9 @@ export interface BrokerCredentialRef {
 
 export interface BrokerInjection {
   field:   string;
-  target:  'header' | 'query' | 'json';
+  target:  'header' | 'query' | 'json' | 'form';
   name:    string;
-  scheme?: 'Bearer' | 'Basic' | 'Bot' | 'GitHubBasic' | 'Token' | 'raw';
+  scheme?: 'Bearer' | 'Basic' | 'BasicClient' | 'Bot' | 'GitHubBasic' | 'Token' | 'raw';
 }
 
 export interface BrokerExecuteRequest {

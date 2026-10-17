@@ -92,10 +92,14 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     injections: [
       { field: 'refresh_token', target: 'json', name: 'refresh_token', scheme: 'raw' },
       { field: 'refresh_token', target: 'query', name: 'refresh_token', scheme: 'raw' },
+      { field: 'refresh_token', target: 'form', name: 'refresh_token', scheme: 'raw' },
       { field: 'client_id', target: 'json', name: 'client_id', scheme: 'raw' },
       { field: 'client_secret', target: 'json', name: 'client_secret', scheme: 'raw' },
       { field: 'client_id', target: 'query', name: 'client_id', scheme: 'raw' },
       { field: 'client_secret', target: 'query', name: 'client_secret', scheme: 'raw' },
+      { field: 'client_id', target: 'form', name: 'client_id', scheme: 'raw' },
+      { field: 'client_secret', target: 'form', name: 'client_secret', scheme: 'raw' },
+      { field: 'client_secret', target: 'header', name: 'authorization', scheme: 'BasicClient' },
     ],
   },
 };

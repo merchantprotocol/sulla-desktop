@@ -72,6 +72,12 @@ function sealCacheUpdate(clear: Buffer, key: Buffer, nonce: Buffer): string {
   }
 }
 
+function serializeBrokerBody(body: unknown): Buffer {
+  if (Buffer.isBuffer(body)) return body;
+  if (body instanceof URLSearchParams) return Buffer.from(body.toString());
+  return Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
+}
+
 export class LocalVaultError extends Error {
   constructor(public readonly code: string, public readonly status: number, message: string) {
     super(message);
@@ -1227,8 +1233,14 @@ export class LocalVaultAuthority {
       if (typeof value !== 'string') throw new LocalVaultError('credential_field_missing', 404, 'Requested credential field is unavailable');
       if (Buffer.byteLength(value) > MAX_CREDENTIAL_BYTES) throw new LocalVaultError('policy_denied', 403, 'Credential field exceeds the broker limit');
       secrets.push(value);
+      const basicClientId = injection.scheme === 'BasicClient' ? credentialField(plaintext, 'client_id') : undefined;
+      if (injection.scheme === 'BasicClient' && typeof basicClientId !== 'string') {
+        throw new LocalVaultError('credential_field_missing', 404, 'OAuth client identity is unavailable');
+      }
       const injected = injection.scheme === 'GitHubBasic'
         ? `Basic ${ Buffer.from(`x-access-token:${ value }`).toString('base64') }`
+        : injection.scheme === 'BasicClient'
+          ? `Basic ${ Buffer.from(`${ basicClientId }:${ value }`).toString('base64') }`
         : injection.scheme && injection.scheme !== 'raw' ? `${ injection.scheme } ${ value }` : value;
       secrets.push(injected);
       if (injection.target === 'header') {
@@ -1236,6 +1248,16 @@ export class LocalVaultAuthority {
         headers[injection.name] = injected;
       } else if (injection.target === 'query') {
         target.searchParams.set(injection.name, injected);
+      } else if (injection.target === 'form') {
+        const form = body instanceof URLSearchParams
+          ? body
+          : typeof body === 'string' ? new URLSearchParams(body)
+            : new URLSearchParams(Object.entries(body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {})
+              .filter(([, entry]) => ['string', 'number', 'boolean'].includes(typeof entry))
+              .map(([name, entry]) => [name, String(entry)]));
+        form.set(injection.name, injected);
+        body = form;
+        headers['content-type'] = 'application/x-www-form-urlencoded';
       } else {
         body = applyJsonPath(body, injection.name, injected);
       }
@@ -1330,9 +1352,7 @@ export class LocalVaultAuthority {
     const headers = Object.fromEntries(Object.entries(prepared.headers).filter(([name]) => !blockedRequestHeaders.has(name.toLowerCase())));
     let payload: Buffer | undefined;
     if (prepared.body !== undefined && method !== 'GET' && method !== 'HEAD') {
-      payload = Buffer.isBuffer(prepared.body)
-        ? prepared.body
-        : Buffer.from(typeof prepared.body === 'string' ? prepared.body : JSON.stringify(prepared.body));
+      payload = serializeBrokerBody(prepared.body);
       if (payload.byteLength > MAX_STREAM_BYTES) throw new LocalVaultError('request_too_large', 413, 'Broker request body is too large');
       headers['content-length'] = String(payload.byteLength);
     }
@@ -1442,14 +1462,13 @@ export class LocalVaultAuthority {
     headers['accept-encoding'] = 'identity';
     let payload: Buffer | undefined;
     if (bodyInput !== undefined && method !== 'GET' && method !== 'HEAD') {
-      payload = Buffer.isBuffer(bodyInput)
-        ? bodyInput
-        : Buffer.from(typeof bodyInput === 'string' ? bodyInput : JSON.stringify(bodyInput));
+      payload = serializeBrokerBody(bodyInput);
       if (payload.byteLength > MAX_RESPONSE_BYTES) throw new LocalVaultError('request_too_large', 413, 'Broker request body is too large');
       headers['content-length'] = String(payload.byteLength);
       headers['content-type'] ??= Buffer.isBuffer(bodyInput)
         ? 'application/octet-stream'
-        : typeof bodyInput === 'string' ? 'text/plain; charset=utf-8' : 'application/json';
+        : bodyInput instanceof URLSearchParams ? 'application/x-www-form-urlencoded'
+          : typeof bodyInput === 'string' ? 'text/plain; charset=utf-8' : 'application/json';
     }
 
     return new Promise<BrokerExecuteResponse>((resolve, reject) => {
