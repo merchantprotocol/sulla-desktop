@@ -14,7 +14,7 @@ services:
     volumes:
       - sulla-files-data:/var/lib/sulla-files
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8792/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8792/healthz"]
       interval: 5s
       timeout: 3s
       retries: 10
