@@ -74,6 +74,13 @@ export interface BootstrapUnlockResponse {
 }
 
 export const BOOTSTRAP_PROTOCOL_VERSION = 1 as const;
+/**
+ * Both peers use the UTF-8 bytes of the exact base64url installation token
+ * string as the HMAC key. They MUST NOT base64-decode that token first. The
+ * base64-decoded values inside sealedUnlock are vault key material and are a
+ * separate trust domain.
+ */
+export const BOOTSTRAP_HMAC_KEY_ENCODING = 'utf8-base64url-token-string' as const;
 
 export function bootstrapChallengeProofInput(callerId: string, clientNonce: string): string {
   return `challenge:${ callerId }:${ clientNonce }`;
@@ -101,6 +108,15 @@ export interface HumanSessionResponse {
   url:       string;
   csrf:      string;
   expiresAt: number;
+  /** Pre-unlock sessions can only set up, unlock, or recover the vault. */
+  phase:     'pre-unlock' | 'unlocked';
+}
+
+export type DesktopControlAction = 'status' | 'lock' | 'migrate' | 'create-human-session';
+
+export interface DesktopControlIdentity {
+  serviceId: string;
+  token:     string;
 }
 
 export interface BrokerClaims {
@@ -111,6 +127,13 @@ export interface BrokerClaims {
   thread_id?:             string;
   job_id?:                string;
   workflow_execution_id?: string;
+  /** Signed by the trusted caller and enforced against ref before lookup. */
+  credential_scope?: {
+    integration_id: string;
+    account_id:     string;
+    /** Required for github.git; normalized as owner/repository. */
+    repository?:    string;
+  };
 }
 
 export interface BrokerCredentialRef {
