@@ -613,9 +613,7 @@ export class SpawnAgentWorker extends BaseTool {
           threadId,
         };
       } finally {
-        await containerLifecycle?.close().catch(error => {
-          console.warn(`[spawn_agent] Container lifecycle cleanup failed for ${ threadId }: ${ (error as Error).message }`);
-        });
+        await containerLifecycle?.close();
         if (subStateRef?.metadata) subStateRef.metadata.delegatedRunActive = false;
         // Deregister from parent's active-sub-agents list so stale threadIds
         // don't receive abort signals after the subagent has already exited

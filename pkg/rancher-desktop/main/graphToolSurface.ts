@@ -20,18 +20,31 @@
 
 import { sessionAllowsTool } from './toolSessionPolicy';
 
+import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
+import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
+import type { ToolExecutionTarget } from '@pkg/agent/tools/executionTargets';
+
 export interface GraphToolCallResult {
   // Index signature required for assignability to the MCP SDK's CallToolResult.
   [key: string]: unknown;
-  content: { type: 'text'; text: string }[];
-  isError?: boolean;
+  content:       { type: 'text'; text: string }[];
+  isError?:      boolean;
 }
 
 interface ToolWorker {
+  executionContext?: ToolExecutionContext;
   call(args: Record<string, unknown>): Promise<{ success: boolean; result?: unknown; error?: unknown }>;
+  invoke?(args: Record<string, unknown>, state: BaseThreadState): Promise<{ success: boolean; result?: unknown; error?: unknown }>;
 }
 
 export type ToolResolver = (name: string) => Promise<ToolWorker>;
+
+export interface GraphToolExecutionOptions {
+  state:            BaseThreadState;
+  executionContext: ToolExecutionContext;
+  executionTarget(name: string): ToolExecutionTarget | undefined;
+}
 
 /**
  * Resolve the graph-stamped tool surface for a session. Returns the
@@ -51,8 +64,12 @@ export function resolveGraphToolSurface(metadata: unknown): string[] | null {
  * dispatch in-process to the ToolRegistry worker and map its result to MCP
  * content.
  */
-export function buildGraphToolHandler(allowedTools: string[], getTool: ToolResolver) {
-  return async ({ tool, args }: { tool: string; args?: Record<string, unknown> }): Promise<GraphToolCallResult> => {
+export function buildGraphToolHandler(
+  allowedTools: string[],
+  getTool: ToolResolver,
+  execution?: GraphToolExecutionOptions,
+) {
+  return async({ tool, args }: { tool: string; args?: Record<string, unknown> }): Promise<GraphToolCallResult> => {
     // `exec` in the surface means full Sulla catalog authority (same rule as
     // the CLI session gate), so dispatched workers can reach github/*,
     // project/*, etc. here too — sandboxed CLI providers have no other path.
@@ -64,7 +81,19 @@ export function buildGraphToolHandler(allowedTools: string[], getTool: ToolResol
     }
     try {
       const worker = await getTool(tool);
-      const result = await worker.call(args ?? {});
+      let result;
+      if (execution) {
+        worker.executionContext = execution.executionContext;
+        const runtime = containerRuntimeForExecution(execution.executionContext, execution.executionTarget(tool));
+        const invoke = () => worker.invoke
+          ? worker.invoke(args ?? {}, execution.state)
+          : worker.call(args ?? {});
+        result = runtime
+          ? await withAgentContainerRuntime(runtime, invoke)
+          : await invoke();
+      } else {
+        result = await worker.call(args ?? {});
+      }
       return {
         content: [{ type: 'text', text: String(result.result ?? result.error ?? '') }],
         isError: !result.success,

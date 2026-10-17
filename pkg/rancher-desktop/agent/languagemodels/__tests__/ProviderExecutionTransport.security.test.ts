@@ -73,6 +73,35 @@ describe('ProviderExecutionTransport security boundary', () => {
     expect(() => requireContainerToolConfig(context)).toThrow(/MCP config overrides/);
   });
 
+  test('requires Claude MCP capabilities in memory while its config contains only an env placeholder', () => {
+    const context: ProviderTransportContext = {
+      runtime:        'container',
+      provider:       'claude-code',
+      conversationId: 'synthetic-thread',
+      auth:           { kind: 'broker', opaqueConfigRef: 'opaque:provider' },
+      session:        {
+        opaqueToolConfigRef: 'opaque:tools',
+        toolConfig:          {
+          opaqueConfigRef:   'opaque:tools',
+          claudeConfigPath:  '/run/secrets/sulla-agent/mcp.json',
+          environment:      {
+            SULLA_MCP_SESSION_TOKEN: 'synthetic-mcp-capability',
+            SULLA_TOOL_SESSION:      'synthetic-mcp-capability',
+          },
+        },
+      },
+    };
+    expect(requireContainerToolConfig(context)?.environment).toEqual({
+      SULLA_MCP_SESSION_TOKEN: 'synthetic-mcp-capability',
+      SULLA_TOOL_SESSION:      'synthetic-mcp-capability',
+    });
+    context.session!.toolConfig = {
+      ...context.session!.toolConfig!,
+      environment: { SULLA_TOOL_SESSION: 'synthetic-mcp-capability' },
+    };
+    expect(() => requireContainerToolConfig(context)).toThrow(/provider-visible MCP config path/);
+  });
+
   test('keeps one lifecycle transport bound across awaited and nested work', async() => {
     const transport = { runtime: 'container' } as ProviderExecutionTransport;
 

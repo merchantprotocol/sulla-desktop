@@ -512,9 +512,12 @@ export class ClaudeCodeService extends BaseLanguageModel {
         ? await this.resolveClaudeCreds()
         : { oauthToken: '', apiKey: '' };
       if (transportContext.runtime === 'lima' && !oauthToken && !apiKey) return;
+      const toolConfig = mcpSession && transportContext.runtime === 'container'
+        ? requireContainerToolConfig(transportContext)
+        : undefined;
       if (mcpSession) {
         mcpConfigPath = transportContext.runtime === 'container'
-          ? requireContainerToolConfig(transportContext)?.claudeConfigPath ?? null
+          ? toolConfig?.claudeConfigPath ?? null
           : this.writeMcpConfig(mcpSession);
         if (transportContext.runtime === 'container' && !mcpConfigPath) {
           throw new Error('Container Claude execution requires an opaque broker MCP config');
@@ -539,7 +542,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
         streamJsonInput: true,
         disallowedTools,
         systemPromptPath,
-        environment:     providerConfig?.environment,
+        environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
       });
       const proc = transport.spawn({
         context: transportContext,
@@ -1187,8 +1190,6 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const bgPreamble = heldNotices.length ? formatBackgroundNotices(heldNotices) : '';
     const prompt = [contextPrefix, bgPreamble, basePrompt].filter(Boolean).join('\n\n');
 
-    log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
-
     // Lima only exists on macOS/Linux; container transports do not depend on it.
     if (transport.runtime === 'lima' && process.platform === 'win32') {
       throw new Error('Claude Code execution requires the Lima VM, which is not available on Windows yet. This feature currently supports macOS and Linux only.');
@@ -1246,11 +1247,15 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const { oauthToken, apiKey } = transportContext.runtime === 'lima'
       ? await this.resolveClaudeCreds()
       : { oauthToken: '', apiKey: '' };
+    log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
     if (transportContext.runtime === 'lima' && !oauthToken && !apiKey) {
       throw new Error('No Claude credentials configured. Sign in via Integrations → Claude Code.');
     }
+    const toolConfig = mcpSession && transportContext.runtime === 'container'
+      ? requireContainerToolConfig(transportContext)
+      : undefined;
     if (!adopted && mcpSession && transportContext.runtime === 'container') {
-      mcpConfigPath = requireContainerToolConfig(transportContext)?.claudeConfigPath ?? null;
+      mcpConfigPath = toolConfig?.claudeConfigPath ?? null;
       if (!mcpConfigPath) throw new Error('Container Claude execution requires an opaque broker MCP config');
     }
 
@@ -1296,7 +1301,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       streamJsonInput: speculative,
       disallowedTools,
       systemPromptPath,
-      environment:     providerConfig?.environment,
+      environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
     });
 
     const cleanupMcp = () => {

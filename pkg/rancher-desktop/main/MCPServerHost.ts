@@ -31,6 +31,7 @@
 
 import type { Server as HttpServer } from 'http';
 import type { AddressInfo } from 'net';
+import crypto from 'node:crypto';
 
 import express, { type NextFunction, type Request, type Response } from 'express';
 
@@ -39,6 +40,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 
 import { toolRegistry } from '@pkg/agent/tools/registry';
+import { currentAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { activateWorkflowOnState } from '@pkg/agent/tools/workflow/execute_workflow';
 import { registerGraphBrowserControllerMcp } from '@pkg/agent/utils/graphBrowserControllerMcp';
 import {
@@ -51,6 +53,7 @@ import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurfa
 import { DEFAULT_SESSION_TTL_MS, ToolSessionRegistry, type ToolSession } from './mcpToolSessions';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
+import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
 const LOG = '[MCPServerHost]';
 
@@ -73,14 +76,12 @@ export interface RegisteredSession {
   header: string;
   revoke: () => void;
 }
-
 let hostInstance: MCPServerHost | null = null;
 
 export function getMCPServerHost(): MCPServerHost {
   if (!hostInstance) hostInstance = new MCPServerHost();
   return hostInstance;
 }
-
 export class MCPServerHost {
   private httpServer: HttpServer | null = null;
   private port = 0;
@@ -118,7 +119,7 @@ export class MCPServerHost {
    */
   registerSession(state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS): RegisteredSession {
     if (!this.port) throw new Error(`${ LOG } cannot register session: server not started`);
-    const id = this.sessions.register(state, ttlMs);
+    const id = this.sessions.register(state, ttlMs, this.containerExecutionContext(state, ttlMs));
 
     return {
       id,
@@ -144,7 +145,8 @@ export class MCPServerHost {
    * Keeps the session's own TTL unless one is passed.
    */
   rebindSession(id: string, state: BaseThreadState, ttlMs?: number): boolean {
-    return this.sessions.rebind(id, state, ttlMs);
+    const effectiveTtl = ttlMs ?? DEFAULT_SESSION_TTL_MS;
+    return this.sessions.rebind(id, state, ttlMs, this.containerExecutionContext(state, effectiveTtl));
   }
 
   /** Bind CLI calls to the same live graph as their provider MCP session. */
@@ -476,7 +478,17 @@ export class MCPServerHost {
             args: z.record(z.any()).optional().describe('JSON arguments for the tool, exactly as documented by browse_tools.'),
           },
         },
-        buildGraphToolHandler(graphToolSurface, name => toolRegistry.createTool(name)),
+        buildGraphToolHandler(
+          graphToolSurface,
+          name => toolRegistry.createTool(name),
+          session.executionContext
+            ? {
+              state:            session.state,
+              executionContext: session.executionContext,
+              executionTarget:  name => toolRegistry.getExecutionTarget(name),
+            }
+            : undefined,
+        ),
       );
     }
 
@@ -487,5 +499,30 @@ export class MCPServerHost {
     registerGraphBrowserControllerMcp(server, session.state);
 
     return server;
+  }
+
+  private containerExecutionContext(state: BaseThreadState, ttlMs: number): ToolExecutionContext | undefined {
+    const runtime = currentAgentContainerRuntime();
+    if (!runtime) return undefined;
+    const now = Math.floor(Date.now() / 1000);
+    const allowed = state.metadata.allowedToolNames ?? [];
+
+    return {
+      v:         1,
+      iss:       'sulla-desktop',
+      aud:       'sulla-tools',
+      sub:       runtime.subject,
+      org_id:    runtime.orgId,
+      agent_id:  runtime.agentId,
+      pod_id:    runtime.podId,
+      thread_id: runtime.threadId,
+      job_id:    runtime.jobId,
+      device_id: runtime.deviceId,
+      scopes:    allowed.length === 0 || allowed.includes('exec') ? ['*'] : [...allowed],
+      iat:       now,
+      exp:       now + Math.ceil(ttlMs / 1000),
+      jti:       crypto.randomUUID(),
+      request_id: crypto.randomUUID(),
+    };
   }
 }

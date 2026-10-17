@@ -281,7 +281,9 @@ export function requireContainerToolConfig(context: ProviderTransportContext): P
     throw new Error(`Container ${ context.provider } execution requires a matching opaque tool config`);
   }
   if (context.provider === 'claude-code') {
-    if (!config.claudeConfigPath || config.codexConfigOverrides?.length || Object.keys(config.environment ?? {}).length) {
+    if (!config.claudeConfigPath || config.codexConfigOverrides?.length ||
+        Object.keys(config.environment ?? {}).sort().join(',') !== 'SULLA_MCP_SESSION_TOKEN,SULLA_TOOL_SESSION' ||
+        Object.values(config.environment ?? {}).some(value => !value)) {
       throw new Error('Container Claude tool config requires a provider-visible MCP config path');
     }
   } else if (!config.codexConfigOverrides?.length || config.claudeConfigPath ||
