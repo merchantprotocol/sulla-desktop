@@ -7,6 +7,7 @@ import type {
   BrokerClaims,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
+  BrokerIntegrationMetadataResponse,
   BrokerRelayCreateRequest,
   BrokerRelayCreateResponse,
   BrokerRelaySendRequest,
@@ -19,6 +20,7 @@ export type {
   BrokerCredentialRef,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
+  BrokerIntegrationMetadataResponse,
   BrokerInjection,
   BrokerRelayCreateRequest,
   BrokerRelayCreateResponse,
@@ -176,6 +178,46 @@ export class LocalVaultBrokerClient {
     });
     if (!response.ok) await this.throwRelayResponse(response);
     return response.json() as Promise<{ state: string; unlocked: boolean; principalId?: string }>;
+  }
+
+  async integrationMetadata(
+    integrationId: string,
+    accountId?: string,
+    signal?: AbortSignal,
+  ): Promise<BrokerIntegrationMetadataResponse> {
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) ||
+        (accountId !== undefined && !/^[A-Za-z0-9._-]{1,128}$/.test(accountId))) {
+      throw new VaultBrokerError('invalid_operation', 'Integration metadata reference is invalid', 400);
+    }
+    const url = new URL(`${ this.endpoint }/v1/broker/integrations/${ encodeURIComponent(integrationId) }/metadata`);
+    if (accountId) url.searchParams.set('accountId', accountId);
+    const response = await this.transport(url.toString(), {
+      headers: await this.serviceHeaders(false),
+      signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    return response.json() as Promise<BrokerIntegrationMetadataResponse>;
+  }
+
+  async setActiveIntegrationAccount(
+    integrationId: string,
+    accountId: string,
+    signal?: AbortSignal,
+  ): Promise<BrokerIntegrationMetadataResponse> {
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
+      throw new VaultBrokerError('invalid_operation', 'Integration account reference is invalid', 400);
+    }
+    const response = await this.transport(
+      `${ this.endpoint }/v1/broker/integrations/${ encodeURIComponent(integrationId) }/active-account`,
+      {
+        method:  'PUT',
+        headers: await this.serviceHeaders(true),
+        body:    JSON.stringify({ accountId }),
+        signal,
+      },
+    );
+    if (!response.ok) await this.throwRelayResponse(response);
+    return response.json() as Promise<BrokerIntegrationMetadataResponse>;
   }
 
   async executeStream(request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> {

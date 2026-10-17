@@ -46,6 +46,7 @@ const FIXED_INTEGRATION_CATEGORIES: Readonly<Record<string, string>> = {
   slack:   'slack',
   discord: 'discord',
   gdrive:  'google_drive',
+  mobile:  'sulla-cloud',
 };
 const execFile = promisify(execFileCallback);
 
@@ -83,6 +84,21 @@ async function githubGitRepository(tool: CatalogTool, args: unknown): Promise<st
   return repositoryFromGitHubRemote(result.stdout.trim());
 }
 
+function notifyUsesMobileDelivery(tool: CatalogTool, args: unknown): boolean {
+  if (tool.name !== 'notify_user' || !args || typeof args !== 'object') return false;
+  const targets = (args as Record<string, unknown>).targets;
+  if (typeof targets === 'string') return targets.trim().toLowerCase() === 'mobile';
+  return Array.isArray(targets) && targets.some(target =>
+    typeof target === 'string' && target.trim().toLowerCase() === 'mobile');
+}
+
+/** Credential authority is derived from the trusted catalog entry, never caller-selected. */
+export function credentialIntegrationForTool(tool: CatalogTool, args: unknown): string | undefined {
+  return FIXED_INTEGRATION_CATEGORIES[tool.category] ??
+    (tool.name === 'reconcile_github_pr_mirror' ? 'github' : undefined) ??
+    (notifyUsesMobileDelivery(tool, args) ? 'sulla-cloud' : undefined);
+}
+
 /**
  * Narrow verified tool authority to the credential selected by the trusted
  * runtime. Tool arguments can select a repository but can never select or
@@ -93,8 +109,7 @@ export async function scopeToolExecutionContext(
   tool: CatalogTool,
   args: unknown,
 ): Promise<ToolExecutionContext> {
-  const integrationId = FIXED_INTEGRATION_CATEGORIES[tool.category] ??
-    (tool.name === 'reconcile_github_pr_mirror' ? 'github' : undefined);
+  const integrationId = credentialIntegrationForTool(tool, args);
   if (!integrationId) return ctx;
   const { getIntegrationService } = await import('../../../pkg/rancher-desktop/agent/services/IntegrationService.js');
   const accountId = await getIntegrationService().getActiveAccountId(integrationId);

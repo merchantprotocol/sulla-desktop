@@ -35,20 +35,20 @@ export type LocalVaultErrorCode =
   | 'unsupported_secret_egress';
 
 export interface LocalVaultErrorResponse {
-  error:        LocalVaultErrorCode | string;
-  message:      string;
+  error:   LocalVaultErrorCode | string;
+  message: string;
   /** Present only for approval_required; contains no secret or credential ref. */
   operationId?: string;
 }
 
 export interface LocalVaultStatusResponse {
-  state:               LocalVaultState;
-  unlocked:            boolean;
+  state:     LocalVaultState;
+  unlocked:  boolean;
   /** Present only while unlocked; callers bind capability claims to this UUID. */
-  principalId?:        string;
+  principalId?: string;
   /** True only while a short-lived master-key cache update is waiting for the isolated OS helper. */
   cacheUpdateRequired: boolean;
-  migration:           { required: boolean; lastBatchId?: string; error?: string };
+  migration: { required: boolean; lastBatchId?: string; error?: string };
 }
 
 export interface BootstrapChallengeRequest {
@@ -66,9 +66,9 @@ export interface BootstrapChallengeResponse {
 }
 
 export interface BootstrapUnlockRequest {
-  callerId:     string;
-  challengeId:  string;
-  clientProof:  string;
+  callerId:    string;
+  challengeId: string;
+  clientProof: string;
   /** AES-256-GCM sealed JSON {masterKey,legacyVmk?}; key is derived from both nonces and the installation secret. */
   sealedUnlock: string;
 }
@@ -130,8 +130,9 @@ export function cacheUpdateSessionKeyInput(
 
 export function cacheUpdateFetchProofInput(
   callerId: string, clientNonce: string, serverNonce: string, challengeId: string, expiresAt: number,
+  sealedLegacySha256 = '-',
 ): string {
-  return `cache-fetch:${ callerId }:${ clientNonce }:${ serverNonce }:${ challengeId }:${ expiresAt }`;
+  return `cache-fetch:${ callerId }:${ clientNonce }:${ serverNonce }:${ challengeId }:${ expiresAt }:${ sealedLegacySha256 }`;
 }
 
 export type CacheUpdateChallengeRequest = BootstrapChallengeRequest;
@@ -141,6 +142,8 @@ export interface CacheUpdateFetchRequest {
   callerId:    string;
   challengeId: string;
   clientProof: string;
+  /** Optional AES-256-GCM sealed 32-byte legacy VMK, accepted only while migration is required. */
+  sealedLegacyVmk?: string;
 }
 
 export interface CacheUpdateFetchResponse {
@@ -186,8 +189,9 @@ export interface HumanBackupImportRequest { backupPassword: string; backup: Huma
 
 export interface BrokerRelayCreateRequest {
   claims:    BrokerClaims;
-  operation: 'slack.socket-mode' | 'discord.gateway';
+  operation: 'slack.socket-mode' | 'discord.gateway' | 'enterprise.gateway';
   ref:       BrokerCredentialRef;
+  approvalId?: string;
 }
 export interface BrokerRelayCreateResponse { relayId: string; expiresAt: number }
 export interface BrokerRelaySendRequest { sequence?: number; type: string; payload: unknown }
@@ -224,9 +228,9 @@ export interface BrokerCredentialRef {
 
 export interface BrokerInjection {
   field:   string;
-  target:  'header' | 'query' | 'json';
+  target:  'header' | 'query' | 'json' | 'form';
   name:    string;
-  scheme?: 'Bearer' | 'Basic' | 'Bot' | 'GitHubBasic' | 'Token' | 'raw';
+  scheme?: 'Bearer' | 'Basic' | 'BasicClient' | 'Bot' | 'GitHubBasic' | 'Token' | 'raw';
 }
 
 export interface BrokerExecuteRequest {
@@ -250,6 +254,27 @@ export interface BrokerExecuteResponse {
   body:    unknown;
 }
 
+export interface BrokerStatusResponse {
+  state:        LocalVaultState;
+  unlocked:     boolean;
+  principalId?: string;
+}
+
+export interface BrokerIntegrationMetadataResponse {
+  integrationId: string;
+  activeAccountId?: string;
+  accounts: {
+    accountId:  string;
+    label:      string;
+    connected:  boolean;
+    active:     boolean;
+    revision:   number;
+    properties: Record<string, string>;
+  }[];
+}
+
+export interface BrokerSetActiveAccountRequest { accountId: string }
+
 /**
  * /v1/broker/execute-stream returns upstream status and sanitized headers as
  * HTTP status/headers, then writes the sanitized body directly. It never wraps
@@ -257,7 +282,7 @@ export interface BrokerExecuteResponse {
  * After headers, timeout, lock, or policy failure terminates the stream.
  */
 export interface BrokerStreamResponseMeta {
-  status:       number;
+  status:      number;
   contentType?: string;
 }
 
