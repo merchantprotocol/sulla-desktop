@@ -60,3 +60,43 @@ test('arbitrary secret egress is an explicit unsupported operation', () => {
   assert.equal(error.code, 'unsupported_secret_egress');
   assert.doesNotMatch(JSON.stringify(error), /password|private.?key|refresh.?token/i);
 });
+
+test('parses bounded relay events split across NDJSON chunks', async() => {
+  const encoder = new TextEncoder();
+  const chunks = [
+    '{"sequence":1,"type":"slack.events_api","pay',
+    'load":{"event":{"type":"message"}}}\n{"sequence":2,"type":"relay.gap","payload":{}}\n',
+  ];
+  const syntheticFetch = () => Promise.resolve(new Response(new ReadableStream({
+    pull(controller) {
+      const chunk = chunks.shift();
+      if (chunk === undefined) controller.close();
+      else controller.enqueue(encoder.encode(chunk));
+    },
+  }), { status: 200, headers: { 'content-type': 'application/x-ndjson' } }));
+  const client = new LocalVaultBrokerClient('https://127.0.0.1:30135', {
+    serviceId: 'sulla-tools', serviceToken: 'synthetic-service-token',
+  }, syntheticFetch);
+
+  const events = [];
+  for await (const event of client.relayEventStream('synthetic-relay')) events.push(event);
+  assert.deepEqual(events.map(event => [event.sequence, event.type]), [
+    [1, 'slack.events_api'],
+    [2, 'relay.gap'],
+  ]);
+});
+
+test('rejects a relay stream that ends with a partial event', async() => {
+  const syntheticFetch = () => Promise.resolve(new Response('{"sequence":1', {
+    status: 200, headers: { 'content-type': 'application/x-ndjson' },
+  }));
+  const client = new LocalVaultBrokerClient('https://127.0.0.1:30135', {
+    serviceId: 'sulla-tools', serviceToken: 'synthetic-service-token',
+  }, syntheticFetch);
+
+  await assert.rejects(async() => {
+    for await (const _event of client.relayEventStream('synthetic-relay')) {
+      // No complete event should be yielded.
+    }
+  }, (error: unknown) => error instanceof VaultBrokerError && error.code === 'invalid_response');
+});

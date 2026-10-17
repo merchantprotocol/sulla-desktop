@@ -83,7 +83,10 @@ async function disconnectIntegration(integrationId: string): Promise<void> {
 registry.register('slack', async() => {
   // Desktop Web API calls use the outbound broker directly. Socket Mode is a
   // separate vault-owned relay and must never cause Bolt to receive tokens.
-  if (usesContainerVaultAuthority()) return slackClient;
+  if (usesContainerVaultAuthority()) {
+    await slackClient.initialize();
+    return slackClient;
+  }
   const svc = getIntegrationService();
   await svc.initialize(); // ensure DB tables
 

@@ -17,7 +17,11 @@ import {
 } from '../../services/WebSocketClientService';
 import { withSuppressedConnectionStatus } from '../integrationFlags';
 import { incomingMessage } from './prompts/incoming_message';
-import { requireConfiguredCredentialBroker, usesContainerVaultAuthority } from '../../../vault-broker';
+import {
+  issueLocalBrokerContext,
+  requireConfiguredCredentialBroker,
+  usesContainerVaultAuthority,
+} from '../../../vault-broker';
 
 import type { AgentGraphState } from '../../nodes/Graph';
 import type { ToolExecutionContext } from '../../tools/executionContext';
@@ -88,6 +92,8 @@ export class SlackClient {
   private lastInitializeError: string | null = null;
   private intentionallyClosed = false;
   private eventsRegistered = false;
+  private relayId:              string | null = null;
+  private relayAbortController: AbortController | null = null;
 
   private static instance: SlackClient | null = null;
 
@@ -104,7 +110,7 @@ export class SlackClient {
   private appToken?: string;
 
   isConnected(): boolean {
-    return this.connected && this.app !== null;
+    return this.connected && (this.app !== null || this.relayId !== null);
   }
 
   getLastInitializeError(): string | null {
@@ -267,7 +273,10 @@ ${ incomingMessage }`.trim();
       return;
     }
 
-    await this.replyInThread(channel, threadTs, responseText);
+    const executionContext = usesContainerVaultAuthority()
+      ? await this.issueSlackBrokerContext()
+      : undefined;
+    await this.replyInThread(channel, threadTs, responseText, undefined, executionContext);
     console.log('[SlackClient] Replied to Slack app_mention thread', {
       messageId,
       channel,
@@ -325,7 +334,7 @@ ${ incomingMessage }`.trim();
   }
 
   async initialize(): Promise<boolean> {
-    if (this.connected && this.app) return true;
+    if (this.isConnected()) return true;
     if (this.initializePromise) return this.initializePromise;
 
     this.intentionallyClosed = false;
@@ -345,8 +354,7 @@ ${ incomingMessage }`.trim();
 
   private async _doInitialize(): Promise<boolean> {
     if (usesContainerVaultAuthority()) {
-      this.lastInitializeError = 'Slack Socket Mode requires the vault-owned relay session';
-      return false;
+      return this.initializeVaultRelay();
     }
     console.log('[SlackClient] _doInitialize() entered', {
       hasApp:              !!this.app,
@@ -440,6 +448,102 @@ ${ incomingMessage }`.trim();
       await this.stopApp();
       throw (err instanceof Error ? err : new Error(String(err)));
     }
+  }
+
+  private async initializeVaultRelay(): Promise<boolean> {
+    await this.stopRelay();
+    const service = getIntegrationService();
+    const accountId = await service.getActiveAccountId(INTEGRATION_ID);
+    const abortController = new AbortController();
+    const context = await this.issueSlackBrokerContext(accountId, abortController.signal);
+    const broker = requireConfiguredCredentialBroker();
+    const relay = await broker.createRelay(
+      context,
+      'slack.socket-mode',
+      { integrationId: INTEGRATION_ID, accountId },
+      abortController.signal,
+    );
+
+    this.relayAbortController = abortController;
+    this.relayId = relay.relayId;
+    this.connected = true;
+    WS_SERVICE.connect(SLACK_GRAPH_CHANNEL);
+    this.consumeVaultRelay(relay.relayId, abortController.signal)
+      .catch(error => console.error('[SlackClient] Vault relay consumer failed:', error));
+    return true;
+  }
+
+  private async issueSlackBrokerContext(accountId?: string, signal?: AbortSignal): Promise<ToolExecutionContext> {
+    const resolvedAccountId = accountId ?? await getIntegrationService().getActiveAccountId(INTEGRATION_ID);
+    return issueLocalBrokerContext({
+      agentId:         'slack-relay',
+      podId:           'desktop-main',
+      credentialScope: { integration_id: INTEGRATION_ID, account_id: resolvedAccountId },
+      signal,
+    });
+  }
+
+  private async consumeVaultRelay(relayId: string, signal: AbortSignal): Promise<void> {
+    const broker = requireConfiguredCredentialBroker();
+    try {
+      for await (const relayEvent of broker.relayEventStream(relayId, signal)) {
+        if (signal.aborted) break;
+        await broker.relaySend(relayId, {
+          sequence: relayEvent.sequence,
+          type:     'slack.ack',
+          payload:  {},
+        }, signal);
+        if (relayEvent.type !== 'slack.events_api') continue;
+        const envelope = relayEvent.payload && typeof relayEvent.payload === 'object'
+          ? relayEvent.payload as Record<string, any>
+          : {};
+        const event = envelope.event;
+        if (!event || typeof event !== 'object') continue;
+        if (event.type === 'app_mention') {
+          this.handleAppMention(event)
+            .catch(error => console.error('[SlackClient] Failed processing app_mention', error));
+          continue;
+        }
+        if (event.type !== 'message' || event.subtype === 'bot_message' || event.bot_id) continue;
+        this.forwardMessageEvent(event);
+      }
+    } catch (error) {
+      if (!signal.aborted) console.error('[SlackClient] Vault relay failed:', error);
+    } finally {
+      if (this.relayId === relayId) {
+        this.connected = false;
+        this.relayId = null;
+      }
+    }
+  }
+
+  private forwardMessageEvent(event: any): void {
+    const facts = extractMessageFacts({ event, message: event });
+    const factsText = facts.map(fact => `- ${ fact }`).join('\n');
+    WS_SERVICE.send('tasker', {
+      type:      'user_message',
+      data:      {
+        content:  `${ factsText }\n\n${ incomingMessage }`,
+        metadata: {
+          origin:   'slack',
+          channel:  event.channel,
+          threadTs: event.thread_ts || event.ts,
+          user:     event.user,
+        },
+      },
+      id:        generateUUID(),
+      timestamp: Date.now(),
+      channel:   'tasker',
+    });
+  }
+
+  private async stopRelay(): Promise<void> {
+    const relayId = this.relayId;
+    this.relayAbortController?.abort();
+    this.relayAbortController = null;
+    this.relayId = null;
+    this.connected = false;
+    if (relayId) await requireConfiguredCredentialBroker().closeRelay(relayId).catch(() => undefined);
   }
 
   private async stopApp(): Promise<void> {
@@ -669,6 +773,7 @@ ${ incomingMessage }`.trim();
   async close(): Promise<void> {
     this.intentionallyClosed = true;
     console.log('[SlackClient] Intentional close requested');
+    await this.stopRelay();
     await this.stopApp();
   }
 
