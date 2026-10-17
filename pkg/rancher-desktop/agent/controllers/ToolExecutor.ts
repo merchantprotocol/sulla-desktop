@@ -5,11 +5,13 @@
  *  - Policy checking (access control, category filtering, agent config allowlists)
  *  - WebSocket event emission (tool_call / tool_result progress events)
  *  - Result formatting & state message persistence
- *  - Structured tool run record persistence (deduplication index)
+ *  - Bounded tool run deduplication history
  *  - Conversation logging
  *
  * BaseNode delegates to this via `processPendingToolCalls()` and `executeToolCalls()`.
  */
+
+import { createHash } from 'node:crypto';
 
 import { throwIfAborted } from '../services/AbortService';
 import { RunActivity } from '../services/RunActivity';
@@ -17,6 +19,7 @@ import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { BaseTool } from '../tools/base';
 import { toolRegistry } from '../tools/registry';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+
 import Logging from '@pkg/utils/logging';
 
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
@@ -51,6 +54,14 @@ const MAX_INLINE_SCREENSHOT_BYTES = 500_000;
 // placeholder. Protects the chat window's V8 heap, the WS pipe, and the
 // renderer-side reactive state regardless of which tool was invoked.
 const MAX_TOOL_RESULT_WIRE_BYTES = 50_000;
+
+// The loop detector only needs enough history to prove that the same call was
+// made seven times in a row. Keep fixed-size hashes instead of retaining raw
+// arguments and results in thread metadata (the durable conversation log owns
+// the full tool transcript).
+const TOOL_LOOP_THRESHOLD = 7;
+const TOOL_DEDUPE_HISTORY_LIMIT = TOOL_LOOP_THRESHOLD;
+const TOOL_DEDUPE_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
 function capWireResult(r: any): any {
   if (r == null) return r;
@@ -161,21 +172,19 @@ export class ToolExecutor {
       // Block only after the same exact call has been made LOOP_THRESHOLD times
       // in a row. A single retry is normal (e.g. transient failure, corrected
       // context); only sustained repetition signals a real loop.
-      const LOOP_THRESHOLD = 7;
       const dedupeKey = this.buildToolRunDedupeKey(toolName, args);
-      const metadataAny = state.metadata as any;
-      const toolRuns = metadataAny.__toolRuns as { dedupeKey: string }[] | undefined;
+      const toolRuns = this.getToolRunDedupeHistory(state);
       let consecutiveCount = 0;
       if (toolRuns?.length) {
         for (let i = toolRuns.length - 1; i >= 0; i--) {
-          if (toolRuns[i].dedupeKey === dedupeKey) {
+          if (toolRuns[i] === dedupeKey) {
             consecutiveCount++;
           } else {
             break;
           }
         }
       }
-      if (consecutiveCount >= LOOP_THRESHOLD) {
+      if (consecutiveCount >= TOOL_LOOP_THRESHOLD) {
         const loopMsg = `Loop detected: this exact tool call ("${ toolName }" with the same arguments) was executed ${ consecutiveCount } times consecutively. Use the previous result instead of calling it again.`;
         await this.emitToolCallEvent(state, toolRunId, toolName, args);
         await this.emitToolResultEvent(state, toolRunId, false, loopMsg);
@@ -360,17 +369,16 @@ export class ToolExecutor {
       await this.emitToolCallEvent(state, toolRunId, toolName, args);
 
       // Loop detection — same rule as the sequential path.
-      const LOOP_THRESHOLD = 7;
       const dedupeKey = this.buildToolRunDedupeKey(toolName, args);
-      const toolRuns = (state.metadata as any).__toolRuns as { dedupeKey: string }[] | undefined;
+      const toolRuns = this.getToolRunDedupeHistory(state);
       let consecutiveCount = 0;
       if (toolRuns?.length) {
         for (let i = toolRuns.length - 1; i >= 0; i--) {
-          if (toolRuns[i].dedupeKey === dedupeKey) consecutiveCount++;
+          if (toolRuns[i] === dedupeKey) consecutiveCount++;
           else break;
         }
       }
-      if (consecutiveCount >= LOOP_THRESHOLD) {
+      if (consecutiveCount >= TOOL_LOOP_THRESHOLD) {
         const loopMsg = `Loop detected: this exact tool call ("${ toolName }" with the same arguments) was executed ${ consecutiveCount } times consecutively. Use the previous result instead of calling it again.`;
         launched.push({ toolRunId, toolName, args, outcome: Promise.resolve({ error: loopMsg, loopBlock: true }), started: Date.now() });
         continue;
@@ -886,34 +894,59 @@ export class ToolExecutor {
       error?:    string;
     },
   ): void {
-    const metadataAny = state.metadata as any;
     const dedupeKey = this.buildToolRunDedupeKey(payload.toolName, payload.args);
-    const record = {
-      toolName:  payload.toolName,
-      toolRunId: payload.toolRunId,
-      dedupeKey,
-      args:      payload.args ?? {},
-      success:   payload.success,
-      result:    payload.result,
-      error:     payload.error,
-      timestamp: Date.now(),
-      nodeId:    this.ctx.nodeId,
-      nodeName:  this.ctx.nodeName,
-    };
+    const toolRuns = this.getToolRunDedupeHistory(state);
 
-    if (!Array.isArray(metadataAny.__toolRuns)) {
-      metadataAny.__toolRuns = [];
+    toolRuns.push(dedupeKey);
+    if (toolRuns.length > TOOL_DEDUPE_HISTORY_LIMIT) {
+      toolRuns.splice(0, toolRuns.length - TOOL_DEDUPE_HISTORY_LIMIT);
     }
-    if (!metadataAny.__toolRunIndex || typeof metadataAny.__toolRunIndex !== 'object') {
-      metadataAny.__toolRunIndex = {};
-    }
-    metadataAny.__toolRuns.push(record);
-    metadataAny.__toolRunIndex[dedupeKey] = record;
     this.ctx.bumpStateVersion(state);
   }
 
   private buildToolRunDedupeKey(toolName: string, args: unknown): string {
-    return `${ toolName }:${ this.stableStringify(args ?? {}) }`;
+    const hash = createHash('sha256');
+    hash.update(toolName);
+    hash.update('\0');
+    hash.update(this.stableStringify(args ?? {}));
+
+    return `sha256:${ hash.digest('hex') }`;
+  }
+
+  private getToolRunDedupeHistory(state: BaseThreadState): string[] {
+    const metadataAny = state.metadata as any;
+
+    // __toolRunIndex was write-only and duplicated every full record. Remove it
+    // as soon as an existing thread executes another tool.
+    delete metadataAny.__toolRunIndex;
+
+    const history = metadataAny.__toolRuns;
+    const isCompactHistory = Array.isArray(history) &&
+      history.every(item => typeof item === 'string' && TOOL_DEDUPE_HASH_PATTERN.test(item));
+
+    if (!isCompactHistory && Array.isArray(history)) {
+      const legacyTail = history.slice(-TOOL_DEDUPE_HISTORY_LIMIT);
+      const isMigratableLegacyHistory = legacyTail.every(item => item &&
+        typeof item === 'object' &&
+        typeof item.toolName === 'string' &&
+        Object.prototype.hasOwnProperty.call(item, 'args'));
+
+      if (isMigratableLegacyHistory) {
+        metadataAny.__toolRuns = legacyTail.map(item =>
+          this.buildToolRunDedupeKey(item.toolName, item.args));
+        return metadataAny.__toolRuns;
+      }
+    }
+
+    // Invalid legacy entries cannot safely participate in loop detection. Drop
+    // them rather than retaining raw payloads or comparing incompatible keys.
+    if (!isCompactHistory) {
+      metadataAny.__toolRuns = [];
+    } else if (history.length > TOOL_DEDUPE_HISTORY_LIMIT) {
+      metadataAny.__toolRuns = history.slice(-TOOL_DEDUPE_HISTORY_LIMIT);
+    }
+
+    return metadataAny.__toolRuns;
   }
 
   /**
