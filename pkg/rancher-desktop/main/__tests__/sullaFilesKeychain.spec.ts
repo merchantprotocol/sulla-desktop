@@ -12,7 +12,7 @@ import { SullaFilesKeychain, type FilesSafeStorage } from '../sullaFilesKeychain
 function storage(): FilesSafeStorage {
   const wrappingKey = crypto.randomBytes(32);
   return {
-    isEncryptionAvailable: () => true,
+    isEncryptionAvailable:     () => true,
     getSelectedStorageBackend: () => 'test',
     encryptString(value) {
       const iv = crypto.randomBytes(12);
@@ -41,14 +41,14 @@ describe('Files keychain bootstrap', () => {
     const provider = storage();
     let retained: Buffer | undefined;
     let original: Buffer | undefined;
-    const first = new SullaFilesKeychain(keyPath, async() => provider, async(key) => { retained = key; original = Buffer.from(key) });
+    const first = new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), (key) => { retained = key; original = Buffer.from(key); return Promise.resolve() });
     await first.unlock();
     expect(retained?.every(byte => byte === 0)).toBe(true);
     const disk = await fs.promises.readFile(keyPath);
     expect(disk.includes(original!)).toBe(false);
     expect(disk.includes(original!.toString('base64'))).toBe(false);
     expect((await fs.promises.stat(keyPath)).mode & 0o777).toBe(0o600);
-    await new SullaFilesKeychain(keyPath, async() => provider, async(key) => { expect(key.equals(original!)).toBe(true) }).unlock();
+    await new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), (key) => { expect(key.equals(original!)).toBe(true); return Promise.resolve() }).unlock();
     original!.fill(0);
   });
 
@@ -57,7 +57,7 @@ describe('Files keychain bootstrap', () => {
     provider.isEncryptionAvailable = () => mode !== 'unavailable';
     provider.getSelectedStorageBackend = () => mode;
     let invoked = false;
-    await expect(new SullaFilesKeychain(keyPath, async() => provider, async() => { invoked = true }).unlock()).rejects.toThrow('Files could not unlock using the OS keychain');
+    await expect(new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => { invoked = true; return Promise.resolve() }).unlock()).rejects.toThrow('Files could not unlock using the OS keychain');
     expect(invoked).toBe(false);
     expect(fs.existsSync(keyPath)).toBe(false);
   });
@@ -67,14 +67,14 @@ describe('Files keychain bootstrap', () => {
     await fs.promises.writeFile(keyPath, original);
     const provider = storage();
     provider.decryptString = () => { throw new Error('synthetic-secret-must-not-escape') };
-    await expect(new SullaFilesKeychain(keyPath, async() => provider, async() => { throw new Error('must not bootstrap') }).unlock()).rejects.toThrow('Files could not unlock using the OS keychain');
+    await expect(new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => Promise.reject(new Error('must not bootstrap'))).unlock()).rejects.toThrow('Files could not unlock using the OS keychain');
     expect(await fs.promises.readFile(keyPath)).toEqual(original);
   });
 
   it('wipes the key on bootstrap failure and coalesces concurrent unlocks', async() => {
     let retained: Buffer | undefined;
     let calls = 0;
-    const keychain = new SullaFilesKeychain(keyPath, async() => storage(), async(key) => { calls++; retained = key; throw new Error('synthetic request failure') });
+    const keychain = new SullaFilesKeychain(keyPath, () => Promise.resolve(storage()), (key) => { calls++; retained = key; return Promise.reject(new Error('synthetic request failure')) });
     const results = await Promise.allSettled([keychain.unlock(), keychain.unlock()]);
     expect(results.every(result => result.status === 'rejected')).toBe(true);
     expect(calls).toBe(1);
@@ -86,7 +86,7 @@ describe('Files keychain bootstrap', () => {
     const entered = new Promise<void>(resolve => { began = resolve });
     const held = new Promise<void>(resolve => { release = resolve });
     let retained: Buffer | undefined;
-    const keychain = new SullaFilesKeychain(keyPath, async() => storage(), async(key) => { retained = key; began(); await held });
+    const keychain = new SullaFilesKeychain(keyPath, () => Promise.resolve(storage()), async(key) => { retained = key; began(); await held });
     const unlock = keychain.unlock();
     await entered;
     let drained = false;
@@ -97,5 +97,4 @@ describe('Files keychain bootstrap', () => {
     await Promise.all([unlock, settled]);
     expect(drained).toBe(true);
   });
-
 });

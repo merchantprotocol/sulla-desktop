@@ -121,6 +121,7 @@ class SullaFilesWatcher {
     await this.ensureUnlocked();
     return this.rawLocalRequest(endpoint, init);
   }
+
   async initialize():Promise<void> {
     if (this.started) return; this.started = true; this.stopped = false; app.once('before-quit', () => this.shutdown()); await fs.promises.mkdir(this.folder, { recursive: true, mode: 0o700 });
     try { this.watcher = fs.watch(this.folder, { recursive: process.platform !== 'linux', persistent: false }, (_event, filename) => { if (filename) this.changed(filename.toString()).catch(error => console.warn('[SullaFiles] watch event failed:', error)); }) } catch (error) { console.warn('[SullaFiles] host folder watcher unavailable; periodic rescans remain active:', error) }
@@ -142,6 +143,7 @@ class SullaFilesWatcher {
   private async request(endpoint:string, init:RequestInit = {}):Promise<Response> {
     return this.localRequest(endpoint, init);
   }
+
   private async capabilityToken():Promise<string> {
     const key = sullaFilesCapabilityKey(await SullaSettingsModel.getServicePassword()); const now = Math.floor(Date.now() / 1_000); const encode = (value:string) => Buffer.from(value).toString('base64url'); const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
     const deviceId = await getDesktopDeviceId().catch(() => os.hostname());
