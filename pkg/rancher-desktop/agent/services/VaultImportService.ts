@@ -12,7 +12,7 @@ import {
 } from '../../../../packages/vault-crypto/src/index';
 import { postgresClient } from '../database/PostgresClient';
 
-const API = 'http://127.0.0.1:30125';
+const API = 'http://127.0.0.1:30135';
 const VAULT_PREFIX = '$VAULT$';
 
 interface LegacyRow {
