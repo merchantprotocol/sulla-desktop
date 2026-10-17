@@ -75,6 +75,7 @@
         :collapsed="artifactCollapsed"
         @toggle-collapse="artifactCollapsed = !artifactCollapsed"
       />
+      <ChatFilesPanel @open-files="emit('set-mode', 'files')" />
     </div>
 
     <SubAgentDrawer :target="subAgentTarget" @close="subAgentTarget = null" />
@@ -106,6 +107,7 @@ import FileTreeRail      from './components/files/FileTreeRail.vue';
 import EmptyState        from './components/empty/EmptyState.vue';
 import SubAgentDrawer    from './components/subagent/SubAgentDrawer.vue';
 import SubAgentRail      from './components/subagent/SubAgentRail.vue';
+import ChatFilesPanel    from './components/files/ChatFilesPanel.vue';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
 
 import { restoreChatFromHistory } from './services/historyRestore';

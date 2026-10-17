@@ -41,8 +41,13 @@ export function useKeyboardShortcuts(opts: KeyboardShortcutOptions = {}): void {
     if (metaish && e.key.toLowerCase() === 'i') {
       e.preventDefault(); c.openModal('tokens'); return;
     }
+    // ⌘⇧F — attach a durable Sulla Files reference. This must precede the
+    // generic ⌘F branch or the search modal steals the shortcut.
+    if (metaish && e.shiftKey && e.key.toLowerCase() === 'f') {
+      e.preventDefault(); window.dispatchEvent(new CustomEvent('chat:attach-files')); return;
+    }
     // ⌘F — search
-    if (metaish && e.key.toLowerCase() === 'f') {
+    if (metaish && !e.shiftKey && e.key.toLowerCase() === 'f') {
       e.preventDefault(); c.openModal('search'); return;
     }
     // ⌘N — new chat  (handled by parent registry; event here for later)

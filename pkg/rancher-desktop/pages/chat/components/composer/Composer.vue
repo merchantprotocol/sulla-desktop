@@ -71,7 +71,8 @@
           />
 
           <div class="composer-tools">
-            <ComposerAttach :open="controller.staged.value.length > 0" @pick="onAttach" />
+            <ComposerAttach :open="filesMenuOpen" @pick="toggleFilesMenu" />
+            <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" @browse="browseFiles" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
             <HeartbeatControl />
             <button class="model-btn" type="button" :title="selectionTitle" @click="controller.openModal('model')">
               <span class="model-avatar">{{ modelInitial }}</span>
@@ -146,6 +147,7 @@ import QueueStrip         from './QueueStrip.vue';
 import RunControls        from './RunControls.vue';
 import HeartbeatControl   from './HeartbeatControl.vue';
 import CommandPopover     from './CommandPopover.vue';
+import FilesAttachMenu, { type FilesReference } from './FilesAttachMenu.vue';
 
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
 import { useChatController } from '../../controller/useChatController';
@@ -159,6 +161,7 @@ import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
 import { defaultSlashCommands, type SlashCommand, type MentionTarget } from '../../models/Command';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const controller = useChatController();
 
@@ -182,6 +185,9 @@ const draft        = ref('');
 const inputRef     = ref<InstanceType<typeof ComposerInput> | null>(null);
 const wrapEl       = ref<HTMLElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
+const filesMenuOpen = ref(false);
+const recentFiles = ref<FilesReference[]>([]);
+const screenRecording = ref(false);
 
 // ─── Placeholder + keyboard hints ──────────────────────────────────
 const placeholder = computed(() => {
@@ -397,8 +403,36 @@ function onKeydown(e: KeyboardEvent): void {
 // and staged on the controller. Resetting the input's `value` after a
 // pick lets the user re-select the same file next time without us
 // swallowing the change event.
-function onAttach(): void {
-  fileInputRef.value?.click();
+async function toggleFilesMenu():Promise<void> {
+  filesMenuOpen.value = !filesMenuOpen.value;
+  if (filesMenuOpen.value) recentFiles.value = await ipcRenderer.invoke('files-ui:recent-references', 5).catch(() => []);
+}
+
+async function browseFiles():Promise<void> {
+  const selected = await ipcRenderer.invoke('files-ui:pick-reference') as FilesReference[];
+  selected.forEach(stageFilesReference); filesMenuOpen.value = false;
+}
+
+function stageFilesReference(file:FilesReference):void {
+  controller.stageAttachment(AttachmentService.fromFilesReference(file));
+  filesMenuOpen.value = false;
+}
+
+async function takeScreenshot():Promise<void> {
+  const capture = await ipcRenderer.invoke('files-ui:capture-screenshot', 'area') as { fileId?:string };
+  const recent = await ipcRenderer.invoke('files-ui:recent-references', 20) as FilesReference[];
+  const ref = recent.find(file => file.fileId === capture.fileId);
+  if (ref) stageFilesReference(ref);
+}
+
+async function toggleScreenRecording():Promise<void> {
+  const result = await ipcRenderer.invoke('files-ui:toggle-recording', { mic: true, camera: false }) as { recording:boolean; capture?:{ fileId?:string } };
+  screenRecording.value = result.recording;
+  if (result.capture?.fileId) {
+    const recent = await ipcRenderer.invoke('files-ui:recent-references', 20) as FilesReference[];
+    const ref = recent.find(file => file.fileId === result.capture?.fileId);
+    if (ref) stageFilesReference(ref);
+  }
 }
 
 function onFilesSelected(ev: Event): void {
@@ -441,7 +475,10 @@ onBeforeUnmount(() => {
   voiceAdapter.dispose();
   reflexIntent.dispose();
   window.removeEventListener('chat:quote', onQuoteFromTurn as EventListener);
+  window.removeEventListener('chat:attach-files', onAttachShortcut as EventListener);
 });
+
+function onAttachShortcut():void { void browseFiles() }
 
 // ─── Listen for quote events from Sulla turns ────────────────────
 // TurnSulla's "Quote" hover action dispatches this; we prefill the
@@ -488,6 +525,7 @@ onMounted(() => {
   });
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   window.addEventListener('chat:quote', onQuoteFromTurn as EventListener);
+  window.addEventListener('chat:attach-files', onAttachShortcut as EventListener);
   prefillFirstRunStarter().catch(() => { /* logged inside */ });
   // Warm the artifact mention cache so the first `@` keystroke has data.
   artifactMentions.prefetch();

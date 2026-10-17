@@ -53,6 +53,10 @@ export interface AttachedFile {
   size:   string;  // humanized e.g. "48 KB"
   kind:   'image' | 'json' | 'ts' | 'md' | 'log' | 'file';
   url?:   string;  // data URL for images (optional)
+  fileRef?: {
+    fileId: string; versionId: string; path: string; mime: string; size: number;
+    createdByType?: string; createdById?: string; collectionId?: string; collectionKind?: string; agentRunId?: string;
+  };
 }
 
 // ─── Sulla (complete) + Streaming (in-flight) ────────────────────
@@ -61,6 +65,7 @@ export interface SullaMessage extends MessageBase {
   text:       string;        // markdown-ish; rendered by prose component
   model:      string;        // e.g. "opus-4.7"
   tokens?:    number;
+  fileReferences?: readonly AttachedFile[];
 }
 
 export interface StreamingMessage extends MessageBase {
