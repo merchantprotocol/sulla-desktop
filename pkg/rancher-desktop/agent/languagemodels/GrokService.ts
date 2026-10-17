@@ -29,7 +29,7 @@ export const GROK_SUBSCRIPTION_BASE_URL = 'https://cli-chat-proxy.grok.com/v1';
  * pi-grok-cli ships); expect xAI to ratchet the minimum over time — a 426
  * from the proxy means bump this constant.
  */
-export const GROK_CLI_VERSION = '0.2.91';
+export const GROK_CLI_VERSION = '1.0.13';
 export const GROK_CLI_USER_AGENT = `grok-pager/${ GROK_CLI_VERSION } grok-shell/${ GROK_CLI_VERSION } (macos; aarch64)`;
 
 /** Default model on the subscription lane (500k context, Responses backend). */
