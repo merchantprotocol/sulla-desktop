@@ -14,12 +14,16 @@ import type pg from 'pg';
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/'];
 
-interface RuntimeState { state: 'synced' | 'syncing' | 'paused' | 'error'; pendingFiles: number; lastError?: string; lastScanAt?: string; lastSyncAt?: string; serverConfigured: boolean }
+interface RuntimeState {
+  state: 'synced' | 'syncing' | 'paused' | 'error'; pendingFiles: number; pendingBytes: number;
+  processedBytes: number; totalBytes: number; estimatedSeconds?: number; lastError?: string;
+  lastScanAt?: string; lastSyncAt?: string; serverConfigured: boolean;
+}
 interface WatchedRow { collection_id: string; path: string; file_id: string; content_hash: string; size: string; mtime_ms: string; role?: string }
 
 function mime(path:string):string {
   const extension = extname(path).toLowerCase();
-  return ({ '.txt': 'text/plain', '.md': 'text/markdown', '.json': 'application/json', '.yaml': 'application/yaml', '.yml': 'application/yaml', '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.ppt': 'application/vnd.ms-powerpoint', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mov': 'video/quicktime' } as Record<string, string>)[extension] ?? 'application/octet-stream';
+  return ({ '.txt': 'text/plain', '.md': 'text/markdown', '.json': 'application/json', '.yaml': 'application/yaml', '.yml': 'application/yaml', '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.ppt': 'application/vnd.ms-powerpoint', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.mkv': 'video/x-matroska' } as Record<string, string>)[extension] ?? 'application/octet-stream';
 }
 function matchIgnore(path:string, patterns:string[]):boolean {
   const parts = path.split('/');
@@ -51,6 +55,10 @@ export class LocalFilesManager {
   private lastSyncAt?:    string;
   private syncTimer?:     NodeJS.Timeout;
   private pendingFiles = 0;
+  private pendingBytes = 0;
+  private processedBytes = 0;
+  private totalBytes = 0;
+  private progressStartedAt = 0;
   constructor(private readonly db:pg.Pool, private readonly config:Config, private readonly indexer?:IndexingQueue) { this.store = new Store(config.chunkRoot); this.paused = config.paused }
 
   async initialize():Promise<void> {
@@ -67,7 +75,17 @@ export class LocalFilesManager {
 
   close():void { if (this.syncTimer) clearInterval(this.syncTimer); }
   status():RuntimeState {
-    return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl) };
+    const elapsed = Math.max(0.001, (Date.now() - this.progressStartedAt) / 1_000); const rate = this.processedBytes / elapsed;
+    return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, pendingBytes: this.pendingBytes, processedBytes: this.processedBytes, totalBytes: this.totalBytes, estimatedSeconds: this.running && rate > 0 ? Math.max(1, Math.ceil(this.pendingBytes / rate)) : undefined, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl) };
+  }
+
+  async recent(limit:number, exactPath?:string):Promise<any[]> {
+    const result = await this.db.query(`SELECT f.id,f.path,f.mime,f.size,f.updated_at,(f.path ILIKE '%conflicted copy%') AS conflict,m.duration_seconds
+      FROM files f JOIN collection_acl a ON a.collection_id=f.collection_id AND a.principal_type='user' AND a.principal_id=$1
+      LEFT JOIN recording_metadata m ON m.file_id=f.id
+      WHERE f.deleted_at IS NULL AND ($2::text IS NULL OR f.path=$2) ORDER BY f.updated_at DESC LIMIT $3`, [this.config.userId, exactPath ?? null, Math.max(1, Math.min(Number.isFinite(limit) ? limit : 4, 100))]);
+    const syncState = this.status().state;
+    return result.rows.map(row => ({ id: row.id, path: row.path, mime: row.mime, size: Number(row.size), updatedAt: row.updated_at, conflict: row.conflict, durationSeconds: row.duration_seconds == null ? undefined : Number(row.duration_seconds), syncState: syncState === 'error' ? 'error' : syncState === 'syncing' ? 'syncing' : 'synced' }));
   }
 
   async setPaused(paused:boolean):Promise<RuntimeState> {
@@ -122,13 +140,16 @@ export class LocalFilesManager {
   private async scanFolder():Promise<void> {
     const disk = await this.diskFiles(); const diskSet = new Set(disk); const states = (await this.db.query<WatchedRow>(`SELECT w.*,a.role FROM watched_folder_state w JOIN collection_acl a ON a.collection_id=w.collection_id AND a.principal_type='user' AND a.principal_id=$1`, [this.config.userId])).rows;
     const owned = states.filter(row => row.collection_id === this.collectionId); const missing = new Map(owned.filter(row => !diskSet.has(row.path)).map(row => [row.content_hash, row]));
-    this.pendingFiles = disk.filter(path => { const current = states.find(row => row.path === path); return !current }).length + missing.size;
+    const diskInfo = new Map<string, { size:number; mtimeMs:number }>();
+    for (const filePath of disk) { const info = await stat(this.safe(filePath)); diskInfo.set(filePath, { size: info.size, mtimeMs: info.mtimeMs }) }
+    const changedPaths = disk.filter(filePath => { const current = states.find(row => row.path === filePath); const info = diskInfo.get(filePath)!; return current?.role !== 'view' && (!current || Number(current.size) !== info.size || Number(current.mtime_ms) !== Math.trunc(info.mtimeMs)) });
+    this.pendingFiles = changedPaths.length + missing.size; this.totalBytes = changedPaths.reduce((sum, filePath) => sum + diskInfo.get(filePath)!.size, 0); this.pendingBytes = this.totalBytes; this.processedBytes = 0; this.progressStartedAt = Date.now();
     await this.db.query("UPDATE files_runtime_state SET state='syncing',pending_files=$1,updated_at=NOW() WHERE id=TRUE", [this.pendingFiles]);
     let changed = 0;
-    for (const path of disk) { const info = await stat(this.safe(path)); const old = states.find(row => row.path === path); if (old && Number(old.size) === info.size && Number(old.mtime_ms) === Math.trunc(info.mtimeMs)) continue; if (old?.role === 'view') continue; const result = await this.ingest(old?.collection_id ?? this.collectionId!, path, info.mtimeMs, old, missing); if (result) changed++; }
+    for (const path of disk) { const info = diskInfo.get(path)!; const old = states.find(row => row.path === path); if (old && Number(old.size) === info.size && Number(old.mtime_ms) === Math.trunc(info.mtimeMs)) continue; if (old?.role === 'view') continue; const result = await this.ingest(old?.collection_id ?? this.collectionId!, path, info.mtimeMs, old, missing); this.processedBytes += info.size; this.pendingBytes = Math.max(0, this.totalBytes - this.processedBytes); this.pendingFiles = Math.max(0, this.pendingFiles - 1); if (result) changed++; }
     const currentStates = (await this.db.query<WatchedRow>('SELECT * FROM watched_folder_state')).rows;
     for (const row of states) if (!diskSet.has(row.path) && row.role !== 'view' && !currentStates.some(current => current.file_id === row.file_id && current.path !== row.path)) { await this.softDelete(row); changed++ }
-    this.pendingFiles = 0; this.lastScanAt = new Date().toISOString(); await this.db.query("UPDATE files_runtime_state SET state='synced',pending_files=0,last_error=NULL,last_scan_at=NOW(),updated_at=NOW() WHERE id=TRUE");
+    this.pendingFiles = 0; this.pendingBytes = 0; this.processedBytes = this.totalBytes; this.lastScanAt = new Date().toISOString(); await this.db.query("UPDATE files_runtime_state SET state='synced',pending_files=0,last_error=NULL,last_scan_at=NOW(),updated_at=NOW() WHERE id=TRUE");
     if (changed) console.log(`[SullaFiles] recorded ${ changed } watched folder change(s)`);
   }
 
@@ -151,7 +172,11 @@ export class LocalFilesManager {
       if (renameFrom) await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND path=$2', [collectionId, renameFrom.path]);
       await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms) VALUES($1,$2,$3,$4,$5,$6)
         ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms`, [collectionId, path, fileId, contentHash, total, Math.trunc(mtimeMs)]);
-      await client.query('COMMIT'); this.indexer?.wake(); if (renameFrom) missing.delete(contentHash); return true;
+      await client.query('COMMIT'); this.indexer?.wake(); if (renameFrom) missing.delete(contentHash);
+      if (path.startsWith('Recordings/') && mime(path).startsWith('video/') && !/-(?:camera|mic|system-audio)\.[^/]+$/i.test(path)) {
+        await this.db.query(`INSERT INTO recording_enrichment_jobs(file_id,version_id,status) VALUES($1,$2,'pending') ON CONFLICT(version_id) DO NOTHING`, [fileId, version.id]).catch(error => console.warn('[SullaFiles] recording enrichment hook unavailable:', error));
+      }
+      return true;
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 

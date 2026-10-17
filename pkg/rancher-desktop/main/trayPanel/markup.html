@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: file:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:">
+  <title>Mark up screenshot</title>
+  <link rel="stylesheet" href="markup.css">
+</head>
+<body>
+  <!-- Styled with the mockups/files design system (04-tray / 05-capture-share) -->
+  <header>
+    <b>Mark up screenshot</b>
+    <div class="seg">
+      <button class="on" data-tool="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19L19 5M10 5h9v9"/></svg>Arrow</button>
+      <button data-tool="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"/></svg>Box</button>
+      <button data-tool="text"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6V5h14v1M12 5v14M9 19h6"/></svg>Text</button>
+      <button data-tool="blur"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="1.5"/><circle cx="12" cy="7" r="1.5"/><circle cx="17" cy="7" r="1.5"/><circle cx="7" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="17" cy="12" r="1.5"/><circle cx="7" cy="17" r="1.5"/><circle cx="12" cy="17" r="1.5"/><circle cx="17" cy="17" r="1.5"/></svg>Blur</button>
+    </div>
+    <span class="sp"></span>
+    <button id="cancel" class="btn">Cancel</button><button id="save" class="btn pri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Save</button>
+  </header>
+  <main><canvas id="canvas"></canvas></main>
+  <footer><span>Drag to add an annotation. Text is placed where you click.</span><b id="status"></b></footer>
+  <script src="markup.js"></script>
+</body>
+</html>

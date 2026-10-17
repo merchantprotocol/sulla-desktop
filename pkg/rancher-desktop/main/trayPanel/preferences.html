@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Sulla Files — Preferences</title>
+  <link rel="stylesheet" href="preferences.css">
+</head>
+<body>
+  <!-- Ported from mockups/files/04-tray.html (.pwin) -->
+  <div class="pwin">
+    <div class="bar"><i></i><i></i><i></i><span>Sulla Files — Preferences</span></div>
+    <div class="ptabs">
+      <a href="#" data-tab="general"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>General</a>
+      <a href="#" data-tab="sync"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 0 1-14.2 5M4 12a8 8 0 0 1 14.2-5"/><path d="M4 7v5h5M20 17v-5h-5"/></svg>Sync</a>
+      <a href="#" data-tab="capture" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></svg>Capture</a>
+      <a href="#" data-tab="sharing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/></svg>Sharing</a>
+    </div>
+
+    <div class="pbody" data-page="general">
+      <div class="pgrp">Files folder</div>
+      <div class="pbox">
+        <div class="prow"><div class="n"><b>Folder on this Mac</b><small class="mono">~/sulla/Files</small></div><button id="open-folder" class="btn sm">Open</button></div>
+        <div class="prow"><div class="n"><b>Versions</b><small>Sulla Files keeps every saved version, ready wherever you use Sulla</small></div></div>
+      </div>
+    </div>
+
+    <div class="pbody" data-page="sync">
+      <div class="pgrp">Sync</div>
+      <div class="pbox">
+        <div class="prow"><div class="n"><b>Sync automatically</b><small>Starts on its own. Pause for an hour from the menu bar.</small></div></div>
+        <div class="prow"><div class="n"><b>Conflict copies</b><small>Keep both versions until I choose one</small></div></div>
+      </div>
+    </div>
+
+    <div class="pbody" data-page="capture">
+      <div class="pgrp">After a screenshot or recording</div>
+      <div class="pbox">
+        <div class="prow stack"><div class="n"><b>Default action</b><small>Shown for a few seconds after every capture. You can override it each time.</small></div><div class="seg sm" data-setting="defaultAction"><button data-value="share">Share online</button><button data-value="save">Save to Files only</button><button data-value="ask">Ask each time</button></div></div>
+        <div class="prow"><div class="n"><b>Keep captures available when my computer is off</b><small>Temporary copy on Sulla Cloud until the link expires or is revoked</small></div><span class="sw" data-setting="keepCapturesAvailable" role="switch"></span></div>
+        <div class="prow"><div class="n"><b>Capture links expire</b><small>Counted from the day you share</small></div><label class="sel"><select data-setting="expiryDays"><option value="1">After 1 day</option><option value="7">After 7 days</option><option value="30">After 30 days</option><option value="90">After 90 days</option><option value="0">Never</option></select></label></div>
+        <div class="prow"><div class="n"><b>Visitors can</b></div><div class="seg sm" data-setting="visitorMode"><button data-value="view">View</button><button data-value="download">Download</button></div></div>
+        <div class="prow"><div class="n"><b>Save captures to</b><small>Syncs like any other folder</small></div><span id="save-location" class="sel">Files › Screenshots</span></div>
+      </div>
+      <div class="pgrp">Ordinary file links</div>
+      <div class="pbox">
+        <div class="prow"><div class="n"><b>Keep available when my computer is off</b><small>Off · links serve live from this Mac through Sulla Cloud. Turn on per link in the share dialog.</small></div><span class="sw" data-setting="ordinaryKeepAvailable" role="switch"></span></div>
+      </div>
+    </div>
+
+    <div class="pbody" data-page="sharing">
+      <div class="pgrp">Ordinary file links</div>
+      <div class="pbox">
+        <div class="prow"><div class="n"><b>Keep available when my computer is off</b><small>Off · links serve live from this Mac through Sulla Cloud. Turn on per link in the share dialog.</small></div><span class="sw" data-setting="ordinaryKeepAvailable" role="switch"></span></div>
+      </div>
+      <div class="pgrp">Capture links</div>
+      <div class="pbox">
+        <div class="prow"><div class="n"><b>Screenshots and recordings</b><small>Expiry and visitor access live under Capture</small></div><button class="btn sm" data-goto="capture">Open Capture</button></div>
+      </div>
+    </div>
+  </div>
+  <script src="preferences.js"></script>
+</body>
+</html>

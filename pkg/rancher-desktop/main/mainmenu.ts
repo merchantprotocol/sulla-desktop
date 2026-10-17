@@ -708,7 +708,7 @@ function getMacApplicationMenu(): MenuItem[] {
         },
         {
           label:       'Audio Settings…',
-          accelerator: 'CmdOrCtrl+Shift+U',
+          accelerator: 'CmdOrCtrl+Alt+U',
           enabled:     userLoggedIn,
           click:       openAudioSettings,
         },
