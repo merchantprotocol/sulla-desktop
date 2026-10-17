@@ -171,6 +171,16 @@ main() {
 
   umask 077
   env_file="$SULLA_DIR/server.env"
+  if [[ "$saved_configuration" == false && "${SULLA_RUNTIME:-}" == kubernetes && "${SULLA_KUBERNETES_MODE:-}" == existing ]]; then
+    pinned_kubeconfig="$SULLA_DIR/cluster.kubeconfig"
+    source_kubectl=(kubectl)
+    [[ -z ${SULLA_KUBECONFIG:-} ]] || source_kubectl+=(--kubeconfig "$SULLA_KUBECONFIG")
+    source_kubectl+=(--context "$SULLA_KUBECONTEXT")
+    "${source_kubectl[@]}" config view --raw --flatten --minify >"$pinned_kubeconfig.tmp" || fail "could not snapshot the selected Kubernetes context"
+    chmod 600 "$pinned_kubeconfig.tmp"
+    mv "$pinned_kubeconfig.tmp" "$pinned_kubeconfig"
+    SULLA_KUBECONFIG="$pinned_kubeconfig"
+  fi
   [[ -f "$env_file" ]] || {
     env_tmp="$env_file.tmp"
     postgres_password="$(openssl rand -hex 32)"; jwt_secret="$(openssl rand -base64 48 | tr -d '\n')"; bootstrap_token="$(openssl rand -hex 32)"

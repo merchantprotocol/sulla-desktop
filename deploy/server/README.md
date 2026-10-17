@@ -128,7 +128,7 @@ On the first server:
 sudo ./deploy-sulla.sh
 ```
 
-The installer generates PostgreSQL, JWT, and bootstrap secrets once and saves them in `server.env` with mode `0600`. The deploy script applies those values through a Kubernetes Secret, renders the selected storage and pinned image settings, waits for both Deployments, and prints the final Pods, PVC, and Services. The selected kubeconfig and context are saved and used explicitly on every call. Rerunning it preserves the same cluster target, secrets, and database volume. If an unrelated `sulla` namespace already exists, deployment stops before changing its Secrets or PVCs.
+The installer generates PostgreSQL, JWT, and bootstrap secrets once and saves them in `server.env` with mode `0600`. The deploy script applies those values through a Kubernetes Secret, renders the selected storage and pinned image settings, waits for both Deployments, and prints the final Pods, PVC, and Services. For an existing cluster, the selected context is flattened into a root-readable task kubeconfig and used explicitly on every call. Rerunning it preserves the same cluster target, secrets, and database volume. If an unrelated `sulla` namespace already exists, deployment stops before changing its Secrets or PVCs.
 
 PostgreSQL stays `ClusterIP`. The wizard can create an Ingress or leave routing to an existing ingress. It prints the real console login URL only after rollout and first-owner bootstrap succeed.
 
