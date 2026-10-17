@@ -743,15 +743,15 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   let vaultStatusPoll: ReturnType<typeof setInterval> | undefined;
   let vaultStatusRunning = false;
-  let vaultMigrationRun: Promise<void> | null = null;
+  let vaultMigrationRun: Promise<unknown> | undefined;
   const refreshVaultStatus = async() => {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const client = getDesktopVaultClient();
     const wasUnlocked = client.isUnlocked();
     let status = await client.status();
     if (status.cacheUpdateRequired && await vaultKey.refreshMasterCache()) status = await client.status();
-    if (status.unlocked && status.migration.required) {
-      vaultMigrationRun ??= client.migrate().then(() => undefined).finally(() => { vaultMigrationRun = null });
+    if (status.state === 'migration_required') {
+      vaultMigrationRun ??= client.migrate().finally(() => { vaultMigrationRun = undefined });
       await vaultMigrationRun;
       status = await client.status();
     }
@@ -764,13 +764,23 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   ipcMainProxy.handle('vault:status', refreshVaultStatus);
 
-  ipcMainProxy.handle('vault:view-open', async(event: Electron.IpcMainInvokeEvent, bounds: Electron.Rectangle) => {
+  ipcMainProxy.handle('vault:view-open', async(
+    event: Electron.IpcMainInvokeEvent,
+    bounds: Electron.Rectangle,
+    hint?: { integrationId?: string; accountId?: string },
+  ) => {
     const mainWindow = window.getWindow('main-agent');
     if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted vault view caller');
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const { vaultViewManager } = await import('@pkg/window/vaultViewManager');
     const humanSession = await getDesktopVaultClient().createHumanSession();
-    await vaultViewManager.show(humanSession.url, bounds);
+    const target = new URL(humanSession.url);
+    const safeMetadata = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : undefined;
+    const integrationId = safeMetadata(hint?.integrationId);
+    const accountId = safeMetadata(hint?.accountId);
+    if (integrationId) target.searchParams.set('integration', integrationId);
+    if (accountId) target.searchParams.set('account', accountId);
+    await vaultViewManager.show(target.toString(), bounds);
     if (!vaultStatusPoll) vaultStatusPoll = setInterval(() => {
       if (vaultStatusRunning) return;
       vaultStatusRunning = true;

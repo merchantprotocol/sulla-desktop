@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import Electron, { WebContentsView } from 'electron';
 
 import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
@@ -50,7 +52,9 @@ export class VaultViewManager {
   owns(webContents: Electron.WebContents): boolean { return this.view?.webContents === webContents }
 
   private async createView(): Promise<WebContentsView> {
-    const isolatedSession = Electron.session.fromPartition(`sulla-vault-human-${ process.pid }`, { cache: false });
+    // Never reuse a partition: hide() clears the old one asynchronously, and a
+    // rapid reopen must not let that cleanup erase the new human session.
+    const isolatedSession = Electron.session.fromPartition(`sulla-vault-human-${ process.pid }-${ randomUUID() }`, { cache: false });
     await configureVaultPinnedSession(isolatedSession);
     this.isolatedSession = isolatedSession;
     isolatedSession.setPermissionCheckHandler(() => false);
