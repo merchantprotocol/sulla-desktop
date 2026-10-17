@@ -164,13 +164,6 @@ export interface BrowserFillTarget {
   origin: string;
 }
 
-export interface BrowserFillPayload extends BrowserFillTarget {
-  requestId: string;
-  username:  string;
-  password:  string;
-  expiresAt: number;
-}
-
 export interface HumanUnlockRequest { password: string }
 export interface HumanLockResponse {
   csrf:      string;

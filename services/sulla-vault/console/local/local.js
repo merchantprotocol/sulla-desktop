@@ -151,8 +151,10 @@
     const fragment = new URLSearchParams(location.hash.slice(1));
     const grant = fragment.get('grant'); csrf = fragment.get('csrf') || '';
     history.replaceState(null, '', '/vault/');
-    if (!grant || !csrf) throw new Error('Open the vault from Sulla Desktop to start a protected session');
-    const session = await api('/v1/human/session/exchange', { method: 'POST', body: JSON.stringify({ grant, csrf }) });
+    if (!csrf) throw new Error('Open the vault from Sulla Desktop to start a protected session');
+    const session = grant
+      ? await api('/v1/human/session/exchange', { method: 'POST', body: JSON.stringify({ grant, csrf }) })
+      : await api('/v1/human/session');
     csrf = session.csrf; setPhase(session.phase);
     if (session.phase === 'unlocked') { await load(); await openIntegrationHint(); }
     else { byId('unlock-title').textContent = session.setupRequired ? 'Create your vault password' : 'Unlock your vault'; byId('password').autocomplete = session.setupRequired ? 'new-password' : 'current-password'; }

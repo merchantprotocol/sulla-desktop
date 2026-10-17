@@ -61,7 +61,7 @@ test('bootstrap challenge rejects forgery, replay, expiry, and consumes unlock c
   assert.equal(authority.status().unlocked, false);
 });
 
-test('browser fills are origin-bound, control-authenticated, expiring, and one-use', () => {
+test('browser popup sessions preserve an origin-bound target', () => {
   const authority = new LocalVaultAuthority({ query: async() => ({ rowCount: 0, rows: [] }) } as any, config('postgresql://synthetic/unused'));
   const target = { tabId: 'tab-123', origin: 'https://login.example.com' };
   const grant = authority.createHumanSession('sulla-desktop-control', TOKEN.control, target);
@@ -72,15 +72,6 @@ test('browser fills are origin-bound, control-authenticated, expiring, and one-u
     () => authority.createHumanSession('sulla-desktop-control', TOKEN.control, { tabId: 'tab-123', origin: 'javascript:alert(1)' }),
     (error: any) => error.code === 'invalid_destination',
   );
-  const fill = { requestId: 'fill-1', ...target, username: 'synthetic-user', password: 'synthetic-password', expiresAt: Date.now() + 1_000, timer: setTimeout(() => {}, 1_000) };
-  (authority as any).pendingBrowserFills.set(target.tabId, fill);
-  assert.throws(() => authority.consumeBrowserFill('sulla-desktop-control', 'wrong', target.tabId),
-    (error: any) => error.code === 'invalid_service_identity');
-  const { timer: _timer, ...payload } = fill;
-  assert.deepEqual(authority.consumeBrowserFill('sulla-desktop-control', TOKEN.control, target.tabId), payload);
-  assert.equal(authority.consumeBrowserFill('sulla-desktop-control', TOKEN.control, target.tabId), null);
-  (authority as any).pendingBrowserFills.set(target.tabId, { ...fill, timer: setTimeout(() => {}, 1_000), expiresAt: Date.now() - 1 });
-  assert.equal(authority.consumeBrowserFill('sulla-desktop-control', TOKEN.control, target.tabId), null);
 });
 
 test('approval digest binds headers, body, account, repository and response mode', () => {
@@ -575,6 +566,11 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
       assert.match(exchange.headers.get('set-cookie') ?? '', /; Secure(?:;|$)/);
       const exchangeBody: any = await exchange.json();
       const exchangeCookie = exchange.headers.get('set-cookie')!.split(';')[0];
+      const resumed = await fetch(`${ base }/v1/human/session`, {
+        headers: { cookie: exchangeCookie, 'x-csrf-token': exchangeBody.csrf, origin: 'https://127.0.0.1:30135' },
+      });
+      assert.equal(resumed.status, 200);
+      assert.equal((await resumed.json() as any).phase, 'unlocked');
       const locked = await fetch(`${ base }/v1/human/lock`, {
         method: 'POST',
         headers: { cookie: exchangeCookie, 'x-csrf-token': exchangeBody.csrf, origin: 'https://127.0.0.1:30135' },
