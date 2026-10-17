@@ -3,6 +3,7 @@
 // Supports multiple accounts per integration via account_id
 
 import { normalizeVaultCredentialValues, type VaultCredentialReadResult } from './vaultCredentialSchema';
+import { usesContainerVaultAuthority } from '../../vault-broker';
 import { IntegrationValueModel } from '../database/models/IntegrationValueModel';
 import { getSelectBoxProvider, type SelectOption } from '../integrations/select_box';
 
@@ -45,6 +46,7 @@ export interface IntegrationAccount {
 
 // Special properties that are not shown in forms
 const SYSTEM_PROPERTIES = ['connection_status', 'connected_at', 'last_sync_at', 'account_label'];
+const LOCAL_METADATA_PROPERTIES = new Set([...SYSTEM_PROPERTIES, 'active_account', 'llm_access', 'server_url', 'base_url', 'provider']);
 
 type IntegrationValueCallback = (value: IntegrationValue, action: 'created' | 'updated' | 'deleted') => void;
 
@@ -151,7 +153,9 @@ export class IntegrationService {
       const status = await this.getConnectionStatus(integrationId, accountId);
 
       // Check is_default from any row for this account
-      const accountRows = await IntegrationValueModel.findByAccount(integrationId, accountId);
+      const accountRows = usesContainerVaultAuthority()
+        ? await IntegrationValueModel.findMetadataByAccount(integrationId, accountId)
+        : await IntegrationValueModel.findByAccount(integrationId, accountId);
       const isDefault = accountRows.some(m => !!m.attributes.is_default);
 
       accounts.push({
@@ -345,10 +349,13 @@ export class IntegrationService {
   /** Get a value from the active account (backward-compat) */
   async getIntegrationValue(integrationId: string, property: string, accountId?: string): Promise<IntegrationValue | null> {
     const acctId = accountId || await this.getActiveAccountId(integrationId);
+    if (usesContainerVaultAuthority() && !LOCAL_METADATA_PROPERTIES.has(property)) {
+      throw new Error('unsupported_secret_egress: use an authenticated outbound vault broker operation');
+    }
     // Agent/tool execution runs in main and reads the new encrypted vault first.
     // Renderer forms and a missing migrated item keep the legacy store as a
     // read-only fallback during the verified migration window.
-    if (typeof process !== 'undefined' && process.type !== 'renderer') {
+    if (!usesContainerVaultAuthority() && typeof process !== 'undefined' && process.type !== 'renderer') {
       const { getDesktopVaultClient } = await import('./DesktopVaultClient');
       const vault = getDesktopVaultClient();
       if (vault.isUnlocked()) {
@@ -375,6 +382,9 @@ export class IntegrationService {
   }
 
   async getAllIntegrationValues(): Promise<IntegrationValue[]> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: bulk integration values are unavailable outside the vault');
+    }
     const models = await IntegrationValueModel.all();
     console.log(`[IntegrationService] Fetched ${ models.length } total values`);
     return models.map(m => this.modelToValue(m));

@@ -13,6 +13,11 @@ export interface CapabilityTokenClaims {
   job_id?:                string;
   workflow_execution_id?: string;
   device_id?:             string;
+  credential_scope?:      {
+    integration_id: string;
+    account_id:     string;
+    repository?:    string;
+  };
   scopes:                 string[];
   iat:                    number;
   exp:                    number;

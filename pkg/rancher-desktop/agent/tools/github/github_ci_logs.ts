@@ -1,6 +1,4 @@
-import { Octokit } from '@octokit/rest';
-
-import { getIntegrationService } from '../../services/IntegrationService';
+import { createGitHubOctokit } from './octokit';
 import { BaseTool, ToolResponse } from '../base';
 
 type CheckLike = {
@@ -69,9 +67,7 @@ export class GitHubCILogsWorker extends BaseTool {
       return { successBoolean: false, responseString: 'owner and repo are required; provide exactly one of runId, jobId, or ref.' };
     }
 
-    const tokenValue = await getIntegrationService().getIntegrationValue('github', 'token');
-    if (!tokenValue) return { successBoolean: false, responseString: 'GitHub token not configured in vault.' };
-    const octokit = new Octokit({ auth: tokenValue.value });
+    const octokit = await createGitHubOctokit(this.executionContext);
 
     try {
       let jobs: CheckLike[] = [];

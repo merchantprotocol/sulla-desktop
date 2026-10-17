@@ -1,6 +1,4 @@
-import { Octokit } from '@octokit/rest';
-
-import { getIntegrationService } from '../../services/IntegrationService';
+import { createGitHubOctokit } from './octokit';
 import { BaseTool, ToolResponse } from '../base';
 
 export class GitHubListPRsWorker extends BaseTool {
@@ -24,13 +22,7 @@ export class GitHubListPRsWorker extends BaseTool {
       return { successBoolean: false, responseString: 'page and limit must be positive integers.' };
     }
 
-    const integrationService = getIntegrationService();
-    const tokenValue = await integrationService.getIntegrationValue('github', 'token');
-    if (!tokenValue) {
-      return { successBoolean: false, responseString: 'GitHub token not configured in vault.' };
-    }
-
-    const octokit = new Octokit({ auth: tokenValue.value });
+    const octokit = await createGitHubOctokit(this.executionContext);
 
     try {
       const { data: prs, headers } = await octokit.pulls.list({

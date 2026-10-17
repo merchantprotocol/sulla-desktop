@@ -1,6 +1,4 @@
-import { Octokit } from '@octokit/rest';
-
-import { getIntegrationService } from '../../services/IntegrationService';
+import { createGitHubOctokit } from './octokit';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -20,13 +18,7 @@ export class GitHubCheckRunsWorker extends BaseTool {
       return { successBoolean: false, responseString: 'Missing required fields: owner, repo, ref (branch name, SHA, or tag).' };
     }
 
-    const integrationService = getIntegrationService();
-    const tokenValue = await integrationService.getIntegrationValue('github', 'token');
-    if (!tokenValue) {
-      return { successBoolean: false, responseString: 'GitHub token not configured in vault.' };
-    }
-
-    const octokit = new Octokit({ auth: tokenValue.value });
+    const octokit = await createGitHubOctokit(this.executionContext);
 
     try {
       const response = await octokit.checks.listForRef({

@@ -1,158 +1,176 @@
-import * as fs from 'node:fs/promises';
-
-import {
-  decryptWithKey,
-  itemAssociatedData,
-  unwrapItemKeyForAgent,
-  type EncryptedEnvelope,
-  type PublicKeyEnvelope,
-  type VaultItemPlaintext,
-} from '../../../packages/vault-crypto/src/index';
-
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
+import type {
+  BrokerApprovalResponse,
+  BrokerClaims,
+  BrokerExecuteRequest,
+  BrokerExecuteResponse,
+  LocalVaultErrorResponse,
+} from '../../../services/sulla-vault/src/contracts';
+
+export type {
+  BrokerApprovalResponse,
+  BrokerClaims,
+  BrokerCredentialRef,
+  BrokerExecuteRequest,
+  BrokerExecuteResponse,
+  BrokerInjection,
+  LocalVaultErrorResponse,
+} from '../../../services/sulla-vault/src/contracts';
 export type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
-export interface CredentialReference {
-  integrationId?: string;
-  itemId?:        string;
-  field?:         string;
+const DEFAULT_VAULT_ENDPOINT = 'http://sulla_vault:8787';
+
+export function usesContainerVaultAuthority(): boolean {
+  return process.env.SULLA_VAULT_MODE !== 'server';
 }
 
-export interface CredentialBroker {
-  useCredential<T>(
-    ctx: ToolExecutionContext,
-    ref: CredentialReference,
-    fn: (secret: Buffer) => Promise<T>,
-  ): Promise<T>;
-}
-
-export interface AgentKeyPair {
-  publicKey:  string;
-  privateKey: Buffer;
-}
-
-export interface AgentKeySource {
-  load(): Promise<AgentKeyPair>;
-}
-
-/** Docker tmpfs secret or Kubernetes Secret mount. */
-export class FileAgentKeySource implements AgentKeySource {
-  constructor(private readonly filePath: string) {}
-
-  async load(): Promise<AgentKeyPair> {
-    const stat = await fs.stat(this.filePath);
-    if (!stat.isFile() || (stat.mode & 0o077) !== 0) {
-      throw new Error('Agent key file must be a regular file readable only by its owner');
-    }
-    const raw = await fs.readFile(this.filePath);
-    try {
-      const parsed = JSON.parse(raw.toString('utf8')) as { publicKey?: unknown; privateKey?: unknown };
-      if (typeof parsed.publicKey !== 'string' || typeof parsed.privateKey !== 'string') {
-        throw new Error('Agent key file is malformed');
-      }
-      const privateKey = Buffer.from(parsed.privateKey, 'base64url');
-      if (privateKey.byteLength !== 32) {
-        privateKey.fill(0);
-        throw new Error('Agent private key must be 32 bytes');
-      }
-      return { publicKey: parsed.publicKey, privateKey };
-    } finally {
-      raw.fill(0);
-    }
+export class VaultBrokerError extends Error {
+  constructor(public readonly code: string, message: string, public readonly status: number) {
+    super(message);
+    this.name = 'VaultBrokerError';
   }
 }
 
-/** Enterprise implementation point; no local fallback is permitted. */
-export class KmsAgentKeySource implements AgentKeySource {
-  load(): Promise<AgentKeyPair> {
-    return Promise.reject(new Error('Enterprise KMS/HSM agent-key source is not configured'));
-  }
-}
-
-interface BrokerEnvelope {
-  ciphertext:             EncryptedEnvelope;
-  agent_wrapped_item_key: PublicKeyEnvelope;
-  policyDecision:         { allowed: true; itemId: string; contextOwnerId: string; auditId: string };
-}
-
-function credentialField(item: VaultItemPlaintext, ref: CredentialReference): string | undefined {
-  const field = ref.field ?? 'password';
-  if (field === '__integration_auth__') {
-    const properties = item.integration?.properties ?? {};
-    const allowed = ['bearer_token', 'access_token', 'api_token', 'api_key', 'basic_username', 'basic_password', 'auth_token'];
-    return JSON.stringify(Object.fromEntries(allowed.filter(key => typeof properties[key] === 'string').map(key => [key, properties[key]])));
-  }
-  return item.integration?.properties?.[field] ??
-    (field === 'username' ? item.username : undefined) ??
-    (['password', 'api_key', 'bearer_token', 'api_token', 'auth_token'].includes(field) ? item.password : undefined) ??
-    item.fields?.find(candidate => candidate.name === field)?.value;
-}
-
-export class VaultCredentialBroker implements CredentialBroker {
+export class VaultApprovalRequiredError extends VaultBrokerError {
   constructor(
-    private readonly endpoint: string,
-    private readonly serviceId: string,
-    private readonly serviceToken: string,
-    private readonly keySource: AgentKeySource,
-  ) {}
+    public readonly operationId: string,
+    public readonly request: Readonly<BrokerExecuteRequest>,
+    message = 'Vault approval is required for this operation',
+  ) {
+    super('approval_required', message, 428);
+    this.name = 'VaultApprovalRequiredError';
+  }
+}
 
-  async useCredential<T>(ctx: ToolExecutionContext, ref: CredentialReference, fn: (secret: Buffer) => Promise<T>): Promise<T> {
-    if (!ctx.agent_id || !ctx.pod_id) {
-      throw new Error('Credential broker requires agent_id and pod_id capability claims');
+function claimsFromContext(ctx: ToolExecutionContext): BrokerClaims {
+  if (!ctx?.sub || !ctx.agent_id || !ctx.pod_id) {
+    throw new VaultBrokerError('invalid_caller_identity', 'Vault broker calls require verified subject, agent_id, and pod_id claims', 401);
+  }
+  return {
+    sub:                    ctx.sub,
+    agent_id:               ctx.agent_id,
+    pod_id:                 ctx.pod_id,
+    org_id:                 ctx.org_id,
+    thread_id:              ctx.thread_id,
+    job_id:                 ctx.job_id,
+    workflow_execution_id: ctx.workflow_execution_id,
+    credential_scope:       ctx.credential_scope,
+  };
+}
+
+function assertEndpoint(endpoint: string): string {
+  const url = new URL(endpoint);
+  const isLocal = ['127.0.0.1', 'localhost', '::1', 'sulla_vault'].includes(url.hostname);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLocal)) {
+    throw new Error('Vault broker endpoint must use HTTPS or an approved local service address');
+  }
+  return url.toString().replace(/\/$/, '');
+}
+
+async function errorBody(response: Response): Promise<LocalVaultErrorResponse> {
+  return response.json().catch(() => ({
+    error:   'vault_unavailable',
+    message: `Vault broker request failed (${ response.status })`,
+  })) as Promise<LocalVaultErrorResponse>;
+}
+
+export class LocalVaultBrokerClient {
+  private readonly endpoint: string;
+
+  constructor(endpoint: string, private readonly serviceId: string, private readonly serviceToken: string) {
+    this.endpoint = assertEndpoint(endpoint);
+    if (!serviceId || !serviceToken) throw new Error('Vault broker service identity is not configured');
+  }
+
+  requestFor(ctx: ToolExecutionContext, request: Omit<BrokerExecuteRequest, 'claims'>): BrokerExecuteRequest {
+    return { ...request, claims: claimsFromContext(ctx) };
+  }
+
+  async execute(request: BrokerExecuteRequest, signal?: AbortSignal): Promise<BrokerExecuteResponse> {
+    const response = await this.send('/v1/broker/execute', request, signal);
+    if (!response.ok) await this.throwResponse(response, request);
+    return response.json() as Promise<BrokerExecuteResponse>;
+  }
+
+  async executeStream(request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> {
+    const streamRequest = { ...request, responseType: request.responseType ?? 'stream' } as BrokerExecuteRequest;
+    const response = await this.send('/v1/broker/execute-stream', streamRequest, signal);
+    // Upstream provider errors are legitimate streamed responses. The vault
+    // marks its own pre-header denials so callers can distinguish them without
+    // consuming or buffering a provider response body.
+    if (!response.ok && response.headers.get('x-sulla-vault-error')) {
+      await this.throwResponse(response, streamRequest);
     }
-    const response = await fetch(`${ this.endpoint.replace(/\/$/, '') }/v1/broker/credential`, {
+    return response;
+  }
+
+  private async send(path: string, request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> {
+    if (!request.claims?.sub || !request.claims.agent_id || !request.claims.pod_id) {
+      throw new VaultBrokerError('invalid_caller_identity', 'Vault broker request has incomplete caller claims', 401);
+    }
+    return fetch(`${ this.endpoint }${ path }`, {
       method:  'POST',
       headers: {
         authorization:        `Bearer ${ this.serviceToken }`,
         'content-type':       'application/json',
         'x-sulla-service-id': this.serviceId,
       },
-      body: JSON.stringify({ claims: ctx, ref }),
+      body: JSON.stringify(request),
+      signal,
     });
-    const body = await response.json().catch(() => ({})) as BrokerEnvelope & { policyDecision?: { reason?: string } };
-    if (!response.ok) {
-      throw new Error(body.policyDecision?.reason ?? `Credential broker denied request (${ response.status })`);
-    }
+  }
 
-    const keyPair = await this.keySource.load();
-    let itemKey: Uint8Array | undefined;
-    let plaintext: Uint8Array | undefined;
-    let secret: Buffer | undefined;
-    try {
-      itemKey = await unwrapItemKeyForAgent(body.agent_wrapped_item_key, keyPair.publicKey, keyPair.privateKey);
-      plaintext = await decryptWithKey(
-        body.ciphertext,
-        itemKey,
-        itemAssociatedData('ciphertext', { itemId: body.policyDecision.itemId, ownerId: body.policyDecision.contextOwnerId }),
-      );
-      const item = JSON.parse(Buffer.from(plaintext).toString('utf8')) as VaultItemPlaintext;
-      const value = credentialField(item, ref);
-      if (typeof value !== 'string') throw new Error(`Credential field ${ ref.field ?? 'password' } is unavailable`);
-      secret = Buffer.from(value, 'utf8');
-      const result = await fn(secret);
-      if (result === secret || (typeof result === 'string' && result === value)) {
-        throw new Error('Credential callback attempted to return secret material');
-      }
-      return result;
-    } finally {
-      secret?.fill(0);
-      plaintext?.fill(0);
-      itemKey?.fill(0);
-      keyPair.privateKey.fill(0);
+  private async throwResponse(response: Response, request: BrokerExecuteRequest): Promise<never> {
+    const body = await errorBody(response);
+    if (response.status === 428 && body.error === 'approval_required' && body.operationId) {
+      throw new VaultApprovalRequiredError(body.operationId, Object.freeze(structuredClone(request)), body.message);
     }
+    throw new VaultBrokerError(body.error, body.message, response.status);
   }
 }
 
-let configuredBroker: CredentialBroker | null | undefined;
+/** Construct only in the trusted Desktop approval path, never in tools/providers. */
+export class LocalVaultApprovalClient {
+  private readonly endpoint: string;
 
-export function getConfiguredCredentialBroker(): CredentialBroker | null {
+  constructor(endpoint: string, private readonly serviceId: string, private readonly serviceToken: string) {
+    this.endpoint = assertEndpoint(endpoint);
+    if (!serviceId || !serviceToken) throw new Error('Vault approval service identity is not configured');
+  }
+
+  async approve(operationId: string): Promise<BrokerApprovalResponse> {
+    const response = await fetch(`${ this.endpoint }/v1/broker/approve`, {
+      method:  'POST',
+      headers: {
+        authorization:        `Bearer ${ this.serviceToken }`,
+        'content-type':       'application/json',
+        'x-sulla-service-id': this.serviceId,
+      },
+      body: JSON.stringify({ operationId }),
+    });
+    if (!response.ok) {
+      const body = await errorBody(response);
+      throw new VaultBrokerError(body.error, body.message, response.status);
+    }
+    return response.json() as Promise<BrokerApprovalResponse>;
+  }
+}
+
+let configuredBroker: LocalVaultBrokerClient | null | undefined;
+
+export function getConfiguredCredentialBroker(): LocalVaultBrokerClient | null {
   if (configuredBroker !== undefined) return configuredBroker;
-  const endpoint = process.env.SULLA_VAULT_BROKER_URL;
-  const token = process.env.SULLA_VAULT_BROKER_TOKEN ?? process.env.SULLA_API_TOKEN;
-  const keyFile = process.env.SULLA_AGENT_KEY_FILE;
-  configuredBroker = endpoint && token && keyFile
-    ? new VaultCredentialBroker(endpoint, process.env.SULLA_VAULT_BROKER_SERVICE_ID ?? 'sulla-tools', token, new FileAgentKeySource(keyFile))
+  const token = process.env.SULLA_VAULT_BROKER_TOKEN;
+  const serviceId = process.env.SULLA_VAULT_BROKER_SERVICE_ID;
+  configuredBroker = token && serviceId
+    ? new LocalVaultBrokerClient(process.env.SULLA_VAULT_BROKER_URL ?? DEFAULT_VAULT_ENDPOINT, serviceId, token)
     : null;
   return configuredBroker;
+}
+
+export function requireConfiguredCredentialBroker(): LocalVaultBrokerClient {
+  const broker = getConfiguredCredentialBroker();
+  if (!broker) throw new VaultBrokerError('vault_unavailable', 'Vault broker service identity is not configured', 503);
+  return broker;
 }
