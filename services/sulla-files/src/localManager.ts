@@ -1,7 +1,7 @@
 import { isProtectedPath } from './protectedFiles.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, readdir, rename, stat } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rename, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 
 import { issueCapabilityToken } from './auth.js';
@@ -46,6 +46,15 @@ function collectionIdFor(userId:string):string {
   return `${ value.slice(0, 8).join('') }-${ value.slice(8, 12).join('') }-${ value.slice(12, 16).join('') }-${ value.slice(16, 20).join('') }-${ value.slice(20).join('') }`;
 }
 
+/** Resolve symlinks before allowing plaintext watched files beside private storage. */
+export async function assertSeparateStorageRoots(filesRoot:string, dataRoot:string, chunkRoot:string):Promise<void> {
+  const [files, data, chunks] = await Promise.all([realpath(filesRoot), realpath(dataRoot), realpath(chunkRoot)]);
+  const contains = (parent:string, child:string) => child === parent || child.startsWith(parent.endsWith(sep) ? parent : `${ parent }${ sep }`);
+  for (const privateRoot of [data, chunks]) {
+    if (contains(files, privateRoot) || contains(privateRoot, files)) throw new Error('Files watched folder must not overlap private data or chunk storage');
+  }
+}
+
 export class LocalFilesManager {
   private readonly store: Store;
   private collectionId?:  string;
@@ -68,6 +77,8 @@ export class LocalFilesManager {
     if (!this.config.filesRoot) return;
     await mkdir(this.config.filesRoot, { recursive: true, mode: 0o700 });
     await mkdir(this.config.dataRoot, { recursive: true, mode: 0o700 });
+    await mkdir(this.config.chunkRoot, { recursive: true, mode: 0o700 });
+    await assertSeparateStorageRoots(this.config.filesRoot, this.config.dataRoot, this.config.chunkRoot);
     this.collectionId = await this.ensureCollection();
     const saved = await this.db.query('SELECT paused,last_error,last_scan_at,last_sync_at FROM files_runtime_state WHERE id=TRUE');
     if (saved.rows[0]) { this.paused ||= saved.rows[0].paused; this.lastError = saved.rows[0].last_error; this.lastScanAt = saved.rows[0].last_scan_at?.toISOString?.(); this.lastSyncAt = saved.rows[0].last_sync_at?.toISOString?.() }

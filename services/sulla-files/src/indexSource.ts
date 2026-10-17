@@ -9,7 +9,7 @@ import { Store } from './store.js';
 import type { Config } from './config.js';
 import type pg from 'pg';
 
-export function desktopIndexSource(filesRoot:string) { return (file:any) => { if (isProtectedPath(file.path)) throw protectedPathError(); return Promise.resolve({ path: join(filesRoot, file.path) }); } }
+export function desktopIndexSource(filesRoot:string, db?:pg.Pool) { return async(file:any) => { if (isProtectedPath(file.path)) throw protectedPathError(); if (db) await assertUnprotectedFile(db, file); return { path: join(filesRoot, file.path) }; } }
 
 export function storedIndexSource(db:pg.Pool, config:Config) {
   const store = new Store(config.chunkRoot); const tempRoot = join(config.dataRoot, 'index-tmp');

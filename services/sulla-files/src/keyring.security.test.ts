@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
 import test from 'node:test';
+import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { assertSeparateStorageRoots } from './localManager.js';
 
 import { createApp } from './app.js';
 import { issueCapabilityToken } from './auth.js';
@@ -105,4 +110,18 @@ test('malformed bootstrap never reflects secrets and failed shutdown still scrub
     assert.equal(keyring.unlocked, false);
     assert.equal((await (await fetch(`${ base }/healthz`)).json()).locked, true);
   } finally { keyring.close(); await new Promise<void>(resolve => server.close(() => resolve())) }
+});
+
+
+test('watched folder cannot overlap private storage through paths or symlinks', async() => {
+  const root = await mkdtemp(join(tmpdir(), 'sulla-storage-boundary-'));
+  const files = join(root, 'Files'); const data = join(root, 'private'); const chunks = join(data, 'chunks');
+  try {
+    await mkdir(files); await mkdir(chunks, { recursive: true });
+    await assertSeparateStorageRoots(files, data, chunks);
+    await assert.rejects(assertSeparateStorageRoots(root, data, chunks), /must not overlap/);
+    await assert.rejects(assertSeparateStorageRoots(chunks, data, chunks), /must not overlap/);
+    await symlink(data, join(root, 'alias'));
+    await assert.rejects(assertSeparateStorageRoots(join(root, 'alias'), data, chunks), /must not overlap/);
+  } finally { await rm(root, { recursive: true }) }
 });

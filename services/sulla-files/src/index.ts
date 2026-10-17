@@ -17,7 +17,7 @@ const db = await connect(config.databaseUrl); await migrate(db);
 config.keyring = config.mode === 'desktop' ? new FilesKeyring(db) : new LegacyServerKeyring(db, config.capabilitySigningKey);
 const identityDb = await connectOptional(config.vaultDatabaseUrl);
 const embedder = PotionEmbedder.load(config.modelDir);
-const indexer = new IndexingQueue(db, config.mode === 'desktop' && config.filesRoot ? desktopIndexSource(config.filesRoot) : storedIndexSource(db, config), embedder);
+const indexer = new IndexingQueue(db, config.mode === 'desktop' && config.filesRoot ? desktopIndexSource(config.filesRoot, db) : storedIndexSource(db, config), embedder);
 const manager = config.mode === 'desktop' ? new LocalFilesManager(db, config, indexer) : undefined;
 const enrichment = config.mode === 'desktop' && config.filesRoot ? new RecordingEnrichmentQueue(db, config.filesRoot) : undefined;
 const search = new FileSearch(db, embedder);
