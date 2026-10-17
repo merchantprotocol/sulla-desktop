@@ -325,6 +325,9 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
       const address = server.address();
       assert.ok(address && typeof address === 'object');
       const base = `http://127.0.0.1:${ address.port }`;
+      const vaultPage = await fetch(`${ base }/vault/`, { redirect: 'manual' });
+      assert.equal(vaultPage.status, 200);
+      assert.match(vaultPage.headers.get('content-security-policy') ?? '', /default-src 'none'/);
       for (const legacyPath of ['/v1/session', '/v1/broker/credential', '/v1/desktop/bootstrap']) {
         const response = await fetch(`${ base }${ legacyPath }`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
         assert.equal(response.status, 404, legacyPath);

@@ -366,7 +366,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       localAuthority.closeRelay(requiredString(request.params.relayId, 'relayId'), identity.serviceId, identity.token);
       response.status(204).end();
     });
-    app.get('/vault', (_request, response) => response.redirect(308, '/vault/'));
+    app.get(/^\/vault$/, (_request, response) => response.redirect(308, '/vault/'));
     app.use('/vault', (_request, response, next) => {
       response.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors app: rancher-desktop:");
       response.setHeader('Referrer-Policy', 'no-referrer');
