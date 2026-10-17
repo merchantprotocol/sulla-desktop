@@ -809,7 +809,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   ipcMainProxy.handle('vault:view-open', async(
     event: Electron.IpcMainInvokeEvent,
     bounds: Electron.Rectangle,
-    hint?: { integrationId?: string; accountId?: string },
+    hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string },
   ) => {
     const mainWindow = window.getWindow('main-agent');
     if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted vault view caller');
@@ -822,6 +822,15 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const accountId = safeMetadata(hint?.accountId);
     if (integrationId) target.searchParams.set('integration', integrationId);
     if (accountId) target.searchParams.set('account', accountId);
+    if (hint?.surface === 'popup') {
+      target.pathname = '/vault/popup.html';
+      try {
+        const site = new URL(hint.siteUrl || '');
+        if (site.protocol === 'http:' || site.protocol === 'https:') {
+          target.searchParams.set('site', site.hostname);
+        }
+      } catch { /* about:blank and malformed page URLs intentionally omit site context */ }
+    }
     await vaultViewManager.show(target.toString(), bounds);
     if (!vaultStatusPoll) vaultStatusPoll = setInterval(() => {
       if (vaultStatusRunning) return;
