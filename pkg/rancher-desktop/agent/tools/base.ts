@@ -12,7 +12,7 @@ export interface ToolMetadata extends Record<string, unknown> {
   operationTypes?:   ToolOperation[];
 }
 
-type FieldType = 'string' | 'number' | 'boolean' | 'enum' | 'array' | 'object';
+type FieldType = 'string' | 'number' | 'boolean' | 'enum' | 'array' | 'object' | 'any';
 
 export interface FieldSchema {
   type:         FieldType;
@@ -94,11 +94,12 @@ export abstract class BaseTool<TState = any> {
         if (typeof value !== 'string') errors.push(`Invalid type for ${ key }: expected string`);
         result[key] = String(value);
         break;
-      case 'number':
+      case 'number': {
         const num = Number(value);
         if (isNaN(num)) errors.push(`Invalid number for ${ key }`);
         result[key] = num;
         break;
+      }
       case 'boolean':
         result[key] = !!value;
         break;
@@ -151,6 +152,9 @@ export abstract class BaseTool<TState = any> {
           result[key] = parsedObject;
         }
         break;
+      case 'any':
+        result[key] = value;
+        break;
       }
     }
 
@@ -186,6 +190,7 @@ export abstract class BaseTool<TState = any> {
           );
         }
         break;
+      case 'any': break;
       }
 
       if (spec.default !== undefined) field.default = spec.default;
@@ -202,7 +207,7 @@ export abstract class BaseTool<TState = any> {
   }
 
   private fieldToJsonSchema(spec: FieldSchema): any {
-    const field: any = { type: spec.type === 'enum' ? 'string' : spec.type };
+    const field: any = spec.type === 'any' ? {} : { type: spec.type === 'enum' ? 'string' : spec.type };
     if (spec.enum) field.enum = spec.enum;
     if (spec.description) field.description = spec.description;
     if (spec.type === 'array' && spec.items) field.items = this.fieldToJsonSchema(spec.items);

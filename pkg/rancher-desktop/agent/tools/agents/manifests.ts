@@ -51,7 +51,7 @@ export const agentToolManifests: ToolManifest[] = [
     schemaDef:   {
       status:  { type: 'enum', enum: ['completed', 'blocked', 'failed'], optional: true, description: 'Default contract: how it went. Defaults to completed.' },
       summary: { type: 'string', optional: true, description: 'Default contract: one-paragraph summary (required there). With a custom schema: optional human-readable note.' },
-      output:  { type: 'string', optional: true, description: 'Default contract: the deliverable (text, links, findings). May also be sent inside result.' },
+      output:  { type: 'any', optional: true, description: 'Default contract: the deliverable in any JSON shape (text, links, findings, or structured data). May also be sent inside result.' },
       result:  { type: 'object', optional: true, description: 'Custom-schema contracts: the structured value matching the schema exactly.' },
       jobId:   { type: 'string', optional: true, description: 'Job/contract id from your brief. Optional; your thread identifies the job.' },
     },

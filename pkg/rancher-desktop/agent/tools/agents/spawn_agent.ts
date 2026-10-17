@@ -523,7 +523,7 @@ export class SpawnAgentWorker extends BaseTool {
             throw new Error(`Agent ${ selector ?? label } uses run_location=container but provider ${ provider || '(unset)' } is not a CLI worker`);
           }
           if (!activityJobId) throw new Error('Container agents require a durable job identity');
-          const persistenceNotice = '\n\n[Container workspace] Your checkout lives only inside this container. Pushed work is saved; unpushed work is lost when the job ends.';
+          const persistenceNotice = `\n\n[Container workspace] Work in the job workspace shown by pwd. It is a bounded host-backed directory that survives container exit; do not write outside it. The container itself is always removed when the job ends.`;
           const promptMessage = subState.messages[subState.messages.length - 1];
           const prompt = `${ typeof promptMessage?.content === 'string' ? promptMessage.content : task.prompt }${ persistenceNotice }`;
           const instructions = [

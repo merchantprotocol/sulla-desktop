@@ -8,7 +8,9 @@ for secret_name in SULLA_API_TOKEN SULLA_TOOL_SESSION SULLA_AGENT_INSTRUCTIONS_B
   secret_file="$secret_dir/$secret_name"
   if [ -f "$secret_file" ]; then
     secret_value=$(cat "$secret_file")
-    rm -f "$secret_file"
+    # Capability/session leases stay mounted so the wrapper can pick up
+    # atomic renewals. One-shot provider credentials are removed immediately.
+    case "$secret_name" in SULLA_API_TOKEN|SULLA_TOOL_SESSION) ;; *) rm -f "$secret_file" ;; esac
     export "$secret_name=$secret_value"
     unset secret_value
   fi
@@ -27,36 +29,4 @@ if [ -n "${SULLA_AGENT_INSTRUCTIONS_B64:-}" ]; then
   unset SULLA_AGENT_INSTRUCTIONS_B64
 fi
 
-case "${SULLA_AGENT_PROVIDER:-}" in
-  codex)
-    if [ -n "${SULLA_AGENT_MODEL:-}" ]; then
-      set -- codex exec -c shell_environment_policy.inherit=all \
-        --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --json \
-        -c 'features.multi_agent=false' -c 'features.multi_agent_v2=false' \
-        -c 'model_instructions_file="/tmp/sulla-agent-instructions.md"' \
-        --model "$SULLA_AGENT_MODEL" -
-    else
-      set -- codex exec -c shell_environment_policy.inherit=all \
-        --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --json \
-        -c 'features.multi_agent=false' -c 'features.multi_agent_v2=false' \
-        -c 'model_instructions_file="/tmp/sulla-agent-instructions.md"' -
-    fi
-    ;;
-  claude-code)
-    if [ -n "${SULLA_AGENT_MODEL:-}" ]; then
-      set -- claude -p --output-format stream-json --verbose --include-partial-messages \
-        --dangerously-skip-permissions --input-format stream-json \
-        --append-system-prompt-file /tmp/sulla-agent-instructions.md --model "$SULLA_AGENT_MODEL"
-    else
-      set -- claude -p --output-format stream-json --verbose --include-partial-messages \
-        --dangerously-skip-permissions --input-format stream-json \
-        --append-system-prompt-file /tmp/sulla-agent-instructions.md
-    fi
-    ;;
-  *)
-    echo "Unsupported SULLA_AGENT_PROVIDER=${SULLA_AGENT_PROVIDER:-}" >&2
-    exit 64
-    ;;
-esac
-
-exec "$@"
+exec node /usr/local/libexec/sulla-agent-supervisor.mjs

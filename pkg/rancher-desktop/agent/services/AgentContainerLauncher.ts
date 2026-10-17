@@ -1,6 +1,7 @@
 import * as childProcess from 'node:child_process';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs';
+import os from 'node:os';
 import * as path from 'node:path';
 
 import Electron from 'electron';
@@ -8,10 +9,14 @@ import Electron from 'electron';
 import { redisClient } from '../database/RedisClient';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { ensureCodexAuthFile, codexAuthPath } from '../util/codexAuthFile';
+import { onSteer, steerText } from '../utils/steerChannel';
+import { RunActivity } from './RunActivity';
 
 import { resolveSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
+import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { getCurrentUserId } from '@pkg/main/sullaCloudAuth';
 import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/containerRuntime';
 import Logging from '@pkg/utils/logging';
@@ -23,6 +28,10 @@ const log = Logging.background;
 const IDLE_MS = 30 * 60_000;
 const MEMORY = process.env.SULLA_AGENT_MEMORY ?? '4g';
 const CPUS = process.env.SULLA_AGENT_CPUS ?? '2';
+const LEASE_MS = 15 * 60_000;
+const RENEW_MS = 5 * 60_000;
+const CONTAINER_UID = typeof process.getuid === 'function' ? process.getuid() : 10_001;
+const CONTAINER_GID = typeof process.getgid === 'function' ? process.getgid() : 10_001;
 
 export interface AgentContainerRun {
   jobId:        string;
@@ -75,8 +84,10 @@ class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
     if (spec.envFile) args.push('--env-file', spec.envFile);
     for (const [key, value] of Object.entries(spec.env ?? {})) args.push('--env', `${ key }=${ value }`);
     for (const bind of spec.binds ?? []) args.push('--volume', bind);
+    for (const [target, options] of Object.entries(spec.tmpfs ?? {})) args.push('--tmpfs', `${ target }:${ options }`);
     if (spec.network) args.push('--network', spec.network);
     if (spec.workingDir) args.push('--workdir', spec.workingDir);
+    if (spec.user) args.push('--user', spec.user);
     args.push(spec.image, ...(spec.command ?? []));
     return (await limactl(args)).stdout.trim();
   }
@@ -153,7 +164,7 @@ async function containerEnvironment(run: AgentContainerRun, token: string, sessi
   secrets: Record<string, string>;
 }> {
   const env: Record<string, string> = {
-    SULLA_HOST:                   'host.lima.internal',
+    SULLA_HOST:                   'sulla_tools',
     SULLA_TOOL_API_URL:           toolApiUrl,
     SULLA_AGENT_PROVIDER:         run.provider,
     SULLA_AGENT_MODEL:            run.model ?? '',
@@ -177,12 +188,12 @@ async function containerEnvironment(run: AgentContainerRun, token: string, sessi
 
 async function provisionContainerSecrets(containerName: string, secrets: Record<string, string>): Promise<string> {
   const secretDir = `/dev/shm/sulla-agent-secrets/${ containerName }`;
-  await limactl(['sh', '-c', 'sudo install -d -m 0700 -o 10001 -g 10001 "$1"', 'sh', secretDir]);
+  await limactl(['sh', '-c', 'sudo install -d -m 0700 -o "$2" -g "$3" "$1"', 'sh', secretDir, String(CONTAINER_UID), String(CONTAINER_GID)]);
   for (const [key, value] of Object.entries(secrets)) {
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`Invalid container secret name ${ key }`);
     const target = `${ secretDir }/${ key }`;
     await limactl(
-      ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown 10001:10001 "$1"; sudo chmod 0400 "$1"', 'sh', target],
+      ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown "$2:$3" "$1"; sudo chmod 0400 "$1"', 'sh', target, String(CONTAINER_UID), String(CONTAINER_GID)],
       Buffer.from(value).toString('base64'),
     );
   }
@@ -194,6 +205,45 @@ async function removeContainerSecrets(secretDir: string): Promise<void> {
   await limactl(['sh', '-c', 'sudo find "$1" -maxdepth 1 -type f -delete; sudo rmdir "$1" 2>/dev/null || true', 'sh', secretDir]).catch(() => {});
 }
 
+async function replaceContainerSecret(secretDir: string, name: string, value: string): Promise<void> {
+  if (!secretDir.startsWith('/dev/shm/sulla-agent-secrets/')) throw new Error('Refusing to update an unexpected secret path');
+  if (!/^[A-Z][A-Z0-9_]*$/.test(name)) throw new Error(`Invalid container secret name ${ name }`);
+  const target = `${ secretDir }/${ name }`;
+  await limactl(
+    ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1.next" >/dev/null; sudo chown "$2:$3" "$1.next"; sudo chmod 0400 "$1.next"; sudo mv "$1.next" "$1"', 'sh', target, String(CONTAINER_UID), String(CONTAINER_GID)],
+    Buffer.from(value).toString('base64'),
+  );
+}
+
+/**
+ * A coding brief may name one existing isolated worktree. Mount only that
+ * checkout and its Git metadata; never expose the repository root or home.
+ */
+function authorizedCheckout(prompt: string): { workingDir?: string; binds: string[] } {
+  const worktreeRoot = path.join(os.homedir(), 'Sites', 'worktrees') + path.sep;
+  const candidates = prompt.match(/\/Users\/[^\s`"'<>]+\/Sites\/worktrees\/[^\s`"'<>.,;:]+/g) ?? [];
+  for (const candidate of candidates) {
+    try {
+      const resolved = fs.realpathSync(candidate);
+      if (!resolved.startsWith(worktreeRoot) || !fs.statSync(resolved).isDirectory()) continue;
+      const binds = [`${ resolved }:${ resolved }:rw`];
+      const dotGit = path.join(resolved, '.git');
+      if (fs.statSync(dotGit).isFile()) {
+        const match = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotGit, 'utf8'));
+        if (match) {
+          const gitDir = path.resolve(resolved, match[1].trim());
+          const marker = `${ path.sep }worktrees${ path.sep }`;
+          const markerIndex = gitDir.lastIndexOf(marker);
+          const commonGitDir = markerIndex > 0 ? gitDir.slice(0, markerIndex) : gitDir;
+          if (fs.statSync(commonGitDir).isDirectory()) binds.push(`${ commonGitDir }:${ commonGitDir }:rw`);
+        }
+      }
+      return { workingDir: resolved, binds };
+    } catch { /* Candidate does not exist or is not a worktree. */ }
+  }
+  return { binds: [] };
+}
+
 export async function runAgentContainer(run: AgentContainerRun): Promise<AgentContainerResult> {
   const image = await ensureAgentImage();
   const runtime = new LimaDockerRuntimeDriver();
@@ -201,34 +251,38 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   let secretDir: string | undefined;
   const capabilityJti = crypto.randomUUID();
-  const capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil((IDLE_MS + 5 * 60_000) / 1000);
+  let capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
   let containerId: string | undefined;
   try {
     const installationSecret = getChatCompletionsServer().getApiToken();
     if (!installationSecret) throw new Error('Desktop tool API is not initialized');
     const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
+    const deviceId = metadata.deviceId ?? await getDesktopDeviceId();
+    const userId = metadata.userId ?? (await getCurrentUserId() || 'desktop-user');
     const allowed = metadata.allowedToolNames ?? [];
     const scopes = allowed.length === 0 || allowed.includes('exec') ? ['*'] : allowed;
-    const capability = issueCapabilityToken({
-      sub:              metadata.userId ?? 'desktop-user',
+    const issueLease = () => issueCapabilityToken({
+      sub:              userId,
       org_id:           metadata.orgId,
       agent_id:         metadata.agentId,
       pod_id:           containerName,
       thread_id:        metadata.threadId,
       job_id:           run.jobId,
-      device_id:        metadata.deviceId,
+      device_id:        deviceId,
       scopes,
       jti:              capabilityJti,
-      expiresInSeconds: Math.ceil((IDLE_MS + 5 * 60_000) / 1000),
+      expiresInSeconds: Math.ceil(LEASE_MS / 1000),
     }, deriveCapabilitySigningKey(installationSecret));
-    const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(300) })
+    const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
       .then(response => response.ok).catch(() => false);
+    if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
     const configuration = await containerEnvironment(
-      run, capability, session.id,
-      toolsServiceHealthy ? 'http://sulla_tools:3000' : 'http://host.lima.internal:3000',
+      run, issueLease(), session.id, 'http://sulla_tools:3000',
     );
-    const desktopHostIp = (await limactl(['sh', '-c', "getent hosts host.lima.internal | awk 'NR==1 {print $1}'"])).stdout.trim();
-    if (!desktopHostIp) throw new Error('Could not resolve Desktop host from the Lima VM');
+    const workspacePath = path.join(os.homedir(), 'sulla', 'workspaces', 'agents', `${ safeName(run.jobId) }-${ run.taskIndex }`);
+    await fs.promises.mkdir(workspacePath, { recursive: true, mode: 0o700 });
+    await fs.promises.chmod(workspacePath, 0o700);
+    const checkout = authorizedCheckout(run.prompt);
     secretDir = await provisionContainerSecrets(containerName, configuration.secrets);
     containerId = await runtime.create({
       name:   containerName,
@@ -237,13 +291,17 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         'com.sulla.workload':   'agent',
         'com.sulla.job-id':     run.jobId,
         'com.sulla.task-index': String(run.taskIndex),
+        'com.sulla.capability-jti': capabilityJti,
+        'com.sulla.capability-exp': String(capabilityExpiresAt),
       },
       autoRemove:  true,
       stdinOpen:   true,
       env:         configuration.env,
-      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`],
+      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`, `${ workspacePath }:${ workspacePath }:rw`, ...checkout.binds],
       network:     'sulla_default',
-      extraHosts:  [`host.lima.internal:${ desktopHostIp }`],
+      workingDir:  checkout.workingDir ?? workspacePath,
+      user:        `${ CONTAINER_UID }:${ CONTAINER_GID }`,
+      tmpfs:       { '/home/sulla': `rw,uid=${ CONTAINER_UID },gid=${ CONTAINER_GID },mode=0700` },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
     });
@@ -260,6 +318,24 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       let output = '';
       let settled = false;
       let idleTimer: ReturnType<typeof setTimeout>;
+      const unsubscribeSteer = onSteer(run.state, message => {
+        const text = steerText(message).trim();
+        if (!text || settled || proc.stdin.destroyed || proc.stdin.writableEnded) return false;
+        try {
+          proc.stdin.write(`${ JSON.stringify({ type: 'steer', message: text }) }\n`);
+          RunActivity.touch(run.state.metadata);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      const renewTimer = setInterval(() => {
+        capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
+        getMCPServerHost().rebindSession(session.id, run.state, LEASE_MS);
+        if (secretDir) replaceContainerSecret(secretDir, 'SULLA_API_TOKEN', issueLease()).catch(error => {
+          log.warn(`[AgentContainer] capability renewal failed for ${ containerName }: ${ (error as Error).message }`);
+        });
+      }, RENEW_MS);
       const resetIdle = () => {
         clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
@@ -272,6 +348,8 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         if (settled) return;
         settled = true;
         clearTimeout(idleTimer);
+        clearInterval(renewTimer);
+        unsubscribeSteer();
         session.revoke();
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
         if (secretDir) await removeContainerSecrets(secretDir);
@@ -280,6 +358,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       };
       const onData = (chunk: Buffer) => {
         resetIdle();
+        RunActivity.touch(run.state.metadata);
         output += chunk.toString('utf8');
         if (output.length > 400_000) output = output.slice(-200_000);
       };
@@ -289,14 +368,17 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       proc.once('close', code => { finish(code === 0 ? undefined : new Error(`Agent container exited ${ code }: ${ output.slice(-4_000) }`)).catch(reject) });
       if (run.signal) {
         run.signal.addEventListener('abort', () => {
-          runtime.remove(containerName).catch(() => {});
+          proc.stdin.write(`${ JSON.stringify({ type: 'cancel' }) }\n`);
+          const forceTimer = setTimeout(() => {
+            void runtime.remove(containerName).catch(error => {
+              log.warn(`[AgentContainer] abort cleanup failed for ${ containerName }: ${ (error as Error).message }`);
+            });
+          }, 6_000);
+          forceTimer.unref();
         }, { once: true });
       }
       resetIdle();
-      const prompt = run.provider === 'claude-code'
-        ? `${ JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: run.prompt }] } }) }\n`
-        : run.prompt;
-      proc.stdin.end(prompt);
+      proc.stdin.write(`${ JSON.stringify({ type: 'start', prompt: run.prompt }) }\n`);
     });
   } catch (error) {
     session.revoke();
@@ -310,7 +392,17 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
 /** Remove agent containers left behind by a Desktop crash/restart. */
 export async function reapOrphanAgentContainers(): Promise<void> {
   try {
-    await limactl(['sh', '-c', 'docker ps -aq --filter label=com.sulla.workload=agent | xargs -r docker rm -f']);
+    const runtime = new LimaDockerRuntimeDriver();
+    const containers = await runtime.list('com.sulla.workload=agent');
+    for (const container of containers) {
+      const details = await runtime.inspect(container.ID ?? container.Id ?? container.Names);
+      const labels = details?.Config?.Labels ?? {};
+      const jti = labels['com.sulla.capability-jti'];
+      const exp = Number(labels['com.sulla.capability-exp'] ?? 0);
+      if (jti) await redisClient.set(`sulla:capability:revoked:${ jti }`, '1', Math.max(Math.ceil(LEASE_MS / 1000), exp - Math.floor(Date.now() / 1000))).catch(() => {});
+      await runtime.remove(details.Id ?? container.ID ?? container.Names);
+    }
+    await limactl(['sh', '-c', 'sudo find /dev/shm/sulla-agent-secrets -mindepth 2 -maxdepth 2 -type f -delete 2>/dev/null || true; sudo find /dev/shm/sulla-agent-secrets -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null || true']);
   } catch (error) {
     // Agent containers are optional and must never prevent Desktop startup.
     log.warn(`[AgentContainer] startup orphan reap skipped: ${ (error as Error).message }`);

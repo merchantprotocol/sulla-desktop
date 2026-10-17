@@ -27,6 +27,24 @@ const desktop: DesktopExecutor = config.relayUrl && config.relayToken
   ? new RelayDesktopExecutor({ relayUrl: config.relayUrl, serviceToken: config.relayToken, deviceId: config.relayDeviceId || undefined })
   : new HttpDesktopExecutor(config.desktopExecutorUrl, config.desktopExecutorToken);
 
+async function executeAgentLocal(ctx: ToolExecutionContext, tool: string, args: unknown, capability: string): Promise<unknown> {
+  const pod = String(ctx.pod_id ?? '');
+  if (!/^sulla-agent-[a-zA-Z0-9_.-]+$/.test(pod)) throw new Error('agent-local tool call is not bound to a valid agent container');
+  const response = await fetch(`http://${ pod }:8789/v1/tools/${ encodeURIComponent(tool) }`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ capability }` },
+    body:    JSON.stringify(args ?? {}),
+    signal:  AbortSignal.timeout(config.requestTimeoutMs),
+  });
+  const result = await response.json().catch(() => ({ success: false, error: { code: 'invalid_response', message: `agent-local executor returned HTTP ${ response.status }` } })) as {
+    success?: boolean;
+    result?:  unknown;
+    error?:   { message?: string };
+  };
+  if (!response.ok || result?.success === false) throw new Error(result?.error?.message ?? String(result?.result ?? `agent-local executor returned HTTP ${ response.status }`));
+  return result.result;
+}
+
 app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
 app.get('/healthz', async(_request, response) => {
@@ -86,8 +104,10 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
         executeCatalogTool(ctx, tool, args),
         new Promise((_resolve, reject) => setTimeout(() => reject(new Error('Tool deadline exceeded')), config.requestTimeoutMs)),
       ])
-      : await desktop.execute(ctx, category, requested, args, { deadlineMs: config.requestTimeoutMs });
-    if (tool.executionTarget !== 'catalog') {
+      : tool.executionTarget === 'agent-local'
+        ? await executeAgentLocal(ctx, tool.name, args, bearer!)
+        : await desktop.execute(ctx, category, requested, args, { deadlineMs: config.requestTimeoutMs });
+    if (tool.executionTarget !== 'catalog' && tool.executionTarget !== 'agent-local') {
       const forwarded = result as Awaited<ReturnType<typeof desktop.execute>>;
       if (!forwarded.success) status = forwarded.error?.code === 'deadline_exceeded' ? 504 : 503;
       return response.status(status).json({ ...forwarded, request_id: requestId });
