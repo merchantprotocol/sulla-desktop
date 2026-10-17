@@ -655,13 +655,72 @@ export class OpenAICompatibleService extends BaseLanguageModel {
    * The /responses API uses 'input' instead of 'messages'.
    */
   protected transformToResponsesAPI(body: any): any {
-    // The Responses API rejects null content — replace with empty string
-    const input = (body.messages as any[]).map((msg: any) => {
-      if (msg.content === null || msg.content === undefined) {
-        return { ...msg, content: '' };
+    const input: any[] = [];
+    const toResponsesContent = (content: any): any => {
+      if (!Array.isArray(content)) return content ?? '';
+
+      return content.map((block: any) => {
+        if (block?.type === 'text') {
+          return { type: 'input_text', text: block.text ?? '' };
+        }
+        if (block?.type === 'image_url') {
+          const image = block.image_url;
+
+          return {
+            type:      'input_image',
+            image_url: typeof image === 'string' ? image : image?.url,
+            ...(typeof image?.detail === 'string' ? { detail: image.detail } : {}),
+          };
+        }
+        return block;
+      });
+    };
+
+    for (const msg of body.messages as any[]) {
+      // Chat Completions represents an assistant turn and its function calls
+      // in one message. Responses expects the text message (when present) and
+      // each call as separate input items.
+      if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
+        const { tool_calls: toolCalls, ...assistantMessage } = msg;
+        const content = toResponsesContent(assistantMessage.content);
+
+        if ((typeof content === 'string' && content.length > 0) ||
+            (Array.isArray(content) && content.length > 0)) {
+          input.push({ ...assistantMessage, content });
+        }
+
+        for (const toolCall of toolCalls) {
+          const fn = toolCall?.function;
+
+          if (!fn || typeof fn.name !== 'string') continue;
+          input.push({
+            type:      'function_call',
+            call_id:   toolCall.id,
+            name:      fn.name,
+            arguments: typeof fn.arguments === 'string'
+              ? fn.arguments
+              : JSON.stringify(fn.arguments ?? {}),
+          });
+        }
+        continue;
       }
-      return msg;
-    });
+
+      // A Chat Completions role:tool message is the output for a preceding
+      // tool call. Responses links that output with call_id instead.
+      if (msg.role === 'tool') {
+        input.push({
+          type:    'function_call_output',
+          call_id: msg.tool_call_id,
+          output:  typeof msg.content === 'string'
+            ? msg.content
+            : JSON.stringify(msg.content ?? ''),
+        });
+        continue;
+      }
+
+      // The Responses API rejects null content — replace with empty string.
+      input.push({ ...msg, content: toResponsesContent(msg.content) });
+    }
 
     const transformed: any = {
       model: body.model,
