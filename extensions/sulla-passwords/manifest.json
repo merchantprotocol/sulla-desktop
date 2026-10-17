@@ -4,7 +4,7 @@
   "description": "End-to-end encrypted Sulla vault passwords.",
   "version": "0.1.0",
   "permissions": ["activeTab", "storage", "tabs", "clipboardWrite"],
-  "host_permissions": ["http://127.0.0.1:30125/*", "http://localhost:30125/*", "https://*/*", "http://*/*"],
+  "host_permissions": ["http://127.0.0.1:30135/*", "http://localhost:30135/*", "https://*/*", "http://*/*"],
   "action": { "default_popup": "popup.html", "default_title": "Sulla Passwords" },
   "background": { "service_worker": "background.js", "type": "module" },
   "content_scripts": [{ "matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "run_at": "document_idle" }],
