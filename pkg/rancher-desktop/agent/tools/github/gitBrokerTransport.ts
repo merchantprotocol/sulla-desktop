@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 import { requireConfiguredCredentialBroker } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
@@ -8,6 +9,28 @@ import { getIntegrationService } from '../../services/IntegrationService';
 import type { ToolExecutionContext } from '../executionContext';
 
 const MAX_GIT_REQUEST_BYTES = 128 * 1024 * 1024;
+const HOP_BY_HOP_HEADERS = new Set([
+  'authorization',
+  'connection',
+  'content-length',
+  'host',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'proxy-connection',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+function brokerHeaders(headers: http.IncomingHttpHeaders | Headers): Record<string, string> {
+  const entries = headers instanceof Headers ? headers.entries() : Object.entries(headers);
+  return Object.fromEntries([...entries].flatMap(([name, value]) => {
+    if (HOP_BY_HOP_HEADERS.has(name.toLowerCase()) || typeof value !== 'string') return [];
+    return [[name, value]];
+  }));
+}
 
 function githubRepositoryPath(remoteUrl: string): string {
   const normalized = remoteUrl.startsWith('git@github.com:')
@@ -57,14 +80,19 @@ export async function withGitHubBrokerRemote<T>(
   const server = http.createServer(async(request, response) => {
     const abort = new AbortController();
     request.once('aborted', () => abort.abort());
+    request.once('close', () => {
+      if (!request.complete) abort.abort();
+    });
+    response.once('close', () => {
+      if (!response.writableEnded) abort.abort();
+    });
     try {
       const incoming = new URL(request.url ?? '/', 'http://127.0.0.1');
       if (!incoming.pathname.startsWith(`${ scopedPath }/`)) {
         response.writeHead(404).end();
         return;
       }
-      const headers = Object.fromEntries(Object.entries(request.headers)
-        .filter(([name, value]) => name.toLowerCase() !== 'authorization' && typeof value === 'string') as [string, string][]);
+      const headers = brokerHeaders(request.headers);
       const body = await readBody(request);
       const brokerRequest = broker.requestFor(ctx, {
         operation:    'github.git',
@@ -77,12 +105,17 @@ export async function withGitHubBrokerRemote<T>(
         responseType: 'binary-stream',
       });
       const upstream = await broker.executeStream(brokerRequest, abort.signal);
-      response.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
-      if (upstream.body) Readable.fromWeb(upstream.body as any).pipe(response);
+      response.writeHead(upstream.status, brokerHeaders(upstream.headers));
+      if (upstream.body) await pipeline(Readable.fromWeb(upstream.body as any), response);
       else response.end();
-    } catch (error) {
+    } catch {
+      abort.abort();
+      if (response.headersSent) {
+        response.destroy();
+        return;
+      }
       if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain' });
-      response.end(error instanceof Error ? error.message : 'github.git broker failed');
+      response.end('github.git broker failed');
     }
   });
 

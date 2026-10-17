@@ -44,10 +44,11 @@ const SESSION_TTL_MS = 30 * 60_000;
 const MAX_QUEUE_EVENTS = 512;
 const MAX_EVENT_BYTES = 512 * 1024;
 const MAX_COMMAND_BYTES = 64 * 1024;
+const MAX_BOOTSTRAP_BYTES = 64 * 1024;
+const BOOTSTRAP_TIMEOUT_MS = 10_000;
 const RECONNECT_MAX_MS = 30_000;
 const SENSITIVE_KEY = /(?:^|_)(?:token|authorization|cookie|password|secret|session_key|session_id|resume_gateway_url|response_url)(?:$|_)/i;
 const SLACK_SOCKET_HOSTS = new Set(['wss-primary.slack.com', 'wss-backup.slack.com']);
-const DISCORD_GATEWAY_HOSTS = new Set(['gateway.discord.gg']);
 
 function jsonBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value));
@@ -80,6 +81,34 @@ function assertProviderWebSocket(value: string, allowedHosts: ReadonlySet<string
     throw new Error('relay_destination_denied');
   }
   return url;
+}
+
+function assertDiscordGateway(value: string): URL {
+  const url = new URL(value);
+  const providerHost = url.hostname === 'gateway.discord.gg' || url.hostname.endsWith('.discord.gg');
+  if (url.protocol !== 'wss:' || !providerHost || url.username || url.password) {
+    throw new Error('relay_destination_denied');
+  }
+  return url;
+}
+
+async function readBoundedJson(response: Response): Promise<Record<string, unknown> | null> {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BOOTSTRAP_BYTES) {
+      await reader.cancel();
+      throw new Error('relay_bootstrap_too_large');
+    }
+    chunks.push(value);
+  }
+  const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
 class RelayEventQueue {
@@ -151,13 +180,17 @@ abstract class BaseRelaySession implements RelaySession {
     readonly relayId: string,
     readonly operation: VaultRelayOperation,
     protected credential: string,
-    abortSignal: AbortSignal,
+    protected readonly authoritySignal: AbortSignal,
   ) {
     this.sensitiveValues.add(credential);
     this.output = new RelayEventQueue(() => this.sensitiveValues);
-    abortSignal.addEventListener('abort', () => this.close('authority_aborted'), { once: true });
     this.expiryTimer = setTimeout(() => this.close('expired'), SESSION_TTL_MS);
     this.expiryTimer.unref?.();
+    if (authoritySignal.aborted) {
+      this.close('authority_aborted');
+      throw new Error('authority_aborted');
+    }
+    authoritySignal.addEventListener('abort', () => this.close('authority_aborted'), { once: true });
   }
 
   events(signal: AbortSignal): AsyncIterable<VaultRelayEvent> {
@@ -219,15 +252,15 @@ abstract class BaseRelaySession implements RelaySession {
   }
 
   protected parse(data: unknown): Record<string, any> | null {
-    try {
-      const byteLength = typeof data === 'string'
-        ? Buffer.byteLength(data)
-        : data instanceof ArrayBuffer
+    const byteLength = typeof data === 'string'
+      ? Buffer.byteLength(data)
+      : data instanceof ArrayBuffer
+        ? data.byteLength
+        : ArrayBuffer.isView(data)
           ? data.byteLength
-          : ArrayBuffer.isView(data)
-            ? data.byteLength
-            : MAX_EVENT_BYTES + 1;
-      if (byteLength > MAX_EVENT_BYTES) throw new Error('relay_frame_too_large');
+          : MAX_EVENT_BYTES + 1;
+    if (byteLength > MAX_EVENT_BYTES) throw new Error('relay_frame_too_large');
+    try {
       const text = typeof data === 'string'
         ? data
         : data instanceof ArrayBuffer
@@ -295,11 +328,13 @@ class SlackRelaySession extends BaseRelaySession {
   protected async reconnect(): Promise<void> {
     if (this.closed) return;
     const response = await fetch('https://slack.com/api/apps.connections.open', {
-      method:  'POST',
-      headers: { authorization: `Bearer ${ this.credential }`, 'content-type': 'application/x-www-form-urlencoded' },
-      body:    '',
+      method:   'POST',
+      headers:  { authorization: `Bearer ${ this.credential }`, 'content-type': 'application/x-www-form-urlencoded' },
+      body:     '',
+      redirect: 'error',
+      signal:   AbortSignal.any([this.authoritySignal, AbortSignal.timeout(BOOTSTRAP_TIMEOUT_MS)]),
     });
-    const body = await response.json().catch(() => null) as { ok?: boolean; url?: string } | null;
+    const body = await readBoundedJson(response).catch(() => null) as { ok?: boolean; url?: string } | null;
     if (!response.ok || !body?.ok || typeof body.url !== 'string') {
       throw new Error('slack_relay_connect_failed');
     }
@@ -326,13 +361,15 @@ class DiscordRelaySession extends BaseRelaySession {
 
   async start(): Promise<void> {
     const response = await fetch('https://discord.com/api/v10/gateway/bot', {
-      headers: { authorization: `Bot ${ this.credential }` },
+      headers:  { authorization: `Bot ${ this.credential }` },
+      redirect: 'error',
+      signal:   AbortSignal.any([this.authoritySignal, AbortSignal.timeout(BOOTSTRAP_TIMEOUT_MS)]),
     });
-    const body = await response.json().catch(() => null) as { url?: string } | null;
+    const body = await readBoundedJson(response).catch(() => null) as { url?: string } | null;
     if (!response.ok || typeof body?.url !== 'string') {
       throw new Error('discord_relay_connect_failed');
     }
-    this.gatewayUrl = assertProviderWebSocket(body.url, DISCORD_GATEWAY_HOSTS).toString();
+    this.gatewayUrl = assertDiscordGateway(body.url).toString();
     await this.reconnect();
   }
 
@@ -414,7 +451,7 @@ class DiscordRelaySession extends BaseRelaySession {
         this.sensitiveValues.add(frame.d.session_id);
       }
       if (typeof frame.d?.resume_gateway_url === 'string') {
-        this.resumeUrl = assertProviderWebSocket(frame.d.resume_gateway_url, DISCORD_GATEWAY_HOSTS).toString();
+        this.resumeUrl = assertDiscordGateway(frame.d.resume_gateway_url).toString();
       }
     }
     this.output.push(`discord.${ frame.t.toLowerCase() }`, frame.d ?? {});

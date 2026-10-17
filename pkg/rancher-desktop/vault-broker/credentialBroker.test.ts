@@ -22,7 +22,9 @@ const verifiedContext: ToolExecutionContext = {
 };
 
 test('rejects an incomplete caller before making a broker request', () => {
-  const client = new LocalVaultBrokerClient('http://127.0.0.1:30135', 'tools', 'synthetic-service-token');
+  const client = new LocalVaultBrokerClient('https://127.0.0.1:30135', {
+    serviceId: 'sulla-tools', serviceToken: 'synthetic-service-token',
+  });
   assert.throws(
     () => client.requestFor({ ...verifiedContext, agent_id: undefined }, {
       operation:  'github.api',
@@ -36,24 +38,21 @@ test('rejects an incomplete caller before making a broker request', () => {
 });
 
 test('forwards destination policy denial without returning secret material', async() => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve(new Response(JSON.stringify({ error: 'destination_denied', message: 'Destination denied' }), {
+  const syntheticFetch = () => Promise.resolve(new Response(JSON.stringify({ error: 'destination_denied', message: 'Destination denied' }), {
     status: 403, headers: { 'content-type': 'application/json' },
   }));
-  try {
-    const client = new LocalVaultBrokerClient('http://127.0.0.1:30135', 'tools', 'synthetic-service-token');
-    const request = client.requestFor(verifiedContext, {
-      operation:  'github.api',
-      ref:        { integrationId: 'github' },
-      url:        'https://127.0.0.1/private',
-      method:     'GET',
-      injections: [{ field: 'token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
-    });
-    await assert.rejects(client.execute(request), (error: unknown) =>
-      error instanceof VaultBrokerError && error.code === 'destination_denied' && !error.message.includes('synthetic-service-token'));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  const client = new LocalVaultBrokerClient('https://127.0.0.1:30135', {
+    serviceId: 'sulla-tools', serviceToken: 'synthetic-service-token',
+  }, syntheticFetch);
+  const request = client.requestFor(verifiedContext, {
+    operation:  'github.api',
+    ref:        { integrationId: 'github' },
+    url:        'https://127.0.0.1/private',
+    method:     'GET',
+    injections: [{ field: 'token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+  });
+  await assert.rejects(client.execute(request), (error: unknown) =>
+    error instanceof VaultBrokerError && error.code === 'destination_denied' && !error.message.includes('synthetic-service-token'));
 });
 
 test('arbitrary secret egress is an explicit unsupported operation', () => {
