@@ -7,6 +7,9 @@ import type {
   BrokerClaims,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
+  BrokerRelayCreateRequest,
+  BrokerRelayCreateResponse,
+  BrokerRelaySendRequest,
   LocalVaultErrorResponse,
 } from '../../../services/sulla-vault/src/contracts';
 
@@ -17,6 +20,9 @@ export type {
   BrokerExecuteRequest,
   BrokerExecuteResponse,
   BrokerInjection,
+  BrokerRelayCreateRequest,
+  BrokerRelayCreateResponse,
+  BrokerRelaySendRequest,
   LocalVaultErrorResponse,
 } from '../../../services/sulla-vault/src/contracts';
 export type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
@@ -171,20 +177,76 @@ export class LocalVaultBrokerClient {
     return response;
   }
 
+  async createRelay(
+    ctx: ToolExecutionContext,
+    operation: BrokerRelayCreateRequest['operation'],
+    ref: BrokerRelayCreateRequest['ref'],
+    signal?: AbortSignal,
+  ): Promise<BrokerRelayCreateResponse> {
+    const request: BrokerRelayCreateRequest = { claims: claimsFromContext(ctx), operation, ref };
+    const response = await fetch(`${ this.endpoint }/v1/broker/relay/session`, {
+      method:  'POST',
+      headers: this.serviceHeaders(true),
+      body:    JSON.stringify(request),
+      signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    return response.json() as Promise<BrokerRelayCreateResponse>;
+  }
+
+  async relayEvents(relayId: string, signal?: AbortSignal): Promise<Response> {
+    const response = await fetch(`${ this.endpoint }/v1/broker/relay/${ encodeURIComponent(relayId) }/events`, {
+      headers: this.serviceHeaders(false),
+      signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    return response;
+  }
+
+  async relaySend(relayId: string, payload: BrokerRelaySendRequest, signal?: AbortSignal): Promise<void> {
+    const response = await fetch(`${ this.endpoint }/v1/broker/relay/${ encodeURIComponent(relayId) }/send`, {
+      method:  'POST',
+      headers: this.serviceHeaders(true),
+      body:    JSON.stringify(payload),
+      signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    await response.body?.cancel();
+  }
+
+  async closeRelay(relayId: string, signal?: AbortSignal): Promise<void> {
+    const response = await fetch(`${ this.endpoint }/v1/broker/relay/${ encodeURIComponent(relayId) }`, {
+      method:  'DELETE',
+      headers: this.serviceHeaders(false),
+      signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    await response.body?.cancel();
+  }
+
   private async send(path: string, request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> {
     if (!request.claims?.sub || !request.claims.agent_id || !request.claims.pod_id) {
       throw new VaultBrokerError('invalid_caller_identity', 'Vault broker request has incomplete caller claims', 401);
     }
     return fetch(`${ this.endpoint }${ path }`, {
       method:  'POST',
-      headers: {
-        authorization:        `Bearer ${ this.serviceToken }`,
-        'content-type':       'application/json',
-        'x-sulla-service-id': this.serviceId,
-      },
+      headers: this.serviceHeaders(true),
       body: JSON.stringify(request),
       signal,
     });
+  }
+
+  private serviceHeaders(json: boolean): Record<string, string> {
+    return {
+      authorization:        `Bearer ${ this.serviceToken }`,
+      'x-sulla-service-id': this.serviceId,
+      ...(json ? { 'content-type': 'application/json' } : {}),
+    };
+  }
+
+  private async throwRelayResponse(response: Response): Promise<never> {
+    const body = await errorBody(response);
+    throw new VaultBrokerError(body.error, body.message, response.status);
   }
 
   private async throwResponse(response: Response, request: BrokerExecuteRequest): Promise<never> {

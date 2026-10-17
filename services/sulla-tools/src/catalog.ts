@@ -45,6 +45,7 @@ const FIXED_INTEGRATION_CATEGORIES: Readonly<Record<string, string>> = {
   github:  'github',
   slack:   'slack',
   discord: 'discord',
+  gdrive:  'google_drive',
 };
 const execFile = promisify(execFileCallback);
 
@@ -92,7 +93,8 @@ export async function scopeToolExecutionContext(
   tool: CatalogTool,
   args: unknown,
 ): Promise<ToolExecutionContext> {
-  const integrationId = FIXED_INTEGRATION_CATEGORIES[tool.category];
+  const integrationId = FIXED_INTEGRATION_CATEGORIES[tool.category] ??
+    (tool.name === 'reconcile_github_pr_mirror' ? 'github' : undefined);
   if (!integrationId) return ctx;
   const { getIntegrationService } = await import('../../../pkg/rancher-desktop/agent/services/IntegrationService.js');
   const accountId = await getIntegrationService().getActiveAccountId(integrationId);

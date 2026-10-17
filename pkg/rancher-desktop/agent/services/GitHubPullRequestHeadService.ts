@@ -1,6 +1,4 @@
-import { Octokit } from '@octokit/rest';
-
-import { getIntegrationService } from './IntegrationService';
+import { createGitHubServiceOctokit } from '../tools/github/octokit';
 
 // Owner/repo limited to GitHub's name characters, so markdown around a
 // reference (e.g. a receipt's `owner/repo#12`) never leaks into the owner.
@@ -90,12 +88,6 @@ export function extractPullRequestReferences(
   return distinctReferences(githubIssue, comments).map(strip);
 }
 
-async function client(): Promise<Octokit> {
-  const token = await getIntegrationService().getIntegrationValue('github', 'token');
-  if (!token) throw new Error('github_token_unavailable');
-  return new Octokit({ auth: token.value });
-}
-
 export async function resolvePullRequestHead(
   githubIssue: string | null,
   comments: { body: string }[],
@@ -103,7 +95,7 @@ export async function resolvePullRequestHead(
   const reference = extractPullRequestReference(githubIssue, comments);
   if (!reference) return null;
 
-  const octokit = await client();
+  const octokit = await createGitHubServiceOctokit('github-pr-head-resolver');
   const { data } = await octokit.pulls.get({
     owner:       reference.owner,
     repo:        reference.repo,
@@ -124,7 +116,7 @@ export async function resolvePullRequestHeads(
 ): Promise<GitHubPullRequestHead[]> {
   const references = distinctReferences(githubIssue, comments);
   if (references.length === 0) return [];
-  const octokit = await client();
+  const octokit = await createGitHubServiceOctokit('github-pr-head-resolver');
   const heads = await Promise.all(references.map(async(reference): Promise<GitHubPullRequestHead | null> => {
     try {
       const { data } = await octokit.pulls.get({
