@@ -195,8 +195,10 @@ export class LocalVaultBrokerClient {
     operation: BrokerRelayCreateRequest['operation'],
     ref: BrokerRelayCreateRequest['ref'],
     signal?: AbortSignal,
+    approvalId?: string,
   ): Promise<BrokerRelayCreateResponse> {
     const request: BrokerRelayCreateRequest = { claims: claimsFromContext(ctx), operation, ref };
+    if (approvalId) (request as BrokerRelayCreateRequest & { approvalId?: string }).approvalId = approvalId;
     const response = await this.transport(`${ this.endpoint }/v1/broker/relay/session`, {
       method:  'POST',
       headers: await this.serviceHeaders(true),
@@ -218,6 +220,10 @@ export class LocalVaultBrokerClient {
 
   async * relayEventStream(relayId: string, signal?: AbortSignal): AsyncIterable<VaultRelayEvent> {
     const response = await this.relayEvents(relayId, signal);
+    if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/x-ndjson')) {
+      await response.body?.cancel();
+      throw new VaultBrokerError('invalid_response', 'Vault relay returned an invalid content type', 502);
+    }
     if (!response.body) throw new VaultBrokerError('vault_unavailable', 'Vault relay returned no event stream', 502);
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
