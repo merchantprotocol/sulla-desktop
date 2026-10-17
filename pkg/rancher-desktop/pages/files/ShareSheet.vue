@@ -35,7 +35,7 @@
           <template v-else-if="link || publicEnabled">
             <div v-if="link" class="url-row"><code>{{ link.url }}</code><button class="button primary" type="button" :disabled="busy || Boolean(link.revokedAt)" @click="copy">{{ copied ? 'Copied' : 'Copy link' }}</button></div>
             <div class="policy-row"><div><b>Visitors can</b><small>Choose view only or allow download</small></div><div class="seg"><button type="button" :class="{ on: mode === 'view' }" @click="mode = 'view'">View</button><button type="button" :class="{ on: mode === 'download' }" @click="mode = 'download'">Download</button></div></div>
-            <div class="policy-row"><div><b>Password</b><small>{{ password ? 'Required to open' : 'Not set' }}</small></div><input v-model="password" class="field" type="password" autocomplete="new-password" placeholder="Optional password"></div>
+            <div class="policy-row"><div><b>Password</b><small>{{ removePassword ? 'Will be removed' : password || link?.password ? 'Required to open' : 'Not set' }}</small></div><button v-if="link?.password && !removePassword && !link.revokedAt" class="text-button" type="button" @click="removePassword = true; password = ''">Remove</button><input v-else v-model="password" class="field" type="password" autocomplete="new-password" :placeholder="link?.revokedAt && link.password ? 'Re-enter to restore' : 'At least 8 characters'"></div>
             <div class="policy-row"><div><b>Expires</b><small>Link stops working after this date</small></div><input v-model="expiresAt" class="field" type="date" :min="tomorrow"></div>
             <div class="policy-row"><div><b>Display my name</b><small>Show who shared this item</small></div><label class="switch"><input v-model="displaySharerName" type="checkbox"><i /></label></div>
             <div class="policy-row keep"><div><b>Keep available when my computer is off</b><small>Store a temporary encrypted copy on Sulla Cloud until the earlier of Keep until, expiry, or revoke.</small></div><label class="switch"><input v-model="keepAvailable" type="checkbox"><i /></label></div>
@@ -64,13 +64,13 @@ import type { FilesDataSource, FolderShare, ShareActivity, ShareLink, SharePrinc
 
 const props = defineProps<{
   dataSource: FilesDataSource;
-  target: { id: string; name: string; folder: boolean; path: string; collectionId: string; orgId?: string; ownerUserId?: string };
+  target: { id: string; name: string; folder: boolean; path: string; collectionId: string; orgId?: string; ownerUserId?: string; assetKind?:'file' | 'capture' | 'artifact' };
 }>();
 const emit = defineEmits<{ close: []; updated: [link?:ShareLink] }>();
 
 const loading = ref(true); const busy = ref(false); const error = ref(''); const copied = ref(false);
 const currentShares = ref<FolderShare[]>([]); const principals = ref<SharePrincipal[]>([]); const principalId = ref(''); const principalRole = ref<'view' | 'edit'>('view');
-const link = ref<ShareLink>(); const publicEnabled = ref(false); const mode = ref<'view' | 'download'>('view'); const password = ref(''); const expiresAt = ref('');
+const link = ref<ShareLink>(); const publicEnabled = ref(false); const mode = ref<'view' | 'download'>('view'); const password = ref(''); const removePassword = ref(false); const expiresAt = ref('');
 const displaySharerName = ref(true); const keepAvailable = ref(false); const keepUntil = ref(''); const showLog = ref(false); const activity = ref<ShareActivity[]>([]); const activityLoading = ref(false);
 const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 const canManageMembers = computed(() => props.target.folder && props.target.orgId && props.dataSource.listMembers && props.dataSource.shareFolder);
@@ -79,7 +79,7 @@ const groupPrincipals = computed(() => principals.value.filter(item => item.type
 const principalKey = (principal:SharePrincipal) => `${ principal.type }:${ principal.id }`;
 
 function dateValue(value?:string) { return value ? new Date(value).toISOString().slice(0, 10) : '' }
-function dateTime(value:string) { return value ? new Date(`${ value }T23:59:59.999Z`).toISOString() : undefined }
+function dateTime(value:string) { return value ? new Date(`${ value }T23:59:59.999Z`).toISOString() : null }
 function applyLink(value:ShareLink) { link.value = value; publicEnabled.value = !value.revokedAt; mode.value = value.mode; expiresAt.value = dateValue(value.expiresAt); displaySharerName.value = value.displaySharerName; keepAvailable.value = value.keepAvailable; keepUntil.value = dateValue(value.keepUntil) }
 function initials(value:string) { return value.split(/[@\s._-]+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '?' }
 function relative(value:string) { const difference = Date.now() - Date.parse(value); const minutes = Math.floor(difference / 60_000); if (minutes < 1) return 'just now'; if (minutes < 60) return `${ minutes }m ago`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${ hours }h ago`; return new Date(value).toLocaleDateString() }
@@ -88,7 +88,7 @@ async function load() {
   loading.value = true; error.value = '';
   try {
     if (!props.target.folder && props.dataSource.listPublicLinks) {
-      const links = await props.dataSource.listPublicLinks(); const existing = links.find(item => item.source === props.target.id || item.id === props.target.id || item.name === props.target.name);
+      const links = await props.dataSource.listPublicLinks(); const existing = links.find(item => item.targetId === props.target.id || item.name === props.target.name);
       if (existing) applyLink(existing);
     }
     if (canManageMembers.value) {
@@ -112,15 +112,15 @@ async function addPrincipal() {
 }
 async function changeRole(share:FolderShare, role:'view' | 'edit') { if (!props.dataSource.shareFolder) return; busy.value = true; try { await props.dataSource.shareFolder(share.collectionId, share.folderPath, share.principalType, share.principalId, role); share.role = role } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function removeShare(share:FolderShare) { if (!props.dataSource.unshareFolder) return; busy.value = true; try { await props.dataSource.unshareFolder(share); currentShares.value = currentShares.value.filter(item => item !== share) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function copy() { if (!link.value?.url) return; await navigator.clipboard.writeText(link.value.url); copied.value = true; setTimeout(() => copied.value = false, 1_500) }
+async function copy() { if (!link.value?.url) return; await navigator.clipboard.writeText(link.value.url); copied.value = true; setTimeout(() => { copied.value = false }, 1_500) }
 async function revoke() { if (!link.value || !props.dataSource.revokePublicLink) return; busy.value = true; try { await props.dataSource.revokePublicLink(link.value.id); link.value = { ...link.value, revokedAt: new Date().toISOString() }; publicEnabled.value = false; emit('updated', link.value) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function restore() { if (!link.value || !props.dataSource.restorePublicLink) return; busy.value = true; try { applyLink(await props.dataSource.restorePublicLink(link.value.id)); emit('updated', link.value) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function restore() { if (!link.value || !props.dataSource.restorePublicLink) return; if (link.value.password && password.value.length < 8) { error.value = 'Re-enter the link password to restore this protected share'; return } busy.value = true; try { applyLink(await props.dataSource.restorePublicLink(link.value.id, password.value || undefined)); password.value = ''; emit('updated', link.value) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function save() {
   if (props.target.folder) { emit('updated'); emit('close'); return }
   busy.value = true; error.value = '';
   try {
     if (!publicEnabled.value) { if (link.value && !link.value.revokedAt) await revoke(); emit('close'); return }
-    const options = { mode: mode.value, password: password.value || undefined, expiresAt: dateTime(expiresAt.value), displaySharerName: displaySharerName.value, keepAvailable: keepAvailable.value, keepUntil: keepAvailable.value ? dateTime(keepUntil.value) : undefined };
+    const options = { mode: mode.value, password: removePassword.value ? '' : password.value || undefined, expiresAt: dateTime(expiresAt.value), displaySharerName: displaySharerName.value, keepAvailable: keepAvailable.value, keepUntil: keepAvailable.value ? dateTime(keepUntil.value) : null, assetKind: props.target.assetKind ?? 'file' };
     const value = link.value && !link.value.revokedAt && props.dataSource.updatePublicLink ? await props.dataSource.updatePublicLink(link.value.id, options) : await props.dataSource.createPublicLink!(props.target.id, options);
     applyLink(value); await copy(); emit('updated', value); emit('close');
   } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false }

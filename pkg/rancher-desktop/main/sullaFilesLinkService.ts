@@ -1,5 +1,5 @@
-import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 
 export type ShareMode = 'view' | 'download';
@@ -18,6 +18,7 @@ export interface ShareLink {
   servedFrom:     'desktop' | 'server' | 'cloud';
   assetKind:      'file' | 'capture' | 'artifact';
   source?:        string;
+  targetId?:      string;
   revokedAt?:     string;
   lastViewedAt?:  string;
   createdAt?:     string;
@@ -27,9 +28,9 @@ export interface CreateShareInput {
   fileId:         string;
   mode:           ShareMode;
   password?:      string;
-  expiresAt?:     string;
+  expiresAt?:     string | null;
   keepAvailable:  boolean;
-  keepUntil?:     string;
+  keepUntil?:     string | null;
   displaySharerName?: boolean;
   assetKind?:     'file' | 'capture' | 'artifact';
   capture?:       boolean;
@@ -41,7 +42,7 @@ export interface LinkService {
   list():Promise<ShareLink[]>;
   revoke(id:string):Promise<void>;
   update(id:string, input:Partial<CreateShareInput>):Promise<ShareLink>;
-  restore(id:string):Promise<ShareLink>;
+  restore(id:string, password?:string):Promise<ShareLink>;
   activity(id?:string):Promise<{ id:string; action:'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked'; occurredAt:string; detail?:string }[]>;
 }
 
@@ -62,6 +63,7 @@ function normalize(value:any):ShareLink {
     servedFrom:    value.servedFrom ?? value.served_from ?? 'desktop',
     assetKind:     value.assetKind ?? value.asset_kind ?? 'file',
     source:        value.source_label ?? value.source ?? undefined,
+    targetId:      value.fileId ?? value.file_id ?? undefined,
     revokedAt:     value.revokedAt ?? value.revoked_at ?? undefined,
     lastViewedAt:  value.lastViewedAt ?? value.last_viewed_at ?? undefined,
     createdAt:     value.createdAt ?? value.created_at ?? undefined,
@@ -89,10 +91,16 @@ export class SullaFilesLinkService implements LinkService {
     if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before sharing');
     const deviceId = await getDesktopDeviceId();
     const body = JSON.stringify({
-      fileId: input.fileId, permission: input.mode, accessMode: input.mode, password: input.password,
-      expiresAt: input.expiresAt, keepAvailable: input.keepAvailable, keepUntil: input.keepUntil,
+      fileId:     input.fileId,
+      permission: input.mode,
+      accessMode: input.mode,
+      password:   input.password,
+      expiresAt:  input.expiresAt,
+      keepAvailable: input.keepAvailable,
+      keepUntil:  input.keepUntil,
       displaySharerName: input.displaySharerName ?? true,
-      assetKind: input.assetKind ?? (input.capture ? 'capture' : 'file'), captureMetadata: input.captureMetadata,
+      assetKind:  input.assetKind ?? (input.capture ? 'capture' : 'file'),
+      captureMetadata: input.captureMetadata,
       deviceId,
     });
     const response = await requestWithContractFallback(['/v1/links', '/v1/shares'], {
@@ -138,10 +146,10 @@ export class SullaFilesLinkService implements LinkService {
     return normalize(await response.json());
   }
 
-  async restore(id:string):Promise<ShareLink> {
+  async restore(id:string, password?:string):Promise<ShareLink> {
     const cloudToken = await getCurrentAccessToken();
     if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before restoring a public link');
-    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }/restore`], { method: 'POST', headers: { 'x-sulla-cloud-token': cloudToken } });
+    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }/restore`], { method: 'POST', headers: { 'content-type': 'application/json', 'x-sulla-cloud-token': cloudToken }, body: JSON.stringify({ password }) });
     if (!response.ok) throw new Error(`Restore share failed (${ response.status })`);
     return normalize(await response.json());
   }

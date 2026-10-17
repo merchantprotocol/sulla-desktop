@@ -697,11 +697,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import ShareSheet from './ShareSheet.vue';
+import SharedByMe from './SharedByMe.vue';
+
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
 import type { FilesDataSource, FilesItem, FilesSnapshot, FilesVersion } from './types';
-import ShareSheet from './ShareSheet.vue';
-import SharedByMe from './SharedByMe.vue';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
@@ -752,7 +753,7 @@ const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done
 const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details'); const versions = ref<FilesVersion[]>([]); const versionsLoading = ref(false);
 const previewUrl = ref(''); const previewText = ref<string | null>(null); const previewError = ref(''); const previewLoading = ref(false); const dragging = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
 const starred = ref(new Set<string>(JSON.parse(localStorage.getItem('sulla:files-starred') || '[]')));
-const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string } | null>(null);
+const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string; assetKind?:'file' | 'capture' | 'artifact' } | null>(null);
 
 const activeFiles = computed(() => snapshot.value?.files.filter(file => !file.deletedAt) ?? []);
 const trashFiles = computed(() => snapshot.value?.files.filter(file => file.deletedAt) ?? []);
@@ -879,12 +880,13 @@ const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !
 async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); error.value = '' } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
 async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
 async function newFolder() { const name = window.prompt('Name this folder'); if (!name?.trim()) return; await props.dataSource.createFolder([currentPath.value, name.trim()].filter(Boolean).join('/')); await refresh(true) }
-async function shareEntry(entry:DisplayEntry | null) {
+function shareEntry(entry:DisplayEntry | null) {
   if (!entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
-  shareTarget.value = { id: entry.id, name: entry.name, folder: false, path: entry.path, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
+  const capture = /(^|\/)(screenshots?|recordings?|captures?)(\/|$)/i.test(entry.path);
+  shareTarget.value = { id: entry.id, name: entry.name, folder: false, path: entry.path, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId, assetKind: entry.agent ? 'artifact' : capture ? 'capture' : 'file' };
 }
-async function shareSelectedFile() { await shareEntry(selectedFileForShare.value ?? null) }
-async function shareCurrentFolder() {
+function shareSelectedFile() { shareEntry(selectedFileForShare.value ?? null) }
+function shareCurrentFolder() {
   if (!snapshot.value?.collection.orgId || !props.dataSource.shareFolder || !props.dataSource.listMembers || !currentPath.value || !props.dataSource.capabilities.orgSharing) return;
   shareTarget.value = { id: `folder:${ currentPath.value }`, name: currentPath.value.split('/').at(-1) || 'My Files', folder: true, path: currentPath.value, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
 }
@@ -929,13 +931,13 @@ async function navigateTo(detail:FilesNavigationPayload) {
   const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
   if (!file && detail.path) {
     openPath(detail.path);
-    if (detail.section === 'share-review') await shareCurrentFolder();
+    if (detail.section === 'share-review') shareCurrentFolder();
     return;
   }
   if (!file) { error.value = 'That file is no longer available in this collection.'; return }
   await selectEntry(toDisplay(file));
   if (detail.section === 'versions') detailTab.value = 'versions';
-  if (detail.section === 'share-review') await shareEntry(toDisplay(file));
+  if (detail.section === 'share-review') shareEntry(toDisplay(file));
 }
 
 watch(view, value => localStorage.setItem('sulla:files-view', value));
@@ -1007,8 +1009,6 @@ onBeforeUnmount(() => { mounted = false; window.removeEventListener('keydown', o
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "tnum" 1, "cv11" 1;
 }
-.share-modal{position:fixed;z-index:50;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.58)}.share-card{width:min(480px,calc(100vw - 40px));max-height:70vh;overflow:auto;padding:22px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--card-solid);box-shadow:var(--shadow-lg)}.share-card h2{margin:0}.share-card>p{color:var(--muted)}.member-row{display:flex;align-items:center;gap:10px;padding:10px;border-top:1px solid var(--line)}.member-row span,.member-row b,.member-row small{display:block}.member-row small{color:var(--dim)}.share-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
-
 /* Noir Light reproduces the approved mockup palette exactly. */
 :global(.theme-noir-light) .files-browser {
   --muted: #5b6778;

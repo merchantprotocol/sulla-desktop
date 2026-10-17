@@ -201,7 +201,7 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:revoke-link', (_event, id:string) => getSullaFilesLinkService().revoke(id));
   ipcMain.handle('files-ui:update-link', (_event, input:{ id:string; options:Partial<CreateShareInput> }) => getSullaFilesLinkService().update(input.id, input.options));
   ipcMain.handle('files-ui:set-link-keep', (_event, input:{ id:string; enabled:boolean }) => getSullaFilesLinkService().update(input.id, { keepAvailable: input.enabled }));
-  ipcMain.handle('files-ui:restore-link', (_event, id:string) => getSullaFilesLinkService().restore(id));
+  ipcMain.handle('files-ui:restore-link', (_event, input:{ id:string; password?:string }) => getSullaFilesLinkService().restore(input.id, input.password));
   ipcMain.handle('files-ui:link-activity', (_event, id?:string) => getSullaFilesLinkService().activity(id));
   ipcMain.handle('files-ui:status', () => getSullaFilesWatcher().status());
   ipcMain.handle('files-ui:set-paused', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));

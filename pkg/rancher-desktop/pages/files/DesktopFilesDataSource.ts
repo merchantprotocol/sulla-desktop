@@ -162,16 +162,16 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
   listPublicLinks():Promise<ShareLink[]> { return ipcRenderer.invoke('files-ui:list-links') }
   revokePublicLink(id:string):Promise<void> { return ipcRenderer.invoke('files-ui:revoke-link', id) }
-  restorePublicLink(id:string):Promise<ShareLink> { return ipcRenderer.invoke('files-ui:restore-link', id) }
+  restorePublicLink(id:string, password?:string):Promise<ShareLink> { return ipcRenderer.invoke('files-ui:restore-link', { id, password }) }
   shareActivity(id?:string):Promise<ShareActivity[]> { return ipcRenderer.invoke('files-ui:link-activity', id) }
 
   async listFolderShares(collectionId:string):Promise<FolderShare[]> {
-    const shares = await ipcRenderer.invoke('sulla-files:shares', { collectionId }) as any[];
+    const shares = await ipcRenderer.invoke('sulla-files:shares', { collectionId });
     return shares.map(share => ({ id: share.id, collectionId: share.collection_id ?? share.collectionId ?? collectionId, folderPath: share.folder_path ?? share.folderPath, principalType: share.principal_type ?? share.principalType, principalId: share.principal_id ?? share.principalId, role: share.role }));
   }
 
   async shareFolder(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FolderShare> {
-    const share = await ipcRenderer.invoke('sulla-files:share', { collectionId, folderPath, principalType, principalId, role }) as any;
+    const share = await ipcRenderer.invoke('sulla-files:share', { collectionId, folderPath, principalType, principalId, role });
     return { id: share.id, collectionId: share.collection_id ?? collectionId, folderPath: share.folder_path ?? folderPath, principalType: share.principal_type ?? principalType, principalId: share.principal_id ?? principalId, role: share.role ?? role };
   }
 

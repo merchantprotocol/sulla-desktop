@@ -1,8 +1,8 @@
-import { assertUnprotectedFile, isProtectedPath } from './protectedFiles.js';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { basename, posix } from 'node:path';
 
 import { decryptChunk } from './crypto.js';
+import { assertUnprotectedFile, isProtectedPath } from './protectedFiles.js';
 
 import type { Config } from './config.js';
 import type { Store } from './store.js';
@@ -16,9 +16,9 @@ interface ShareInput {
   accessMode?:      'view' | 'download';
   permission?:      'view' | 'download';
   password?:        string;
-  expiresAt?:       string;
+  expiresAt?:       string | null;
   keepAvailable?:   boolean;
-  keepUntil?:       string;
+  keepUntil?:       string | null;
   displaySharerName?: boolean;
   assetKind?:       'file' | 'capture' | 'artifact';
   captureMetadata?: Record<string, unknown>;
@@ -37,6 +37,28 @@ function passwordMatches(password:string, encoded:string):boolean {
   if (!salt || !expected) return false;
   const actual = scryptSync(password, Buffer.from(salt, 'base64url'), 32); const expectedBytes = Buffer.from(expected, 'base64url');
   return actual.length === expectedBytes.length && timingSafeEqual(actual, expectedBytes);
+}
+
+function remoteShareOverlay(value:unknown):Record<string, unknown> {
+  if (!value || typeof value !== 'object') return {};
+  const remote = value as Record<string, unknown>; const safe:Record<string, unknown> = {};
+  const copy = (target:string, ...sources:string[]) => {
+    const source = sources.find(key => remote[key] !== undefined);
+    if (source) safe[target] = remote[source];
+  };
+
+  copy('public_url', 'url', 'public_url', 'publicUrl');
+  copy('view_count', 'viewCount', 'view_count', 'views');
+  copy('last_viewed_at', 'lastViewedAt', 'last_viewed_at');
+  copy('expires_at', 'expiresAt', 'expires_at');
+  copy('keep_available', 'keepAvailable', 'keep_available');
+  copy('keep_until', 'keepUntil', 'keep_until');
+  copy('display_sharer_name', 'displaySharerName', 'display_sharer_name');
+  copy('served_from', 'servedFrom', 'served_from');
+  copy('access_mode', 'accessMode', 'access_mode');
+  copy('revoked_at', 'revokedAt', 'revoked_at');
+
+  return safe;
 }
 
 class ServerShareRelay {
@@ -83,8 +105,56 @@ class ServerShareRelay {
 
 export class SharesService {
   private serverRelay?: ServerShareRelay;
+  private readonly linkLocks = new Map<string, Promise<void>>();
+
   constructor(private db: pg.Pool, private config: Config, private store: Store) {
     if (config.mode === 'server') { this.serverRelay = new ServerShareRelay(db, config, (id, path) => this.content(id, path)); this.serverRelay.connect() }
+  }
+
+  private async withLinkLock<T>(id:string, operation:()=>Promise<T>):Promise<T> {
+    const previous = this.linkLocks.get(id) ?? Promise.resolve();
+    let release:()=>void = () => {};
+    const current = new Promise<void>(resolve => { release = resolve });
+    const tail = previous.then(() => current);
+
+    this.linkLocks.set(id, tail);
+    await previous;
+    try { return await operation() } finally {
+      release();
+      if (this.linkLocks.get(id) === tail) this.linkLocks.delete(id);
+    }
+  }
+
+  private async deleteRemote(id:string, cloudToken:string):Promise<boolean> {
+    try { await this.cloud(`/shares/${ encodeURIComponent(id) }`, cloudToken, { method: 'DELETE' }, [404]); return true } catch { return false }
+  }
+
+  private async persistRemoteDeleteState(id:string, pending:boolean):Promise<void> {
+    await this.db.query(`UPDATE file_share_links SET revoked_at=COALESCE(revoked_at,NOW()),keep_available=FALSE,keep_until=NULL,
+      reconciliation_required=$2,reconciliation_action=CASE WHEN $2 THEN 'delete' ELSE NULL END,reconciliation_updated_at=CASE WHEN $2 THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$1`, [id, pending]);
+  }
+
+  private async reconcilePendingDeletes(identity:Identity, cloudToken:string):Promise<void> {
+    const pending = (await this.db.query(`SELECT id FROM file_share_links WHERE owner_user_id=$1 AND reconciliation_required=TRUE
+      AND reconciliation_action='delete' ORDER BY reconciliation_updated_at LIMIT 25`, [identity.user])).rows;
+    await Promise.all(pending.map(({ id }) => this.withLinkLock(String(id), async() => {
+      if (await this.deleteRemote(String(id), cloudToken)) await this.persistRemoteDeleteState(String(id), false);
+    })));
+  }
+
+  private assertCloudPolicy(cloud:any, expected:{ accessMode:string; passwordProtected:boolean; expiresAt:string | null; keepAvailable:boolean; keepUntil:string | null; displaySharerName:boolean; passwordChanged?:boolean }):void {
+    const time = (value:unknown) => typeof value === 'string' && value ? new Date(value).toISOString() : null;
+    const mismatches:string[] = [];
+
+    if (!cloud || typeof cloud !== 'object') throw Object.assign(new Error('Sulla Cloud returned no share policy'), { status: 502 });
+    if (cloud.accessMode !== expected.accessMode) mismatches.push('accessMode');
+    if (Boolean(cloud.passwordProtected) !== expected.passwordProtected) mismatches.push('passwordProtected');
+    if (expected.passwordChanged && expected.passwordProtected && cloud.passwordUpdated !== true) mismatches.push('passwordUpdated');
+    if (time(cloud.expiresAt) !== time(expected.expiresAt)) mismatches.push('expiresAt');
+    if (cloud.keepAvailable !== expected.keepAvailable) mismatches.push('keepAvailable');
+    if (!Object.hasOwn(cloud, 'keepUntil') || time(cloud.keepUntil) !== time(expected.keepUntil)) mismatches.push('keepUntil');
+    if (cloud.displaySharerName !== expected.displaySharerName) mismatches.push('displaySharerName');
+    if (mismatches.length) throw Object.assign(new Error(`Sulla Cloud did not confirm share policy fields: ${ mismatches.join(', ') }`), { status: 502 });
   }
 
   private folderPath(value: unknown): string {
@@ -145,25 +215,44 @@ export class SharesService {
         }),
       });
       cloudCreated = true;
+      this.assertCloudPolicy(cloud, {
+        accessMode,
+        passwordProtected: Boolean(input.password),
+        expiresAt:          expiresAt?.toISOString() ?? null,
+        keepAvailable,
+        keepUntil:          keepUntil?.toISOString() ?? null,
+        displaySharerName:  input.displaySharerName ?? true,
+      });
       this.serverRelay?.connect();
       if (keepAvailable) await this.upload(id, cloudToken);
       await this.db.query('UPDATE file_share_links SET public_url=$2,cloud_registered_at=NOW(),served_from=$3,updated_at=NOW() WHERE id=$1', [id, cloud.url, keepAvailable ? 'cloud' : source]);
       return (await this.get(identity, id));
     } catch (error) {
-      if (cloudCreated) await this.cloud(`/shares/${ encodeURIComponent(id) }`, cloudToken, { method: 'DELETE' }).catch(() => {});
-      await this.db.query('DELETE FROM file_share_links WHERE id=$1', [id]); throw error;
+      if (cloudCreated) {
+        const deleted = await this.deleteRemote(id, cloudToken);
+        if (deleted) await this.db.query('DELETE FROM file_share_links WHERE id=$1', [id]);
+        else await this.persistRemoteDeleteState(id, true);
+      } else await this.db.query('DELETE FROM file_share_links WHERE id=$1', [id]);
+      throw error;
     }
   }
 
   async list(identity: Identity, cloudToken?: string) {
-    const local = (await this.db.query('SELECT * FROM file_share_links WHERE owner_user_id=$1 ORDER BY created_at DESC', [identity.user])).rows;
     if (cloudToken) {
       try {
+        await this.reconcilePendingDeletes(identity, cloudToken);
+        const local = (await this.db.query('SELECT * FROM file_share_links WHERE owner_user_id=$1 ORDER BY created_at DESC', [identity.user])).rows;
         const cloud = await this.cloud('/shares', cloudToken); const values = Array.isArray(cloud) ? cloud : cloud.shares ?? cloud.links ?? [];
-        const remote = new Map(values.map((item:any) => [String(item.id ?? item.token), item]));
-        return local.map(item => { const { password_hash: _passwordHash, relay_secret: _relaySecret, ...safe } = item; return { ...safe, ...(remote.get(String(item.id)) ?? {}), id: item.id, password: undefined } });
+        const remote = new Map(values.map((item:any) => [String(item.id ?? item.token), remoteShareOverlay(item)]));
+        return local.map(item => {
+          const { password_hash: _passwordHash, relay_secret: _relaySecret, ...safe } = item;
+          const overlay:Record<string, unknown> = { ...(remote.get(String(item.id)) ?? {}) };
+          if (item.revoked_at || item.reconciliation_required) delete overlay.revoked_at;
+          return { ...safe, ...overlay, id: item.id };
+        });
       } catch { /* offline list falls through */ }
     }
+    const local = (await this.db.query('SELECT * FROM file_share_links WHERE owner_user_id=$1 ORDER BY created_at DESC', [identity.user])).rows;
     return local.map(item => { const { password_hash: _passwordHash, relay_secret: _relaySecret, ...safe } = item; return safe });
   }
 
@@ -178,39 +267,89 @@ export class SharesService {
   }
 
   async revoke(identity: Identity, id: string, cloudToken?: string) {
-    await this.getRow(identity, id);
-    if (!cloudToken) throw Object.assign(new Error('Sulla Cloud sign-in required to revoke a public link'), { status: 401 });
-    await this.cloud(`/shares/${ encodeURIComponent(id) }`, cloudToken, { method: 'DELETE' });
-    await this.db.query('UPDATE file_share_links SET revoked_at=COALESCE(revoked_at,NOW()),keep_available=FALSE,keep_until=NULL,updated_at=NOW() WHERE id=$1', [id]);
-    await this.db.query(`INSERT INTO file_share_events(share_id,action) VALUES($1,'revoked')`, [id]); return { ok: true };
+    return this.withLinkLock(id, async() => {
+      await this.getRow(identity, id);
+      if (!cloudToken) throw Object.assign(new Error('Sulla Cloud sign-in required to revoke a public link'), { status: 401 });
+      await this.persistRemoteDeleteState(id, true);
+      const deleted = await this.deleteRemote(id, cloudToken);
+      await this.persistRemoteDeleteState(id, !deleted);
+      await this.db.query(`INSERT INTO file_share_events(share_id,action) VALUES($1,'revoked')`, [id]);
+      if (!deleted) throw Object.assign(new Error('Local access is disabled; remote deletion could not be confirmed and is queued for retry'), { status: 502 });
+      return { ok: true };
+    });
   }
 
   async update(identity: Identity, id: string, input:ShareInput, cloudToken: string) {
-    if (!cloudToken) throw Object.assign(new Error('Sulla Cloud sign-in required to change link availability'), { status: 401 });
-    const row = await this.getRow(identity, id); if (row.revoked_at) throw Object.assign(new Error('revoked links must be restored before editing'), { status: 409 });
-    const mode = input.permission === 'download' || input.accessMode === 'download' ? 'download' : input.accessMode === 'view' || input.permission === 'view' ? 'view' : row.access_mode;
-    const enabled = input.keepAvailable ?? row.keep_available; if (row.target_type !== 'file' && enabled) throw Object.assign(new Error('folder copies are not supported'), { status: 400 });
-    const expiresAt = input.expiresAt === undefined ? row.expires_at : input.expiresAt ? new Date(input.expiresAt) : null;
-    const keepUntil = input.keepUntil === undefined ? row.keep_until : input.keepUntil ? new Date(input.keepUntil) : null;
-    if (expiresAt && (!Number.isFinite(new Date(expiresAt).getTime()) || new Date(expiresAt).getTime() <= Date.now())) throw Object.assign(new Error('expiry must be in the future'), { status: 400 });
-    if (keepUntil && (!Number.isFinite(new Date(keepUntil).getTime()) || new Date(keepUntil).getTime() <= Date.now())) throw Object.assign(new Error('keepUntil must be in the future'), { status: 400 });
-    if (keepUntil && expiresAt && new Date(keepUntil) > new Date(expiresAt)) throw Object.assign(new Error('keepUntil cannot be later than link expiry'), { status: 400 });
-    if (input.password !== undefined && input.password && (input.password.length < 8 || input.password.length > 256)) throw Object.assign(new Error('password must be 8 to 256 characters'), { status: 400 });
-    await this.cloud(`/shares/${ encodeURIComponent(id) }`, cloudToken, { method: 'PATCH', body: JSON.stringify({ accessMode: mode, password: input.password, expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null, keepAvailable: enabled, keepUntil: keepUntil ? new Date(keepUntil).toISOString() : null, displaySharerName: input.displaySharerName ?? row.display_sharer_name }) });
-    if (enabled && !row.keep_available) await this.upload(id, cloudToken);
-    const passwordProtected = input.password === undefined ? row.password_protected : Boolean(input.password);
-    const encodedPassword = input.password === undefined ? row.password_hash : input.password ? passwordHash(input.password) : null;
-    await this.db.query(`UPDATE file_share_links SET access_mode=$2,password_protected=$3,password_hash=$4,expires_at=$5,keep_available=$6,keep_until=$7,display_sharer_name=$8,served_from=$9,updated_at=NOW() WHERE id=$1`, [id, mode, passwordProtected, encodedPassword, expiresAt ? new Date(expiresAt).toISOString() : null, enabled, keepUntil ? new Date(keepUntil).toISOString() : null, input.displaySharerName ?? row.display_sharer_name, enabled ? 'cloud' : this.config.mode]);
-    await this.db.query(`INSERT INTO file_share_events(share_id,action,detail) VALUES($1,'updated',$2)`, [id, `${ mode } access`]);
-    return this.get(identity, id);
+    return this.withLinkLock(id, async() => {
+      if (!cloudToken) throw Object.assign(new Error('Sulla Cloud sign-in required to change link availability'), { status: 401 });
+      const row = await this.getRow(identity, id); if (row.revoked_at) throw Object.assign(new Error('revoked links must be restored before editing'), { status: 409 });
+      const mode = input.permission === 'download' || input.accessMode === 'download' ? 'download' : input.accessMode === 'view' || input.permission === 'view' ? 'view' : row.access_mode;
+      const enabled = input.keepAvailable ?? row.keep_available; if (row.target_type !== 'file' && enabled) throw Object.assign(new Error('folder copies are not supported'), { status: 400 });
+      const expiresAt = input.expiresAt === undefined ? row.expires_at : input.expiresAt ? new Date(input.expiresAt) : null;
+      const keepUntil = input.keepUntil === undefined ? row.keep_until : input.keepUntil ? new Date(input.keepUntil) : null;
+      if (expiresAt && (!Number.isFinite(new Date(expiresAt).getTime()) || new Date(expiresAt).getTime() <= Date.now())) throw Object.assign(new Error('expiry must be in the future'), { status: 400 });
+      if (keepUntil && (!Number.isFinite(new Date(keepUntil).getTime()) || new Date(keepUntil).getTime() <= Date.now())) throw Object.assign(new Error('keepUntil must be in the future'), { status: 400 });
+      if (keepUntil && expiresAt && new Date(keepUntil) > new Date(expiresAt)) throw Object.assign(new Error('keepUntil cannot be later than link expiry'), { status: 400 });
+      if (input.password !== undefined && input.password && (input.password.length < 8 || input.password.length > 256)) throw Object.assign(new Error('password must be 8 to 256 characters'), { status: 400 });
+      if (enabled && !row.keep_available) await this.upload(id, cloudToken);
+      const passwordProtected = input.password === undefined ? row.password_protected : Boolean(input.password);
+      const encodedPassword = input.password === undefined ? row.password_hash : input.password ? passwordHash(input.password) : null;
+      // Disable the local relay before changing the remote policy. Uploads happen
+      // first because content() intentionally refuses access while disabled.
+      await this.db.query('UPDATE file_share_links SET revoked_at=COALESCE(revoked_at,NOW()),updated_at=NOW() WHERE id=$1', [id]);
+      try {
+        const cloud = await this.cloud(`/shares/${ encodeURIComponent(id) }`, cloudToken, { method: 'PATCH', body: JSON.stringify({ accessMode: mode, password: input.password, expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null, keepAvailable: enabled, keepUntil: keepUntil ? new Date(keepUntil).toISOString() : null, displaySharerName: input.displaySharerName ?? row.display_sharer_name }) });
+        this.assertCloudPolicy(cloud, {
+          accessMode:        mode,
+          passwordProtected,
+          passwordChanged:  input.password !== undefined,
+          expiresAt:         expiresAt ? new Date(expiresAt).toISOString() : null,
+          keepAvailable:     enabled,
+          keepUntil:         keepUntil ? new Date(keepUntil).toISOString() : null,
+          displaySharerName: input.displaySharerName ?? row.display_sharer_name,
+        });
+        await this.db.query(`UPDATE file_share_links SET access_mode=$2,password_protected=$3,password_hash=$4,expires_at=$5,keep_available=$6,keep_until=$7,display_sharer_name=$8,served_from=$9,revoked_at=NULL,reconciliation_required=FALSE,reconciliation_action=NULL,reconciliation_updated_at=NULL,updated_at=NOW() WHERE id=$1`, [id, mode, passwordProtected, encodedPassword, expiresAt ? new Date(expiresAt).toISOString() : null, enabled, keepUntil ? new Date(keepUntil).toISOString() : null, input.displaySharerName ?? row.display_sharer_name, enabled ? 'cloud' : this.config.mode]);
+        await this.db.query(`INSERT INTO file_share_events(share_id,action,detail) VALUES($1,'updated',$2)`, [id, `${ mode } access`]);
+        return this.get(identity, id);
+      } catch (error) {
+        // A partially-applied policy must never leave the local relay reachable.
+        const deleted = await this.deleteRemote(id, cloudToken);
+        await this.persistRemoteDeleteState(id, !deleted);
+        const state = deleted ? 'local access was disabled' : 'local access was disabled and remote deletion is queued because it could not be confirmed';
+        throw Object.assign(new Error(`Share settings could not be reconciled; ${ state }: ${ error instanceof Error ? error.message : String(error) }`), { status: 502 });
+      }
+    });
   }
 
-  async restore(identity:Identity, id:string, cloudToken:string) {
-    if (!cloudToken) throw Object.assign(new Error('Sulla Cloud sign-in required to restore a public link'), { status: 401 });
-    const row = await this.getRow(identity, id); if (!row.revoked_at) return this.get(identity, id);
-    const cloud = await this.cloud('/shares', cloudToken, { method: 'POST', body: JSON.stringify({ id, targetType: row.target_type, name: row.display_name, mime: row.mime, accessMode: row.access_mode, expiresAt: row.expires_at, keepAvailable: false, displaySharerName: row.display_sharer_name, servedFrom: this.config.mode, deviceId: row.device_id, relaySecret: row.relay_secret, assetKind: row.asset_kind, captureMetadata: row.capture_metadata }) });
-    await this.db.query('UPDATE file_share_links SET revoked_at=NULL,public_url=$2,served_from=$3,updated_at=NOW() WHERE id=$1', [id, cloud.url, this.config.mode]);
-    await this.db.query(`INSERT INTO file_share_events(share_id,action,detail) VALUES($1,'created','restored')`, [id]); return this.get(identity, id);
+  async restore(identity:Identity, id:string, cloudToken:string, password?:string) {
+    return this.withLinkLock(id, async() => {
+      if (!cloudToken) throw Object.assign(new Error('Sulla Cloud sign-in required to restore a public link'), { status: 401 });
+      const row = await this.getRow(identity, id); if (!row.revoked_at) return this.get(identity, id);
+      if (row.password_protected && (!password || !row.password_hash || !passwordMatches(password, row.password_hash))) throw Object.assign(new Error('Re-enter the link password to restore this protected share'), { status: 401 });
+      if (row.reconciliation_required) {
+        if (!await this.deleteRemote(id, cloudToken)) throw Object.assign(new Error('The prior remote link deletion is still pending; restore is blocked until it can be confirmed'), { status: 502 });
+        await this.persistRemoteDeleteState(id, false);
+      }
+      let cloudCreated = false;
+      try {
+        const cloud = await this.cloud('/shares', cloudToken, { method: 'POST', body: JSON.stringify({ id, targetType: row.target_type, name: row.display_name, mime: row.mime, accessMode: row.access_mode, password: row.password_protected ? password : undefined, expiresAt: row.expires_at, keepAvailable: false, keepUntil: null, displaySharerName: row.display_sharer_name, servedFrom: this.config.mode, deviceId: row.device_id, relaySecret: row.relay_secret, assetKind: row.asset_kind, captureMetadata: row.capture_metadata }) });
+        cloudCreated = true;
+        this.assertCloudPolicy(cloud, {
+          accessMode:        row.access_mode,
+          passwordProtected: Boolean(row.password_protected),
+          expiresAt:         row.expires_at,
+          keepAvailable:     false,
+          keepUntil:         null,
+          displaySharerName: Boolean(row.display_sharer_name),
+        });
+        await this.db.query('UPDATE file_share_links SET revoked_at=NULL,public_url=$2,served_from=$3,reconciliation_required=FALSE,reconciliation_action=NULL,reconciliation_updated_at=NULL,updated_at=NOW() WHERE id=$1', [id, cloud.url, this.config.mode]);
+        await this.db.query(`INSERT INTO file_share_events(share_id,action,detail) VALUES($1,'created','restored')`, [id]); return this.get(identity, id);
+      } catch (error) {
+        const deleted = !cloudCreated || await this.deleteRemote(id, cloudToken);
+        await this.persistRemoteDeleteState(id, !deleted);
+        throw error;
+      }
+    });
   }
 
   async activity(identity:Identity, id?:string) {
@@ -262,10 +401,10 @@ export class SharesService {
     });
   }
 
-  private async cloud(path: string, token: string, init: RequestInit = {}) {
+  private async cloud(path: string, token: string, init: RequestInit = {}, acceptedStatuses:number[] = []) {
     const headers = new Headers(init.headers); headers.set('Authorization', `Bearer ${ token }`); if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     const response = await fetch(`${ this.config.cloudUrl }${ path }`, { ...init, headers });
-    if (!response.ok) throw Object.assign(new Error(`Sulla Cloud returned ${ response.status }: ${ (await response.text()).slice(0, 200) }`), { status: 502 });
-    return response.status === 204 ? {} : response.json();
+    if (!response.ok && !acceptedStatuses.includes(response.status)) throw Object.assign(new Error(`Sulla Cloud returned ${ response.status }: ${ (await response.text()).slice(0, 200) }`), { status: 502 });
+    return response.status === 204 || acceptedStatuses.includes(response.status) ? {} : response.json();
   }
 }

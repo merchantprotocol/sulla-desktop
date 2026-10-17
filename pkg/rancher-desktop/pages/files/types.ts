@@ -91,10 +91,10 @@ export interface FolderShare {
 export interface ShareLinkOptions {
   mode: ShareAccessMode;
   password?: string;
-  expiresAt?: string;
+  expiresAt?: string | null;
   displaySharerName: boolean;
   keepAvailable: boolean;
-  keepUntil?: string;
+  keepUntil?: string | null;
   assetKind?: ShareAssetKind;
   captureMetadata?: Record<string, unknown>;
 }
@@ -114,6 +114,7 @@ export interface ShareLink {
   servedFrom: 'desktop' | 'server' | 'cloud';
   assetKind: ShareAssetKind;
   source?: string;
+  targetId?: string;
   revokedAt?: string;
   createdAt?: string;
 }
@@ -145,7 +146,7 @@ export interface FilesDataSource {
   updatePublicLink?(id:string, options:Partial<ShareLinkOptions>):Promise<ShareLink>;
   listPublicLinks?():Promise<ShareLink[]>;
   revokePublicLink?(id:string):Promise<void>;
-  restorePublicLink?(id:string):Promise<ShareLink>;
+  restorePublicLink?(id:string, password?:string):Promise<ShareLink>;
   shareActivity?(id?:string):Promise<ShareActivity[]>;
   listFolderShares?(collectionId:string):Promise<FolderShare[]>;
   shareFolder?(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FolderShare>;

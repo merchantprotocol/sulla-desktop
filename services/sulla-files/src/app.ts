@@ -1,4 +1,3 @@
-import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 import { createHash, randomUUID } from 'node:crypto';
 
 import express from 'express';
@@ -7,6 +6,7 @@ import { resolveCollectionGrants, ROLE_LEVEL, searchableScopes } from './acl.js'
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, encryptChunk } from './crypto.js';
 import { loadFileContent, thumbnail } from './preview.js';
+import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 import { SharesService } from './shares.js';
 import { Store } from './store.js';
 
@@ -181,7 +181,7 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
   app.get('/v1/links/:id/activity', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.activity({ user: actor.userId, device: actor.deviceId || '' }, request.params.id)) } catch (error) { next(error) } });
   app.delete('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.revoke({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.header('x-sulla-cloud-token') ?? undefined)) } catch (error) { next(error) } });
   app.patch('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.update({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.body, request.header('x-sulla-cloud-token') ?? '')) } catch (error) { next(error) } });
-  app.post('/v1/links/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.restore({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.header('x-sulla-cloud-token') ?? '')) } catch (error) { next(error) } });
+  app.post('/v1/links/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.restore({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.header('x-sulla-cloud-token') ?? '', typeof request.body.password === 'string' ? request.body.password : undefined)) } catch (error) { next(error) } });
 
   app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try { const rows = await db.query("SELECT * FROM collections WHERE kind='knowledge' ORDER BY name"); const visible:any[] = []; for (const collection of rows.rows) { const access = await grants(request, collection.id); if (access.role || access.paths.length) visible.push({ ...collection, access_role: access.role ?? null, shared_folders: access.paths }); } response.json(visible) } catch (error) { next(error) } });
   app.post('/v1/agent-files/query', async(request:RequestWithIdentity, response, next) => {
