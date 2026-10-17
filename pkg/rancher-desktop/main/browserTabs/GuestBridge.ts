@@ -22,10 +22,15 @@ function jsArg(value: unknown): string {
 }
 
 export class GuestBridge {
-  constructor(private readonly wc: WebContents, public readonly assetId: string) {}
+  constructor(
+    private readonly wc: WebContents,
+    public readonly assetId: string,
+    private readonly mayAutomate: () => boolean = () => true,
+  ) {}
 
   /** Raw JS eval in the guest page. Used by execInPage tool + internal helpers. */
   async exec(code: string): Promise<unknown> {
+    if (!this.mayAutomate()) throw new Error('vault_protected_tab: navigate before using browser automation');
     try {
       return await this.wc.executeJavaScript(code, true);
     } catch {
@@ -64,6 +69,7 @@ export class GuestBridge {
    * undefined return.
    */
   execInPageStrict(code: string): Promise<unknown> {
+    if (!this.mayAutomate()) return Promise.reject(new Error('vault_protected_tab: navigate before using browser automation'));
     return this.wc.executeJavaScript(code, true);
   }
 

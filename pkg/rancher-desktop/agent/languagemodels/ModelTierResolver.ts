@@ -10,12 +10,13 @@
  */
 
 import { modelDiscoveryService } from './ModelDiscoveryService';
-import { getIntegrationService } from '../services/IntegrationService';
+import { usesContainerVaultAuthority } from '../../vault-broker';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { getIntegrationService } from '../services/IntegrationService';
 
 export type ModelTier = 'fast' | 'balanced' | 'powerful';
 
-const MODEL_TIERS = new Set<string>([ 'fast', 'balanced', 'powerful' ]);
+const MODEL_TIERS = new Set<string>(['fast', 'balanced', 'powerful']);
 
 export function isTierName(s: string | undefined | null): s is ModelTier {
   return !!s && MODEL_TIERS.has(s);
@@ -51,7 +52,7 @@ const TIER_PATTERNS: Record<ModelTier, RegExp[]> = {
 };
 
 export function classifyModelTier(modelId: string): ModelTier | null {
-  for (const [ tier, patterns ] of Object.entries(TIER_PATTERNS) as [ModelTier, RegExp[]][]) {
+  for (const [tier, patterns] of Object.entries(TIER_PATTERNS) as [ModelTier, RegExp[]][]) {
     if (patterns.some(p => p.test(modelId))) return tier;
   }
   return null;
@@ -71,12 +72,12 @@ function selectBestForTier(modelIds: string[], tier: ModelTier): string | undefi
 
 async function getApiKeyForProvider(providerId: string): Promise<string> {
   if (providerId === 'claude-code') {
-    const oauth  = await SullaSettingsModel.get('claudeOAuthToken', '');
+    const oauth = await SullaSettingsModel.get('claudeOAuthToken', '');
     const apiKey = await SullaSettingsModel.get('claudeApiKey', '');
     return oauth || apiKey;
   }
   try {
-    const svc    = getIntegrationService();
+    const svc = getIntegrationService();
     const values = await svc.getFormValues(providerId);
     return values.find(v => v.property === 'api_key')?.value || '';
   } catch {
@@ -102,10 +103,11 @@ export async function resolveTierToModelId(
   if (providerId === 'claude-code' || providerId === 'codex' || providerId === 'opencode' || providerId === 'cursor') return undefined;
 
   try {
-    const apiKey = await getApiKeyForProvider(providerId);
-    if (!apiKey) return undefined;
+    const containerAuthority = usesContainerVaultAuthority();
+    const apiKey = containerAuthority ? '' : await getApiKeyForProvider(providerId);
+    if (!containerAuthority && !apiKey) return undefined;
 
-    const models   = await modelDiscoveryService.fetchModelsForProvider(providerId, apiKey);
+    const models = await modelDiscoveryService.fetchModelsForProvider(providerId, apiKey);
     const modelIds = models.map(m => m.id);
     const resolved = selectBestForTier(modelIds, tier);
 

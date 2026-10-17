@@ -21,7 +21,7 @@ export class SlackSearchUsersWorker extends BaseTool {
           responseString: `Slack integration is not initialized for command ${ this.name }`,
         };
       }
-      const users = await slack.searchUsers(query, limit);
+      const users = await slack.searchUsers(query, limit, this.executionContext);
 
       if (!users || users.length === 0) {
         return {

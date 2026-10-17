@@ -1,3 +1,5 @@
+import { withGitHubBrokerRemote } from './gitBrokerTransport';
+import { usesContainerVaultAuthority } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
@@ -31,6 +33,7 @@ export class GitFetchWorker extends BaseTool {
     const branch = typeof input.branch === 'string' && input.branch.trim() ? input.branch.trim() : '';
     const prune = input.prune === true;
     if (!absolutePath) return { successBoolean: false, responseString: 'absolutePath is required.' };
+    const localAuthority = usesContainerVaultAuthority();
 
     let token: string | undefined;
     const redact = (value: string) => token ? value.split(token).join('***') : value;
@@ -48,8 +51,10 @@ export class GitFetchWorker extends BaseTool {
       let fetchTarget = remote;
       let authPrefix = '';
       let credFlags = '';
-      const tokenValue = await getIntegrationService().getIntegrationValue('github', 'token');
-      token = tokenValue?.value;
+      if (!localAuthority) {
+        const tokenValue = await getIntegrationService().getIntegrationValue('github', 'token');
+        token = tokenValue?.value;
+      }
       if (token) {
         const remoteUrlResult = await runCommand(
           `git -C ${ quote(repoRoot) } remote get-url ${ quote(remote) }`,
@@ -73,8 +78,17 @@ export class GitFetchWorker extends BaseTool {
       const refspec = branch
         ? ` ${ quote(`+refs/heads/${ branch }:refs/remotes/${ remote }/${ branch }`) }`
         : ` ${ quote(`+refs/heads/*:refs/remotes/${ remote }/*`) }`;
-      const command = `${ authPrefix }git ${ credFlags }-C ${ quote(repoRoot) } fetch${ prune ? ' --prune' : '' } ${ fetchTarget }${ refspec }`;
-      const result = await runCommand(command, [], { runInLimaShell: true, timeoutMs: 120_000 });
+      const runFetch = (target: string) => runCommand(
+        `${ authPrefix }git ${ credFlags }-C ${ quote(repoRoot) } fetch${ prune ? ' --prune' : '' } ${ quote(target) }${ refspec }`,
+        [], { runInLimaShell: true, timeoutMs: 120_000 },
+      );
+      const result = localAuthority
+        ? await (async() => {
+          const remoteUrl = await runCommand(`git -C ${ quote(repoRoot) } remote get-url ${ quote(remote) }`, [], { runInLimaShell: true, timeoutMs: 10_000 });
+          if (remoteUrl.exitCode !== 0) return remoteUrl;
+          return withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), runFetch);
+        })()
+        : await runFetch(fetchTarget.replace(/^'|'$/g, ''));
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: redact(`Git fetch failed: ${ result.stderr || result.stdout }`) };
       }

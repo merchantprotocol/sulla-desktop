@@ -40,7 +40,7 @@ docker compose \
   up -d postgres sulla_vault
 ```
 
-The service creates only the `sulla_vault` database through the admin connection, runs its migrations there, and listens on `127.0.0.1:30125`.
+The service creates only the `sulla_vault` database through the admin connection, runs its migrations there, and listens on `127.0.0.1:30135`.
 
 ## Run in server mode
 

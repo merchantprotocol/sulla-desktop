@@ -100,7 +100,7 @@ export class SlackScopeCommandWorker extends BaseTool {
         };
       }
 
-      const result = await slack.apiCall(apiMethod, params);
+      const result = await slack.apiCall(apiMethod, params, this.executionContext);
       const success = result?.ok !== false;
 
       return {
@@ -199,7 +199,7 @@ export class SlackApiCommandWorker extends BaseTool {
         };
       }
 
-      const result = await slack.apiCall(command.apiMethod, params);
+      const result = await slack.apiCall(command.apiMethod, params, this.executionContext);
       const success = result?.ok !== false;
 
       return {

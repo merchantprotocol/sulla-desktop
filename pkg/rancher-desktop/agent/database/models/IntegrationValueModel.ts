@@ -1,8 +1,19 @@
+import { usesContainerVaultAuthority } from '../../../vault-broker';
 import { normalizeVaultCredentialValue } from '../../services/vaultCredentialSchema';
 import { BaseModel } from '../BaseModel';
 
 const VAULT_PREFIX = '$VAULT$';
 const isRenderer = typeof process !== 'undefined' && process.type === 'renderer';
+const LOCAL_METADATA_PROPERTIES = new Set([
+  'account_label', 'active_account', 'connection_status', 'connected_at',
+  'last_sync_at', 'llm_access', 'server_url', 'base_url', 'provider', 'model',
+]);
+
+function assertLocalMetadataOnly(property: string | undefined): void {
+  if (usesContainerVaultAuthority() && (!property || !LOCAL_METADATA_PROPERTIES.has(property))) {
+    throw new Error('unsupported_secret_egress: integration secrets are available only through the outbound vault broker');
+  }
+}
 
 /**
  * Get the VaultKeyService for encrypt/decrypt.
@@ -159,6 +170,7 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
 
   /** Decrypt the value attribute on a model instance */
   private static decryptModel(model: IntegrationValueModel): IntegrationValueModel {
+    assertLocalMetadataOnly(model.attributes.property);
     const normalized = normalizeVaultCredentialValue(model.attributes);
     if ('code' in normalized) {
       throw new Error(`${ normalized.code }: ${ normalized.message }`);
@@ -251,6 +263,18 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     return this.decryptModels(models);
   }
 
+  /** Read only explicitly non-secret account metadata under container authority. */
+  static async findMetadataByAccount(
+    integrationId: string,
+    accountId: string,
+  ): Promise<IntegrationValueModel[]> {
+    const models = await this.where({
+      integration_id: integrationId,
+      account_id:     accountId,
+    });
+    return this.decryptModels(models.filter(model => LOCAL_METADATA_PROPERTIES.has(model.attributes.property ?? '')));
+  }
+
   /** Find all values for an integration across all accounts */
   static async findByIntegration(
     integrationId: string,
@@ -283,6 +307,7 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     property: string,
     value: string,
   ): Promise<boolean> {
+    assertLocalMetadataOnly(property);
     // First try exact match (works for unencrypted or if caller passes encrypted value)
     const rows = await this.query(
       `SELECT 1 FROM "integration_values" WHERE "integration_id" = $1 AND "property" = $2 AND "value" = $3 LIMIT 1`,
@@ -305,6 +330,7 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     property: string,
     value: string,
   ): Promise<{ model: IntegrationValueModel; wasUpdate: boolean }> {
+    assertLocalMetadataOnly(property);
     const encryptedValue = this.encryptValue(value);
 
     // findByKey decrypts — we need the raw row to check existence without double-decrypt
@@ -360,7 +386,9 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     accountId: string,
     systemProperties: string[],
   ): Promise<IntegrationValueModel[]> {
-    const all = await this.findByAccount(integrationId, accountId);
+    const all = usesContainerVaultAuthority()
+      ? await this.findMetadataByAccount(integrationId, accountId)
+      : await this.findByAccount(integrationId, accountId);
     return all.filter(m => !systemProperties.includes(m.attributes.property!));
   }
 

@@ -1,6 +1,4 @@
-import { Octokit } from '@octokit/rest';
-
-import { getIntegrationService } from '../../services/IntegrationService';
+import { createGitHubOctokit } from './octokit';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -12,16 +10,7 @@ export class GitHubUpdateFileWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { owner, repo, path, content, message, branch } = input;
 
-    const integrationService = getIntegrationService();
-    const tokenValue = await integrationService.getIntegrationValue('github', 'token');
-    if (!tokenValue) {
-      return {
-        successBoolean: false,
-        responseString: 'Error: GitHub token not configured.',
-      };
-    }
-
-    const octokit = new Octokit({ auth: tokenValue.value });
+    const octokit = await createGitHubOctokit(this.executionContext);
 
     try {
       // First, get the current file to obtain its SHA (required for updates)

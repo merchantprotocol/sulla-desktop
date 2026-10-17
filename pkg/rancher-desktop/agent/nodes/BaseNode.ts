@@ -8,6 +8,7 @@ import { SystemPromptSectionModel } from '../database/models/SystemPromptSection
 import { getAgentOverrideService, getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
+import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
 import { classifyLLMFailure, redactLLMFailureMessage, sameLLMRoute } from '../languagemodels/providerRecovery';
 import { SystemPromptBuilder, type PromptBuildContext, type DbPromptSection, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
@@ -1624,7 +1625,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     let reply: NormalizedResponse | null;
     try {
-      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onToolEvent }, { ...options, state });
+      const providerId = provider.getProviderId?.();
+      const accountId = await provider.getAccountId?.();
+      const executionContext = providerId && accountId
+        ? await issueProviderExecutionContext(state, providerId, accountId)
+        : undefined;
+      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onToolEvent }, { ...options, state, executionContext });
     } finally {
       // Close partial output on failure too, before recovery starts another stream.
       // End-of-turn flush. `onActivity` only fires segment boundaries while

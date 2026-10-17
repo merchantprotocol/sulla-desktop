@@ -1,6 +1,4 @@
-import { Octokit } from '@octokit/rest';
-
-import { getIntegrationService } from '../../services/IntegrationService';
+import { createGitHubOctokit } from './octokit';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -14,16 +12,7 @@ export class GitHubCloseIssueWorker extends BaseTool {
     const { owner, repo, issue_number } = input;
     const reason = input.reason || 'completed';
 
-    const integrationService = getIntegrationService();
-    const tokenValue = await integrationService.getIntegrationValue('github', 'token');
-    if (!tokenValue) {
-      return {
-        successBoolean: false,
-        responseString: 'Error: GitHub token not configured.',
-      };
-    }
-
-    const octokit = new Octokit({ auth: tokenValue.value });
+    const octokit = await createGitHubOctokit(this.executionContext);
 
     try {
       const response = await octokit.issues.update({

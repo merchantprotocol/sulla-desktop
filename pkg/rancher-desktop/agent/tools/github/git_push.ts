@@ -1,3 +1,5 @@
+import { withGitHubBrokerRemote } from './gitBrokerTransport';
+import { usesContainerVaultAuthority } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
@@ -19,6 +21,7 @@ export class GitPushWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { absolutePath, remote = 'origin', branch, tags = false, force = false } = input;
+    const localAuthority = usesContainerVaultAuthority();
 
     const redact = (s: string, secret?: string): string =>
       secret ? (s || '').split(secret).join('***') : (s || '');
@@ -53,9 +56,12 @@ export class GitPushWorker extends BaseTool {
       let pushTarget = remote;
       let authPrefix = '';
       let credFlags = '';
-      const integrationService = getIntegrationService();
-      const tokenValue = await integrationService.getIntegrationValue('github', 'token');
-      const token = tokenValue?.value;
+      let token: string | undefined;
+      if (!localAuthority) {
+        const integrationService = getIntegrationService();
+        const tokenValue = await integrationService.getIntegrationValue('github', 'token');
+        token = tokenValue?.value;
+      }
 
       if (token) {
         const remoteUrlResult = await runCommand(
@@ -84,7 +90,18 @@ export class GitPushWorker extends BaseTool {
       const cmd = tags
         ? `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } --tags${ forceFlag }`
         : `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } ${ targetBranch }${ forceFlag }`;
-      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 120_000 });
+      const result = localAuthority
+        ? await (async() => {
+          const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url ${ remote }`, [], { runInLimaShell: true, timeoutMs: 10_000 });
+          if (remoteUrl.exitCode !== 0) return remoteUrl;
+          return withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), (proxyUrl) => {
+            const brokerCommand = tags
+              ? `git -C "${ repoRoot }" push "${ proxyUrl }" --tags${ forceFlag }`
+              : `git -C "${ repoRoot }" push "${ proxyUrl }" ${ targetBranch }${ forceFlag }`;
+            return runCommand(brokerCommand, [], { runInLimaShell: true, timeoutMs: 120_000 });
+          });
+        })()
+        : await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 120_000 });
 
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: redact(`Git push failed: ${ result.stderr || result.stdout }`, token) };
