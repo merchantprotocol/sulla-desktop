@@ -60,6 +60,8 @@ test('agent policy blocks only-me, over-level, other agents, expired and off-sit
   const policy = { ...DEFAULT_AGENT_POLICY, mode: 'agents' as const, level: 'autofill' as const, agents: ['sulla'], sites: ['github.com'] };
   assert.equal(agentPolicyAllows(DEFAULT_AGENT_POLICY, { agentId: 'sulla', level: 'metadata' }).allowed, false);
   assert.equal(agentPolicyAllows(policy, { agentId: 'sulla', level: 'autofill', host: 'api.github.com' }).allowed, true);
+  assert.equal(agentPolicyAllows(policy, { agentId: 'sulla', level: 'autofill' }).allowed, false);
+  assert.equal(agentPolicyAllows(policy, { agentId: 'sulla', level: 'autofill', host: 'github.com/path' }).allowed, false);
   assert.equal(agentPolicyAllows(policy, { agentId: 'sulla', level: 'full' }).allowed, false);
   assert.equal(agentPolicyAllows(policy, { agentId: 'other', level: 'metadata' }).allowed, false);
   assert.equal(agentPolicyAllows(policy, { agentId: 'sulla', level: 'autofill', host: 'evilgithub.com' }).allowed, false);

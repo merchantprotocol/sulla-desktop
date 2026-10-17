@@ -3574,8 +3574,9 @@
   var $2 = (id) => document.getElementById(id);
   var esc = (value) => String(value ?? "").replace(/[&<>'"]/g, (c2) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[c2]);
   var initials = (value) => value.split(/\s+/).slice(0, 2).map((x2) => x2[0]?.toUpperCase()).join("") || "SV";
-  var state = { token: "", email: "", user: null, userKey: null, privateKey: null, org: null, orgKey: null, members: [], groups: [], collections: [], selected: null, access: { members: [], groups: [] }, collectionKeys: /* @__PURE__ */ new Map(), itemNames: /* @__PURE__ */ new Map(), audit: [], auditOffset: 0, authMode: "signin", recovery: null, collectionItems: [], collectionActivity: [] };
+  var state = { token: "", email: "", user: null, userKey: null, privateKey: null, org: null, orgKey: null, members: [], groups: [], collections: [], selected: null, access: { members: [], groups: [] }, collectionKeys: /* @__PURE__ */ new Map(), itemNames: /* @__PURE__ */ new Map(), audit: [], auditOffset: 0, authMode: "signin", recovery: null, collectionItems: [], collectionActivity: [], collectionItemsError: "", collectionActivityError: "", collectionAccessError: "" };
   var idleTimer = 0;
+  var collectionGeneration = 0;
   function armIdle() {
     window.clearTimeout(idleTimer);
     if (state.token) idleTimer = window.setTimeout(() => lock("Locked after 15 minutes of inactivity."), 15 * 60 * 1e3);
@@ -3589,6 +3590,23 @@
     state.token = "";
   }
   function lock(message = "") {
+    collectionGeneration++;
+    state.selected = null;
+    state.collectionItems = [];
+    state.collectionActivity = [];
+    state.access = { members: [], groups: [] };
+    state.audit = [];
+    state.itemNames.clear();
+    state.collectionItemsError = state.collectionActivityError = state.collectionAccessError = "";
+    $2("collection-items").replaceChildren();
+    $2("collection-activity").replaceChildren();
+    $2("rights").replaceChildren();
+    $2("collection-title").textContent = "";
+    $2("collection-meta").textContent = "";
+    $2("audit-rows").replaceChildren();
+    $2("audit-detail").replaceChildren();
+    $2("collection-detail").hidden = true;
+    $2("collection-empty").hidden = false;
     clearKeys();
     $2("shell").hidden = true;
     $2("auth").hidden = false;
@@ -3780,38 +3798,49 @@
     if (!state.selected && state.collections[0]) void selectCollection(state.collections[0].id);
   }
   async function selectCollection(id) {
+    const generation = ++collectionGeneration;
     state.selected = state.collections.find((c2) => c2.id === id) ?? null;
     renderCollections();
     if (!state.selected) return;
     $2("collection-empty").hidden = true;
     $2("collection-detail").hidden = false;
     $2("collection-title").textContent = state.selected.name;
-    const [items, activity] = await Promise.all([
-      api(`/v1/collections/${id}/items`).catch(() => ({ items: [] })),
-      api(`/v1/orgs/${state.org.id}/audit?collection=${encodeURIComponent(id)}&limit=50`).catch(() => ({ events: [] }))
+    $2("collection-items").innerHTML = '<div class="empty"><span>Loading items…</span></div>';
+    $2("collection-activity").innerHTML = '<div class="empty"><span>Loading activity…</span></div>';
+    $2("rights").innerHTML = '<div class="empty"><span>Loading access rights…</span></div>';
+    const [itemsResult, activityResult, accessResult] = await Promise.allSettled([
+      api(`/v1/collections/${id}/items`),
+      api(`/v1/orgs/${state.org.id}/audit?collection=${encodeURIComponent(id)}&limit=50`),
+      api(`/v1/collections/${id}/access`)
     ]);
-    state.collectionItems = [];
+    if (generation !== collectionGeneration || state.selected?.id !== id || !state.token) return;
+    const collectionItems = [];
+    const itemNames = /* @__PURE__ */ new Map();
     const key = state.collectionKeys.get(id);
-    for (const row of items.items) {
-      try {
-        if (!key) throw new Error("Collection key unavailable");
-        const value = JSON.parse(await decryptItemText({ version: 1, encryptedItemKey: row.encrypted_item_key, ciphertext: row.ciphertext, agentWrappedItemKey: row.agent_wrapped_item_key }, key, { itemId: row.id, ownerId: id }));
-        state.collectionItems.push({ id: row.id, name: value.name || "Vault item", type: value.type || row.item_type, agentPolicy: value.agentPolicy, updatedAt: row.updated_at });
-        state.itemNames.set(row.id, value.name || "Vault item");
-      } catch {
-        state.collectionItems.push({ id: row.id, name: "Encrypted item", type: row.item_type, updatedAt: row.updated_at });
+    if (itemsResult.status === "fulfilled") {
+      for (const row of itemsResult.value.items || []) {
+        try {
+          if (!key) throw new Error("Collection key unavailable");
+          const value = JSON.parse(await decryptItemText({ version: 1, encryptedItemKey: row.encrypted_item_key, ciphertext: row.ciphertext, agentWrappedItemKey: row.agent_wrapped_item_key }, key, { itemId: row.id, ownerId: id }));
+          collectionItems.push({ id: row.id, name: value.name || "Vault item", type: value.type || row.item_type, agentPolicy: value.agentPolicy, updatedAt: row.updated_at });
+          itemNames.set(row.id, value.name || "Vault item");
+        } catch {
+          collectionItems.push({ id: row.id, name: "Encrypted item", type: row.item_type, updatedAt: row.updated_at });
+        }
       }
     }
-    state.collectionActivity = activity.events || [];
+    if (generation !== collectionGeneration || state.selected?.id !== id || !state.token) return;
+    state.collectionItems = collectionItems;
+    for (const [itemId, name] of itemNames) state.itemNames.set(itemId, name);
+    state.collectionActivity = activityResult.status === "fulfilled" ? activityResult.value.events || [] : [];
+    state.access = accessResult.status === "fulfilled" ? accessResult.value : { members: [], groups: [] };
+    state.collectionItemsError = itemsResult.status === "rejected" ? "Items could not be loaded. Your access may have changed or the server request failed." : "";
+    state.collectionActivityError = activityResult.status === "rejected" ? "Activity could not be loaded. No events have been hidden as an empty result." : "";
+    state.collectionAccessError = accessResult.status === "rejected" ? "Access rights could not be loaded. Changes are disabled until this request succeeds." : "";
     $2("collection-meta").textContent = `${state.collectionItems.length} item${state.collectionItems.length === 1 ? "" : "s"} \xB7 access is enforced for people and their agents`;
     $2("collection-item-count").textContent = String(state.collectionItems.length);
     renderCollectionItems();
     renderCollectionActivity();
-    try {
-      state.access = await api(`/v1/collections/${id}/access`);
-    } catch {
-      state.access = { members: state.members.map((m2) => ({ ...m2, can_view: state.selected.can_view, can_use_by_agents: state.selected.can_use_by_agents, can_edit: state.selected.can_edit, can_manage: state.selected.can_manage })), groups: [] };
-    }
     renderRights();
     showCollectionTab("items");
   }
@@ -3820,15 +3849,21 @@
     document.querySelectorAll("[data-collection-tab]").forEach((button) => button.classList.toggle("active", button.dataset.collectionTab === tab));
   }
   function renderCollectionItems() {
-    $2("collection-items").innerHTML = state.collectionItems.length ? state.collectionItems.map((item) => `<div class="collection-item"><span class="tile">${esc(initials(item.name))}</span><div><b>${esc(item.name)}</b><small>${esc(item.type || "item")} \xB7 edited ${esc(new Date(item.updatedAt).toLocaleDateString())}</small></div><span class="pill ${item.agentPolicy?.mode === "agents" ? "acc" : ""}">${item.agentPolicy?.mode === "agents" ? "Agents " + esc(item.agentPolicy.level) : "Only owner"}</span></div>`).join("") : '<div class="empty"><b>No items in this collection</b><span>Collection item creation is not available in this console yet.</span></div>';
+    $2("collection-items").innerHTML = state.collectionItemsError ? `<div class="empty error"><b>Could not load collection items</b><span>${esc(state.collectionItemsError)}</span></div>` : state.collectionItems.length ? state.collectionItems.map((item) => `<div class="collection-item"><span class="tile">${esc(initials(item.name))}</span><div><b>${esc(item.name)}</b><small>${esc(item.type || "item")} \xB7 edited ${esc(new Date(item.updatedAt).toLocaleDateString())}</small></div><span class="pill ${item.agentPolicy?.mode === "agents" ? "acc" : ""}">${item.agentPolicy?.mode === "agents" ? "Agents " + esc(item.agentPolicy.level) : "Only owner"}</span></div>`).join("") : '<div class="empty"><b>No items in this collection</b><span>Collection item creation is not available in this console yet.</span></div>';
   }
   function renderCollectionActivity() {
-    $2("collection-activity").innerHTML = state.collectionActivity.length ? `<table><tbody>${state.collectionActivity.map((event) => `<tr><td><b>${esc(actionLabel(event.action))}</b><br><span class="muted">${esc(state.itemNames.get(event.item_id) || "Collection")}</span></td><td><span class="result ${event.blocked ? "bad" : "ok"}">${event.blocked ? "Blocked" : "Allowed"}</span><br><span class="muted">${esc(new Date(event.created_at).toLocaleString())}</span></td></tr>`).join("")}</tbody></table>` : '<div class="empty"><b>No collection activity yet</b><span>Authorized actions will appear here without secret values.</span></div>';
+    $2("collection-activity").innerHTML = state.collectionActivityError ? `<div class="empty error"><b>Could not load collection activity</b><span>${esc(state.collectionActivityError)}</span></div>` : state.collectionActivity.length ? `<table><tbody>${state.collectionActivity.map((event) => `<tr><td><b>${esc(actionLabel(event.action))}</b><br><span class="muted">${esc(state.itemNames.get(event.item_id) || "Collection")}</span></td><td><span class="result ${event.blocked ? "bad" : "ok"}">${event.blocked ? "Blocked" : "Allowed"}</span><br><span class="muted">${esc(new Date(event.created_at).toLocaleString())}</span></td></tr>`).join("")}</tbody></table>` : '<div class="empty"><b>No collection activity yet</b><span>Authorized actions will appear here without secret values.</span></div>';
   }
   function effective(row, key) {
     return ["owner", "admin"].includes(row.role) || Boolean(row[key]);
   }
   function renderRights() {
+    if (state.collectionAccessError) {
+      $2("rights").innerHTML = `<div class="empty error"><b>Could not load collection access</b><span>${esc(state.collectionAccessError)}</span></div>`;
+      $2("right-people").textContent = "—";
+      $2("right-agents").textContent = "—";
+      return;
+    }
     const rights = [["can_view", "View"], ["can_use_by_agents", "Agents use"], ["can_edit", "Edit"], ["can_manage", "Manage"]];
     const rows = [...state.access.groups.map((g2) => ({ ...g2, kind: "group" })), ...state.access.members.map((m2) => ({ ...m2, kind: "member" }))];
     const can = canManage();
@@ -3844,6 +3879,7 @@
     document.querySelectorAll("[data-right-key]").forEach((b2) => b2.onclick = () => void toggleRight(b2));
   }
   async function toggleRight(button) {
+    if (state.collectionAccessError) return;
     const kind = button.dataset.rightKind;
     const id = button.dataset.rightId;
     const row = (kind === "group" ? state.access.groups : state.access.members).find((x2) => (kind === "group" ? x2.id : x2.user_id) === id);
@@ -3996,7 +4032,7 @@
     notice(`Automatic confirmation ${enabled ? "enabled" : "disabled"}.`);
   }
   async function loadItemNames() {
-    const payload = await api("/v1/items").catch(() => ({ items: [] }));
+    const payload = await api("/v1/items");
     for (const row of payload.items) {
       const key = row.collection_id ? state.collectionKeys.get(row.collection_id) : state.userKey;
       if (!key) continue;
@@ -4018,21 +4054,24 @@
     if ($2("filter-blocked").checked) params.set("blocked", "true");
     return params.toString();
   }
-  var actionLabel = (action) => ({ agent_credential_use: "Agent tried to use", join_password_set: "Set join password", join_password_rotated: "Rotated join password", member_confirmed: "Confirmed member", recovery_opt_in: "Enabled recovery", recovery_opt_out: "Disabled recovery", account_recovered: "Recovered account" })[action] ?? action.replaceAll("_", " ");
+  var agentAuditActions = /* @__PURE__ */ new Set(["agent_credential_use", "agent_credential_broker_use", "vault_outbound_request"]);
+  var isAgentAudit = (event) => Boolean(event.metadata?.agentId) || agentAuditActions.has(event.action);
+  var actionLabel = (action) => ({ agent_credential_use: "Agent tried to use", agent_credential_broker_use: "Agent used credential", vault_outbound_request: "Agent used credential", join_password_set: "Set join password", join_password_rotated: "Rotated join password", member_confirmed: "Confirmed member", recovery_opt_in: "Enabled recovery", recovery_opt_out: "Disabled recovery", account_recovered: "Recovered account" })[action] ?? action.replaceAll("_", " ");
   async function loadAudit() {
     if (!state.org) return;
     const result = await api(`/v1/orgs/${state.org.id}/audit?${auditParams()}`);
     state.audit = result.events;
     $2("audit-total").textContent = String(state.audit.length);
-    $2("audit-agents").textContent = String(state.audit.filter((e) => e.action === "agent_credential_use").length);
+    $2("audit-agents").textContent = String(state.audit.filter(isAgentAudit).length);
     $2("audit-blocked").textContent = String(state.audit.filter((e) => e.blocked).length);
     $2("audit-page").textContent = `Page ${Math.floor(state.auditOffset / 25) + 1}`;
     $2("audit-rows").innerHTML = state.audit.length ? state.audit.map((e, i2) => {
       const member = state.members.find((m2) => m2.user_id === e.actor_user_id);
       const collection = state.collections.find((c2) => c2.id === e.collection_id);
-      const who = e.action === "agent_credential_use" ? e.metadata?.agentName || e.metadata?.agentId || "Agent" : member?.email || "Member";
+      const agent = isAgentAudit(e);
+      const who = agent ? e.metadata?.agentName || e.metadata?.agentId || "Agent" : member?.email || "Member";
       const target = state.itemNames.get(e.item_id) || collection?.name || "Organization";
-      return `<tr data-event="${i2}"><td>${esc(new Date(e.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</td><td><div class="actor-cell"><span class="avatar ${e.action === "agent_credential_use" ? "group" : ""}">${e.action === "agent_credential_use" ? "\u25C6" : esc(initials(who))}</span><span>${esc(who)}</span></div></td><td>${esc(actionLabel(e.action))}</td><td>${esc(target)}</td><td><span class="result ${e.blocked ? "bad" : "ok"}">${e.blocked ? "Blocked" : "Allowed"}</span></td></tr>`;
+      return `<tr data-event="${i2}"><td>${esc(new Date(e.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</td><td><div class="actor-cell"><span class="avatar ${agent ? "group" : ""}">${agent ? "\u25C6" : esc(initials(who))}</span><span>${esc(who)}</span></div></td><td>${esc(actionLabel(e.action))}</td><td>${esc(target)}</td><td><span class="result ${e.blocked ? "bad" : "ok"}">${e.blocked ? "Blocked" : "Allowed"}</span></td></tr>`;
     }).join("") : '<tr><td colspan="5" class="muted">No events match these filters.</td></tr>';
     document.querySelectorAll("[data-event]").forEach((row) => row.onclick = () => renderAuditDetail(Number(row.dataset.event)));
     if (state.audit[0]) renderAuditDetail(0);

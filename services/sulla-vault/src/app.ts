@@ -36,6 +36,24 @@ function requiredObject(value: unknown, name: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function sanitizedAuditMetadata(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const input = value as Record<string, unknown>;
+  const metadata: Record<string, string> = {};
+  for (const key of ['agentId', 'agentName', 'operation'] as const) {
+    if (typeof input[key] === 'string' && input[key].length > 0 && input[key].length <= 160) metadata[key] = input[key];
+  }
+  if (typeof input.destination === 'string' && input.destination.length <= 2048) {
+    try {
+      const destination = new URL(input.destination);
+      if (destination.protocol === 'https:' || destination.protocol === 'http:') metadata.destination = destination.origin;
+    } catch {
+      // Invalid destinations are omitted rather than copied into the immutable audit record.
+    }
+  }
+  return metadata;
+}
+
 class HttpError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message);
@@ -60,6 +78,14 @@ function enforceJoinAttemptLimit(ip: string, orgId: string): void {
 
 async function auditEvent(db: Queryable, actorId: string, orgId: string, action: string, metadata: Record<string, unknown> = {}): Promise<void> {
   await db.query('INSERT INTO audit_log(actor_user_id, org_id, action, metadata) VALUES ($1, $2, $3, $4)', [actorId, orgId, action, metadata]);
+}
+
+async function auditPersonalItemEvent(db: Queryable, itemId: string, action: string): Promise<void> {
+  await db.query(
+    `INSERT INTO audit_log(actor_user_id,item_id,action,metadata)
+     SELECT owner_user_id,id,$2,'{}'::jsonb FROM items WHERE id=$1 AND owner_user_id IS NOT NULL`,
+    [itemId, action],
+  );
 }
 
 function userId(request: AuthenticatedRequest): string {
@@ -305,22 +331,71 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       response.json({ items: await localAuthority.listHumanItems(humanCookie(request), request.header('x-csrf-token')) });
     });
     app.get('/v1/human/activity', async(request, response) => {
-      response.json({ events: await localAuthority.listHumanItemActivity(
-        humanCookie(request), request.header('x-csrf-token'),
-        typeof request.query.item === 'string' ? request.query.item : undefined,
-      ) });
+      const session = localAuthority.humanSessionStatus(humanCookie(request), request.header('x-csrf-token'));
+      const principalId = localAuthority.status().principalId;
+      if (session.phase !== 'unlocked' || !principalId) throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
+      const limit = Math.min(Math.max(Number(request.query.limit) || 25, 1), 100);
+      const offset = Math.min(Math.max(Number(request.query.offset) || 0, 0), 100_000);
+      const conditions = ['a.actor_user_id=$1', 'a.org_id IS NULL', '(a.item_id IS NULL OR i.owner_user_id=$1)'];
+      const params: unknown[] = [principalId];
+      const add = (sql: string, value: unknown) => { params.push(value); conditions.push(sql.replace('?', `$${ params.length }`)); };
+      if (typeof request.query.item === 'string') {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(request.query.item)) {
+          throw new HttpError(400, 'item is invalid');
+        }
+        add('a.item_id=?::uuid', request.query.item);
+      }
+      const agentEvent = `(a.action IN ('vault_outbound_request','agent_credential_broker_use','agent_credential_use') OR a.metadata ? 'agentId')`;
+      if (request.query.actor === 'agent') conditions.push(agentEvent);
+      else if (request.query.actor === 'human') conditions.push(`NOT ${ agentEvent }`);
+      else if (request.query.actor !== undefined && request.query.actor !== 'all') throw new HttpError(400, 'actor is invalid');
+      if (request.query.blocked === 'true') conditions.push('a.blocked=true');
+      else if (request.query.blocked !== undefined && request.query.blocked !== 'false') throw new HttpError(400, 'blocked is invalid');
+      if (typeof request.query.from === 'string') {
+        if (!Number.isFinite(Date.parse(request.query.from))) throw new HttpError(400, 'from is invalid');
+        add('a.created_at>=?::timestamptz', request.query.from);
+      }
+      if (typeof request.query.query === 'string') {
+        const query = request.query.query.trim();
+        if (query.length > 160) throw new HttpError(400, 'query is too long');
+        if (query) {
+          params.push(`%${ query.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_') }%`);
+          const search = `$${ params.length }`;
+          conditions.push(`(a.action ILIKE ${ search } OR COALESCE(a.pod_id,'') ILIKE ${ search } OR COALESCE(a.item_id::text,'') ILIKE ${ search } OR COALESCE(a.metadata->>'agentId','') ILIKE ${ search } OR COALESCE(a.metadata->>'operation','') ILIKE ${ search } OR COALESCE(a.metadata->>'destination','') ILIKE ${ search })`);
+        }
+      }
+      params.push(limit + 1, offset);
+      const result = await db.query(
+        `SELECT a.id,a.item_id,a.action,a.pod_id,a.metadata,a.blocked,a.reason,a.created_at
+           FROM audit_log a LEFT JOIN items i ON i.id=a.item_id
+          WHERE ${ conditions.join(' AND ') }
+          ORDER BY a.created_at DESC,a.id DESC LIMIT $${ params.length - 1 } OFFSET $${ params.length }`, params,
+      );
+      const hasMore = result.rows.length > limit;
+      const events = result.rows.slice(0, limit).map(event => ({ ...event, metadata: sanitizedAuditMetadata(event.metadata) }));
+      response.json({ events, hasMore, limit, offset });
     });
     app.post('/v1/human/items', async(request, response) => {
-      response.status(201).json(await localAuthority.saveHumanItem(humanCookie(request), request.header('x-csrf-token'), request.body));
+      const result = await localAuthority.saveHumanItem(humanCookie(request), request.header('x-csrf-token'), request.body);
+      await auditPersonalItemEvent(db, result.id, 'human_item_created');
+      response.status(201).json(result);
     });
     app.post('/v1/human/items/:itemId/reveal', async(request, response) => {
-      response.json(await localAuthority.revealHumanItem(humanCookie(request), request.header('x-csrf-token'), requiredString(request.params.itemId, 'itemId')));
+      const itemId = requiredString(request.params.itemId, 'itemId');
+      const result = await localAuthority.revealHumanItem(humanCookie(request), request.header('x-csrf-token'), itemId);
+      await auditPersonalItemEvent(db, itemId, 'human_item_reveal');
+      response.json(result);
     });
     app.patch('/v1/human/items/:itemId', async(request, response) => {
-      response.json(await localAuthority.saveHumanItem(humanCookie(request), request.header('x-csrf-token'), { ...request.body, id: request.params.itemId }));
+      const itemId = requiredString(request.params.itemId, 'itemId');
+      const result = await localAuthority.saveHumanItem(humanCookie(request), request.header('x-csrf-token'), { ...request.body, id: itemId });
+      await auditPersonalItemEvent(db, itemId, 'human_item_updated');
+      response.json(result);
     });
     app.delete('/v1/human/items/:itemId', async(request, response) => {
-      await localAuthority.deleteHumanItem(humanCookie(request), request.header('x-csrf-token'), requiredString(request.params.itemId, 'itemId'), Number(request.query.revision));
+      const itemId = requiredString(request.params.itemId, 'itemId');
+      await localAuthority.deleteHumanItem(humanCookie(request), request.header('x-csrf-token'), itemId, Number(request.query.revision));
+      await auditPersonalItemEvent(db, itemId, 'human_item_deleted');
       response.status(204).end();
     });
     app.post('/v1/broker/approve', (request, response) => {
@@ -599,6 +674,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       if (!personalAccess && !collectionAccess) reason = 'User cannot use credentials from this collection';
       else if (!item.agent_wrapped_item_key) reason = 'Item is not enabled for agents';
       else if (!policy.allowed) reason = policy.reason ?? reason;
+      else if (item.agent_policy?.askFirst) reason = 'Owner approval is required, but server agent approval is not available';
       else allowed = true;
     } else {
       reason = 'Item not found or inaccessible';
@@ -1205,6 +1281,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     let collectionId = typeof request.body.collectionId === 'string' ? request.body.collectionId : null;
     let orgId = typeof request.body.orgId === 'string' ? request.body.orgId : null;
     const action = requiredString(request.body.action, 'action');
+    if (!/^[a-z][a-z0-9_]{1,79}$/.test(action)) throw new HttpError(400, 'action is invalid');
     let blocked = false;
     let reason: string | null = null;
     let item: Record<string, unknown> | undefined;
@@ -1239,6 +1316,9 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       if (!policyResult.allowed || (!collectionId && !item.agent_wrapped_item_key)) {
         blocked = true;
         reason = !policyResult.allowed ? policyResult.reason ?? 'Agent policy denied this request' : 'Item is not enabled for agents';
+      } else if ((item.agent_policy as { askFirst?: boolean } | null)?.askFirst) {
+        blocked = true;
+        reason = 'Owner approval is required, but server agent approval is not available';
       }
     }
     if (orgId && !collectionId) {
@@ -1251,11 +1331,13 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       const device = await db.query('SELECT 1 FROM devices WHERE id = $1 AND user_id = $2', [request.body.deviceId, actorId]);
       if (!device.rowCount) throw new AccessDenied('Device access denied');
     }
+    const podId = request.body.podId === undefined ? null : requiredString(request.body.podId, 'podId');
+    if (podId && !/^[A-Za-z0-9._:-]{1,160}$/.test(podId)) throw new HttpError(400, 'podId is invalid');
     const result = await db.query(
       `INSERT INTO audit_log(actor_user_id, device_id, org_id, collection_id, item_id, action, pod_id, metadata, blocked, reason)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at, blocked, reason`,
       [actorId, request.body.deviceId ?? null, orgId, collectionId,
-        itemId, action, request.body.podId ?? null, request.body.metadata ?? {}, blocked, reason],
+        itemId, action, podId, sanitizedAuditMetadata(request.body.metadata), blocked, reason],
     );
     if (blocked) { response.status(403).json({ error: 'agent_blocked', reason, auditId: result.rows[0].id }); return; }
     response.status(201).json(result.rows[0]);

@@ -101,8 +101,16 @@ export function agentPolicyAllows(
     if ((request.now ?? new Date()).getTime() >= expiry) return { allowed: false, reason: 'Agent access has expired' };
   }
   if (request.onServer && !policy.allowServerAgents) return { allowed: false, reason: 'Server agents are not allowed for this item' };
-  if (policy.sites.length && request.host) {
-    const host = request.host.toLowerCase();
+  if (policy.sites.length) {
+    const host = request.host?.trim().toLowerCase();
+    if (!host) return { allowed: false, reason: 'A valid destination host is required by this item policy' };
+    try {
+      if (new URL(`https://${ host }`).hostname.toLowerCase() !== host) {
+        return { allowed: false, reason: 'A valid destination host is required by this item policy' };
+      }
+    } catch {
+      return { allowed: false, reason: 'A valid destination host is required by this item policy' };
+    }
     if (!policy.sites.some((s) => host === s.toLowerCase() || host.endsWith(`.${ s.toLowerCase() }`))) {
       return { allowed: false, reason: `Not allowed on ${ host }` };
     }
