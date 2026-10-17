@@ -77,6 +77,10 @@ class SullaFilesWatcher {
         body.fill(0);
       }
     },
+    [
+      { sourcePath: path.join(this.folder, 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-shared-master-key.enc') },
+      { sourcePath: path.join(paths.sullaHome, 'private-files-quarantine', 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-quarantined-master-key.enc') },
+    ],
   );
 
   private async appUnlocked(): Promise<boolean> {
@@ -104,7 +108,15 @@ class SullaFilesWatcher {
     const health = await response.json();
     // Never send a master key to an older image with no memory-only protocol.
     if (typeof health.locked !== 'boolean') throw new Error('Files service requires a keychain-compatible update');
-    if (health.locked) await this.keychain.unlock();
+    if (!health.legacyImport || !['clear', 'secure-import-required'].includes(health.legacyImport.state)) throw new Error('Files service requires a legacy-preflight-compatible update');
+    if (health.locked) {
+      // The service has migrated/classified metadata before this point. Secure
+      // legacy plaintext custody separately, then refuse native unlock until
+      // explicit recovery has installed the external collection keys.
+      await this.keychain.archiveLegacyKeys();
+      if (health.legacyImport.state === 'secure-import-required') throw new Error(health.legacyImport.action || 'Legacy Files secure import is required');
+      await this.keychain.unlock();
+    }
     await this.requireAppUnlocked();
   }
 

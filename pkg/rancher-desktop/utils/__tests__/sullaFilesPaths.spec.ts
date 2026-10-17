@@ -20,6 +20,11 @@ describe('Files user-root compatibility', () => {
     expect(result).toEqual({ canonicalPath: lower, activePath: upper, compatibility: 'existing-uppercase' });
   });
 
+  it('fails explicitly when lowercase and uppercase are distinct directories', () => {
+    expect(() => resolveSullaFilesUserRoot(home, value => value === lower ? { dev: 1, ino: 3 } : value === upper ? { dev: 1, ino: 4 } : undefined))
+      .toThrow('Sulla Files root is ambiguous');
+  });
+
   it('uses lowercase for a fresh install', () => {
     expect(resolveSullaFilesUserRoot(home, () => undefined)).toEqual({ canonicalPath: lower, activePath: lower, compatibility: 'canonical' });
   });

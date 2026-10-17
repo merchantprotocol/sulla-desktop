@@ -97,6 +97,65 @@ describe('Files keychain bootstrap', () => {
     await Promise.all([unlock, settled]);
     expect(drained).toBe(true);
   });
+  it('archives both legacy locations independently before bootstrapping and retires plaintext', async() => {
+    const provider = storage();
+    const legacy = ['shared', 'quarantined'].map(name => ({ sourcePath: path.join(directory, `${ name }.key`), archivePath: path.join(directory, `${ name }.enc`) }));
+    const originals = [crypto.randomBytes(32), crypto.randomBytes(32)];
+    for (const [index, item] of legacy.entries()) await fs.promises.writeFile(item.sourcePath, originals[index]);
+    let bootstrapped = false;
+    const keychain = new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => { bootstrapped = true; return Promise.resolve() }, legacy);
+    await keychain.archiveLegacyKeys();
+    expect(bootstrapped).toBe(false);
+    expect(legacy.every(item => !fs.existsSync(item.sourcePath))).toBe(true);
+    await keychain.unlock();
+    expect(bootstrapped).toBe(true);
+    for (const [index, item] of legacy.entries()) {
+      const archived = await fs.promises.readFile(item.archivePath);
+      expect(archived.includes(originals[index])).toBe(false);
+      expect(Buffer.from(provider.decryptString(archived), 'base64')).toEqual(originals[index]);
+      expect((await fs.promises.stat(item.archivePath)).mode & 0o777).toBe(0o600);
+      originals[index].fill(0);
+    }
+  });
+
+  it.each(['encrypt-failure', 'roundtrip-failure', 'existing-conflict', 'symlink', 'invalid-length'])('preserves legacy plaintext and keeps service locked on %s', async(failure) => {
+    const provider = storage();
+    const sourcePath = path.join(directory, 'legacy.key');
+    const archivePath = path.join(directory, 'legacy.enc');
+    const original = crypto.randomBytes(failure === 'invalid-length' ? 31 : 32);
+    await fs.promises.writeFile(sourcePath, original);
+    if (failure === 'encrypt-failure') provider.encryptString = () => { throw new Error('synthetic encrypt failure') };
+    if (failure === 'roundtrip-failure') provider.decryptString = () => crypto.randomBytes(32).toString('base64');
+    if (failure === 'existing-conflict') await fs.promises.writeFile(archivePath, provider.encryptString(crypto.randomBytes(32).toString('base64')));
+    let actualSource = sourcePath;
+    if (failure === 'symlink') {
+      actualSource = path.join(directory, 'link.key');
+      await fs.promises.symlink(sourcePath, actualSource);
+    }
+    let bootstrapped = false;
+    const keychain = new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => { bootstrapped = true; return Promise.resolve() }, [{ sourcePath: actualSource, archivePath }]);
+    await expect(keychain.archiveLegacyKeys()).rejects.toThrow('Files could not secure legacy key material using the OS keychain');
+    expect(await fs.promises.readFile(sourcePath)).toEqual(original);
+    expect(bootstrapped).toBe(false);
+    expect(fs.existsSync(keyPath)).toBe(false);
+    original.fill(0);
+  });
+
+  it('resumes an interrupted migration when the durable archive matches exactly', async() => {
+    const provider = storage();
+    const sourcePath = path.join(directory, 'legacy.key');
+    const archivePath = path.join(directory, 'legacy.enc');
+    const original = crypto.randomBytes(32);
+    await fs.promises.writeFile(sourcePath, original);
+    const encrypted = provider.encryptString(original.toString('base64'));
+    await fs.promises.writeFile(archivePath, encrypted);
+    const keychain = new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => Promise.resolve(), [{ sourcePath, archivePath }]);
+    await keychain.archiveLegacyKeys();
+    expect(fs.existsSync(sourcePath)).toBe(false);
+    expect(await fs.promises.readFile(archivePath)).toEqual(encrypted);
+    original.fill(0);
+  });
+
   it('does not bootstrap a newly created key unless persisted ciphertext decrypts to the same key', async() => {
     const provider = storage();
     provider.decryptString = () => crypto.randomBytes(32).toString('base64');
@@ -106,5 +165,4 @@ describe('Files keychain bootstrap', () => {
     // Preserve the encrypted file for recovery; never replace it on failure.
     expect(fs.existsSync(keyPath)).toBe(true);
   });
-
 });
