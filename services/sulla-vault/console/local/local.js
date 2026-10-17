@@ -3,6 +3,9 @@
 
   let csrf = '';
   let items = [];
+  const initialUrl = new URL(location.href);
+  const integrationHint = initialUrl.searchParams.get('integration');
+  const accountHint = initialUrl.searchParams.get('account');
   const byId = id => document.getElementById(id);
   const message = (text, error = false) => {
     const output = byId('vault-message');
@@ -116,6 +119,18 @@
     byId('delete-item').hidden = !detail?.id;
     byId('editor').showModal();
   };
+  const openIntegrationHint = async() => {
+    if (!integrationHint) return;
+    if (accountHint) {
+      for (const item of items.slice(0, 200)) {
+        const revealed = await api(`/v1/human/items/${encodeURIComponent(item.id)}/reveal`, { method: 'POST', body: '{}' });
+        if (revealed.item?.integration?.integrationId === integrationHint && revealed.item?.integration?.accountId === accountHint) {
+          await openEditor({ ...revealed.item, id: revealed.id, revision: revealed.revision }); return;
+        }
+      }
+    }
+    await openEditor({ type: 'apiKey', name: integrationHint, integration: { integrationId: integrationHint, accountId: accountHint || 'default', properties: {} } });
+  };
   const itemPayload = () => {
     const type = byId('item-type').value;
     const origin = byId('website').value.trim();
@@ -139,18 +154,18 @@
     if (!grant || !csrf) throw new Error('Open the vault from Sulla Desktop to start a protected session');
     const session = await api('/v1/human/session/exchange', { method: 'POST', body: JSON.stringify({ grant, csrf }) });
     csrf = session.csrf; setPhase(session.phase);
-    if (session.phase === 'unlocked') await load();
+    if (session.phase === 'unlocked') { await load(); await openIntegrationHint(); }
     else { byId('unlock-title').textContent = session.setupRequired ? 'Create your vault password' : 'Unlock your vault'; byId('password').autocomplete = session.setupRequired ? 'new-password' : 'current-password'; }
   };
 
   byId('unlock-form').onsubmit = async event => {
     event.preventDefault(); byId('unlock-error').textContent = '';
-    try { const result = await api('/v1/human/unlock', { method: 'POST', body: JSON.stringify({ password: byId('password').value }) }); csrf = result.csrf; byId('password').value = ''; setPhase('unlocked'); await load(); }
+    try { const result = await api('/v1/human/unlock', { method: 'POST', body: JSON.stringify({ password: byId('password').value }) }); csrf = result.csrf; byId('password').value = ''; setPhase('unlocked'); await load(); await openIntegrationHint(); }
     catch (error) { byId('unlock-error').textContent = error.message; }
   };
   byId('recovery-unlock-form').onsubmit = async event => {
     event.preventDefault();
-    try { const result = await api('/v1/human/recovery/unlock', { method: 'POST', body: JSON.stringify({ recoveryCode: byId('recovery-code').value.trim(), nextPassword: byId('recovery-password').value }) }); csrf = result.csrf; byId('recovery-unlock-form').reset(); setPhase('unlocked'); await load(); }
+    try { const result = await api('/v1/human/recovery/unlock', { method: 'POST', body: JSON.stringify({ recoveryCode: byId('recovery-code').value.trim(), nextPassword: byId('recovery-password').value }) }); csrf = result.csrf; byId('recovery-unlock-form').reset(); setPhase('unlocked'); await load(); await openIntegrationHint(); }
     catch (error) { byId('unlock-error').textContent = error.message; }
   };
   byId('new-item').onclick = () => { void openEditor(null).catch(error => message(error.message, true)); };

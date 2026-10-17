@@ -163,7 +163,10 @@
 
     <template v-else-if="tabMode === 'vault'">
       <div class="flex-1 min-h-0 overflow-auto">
-        <VaultPage />
+        <VaultPage
+          :integration-id="editorIntegrationId || undefined"
+          :account-id="editorAccountId"
+        />
       </div>
     </template>
 
@@ -565,6 +568,16 @@ function onUseGeneratedPassword(password: string) {
 function onIntegrationsCreateAccount(data: { integrationId: string }) {
   onSetMode('vault');
   showNewAccountEditor(data);
+}
+
+function onOpenSecureVault(event: Event) {
+  if (!props.isVisible) return;
+  const detail = (event as CustomEvent<{ integrationId?: string; accountId?: string }>).detail;
+  if (!detail?.integrationId) return;
+  editorIntegrationId.value = detail.integrationId;
+  editorAccountId.value = detail.accountId;
+  onSetMode('vault');
+  setVaultTitle(detail.accountId ? 'Edit Credential' : 'New Credential');
 }
 
 function onHistoryNavigate(entry: { id: string; type: string; url?: string }) {
@@ -1019,6 +1032,7 @@ onMounted(() => {
   ipcRenderer.on('side-panel:state-changed' as any, onSidePanelStateChanged);
   window.addEventListener('sulla:mode-rail-select', onModeRailSelect);
   window.addEventListener('sulla:tab-navigate', onExternalNavigate);
+  window.addEventListener('sulla:open-secure-vault', onOpenSecureVault);
   ipcRenderer.on('browser-tab-view:user-input', onUserInput);
 
   // Read initial URL from the shared tab state
@@ -1040,6 +1054,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('sulla:mode-rail-select', onModeRailSelect);
   window.removeEventListener('sulla:tab-navigate', onExternalNavigate);
+  window.removeEventListener('sulla:open-secure-vault', onOpenSecureVault);
   ipcRenderer.removeListener('browser-tab-view:user-input', onUserInput);
 
   ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);

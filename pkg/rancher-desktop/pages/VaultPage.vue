@@ -15,6 +15,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const host = ref<HTMLElement | null>(null);
+const props = defineProps<{ integrationId?: string; accountId?: string }>();
 const loading = ref(true);
 const error = ref('');
 let observer: ResizeObserver | null = null;
@@ -30,7 +31,10 @@ async function open(): Promise<void> {
   error.value = '';
   await nextTick();
   try {
-    await ipcRenderer.invoke('vault:view-open', bounds());
+    await ipcRenderer.invoke('vault:view-open', bounds(), {
+      integrationId: props.integrationId,
+      accountId:     props.accountId,
+    });
     loading.value = false;
   } catch (cause) {
     loading.value = false;
