@@ -15,17 +15,10 @@
       />
 
       <template
-        v-for="entry in transcriptEntries"
-        :key="entry.id"
+        v-for="message in controller.messages.value"
+        :key="message.id"
       >
-        <ToolGroup
-          v-if="entry.kind === 'tool-group'"
-          :messages="entry.messages"
-        />
-        <MessageRouter
-          v-else
-          :msg="entry"
-        />
+        <MessageRouter :msg="message" />
       </template>
     </div>
 
@@ -42,16 +35,13 @@ import { computed, ref } from 'vue';
 import MessageRouter from './MessageRouter.vue';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
-import { groupTranscriptTools } from './toolGroups';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
-import ToolGroup from '../tool/ToolGroup.vue';
 
 const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, controller.messages);
-const transcriptEntries = computed(() => groupTranscriptTools(controller.messages.value));
 
 const showTodayMarker = computed(() => controller.messages.value.length > 0);
 const todayLabel = computed(() => {
