@@ -31,6 +31,7 @@ import { trustedOriginsForIntegration, validateOperation } from './operationPoli
 import { validateOAuthDestination } from './oauthPolicy.js';
 import { pinnedLookup } from './pinnedLookup.js';
 import { createRelayId, DefaultVaultRelayManager } from './relays.js';
+import { buildTranscriptionProviderRequest } from './transcriptionPolicy.js';
 
 import type { VaultConfig } from './config.js';
 import type {
@@ -63,6 +64,7 @@ const CHALLENGE_RATE_LIMIT = 10;
 const APPROVAL_TTL_MS = 2 * 60_000;
 const HUMAN_SESSION_TTL_MS = 15 * 60_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
+const MAX_TRANSCRIPTION_REQUEST_BYTES = 17 * 1024 * 1024;
 const MAX_STREAM_BYTES = 25 * 1024 * 1024;
 const MAX_CREDENTIAL_BYTES = 64 * 1024;
 const LEGACY_PREFIX = '$VAULT$';
@@ -183,6 +185,7 @@ interface PreparedBrokerRequest {
   body:       unknown;
   secrets:    string[];
   generation: number;
+  maxRequestBytes: number;
   item?:      ItemRow;
   plaintext?: VaultItemPlaintext;
 }
@@ -1295,7 +1298,7 @@ export class LocalVaultAuthority {
     const prepared = await this.prepareBrokerRequest(input, serviceId, token);
     const result = await this.send(
       prepared.target, input.method, prepared.headers, prepared.body,
-      input.responseType ?? 'json', prepared.secrets, prepared.generation,
+      input.responseType ?? 'json', prepared.secrets, prepared.generation, true, prepared.maxRequestBytes,
     );
     if (prepared.item) await this.audit(input, prepared.item, false, null);
     return result;
@@ -1426,6 +1429,7 @@ export class LocalVaultAuthority {
       const result = await this.send(
         prepared.target, input.method, prepared.headers, prepared.body,
         input.responseType === 'text' ? 'text' : 'json', prepared.secrets, prepared.generation, false,
+        prepared.maxRequestBytes,
       );
       if (result.status < 200 || result.status >= 300) {
         throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth upstream rejected the request');
@@ -1495,6 +1499,7 @@ export class LocalVaultAuthority {
         body: input.body,
         secrets: [],
         generation,
+        maxRequestBytes: MAX_RESPONSE_BYTES,
       };
     }
     const item = await this.loadBrokerItem(input, input.operation.startsWith('oauth.') ? null : target.hostname);
@@ -1587,8 +1592,27 @@ export class LocalVaultAuthority {
         body = applyJsonPath(body, injection.name, injected);
       }
     }
+    if (input.operation === 'provider.transcription') {
+      try {
+        const transformed = buildTranscriptionProviderRequest(body, headers);
+        body = transformed.body;
+        for (const name of Object.keys(headers)) delete headers[name];
+        Object.assign(headers, transformed.headers);
+      } catch {
+        throw new LocalVaultError('invalid_operation', 400, 'Transcription request is invalid');
+      }
+    }
     this.requireGeneration(generation);
-    return { target, headers, body, secrets, generation, item, plaintext };
+    return {
+      target,
+      headers,
+      body,
+      secrets,
+      generation,
+      maxRequestBytes: input.operation === 'provider.transcription' ? MAX_TRANSCRIPTION_REQUEST_BYTES : MAX_RESPONSE_BYTES,
+      item,
+      plaintext,
+    };
   }
 
   private bootstrapToken(): string {
@@ -1789,6 +1813,7 @@ export class LocalVaultAuthority {
     secrets: string[],
     generation: number,
     redactResponseBody = true,
+    maxRequestBytes = MAX_RESPONSE_BYTES,
   ): Promise<BrokerExecuteResponse> {
     const method = methodInput.toUpperCase();
     if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
@@ -1800,7 +1825,7 @@ export class LocalVaultAuthority {
     let payload: Buffer | undefined;
     if (bodyInput !== undefined && method !== 'GET' && method !== 'HEAD') {
       payload = serializeBrokerBody(bodyInput);
-      if (payload.byteLength > MAX_RESPONSE_BYTES) throw new LocalVaultError('request_too_large', 413, 'Broker request body is too large');
+      if (payload.byteLength > maxRequestBytes) throw new LocalVaultError('request_too_large', 413, 'Broker request body is too large');
       headers['content-length'] = String(payload.byteLength);
       headers['content-type'] ??= Buffer.isBuffer(bodyInput)
         ? 'application/octet-stream'

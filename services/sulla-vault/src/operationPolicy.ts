@@ -1,6 +1,7 @@
 import type { AgentPolicy } from '@sulla/vault-crypto';
 
 import type { BrokerExecuteRequest, BrokerInjection } from './contracts.js';
+import { CALLER_OPERATION_POLICIES } from './callerPolicies.js';
 import { ENTERPRISE_GATEWAY_INJECTION } from './gatewayPolicy.js';
 
 export interface BrokerOperationPolicy {
@@ -27,6 +28,7 @@ const authHeaders = (fields: string[], names = ['authorization']): BrokerInjecti
   names.flatMap(name => ['Bearer', 'raw'].map(scheme => ({ field, target: 'header' as const, name, scheme: scheme as 'Bearer' | 'raw' }))));
 
 export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationPolicy>> = {
+  ...CALLER_OPERATION_POLICIES,
   'github.api': {
     integrations: ['github'],
     hosts: ['api.github.com'],

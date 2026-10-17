@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { CALLER_OPERATION_POLICIES } from './callerPolicies';
+import { CALLER_OPERATION_POLICIES } from './callerPolicies.js';
 
 test('caller operations bind exact hosts, paths, and credential fields', () => {
   const cloud = CALLER_OPERATION_POLICIES['sulla-cloud.api'];

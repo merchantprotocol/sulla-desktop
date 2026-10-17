@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildTranscriptionProviderRequest } from './transcriptionPolicy';
+import { buildTranscriptionProviderRequest } from './transcriptionPolicy.js';
 
 test('transcription policy builds bounded multipart with the file field last', () => {
   const result = buildTranscriptionProviderRequest({
