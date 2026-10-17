@@ -26,7 +26,9 @@ import {
 
 import { makeLoginVerifier, verifyLoginHash } from './auth.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
+import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
 import { trustedOriginsForIntegration, validateOperation } from './operationPolicy.js';
+import { validateOAuthDestination } from './oauthPolicy.js';
 import { createRelayId, DefaultVaultRelayManager } from './relays.js';
 
 import type { VaultConfig } from './config.js';
@@ -1305,10 +1307,12 @@ export class LocalVaultAuthority {
   ): Promise<BrokerRelayCreateResponse> {
     this.requireBrokerIdentity(serviceId, token);
     const expected = input.operation === 'slack.socket-mode'
-      ? { integrationId: 'slack', host: 'slack.com', fields: ['app_token', 'app_level_token'] }
+      ? { integrationId: 'slack', host: 'slack.com', fields: ['app_token', 'app_level_token'], gatewayField: undefined }
       : input.operation === 'discord.gateway'
-        ? { integrationId: 'discord', host: 'discord.com', fields: ['bot_token', 'token'] }
-        : null;
+        ? { integrationId: 'discord', host: 'discord.com', fields: ['bot_token', 'token'], gatewayField: undefined }
+        : input.operation === 'enterprise.gateway'
+          ? { integrationId: 'enterprise_gateway', host: null, fields: ['api_key'], gatewayField: 'gateway_url' }
+          : null;
     if (!expected || input.ref.integrationId !== expected.integrationId) {
       throw new LocalVaultError('policy_denied', 403, 'Relay operation is not registered for this integration');
     }
@@ -1316,7 +1320,7 @@ export class LocalVaultAuthority {
       claims: input.claims,
       operation: input.operation,
       ref: input.ref,
-      url: `https://${ expected.host }/vault-relay`,
+      url: expected.host ? `https://${ expected.host }/vault-relay` : 'https://enterprise.invalid/vault-relay',
       method: 'POST',
       headers: {},
       body: null,
@@ -1332,6 +1336,22 @@ export class LocalVaultAuthority {
       keys.userKey,
       { itemId: item.id, ownerId: item.owner_user_id ?? keys.userId },
     )) as VaultItemPlaintext;
+    let gatewayUrl: string | undefined;
+    if (input.operation === 'enterprise.gateway') {
+      const rawGatewayUrl = expected.gatewayField ? credentialField(plaintext, expected.gatewayField) : undefined;
+      if (!rawGatewayUrl) throw new LocalVaultError('credential_field_missing', 404, 'Enterprise gateway URL is unavailable');
+      try {
+        const gateway = enterpriseGatewayOrigin(rawGatewayUrl);
+        gatewayUrl = gateway.origin;
+        request.url = `${ gateway.origin }/vault-relay`;
+        const siteDecision = agentPolicyAllows(item.agent_policy ?? plaintext.agentPolicy, {
+          agentId: input.claims.agent_id, level: 'autofill', host: gateway.hostname, onServer: false,
+        });
+        if (!siteDecision.allowed) throw new Error('policy_denied');
+      } catch {
+        throw new LocalVaultError('destination_denied', 403, 'Enterprise gateway relay destination is denied');
+      }
+    }
     const digest = operationDigest(request);
     if ((item.agent_policy ?? plaintext.agentPolicy).askFirst) {
       const approval = input.approvalId ? this.approvals.get(input.approvalId) : undefined;
@@ -1348,7 +1368,7 @@ export class LocalVaultAuthority {
     const controller = new AbortController();
     this.relaySessions.set(relayId, { generation, controller });
     try {
-      const handle = await this.relayManager.open({ relayId, operation: input.operation, credential, abortSignal: controller.signal });
+      const handle = await this.relayManager.open({ relayId, operation: input.operation, credential, gatewayUrl, abortSignal: controller.signal });
       this.requireGeneration(generation);
       await this.audit(request, item, false, null);
       return handle;
@@ -1471,13 +1491,23 @@ export class LocalVaultAuthority {
         generation,
       };
     }
-    const item = await this.loadBrokerItem(input, target.hostname);
+    const item = await this.loadBrokerItem(input, input.operation.startsWith('oauth.') ? null : target.hostname);
     const plaintext = JSON.parse(await decryptItemText(
       { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
       keys.userKey,
       { itemId: item.id, ownerId: item.collection_id ?? item.owner_user_id ?? keys.userId },
     )) as VaultItemPlaintext;
-    const decision = agentPolicyAllows(item.agent_policy ?? plaintext.agentPolicy, {
+    const itemPolicy = item.agent_policy ?? plaintext.agentPolicy;
+    let effectivePolicy = itemPolicy;
+    if (input.operation.startsWith('oauth.')) {
+      try {
+        await validateOAuthDestination(this.db, input, plaintext);
+        effectivePolicy = { ...itemPolicy, sites: [target.hostname] };
+      } catch {
+        throw new LocalVaultError('destination_denied', 403, 'OAuth destination is not registered for this provider');
+      }
+    }
+    const decision = agentPolicyAllows(effectivePolicy, {
       agentId: input.claims.agent_id,
       level: 'autofill',
       host: target.hostname,
@@ -1486,17 +1516,14 @@ export class LocalVaultAuthority {
     if (!decision.allowed) throw new LocalVaultError('policy_denied', 403, decision.reason ?? 'Credential policy denied the operation');
     if (input.operation === 'enterprise.gateway.http') {
       const gatewayUrl = plaintext.integration?.properties.gateway_url;
-      let gatewayOrigin = '';
       try {
-        const parsed = new URL(gatewayUrl ?? '');
-        if (parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.search && !parsed.hash) gatewayOrigin = parsed.origin;
-      } catch { /* denied below */ }
-      if (!gatewayOrigin || gatewayOrigin !== target.origin) {
+        validateEnterpriseGatewayHttp(input, gatewayUrl ?? '');
+      } catch {
         throw new LocalVaultError('destination_denied', 403, 'Enterprise gateway destination is not bound to this account');
       }
     }
     try {
-      if (!catalogDecision) validateOperation(input, target.hostname, item.agent_policy ?? plaintext.agentPolicy);
+      if (!catalogDecision) validateOperation(input, target.hostname, effectivePolicy);
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'policy_denied';
       const code = reason === 'method_denied' ? 'method_denied' : reason === 'destination_denied' ? 'destination_denied' : 'policy_denied';
@@ -1598,7 +1625,7 @@ export class LocalVaultAuthority {
     return Object.assign(url, { pinnedAddress: addresses[0].address, pinnedFamily: addresses[0].family as 4 | 6 });
   }
 
-  private async loadBrokerItem(input: BrokerExecuteRequest, host: string): Promise<ItemRow> {
+  private async loadBrokerItem(input: BrokerExecuteRequest, host: string | null): Promise<ItemRow> {
     const ref = input.ref ?? {};
     const scope = input.claims.credential_scope;
     if (!scope || !ref.integrationId || !ref.accountId ||
@@ -1635,10 +1662,12 @@ export class LocalVaultAuthority {
       if (item) await this.audit(input, item, true, 'User cannot use this credential');
       throw new LocalVaultError('policy_denied', 403, 'Credential is unavailable to this caller');
     }
-    const siteDecision = agentPolicyAllows(item.agent_policy, { agentId: input.claims.agent_id, level: 'autofill', host, onServer: false });
-    if (!siteDecision.allowed) {
-      await this.audit(input, item, true, siteDecision.reason ?? 'Credential policy denied the destination');
-      throw new LocalVaultError('policy_denied', 403, siteDecision.reason ?? 'Credential policy denied the destination');
+    if (host) {
+      const siteDecision = agentPolicyAllows(item.agent_policy, { agentId: input.claims.agent_id, level: 'autofill', host, onServer: false });
+      if (!siteDecision.allowed) {
+        await this.audit(input, item, true, siteDecision.reason ?? 'Credential policy denied the destination');
+        throw new LocalVaultError('policy_denied', 403, siteDecision.reason ?? 'Credential policy denied the destination');
+      }
     }
     return item;
   }

@@ -257,6 +257,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     oauthItem.item.integration.properties.access_token = 'same-access-token';
     oauthItem.item.integration.properties.client_id = 'synthetic-client';
     oauthItem.item.integration.properties.client_secret = 'synthetic-client-secret';
+    oauthItem.item.integration.properties.provider_id = 'grok';
     oauthItem.item.integration.properties.account_label = 'Synthetic account';
     oauthItem.item.integration.properties.connection_status = 'true';
     oauthItem.item.integration.properties.base_url = 'https://user:password@api.openai.com/v1?token=secret';
@@ -267,10 +268,17 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
       assert.equal(body.get('refresh_token'), 'same-refresh-token');
       return { status: 200, headers: {}, body: { access_token: 'same-access-token', refresh_token: 'same-refresh-token', expires_in: 3600, token_type: 'Bearer' } };
     };
+    await assert.rejects(authority.execute({
+      ...request,
+      operation: 'oauth.refresh',
+      url: 'https://attacker.example/oauth/token',
+      responseType: 'json',
+      injections: [{ field: 'refresh_token', target: 'form', name: 'refresh_token', scheme: 'raw' }],
+    }, 'sulla-tools', TOKEN.broker), (error: any) => error.code === 'destination_denied');
     const oauthResult = await authority.execute({
       ...request,
       operation: 'oauth.refresh',
-      url: 'https://api.openai.com/oauth/token',
+      url: 'https://auth.x.ai/oauth2/token',
       responseType: 'json',
       injections: [
         { field: 'refresh_token', target: 'form', name: 'refresh_token', scheme: 'raw' },
@@ -291,6 +299,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     assert.ok(metadata.accounts[0].revision >= 1);
     assert.equal(metadata.accounts[0].properties.expires_at, refreshed.item.integration.properties.expires_at);
     assert.equal(metadata.accounts[0].properties.client_id, 'synthetic-client');
+    assert.equal(metadata.accounts[0].properties.provider_id, 'grok');
     assert.equal(metadata.accounts[0].properties.base_url, undefined);
     assert.equal(metadata.accounts[0].properties.api_key, undefined);
     assert.equal(metadata.accounts[0].properties.client_secret, undefined);
@@ -304,7 +313,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     assert.deepEqual((await authority.execute({
       ...request,
       operation: 'oauth.revoke',
-      url: 'https://api.openai.com/oauth/revoke',
+      url: 'https://auth.x.ai/oauth2/revoke',
       responseType: 'json',
       injections: [{ field: 'access_token', target: 'form', name: 'token', scheme: 'raw' }],
     }, 'sulla-tools', TOKEN.broker)).body, { revoked: true });

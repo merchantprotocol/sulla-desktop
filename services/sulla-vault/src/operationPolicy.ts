@@ -1,6 +1,7 @@
 import type { AgentPolicy } from '@sulla/vault-crypto';
 
 import type { BrokerExecuteRequest, BrokerInjection } from './contracts.js';
+import { ENTERPRISE_GATEWAY_INJECTION } from './gatewayPolicy.js';
 
 export interface BrokerOperationPolicy {
   integrations?:   string[];
@@ -67,7 +68,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     integrations: ['enterprise_gateway'],
     requireItemSites: true,
     methods: ['POST', 'DELETE'],
-    injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+    injections: [ENTERPRISE_GATEWAY_INJECTION],
     pathPattern: /^\/api\/desktop\/sessions(?:\/[A-Za-z0-9._~-]{1,200})?$/,
   },
   'mcp.http': {

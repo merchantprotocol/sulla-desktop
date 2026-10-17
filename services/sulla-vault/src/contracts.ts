@@ -189,7 +189,7 @@ export interface HumanBackupImportRequest { backupPassword: string; backup: Huma
 
 export interface BrokerRelayCreateRequest {
   claims:    BrokerClaims;
-  operation: 'slack.socket-mode' | 'discord.gateway';
+  operation: 'slack.socket-mode' | 'discord.gateway' | 'enterprise.gateway';
   ref:       BrokerCredentialRef;
   approvalId?: string;
 }
