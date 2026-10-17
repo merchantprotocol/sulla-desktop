@@ -18,8 +18,8 @@
         v-for="entry in transcriptEntries"
         :key="entry.id"
       >
-        <ToolGroup
-          v-if="entry.kind === 'tool-group'"
+        <ThinkingGroup
+          v-if="entry.kind === 'thinking-group'"
           :messages="entry.messages"
         />
         <MessageRouter
@@ -42,16 +42,16 @@ import { computed, ref } from 'vue';
 import MessageRouter from './MessageRouter.vue';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
-import { groupTranscriptTools } from './toolGroups';
+import { groupTranscriptThinking } from './toolGroups';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
-import ToolGroup from '../tool/ToolGroup.vue';
+import ThinkingGroup from '../thinking/ThinkingGroup.vue';
 
 const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, controller.messages);
-const transcriptEntries = computed(() => groupTranscriptTools(controller.messages.value));
+const transcriptEntries = computed(() => groupTranscriptThinking(controller.messages.value));
 
 const showTodayMarker = computed(() => controller.messages.value.length > 0);
 const todayLabel = computed(() => {

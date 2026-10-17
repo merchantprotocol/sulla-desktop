@@ -7,11 +7,23 @@
     <span class="desc">{{ msg.desc }}</span>
     <span class="meta">{{ metaLabel }}</span>
     <details
-      v-if="msg.output"
+      v-if="msg.input || msg.output || msg.error"
       class="tool-output"
+      @click.stop
     >
-      <summary>Output</summary>
-      <pre>{{ msg.output }}</pre>
+      <summary>Details</summary>
+      <template v-if="msg.input">
+        <span>Input</span>
+        <pre>{{ msg.input }}</pre>
+      </template>
+      <template v-if="msg.output">
+        <span>Output</span>
+        <pre>{{ msg.output }}</pre>
+      </template>
+      <template v-if="msg.error">
+        <span>Error</span>
+        <pre>{{ msg.error }}</pre>
+      </template>
     </details>
   </div>
 </template>
@@ -31,7 +43,7 @@ const metaLabel = computed(() => props.msg.meta ?? (props.msg.status === 'runnin
 .tool {
   padding: 10px 0 10px 22px;
   border-left: 1px solid rgba(80, 150, 179, 0.22);
-  display: flex; align-items: baseline; gap: 14px;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px;
   font-family: var(--mono); font-size: 11.5px;
   color: var(--read-3); position: relative;
   transition: border-color 0.2s ease;
@@ -64,5 +76,19 @@ const metaLabel = computed(() => props.msg.meta ?? (props.msg.status === 'runnin
 .tool.run .meta { color: var(--steel-400); }
 .tool.err::before { background: var(--err); }
 .tool.err .kind   { background: rgba(252,165,165,0.12); color: var(--err); border-color: rgba(252,165,165,0.3); }
-.tool-output { display: none; }
+.tool-output {
+  flex-basis: 100%; margin-top: 6px;
+  color: var(--read-3);
+}
+.tool-output summary { cursor: pointer; color: var(--steel-300); }
+.tool-output span {
+  display: block; margin-top: 8px;
+  color: var(--read-4); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.tool-output pre {
+  margin: 4px 0 0; padding: 8px 10px; max-height: 280px; overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  background: var(--surface-2); border: 1px solid var(--border-muted); border-radius: 5px;
+  color: var(--read-2); font: 10.5px/1.45 var(--mono);
+}
 </style>
