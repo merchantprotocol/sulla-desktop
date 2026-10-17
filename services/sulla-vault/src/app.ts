@@ -514,6 +514,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
     next();
   }, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../console')));
+  app.get('/', (_request, response) => {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
+    return response.redirect(302, '/console');
+  });
 
   // Desktop bootstrap is deliberately limited to the local, single-user
   // mode. The client sends only derived login material and wrapped keys.

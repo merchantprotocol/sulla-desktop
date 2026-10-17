@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: sulla-vault
+  namespace: sulla
 spec:
   replicas: 1
   selector: {matchLabels: {app: sulla-vault}}
@@ -22,7 +23,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: sulla-vault}
+metadata: {name: sulla-vault, namespace: sulla}
 spec:
   selector: {app: sulla-vault}
   ports: [{name: http, port: 8787, targetPort: http}]

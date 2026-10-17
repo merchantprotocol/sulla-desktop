@@ -23,18 +23,63 @@ main() {
   [[ ${EUID} -eq 0 ]] || fail "run as root: curl -fsSL <url> | sudo bash"
   command -v curl >/dev/null 2>&1 || fail "curl is required: apt-get install -y curl"
   command -v openssl >/dev/null 2>&1 || fail "openssl is required"
-  ask() { local var="$1" prompt="$2" default="$3" value; if [[ -n ${!var:-} ]]; then return; fi; printf '%s [%s]: ' "$prompt" "$default" >&3; IFS= read -r value <&3; printf -v "$var" '%s' "${value:-$default}"; }
+  ask() { local var="$1" prompt="$2" default="$3" value; if [[ ${!var+x} ]]; then return; fi; printf '%s [%s]: ' "$prompt" "$default" >&3; IFS= read -r value <&3; printf -v "$var" '%s' "${value:-$default}"; }
   ask_secret() { local var="$1" prompt="$2" value; [[ -n ${!var:-} ]] && return; printf '%s: ' "$prompt" >&3; stty -echo <&3; IFS= read -r value <&3; stty echo <&3; printf '\n' >&3; printf -v "$var" '%s' "$value"; }
+  valid_url() { [[ "$1" =~ ^https?://[^/@:[:space:]]+(:[0-9]{1,5})?(/[^[:space:]]*)?$ ]]; }
+  valid_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
+  valid_ipv4() {
+    local ip="$1" part; IFS=. read -r -a parts <<<"$ip"; [[ ${#parts[@]} -eq 4 ]] || return 1
+    for part in "${parts[@]}"; do [[ "$part" =~ ^[0-9]+$ ]] && (( 10#$part <= 255 )) || return 1; done
+  }
+  validate_configuration() {
+    [[ ${SULLA_RUNTIME:-} == compose || ${SULLA_RUNTIME:-} == kubernetes ]] || fail "runtime must be compose or kubernetes"
+    valid_url "${SULLA_PUBLIC_URL:-}" || fail "public URL must be an http(s) URL without credentials or spaces"
+    [[ -n ${SULLA_ADMIN_EMAIL:-} && "$SULLA_ADMIN_EMAIL" == *@* ]] || fail "first admin email is invalid"
+    [[ -n ${SULLA_ADMIN_NAME:-} ]] || fail "first admin name is required"
+    [[ -n ${SULLA_ORGANIZATION:-} ]] || fail "organization name is required"
+    if [[ "$SULLA_RUNTIME" == compose ]]; then
+      valid_port "${SULLA_PORT:-}" || fail "published port must be between 1 and 65535"
+      valid_ipv4 "${SULLA_BIND_ADDRESS:-}" || fail "bind address must be an IPv4 address"
+      [[ -n ${SULLA_DATA_DIR:-} && "$SULLA_DATA_DIR" == /* ]] || fail "persistent data directory must be an absolute path"
+      [[ -z ${SULLA_TLS_CERT:-} && -z ${SULLA_TLS_KEY:-} || -n ${SULLA_TLS_CERT:-} && -n ${SULLA_TLS_KEY:-} ]] || fail "TLS certificate and private key must be supplied together"
+      [[ -z ${SULLA_TLS_CERT:-} || "$SULLA_PUBLIC_URL" == https://* ]] || fail "direct TLS requires an https public URL"
+      [[ -z ${SULLA_TLS_CERT:-} || -r "$SULLA_TLS_CERT" && -r "$SULLA_TLS_KEY" ]] || fail "TLS certificate or key is not readable"
+    else
+      [[ ${SULLA_KUBERNETES_MODE:-} == existing || ${SULLA_KUBERNETES_MODE:-} == install ]] || fail "Kubernetes cluster choice must be existing or install"
+      [[ -n ${SULLA_VAULT_IMAGE:-} && "$SULLA_VAULT_IMAGE" != *:latest && "$SULLA_VAULT_IMAGE" != *['| ']* ]] || fail "Kubernetes vault image must be pinned and contain no spaces"
+      [[ ${SULLA_STORAGE_CLASS:-} =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || fail "storage class name is invalid"
+      [[ ${SULLA_STORAGE_SIZE:-} =~ ^[1-9][0-9]*(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$ ]] || fail "PostgreSQL storage size must be a Kubernetes quantity such as 20Gi"
+      [[ ${SULLA_INGRESS_MODE:-} == create || ${SULLA_INGRESS_MODE:-} == existing ]] || fail "ingress must be create or existing"
+      if [[ "$SULLA_INGRESS_MODE" == create ]]; then
+        [[ ${SULLA_HOSTNAME:-} =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || fail "console hostname is invalid"
+        [[ -z ${SULLA_TLS_SECRET:-} || ${SULLA_TLS_SECRET} =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || fail "TLS secret name is invalid"
+      fi
+    fi
+  }
+  verify_default_image() {
+    local image="$1" repository tag token
+    [[ "$image" =~ ^ghcr\.io/merchantprotocol/sulla-vault:(sha-[0-9a-f]{12})$ ]] || return 0
+    repository=merchantprotocol/sulla-vault; tag="${BASH_REMATCH[1]}"
+    token="$(curl -fsSL "https://ghcr.io/token?scope=repository:${repository}:pull" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+    [[ -n "$token" ]] || fail "could not authenticate an availability check for $image"
+    curl -fsSL -o /dev/null -H "Authorization: Bearer $token" \
+      -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+      "https://ghcr.io/v2/${repository}/manifests/${tag}" || fail "Kubernetes image is not published: $image"
+  }
   ask SULLA_DIR "Install directory" /opt/sulla/server
+  [[ "$SULLA_DIR" == /* && "$SULLA_DIR" != *$'\n'* ]] || fail "install directory must be an absolute single-line path"
+  saved_configuration=false
   if [[ -r "$SULLA_DIR/server.env" ]]; then
     # shellcheck disable=SC1090
-    . "$SULLA_DIR/server.env"
+    set -a; . "$SULLA_DIR/server.env"; set +a
+    saved_configuration=true
+    log "Using saved configuration from $SULLA_DIR/server.env."
   fi
   if [[ -z ${SULLA_SOURCE_SHA:-} ]]; then
     SULLA_SOURCE_SHA="$(curl -fsSL "https://api.github.com/repos/merchantprotocol/sulla-desktop/commits/${SULLA_REF}" | sed -n 's/^[[:space:]]*"sha": "\([0-9a-f]\{40\}\)",/\1/p' | head -1)"
   fi
   [[ "$SULLA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "could not resolve SULLA_REF=${SULLA_REF} to a commit"
-  if [[ -z ${K3S_URL:-} ]]; then
+  if [[ -z ${K3S_URL:-} && "$saved_configuration" == false ]]; then
     ask SULLA_RUNTIME "Runtime (compose or kubernetes)" compose
     ask SULLA_PUBLIC_URL "Public URL" "http://$(hostname -f 2>/dev/null || hostname):8787"
     ask SULLA_ORGANIZATION "Organization name" "My organization"
@@ -52,8 +97,8 @@ main() {
       [[ -z "$SULLA_TLS_CERT" || -r "$SULLA_TLS_CERT" && -r "$SULLA_TLS_KEY" ]] || fail "TLS certificate or key is not readable"
       ;;
     kubernetes)
-      ask SULLA_VAULT_IMAGE "Pinned vault image (tag or digest; never latest)" "ghcr.io/merchantprotocol/sulla-vault:${SULLA_SOURCE_SHA}"
-      [[ "$SULLA_VAULT_IMAGE" != *:latest ]] || fail "Kubernetes vault image must be pinned, not :latest"
+      ask SULLA_KUBERNETES_MODE "Cluster (existing context or install new k3s)" existing
+      ask SULLA_VAULT_IMAGE "Pinned vault image (tag or digest; never latest)" "ghcr.io/merchantprotocol/sulla-vault:sha-${SULLA_SOURCE_SHA:0:12}"
       ask SULLA_STORAGE_CLASS "Storage class" local-path
       ask SULLA_STORAGE_SIZE "PostgreSQL storage size" 20Gi
       ask SULLA_INGRESS_MODE "Ingress (create or existing)" create
@@ -63,6 +108,7 @@ main() {
       *) fail "runtime must be compose or kubernetes" ;;
     esac
   fi
+  if [[ -z ${K3S_URL:-} ]]; then validate_configuration; fi
   RAW="https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/${SULLA_SOURCE_SHA}/deploy/server"
   FILES=(
     install-server.sh join-node.sh deploy-sulla.sh compose.yaml
@@ -83,6 +129,7 @@ main() {
     ask_secret K3S_TOKEN "K3S join token"
     [[ -n "${K3S_TOKEN:-}" ]] || fail "a K3S token is required"
     log "Joining this server to ${K3S_URL}..."
+    export K3S_URL K3S_TOKEN
     ./join-node.sh </dev/null
     log "Done. This server is now a node in the cluster."
     return 0
@@ -103,13 +150,14 @@ main() {
       source_dir="$SULLA_DIR/sources/$SULLA_SOURCE_SHA"
       printf 'SULLA_PORT=%q\nSULLA_BIND_ADDRESS=%q\nSULLA_DATA_DIR=%q\nSULLA_TLS_DIR=%q\nSULLA_TLS_CERT_CONTAINER_PATH=%q\nSULLA_TLS_KEY_CONTAINER_PATH=%q\nSULLA_IMAGE_TAG=%q\nSULLA_SOURCE_DIR=%q\n' "$SULLA_PORT" "$SULLA_BIND_ADDRESS" "$SULLA_DATA_DIR" "$tls_dir" "$([[ -n "$SULLA_TLS_CERT" ]] && echo /run/sulla-tls/tls.crt)" "$([[ -n "$SULLA_TLS_KEY" ]] && echo /run/sulla-tls/tls.key)" "${SULLA_SOURCE_SHA:0:12}" "$source_dir" >>"$env_tmp"
     else
-      printf 'SULLA_VAULT_IMAGE=%q\nSULLA_STORAGE_CLASS=%q\nSULLA_STORAGE_SIZE=%q\nSULLA_INGRESS_MODE=%q\nSULLA_HOSTNAME=%q\nSULLA_TLS_SECRET=%q\n' "$SULLA_VAULT_IMAGE" "$SULLA_STORAGE_CLASS" "$SULLA_STORAGE_SIZE" "$SULLA_INGRESS_MODE" "$SULLA_HOSTNAME" "$SULLA_TLS_SECRET" >>"$env_tmp"
+      printf 'SULLA_KUBERNETES_MODE=%q\nSULLA_VAULT_IMAGE=%q\nSULLA_STORAGE_CLASS=%q\nSULLA_STORAGE_SIZE=%q\nSULLA_INGRESS_MODE=%q\nSULLA_HOSTNAME=%q\nSULLA_TLS_SECRET=%q\n' "$SULLA_KUBERNETES_MODE" "$SULLA_VAULT_IMAGE" "$SULLA_STORAGE_CLASS" "$SULLA_STORAGE_SIZE" "$SULLA_INGRESS_MODE" "$SULLA_HOSTNAME" "$SULLA_TLS_SECRET" >>"$env_tmp"
     fi
     mv "$env_tmp" "$env_file"
   }
   chmod 600 "$env_file"
   # shellcheck disable=SC1090
-  . "$env_file"
+  set -a; . "$env_file"; set +a
+  validate_configuration
   if [[ "$SULLA_RUNTIME" == compose ]]; then
     command -v docker >/dev/null 2>&1 || fail "Docker is required"
     docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
@@ -117,13 +165,28 @@ main() {
     mkdir -p "$SULLA_DIR/sources" "$source_dir"
     if [[ ! -f "$archive" ]]; then curl -fsSL "https://github.com/merchantprotocol/sulla-desktop/archive/${SULLA_SOURCE_SHA}.tar.gz" -o "$archive.tmp"; mv "$archive.tmp" "$archive"; fi
     tar -xzf "$archive" --strip-components=1 -C "$source_dir"
-    docker compose --env-file "$env_file" -f "$SULLA_DIR/compose.yaml" build --pull vault
-    docker compose --env-file "$env_file" -f "$SULLA_DIR/compose.yaml" up -d
-    until [[ "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose --env-file "$env_file" -f "$SULLA_DIR/compose.yaml" ps -q vault)" 2>/dev/null)" == healthy ]]; do sleep 2; done
-    bootstrap_url=http://127.0.0.1:8787; [[ -z ${SULLA_TLS_CERT_CONTAINER_PATH:-} ]] || bootstrap_url="$SULLA_PUBLIC_URL"
-    docker compose --env-file "$env_file" -f "$SULLA_DIR/compose.yaml" exec vault node dist/serverBootstrapCli.js --url "$bootstrap_url" --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" <&3
+    compose=(docker compose --env-file /dev/null -f "$SULLA_DIR/compose.yaml")
+    "${compose[@]}" build --pull vault
+    if ! "${compose[@]}" up -d --wait --wait-timeout 300; then
+      "${compose[@]}" ps >&2 || true
+      "${compose[@]}" logs --tail=100 vault >&2 || true
+      fail "Sulla services did not become healthy within 5 minutes"
+    fi
+    bootstrap_url=http://127.0.0.1:8787
+    bootstrap_env=()
+    if [[ -n ${SULLA_TLS_CERT_CONTAINER_PATH:-} ]]; then
+      bootstrap_url=https://127.0.0.1:8787
+      bootstrap_env=(-e NODE_TLS_REJECT_UNAUTHORIZED=0 -e NODE_NO_WARNINGS=1)
+    fi
+    "${compose[@]}" exec "${bootstrap_env[@]}" vault node dist/serverBootstrapCli.js --url "$bootstrap_url" --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" <&3
   else
-    ./install-server.sh </dev/null
+    verify_default_image "$SULLA_VAULT_IMAGE"
+    if [[ "$SULLA_KUBERNETES_MODE" == install ]]; then
+      ./install-server.sh </dev/null
+    else
+      command -v kubectl >/dev/null 2>&1 || fail "kubectl is required for an existing cluster"
+      kubectl cluster-info >/dev/null 2>&1 || fail "the current kubectl context cannot reach a cluster"
+    fi
     ./deploy-sulla.sh </dev/null
     kubectl -n sulla exec -it deployment/sulla-vault -- node dist/serverBootstrapCli.js --url http://127.0.0.1:8787 --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" <&3
   fi

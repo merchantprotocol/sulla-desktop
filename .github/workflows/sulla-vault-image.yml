@@ -21,6 +21,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
         uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 12
         with:
           images: ghcr.io/merchantprotocol/sulla-vault
           tags: |

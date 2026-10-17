@@ -43,9 +43,9 @@ kubectl --namespace "$NAMESPACE" create secret generic "$SECRET_NAME" \
 rendered="$(mktemp)"; rendered_storage="$(mktemp)"; trap 'rm -f "$rendered" "$rendered_storage"' EXIT
 sed "s|__SULLA_VAULT_IMAGE__|${SULLA_VAULT_IMAGE}|g" "$K8S_DIR/sulla-vault.yaml" >"$rendered"
 sed -e "s|__SULLA_STORAGE_CLASS__|${SULLA_STORAGE_CLASS}|g" -e "s|__SULLA_STORAGE_SIZE__|${SULLA_STORAGE_SIZE}|g" "$K8S_DIR/storage.yaml" >"$rendered_storage"
-kubectl apply -f "$rendered_storage"
-kubectl apply -f "$K8S_DIR/postgres.yaml"
-kubectl apply -f "$rendered"
+kubectl --namespace "$NAMESPACE" apply -f "$rendered_storage"
+kubectl --namespace "$NAMESPACE" apply -f "$K8S_DIR/postgres.yaml"
+kubectl --namespace "$NAMESPACE" apply -f "$rendered"
 if [[ ${SULLA_INGRESS_MODE:-create} == create ]]; then
   ingress="$(mktemp)"
   cat >"$ingress" <<EOF
@@ -65,7 +65,7 @@ EOF
     - host: ${SULLA_HOSTNAME}
       http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: sulla-vault, port: {name: http}}}}]}
 EOF
-  kubectl apply -f "$ingress"; rm -f "$ingress"
+  kubectl --namespace "$NAMESPACE" apply -f "$ingress"; rm -f "$ingress"
 fi
 kubectl --namespace "$NAMESPACE" rollout status deployment --all --timeout=5m
 

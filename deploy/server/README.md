@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main
 
 The join token is requested through a hidden terminal prompt. The kit and root-readable `server.env` are saved to `/opt/sulla/server`; rerunning the installer keeps the database, generated service secrets, first owner, and organization.
 
-Compose builds the vault image from the exact resolved source commit. Kubernetes requires a pinned image tag or digest and deploys PostgreSQL plus the Sulla Vault console. Agent and workflow runtime wiring is outside this initial server-console kit.
+Compose builds the vault image from the exact resolved source commit. Kubernetes defaults to the CI-published `sha-<12 characters>` image for that commit and proves the manifest is available before changing the cluster. A custom pinned image tag or digest is also accepted and its pull is verified by the rollout. Agent and workflow runtime wiring is outside this initial server-console kit.
 
 Sulla Desktop's built-in k3s runs **inside a Lima virtual machine**. Other physical machines cannot join that private cluster as nodes. A multi-server cluster therefore needs k3s installed natively on Ubuntu, which is what these scripts do.
 
@@ -67,7 +67,11 @@ sudo ufw allow from 192.168.1.0/24 to any port 6443 proto tcp comment 'k3s API'
 
 Ports `2379-2380/tcp` are **not** needed for the single-server setup in this guide. Open them only between k3s server nodes if you later build an HA cluster with embedded etcd. Do not expose any of these ports to the public internet.
 
-## 2. Install the first k3s server
+## 2. Choose or install the Kubernetes cluster
+
+The wizard keeps these paths separate. Choose `existing` to deploy through the current `kubectl` context without installing, upgrading, or reconfiguring Kubernetes. Choose `install` only on a fresh Ubuntu server where the wizard should install the pinned k3s release.
+
+### Install a new first k3s server
 
 From this directory on the first server, pass its stable LAN IP:
 

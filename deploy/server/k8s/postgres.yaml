@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: postgres
+  namespace: sulla
 spec:
   replicas: 1
   # One writer per data volume: never run old and new pods side by side.
@@ -72,6 +73,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres
+  namespace: sulla
 spec:
   type: ClusterIP
   selector:
