@@ -23,6 +23,7 @@ import ImagesScan from '../pages/images/scans/_image-name.vue';
 import SnapshotsCreate from '../pages/snapshots/create.vue';
 import SnapshotsDialog from '../pages/snapshots/dialog.vue';
 import VolumeFiles from '../pages/volumes/files/_name.vue';
+import FilesPreviewHarness from '../pages/files/FilesPreviewHarness.vue';
 
 export default createRouter({
   history: createWebHashHistory(),
@@ -98,6 +99,9 @@ export default createRouter({
     },
     {
       path: '/routines/:id', component: AgentRoutines, name: 'routines-edit', props: true,
+    },
+    {
+      path: '/files-preview', component: FilesPreviewHarness, name: 'files-preview',
     },
   ],
 });

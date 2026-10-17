@@ -66,6 +66,65 @@ export interface FilesCapabilities {
   onlineOnly: boolean;
 }
 
+export type ShareAccessMode = 'view' | 'download';
+export type ShareAssetKind = 'file' | 'capture' | 'artifact';
+export type SharePrincipalType = 'user' | 'group';
+
+export interface SharePrincipal {
+  id: string;
+  type: SharePrincipalType;
+  name: string;
+  detail?: string;
+  role?: string;
+}
+
+export interface FolderShare {
+  id?: string;
+  collectionId: string;
+  folderPath: string;
+  principalType: SharePrincipalType;
+  principalId: string;
+  principalName?: string;
+  role: 'view' | 'edit';
+}
+
+export interface ShareLinkOptions {
+  mode: ShareAccessMode;
+  password?: string;
+  expiresAt?: string;
+  displaySharerName: boolean;
+  keepAvailable: boolean;
+  keepUntil?: string;
+  assetKind?: ShareAssetKind;
+  captureMetadata?: Record<string, unknown>;
+}
+
+export interface ShareLink {
+  id: string;
+  url: string;
+  name: string;
+  mode: ShareAccessMode;
+  password: boolean;
+  expiresAt?: string;
+  viewCount: number;
+  lastViewedAt?: string;
+  keepAvailable: boolean;
+  keepUntil?: string;
+  displaySharerName: boolean;
+  servedFrom: 'desktop' | 'server' | 'cloud';
+  assetKind: ShareAssetKind;
+  source?: string;
+  revokedAt?: string;
+  createdAt?: string;
+}
+
+export interface ShareActivity {
+  id: string;
+  action: 'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked';
+  occurredAt: string;
+  detail?: string;
+}
+
 export interface FilesDataSource {
   capabilities: FilesCapabilities;
   load(): Promise<FilesSnapshot>;
@@ -82,9 +141,16 @@ export interface FilesDataSource {
   restoreVersion(fileId:string, versionId:string): Promise<void>;
   restoreTrash(fileId:string): Promise<void>;
   trashFile(fileId:string): Promise<void>;
-  createPublicLink?(fileId:string, options?:{ mode?:'view' | 'download'; keepAvailable?:boolean }):Promise<{ url:string }>;
-  shareFolder?(collectionId:string, folderPath:string, principalId:string, role:'view' | 'edit'):Promise<void>;
-  listMembers?(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[] }>;
+  createPublicLink?(fileId:string, options:ShareLinkOptions):Promise<ShareLink>;
+  updatePublicLink?(id:string, options:Partial<ShareLinkOptions>):Promise<ShareLink>;
+  listPublicLinks?():Promise<ShareLink[]>;
+  revokePublicLink?(id:string):Promise<void>;
+  restorePublicLink?(id:string):Promise<ShareLink>;
+  shareActivity?(id?:string):Promise<ShareActivity[]>;
+  listFolderShares?(collectionId:string):Promise<FolderShare[]>;
+  shareFolder?(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FolderShare>;
+  unshareFolder?(share:FolderShare):Promise<void>;
+  listMembers?(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[]; groups?:{ id:string; name?:string; encrypted_name?:string; members?:string[] }[] }>;
   keepOnMac?(fileId:string):Promise<void>;
   onlineOnlyReason?:string;
 }

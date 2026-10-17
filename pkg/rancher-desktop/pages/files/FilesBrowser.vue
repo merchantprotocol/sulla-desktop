@@ -100,7 +100,7 @@
           </template>
           <b v-else>{{ rootLabel }}</b>
         </div>
-        <label class="search"><span
+        <label v-if="section !== 'sharedByMe'" class="search"><span
           class="si"
           v-html="icons.search"
         /><input
@@ -108,7 +108,7 @@
           v-model="query"
           placeholder="Search files, folders, transcripts and screenshot text"
         ><kbd>⌘K</kbd></label>
-        <div class="acts">
+        <div v-if="section !== 'sharedByMe'" class="acts">
           <button
             class="btn"
             type="button"
@@ -133,7 +133,10 @@
         </div>
       </div>
 
-      <div class="content">
+      <div v-if="section === 'sharedByMe'" class="content">
+        <SharedByMe :data-source="dataSource" />
+      </div>
+      <div v-else class="content">
         <div class="toolbar">
           <h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
           <div class="right">
@@ -605,7 +608,7 @@
             </dd><dt>Version</dt><dd>v{{ selected.versionCount }}</dd>
           </dl>
           <section class="coming-card">
-            <strong>Share link</strong><p>{{ dataSource.capabilities.publicLinks ? 'Create a Sulla Cloud link. Choose whether Cloud keeps an encrypted copy available while this Mac is off.' : 'Sign in to Sulla Cloud to create public links.' }}</p><button v-if="dataSource.capabilities.publicLinks" class="btn sm" type="button" @click="shareEntry(selected, true)">Copy link · keep available</button>
+            <strong>Share link</strong><p>{{ dataSource.capabilities.publicLinks ? 'Create a Sulla Cloud link. Choose whether Cloud keeps an encrypted copy available while this Mac is off.' : 'Sign in to Sulla Cloud to create public links.' }}</p><button v-if="dataSource.capabilities.publicLinks" class="btn sm" type="button" @click="shareEntry(selected)">Manage link</button>
           </section>
         </div>
         <div
@@ -687,22 +690,7 @@
         />
       </div>
     </div>
-    <div v-if="shareDialog" class="share-modal" role="dialog" aria-modal="true" aria-label="Share folder">
-      <div class="share-card">
-        <h2>Share {{ currentPath || 'My Files' }}</h2>
-        <p>Select an organization member and the access they should receive.</p>
-        <label v-for="member in shareMembers" :key="member.id" class="member-row">
-          <input v-model="sharePrincipalId" type="radio" :value="member.id">
-          <span><b>{{ member.email }}</b><small>{{ member.role }}</small></span>
-        </label>
-        <p v-if="!shareMembers.length" class="empty">No eligible organization members are available.</p>
-        <div class="share-actions">
-          <button class="btn" type="button" @click="closeShareDialog">Cancel</button>
-          <button class="btn" type="button" :disabled="!sharePrincipalId || busy" @click="confirmFolderShare('view')">Share to view</button>
-          <button class="btn pri" type="button" :disabled="!sharePrincipalId || busy" @click="confirmFolderShare('edit')">Share to edit</button>
-        </div>
-      </div>
-    </div>
+    <ShareSheet v-if="shareTarget" :data-source="dataSource" :target="shareTarget" @close="shareTarget = null" @updated="refresh(true)" />
   </div>
 </template>
 
@@ -712,10 +700,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
 import type { FilesDataSource, FilesItem, FilesSnapshot, FilesVersion } from './types';
+import ShareSheet from './ShareSheet.vue';
+import SharedByMe from './SharedByMe.vue';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
-type Section = 'files' | 'shared' | 'recent' | 'starred' | 'agent' | 'trash';
+type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
 interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
 
@@ -762,7 +752,7 @@ const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done
 const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details'); const versions = ref<FilesVersion[]>([]); const versionsLoading = ref(false);
 const previewUrl = ref(''); const previewText = ref<string | null>(null); const previewError = ref(''); const previewLoading = ref(false); const dragging = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
 const starred = ref(new Set<string>(JSON.parse(localStorage.getItem('sulla:files-starred') || '[]')));
-const shareDialog = ref(false); const shareMembers = ref<{ id:string; email:string; role:string }[]>([]); const sharePrincipalId = ref('');
+const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string } | null>(null);
 
 const activeFiles = computed(() => snapshot.value?.files.filter(file => !file.deletedAt) ?? []);
 const trashFiles = computed(() => snapshot.value?.files.filter(file => file.deletedAt) ?? []);
@@ -786,7 +776,7 @@ const syncLine = computed(() => {
   return `All files synced${ status.lastSyncAt ? ` · ${ timeAgo(status.lastSyncAt) }` : '' }`;
 });
 const syncTooltip = computed(() => syncState.value === 'paused' ? 'Resume Files sync' : 'Pause Files sync');
-const rootLabel = computed(() => ({ files: 'My Files', shared: 'Shared with me', recent: 'Recent', starred: 'Starred', agent: 'Agent files', trash: 'Trash' }[section.value]));
+const rootLabel = computed(() => ({ files: 'My Files', shared: 'Shared with me', sharedByMe: 'Shared by me', recent: 'Recent', starred: 'Starred', agent: 'Agent files', trash: 'Trash' }[section.value]));
 const pageTitle = computed(() => section.value === 'files' && currentPath.value ? currentPath.value.split('/').at(-1) : rootLabel.value);
 const crumbs = computed(() => section.value === 'files' ? currentPath.value.split('/').filter(Boolean).map((label, index, parts) => ({ label, path: parts.slice(0, index + 1).join('/') })) : []);
 const summaryText = computed(() => `${ visibleEntries.value.length } item${ visibleEntries.value.length === 1 ? '' : 's' } · ${ formatBytes(visibleEntries.value.reduce((sum, entry) => sum + entry.size, 0)) }`);
@@ -803,13 +793,14 @@ const agentCount = computed(() => new Set(activeFiles.value.filter(file => file.
 const sections = computed(() => [
   { id: 'files' as Section, label: 'My Files', icon: icons.folderLine, count: 0, warn: false },
   { id: 'shared' as Section, label: 'Shared with me', icon: icons.users, count: sharedFolders.value.length, warn: false },
+  { id: 'sharedByMe' as Section, label: 'Shared by me', icon: icons.share, count: 0, warn: false },
   { id: 'recent' as Section, label: 'Recent', icon: icons.clock, count: 0, warn: false },
   { id: 'starred' as Section, label: 'Starred', icon: icons.star, count: 0, warn: false },
   { id: 'agent' as Section, label: 'Agent files', icon: icons.agent, count: agentCount.value, warn: true },
   { id: 'trash' as Section, label: 'Trash', icon: icons.trash, count: 0, warn: false },
 ]);
-const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
-const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. They stay in ~/sulla/Files.', shared: 'Folders teammates share with you appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: `Deleted files stay recoverable for ${ retentionDays.value } days.` }[section.value]));
+const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', sharedByMe: 'No public links yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
+const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. They stay in ~/sulla/Files.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: `Deleted files stay recoverable for ${ retentionDays.value } days.` }[section.value]));
 const dropCopy = computed(() => snapshot.value?.status.serverConfigured ? 'Or paste a screenshot. Files sync to the server and are versioned on every change.' : 'Or paste a screenshot. Files stay on this Mac and are versioned on every change.');
 const filters = computed(() => [
   { key: 'type' as const, label: 'Type', any: 'Any', options: [...new Set(activeFiles.value.map(file => kindLabel(file.mime, file.path)))].sort() },
@@ -888,29 +879,14 @@ const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !
 async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); error.value = '' } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
 async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
 async function newFolder() { const name = window.prompt('Name this folder'); if (!name?.trim()) return; await props.dataSource.createFolder([currentPath.value, name.trim()].filter(Boolean).join('/')); await refresh(true) }
-async function shareEntry(entry:DisplayEntry | null, keepAvailable = false) {
-  if (!entry || entry.folder || !props.dataSource.createPublicLink) return;
-  busy.value = true;
-  try {
-    const link = await props.dataSource.createPublicLink(entry.id, { keepAvailable });
-    await navigator.clipboard.writeText(link.url);
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false }
+async function shareEntry(entry:DisplayEntry | null) {
+  if (!entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
+  shareTarget.value = { id: entry.id, name: entry.name, folder: false, path: entry.path, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
 }
 async function shareSelectedFile() { await shareEntry(selectedFileForShare.value ?? null) }
 async function shareCurrentFolder() {
   if (!snapshot.value?.collection.orgId || !props.dataSource.shareFolder || !props.dataSource.listMembers || !currentPath.value || !props.dataSource.capabilities.orgSharing) return;
-  busy.value = true;
-  try {
-    const result = await props.dataSource.listMembers(snapshot.value.collection.orgId);
-    shareMembers.value = result.members.filter(member => member.id !== snapshot.value?.collection.ownerUserId);
-    sharePrincipalId.value = ''; shareDialog.value = true; error.value = '';
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false }
-}
-function closeShareDialog() { shareDialog.value = false; sharePrincipalId.value = '' }
-async function confirmFolderShare(role:'view' | 'edit') {
-  if (!snapshot.value || !props.dataSource.shareFolder || !sharePrincipalId.value) return;
-  busy.value = true;
-  try { await props.dataSource.shareFolder(snapshot.value.collection.id, currentPath.value, sharePrincipalId.value, role); closeShareDialog(); await refresh(true) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false }
+  shareTarget.value = { id: `folder:${ currentPath.value }`, name: currentPath.value.split('/').at(-1) || 'My Files', folder: true, path: currentPath.value, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
 }
 async function togglePause() { if (!snapshot.value) return; snapshot.value.status = await props.dataSource.setPaused(syncState.value !== 'paused') }
 function selectSection(next:Section) { section.value = next; currentPath.value = ''; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set() }
@@ -949,6 +925,7 @@ function toggleStar(id:string) { const next = new Set(starred.value); next.has(i
 function trackUpload(progress:{ current: number; name: string; percent: number; done: boolean }) { const log = progress.current <= 1 && !uploadLog.value.some(item => item.name === progress.name) ? [] : uploadLog.value.map(item => item.name === progress.name ? item : { ...item, done: true, percent: 100 }); const rest = log.filter(item => item.name !== progress.name); uploadLog.value = [...rest, { name: progress.name, percent: progress.percent, done: progress.done || progress.percent >= 100 }] }
 function onKeydown(event:KeyboardEvent) { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchInput.value?.focus() } }
 async function navigateTo(detail:FilesNavigationPayload) {
+  if (detail.section === 'shared-by-me') { selectSection('sharedByMe'); return }
   const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
   if (!file && detail.path) {
     openPath(detail.path);
@@ -958,8 +935,7 @@ async function navigateTo(detail:FilesNavigationPayload) {
   if (!file) { error.value = 'That file is no longer available in this collection.'; return }
   await selectEntry(toDisplay(file));
   if (detail.section === 'versions') detailTab.value = 'versions';
-  // A share deep link only opens this review surface. Link creation still
-  // requires the user to press the visible Share action.
+  if (detail.section === 'share-review') await shareEntry(toDisplay(file));
 }
 
 watch(view, value => localStorage.setItem('sulla:files-view', value));

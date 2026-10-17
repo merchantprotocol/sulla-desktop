@@ -1,6 +1,6 @@
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-import type { FilesDataSource, FilesItem, FilesPreview, FilesSnapshot, FilesVersion } from './types';
+import type { FilesDataSource, FilesItem, FilesPreview, FilesSnapshot, FilesVersion, FolderShare, ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType } from './types';
 import type { IpcRendererEvent } from 'electron';
 
 interface ContainerCollection {
@@ -152,15 +152,34 @@ export class DesktopFilesDataSource implements FilesDataSource {
   restoreVersion(fileId:string, versionId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:restore-version', { fileId, versionId }) }
   restoreTrash(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash-restore', { fileId }) }
   trashFile(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash', { fileId }) }
-  createPublicLink(fileId:string, options:{ mode?:'view' | 'download'; keepAvailable?:boolean } = {}):Promise<{ url:string }> {
-    return ipcRenderer.invoke('files-ui:create-link', { fileId, mode: options.mode ?? 'view', keepAvailable: options.keepAvailable ?? false });
+  createPublicLink(fileId:string, options:ShareLinkOptions):Promise<ShareLink> {
+    return ipcRenderer.invoke('files-ui:create-link', { fileId, ...options });
   }
 
-  shareFolder(collectionId:string, folderPath:string, principalId:string, role:'view' | 'edit'):Promise<void> {
-    return ipcRenderer.invoke('sulla-files:share', { collectionId, folderPath, principalType: 'user', principalId, role });
+  updatePublicLink(id:string, options:Partial<ShareLinkOptions>):Promise<ShareLink> {
+    return ipcRenderer.invoke('files-ui:update-link', { id, options });
   }
 
-  listMembers(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[] }> {
+  listPublicLinks():Promise<ShareLink[]> { return ipcRenderer.invoke('files-ui:list-links') }
+  revokePublicLink(id:string):Promise<void> { return ipcRenderer.invoke('files-ui:revoke-link', id) }
+  restorePublicLink(id:string):Promise<ShareLink> { return ipcRenderer.invoke('files-ui:restore-link', id) }
+  shareActivity(id?:string):Promise<ShareActivity[]> { return ipcRenderer.invoke('files-ui:link-activity', id) }
+
+  async listFolderShares(collectionId:string):Promise<FolderShare[]> {
+    const shares = await ipcRenderer.invoke('sulla-files:shares', { collectionId }) as any[];
+    return shares.map(share => ({ id: share.id, collectionId: share.collection_id ?? share.collectionId ?? collectionId, folderPath: share.folder_path ?? share.folderPath, principalType: share.principal_type ?? share.principalType, principalId: share.principal_id ?? share.principalId, role: share.role }));
+  }
+
+  async shareFolder(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FolderShare> {
+    const share = await ipcRenderer.invoke('sulla-files:share', { collectionId, folderPath, principalType, principalId, role }) as any;
+    return { id: share.id, collectionId: share.collection_id ?? collectionId, folderPath: share.folder_path ?? folderPath, principalType: share.principal_type ?? principalType, principalId: share.principal_id ?? principalId, role: share.role ?? role };
+  }
+
+  unshareFolder(share:FolderShare):Promise<void> {
+    return ipcRenderer.invoke('sulla-files:unshare', share);
+  }
+
+  listMembers(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[]; groups?:{ id:string; name?:string; encrypted_name?:string; members?:string[] }[] }> {
     return ipcRenderer.invoke('sulla-files:members', { orgId });
   }
 }

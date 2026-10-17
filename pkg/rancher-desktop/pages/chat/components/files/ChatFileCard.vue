@@ -1,24 +1,26 @@
 <template>
   <article class="file-card">
     <div class="glyph">◇</div><div class="meta"><b>{{ reference.name }}</b><small>{{ provenance }}</small></div>
-    <div class="actions"><button type="button" @click="open">Open</button><button type="button" @click="history">History</button><button type="button" @click="link">Link</button></div>
+    <div class="actions"><button type="button" @click="open">Open</button><button type="button" @click="navigate('versions')">History</button><button type="button" @click="navigate('share-review')">Share</button></div>
   </article>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { computed } from 'vue';
+
+import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 
 const props = defineProps<{ reference:{ fileId:string; versionId?:string; path:string; name:string; createdByType?:string; createdById?:string } }>();
+const { createTab, tabs, updateTab } = useBrowserTabs();
 const provenance = computed(() => props.reference.createdByType === 'agent-run' ? `Made by ${ props.reference.createdById || 'Sulla' } · persistent Files version` : 'From Sulla Files · persistent version');
 async function open() { await ipcRenderer.invoke('files-ui:open-file', { fileId: props.reference.fileId, versionId: props.reference.versionId }) }
-async function history() {
-  const versions = await ipcRenderer.invoke('sulla-files:history', { fileId: props.reference.fileId }) as any[];
-  window.alert(versions.map((version, index) => `v${ versions.length - index } · ${ new Date(version.created_at).toLocaleString() }`).join('\n') || 'No earlier versions');
-}
-async function link() {
-  const result = await ipcRenderer.invoke('files-ui:create-link', { fileId: props.reference.fileId, mode: 'view', keepAvailable: false }) as { url:string };
-  await navigator.clipboard.writeText(result.url);
+function navigate(section:'versions' | 'share-review') {
+  const filesNavigation = { fileId: props.reference.fileId, path: props.reference.path, section };
+  const existing = tabs.find(tab => tab.mode === 'files');
+  const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'Files', filesNavigation });
+  if (existing) updateTab(existing.id, { filesNavigation });
+  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
 }
 </script>
 

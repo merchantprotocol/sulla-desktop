@@ -5,7 +5,7 @@ import { BrowserWindow, dialog, shell } from 'electron';
 
 import { getIpcMainProxy } from './ipcMain';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
-import { getSullaFilesLinkService } from './sullaFilesLinkService';
+import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
 
 import Logging from '@pkg/utils/logging';
@@ -196,10 +196,13 @@ export function initSullaFilesIpc():void {
   });
   ipcMain.handle('files-ui:capture-screenshot', (_event, mode:ScreenshotMode = 'area') => getSullaFilesCaptureService().screenshot(mode));
   ipcMain.handle('files-ui:toggle-recording', (_event, input:{ mic:boolean; camera:boolean }) => getSullaFilesCaptureService().toggleRecording(input));
-  ipcMain.handle('files-ui:create-link', (_event, input:{ fileId:string; mode:'view' | 'download'; password?:string; expiresAt?:string; keepAvailable:boolean }) => getSullaFilesLinkService().create(input));
+  ipcMain.handle('files-ui:create-link', (_event, input:{ fileId:string; mode:'view' | 'download'; password?:string; expiresAt?:string; keepAvailable:boolean; keepUntil?:string; displaySharerName?:boolean; assetKind?:'file' | 'capture' | 'artifact'; captureMetadata?:Record<string, unknown> }) => getSullaFilesLinkService().create(input));
   ipcMain.handle('files-ui:list-links', () => getSullaFilesLinkService().list());
   ipcMain.handle('files-ui:revoke-link', (_event, id:string) => getSullaFilesLinkService().revoke(id));
-  ipcMain.handle('files-ui:set-link-keep', (_event, input:{ id:string; enabled:boolean }) => getSullaFilesLinkService().setKeepAvailable(input.id, input.enabled));
+  ipcMain.handle('files-ui:update-link', (_event, input:{ id:string; options:Partial<CreateShareInput> }) => getSullaFilesLinkService().update(input.id, input.options));
+  ipcMain.handle('files-ui:set-link-keep', (_event, input:{ id:string; enabled:boolean }) => getSullaFilesLinkService().update(input.id, { keepAvailable: input.enabled }));
+  ipcMain.handle('files-ui:restore-link', (_event, id:string) => getSullaFilesLinkService().restore(id));
+  ipcMain.handle('files-ui:link-activity', (_event, id?:string) => getSullaFilesLinkService().activity(id));
   ipcMain.handle('files-ui:status', () => getSullaFilesWatcher().status());
   ipcMain.handle('files-ui:set-paused', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
   ipcMain.handle('files-ui:open-folder', () => getSullaFilesWatcher().openFolder());
