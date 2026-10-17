@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Sulla Vault</title>
+  <link rel="stylesheet" href="/vault/local.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div><small>LOCAL DESKTOP VAULT</small><h1>Sulla Vault</h1></div>
+      <div class="header-actions"><span id="state" class="status">Connecting…</span><button id="lock" class="secondary" hidden>Lock</button></div>
+    </header>
+
+    <section id="unlock" class="narrow" hidden>
+      <h2 id="unlock-title">Unlock your vault</h2>
+      <p id="unlock-help">Your password stays inside this isolated vault page. Desktop and agents never receive it.</p>
+      <form id="unlock-form"><label>Password<input id="password" type="password" autocomplete="current-password" minlength="12" required></label><button>Continue</button></form>
+      <details><summary>Recover with a recovery code</summary><form id="recovery-unlock-form"><label>Recovery code<textarea id="recovery-code" autocomplete="off" required></textarea></label><label>New password<input id="recovery-password" type="password" autocomplete="new-password" minlength="12" required></label><button>Recover vault</button></form></details>
+      <details><summary>Restore an encrypted backup</summary><p class="muted">Restore is available only before setup, while the vault is empty. It never overwrites existing items.</p><form id="backup-import-form"><label>Backup file<input id="backup-file" type="file" accept="application/json,.json,.vault" required></label><label>Backup password<input id="backup-import-password" type="password" autocomplete="current-password" required></label><button>Restore backup</button></form></details>
+      <p id="unlock-error" class="error" role="alert"></p>
+    </section>
+
+    <section id="vault" hidden>
+      <nav aria-label="Vault sections">
+        <button data-tab="items" class="active">Items</button><button data-tab="security">Security</button><button data-tab="backup">Backup</button>
+      </nav>
+      <div id="items-panel" data-panel="items">
+        <div class="toolbar"><div><h2>Vault items</h2><p class="muted">Logins, API keys, and integration credentials.</p></div><div><button id="refresh" class="secondary">Refresh</button><button id="new-item">New item</button></div></div>
+        <div id="items" class="items"></div>
+      </div>
+      <div data-panel="security" hidden>
+        <div class="cards">
+          <article><h2>Change password</h2><form id="password-form"><label>Current password<input id="current-password" type="password" autocomplete="current-password" required></label><label>New password<input id="new-password" type="password" autocomplete="new-password" minlength="12" required></label><button>Change password</button></form></article>
+          <article><h2>Recovery</h2><p class="muted">Generate a one-time recovery code and store it somewhere safe.</p><form id="recovery-form"><button>Generate recovery code</button></form><output id="recovery-output" class="secret-output" hidden></output></article>
+        </div>
+      </div>
+      <div data-panel="backup" hidden>
+        <div class="cards">
+          <article><h2>Export encrypted backup</h2><p class="muted">The downloaded archive is protected by a separate backup password.</p><form id="backup-export-form"><label>Backup password<input id="backup-export-password" type="password" autocomplete="new-password" minlength="12" required></label><button>Download backup</button></form></article>
+        </div>
+      </div>
+      <p id="vault-message" class="message" role="status"></p>
+    </section>
+
+    <dialog id="editor">
+      <form id="item-form">
+        <div class="dialog-title"><h2>Vault item</h2><button id="cancel" type="button" class="icon" aria-label="Close">×</button></div>
+        <input id="item-id" type="hidden"><input id="revision" type="hidden">
+        <div class="form-grid"><label>Type<select id="item-type"><option value="login">Login</option><option value="apiKey">API key</option><option value="integration">Integration credential</option></select></label><label>Name<input id="name" required></label><label>Username / account<input id="username" autocomplete="off"></label><label id="item-secret-field">Secret<input id="item-password" type="password" autocomplete="new-password"></label><div id="integration-fields" class="wide" hidden><div class="form-grid"><label>Integration ID<input id="integration-id" autocomplete="off"></label><label>Account ID<input id="account-id" autocomplete="off"></label></div><div class="property-heading"><strong>Credential properties</strong><button id="add-integration-property" type="button" class="secondary">Add property</button></div><div id="integration-properties"></div></div><label class="wide">Website / API origin<input id="website" type="url" placeholder="https://example.com"></label><label class="wide">Notes<textarea id="notes"></textarea></label></div>
+        <fieldset><legend>Agent access policy</legend><div class="form-grid"><label>Access<select id="policy-mode"><option value="only_me">Only me</option><option value="agents">My agents</option></select></label><label>What agents may use<select id="policy-level"><option value="metadata">Metadata only</option><option value="autofill">Use without reveal</option><option value="full">Full access</option></select></label><label class="wide">Allowed agent IDs<input id="policy-agents" placeholder="agent-one, agent-two"></label><label class="wide checkbox"><input id="ask-first" type="checkbox"> Ask me before each agent use</label><label class="wide checkbox"><input id="allow-server-agents" type="checkbox"> Allow my agents running on the server</label><label class="wide">Allowed sites<input id="policy-sites" placeholder="api.example.com, example.com"></label></div></fieldset>
+        <div class="dialog-actions"><button id="delete-item" type="button" class="danger" hidden>Delete</button><span></span><button id="save-item">Save</button></div>
+      </form>
+    </dialog>
+  </main>
+  <script src="/vault/local.js"></script>
+</body>
+</html>
