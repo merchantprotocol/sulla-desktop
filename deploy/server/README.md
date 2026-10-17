@@ -2,7 +2,7 @@
 
 ## One-line install
 
-On a fresh Ubuntu 24.04 LTS server:
+On a prepared Ubuntu 24.04 LTS server:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo bash
@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main
 
 The join token is requested through a hidden terminal prompt. The kit and root-readable `server.env` are saved to `/opt/sulla/server`; rerunning the installer keeps the database, generated service secrets, first owner, and organization.
 
-Compose builds the vault image from the exact resolved source commit. Kubernetes defaults to the CI-published `sha-<12 characters>` image for that commit and proves the manifest is available before changing the cluster. A custom pinned image tag or digest is also accepted and its pull is verified by the rollout. Agent and workflow runtime wiring is outside this initial server-console kit.
+Compose builds the vault image from the exact resolved source commit. Kubernetes defaults to the CI-published `sha-<12 characters>` image for that commit and proves the manifest is available before changing the cluster. The image workflow runs for every main-branch commit, so the installer never silently substitutes an older runtime. A custom pinned image tag or digest is also accepted and its pull is verified by the rollout. Agent and workflow runtime wiring is outside this initial server-console kit.
 
 Sulla Desktop's built-in k3s runs **inside a Lima virtual machine**. Other physical machines cannot join that private cluster as nodes. A multi-server cluster therefore needs k3s installed natively on Ubuntu, which is what these scripts do.
 
@@ -29,6 +29,8 @@ Sulla Desktop's built-in k3s runs **inside a Lima virtual machine**. Other physi
 - All nodes on the same trusted LAN, with stable IP addresses. A DHCP reservation in the router is usually simpler and safer than hand-editing Netplan.
 - Internet access while installing k3s and pulling container images.
 - This `deploy/server` directory copied to the first server.
+
+The Compose choice requires Docker Engine with the Compose v2 plugin already installed and running. The wizard checks both, but it does not install Docker. The Kubernetes `existing` choice requires a working `kubectl` context. The Kubernetes `install` choice installs k3s only on a native Ubuntu 24.04 LTS server with systemd.
 
 The scripts pin k3s to `v1.36.4+k3s1`. Override it only deliberately by exporting `INSTALL_K3S_VERSION` before running either install script.
 
@@ -126,7 +128,7 @@ On the first server:
 sudo ./deploy-sulla.sh
 ```
 
-The installer generates PostgreSQL, JWT, and bootstrap secrets once and saves them in `server.env` with mode `0600`. The deploy script applies those values through a Kubernetes Secret, renders the selected storage and pinned image settings, waits for both Deployments, and prints the final Pods, PVC, and Services. Rerunning it preserves the same secrets and database volume.
+The installer generates PostgreSQL, JWT, and bootstrap secrets once and saves them in `server.env` with mode `0600`. The deploy script applies those values through a Kubernetes Secret, renders the selected storage and pinned image settings, waits for both Deployments, and prints the final Pods, PVC, and Services. The selected kubeconfig and context are saved and used explicitly on every call. Rerunning it preserves the same cluster target, secrets, and database volume. If an unrelated `sulla` namespace already exists, deployment stops before changing its Secrets or PVCs.
 
 PostgreSQL stays `ClusterIP`. The wizard can create an Ingress or leave routing to an existing ingress. It prints the real console login URL only after rollout and first-owner bootstrap succeed.
 

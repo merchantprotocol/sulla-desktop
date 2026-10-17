@@ -3,7 +3,6 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-    paths: ['services/sulla-vault/**', 'packages/vault-crypto/**', '.github/workflows/sulla-vault-image.yml']
 permissions:
   contents: read
   packages: write
