@@ -11,7 +11,7 @@
     }
   });
 
-  // ../../packages/vault-crypto/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
+  // ../../../../../mnt/data/devcache/deps/sulla-desktop-0ed85271cbb25ba4/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
   var import_meta = {};
   async function A(A3 = {}) {
     var I2, g2 = A3, C2 = !!globalThis.window, B2 = !!globalThis.WorkerGlobalScope, Q2 = (globalThis.process?.versions?.node && globalThis.process, import_meta.url);
@@ -209,7 +209,7 @@
   }
   var libsodium_sumo_default = A;
 
-  // ../../packages/vault-crypto/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
+  // ../../../../../mnt/data/devcache/deps/sulla-desktop-0ed85271cbb25ba4/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
   var r;
   var t = {};
   if (void 0 === globalThis.crypto || "function" != typeof globalThis.crypto.getRandomValues) throw new Error("globalThis.crypto.getRandomValues is not available. The ESM build of libsodium requires a secure random source (available in all browsers and Node.js 19+).");
@@ -3438,7 +3438,7 @@
   }, t.add = o, t.base64_variants = m, t.compare = l, t.from_base64 = x, t.from_hex = b, t.from_string = v, t.increment = p, t.is_zero = h, t.memcmp = i, t.memzero = y, t.output_formats = T, t.pad = u, t.unpad = d, t.ready = s, t.symbols = c, t.to_base64 = E, t.to_hex = f, t.to_string = g;
   var libsodium_wrappers_default = t;
 
-  // ../../packages/vault-crypto/dist/index.js
+  // packages/vault-crypto/src/index.ts
   var VERSION = 1;
   var KEY_BYTES = 32;
   var SALT_BYTES = 16;
@@ -3463,12 +3463,6 @@
       throw new Error(`${label} must be ${KEY_BYTES} bytes`);
     }
   }
-  function itemAssociatedData(purpose, context) {
-    if (!context.itemId || !context.ownerId) {
-      throw new Error("Item context requires an item id and owner id");
-    }
-    return `sulla:item:${purpose}:v1:${JSON.stringify([context.ownerId, context.itemId])}`;
-  }
   async function deriveMasterKey(masterPassword, salt, parameters = DEFAULT_ARGON2ID) {
     await ready();
     if (!masterPassword) {
@@ -3478,7 +3472,14 @@
     if (saltBytes.byteLength !== libsodium_wrappers_default.crypto_pwhash_SALTBYTES) {
       throw new Error(`Argon2id salt must be ${libsodium_wrappers_default.crypto_pwhash_SALTBYTES} bytes`);
     }
-    const key = libsodium_wrappers_default.crypto_pwhash(KEY_BYTES, masterPassword, saltBytes, parameters.operations, parameters.memoryBytes, libsodium_wrappers_default.crypto_pwhash_ALG_ARGON2ID13);
+    const key = libsodium_wrappers_default.crypto_pwhash(
+      KEY_BYTES,
+      masterPassword,
+      saltBytes,
+      parameters.operations,
+      parameters.memoryBytes,
+      libsodium_wrappers_default.crypto_pwhash_ALG_ARGON2ID13
+    );
     return { key, salt: b64(saltBytes), parameters };
   }
   async function deriveLoginHash(masterKey) {
@@ -3506,7 +3507,13 @@
     await ready();
     assertKey(key, "Encryption key");
     const nonce = libsodium_wrappers_default.randombytes_buf(NONCE_BYTES);
-    const ciphertext = libsodium_wrappers_default.crypto_aead_xchacha20poly1305_ietf_encrypt(plaintext, textEncoder.encode(context), null, nonce, key);
+    const ciphertext = libsodium_wrappers_default.crypto_aead_xchacha20poly1305_ietf_encrypt(
+      plaintext,
+      textEncoder.encode(context),
+      null,
+      nonce,
+      key
+    );
     return { version: VERSION, algorithm: "xchacha20-poly1305", nonce: b64(nonce), ciphertext: b64(ciphertext) };
   }
   async function decryptWithKey(envelope, key, context) {
@@ -3515,7 +3522,13 @@
     if (envelope.version !== VERSION || envelope.algorithm !== "xchacha20-poly1305") {
       throw new Error("Unsupported encrypted envelope");
     }
-    return libsodium_wrappers_default.crypto_aead_xchacha20poly1305_ietf_decrypt(null, bytes(envelope.ciphertext), textEncoder.encode(context), bytes(envelope.nonce), key);
+    return libsodium_wrappers_default.crypto_aead_xchacha20poly1305_ietf_decrypt(
+      null,
+      bytes(envelope.ciphertext),
+      textEncoder.encode(context),
+      bytes(envelope.nonce),
+      key
+    );
   }
   async function createUserKey(masterKey) {
     const userKey = await generateKey();
@@ -3523,16 +3536,6 @@
   }
   function unwrapUserKey(encryptedUserKey, masterKey) {
     return decryptWithKey(encryptedUserKey, masterKey, "sulla:user-key:v1");
-  }
-  async function decryptItem(item, ownerKey, context) {
-    if (item.version !== VERSION) {
-      throw new Error("Unsupported item version");
-    }
-    const itemKey = await decryptWithKey(item.encryptedItemKey, ownerKey, itemAssociatedData("key", context));
-    return decryptWithKey(item.ciphertext, itemKey, itemAssociatedData("ciphertext", context));
-  }
-  async function decryptItemText(item, ownerKey, context) {
-    return textDecoder.decode(await decryptItem(item, ownerKey, context));
   }
   async function createUserKeyPair(userKey) {
     await ready();
@@ -3568,12 +3571,12 @@
     return decryptWithKey(encryptedCollectionKey, orgKey, "sulla:collection-key:v1");
   }
 
-  // console/app.ts
+  // services/sulla-vault/console/app.ts
   var text = new TextEncoder();
   var decoder = new TextDecoder();
   var $2 = (id) => document.getElementById(id);
   var esc = (value) => String(value ?? "").replace(/[&<>'"]/g, (c2) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[c2]);
-  var initials = (value) => value.split(/\s+/).slice(0, 2).map((x2) => x2[0]?.toUpperCase()).join("") || "SV";
+  var initials = (value = "") => value.split(/\s+/).slice(0, 2).map((x2) => x2[0]?.toUpperCase()).join("") || "SV";
   var state = { token: "", email: "", user: null, userKey: null, privateKey: null, org: null, orgKey: null, members: [], groups: [], collections: [], selected: null, access: { members: [], groups: [] }, collectionKeys: /* @__PURE__ */ new Map(), itemNames: /* @__PURE__ */ new Map(), audit: [], auditOffset: 0, authMode: "signin", recovery: null };
   var idleTimer = 0;
   function armIdle() {
@@ -3590,6 +3593,20 @@
   }
   function lock(message = "") {
     clearKeys();
+    state.org = null;
+    state.user = null;
+    state.members = [];
+    state.groups = [];
+    state.collections = [];
+    state.selected = null;
+    state.audit = [];
+    state.itemNames.clear();
+    state.auditOffset = 0;
+    document.querySelectorAll(".page").forEach((x2) => x2.setAttribute("hidden", ""));
+    $2("modal").hasAttribute("open") && $2("modal").close();
+    $2("modal-body").replaceChildren();
+    $2("auth-password").value = "";
+    $2("auth-join-password").value = "";
     $2("shell").hidden = true;
     $2("auth").hidden = false;
     setAuthMode("signin");
@@ -3598,6 +3615,7 @@
   async function api(path, options = {}) {
     const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...state.token ? { Authorization: `Bearer ${state.token}` } : {}, ...options.headers ?? {} } });
     if (!response.ok) {
+      if (response.status === 401 && state.token) lock("Your session ended. Sign in again.");
       const body = await response.json().catch(() => ({}));
       const error = new Error(body.reason || body.error || `Request failed (${response.status})`);
       error.status = response.status;
@@ -3629,14 +3647,14 @@
   function setAuthMode(mode) {
     state.authMode = mode;
     document.querySelectorAll("[data-auth]").forEach((b2) => b2.classList.toggle("active", b2.dataset.auth === mode));
-    document.querySelectorAll(".create-field").forEach((x2) => x2.hidden = mode !== "create");
     document.querySelectorAll(".join-field").forEach((x2) => x2.hidden = mode !== "join");
-    const copy = { signin: ["Welcome back", "Unlock your organization without sending a master password or encryption key to the server.", "Unlock console"], create: ["Create your vault server", "Create the first owner account and an encrypted organization.", "Create owner account"], join: ["Join your organization", "Create an account. An owner will confirm your public key before you can see organization data.", "Create account & request access"] }[mode];
+    const copy = { signin: ["Welcome back", "Unlock your organization without sending a master password or encryption key to the server.", "Unlock console"], join: ["Join your organization", "Create an account. An owner will confirm your public key before you can see organization data.", "Create account & request access"] }[mode];
     $2("auth-title").textContent = copy[0];
     $2("auth-lead").textContent = copy[1];
     $2("auth-submit").textContent = copy[2];
     $2("auth-password").setAttribute("autocomplete", mode === "signin" ? "current-password" : "new-password");
     $2("auth-error").textContent = "";
+    document.querySelectorAll(".join-field input").forEach((x2) => x2.required = mode === "join");
   }
   async function makeAccount(password) {
     const master = await deriveMasterKey(password);
@@ -3650,39 +3668,29 @@
     const info = await api(`/v1/accounts/kdf?email=${encodeURIComponent(email)}`);
     const parameters = kdf(info.kdf);
     const master = await deriveMasterKey(password, parameters.salt, parameters.parameters);
-    const loginHash = await deriveLoginHash(master.key);
-    const session = await api("/v1/session", { method: "POST", body: JSON.stringify({ email, loginHash, device: { name: "Web console" } }) });
-    state.token = session.token;
-    state.email = email;
-    state.user = session.user;
-    state.userKey = await unwrapUserKey(session.user.encryptedUserKey, master.key);
-    master.key.fill(0);
-    state.privateKey = await unwrapUserPrivateKey(session.user.encryptedPrivateKey, state.userKey);
+    try {
+      const loginHash = await deriveLoginHash(master.key);
+      const session = await api("/v1/session", { method: "POST", body: JSON.stringify({ email, loginHash, device: { name: "Web console" } }) });
+      state.token = session.token;
+      state.email = email;
+      state.user = session.user;
+      state.userKey = await unwrapUserKey(session.user.encryptedUserKey, master.key);
+      state.privateKey = await unwrapUserPrivateKey(session.user.encryptedPrivateKey, state.userKey);
+    } finally {
+      master.key.fill(0);
+    }
   }
-  async function register(mode, email, password) {
+  async function register(_mode, email, password) {
     const account = await makeAccount(password);
-    let orgKey = null;
-    let orgId = "";
-    let joinHash = "";
-    if (mode === "join") {
-      orgId = $2("auth-org-id").value.trim();
-      joinHash = await deriveOrgJoinHash($2("auth-join-password").value, orgId);
+    try {
+      const orgId = $2("auth-org-id").value.trim();
+      const joinHash = await deriveOrgJoinHash($2("auth-join-password").value, orgId);
+      await api("/v1/accounts", { method: "POST", body: JSON.stringify({ email, loginHash: account.loginHash, publicKey: account.publicKey, encryptedPrivateKey: account.encryptedPrivateKey, encryptedUserKey: account.encryptedUserKey, kdf: account.kdf, orgId, joinHash }) });
+      await establishSession(email, password);
+    } finally {
+      account.userKey.fill(0);
+      account.privateKey.fill(0);
     }
-    await api("/v1/accounts", { method: "POST", body: JSON.stringify({ email, loginHash: account.loginHash, publicKey: account.publicKey, encryptedPrivateKey: account.encryptedPrivateKey, encryptedUserKey: account.encryptedUserKey, kdf: account.kdf, ...mode === "join" ? { orgId, joinHash } : {} }) });
-    state.token = (await api("/v1/session", { method: "POST", body: JSON.stringify({ email, loginHash: account.loginHash, device: { name: "Web console" } }) })).token;
-    state.email = email;
-    state.user = { id: "", publicKey: account.publicKey };
-    state.userKey = account.userKey;
-    state.privateKey = account.privateKey;
-    const session = await api("/v1/session", { method: "POST", body: JSON.stringify({ email, loginHash: account.loginHash }) });
-    state.token = session.token;
-    state.user = session.user;
-    if (mode === "create") {
-      orgKey = await generateKey();
-      const name = $2("auth-org-name").value.trim();
-      await api("/v1/orgs", { method: "POST", body: JSON.stringify({ encryptedName: await encryptText(name, orgKey, "sulla:org-name:v1"), wrappedOrgKey: await wrapOrgKeyForMember(orgKey, account.publicKey) }) });
-    }
-    orgKey?.fill(0);
   }
   async function onAuth(event) {
     event.preventDefault();
@@ -3699,11 +3707,11 @@
       $2("auth-join-password").value = "";
       await openConsole();
     } catch (error) {
-      clearKeys();
+      lock();
       $2("auth-error").textContent = error instanceof Error ? error.message : "Could not unlock the vault";
     } finally {
       button.disabled = false;
-      setAuthMode(state.authMode);
+      button.textContent = state.authMode === "signin" ? "Unlock console" : "Create account & request access";
     }
   }
   async function openConsole() {
@@ -3711,25 +3719,31 @@
     $2("shell").hidden = false;
     $2("session-email").textContent = state.email;
     armIdle();
-    if (await loadAll()) showPage("collections");
+    if (await loadAll()) showPage("audit");
   }
   async function loadAll() {
     const orgs = await api("/v1/orgs");
     if (!orgs.orgs.length) {
+      $2("rename-org").disabled = true;
+      $2("org-name").textContent = "Membership pending";
+      $2("org-initials").textContent = "S";
+      document.querySelectorAll("[data-page]").forEach((x2) => x2.disabled = true);
       document.querySelectorAll(".page").forEach((x2) => x2.hidden = true);
       $2("page-title").textContent = "Membership pending";
       $2("page-lead").textContent = "You are signed in, but no organization data is available until an owner confirms your public key.";
       return false;
     }
-    state.org = orgs.orgs[0];
-    state.orgKey = await unwrapOrgKeyForMember(state.org.wrapped_org_key, state.user.publicKey, state.privateKey);
-    state.org.name = await decryptText(state.org.encrypted_name, state.orgKey, "sulla:org-name:v1");
-    const [members, groups, collections] = await Promise.all([api(`/v1/orgs/${state.org.id}/members`), api(`/v1/orgs/${state.org.id}/groups`), api(`/v1/orgs/${state.org.id}/collections`)]);
+    document.querySelectorAll("[data-page]").forEach((x2) => x2.disabled = false);
+    const org = orgs.orgs[0];
+    state.org = org;
+    state.orgKey = await unwrapOrgKeyForMember(org.wrapped_org_key, state.user.publicKey, state.privateKey);
+    org.name = await decryptText(org.encrypted_name, state.orgKey, "sulla:org-name:v1");
+    const [members, groups, collections] = await Promise.all([api(`/v1/orgs/${org.id}/members`), api(`/v1/orgs/${org.id}/groups`), api(`/v1/orgs/${org.id}/collections`)]);
     state.members = members.members;
     state.groups = groups.groups;
     state.collections = collections.collections;
     await fingerprintMembers();
-    if (state.org.auto_confirm_new_members && ["owner", "admin"].includes(state.org.role)) {
+    if (org.auto_confirm_new_members && ["owner", "admin"].includes(org.role)) {
       for (const member of state.members.filter((m2) => m2.status === "pending")) await confirmMember(member.user_id, false);
       await refreshPeople();
     }
@@ -3741,18 +3755,18 @@
       } catch {
       }
     }
-    $2("org-name").textContent = state.org.name;
-    $2("org-initials").textContent = initials(state.org.name);
+    $2("org-name").textContent = org.name;
+    $2("org-initials").textContent = initials(org.name);
     $2("member-count").textContent = String(state.members.length);
     $2("collection-count").textContent = String(state.collections.length);
-    $2("people-role").textContent = state.org.role;
-    $2("join-display").textContent = state.org.join_enabled ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "Not set";
-    $2("auto-confirm").checked = Boolean(state.org.auto_confirm_new_members);
+    $2("people-role").textContent = org.role;
+    const manager = ["owner", "admin"].includes(org.role);
+    for (const id of ["new-collection", "invite", "new-group", "rotate-join", "auto-confirm", "rename-org"]) $2(id).disabled = !manager;
+    $2("join-display").textContent = org.join_enabled ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "Not set";
+    $2("auto-confirm").checked = Boolean(org.auto_confirm_new_members);
     renderPeople();
     renderCollections();
     fillFilters();
-    await loadItemNames();
-    await loadRecovery();
     return true;
   }
   async function safeName(envelope, key, context, fallback) {
@@ -3765,14 +3779,16 @@
   function showPage(page) {
     document.querySelectorAll(".page").forEach((x2) => x2.hidden = x2.id !== page);
     document.querySelectorAll("[data-page]").forEach((x2) => x2.classList.toggle("active", x2.dataset.page === page));
+    document.querySelectorAll("[data-page]").forEach((x2) => x2.setAttribute("aria-current", x2.dataset.page === page ? "page" : "false"));
     const copy = { collections: ["Shared collections", "Share passwords with a team. Choose who can see them, and whose agents can use them."], people: ["People & groups", "Invite existing accounts, assign roles and organize people into groups."], audit: ["Audit log", "Every person and agent action. Secret values are never written here."], recovery: ["Recovery", "Members choose whether organization owners can help recover their encrypted account."] };
     $2("page-title").textContent = copy[page][0];
     $2("page-lead").textContent = copy[page][1];
-    if (page === "people") void refreshPeople();
-    if (page === "audit") void loadAudit();
-    if (page === "recovery") void loadRecovery();
+    if (page === "people") void run(refreshPeople);
+    if (page === "audit") void run(loadAudit);
+    if (page === "recovery") void run(loadRecovery);
   }
   function renderCollections() {
+    $2("collection-count").textContent = String(state.collections.length);
     const query = $2("collection-search").value.toLowerCase();
     const rows = state.collections.filter((c2) => c2.name.toLowerCase().includes(query));
     $2("collection-list").innerHTML = rows.length ? rows.map((c2) => `<div class="collection-row ${state.selected?.id === c2.id ? "active" : ""}" data-collection="${esc(c2.id)}"><b><span style="color:var(--accent)">\u25B0</span>${esc(c2.name)}</b><small>${c2.can_use_by_agents ? "Agents enabled" : c2.can_view || ["owner", "admin"].includes(state.org?.role) ? "Shared collection" : "Restricted"}</small></div>`).join("") : '<div class="empty" style="min-height:180px"><span>No collections yet</span></div>';
@@ -3786,14 +3802,22 @@
     $2("collection-empty").hidden = true;
     $2("collection-detail").hidden = false;
     $2("collection-title").textContent = state.selected.name;
-    const items = await api(`/v1/collections/${id}/items`).catch(() => ({ items: [] }));
-    $2("collection-meta").textContent = `${items.items.length} item${items.items.length === 1 ? "" : "s"} \xB7 access is enforced for people and their agents`;
+    $2("collection-meta").textContent = "Access is enforced for people and their agents";
+    $2("rights").textContent = "Loading access\u2026";
     try {
-      state.access = await api(`/v1/collections/${id}/access`);
-    } catch {
-      state.access = { members: state.members.map((m2) => ({ ...m2, can_view: state.selected.can_view, can_use_by_agents: state.selected.can_use_by_agents, can_edit: state.selected.can_edit, can_manage: state.selected.can_manage })), groups: [] };
+      const access = await api(`/v1/collections/${id}/access`);
+      if (state.selected?.id !== id) return;
+      for (const group of access.groups) group.name = await safeName(group.encrypted_name, state.orgKey, "sulla:group-name:v1", "Encrypted group");
+      state.access = access;
+      renderRights();
+    } catch (error) {
+      if (state.selected?.id === id) {
+        state.access = { members: [], groups: [] };
+        $2("rights").textContent = error instanceof Error ? error.message : "Could not load access";
+        $2("right-people").textContent = "\u2014";
+        $2("right-agents").textContent = "\u2014";
+      }
     }
-    renderRights();
   }
   function effective(row, key) {
     return ["owner", "admin"].includes(row.role) || Boolean(row[key]);
@@ -3819,23 +3843,32 @@
     const row = (kind === "group" ? state.access.groups : state.access.members).find((x2) => (kind === "group" ? x2.id : x2.user_id) === id);
     if (!row || !state.selected) return;
     const key = button.dataset.rightKey;
+    const previous = { ...row };
+    document.querySelectorAll("[data-right-key]").forEach((b2) => b2.disabled = true);
     row[key] = !row[key];
     if (key === "can_view" && !row[key]) {
       row.can_use_by_agents = row.can_edit = row.can_manage = false;
     } else if (key !== "can_view" && row[key]) row.can_view = true;
     const body = { view: row.can_view, useByAgents: row.can_use_by_agents, edit: row.can_edit, manage: row.can_manage };
-    await api(`/v1/collections/${state.selected.id}/${kind === "group" ? "groups" : "members"}/${id}`, { method: "PUT", body: JSON.stringify(body) });
-    renderRights();
-    notice("Collection rights updated.");
+    try {
+      await api(`/v1/collections/${state.selected.id}/${kind === "group" ? "groups" : "members"}/${id}`, { method: "PUT", body: JSON.stringify(body) });
+      notice("Collection rights updated.");
+    } catch (error) {
+      for (const field of ["can_view", "can_use_by_agents", "can_edit", "can_manage"]) row[field] = previous[field];
+      notice(error instanceof Error ? error.message : "Could not update rights");
+    } finally {
+      renderRights();
+    }
   }
   function renderPeople() {
+    $2("member-count").textContent = String(state.members.length);
     $2("people-preview").innerHTML = state.members.filter((m2) => m2.status === "confirmed").slice(0, 5).map((m2) => personHtml(m2, false)).join("");
     $2("members").innerHTML = state.members.map((m2) => personHtml(m2, true)).join("");
     $2("groups").innerHTML = state.groups.length ? state.groups.map((g2) => `<div class="group-line"><span class="avatar group">\u2659</span><div><b>${esc(g2.name)}</b><small>${g2.member_count} member${g2.member_count === 1 ? "" : "s"}</small></div>${["owner", "admin"].includes(state.org?.role) ? `<button class="btn small" data-group-manage="${esc(g2.id)}">Manage</button>` : ""}</div>`).join("") : '<p class="muted">No groups yet.</p>';
-    document.querySelectorAll("[data-member-role]").forEach((s2) => s2.onchange = () => void changeRole(s2));
-    document.querySelectorAll("[data-member-remove]").forEach((b2) => b2.onclick = () => void removeMember(b2.dataset.memberRemove));
-    document.querySelectorAll("[data-member-confirm]").forEach((b2) => b2.onclick = () => void confirmMember(b2.dataset.memberConfirm));
-    document.querySelectorAll("[data-group-manage]").forEach((b2) => b2.onclick = () => void manageGroup(b2.dataset.groupManage));
+    document.querySelectorAll("[data-member-role]").forEach((s2) => s2.onchange = () => void run(() => changeRole(s2)));
+    document.querySelectorAll("[data-member-remove]").forEach((b2) => b2.onclick = () => void run(() => removeMember(b2.dataset.memberRemove)));
+    document.querySelectorAll("[data-member-confirm]").forEach((b2) => b2.onclick = () => void run(() => confirmMember(b2.dataset.memberConfirm)));
+    document.querySelectorAll("[data-group-manage]").forEach((b2) => b2.onclick = () => void run(() => manageGroup(b2.dataset.groupManage)));
   }
   function personHtml(m2, actions) {
     const manager = ["owner", "admin"].includes(state.org?.role);
@@ -3901,6 +3934,7 @@
     state.collections.unshift(created);
     state.selected = null;
     renderCollections();
+    fillFilters();
     notice("Collection created.");
   }
   async function invite() {
@@ -3965,50 +3999,70 @@
     }
     notice(`Automatic confirmation ${enabled ? "enabled" : "disabled"}.`);
   }
-  async function loadItemNames() {
-    const payload = await api("/v1/items").catch(() => ({ items: [] }));
-    for (const row of payload.items) {
-      const key = row.collection_id ? state.collectionKeys.get(row.collection_id) : state.userKey;
-      if (!key) continue;
-      try {
-        const value = JSON.parse(await decryptItemText({ version: 1, encryptedItemKey: row.encrypted_item_key, ciphertext: row.ciphertext, agentWrappedItemKey: row.agent_wrapped_item_key }, key, { itemId: row.id, ownerId: row.collection_id ?? state.user.id }));
-        state.itemNames.set(row.id, value.name || "Vault item");
-      } catch {
-      }
-    }
-  }
   function fillFilters() {
     $2("filter-person").innerHTML = '<option value="">Everyone</option>' + state.members.map((m2) => `<option value="${esc(m2.user_id)}">${esc(m2.email)}</option>`).join("");
     $2("filter-collection").innerHTML = '<option value="">All collections</option>' + state.collections.map((c2) => `<option value="${esc(c2.id)}">${esc(c2.name)}</option>`).join("");
   }
   function auditParams() {
+    const item = $2("filter-item").value.trim();
+    if (item && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item)) throw new Error("Enter a valid item UUID, or leave Item ID empty.");
+    const from = $2("filter-from").value;
+    const to = $2("filter-to").value;
+    if (from && to && from > to) throw new Error("From date must be before the end date.");
     const params = new URLSearchParams({ limit: "25", offset: String(state.auditOffset) });
-    const values = { person: $2("filter-person").value, action: $2("filter-action").value, collection: $2("filter-collection").value, item: $2("filter-item").value, from: $2("filter-from").value, to: $2("filter-to").value };
-    for (const [key, value] of Object.entries(values)) if (value) params.set(key, key === "to" ? (/* @__PURE__ */ new Date(`${value}T23:59:59.999Z`)).toISOString() : value);
+    const values = { person: $2("filter-person").value, action: $2("filter-action").value, collection: $2("filter-collection").value, item, from: $2("filter-from").value, to: $2("filter-to").value };
+    for (const [key, value] of Object.entries(values)) if (value) params.set(key, key === "to" ? new Date((/* @__PURE__ */ new Date(`${value}T00:00:00Z`)).getTime() + 864e5).toISOString() : value);
     if ($2("filter-blocked").checked) params.set("blocked", "true");
     return params.toString();
   }
   var actionLabel = (action) => ({ agent_credential_use: "Agent tried to use", join_password_set: "Set join password", join_password_rotated: "Rotated join password", member_confirmed: "Confirmed member", recovery_opt_in: "Enabled recovery", recovery_opt_out: "Disabled recovery", account_recovered: "Recovered account" })[action] ?? action.replaceAll("_", " ");
   async function loadAudit() {
     if (!state.org) return;
-    const result = await api(`/v1/orgs/${state.org.id}/audit?${auditParams()}`);
+    const request = ++auditRequest;
+    $2("audit-rows").innerHTML = '<tr><td colspan="6" role="status">Loading events\u2026</td></tr>';
+    $2("audit-detail").textContent = "Loading\u2026";
+    for (const id of ["audit-prev", "audit-next"]) $2(id).disabled = true;
+    for (const id of ["audit-total", "audit-agents", "audit-blocked"]) $2(id).textContent = "\u2014";
+    let result;
+    try {
+      result = await api(`/v1/orgs/${state.org.id}/audit?${auditParams()}`);
+    } catch (error) {
+      if (request !== auditRequest) return;
+      state.audit = [];
+      $2("audit-rows").innerHTML = '<tr><td colspan="6">Could not load events. Check your connection and apply the filters to retry.</td></tr>';
+      $2("audit-detail").textContent = "Event details unavailable.";
+      throw error;
+    }
+    if (request !== auditRequest || !state.token) return;
     state.audit = result.events;
     $2("audit-total").textContent = String(state.audit.length);
     $2("audit-agents").textContent = String(state.audit.filter((e) => e.action === "agent_credential_use").length);
     $2("audit-blocked").textContent = String(state.audit.filter((e) => e.blocked).length);
     $2("audit-page").textContent = `Page ${Math.floor(state.auditOffset / 25) + 1}`;
+    $2("audit-detail").innerHTML = '<p class="muted">Select an event to see its details.</p>';
+    $2("audit-prev").disabled = state.auditOffset === 0;
+    $2("audit-next").disabled = state.audit.length < 25;
     $2("audit-rows").innerHTML = state.audit.length ? state.audit.map((e, i2) => {
       const member = state.members.find((m2) => m2.user_id === e.actor_user_id);
       const collection = state.collections.find((c2) => c2.id === e.collection_id);
       const who = e.action === "agent_credential_use" ? e.metadata?.agentName || e.metadata?.agentId || "Agent" : member?.email || "Member";
-      const target = state.itemNames.get(e.item_id) || collection?.name || "Organization";
-      return `<tr data-event="${i2}"><td>${esc(new Date(e.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</td><td><div class="actor-cell"><span class="avatar ${e.action === "agent_credential_use" ? "group" : ""}">${e.action === "agent_credential_use" ? "\u25C6" : esc(initials(who))}</span><span>${esc(who)}</span></div></td><td>${esc(actionLabel(e.action))}</td><td>${esc(target)}</td><td><span class="result ${e.blocked ? "bad" : "ok"}">${e.blocked ? "Blocked" : "Allowed"}</span></td></tr>`;
-    }).join("") : '<tr><td colspan="5" class="muted">No events match these filters.</td></tr>';
-    document.querySelectorAll("[data-event]").forEach((row) => row.onclick = () => renderAuditDetail(Number(row.dataset.event)));
+      const target = e.item_id || collection?.name || "Organization";
+      return `<tr data-event="${i2}" tabindex="0" aria-label="View event ${i2 + 1}"><td>${esc(new Date(e.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</td><td><div class="actor-cell"><span class="avatar ${e.action === "agent_credential_use" ? "group" : ""}">${e.action === "agent_credential_use" ? "\u25C6" : esc(initials(who))}</span><span>${esc(who)}</span></div></td><td>${esc(actionLabel(e.action))}</td><td>${esc(target)}</td><td class="where">${esc(e.metadata?.toolName || e.pod_id || "\u2014")}</td><td><span class="result ${e.blocked ? "bad" : "ok"}">${e.blocked ? "Blocked" : "Allowed"}</span></td></tr>`;
+    }).join("") : '<tr><td colspan="6" class="muted">No events match these filters.</td></tr>';
+    document.querySelectorAll("[data-event]").forEach((row) => {
+      row.onclick = () => renderAuditDetail(Number(row.dataset.event));
+      row.onkeydown = (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          row.click();
+        }
+      };
+    });
     if (state.audit[0]) renderAuditDetail(0);
   }
   function renderAuditDetail(index) {
     const e = state.audit[index];
+    if (!e) return;
     document.querySelectorAll("[data-event]").forEach((x2, i2) => x2.classList.toggle("selected", i2 === index));
     const member = state.members.find((m2) => m2.user_id === e.actor_user_id);
     const collection = state.collections.find((c2) => c2.id === e.collection_id);
@@ -4019,10 +4073,6 @@
     if (!state.org) return;
     try {
       state.recovery = await api(`/v1/orgs/${state.org.id}/recovery`);
-      if (!state.recovery.recoveryPublicKey && ["owner", "admin"].includes(state.org.role)) {
-        await api(`/v1/orgs/${state.org.id}/recovery/public-key`, { method: "PUT", body: JSON.stringify({ publicKey: state.user.publicKey }) });
-        state.recovery = await api(`/v1/orgs/${state.org.id}/recovery`);
-      }
       const opted = state.recovery.members.some((m2) => m2.user_id === state.user.id);
       $2("recovery-toggle").checked = opted;
       $2("recovery-status").textContent = opted ? "Your encrypted user key is available for recovery." : "You are not opted in.";
@@ -4052,24 +4102,54 @@
   document.querySelectorAll("[data-page]").forEach((b2) => b2.onclick = () => showPage(b2.dataset.page));
   document.querySelectorAll("[data-go]").forEach((b2) => b2.onclick = () => showPage(b2.dataset.go));
   $2("collection-search").addEventListener("input", renderCollections);
-  $2("new-collection").onclick = () => void createCollection();
-  $2("invite").onclick = () => void invite();
-  $2("new-group").onclick = () => void createGroup();
-  $2("rotate-join").onclick = () => void rotateJoin();
-  $2("auto-confirm").onchange = () => void toggleAutoConfirm();
+  $2("new-collection").onclick = () => void run(createCollection);
+  $2("invite").onclick = () => void run(invite);
+  $2("new-group").onclick = () => void run(createGroup);
+  $2("rotate-join").onclick = () => void run(rotateJoin);
+  $2("auto-confirm").onchange = () => void run(toggleAutoConfirm);
   $2("copy-org").onclick = () => void navigator.clipboard.writeText(state.org?.id ?? "").then(() => notice("Organization ID copied."));
   $2("apply-audit").onclick = () => {
     state.auditOffset = 0;
-    void loadAudit();
+    void run(loadAudit);
   };
   $2("audit-prev").onclick = () => {
     state.auditOffset = Math.max(0, state.auditOffset - 25);
-    void loadAudit();
+    void run(loadAudit);
   };
   $2("audit-next").onclick = () => {
     if (state.audit.length === 25) state.auditOffset += 25;
-    void loadAudit();
+    void run(loadAudit);
   };
-  $2("recovery-toggle").onchange = () => void toggleRecovery();
+  $2("recovery-toggle").onchange = () => void run(toggleRecovery);
   setAuthMode("signin");
+  var auditRequest = 0;
+  async function run(action) {
+    try {
+      await action();
+    } catch (error) {
+      notice(error instanceof Error ? error.message : "The action failed. Please try again.");
+    }
+  }
+  $2("rename-org").onclick = () => void run(async () => {
+    const values = await modal("Organization name", [{ name: "name", label: "Name", value: state.org.name }]);
+    if (!values) return;
+    const name = String(values.name).trim();
+    if (!name) throw new Error("Enter an organization name");
+    await api(`/v1/orgs/${state.org.id}`, { method: "PATCH", body: JSON.stringify({ encryptedName: await encryptText(name, state.orgKey, "sulla:org-name:v1") }) });
+    state.org.name = name;
+    $2("org-name").textContent = name;
+    $2("org-initials").textContent = initials(name);
+    notice("Organization name updated.");
+  });
+  document.querySelectorAll("[data-audit-filter]").forEach((button) => button.onclick = () => {
+    const filter = button.dataset.auditFilter;
+    $2("filter-action").value = filter === "agents" ? "agent_credential_use" : "";
+    $2("filter-blocked").checked = filter === "blocked";
+    document.querySelectorAll("[data-audit-filter]").forEach((b2) => {
+      b2.classList.toggle("primary", b2 === button);
+      b2.setAttribute("aria-pressed", String(b2 === button));
+    });
+    state.auditOffset = 0;
+    void run(loadAudit);
+  });
 })();
