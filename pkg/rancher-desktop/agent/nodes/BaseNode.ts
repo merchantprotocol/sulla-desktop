@@ -1625,8 +1625,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     let reply: NormalizedResponse | null;
     try {
-      const providerId = provider.getProviderId();
-      const accountId = await provider.getAccountId();
+      const providerId = provider.getProviderId?.();
+      const accountId = await provider.getAccountId?.();
       const executionContext = providerId && accountId
         ? await issueProviderExecutionContext(state, providerId, accountId)
         : undefined;
