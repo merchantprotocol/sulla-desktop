@@ -46,6 +46,8 @@ export interface LocalVaultStatusResponse {
   unlocked:  boolean;
   /** Present only while unlocked; callers bind capability claims to this UUID. */
   principalId?: string;
+  /** True only while a short-lived master-key cache update is waiting for the isolated OS helper. */
+  cacheUpdateRequired: boolean;
   migration: { required: boolean; lastBatchId?: string; error?: string };
 }
 
@@ -106,6 +108,46 @@ export function bootstrapUnlockProofInput(
   return `unlock:${ callerId }:${ clientNonce }:${ serverNonce }:${ challengeId }:${ expiresAt }:${ sealedSha256 }`;
 }
 
+/**
+ * Cache update is a separate, domain-separated use of the bootstrap identity.
+ * The helper authenticates the service proof before asking for the staged key.
+ */
+export function cacheUpdateChallengeProofInput(callerId: string, clientNonce: string): string {
+  return `cache-challenge:${ callerId }:${ clientNonce }`;
+}
+
+export function cacheUpdateServerProofInput(
+  callerId: string, clientNonce: string, serverNonce: string, challengeId: string, expiresAt: number,
+): string {
+  return `cache-server:${ callerId }:${ clientNonce }:${ serverNonce }:${ challengeId }:${ expiresAt }`;
+}
+
+export function cacheUpdateSessionKeyInput(
+  callerId: string, clientNonce: string, serverNonce: string, challengeId: string, expiresAt: number,
+): string {
+  return `cache-session:${ callerId }:${ clientNonce }:${ serverNonce }:${ challengeId }:${ expiresAt }`;
+}
+
+export function cacheUpdateFetchProofInput(
+  callerId: string, clientNonce: string, serverNonce: string, challengeId: string, expiresAt: number,
+): string {
+  return `cache-fetch:${ callerId }:${ clientNonce }:${ serverNonce }:${ challengeId }:${ expiresAt }`;
+}
+
+export type CacheUpdateChallengeRequest = BootstrapChallengeRequest;
+export type CacheUpdateChallengeResponse = BootstrapChallengeResponse;
+
+export interface CacheUpdateFetchRequest {
+  callerId:    string;
+  challengeId: string;
+  clientProof: string;
+}
+
+export interface CacheUpdateFetchResponse {
+  /** AES-256-GCM sealed JSON {masterKey}; only the isolated bootstrap helper can derive the session key. */
+  sealedMaster: string;
+}
+
 export interface HumanSessionResponse {
   url:       string;
   csrf:      string;
@@ -115,13 +157,19 @@ export interface HumanSessionResponse {
 }
 
 export interface HumanUnlockRequest { password: string }
+export interface HumanLockResponse {
+  csrf:      string;
+  expiresAt: number;
+  phase:     'pre-unlock';
+  state:     'locked';
+}
 export interface HumanUnlockResponse {
   csrf:      string;
   expiresAt: number;
   phase:     'unlocked';
   state:     LocalVaultState;
-  /** No master material leaves the container; the user unlocks each start unless the isolated bootstrap cache is separately updated. */
-  cacheMode: 'password-each-start';
+  /** The isolated bootstrap helper must consume the one-use cache update immediately. */
+  cacheMode: 'helper-update-required';
 }
 
 export interface HumanPasswordChangeRequest { currentPassword: string; nextPassword: string }
