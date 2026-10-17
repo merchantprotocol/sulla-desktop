@@ -134,8 +134,8 @@ export interface BrokerExecuteRequest {
   method:        string;
   headers?:      Record<string, string>;
   body?:         unknown;
-  /** Typed binary request body for smart HTTP adapters; mutually exclusive with body. */
-  bodyBase64?:   string;
+  /** When set, body must be a base64 string decoded only by the typed binary adapter. */
+  bodyEncoding?: 'base64';
   injections:    BrokerInjection[];
   approvalId?:   string;
   responseType?: 'json' | 'text' | 'stream' | 'binary-stream';
