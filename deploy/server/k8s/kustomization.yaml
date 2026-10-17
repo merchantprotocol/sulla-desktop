@@ -5,6 +5,4 @@ resources:
   - namespace.yaml
   - storage.yaml
   - postgres.yaml
-  - redis.yaml
-  - runtimes.yaml
   - sulla-vault.yaml

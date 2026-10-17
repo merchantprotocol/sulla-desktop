@@ -13,8 +13,9 @@ import {
   makeLoginVerifier,
   verifyLoginHash,
 } from './auth.js';
-import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } from './rbac.js';
 import { LocalVaultAuthority, LocalVaultError } from './localAuthority.js';
+import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } from './rbac.js';
+import { bootstrapFirstOwner } from './serverBootstrap.js';
 
 import type { VaultConfig } from './config.js';
 import type { Database, Queryable } from './db.js';
@@ -426,6 +427,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     const joinOrgId = typeof request.body.orgId === 'string' ? request.body.orgId : null;
     const joinHash = typeof request.body.joinHash === 'string' ? request.body.joinHash : null;
     if ((joinOrgId && !joinHash) || (!joinOrgId && joinHash)) throw new HttpError(400, 'orgId and joinHash must be supplied together');
+    if (!joinOrgId) {
+      response.status(403).json({ error: 'public_signup_disabled' });
+      return;
+    }
     if (joinOrgId) {
       enforceJoinAttemptLimit(request.ip ?? "unknown", joinOrgId);
       const org = await db.query<{ join_password_salt: Buffer; join_password_verifier: Buffer }>(
@@ -458,14 +463,61 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     response.json({ kdf: result.rows[0]?.kdf ?? { salt: fakeSalt, parameters: DEFAULT_ARGON2ID } });
   });
 
-  app.get('/console', async (_request, response) => {
+  app.post('/v1/server/bootstrap', async(request, response) => {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
+    if (!safeTokenEqual(request.header('x-sulla-bootstrap-token'), config.serverBootstrapToken)) {
+      return response.status(403).json({ error: 'invalid_bootstrap_token' });
+    }
+    const email = requiredString(request.body.email, 'email').trim().toLowerCase();
+    const displayName = requiredString(request.body.displayName, 'displayName').trim();
+    const loginHash = requiredString(request.body.loginHash, 'loginHash');
+    const publicKey = requiredString(request.body.publicKey, 'publicKey');
+    const encryptedPrivateKey = requiredObject(request.body.encryptedPrivateKey, 'encryptedPrivateKey');
+    const encryptedUserKey = requiredObject(request.body.encryptedUserKey, 'encryptedUserKey');
+    const kdf = requiredObject(request.body.kdf, 'kdf');
+    const encryptedOrgName = requiredObject(request.body.encryptedOrgName, 'encryptedOrgName');
+    const wrappedOrgKey = requiredObject(request.body.wrappedOrgKey, 'wrappedOrgKey');
+    const status = await bootstrapFirstOwner(db, {
+      email,
+      displayName,
+      loginHash,
+      publicKey,
+      encryptedPrivateKey,
+      encryptedUserKey,
+      kdf,
+      encryptedOrgName,
+      wrappedOrgKey,
+    });
+    return response.status(status === 'created' ? 201 : 200).json({ status });
+  });
+
+  app.get('/v1/server/bootstrap', async(request, response) => {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
+    if (!safeTokenEqual(request.header('x-sulla-bootstrap-token'), config.serverBootstrapToken)) {
+      return response.status(403).json({ error: 'invalid_bootstrap_token' });
+    }
+    response.json({ bootstrapped: ((await db.query('SELECT 1 FROM users LIMIT 1')).rowCount ?? 0) > 0 });
+  });
+
+  app.get('/console', async(_request, response) => {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
     const here = dirname(fileURLToPath(import.meta.url));
     for (const candidate of [resolve(here, '../console/index.html'), resolve(here, '../../console/index.html')]) {
-      try { response.type('html').send(await readFile(candidate, 'utf8')); return; } catch { /* source tree vs image */ }
+      try {
+        response.type('html').send(await readFile(candidate, 'utf8'));
+        return;
+      } catch { /* source tree vs image */ }
     }
     response.type('html').send(CONSOLE_HTML);
   });
-  app.use('/console', express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../console')));
+  app.use('/console', (request, response, next) => {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
+    next();
+  }, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../console')));
+  app.get('/', (_request, response) => {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
+    return response.redirect(302, '/console');
+  });
 
   // Desktop bootstrap is deliberately limited to the local, single-user
   // mode. The client sends only derived login material and wrapped keys.
