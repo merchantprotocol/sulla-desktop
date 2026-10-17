@@ -907,21 +907,22 @@ export class LocalVaultAuthority {
     }
     const id = input.id ?? randomUUID();
     const encrypted = await encryptItem(JSON.stringify(input.item), keys.userKey, { itemId: id, ownerId: keys.userId });
-    if (!input.id) {
-      const created = await this.db.query<{ revision: number }>(
+    const result = await this.runTransaction(async client => {
+      if (!input.id) {
+      const created = await client.query<{ revision: number }>(
         `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
          VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING revision`,
         [id, keys.userId, input.item.type, encrypted.ciphertext, encrypted.encryptedItemKey, input.item.agentPolicy,
           input.item.integration ? `${ input.item.integration.integrationId }/${ input.item.integration.accountId }` : null],
       );
       this.requireGeneration(generation);
-      await this.auditHumanAction(this.db, keys.userId, 'human_item_created', id);
+      await this.auditHumanAction(client, keys.userId, 'human_item_created', id);
       this.requireGeneration(generation);
       return { id, revision: Number(created.rows[0].revision) };
-    }
+      }
     const revision = Number(input.revision);
     if (!Number.isSafeInteger(revision) || revision < 1) throw new LocalVaultError('invalid_operation', 400, 'Item revision is required');
-    const updated = await this.db.query<{ revision: number }>(
+    const updated = await client.query<{ revision: number }>(
       `UPDATE items SET item_type=$1,ciphertext=$2,encrypted_item_key=$3,agent_policy=$4,integration_ref=$5,
               revision=revision+1,updated_at=now()
         WHERE id=$6 AND owner_user_id=$7 AND revision=$8 AND deleted_at IS NULL RETURNING revision`,
@@ -931,9 +932,11 @@ export class LocalVaultAuthority {
     );
     if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; reload and retry');
     this.requireGeneration(generation);
-    await this.auditHumanAction(this.db, keys.userId, 'human_item_updated', id);
+    await this.auditHumanAction(client, keys.userId, 'human_item_updated', id);
     this.requireGeneration(generation);
     return { id, revision: Number(updated.rows[0].revision) };
+    });
+    return result;
     });
   }
 
@@ -943,15 +946,17 @@ export class LocalVaultAuthority {
     if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     const keys = this.requireKeys();
     const generation = this.generation;
-    const result = await this.db.query(
+    await this.runTransaction(async client => {
+    const result = await client.query(
       `UPDATE items SET deleted_at=now(),revision=revision+1,updated_at=now()
         WHERE id=$1 AND owner_user_id=$2 AND revision=$3 AND deleted_at IS NULL RETURNING id`,
       [itemId, keys.userId, revision],
     );
     if (!result.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; reload and retry');
     this.requireGeneration(generation);
-    await this.auditHumanAction(this.db, keys.userId, 'human_item_deleted', itemId);
+    await this.auditHumanAction(client, keys.userId, 'human_item_deleted', itemId);
     this.requireGeneration(generation);
+    });
     });
   }
 
@@ -978,14 +983,16 @@ export class LocalVaultAuthority {
       }
       const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
       const wrapped = await encryptWithKey(keys.userKey, next.key, 'sulla:user-key:v1');
-      await this.db.query(
+      await this.runTransaction(async client => {
+      await client.query(
         `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
         [verifier.salt, verifier.verifier, wrapped,
           { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } }, keys.userId],
       );
       this.requireGeneration(generation);
-      await this.auditHumanAction(this.db, keys.userId, 'human_password_changed');
+      await this.auditHumanAction(client, keys.userId, 'human_password_changed');
       this.requireGeneration(generation);
+      });
       this.stageCacheUpdate(next.key);
       return { cacheMode: 'helper-update-required' };
     } finally {
@@ -1008,7 +1015,8 @@ export class LocalVaultAuthority {
     try {
       const verifier = makeLoginVerifier(await deriveLoginHash(recovery.key));
       const wrapped = await encryptWithKey(keys.userKey, recovery.key, 'sulla:recovery-user-key:v1');
-      await this.db.query(
+      await this.runTransaction(async client => {
+      await client.query(
         `INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key)
          VALUES ($1,$2,$3,$4)
          ON CONFLICT(user_id) DO UPDATE SET recovery_salt=$2,recovery_verifier=$3,encrypted_user_key=$4,updated_at=now()`,
@@ -1016,8 +1024,9 @@ export class LocalVaultAuthority {
           verifier.verifier.toString('base64url'), wrapped],
       );
       this.requireGeneration(generation);
-      await this.auditHumanAction(this.db, keys.userId, 'human_recovery_configured');
+      await this.auditHumanAction(client, keys.userId, 'human_recovery_configured');
       this.requireGeneration(generation);
+      });
     } finally {
       recovery.key.fill(0);
     }
@@ -1047,16 +1056,18 @@ export class LocalVaultAuthority {
       recoveredUserKey = await decryptWithKey(row.encrypted_user_key, recovery.key, 'sulla:recovery-user-key:v1');
       const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
       const wrapped = await encryptWithKey(recoveredUserKey, next.key, 'sulla:user-key:v1');
-      await this.db.query(
+      await this.runTransaction(async client => {
+      await client.query(
         `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
         [verifier.salt, verifier.verifier, wrapped,
           { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } }, row.user_id],
       );
       this.requireStableGeneration(attemptGeneration);
+      await this.auditHumanAction(client, row.user_id, 'human_recovery_unlocked');
+      });
       const unlocked = await this.activateMasterKey(next.key, undefined,
         { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } }, attemptGeneration);
       this.stageCacheUpdate(next.key);
-      await this.auditHumanAction(this.db, row.user_id, 'human_recovery_unlocked');
       const rotated = this.issueHumanSession();
       if (rotated.phase !== 'unlocked') throw new LocalVaultError('vault_unavailable', 503, 'Recovery did not unlock the vault');
       return { ...rotated, phase: 'unlocked', state: unlocked.state, cacheMode: 'helper-update-required' };
@@ -1287,6 +1298,10 @@ export class LocalVaultAuthority {
   }
 
   async migrateLegacy(callerId: string, token: string | undefined): Promise<LegacyMigrationResponse> {
+    return this.runSecurityOperation(() => this.migrateLegacyInternal(callerId, token));
+  }
+
+  private async migrateLegacyInternal(callerId: string, token: string | undefined): Promise<LegacyMigrationResponse> {
     this.requireControlIdentity(callerId, token);
     const keys = this.requireKeys();
     const generation = this.generation;
@@ -1851,6 +1866,21 @@ export class LocalVaultAuthority {
        VALUES ($1,$2,$3,'{}'::jsonb,false)`,
       [actorId, itemId, action],
     );
+  }
+
+  private async runTransaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await operation(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   private async validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6 }> {

@@ -3865,10 +3865,10 @@
     const rights = [["can_view", "View"], ["can_use_by_agents", "Agents use"], ["can_edit", "Edit"], ["can_manage", "Manage"]];
     const rows = [...state.access.groups.map((g2) => ({ ...g2, kind: "group" })), ...state.access.members.map((m2) => ({ ...m2, kind: "member" }))];
     const can = canManage();
-    $2("rights").innerHTML = `<table><thead><tr><th>Person or group</th>${rights.map((r2) => `<th>${r2[1]}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr><td><div class="who"><span class="avatar ${row.kind === "group" ? "group" : ""}">${row.kind === "group" ? "\u2659" : esc(initials(row.email))}</span><div><b>${esc(row.name ?? row.email)}</b><small>${row.kind === "group" ? `Group \xB7 ${row.member_count} people` : row.role}</small></div></div></td>${rights.map(([key]) => {
+    $2("rights").innerHTML = `<table><thead><tr><th>Person or group</th>${rights.map((r2) => `<th>${r2[1]}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr><td><div class="who"><span class="avatar ${row.kind === "group" ? "group" : ""}">${row.kind === "group" ? '<svg class="i sm" aria-hidden="true" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"></circle><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 11a3 3 0 1 0 0-6M15.5 14.5a5 5 0 0 1 5 4.5"></path></svg>' : esc(initials(row.email))}</span><div><b>${esc(row.name ?? row.email)}</b><small>${row.kind === "group" ? `Group \xB7 ${row.member_count} people` : row.role}</small></div></div></td>${rights.map(([key]) => {
       const inherited = ["owner", "admin"].includes(row.role);
       const on = effective(row, key);
-      return `<td><button class="check ${on ? "on" : ""} ${inherited ? "inherited" : ""}" ${!can || inherited ? "disabled" : ""} data-right-kind="${row.kind}" data-right-id="${esc(row.kind === "group" ? row.id : row.user_id)}" data-right-key="${key}" aria-label="Toggle ${key}">${on ? "\u2713" : ""}</button></td>`;
+      return `<td><button class="check ${on ? "on" : ""} ${inherited ? "inherited" : ""}" ${!can || inherited ? "disabled" : ""} data-right-kind="${row.kind}" data-right-id="${esc(row.kind === "group" ? row.id : row.user_id)}" data-right-key="${key}" aria-label="Toggle ${key}">${on ? "" : ""}</button></td>`;
     }).join("")}</tr>`).join("")}</tbody></table>`;
     const people = state.access.members.filter((m2) => effective(m2, "can_view")).length;
     const agents = state.access.members.filter((m2) => effective(m2, "can_use_by_agents")).length;

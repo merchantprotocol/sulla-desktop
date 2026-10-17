@@ -105,6 +105,7 @@ test('lock linearizes behind in-flight plaintext reads and mutations', async() =
   const events: string[] = [];
   const db = {
     query: async(sql: string) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] };
       if (sql.includes('FROM items WHERE id=$1')) {
         releaseRead();
         await readGate;
@@ -124,6 +125,7 @@ test('lock linearizes behind in-flight plaintext reads and mutations', async() =
       throw new Error(`Unexpected query: ${ sql }`);
     },
   } as any;
+  db.connect = async() => ({ query: db.query, release() {} });
   const authority = new LocalVaultAuthority(db, config('postgresql://synthetic/unused'));
   (authority as any).keys = { userId: actorId, publicKey: '', userKey, privateKey: randomBytes(32) };
   (authority as any).migrationState = 'unlocked';
@@ -147,6 +149,49 @@ test('lock linearizes behind in-flight plaintext reads and mutations', async() =
   allowMutation();
   await Promise.all([mutation, secondLock]);
   assert.deepEqual(events.slice(-3), ['mutation-committed', 'mutation-returned', 'second-lock-complete']);
+});
+
+test('legacy migration and lock share one security-operation order', async() => {
+  const events: string[] = [];
+  let releaseMigration!: () => void;
+  let migrationStarted!: () => void;
+  const gate = new Promise<void>(resolve => { releaseMigration = resolve; });
+  const started = new Promise<void>(resolve => { migrationStarted = resolve; });
+  const authority = new LocalVaultAuthority({} as any, config('postgresql://synthetic/unused'));
+  (authority as any).keys = { userId: '11111111-1111-4111-8111-111111111111', publicKey: '', userKey: randomBytes(32), privateKey: randomBytes(32) };
+  (authority as any).migrateLegacyInternal = async() => {
+    migrationStarted();
+    await gate;
+    events.push('migration-complete');
+    return { batchId: 'synthetic', imported: 0, skipped: 0, state: 'unlocked' };
+  };
+  const migration = authority.migrateLegacy('sulla-desktop-control', TOKEN.control);
+  await started;
+  const lock = authority.lock().then(() => { events.push('lock-complete'); });
+  releaseMigration();
+  await Promise.all([migration, lock]);
+  assert.deepEqual(events, ['migration-complete', 'lock-complete']);
+});
+
+test('human item mutation rolls back when its audit insert fails', async() => {
+  const events: string[] = [];
+  const actorId = '11111111-1111-4111-8111-111111111111';
+  const client = {
+    async query(sql: string) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') { events.push(sql); return { rowCount: 0, rows: [] }; }
+      if (sql.includes('INSERT INTO items')) { events.push('item-insert'); return { rowCount: 1, rows: [{ revision: 1 }] }; }
+      if (sql.includes('INSERT INTO audit_log')) { events.push('audit-insert'); throw new Error('synthetic audit failure'); }
+      throw new Error(`Unexpected query: ${ sql }`);
+    },
+    release() { events.push('release'); },
+  };
+  const authority = new LocalVaultAuthority({ connect: async() => client } as any, config('postgresql://synthetic/unused'));
+  (authority as any).keys = { userId: actorId, publicKey: '', userKey: randomBytes(32), privateKey: randomBytes(32) };
+  (authority as any).humanSessions.set('session', { csrf: 'csrf', expiresAt: Date.now() + 60_000, phase: 'unlocked' });
+  await assert.rejects(authority.saveHumanItem('session', 'csrf', {
+    item: { type: 'login', name: 'Synthetic rollback', password: 'synthetic', uris: [], favorite: false, agentPolicy: DEFAULT_AGENT_POLICY },
+  }), /synthetic audit failure/);
+  assert.deepEqual(events, ['BEGIN', 'item-insert', 'audit-insert', 'ROLLBACK', 'release']);
 });
 
 test('approval digest binds headers, body, account, repository and response mode', () => {

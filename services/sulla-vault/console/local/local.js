@@ -221,7 +221,7 @@
     byId('item-id').value = detail?.id || ''; byId('revision').value = detail?.revision || ''; byId('item-type').value = detail?.integration ? 'integration' : detail?.type || 'login';
     byId('name').value = detail?.name || ''; byId('username').value = detail?.username || detail?.integration?.accountId || ''; byId('item-password').value = detail?.password || ''; byId('website').value = detail?.uris?.[0]?.uri || ''; byId('notes').value = detail?.notes || ''; byId('favorite').checked = Boolean(detail?.favorite);
     byId('integration-id').value = detail?.integration?.integrationId || ''; byId('account-id').value = detail?.integration?.accountId || ''; renderIntegrationProperties(detail?.integration?.properties);
-    byId('agent-enabled').checked = itemPolicy.mode === 'agents'; byId('policy-mode').value = itemPolicy.mode; setPolicyLevel(itemPolicy.level); byId('ask-first').checked = Boolean(itemPolicy.askFirst); byId('allow-server-agents').checked = Boolean(itemPolicy.allowServerAgents); byId('policy-agents').value = itemPolicy.agents.join(', '); byId('policy-sites').value = itemPolicy.sites.join(', '); byId('policy-expiry').value = localDateValue(itemPolicy.expiresAt); syncPolicyEnabled();
+    const agentsEnabled = itemPolicy.mode === 'agents'; byId('agent-enabled').checked = agentsEnabled; byId('only-me-access').checked = !agentsEnabled; setPolicyLevel(itemPolicy.level); byId('ask-first').checked = Boolean(itemPolicy.askFirst); byId('allow-server-agents').checked = Boolean(itemPolicy.allowServerAgents); byId('policy-agents').value = itemPolicy.agents.join(', '); byId('policy-sites').value = itemPolicy.sites.join(', '); byId('policy-expiry').value = localDateValue(itemPolicy.expiresAt); syncPolicyEnabled();
     const integration = byId('item-type').value === 'integration'; byId('integration-fields').hidden = !integration; byId('item-secret-field').hidden = integration;
     byId('delete-item').hidden = !detail?.id; byId('editor-title').textContent = detail?.id ? `Edit ${detail.name}` : 'New vault item'; byId('editor-crumb').textContent = detail?.name || 'New item'; byId('editor-tile').textContent = initials(detail) || '＋';
     byId('browser-view').hidden = true; byId('editor-view').hidden = false; byId('name').focus();
@@ -317,7 +317,7 @@
   byId('audit-next').onclick = () => { if (auditHasMore) { auditOffset += 25; void loadAudit(); } };
   byId('item-type').onchange = () => { const integration = byId('item-type').value === 'integration'; byId('integration-fields').hidden = !integration; byId('item-secret-field').hidden = integration; if (integration && !byId('integration-properties').children.length) renderIntegrationProperties({}); };
   byId('add-integration-property').onclick = () => { if (byId('integration-properties').children.length >= 20) return message('Integration properties are limited to 20.', true); addPropertyRow().focus(); };
-  byId('agent-enabled').onchange = syncPolicyEnabled;
+  document.querySelectorAll('input[name="policy-access"]').forEach(input => { input.onchange = syncPolicyEnabled; });
   document.querySelectorAll('[data-level]').forEach(button => button.onclick = () => setPolicyLevel(button.dataset.level));
   for (const id of ['cancel', 'editor-back']) byId(id).onclick = showBrowser;
   byId('search').oninput = event => { query = event.target.value.trim().toLowerCase(); renderItems(); };
