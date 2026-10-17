@@ -1,18 +1,19 @@
 import { describe, expect, jest, test } from '@jest/globals';
 
-import type { ProviderExecutionTransport, ProviderTransportContext } from '../ProviderExecutionTransport';
-
-jest.unstable_mockModule('@pkg/utils/paths', () => ({
-  __esModule: true,
-  default:    { limactl: '/bin/true', lima: '/dev/null', sullaHome: '/tmp' },
-}));
-
-const {
+import {
   getProviderExecutionTransport,
   requireBrokeredContainerAuth,
   requireContainerToolConfig,
   withProviderExecutionTransport,
-} = await import('../ProviderExecutionTransport');
+  type ProviderExecutionTransport,
+  type ProviderTransportContext,
+} from '../ProviderExecutionTransport';
+
+jest.mock('@pkg/utils/paths', () => ({
+  __esModule: true,
+  default:    { limactl: '/bin/true', lima: '/dev/null', sullaHome: '/tmp' },
+}));
+jest.mock('electron', () => ({ __esModule: true, default: {} }));
 
 function codexContext(overrides: Partial<ProviderTransportContext> = {}): ProviderTransportContext {
   return {
@@ -20,12 +21,12 @@ function codexContext(overrides: Partial<ProviderTransportContext> = {}): Provid
     provider:       'codex',
     conversationId: 'synthetic-thread',
     auth:           { kind: 'broker', opaqueConfigRef: 'opaque:test' },
-    session: {
+    session:        {
       opaqueProviderConfigRef: 'opaque:test',
-      providerConfig: {
-        opaqueConfigRef: 'opaque:test',
-        baseUrl:         'http://provider_broker:8080/codex/lease/v1',
-        environment:     { SULLA_PROVIDER_BRIDGE_TOKEN: 'synthetic-capability' },
+      providerConfig:          {
+        opaqueConfigRef:      'opaque:test',
+        baseUrl:              'http://provider_broker:8080/codex/lease/v1',
+        environment:          { SULLA_PROVIDER_BRIDGE_TOKEN: 'synthetic-capability' },
         codexConfigOverrides: ['model_provider="sulla_broker"'],
       },
     },
@@ -40,10 +41,10 @@ describe('ProviderExecutionTransport security boundary', () => {
     expect(() => requireBrokeredContainerAuth(codexContext({
       session: {
         opaqueProviderConfigRef: 'opaque:test',
-        providerConfig: {
+        providerConfig:          {
           opaqueConfigRef: 'opaque:test',
           baseUrl:         'http://provider_broker:8080/codex/lease/v1',
-          environment: {
+          environment:     {
             SULLA_PROVIDER_BRIDGE_TOKEN: 'synthetic-capability',
             HOME:                        '/host-must-not-cross',
           },
@@ -58,10 +59,10 @@ describe('ProviderExecutionTransport security boundary', () => {
     context.session = {
       ...context.session,
       opaqueToolConfigRef: 'opaque:tools',
-      toolConfig: {
-        opaqueConfigRef:     'opaque:tools',
+      toolConfig:          {
+        opaqueConfigRef:      'opaque:tools',
         codexConfigOverrides: ['mcp_servers.sulla-native.url="http://sulla_tools:3000/mcp"'],
-        environment: {
+        environment:          {
           SULLA_MCP_SESSION_TOKEN: 'synthetic-mcp-capability',
           SULLA_TOOL_SESSION:      'synthetic-mcp-capability',
         },

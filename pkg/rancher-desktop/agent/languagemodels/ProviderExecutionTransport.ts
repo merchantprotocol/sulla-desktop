@@ -22,17 +22,17 @@ export type ProviderTransportAuth =
   | { kind: 'broker'; opaqueConfigRef: string };
 
 export interface ProviderCliOpaqueConfig {
-  opaqueConfigRef: string;
-  baseUrl:         string;
-  environment:     Readonly<Record<string, string>>;
+  opaqueConfigRef:       string;
+  baseUrl:               string;
+  environment:           Readonly<Record<string, string>>;
   codexConfigOverrides?: readonly string[];
 }
 
 export interface ProviderCliToolConfig {
-  opaqueConfigRef: string;
-  claudeConfigPath?: string;
+  opaqueConfigRef:       string;
+  claudeConfigPath?:     string;
   codexConfigOverrides?: readonly string[];
-  environment?: Readonly<Record<string, string>>;
+  environment?:          Readonly<Record<string, string>>;
 }
 
 export interface ProviderTransportContext {
