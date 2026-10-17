@@ -101,6 +101,28 @@ test('audio policy binds each provider credential to its own host, path, and inj
   }, 'api.x.ai', DEFAULT_AGENT_POLICY), /destination_denied/);
 });
 
+test('enterprise gateway policy binds methods, paths, and credential injection', () => {
+  const policy = { ...DEFAULT_AGENT_POLICY, sites: ['gateway.example.com'] };
+  const request: any = {
+    claims: { sub: 'user', agent_id: 'agent', pod_id: 'pod' },
+    operation: 'enterprise.gateway.http', ref: { integrationId: 'enterprise_gateway', accountId: 'default' },
+    url: 'https://gateway.example.com/api/desktop/sessions', method: 'POST',
+    injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+  };
+  assert.doesNotThrow(() => validateOperation(request, 'gateway.example.com', policy));
+  assert.throws(() => validateOperation({ ...request, method: 'DELETE' }, 'gateway.example.com', policy), /method_denied/);
+  assert.throws(() => validateOperation({ ...request, url: 'https://gateway.example.com/api/desktop/sessions/id' }, 'gateway.example.com', policy), /method_denied/);
+  assert.doesNotThrow(() => validateOperation({ ...request, method: 'DELETE', url: 'https://gateway.example.com/api/desktop/sessions/id' }, 'gateway.example.com', policy));
+});
+
+test('bodyless MCP stream statuses do not require content type', () => {
+  assert.equal(localAuthorityTestHooks.streamResponseIsBodyless('POST', 202, undefined), true);
+  assert.equal(localAuthorityTestHooks.streamResponseIsBodyless('POST', 204, undefined), true);
+  assert.equal(localAuthorityTestHooks.streamResponseIsBodyless('HEAD', 200, undefined), true);
+  assert.equal(localAuthorityTestHooks.streamResponseIsBodyless('POST', 200, '0'), true);
+  assert.equal(localAuthorityTestHooks.streamResponseIsBodyless('POST', 200, undefined), false);
+});
+
 test('stream redaction covers short, unicode, encoded, and every split boundary', () => {
   const secrets = ['x', 'short', 'påss word'];
   const text = `before x Bearer short ${ encodeURIComponent('påss word') } after`;
@@ -124,6 +146,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     await migrate(db);
     await db.query(`CREATE TABLE integration_values(value_id bigserial primary key,integration_id text not null,account_id text not null,property text not null,value text not null,is_default boolean not null default false,created_at timestamptz default now(),updated_at timestamptz default now())`);
     await db.query(`CREATE TABLE oauth_tokens(token_id bigserial primary key,integration_id text not null,account_id text not null,provider_id text not null,access_token text not null,refresh_token text,token_type text,scope text,expires_at bigint,created_at timestamptz default now(),updated_at timestamptz default now())`);
+    await db.query(`CREATE TABLE integration_definitions(slug text primary key,files jsonb not null)`);
     const legacyVmk = randomBytes(32);
     const legacyNonce = randomBytes(12);
     const legacyCipher = createCipheriv('aes-256-gcm', legacyVmk, legacyNonce);
@@ -218,6 +241,9 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     oauthItem.item.integration.properties.access_token = 'same-access-token';
     oauthItem.item.integration.properties.client_id = 'synthetic-client';
     oauthItem.item.integration.properties.client_secret = 'synthetic-client-secret';
+    oauthItem.item.integration.properties.account_label = 'Synthetic account';
+    oauthItem.item.integration.properties.connection_status = 'true';
+    oauthItem.item.integration.properties.base_url = 'https://user:password@api.openai.com/v1?token=secret';
     await authority.saveHumanItem(unlocked.sessionId, unlocked.csrf, oauthItem);
     (authority as any).send = async(_url: URL, _method: string, headers: Record<string, string>, body: unknown) => {
       assert.match(headers.authorization, /^Basic /);
@@ -235,12 +261,81 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
         { field: 'client_secret', target: 'header', name: 'authorization', scheme: 'BasicClient' },
       ],
     }, 'sulla-tools', TOKEN.broker);
-    assert.deepEqual(Object.keys(oauthResult.body as object).sort(), ['expires_at', 'expires_in', 'refreshed', 'scope', 'token_type']);
+    assert.deepEqual(Object.keys(oauthResult.body as object).sort(), ['expires_at', 'expires_in', 'operation', 'scope', 'token_type', 'updated']);
     const refreshed: any = await authority.revealHumanItem(unlocked.sessionId, unlocked.csrf, listed[0].id as string);
     assert.equal(refreshed.item.integration.properties.refresh_token, 'same-refresh-token');
     assert.equal(refreshed.item.integration.properties.access_token, 'same-access-token');
     assert.notEqual(refreshed.item.integration.properties.expires_at, undefined);
+    const metadata = await authority.integrationMetadata('sulla-tools', TOKEN.broker, 'openai');
+    assert.equal(metadata.activeAccountId, 'default');
+    assert.equal(metadata.accounts[0].accountId, 'default');
+    assert.equal(metadata.accounts[0].label, 'Synthetic account');
+    assert.equal(metadata.accounts[0].connected, true);
+    assert.equal(metadata.accounts[0].active, true);
+    assert.ok(metadata.accounts[0].revision >= 1);
+    assert.equal(metadata.accounts[0].properties.expires_at, refreshed.item.integration.properties.expires_at);
+    assert.equal(metadata.accounts[0].properties.client_id, 'synthetic-client');
+    assert.equal(metadata.accounts[0].properties.base_url, undefined);
+    assert.equal(metadata.accounts[0].properties.api_key, undefined);
+    assert.equal(metadata.accounts[0].properties.client_secret, undefined);
+    assert.equal((await authority.setActiveIntegrationAccount('sulla-tools', TOKEN.broker, 'openai', 'default')).activeAccountId, 'default');
+
+    (authority as any).send = async(_url: URL, _method: string, _headers: Record<string, string>, body: unknown) => {
+      assert.ok(body instanceof URLSearchParams);
+      assert.equal(body.get('token'), 'same-access-token');
+      return { status: 200, headers: {}, body: {} };
+    };
+    assert.deepEqual((await authority.execute({
+      ...request,
+      operation: 'oauth.revoke',
+      url: 'https://api.openai.com/oauth/revoke',
+      responseType: 'json',
+      injections: [{ field: 'access_token', target: 'form', name: 'token', scheme: 'raw' }],
+    }, 'sulla-tools', TOKEN.broker)).body, { revoked: true });
+    const revoked: any = await authority.revealHumanItem(unlocked.sessionId, unlocked.csrf, listed[0].id as string);
+    assert.equal(revoked.item.integration.properties.access_token, undefined);
+    assert.equal(revoked.item.integration.properties.refresh_token, undefined);
+    await db.query('INSERT INTO integration_definitions(slug,files) VALUES ($1,$2),($3,$4)', [
+      'openai', {
+        'openai.v1-auth.yaml': 'api:\n  name: OpenAI\n  version: v1\n  base_url: https://api.openai.com\nauth:\n  type: apiKey\n  header: x-api-key\n',
+        'widget.v1.yaml': 'endpoint:\n  name: widget\n  path: /v1/widgets/{id}\n  method: GET\n  auth: required\n',
+      },
+      'mcp-public', {
+        'mcp-public.v1-auth.yaml': 'api:\n  name: Public MCP\n  version: v1\n  base_url: https://mcp.example.com/rpc\n  transport: mcp\nauth:\n  type: bearer\n',
+        'call.v1.yaml': 'endpoint:\n  name: call\n  path: /rpc\n  method: POST\n  auth: none\n',
+      },
+    ]);
     (authority as any).send = async() => ({ status: 200, headers: {}, body: { ok: true } });
+    assert.equal((await authority.execute({
+      ...request,
+      operation: 'catalog.http',
+      url: 'https://api.openai.com/v1/widgets/abc',
+      method: 'GET',
+      body: undefined,
+      injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+    }, 'sulla-tools', TOKEN.broker)).status, 200);
+    await assert.rejects(authority.execute({
+      ...request,
+      operation: 'catalog.http',
+      url: 'https://api.openai.com/v1/unregistered',
+      method: 'GET',
+      body: undefined,
+      injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+    }, 'sulla-tools', TOKEN.broker), (error: any) => error.code === 'policy_denied');
+    const publicMcp = await authority.execute({
+      claims: {
+        ...request.claims,
+        credential_scope: { integration_id: 'mcp', account_id: 'public' },
+      },
+      operation: 'mcp.http',
+      ref: { integrationId: 'mcp', accountId: 'public' },
+      url: 'https://mcp.example.com/rpc',
+      method: 'POST',
+      body: { jsonrpc: '2.0' },
+      injections: [],
+      responseType: 'json',
+    }, 'sulla-tools', TOKEN.broker);
+    assert.equal(publicMcp.status, 200);
 
     authority.lock();
     assert.equal(authority.status().unlocked, false);
@@ -370,6 +465,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
         body: JSON.stringify({ grant: new URLSearchParams(fragment).get('grant'), csrf: mintedBody.csrf }),
       });
       assert.equal(exchange.status, 200);
+      assert.match(exchange.headers.get('set-cookie') ?? '', /; Secure(?:;|$)/);
       const exchangeBody: any = await exchange.json();
       const exchangeCookie = exchange.headers.get('set-cookie')!.split(';')[0];
       const locked = await fetch(`${ base }/v1/human/lock`, {

@@ -25,6 +25,7 @@ import {
 } from '@sulla/vault-crypto';
 
 import { makeLoginVerifier, verifyLoginHash } from './auth.js';
+import { validateCatalogRequest } from './catalogPolicy.js';
 import { trustedOriginsForIntegration, validateOperation } from './operationPolicy.js';
 import { createRelayId, DefaultVaultRelayManager } from './relays.js';
 
@@ -62,6 +63,36 @@ const MAX_RESPONSE_BYTES = 1_048_576;
 const MAX_STREAM_BYTES = 25 * 1024 * 1024;
 const MAX_CREDENTIAL_BYTES = 64 * 1024;
 const LEGACY_PREFIX = '$VAULT$';
+const SAFE_INTEGRATION_METADATA_FIELDS = new Set([
+  'account_label', 'connection_status', 'connected_at', 'last_sync_at', 'base_url', 'server_url',
+  'gateway_url', 'provider', 'provider_id', 'model', 'llm_access', 'client_id', 'oauth_client_id',
+  'expires_at', 'token_type', 'scope',
+]);
+const CREDENTIAL_PROPERTY_PATTERN = /(?:^|_)(?:token|key|secret|password|credential)$/i;
+
+function safeIntegrationMetadata(
+  source: Record<string, unknown>,
+): Record<string, string> {
+  const secrets = Object.entries(source)
+    .filter(([name, value]) => CREDENTIAL_PROPERTY_PATTERN.test(name) && typeof value === 'string' && value.length > 0)
+    .map(([, value]) => value as string);
+  const output: Record<string, string> = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (!SAFE_INTEGRATION_METADATA_FIELDS.has(name) || typeof value !== 'string') continue;
+    if (name === 'base_url' || name === 'server_url' || name === 'gateway_url') {
+      try {
+        const parsed = new URL(value);
+        if (parsed.username || parsed.password || parsed.search || parsed.hash || parsed.protocol !== 'https:') continue;
+        if (name === 'gateway_url') {
+          output[name] = parsed.origin;
+          continue;
+        }
+      } catch { continue; }
+    }
+    output[name] = redact(value, secrets);
+  }
+  return output;
+}
 
 const { Pool } = pg;
 
@@ -149,8 +180,8 @@ interface PreparedBrokerRequest {
   body:       unknown;
   secrets:    string[];
   generation: number;
-  item:       ItemRow;
-  plaintext:  VaultItemPlaintext;
+  item?:      ItemRow;
+  plaintext?: VaultItemPlaintext;
 }
 
 export interface BrokerStreamSink {
@@ -208,8 +239,13 @@ class StreamingRedactor {
 export const localAuthorityTestHooks = {
   operationDigest,
   privateAddress,
+  streamResponseIsBodyless,
   StreamingRedactor,
 };
+
+function streamResponseIsBodyless(method: string, status: number, contentLength: string | string[] | undefined): boolean {
+  return method === 'HEAD' || [202, 204, 205, 304].includes(status) || contentLength === '0';
+}
 
 function constantEqual(left: string | undefined, right: string | undefined): boolean {
   if (!left || !right) return false;
@@ -992,6 +1028,86 @@ export class LocalVaultAuthority {
     return { state, unlocked, principalId };
   }
 
+  async integrationMetadata(
+    callerId: string, token: string | undefined, integrationId: string, accountFilter?: string,
+  ): Promise<import('./contracts.js').BrokerIntegrationMetadataResponse> {
+    this.requireBrokerIdentity(callerId, token);
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId)) {
+      throw new LocalVaultError('invalid_operation', 400, 'Integration identifier is invalid');
+    }
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const result = await this.db.query<ItemRow & { integration_ref: string }>(
+      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision,integration_ref
+         FROM items
+        WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL
+          AND split_part(integration_ref,'/',1)=$2
+          AND ($3::text IS NULL OR split_part(integration_ref,'/',2)=$3)
+        ORDER BY updated_at DESC`,
+      [keys.userId, integrationId, accountFilter ?? null],
+    );
+    this.requireGeneration(generation);
+    const active = await this.db.query<{ active_account_id: string | null }>(
+      'SELECT active_account_id FROM local_integration_state WHERE owner_user_id=$1 AND integration_id=$2',
+      [keys.userId, integrationId],
+    );
+    this.requireGeneration(generation);
+    const availableIds = result.rows.map(item => item.integration_ref.slice(integrationId.length + 1));
+    const configuredActive = active.rows[0]?.active_account_id;
+    const activeAccountId = configuredActive && availableIds.includes(configuredActive)
+      ? configuredActive
+      : availableIds[0];
+    const accounts = await Promise.all(result.rows.map(async item => {
+      const plaintext = JSON.parse(await decryptItemText(
+        { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
+        keys.userKey,
+        { itemId: item.id, ownerId: keys.userId },
+      )) as VaultItemPlaintext;
+      this.requireGeneration(generation);
+      const sourceProperties = plaintext.integration?.properties ?? {};
+      const properties = safeIntegrationMetadata(sourceProperties);
+      const accountId = item.integration_ref.slice(integrationId.length + 1);
+      const explicitStatus = properties.connection_status?.toLowerCase();
+      const hasCredential = Object.entries(sourceProperties)
+        .some(([name, value]) => CREDENTIAL_PROPERTY_PATTERN.test(name) && typeof value === 'string' && value.length > 0);
+      return {
+        accountId,
+        label: properties.account_label || accountId,
+        connected: explicitStatus ? ['connected', 'true'].includes(explicitStatus) : hasCredential,
+        active: accountId === activeAccountId,
+        revision: item.revision,
+        properties,
+      };
+    }));
+    this.requireGeneration(generation);
+    return { integrationId, activeAccountId, accounts };
+  }
+
+  async setActiveIntegrationAccount(
+    callerId: string, token: string | undefined, integrationId: string, accountId: string,
+  ): Promise<import('./contracts.js').BrokerIntegrationMetadataResponse> {
+    this.requireBrokerIdentity(callerId, token);
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
+      throw new LocalVaultError('invalid_operation', 400, 'Integration account identifier is invalid');
+    }
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const exists = await this.db.query(
+      `SELECT 1 FROM items WHERE owner_user_id=$1 AND integration_ref=$2 AND collection_id IS NULL AND deleted_at IS NULL`,
+      [keys.userId, `${ integrationId }/${ accountId }`],
+    );
+    this.requireGeneration(generation);
+    if (!exists.rowCount) throw new LocalVaultError('invalid_operation', 404, 'Integration account is unavailable');
+    await this.db.query(
+      `INSERT INTO local_integration_state(owner_user_id,integration_id,active_account_id)
+       VALUES ($1,$2,$3)
+       ON CONFLICT(owner_user_id,integration_id) DO UPDATE SET active_account_id=$3,updated_at=now()`,
+      [keys.userId, integrationId, accountId],
+    );
+    this.requireGeneration(generation);
+    return this.integrationMetadata(callerId, token, integrationId);
+  }
+
   private requireBrokerIdentity(callerId: string, token: string | undefined): void {
     if (callerId !== this.config.brokerServiceId || !constantEqual(token, this.config.brokerServiceToken)) {
       throw new LocalVaultError('invalid_service_identity', 401, 'Broker service identity is invalid');
@@ -1093,12 +1209,12 @@ export class LocalVaultAuthority {
         for (const row of groupRows) properties[row.property] = decryptLegacyValue(row.value, keys.legacyVmk);
         const policy = agentPolicyFromLegacyLlmAccess(properties.llm_access);
         const sites = new Set(trustedOriginsForIntegration(integrationId));
-        for (const property of ['base_url', 'server_url', 'url', 'endpoint']) {
+        for (const property of ['base_url', 'server_url', 'gateway_url', 'url', 'endpoint']) {
           const raw = properties[property];
           if (!raw) continue;
           try {
             const url = new URL(raw);
-            if (url.protocol === 'https:' && !url.username && !url.password) sites.add(url.hostname.toLowerCase());
+            if (url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash) sites.add(url.hostname.toLowerCase());
           } catch { /* An invalid legacy URL is not promoted into broker policy. */ }
         }
         policy.sites = [...sites];
@@ -1170,13 +1286,15 @@ export class LocalVaultAuthority {
     if (input.responseType === 'stream' || input.responseType === 'binary-stream') {
       throw new LocalVaultError('invalid_operation', 400, 'Use execute-stream for streaming operations');
     }
-    if (input.operation === 'oauth.refresh') return this.executeOAuthRefresh(input, serviceId, token);
+    if (['oauth.exchange', 'oauth.adopt', 'oauth.refresh', 'oauth.revoke'].includes(input.operation)) {
+      return this.executeOAuthMutation(input, serviceId, token);
+    }
     const prepared = await this.prepareBrokerRequest(input, serviceId, token);
     const result = await this.send(
       prepared.target, input.method, prepared.headers, prepared.body,
       input.responseType ?? 'json', prepared.secrets, prepared.generation,
     );
-    await this.audit(input, prepared.item, false, null);
+    if (prepared.item) await this.audit(input, prepared.item, false, null);
     return result;
   }
 
@@ -1269,7 +1387,7 @@ export class LocalVaultAuthority {
     this.relayManager.close(relayId, 'caller_closed');
   }
 
-  private async executeOAuthRefresh(input: BrokerExecuteRequest, serviceId: string, token: string | undefined): Promise<BrokerExecuteResponse> {
+  private async executeOAuthMutation(input: BrokerExecuteRequest, serviceId: string, token: string | undefined): Promise<BrokerExecuteResponse> {
     const queueKey = `${ input.ref.integrationId ?? '' }/${ input.ref.accountId ?? '' }`;
     const previous = this.oauthRefreshQueues.get(queueKey) ?? Promise.resolve();
     let release!: () => void;
@@ -1284,11 +1402,16 @@ export class LocalVaultAuthority {
         input.responseType === 'text' ? 'text' : 'json', prepared.secrets, prepared.generation, false,
       );
       if (result.status < 200 || result.status >= 300) {
-        throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth refresh upstream rejected the request');
+        throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth upstream rejected the request');
       }
-      await this.storeOAuthRefresh(prepared, result.body);
-      await this.audit(input, prepared.item, false, null);
-      return { ...result, body: this.sanitizeOAuthRefreshResult(result.body) };
+      if (input.operation === 'oauth.revoke') {
+        await this.clearOAuthTokens(prepared);
+        await this.audit(input, prepared.item!, false, null);
+        return { ...result, body: { revoked: true } };
+      }
+      await this.storeOAuthTokens(prepared, result.body);
+      await this.audit(input, prepared.item!, false, null);
+      return { ...result, body: this.sanitizeOAuthResult(input.operation, result.body) };
     } finally {
       release();
       if (this.oauthRefreshQueues.get(queueKey) === queued) this.oauthRefreshQueues.delete(queueKey);
@@ -1307,7 +1430,7 @@ export class LocalVaultAuthority {
     };
     const prepared = await this.prepareBrokerRequest(streamInput, serviceId, token);
     await this.sendStream(prepared, streamInput, sink);
-    await this.audit(streamInput, prepared.item, false, null);
+    if (prepared.item) await this.audit(streamInput, prepared.item, false, null);
   }
 
   private async prepareBrokerRequest(
@@ -1324,7 +1447,30 @@ export class LocalVaultAuthority {
     }
     const keys = this.requireKeys();
     const generation = this.generation;
+    if (input.claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
     const target = await this.validateTarget(input.url);
+    let catalogDecision = null;
+    if (['catalog.http', 'mcp.http'].includes(input.operation)) {
+      try {
+        catalogDecision = await validateCatalogRequest(this.db, input, target);
+      } catch {
+        throw new LocalVaultError('policy_denied', 403, 'Registered catalog policy denied the request');
+      }
+    }
+    if (catalogDecision?.credentialFree) {
+      const scope = input.claims.credential_scope;
+      if (!scope || scope.integration_id !== input.ref.integrationId || scope.account_id !== input.ref.accountId) {
+        throw new LocalVaultError('policy_denied', 403, 'Public request is outside the signed caller scope');
+      }
+      this.requireGeneration(generation);
+      return {
+        target,
+        headers: { ...(input.headers ?? {}), 'accept-encoding': 'identity' },
+        body: input.body,
+        secrets: [],
+        generation,
+      };
+    }
     const item = await this.loadBrokerItem(input, target.hostname);
     const plaintext = JSON.parse(await decryptItemText(
       { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
@@ -1338,8 +1484,19 @@ export class LocalVaultAuthority {
       onServer: false,
     });
     if (!decision.allowed) throw new LocalVaultError('policy_denied', 403, decision.reason ?? 'Credential policy denied the operation');
+    if (input.operation === 'enterprise.gateway.http') {
+      const gatewayUrl = plaintext.integration?.properties.gateway_url;
+      let gatewayOrigin = '';
+      try {
+        const parsed = new URL(gatewayUrl ?? '');
+        if (parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.search && !parsed.hash) gatewayOrigin = parsed.origin;
+      } catch { /* denied below */ }
+      if (!gatewayOrigin || gatewayOrigin !== target.origin) {
+        throw new LocalVaultError('destination_denied', 403, 'Enterprise gateway destination is not bound to this account');
+      }
+    }
     try {
-      validateOperation(input, target.hostname, item.agent_policy ?? plaintext.agentPolicy);
+      if (!catalogDecision) validateOperation(input, target.hostname, item.agent_policy ?? plaintext.agentPolicy);
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'policy_denied';
       const code = reason === 'method_denied' ? 'method_denied' : reason === 'destination_denied' ? 'destination_denied' : 'policy_denied';
@@ -1534,7 +1691,8 @@ export class LocalVaultAuthority {
           request.destroy(new LocalVaultError('invalid_upstream_response', 502, 'Compressed broker streams are not accepted'));
           return;
         }
-        if (!binary && !contentType.startsWith('text/') && !contentType.includes('json') && !contentType.includes('event-stream') && !contentType.includes('ndjson')) {
+        const bodyless = streamResponseIsBodyless(method, response.statusCode ?? 0, response.headers['content-length']);
+        if (!binary && !bodyless && !contentType.startsWith('text/') && !contentType.includes('json') && !contentType.includes('event-stream') && !contentType.includes('ndjson')) {
           response.resume();
           request.destroy(new LocalVaultError('invalid_upstream_response', 502, 'Streaming adapter requires a textual upstream response'));
           return;
@@ -1678,16 +1836,17 @@ export class LocalVaultAuthority {
     });
   }
 
-  private async storeOAuthRefresh(prepared: PreparedBrokerRequest, body: unknown): Promise<void> {
+  private async storeOAuthTokens(prepared: PreparedBrokerRequest, body: unknown): Promise<void> {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth refresh response is invalid');
+      throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth token response is invalid');
     }
     const response = body as Record<string, unknown>;
     if (typeof response.access_token !== 'string' || !response.access_token) {
-      throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth refresh response did not contain an access token');
+      throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth response did not contain an access token');
     }
     const keys = this.requireKeys();
     this.requireGeneration(prepared.generation);
+    if (!prepared.item || !prepared.plaintext) throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
     const integration = prepared.plaintext.integration;
     if (!integration) throw new LocalVaultError('migration_failed', 409, 'OAuth item is missing its integration reference');
     integration.properties.access_token = response.access_token;
@@ -1696,6 +1855,24 @@ export class LocalVaultAuthority {
     if (typeof response.expires_in === 'number') integration.properties.expires_at = String(Date.now() + Math.max(0, response.expires_in) * 1000);
     if (typeof response.scope === 'string') integration.properties.scope = response.scope;
     if (typeof response.token_type === 'string') integration.properties.token_type = response.token_type;
+    if (typeof response.id_token === 'string' && response.id_token) integration.properties.id_token = response.id_token;
+    await this.persistOAuthItem(prepared, keys);
+  }
+
+  private async clearOAuthTokens(prepared: PreparedBrokerRequest): Promise<void> {
+    const keys = this.requireKeys();
+    this.requireGeneration(prepared.generation);
+    if (!prepared.item || !prepared.plaintext?.integration) {
+      throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
+    }
+    for (const field of ['access_token', 'refresh_token', 'id_token', 'expires_in', 'expires_at', 'scope', 'token_type']) {
+      delete prepared.plaintext.integration.properties[field];
+    }
+    await this.persistOAuthItem(prepared, keys);
+  }
+
+  private async persistOAuthItem(prepared: PreparedBrokerRequest, keys: UnlockedKeys): Promise<void> {
+    if (!prepared.item || !prepared.plaintext) throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
     const ownerId = prepared.item.collection_id ?? prepared.item.owner_user_id ?? keys.userId;
     const encrypted = await encryptItem(JSON.stringify(prepared.plaintext), keys.userKey, {
       itemId: prepared.item.id,
@@ -1708,13 +1885,14 @@ export class LocalVaultAuthority {
         WHERE id=$3 AND revision=$4 AND deleted_at IS NULL RETURNING revision`,
       [encrypted.ciphertext, encrypted.encryptedItemKey, prepared.item.id, prepared.item.revision],
     );
-    if (!updated.rowCount) throw new LocalVaultError('migration_failed', 409, 'OAuth item changed during refresh');
+    if (!updated.rowCount) throw new LocalVaultError('migration_failed', 409, 'OAuth item changed during token update');
   }
 
-  private sanitizeOAuthRefreshResult(body: unknown): Record<string, unknown> {
+  private sanitizeOAuthResult(operation: string, body: unknown): Record<string, unknown> {
     const response = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
     return {
-      refreshed:  true,
+      updated:    true,
+      operation,
       expires_in: typeof response.expires_in === 'number' ? response.expires_in : undefined,
       expires_at: typeof response.expires_in === 'number' ? Date.now() + Math.max(0, response.expires_in) * 1000 : undefined,
       scope:      typeof response.scope === 'string' ? response.scope : undefined,

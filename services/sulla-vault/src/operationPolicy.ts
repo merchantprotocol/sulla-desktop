@@ -11,11 +11,12 @@ export interface BrokerOperationPolicy {
   allowStreaming?: boolean;
   binaryRequest?:  boolean;
   binaryResponse?: boolean;
+  credentialOptional?: boolean;
   pathPattern?:    RegExp;
   /** Provider-specific authority that must remain coupled as one trust decision. */
   bindings?:       ReadonlyArray<{
     integration: string;
-    hosts:       string[];
+    hosts?:      string[];
     injections:  BrokerInjection[];
     pathPattern?: RegExp;
   }>;
@@ -62,6 +63,13 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { field: 'token', target: 'header', name: 'authorization', scheme: 'Bot' },
     ],
   },
+  'enterprise.gateway.http': {
+    integrations: ['enterprise_gateway'],
+    requireItemSites: true,
+    methods: ['POST', 'DELETE'],
+    injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+    pathPattern: /^\/api\/desktop\/sessions(?:\/[A-Za-z0-9._~-]{1,200})?$/,
+  },
   'mcp.http': {
     integrations: ['mcp'],
     requireItemSites: true,
@@ -97,13 +105,24 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom'],
     requireItemSites: true,
     methods: ['GET'],
-    injections: [
-      ...authHeaders(['api_key', 'api_token', 'bearer_token', 'access_token']),
-      { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
-      { field: 'api_key', target: 'header', name: 'api-key', scheme: 'raw' },
-      { field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' },
+    injections: [],
+    bindings: [
+      { integration: 'openai', hosts: ['api.openai.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'anthropic', hosts: ['api.anthropic.com'], injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }], pathPattern: /^\/v1\/models$/ },
+      { integration: 'google', hosts: ['generativelanguage.googleapis.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1beta\/models$/ },
+      { integration: 'grok', hosts: ['api.x.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'kimi', hosts: ['api.moonshot.cn'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'nvidia', hosts: ['integrate.api.nvidia.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'alibaba', hosts: ['coding-intl.dashscope.aliyuncs.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'groq', hosts: ['api.groq.com'], injections: authHeaders(['api_key']), pathPattern: /^\/openai\/v1\/models$/ },
+      { integration: 'mistral', hosts: ['api.mistral.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'cerebras', hosts: ['api.cerebras.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'together', hosts: ['api.together.xyz'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'cohere', hosts: ['api.cohere.com', 'api.cohere.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v2\/models$/ },
+      { integration: 'deepseek', hosts: ['api.deepseek.com'], injections: authHeaders(['api_key']), pathPattern: /^\/models$/ },
+      { integration: 'arcee', hosts: ['api.arcee.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/api\/v1\/models$/ },
+      { integration: 'custom', injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1|v1beta)\/models$/ },
     ],
-    pathPattern: /^\/(?:v1|v1beta)\/models(?:\/.*)?$/,
   },
   'provider.audio': {
     integrations: ['elevenlabs', 'grok'],
@@ -129,6 +148,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
   'oauth.exchange': {
     requireItemSites: true,
     methods: ['POST'],
+    credentialOptional: true,
     injections: [
       { field: 'client_id', target: 'form', name: 'client_id', scheme: 'raw' },
       { field: 'client_secret', target: 'form', name: 'client_secret', scheme: 'raw' },
@@ -195,6 +215,13 @@ export function validateOperation(
     throw new Error('integration_denied');
   }
   if (!policy.methods.includes(input.method.toUpperCase())) throw new Error('method_denied');
+  if (input.operation === 'enterprise.gateway.http') {
+    const pathname = new URL(input.url).pathname;
+    if ((input.method.toUpperCase() === 'POST' && pathname !== '/api/desktop/sessions') ||
+        (input.method.toUpperCase() === 'DELETE' && !/^\/api\/desktop\/sessions\/[A-Za-z0-9._~-]{1,200}$/.test(pathname))) {
+      throw new Error('method_denied');
+    }
+  }
   const binding = policy.bindings?.find(candidate => candidate.integration === input.ref.integrationId);
   if (policy.bindings && !binding) throw new Error('integration_denied');
   const allowedHosts = binding?.hosts ?? (policy.requireItemSites ? itemPolicy.sites : policy.hosts);
@@ -213,7 +240,7 @@ export function validateOperation(
   for (const injection of input.injections) {
     if (!allowedInjections.some(candidate => exactInjection(candidate, injection))) throw new Error('injection_denied');
   }
-  if (!input.injections.length) throw new Error('credential_injection_required');
+  if (!input.injections.length && !policy.credentialOptional) throw new Error('credential_injection_required');
   return policy;
 }
 
@@ -236,6 +263,7 @@ export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
   cohere:    ['api.cohere.ai', 'api.cohere.com'],
   deepseek:  ['api.deepseek.com'],
   arcee:     ['api.arcee.ai'],
+  enterprise_gateway: [],
 };
 
 export function trustedOriginsForIntegration(integrationId: string): string[] {

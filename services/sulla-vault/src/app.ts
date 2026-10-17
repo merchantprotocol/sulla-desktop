@@ -171,7 +171,8 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     request.header('cookie')?.split(';').map(value => value.trim()).find(value => value.startsWith('sulla_vault_human='))?.slice('sulla_vault_human='.length);
   const setHumanCookie = (response: Response, sessionId: string, expiresAt: number): void => {
     const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
-    response.setHeader('Set-Cookie', `sulla_vault_human=${ sessionId }; HttpOnly; SameSite=Strict; Path=/v1/human; Max-Age=${ maxAge }`);
+    const secure = config.humanUiOrigin?.startsWith('https:') ? '; Secure' : '';
+    response.setHeader('Set-Cookie', `sulla_vault_human=${ sessionId }; HttpOnly; SameSite=Strict; Path=/v1/human; Max-Age=${ maxAge }${ secure }`);
   };
 
   if (localAuthority) {
@@ -316,6 +317,20 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     app.get('/v1/broker/status', (request, response) => {
       const identity = serviceIdentity(request);
       response.json(localAuthority.brokerStatus(identity.serviceId, identity.token));
+    });
+    app.get('/v1/broker/integrations/:integrationId/metadata', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.integrationMetadata(
+        identity.serviceId, identity.token, requiredString(request.params.integrationId, 'integrationId'),
+        typeof request.query.accountId === 'string' ? request.query.accountId : undefined,
+      ));
+    });
+    app.put('/v1/broker/integrations/:integrationId/active-account', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.setActiveIntegrationAccount(
+        identity.serviceId, identity.token, requiredString(request.params.integrationId, 'integrationId'),
+        requiredString(request.body.accountId, 'accountId'),
+      ));
     });
     app.post('/v1/broker/execute', async(request, response) => {
       const identity = serviceIdentity(request);

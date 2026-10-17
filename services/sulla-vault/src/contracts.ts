@@ -260,6 +260,21 @@ export interface BrokerStatusResponse {
   principalId?: string;
 }
 
+export interface BrokerIntegrationMetadataResponse {
+  integrationId: string;
+  activeAccountId?: string;
+  accounts: Array<{
+    accountId:  string;
+    label:      string;
+    connected:  boolean;
+    active:     boolean;
+    revision:   number;
+    properties: Record<string, string>;
+  }>;
+}
+
+export interface BrokerSetActiveAccountRequest { accountId: string }
+
 /**
  * /v1/broker/execute-stream returns upstream status and sanitized headers as
  * HTTP status/headers, then writes the sanitized body directly. It never wraps
