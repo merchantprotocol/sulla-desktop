@@ -127,20 +127,25 @@ export class OAuthService {
     accountId = 'default',
     extraScopes: string[] = [],
   ): Promise<OAuthTokenSet> {
-    if (usesContainerVaultAuthority()) {
-      throw new Error('unsupported_secret_egress: OAuth code exchange must complete inside the local vault authority');
-    }
     const provider = getOAuthProvider(providerId);
     if (!provider) {
       throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
     }
     const cfg = provider.config;
+    if (usesContainerVaultAuthority() && cfg.registrationEndpoint) {
+      throw new Error('unsupported_secret_egress: dynamic OAuth client registration requires a vault-owned typed operation');
+    }
 
     // Resolve effective client_id (built-in takes precedence for public clients).
     // Providers with registrationEndpoint can fill this after the callback
     // server starts, because DCR needs the actual redirect_uri for this flow.
     let effectiveClientId = cfg.builtInClientId || clientId;
-    const effectiveClientSecret = cfg.clientAuthMethod === 'none' ? '' : clientSecret;
+    if (usesContainerVaultAuthority() && !effectiveClientId) {
+      const metadata = await getIntegrationService().getMetadataValues(integrationId, accountId);
+      const values = Object.fromEntries(metadata.map(value => [value.property, value.value]));
+      effectiveClientId = values.oauth_client_id || values.client_id || '';
+    }
+    const effectiveClientSecret = usesContainerVaultAuthority() || cfg.clientAuthMethod === 'none' ? '' : clientSecret;
 
     // Generate CSRF state
     const state = crypto.randomBytes(24).toString('hex');
@@ -206,12 +211,21 @@ export class OAuthService {
 
       // Exchange code for tokens
       const tokens = normalizeTokenExpiry(
-        await this.exchangeCode(cfg, effectiveClientId, effectiveClientSecret, code, redirectUri, codeVerifier),
+        await this.exchangeCode(
+          cfg, effectiveClientId, effectiveClientSecret, code, redirectUri, codeVerifier, integrationId, accountId,
+        ),
       );
       if (cfg.registrationEndpoint) {
         tokens.oauth_client_id = effectiveClientId;
       }
       console.log(`${ LOG_PREFIX } Token exchange successful`);
+
+      if (usesContainerVaultAuthority()) {
+        // The authority persisted the token response before returning this
+        // metadata-only acknowledgement. No provider hook may receive it as a
+        // token set and the legacy OAuth table must remain untouched.
+        return tokens;
+      }
 
       // Let the provider do post-processing
       await provider.onTokenReceived(tokens, { integrationId, accountId, providerId, clientId: effectiveClientId });
@@ -374,6 +388,8 @@ export class OAuthService {
     code: string,
     redirectUri: string,
     codeVerifier?: string,
+    integrationId?: string,
+    accountId?: string,
   ): Promise<OAuthTokenSet> {
     const body: Record<string, string> = {
       grant_type:   'authorization_code',
@@ -392,6 +408,38 @@ export class OAuthService {
       Accept:         'application/json',
       'User-Agent':   'Sulla-Desktop/1.0',
     };
+
+    if (usesContainerVaultAuthority()) {
+      if (!integrationId || !accountId) throw new Error(`${ LOG_PREFIX } OAuth exchange is missing its vault scope`);
+      const injections = cfg.clientAuthMethod === 'header'
+        ? [{ field: 'client_secret', target: 'header' as const, name: 'authorization', scheme: 'BasicClient' as const }]
+        : cfg.clientAuthMethod === 'none'
+          ? []
+          : [
+            { field: 'client_id', target: 'form' as const, name: 'client_id', scheme: 'raw' as const },
+            { field: 'client_secret', target: 'form' as const, name: 'client_secret', scheme: 'raw' as const },
+          ];
+      if (cfg.clientAuthMethod === 'none') body.client_id = clientId;
+      const context = await issueLocalBrokerContext({
+        agentId:         'oauth-exchange',
+        podId:           'desktop-main',
+        credentialScope: { integration_id: integrationId, account_id: accountId },
+      });
+      const broker = requireConfiguredCredentialBroker();
+      const result = await broker.execute(broker.requestFor(context, {
+        operation: 'oauth.exchange',
+        ref:       { integrationId, accountId },
+        url:       cfg.tokenUrl,
+        method:    'POST',
+        headers,
+        body,
+        injections,
+      }));
+      if (result.status < 200 || result.status >= 300 || !result.body || typeof result.body !== 'object') {
+        throw new Error(`${ LOG_PREFIX } Vault-owned token exchange failed`);
+      }
+      return result.body as OAuthTokenSet;
+    }
 
     if (cfg.clientAuthMethod === 'header') {
       const basic = Buffer.from(`${ clientId }:${ clientSecret }`).toString('base64');
@@ -640,7 +688,26 @@ export class OAuthService {
 
   async revokeTokens(integrationId: string, accountId = 'default'): Promise<void> {
     if (usesContainerVaultAuthority()) {
-      throw new Error('unsupported_secret_egress: OAuth revocation must complete inside the local vault authority');
+      const metadata = await getIntegrationService().getMetadataValues(integrationId, accountId);
+      const values = Object.fromEntries(metadata.map(value => [value.property, value.value]));
+      const provider = getOAuthProvider(values.provider_id || values.provider || '');
+      if (!provider?.config.revokeUrl) throw new Error(`${ LOG_PREFIX } OAuth provider does not expose a revoke endpoint`);
+      const context = await issueLocalBrokerContext({
+        agentId:         'oauth-revoke',
+        podId:           'desktop-main',
+        credentialScope: { integration_id: integrationId, account_id: accountId },
+      });
+      const broker = requireConfiguredCredentialBroker();
+      await broker.execute(broker.requestFor(context, {
+        operation:  'oauth.revoke',
+        ref:        { integrationId, accountId },
+        url:        provider.config.revokeUrl,
+        method:     'POST',
+        headers:    { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+        body:       {},
+        injections: [{ field: 'access_token', target: 'form', name: 'token', scheme: 'raw' }],
+      }));
+      return;
     }
     const stored = await this.getStoredTokens(integrationId, accountId);
     if (!stored) return;
