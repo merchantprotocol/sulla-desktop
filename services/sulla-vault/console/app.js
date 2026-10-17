@@ -11,7 +11,7 @@
     }
   });
 
-  // ../../packages/vault-crypto/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
+  // ../../../../../../../mnt/data/devcache/deps/sulla-desktop-0ed85271cbb25ba4/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
   var import_meta = {};
   async function A(A3 = {}) {
     var I2, g2 = A3, C2 = !!globalThis.window, B2 = !!globalThis.WorkerGlobalScope, Q2 = (globalThis.process?.versions?.node && globalThis.process, import_meta.url);
@@ -209,7 +209,7 @@
   }
   var libsodium_sumo_default = A;
 
-  // ../../packages/vault-crypto/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
+  // ../../../../../../../mnt/data/devcache/deps/sulla-desktop-0ed85271cbb25ba4/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
   var r;
   var t = {};
   if (void 0 === globalThis.crypto || "function" != typeof globalThis.crypto.getRandomValues) throw new Error("globalThis.crypto.getRandomValues is not available. The ESM build of libsodium requires a secure random source (available in all browsers and Node.js 19+).");
@@ -3805,9 +3805,9 @@
     $2("collection-empty").hidden = true;
     $2("collection-detail").hidden = false;
     $2("collection-title").textContent = state.selected.name;
-    $2("collection-items").innerHTML = '<div class="empty"><span>Loading items…</span></div>';
-    $2("collection-activity").innerHTML = '<div class="empty"><span>Loading activity…</span></div>';
-    $2("rights").innerHTML = '<div class="empty"><span>Loading access rights…</span></div>';
+    $2("collection-items").innerHTML = '<div class="empty"><span>Loading items\u2026</span></div>';
+    $2("collection-activity").innerHTML = '<div class="empty"><span>Loading activity\u2026</span></div>';
+    $2("rights").innerHTML = '<div class="empty"><span>Loading access rights\u2026</span></div>';
     const [itemsResult, activityResult, accessResult] = await Promise.allSettled([
       api(`/v1/collections/${id}/items`),
       api(`/v1/orgs/${state.org.id}/audit?collection=${encodeURIComponent(id)}&limit=50`),
@@ -3817,16 +3817,14 @@
     const collectionItems = [];
     const itemNames = /* @__PURE__ */ new Map();
     const key = state.collectionKeys.get(id);
-    if (itemsResult.status === "fulfilled") {
-      for (const row of itemsResult.value.items || []) {
-        try {
-          if (!key) throw new Error("Collection key unavailable");
-          const value = JSON.parse(await decryptItemText({ version: 1, encryptedItemKey: row.encrypted_item_key, ciphertext: row.ciphertext, agentWrappedItemKey: row.agent_wrapped_item_key }, key, { itemId: row.id, ownerId: id }));
-          collectionItems.push({ id: row.id, name: value.name || "Vault item", type: value.type || row.item_type, agentPolicy: value.agentPolicy, updatedAt: row.updated_at });
-          itemNames.set(row.id, value.name || "Vault item");
-        } catch {
-          collectionItems.push({ id: row.id, name: "Encrypted item", type: row.item_type, updatedAt: row.updated_at });
-        }
+    if (itemsResult.status === "fulfilled") for (const row of itemsResult.value.items || []) {
+      try {
+        if (!key) throw new Error("Collection key unavailable");
+        const value = JSON.parse(await decryptItemText({ version: 1, encryptedItemKey: row.encrypted_item_key, ciphertext: row.ciphertext, agentWrappedItemKey: row.agent_wrapped_item_key }, key, { itemId: row.id, ownerId: id }));
+        collectionItems.push({ id: row.id, name: value.name || "Vault item", type: value.type || row.item_type, agentPolicy: value.agentPolicy, updatedAt: row.updated_at });
+        itemNames.set(row.id, value.name || "Vault item");
+      } catch {
+        collectionItems.push({ id: row.id, name: "Encrypted item", type: row.item_type, updatedAt: row.updated_at });
       }
     }
     if (generation !== collectionGeneration || state.selected?.id !== id || !state.token) return;
@@ -3852,7 +3850,7 @@
     $2("collection-items").innerHTML = state.collectionItemsError ? `<div class="empty error"><b>Could not load collection items</b><span>${esc(state.collectionItemsError)}</span></div>` : state.collectionItems.length ? state.collectionItems.map((item) => `<div class="collection-item"><span class="tile">${esc(initials(item.name))}</span><div><b>${esc(item.name)}</b><small>${esc(item.type || "item")} \xB7 edited ${esc(new Date(item.updatedAt).toLocaleDateString())}</small></div><span class="pill ${item.agentPolicy?.mode === "agents" ? "acc" : ""}">${item.agentPolicy?.mode === "agents" ? "Agents " + esc(item.agentPolicy.level) : "Only owner"}</span></div>`).join("") : '<div class="empty"><b>No items in this collection</b><span>Collection item creation is not available in this console yet.</span></div>';
   }
   function renderCollectionActivity() {
-    $2("collection-activity").innerHTML = state.collectionActivityError ? `<div class="empty error"><b>Could not load collection activity</b><span>${esc(state.collectionActivityError)}</span></div>` : state.collectionActivity.length ? `<table><tbody>${state.collectionActivity.map((event) => `<tr><td><b>${esc(actionLabel(event.action))}</b><br><span class="muted">${esc(state.itemNames.get(event.item_id) || "Collection")}</span></td><td><span class="result ${event.blocked ? "bad" : "ok"}">${event.blocked ? "Blocked" : "Allowed"}</span><br><span class="muted">${esc(new Date(event.created_at).toLocaleString())}</span></td></tr>`).join("")}</tbody></table>` : '<div class="empty"><b>No collection activity yet</b><span>Authorized actions will appear here without secret values.</span></div>';
+    $2("collection-activity").innerHTML = state.collectionActivityError ? `<div class="empty error"><b>Could not load collection activity</b><span>${esc(state.collectionActivityError)}</span></div>` : state.collectionActivity.length ? `<table><tbody>${state.collectionActivity.map((event) => `<tr><td><b>${esc(actionLabel(event))}</b><br><span class="muted">${esc(state.itemNames.get(event.item_id) || "Collection")}</span></td><td><span class="result ${event.blocked ? "bad" : "ok"}">${event.blocked ? "Blocked" : "Allowed"}</span><br><span class="muted">${esc(new Date(event.created_at).toLocaleString())}</span></td></tr>`).join("")}</tbody></table>` : '<div class="empty"><b>No collection activity yet</b><span>Authorized actions will appear here without secret values.</span></div>';
   }
   function effective(row, key) {
     return ["owner", "admin"].includes(row.role) || Boolean(row[key]);
@@ -3860,8 +3858,8 @@
   function renderRights() {
     if (state.collectionAccessError) {
       $2("rights").innerHTML = `<div class="empty error"><b>Could not load collection access</b><span>${esc(state.collectionAccessError)}</span></div>`;
-      $2("right-people").textContent = "—";
-      $2("right-agents").textContent = "—";
+      $2("right-people").textContent = "\u2014";
+      $2("right-agents").textContent = "\u2014";
       return;
     }
     const rights = [["can_view", "View"], ["can_use_by_agents", "Agents use"], ["can_edit", "Edit"], ["can_manage", "Manage"]];
@@ -4056,7 +4054,7 @@
   }
   var agentAuditActions = /* @__PURE__ */ new Set(["agent_credential_use", "agent_credential_broker_use", "vault_outbound_request"]);
   var isAgentAudit = (event) => Boolean(event.metadata?.agentId) || agentAuditActions.has(event.action);
-  var actionLabel = (action) => ({ agent_credential_use: "Agent tried to use", agent_credential_broker_use: "Agent used credential", vault_outbound_request: "Agent used credential", join_password_set: "Set join password", join_password_rotated: "Rotated join password", member_confirmed: "Confirmed member", recovery_opt_in: "Enabled recovery", recovery_opt_out: "Disabled recovery", account_recovered: "Recovered account" })[action] ?? action.replaceAll("_", " ");
+  var actionLabel = (event) => event.blocked && agentAuditActions.has(event.action) ? "Attempted credential use" : { agent_credential_use: "Agent used credential", agent_credential_broker_use: "Agent used credential", vault_outbound_request: "Agent used credential", join_password_set: "Set join password", join_password_rotated: "Rotated join password", member_confirmed: "Confirmed member", recovery_opt_in: "Enabled recovery", recovery_opt_out: "Disabled recovery", account_recovered: "Recovered account" }[event.action] ?? event.action.replaceAll("_", " ");
   async function loadAudit() {
     if (!state.org) return;
     const result = await api(`/v1/orgs/${state.org.id}/audit?${auditParams()}`);
@@ -4071,7 +4069,7 @@
       const agent = isAgentAudit(e);
       const who = agent ? e.metadata?.agentName || e.metadata?.agentId || "Agent" : member?.email || "Member";
       const target = state.itemNames.get(e.item_id) || collection?.name || "Organization";
-      return `<tr data-event="${i2}"><td>${esc(new Date(e.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</td><td><div class="actor-cell"><span class="avatar ${agent ? "group" : ""}">${agent ? "\u25C6" : esc(initials(who))}</span><span>${esc(who)}</span></div></td><td>${esc(actionLabel(e.action))}</td><td>${esc(target)}</td><td><span class="result ${e.blocked ? "bad" : "ok"}">${e.blocked ? "Blocked" : "Allowed"}</span></td></tr>`;
+      return `<tr data-event="${i2}"><td>${esc(new Date(e.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</td><td><div class="actor-cell"><span class="avatar ${agent ? "group" : ""}">${agent ? "\u25C6" : esc(initials(who))}</span><span>${esc(who)}</span></div></td><td>${esc(actionLabel(e))}</td><td>${esc(target)}</td><td><span class="result ${e.blocked ? "bad" : "ok"}">${e.blocked ? "Blocked" : "Allowed"}</span></td></tr>`;
     }).join("") : '<tr><td colspan="5" class="muted">No events match these filters.</td></tr>';
     document.querySelectorAll("[data-event]").forEach((row) => row.onclick = () => renderAuditDetail(Number(row.dataset.event)));
     if (state.audit[0]) renderAuditDetail(0);
@@ -4082,7 +4080,7 @@
     const member = state.members.find((m2) => m2.user_id === e.actor_user_id);
     const collection = state.collections.find((c2) => c2.id === e.collection_id);
     const item = state.itemNames.get(e.item_id);
-    $2("audit-detail").innerHTML = `<span class="result ${e.blocked ? "bad" : "ok"}">${e.blocked ? "Blocked" : "Allowed"}</span><h2>${esc(actionLabel(e.action))}${item ? ` ${esc(item)}` : ""}</h2>${e.blocked ? `<div class="why">${esc(e.reason || "The requested action was denied before a secret was unlocked.")}</div>` : ""}<div class="kv"><span>Person</span><span>${esc(member?.email || "Member")}</span></div><div class="kv"><span>Agent</span><span>${esc(e.metadata?.agentName || e.metadata?.agentId || "\u2014")}</span></div><div class="kv"><span>Collection</span><span>${esc(collection?.name || "\u2014")}</span></div><div class="kv"><span>Item</span><span>${esc(item || e.item_id || "\u2014")}</span></div><div class="kv"><span>Pod</span><span>${esc(e.pod_id || "\u2014")}</span></div><div class="kv"><span>When</span><span>${esc(new Date(e.created_at).toLocaleString())}</span></div><p class="security-note">No secret value is stored in this event.</p>`;
+    $2("audit-detail").innerHTML = `<span class="result ${e.blocked ? "bad" : "ok"}">${e.blocked ? "Blocked" : "Allowed"}</span><h2>${esc(actionLabel(e))}${item ? ` ${esc(item)}` : ""}</h2>${e.blocked ? `<div class="why">${esc(e.reason || "The requested action was denied before a secret was unlocked.")}</div>` : ""}<div class="kv"><span>Person</span><span>${esc(member?.email || "Member")}</span></div><div class="kv"><span>Agent</span><span>${esc(e.metadata?.agentName || e.metadata?.agentId || "\u2014")}</span></div><div class="kv"><span>Collection</span><span>${esc(collection?.name || "\u2014")}</span></div><div class="kv"><span>Item</span><span>${esc(item || e.item_id || "\u2014")}</span></div><div class="kv"><span>Pod</span><span>${esc(e.pod_id || "\u2014")}</span></div><div class="kv"><span>When</span><span>${esc(new Date(e.created_at).toLocaleString())}</span></div><p class="security-note">No secret value is stored in this event.</p>`;
   }
   async function loadRecovery() {
     if (!state.org) return;

@@ -36,12 +36,33 @@ function requiredObject(value: unknown, name: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const AUDIT_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}$/;
+
+function requiredIdentifier(value: unknown, name: string): string {
+  const identifier = requiredString(value, name);
+  if (!AUDIT_IDENTIFIER_PATTERN.test(identifier)) throw new HttpError(400, `${ name } is invalid`);
+  return identifier;
+}
+
+function requiredUuid(value: unknown, name: string): string {
+  const identifier = requiredString(value, name);
+  if (!UUID_PATTERN.test(identifier)) throw new HttpError(400, `${ name } is invalid`);
+  return identifier;
+}
+
 function sanitizedAuditMetadata(value: unknown): Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const input = value as Record<string, unknown>;
   const metadata: Record<string, string> = {};
-  for (const key of ['agentId', 'agentName', 'operation'] as const) {
-    if (typeof input[key] === 'string' && input[key].length > 0 && input[key].length <= 160) metadata[key] = input[key];
+  for (const key of ['agentId', 'operation', 'serviceId', 'threadId', 'jobId', 'workflowExecutionId', 'integrationId'] as const) {
+    if (typeof input[key] === 'string' && AUDIT_IDENTIFIER_PATTERN.test(input[key])) metadata[key] = input[key];
+  }
+  if (typeof input.agentName === 'string' && input.agentName.length > 0 && input.agentName.length <= 160 && !/[\u0000-\u001f\u007f]/.test(input.agentName)) {
+    metadata.agentName = input.agentName;
+  }
+  if (typeof input.requestedItemId === 'string' && UUID_PATTERN.test(input.requestedItemId)) {
+    metadata.requestedItemId = input.requestedItemId;
   }
   if (typeof input.destination === 'string' && input.destination.length <= 2048) {
     try {
@@ -80,14 +101,6 @@ async function auditEvent(db: Queryable, actorId: string, orgId: string, action:
   await db.query('INSERT INTO audit_log(actor_user_id, org_id, action, metadata) VALUES ($1, $2, $3, $4)', [actorId, orgId, action, metadata]);
 }
 
-async function auditPersonalItemEvent(db: Queryable, itemId: string, action: string): Promise<void> {
-  await db.query(
-    `INSERT INTO audit_log(actor_user_id,item_id,action,metadata)
-     SELECT owner_user_id,id,$2,'{}'::jsonb FROM items WHERE id=$1 AND owner_user_id IS NOT NULL`,
-    [itemId, action],
-  );
-}
-
 function userId(request: AuthenticatedRequest): string {
   if (!request.auth) {
     throw new HttpError(401, 'Authentication required');
@@ -108,13 +121,13 @@ interface BrokerClaims {
 function brokerClaims(value: unknown): BrokerClaims {
   const claims = requiredObject(value, 'claims');
   return {
-    sub:                    requiredString(claims.sub, 'claims.sub'),
-    org_id:                 typeof claims.org_id === 'string' ? claims.org_id : undefined,
-    agent_id:               requiredString(claims.agent_id, 'claims.agent_id'),
-    pod_id:                 requiredString(claims.pod_id, 'claims.pod_id'),
-    thread_id:              typeof claims.thread_id === 'string' ? claims.thread_id : undefined,
-    job_id:                 typeof claims.job_id === 'string' ? claims.job_id : undefined,
-    workflow_execution_id: typeof claims.workflow_execution_id === 'string' ? claims.workflow_execution_id : undefined,
+    sub:                    requiredUuid(claims.sub, 'claims.sub'),
+    org_id:                 claims.org_id === undefined ? undefined : requiredUuid(claims.org_id, 'claims.org_id'),
+    agent_id:               requiredIdentifier(claims.agent_id, 'claims.agent_id'),
+    pod_id:                 requiredIdentifier(claims.pod_id, 'claims.pod_id'),
+    thread_id:              claims.thread_id === undefined ? undefined : requiredIdentifier(claims.thread_id, 'claims.thread_id'),
+    job_id:                 claims.job_id === undefined ? undefined : requiredIdentifier(claims.job_id, 'claims.job_id'),
+    workflow_execution_id: claims.workflow_execution_id === undefined ? undefined : requiredIdentifier(claims.workflow_execution_id, 'claims.workflow_execution_id'),
   };
 }
 
@@ -238,10 +251,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       const status = localAuthority.status();
       response.json({ ...status, migration: { required: status.state === 'migration_required', error: status.state === 'migration_failed' ? 'migration_failed' : undefined } });
     });
-    app.post('/v1/desktop/lock', (request, response) => {
+    app.post('/v1/desktop/lock', async(request, response) => {
       const identity = serviceIdentity(request);
       localAuthority.requireControlIdentity(identity.serviceId, identity.token);
-      localAuthority.lock();
+      await localAuthority.lock();
       response.json({ state: 'locked', unlocked: false, migration: { required: false } });
     });
     app.post('/v1/desktop/migrate', async(request, response) => {
@@ -322,8 +335,8 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       );
       response.status(204).end();
     });
-    app.post('/v1/human/lock', (request, response) => {
-      const result = localAuthority.lockHumanSession(humanCookie(request), request.header('x-csrf-token'));
+    app.post('/v1/human/lock', async(request, response) => {
+      const result = await localAuthority.lockHumanSession(humanCookie(request), request.header('x-csrf-token'));
       setHumanCookie(response, result.sessionId, result.expiresAt);
       response.json({ csrf: result.csrf, expiresAt: result.expiresAt, phase: result.phase, state: result.state });
     });
@@ -331,7 +344,9 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       response.json({ items: await localAuthority.listHumanItems(humanCookie(request), request.header('x-csrf-token')) });
     });
     app.get('/v1/human/activity', async(request, response) => {
-      const session = localAuthority.humanSessionStatus(humanCookie(request), request.header('x-csrf-token'));
+      const sessionId = humanCookie(request);
+      const csrf = request.header('x-csrf-token');
+      const session = localAuthority.humanSessionStatus(sessionId, csrf);
       const principalId = localAuthority.status().principalId;
       if (session.phase !== 'unlocked' || !principalId) throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
       const limit = Math.min(Math.max(Number(request.query.limit) || 25, 1), 100);
@@ -373,29 +388,29 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       );
       const hasMore = result.rows.length > limit;
       const events = result.rows.slice(0, limit).map(event => ({ ...event, metadata: sanitizedAuditMetadata(event.metadata) }));
+      const currentSession = localAuthority.humanSessionStatus(sessionId, csrf);
+      if (currentSession.phase !== 'unlocked' || localAuthority.status().principalId !== principalId) {
+        throw new LocalVaultError('vault_locked', 423, 'Vault locked during audit request');
+      }
       response.json({ events, hasMore, limit, offset });
     });
     app.post('/v1/human/items', async(request, response) => {
       const result = await localAuthority.saveHumanItem(humanCookie(request), request.header('x-csrf-token'), request.body);
-      await auditPersonalItemEvent(db, result.id, 'human_item_created');
       response.status(201).json(result);
     });
     app.post('/v1/human/items/:itemId/reveal', async(request, response) => {
       const itemId = requiredString(request.params.itemId, 'itemId');
       const result = await localAuthority.revealHumanItem(humanCookie(request), request.header('x-csrf-token'), itemId);
-      await auditPersonalItemEvent(db, itemId, 'human_item_reveal');
       response.json(result);
     });
     app.patch('/v1/human/items/:itemId', async(request, response) => {
       const itemId = requiredString(request.params.itemId, 'itemId');
       const result = await localAuthority.saveHumanItem(humanCookie(request), request.header('x-csrf-token'), { ...request.body, id: itemId });
-      await auditPersonalItemEvent(db, itemId, 'human_item_updated');
       response.json(result);
     });
     app.delete('/v1/human/items/:itemId', async(request, response) => {
       const itemId = requiredString(request.params.itemId, 'itemId');
       await localAuthority.deleteHumanItem(humanCookie(request), request.header('x-csrf-token'), itemId, Number(request.query.revision));
-      await auditPersonalItemEvent(db, itemId, 'human_item_deleted');
       response.status(204).end();
     });
     app.post('/v1/broker/approve', (request, response) => {
@@ -636,8 +651,8 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
     const claims = brokerClaims(request.body.claims);
     const ref = requiredObject(request.body.ref, 'ref');
-    const itemId = typeof ref.itemId === 'string' ? ref.itemId : null;
-    const integrationId = typeof ref.integrationId === 'string' ? ref.integrationId : null;
+    const itemId = ref.itemId === undefined ? null : requiredUuid(ref.itemId, 'ref.itemId');
+    const integrationId = ref.integrationId === undefined ? null : requiredIdentifier(ref.integrationId, 'ref.integrationId');
     if (!itemId && !integrationId) throw new HttpError(400, 'ref.itemId or ref.integrationId is required');
 
     const result = await db.query(
@@ -685,7 +700,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
        VALUES ($1,$2,$3,$4,'agent_credential_broker_use',$5,$6,$7,$8)
        RETURNING id,created_at`,
       [claims.sub, item?.org_id ?? claims.org_id ?? null, item?.collection_id ?? null, item?.id ?? null, claims.pod_id,
-        {
+        sanitizedAuditMetadata({
           serviceId,
           agentId:             claims.agent_id,
           threadId:            claims.thread_id,
@@ -693,7 +708,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
           workflowExecutionId: claims.workflow_execution_id,
           requestedItemId:     itemId,
           integrationId,
-        },
+        }),
         !allowed, allowed ? null : reason],
     );
     if (!allowed || !item) {
@@ -1244,7 +1259,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     if (typeof request.query.to === 'string') add('a.created_at < ?::timestamptz', request.query.to);
     params.push(limit, offset);
     const result = await db.query(`SELECT a.id,a.actor_user_id,a.device_id,a.collection_id,a.item_id,a.action,a.pod_id,a.metadata,a.blocked,a.reason,a.created_at FROM audit_log a WHERE ${conditions.join(' AND ')} ORDER BY a.created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
-    response.json({ events: result.rows, limit, offset });
+    response.json({ events: result.rows.map(event => ({ ...event, metadata: sanitizedAuditMetadata(event.metadata) })), limit, offset });
   });
 
   app.get('/v1/sync', async(request: AuthenticatedRequest, response) => {

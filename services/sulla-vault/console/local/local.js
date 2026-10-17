@@ -163,7 +163,7 @@
       byId('detail-sites').textContent = itemPolicy.sites.length ? itemPolicy.sites.join(', ') : 'Any registered destination';
       byId('detail-expiry').textContent = dateText(itemPolicy.expiresAt); byId('detail-ask').textContent = itemPolicy.askFirst ? 'Every use' : 'No';
       const events = activity.events || []; byId('activity-count').textContent = String(events.length);
-      byId('detail-activity').innerHTML = events.length ? events.slice(0, 6).map(event => `<div class="activity-event"><b>${esc(auditAction(event.action))}</b><span>${esc(dateText(event.created_at))}</span><span>${esc(auditIsAgent(event) ? event.metadata?.agentId || 'Agent' : 'You')}</span><span>${esc(auditResult(event))}</span></div>`).join('') : '<div class="honest-state">No recorded activity for this item.</div>';
+      byId('detail-activity').innerHTML = events.length ? events.slice(0, 6).map(event => `<div class="activity-event"><b>${esc(auditAction(event))}</b><span>${esc(dateText(event.created_at))}</span><span>${esc(auditIsAgent(event) ? event.metadata?.agentId || 'Agent' : 'You')}</span><span>${esc(auditResult(event))}</span></div>`).join('') : '<div class="honest-state">No recorded activity for this item.</div>';
       byId('edit-item').onclick = () => { void openEditor(item); };
     } catch (error) {
       if (generation !== detailGeneration || selectedId !== id) return;
@@ -245,10 +245,11 @@
   };
 
   const auditIsAgent = event => Boolean(event.metadata?.agentId) || ['vault_outbound_request', 'agent_credential_broker_use', 'agent_credential_use'].includes(event.action);
-  const auditAction = action => ({
+  const auditAction = event => event.blocked && ['vault_outbound_request', 'agent_credential_broker_use', 'agent_credential_use'].includes(event.action)
+    ? 'Attempted credential use' : ({
     human_item_reveal: 'Revealed item', human_item_created: 'Created item', human_item_updated: 'Changed item', human_item_deleted: 'Deleted item',
     vault_outbound_request: 'Used credential', agent_credential_broker_use: 'Used credential', agent_credential_use: 'Used credential',
-  })[action] || String(action || 'Recorded action').replaceAll('_', ' ');
+  })[event.action] || String(event.action || 'Recorded action').replaceAll('_', ' ');
   const auditItem = event => items.find(item => item.id === event.item_id)?.name || (event.item_id ? 'Deleted or unavailable item' : 'Vault');
   const auditWhere = event => event.metadata?.destination || event.metadata?.operation || event.pod_id || 'Desktop vault';
   const auditResult = event => event.blocked ? 'Blocked' : (auditIsAgent(event) ? 'Allowed' : 'Recorded');
@@ -257,7 +258,7 @@
     if (!event) { byId('audit-detail').innerHTML = '<div class="empty-state"><b>Select an event</b><span>Authorized metadata will appear here.</span></div>'; return; }
     document.querySelectorAll('[data-audit-event]').forEach((row, rowIndex) => row.classList.toggle('selected', rowIndex === index));
     const agent = auditIsAgent(event);
-    byId('audit-detail').innerHTML = `<span class="audit-result ${event.blocked ? 'blocked' : ''}">${esc(auditResult(event))}</span><h2>${esc(auditAction(event.action))}</h2>${event.blocked ? `<div class="reason">${esc(event.reason || 'The action was denied before a secret was released.')}</div>` : ''}<div class="kv"><span>Who</span><b>${esc(agent ? event.metadata?.agentId || 'Agent' : 'You')}</b></div><div class="kv"><span>Item</span><b>${esc(auditItem(event))}</b></div><div class="kv"><span>Where</span><b>${esc(auditWhere(event))}</b></div><div class="kv"><span>Pod</span><b>${esc(event.pod_id || '—')}</b></div><div class="kv"><span>When</span><b>${esc(dateText(event.created_at))}</b></div><p class="security-note">This event contains authorized audit metadata only. No secret value is returned.</p>`;
+    byId('audit-detail').innerHTML = `<span class="audit-result ${event.blocked ? 'blocked' : ''}">${esc(auditResult(event))}</span><h2>${esc(auditAction(event))}</h2>${event.blocked ? `<div class="reason">${esc(event.reason || 'The action was denied before a secret was released.')}</div>` : ''}<div class="kv"><span>Who</span><b>${esc(agent ? event.metadata?.agentId || 'Agent' : 'You')}</b></div><div class="kv"><span>Item</span><b>${esc(auditItem(event))}</b></div><div class="kv"><span>Where</span><b>${esc(auditWhere(event))}</b></div><div class="kv"><span>Pod</span><b>${esc(event.pod_id || '—')}</b></div><div class="kv"><span>When</span><b>${esc(dateText(event.created_at))}</b></div><p class="security-note">This event contains authorized audit metadata only. No secret value is returned.</p>`;
   };
   const renderAudit = () => {
     byId('audit-total').textContent = String(auditEvents.length);
@@ -265,7 +266,7 @@
     byId('audit-blocked-count').textContent = String(auditEvents.filter(event => event.blocked).length);
     byId('audit-page').textContent = `Page ${Math.floor(auditOffset / 25) + 1}`;
     byId('audit-prev').disabled = auditOffset === 0; byId('audit-next').disabled = !auditHasMore;
-    byId('audit-rows').innerHTML = auditEvents.length ? auditEvents.map((event, index) => `<tr data-audit-event="${index}"><td>${esc(dateText(event.created_at))}</td><td>${esc(auditIsAgent(event) ? event.metadata?.agentId || 'Agent' : 'You')}</td><td>${esc(auditAction(event.action))}</td><td>${esc(auditItem(event))}</td><td>${esc(auditWhere(event))}</td><td><span class="audit-result ${event.blocked ? 'blocked' : ''}">${esc(auditResult(event))}</span></td></tr>`).join('') : '<tr><td colspan="6" class="muted">No recorded events match these filters.</td></tr>';
+    byId('audit-rows').innerHTML = auditEvents.length ? auditEvents.map((event, index) => `<tr data-audit-event="${index}"><td>${esc(dateText(event.created_at))}</td><td>${esc(auditIsAgent(event) ? event.metadata?.agentId || 'Agent' : 'You')}</td><td>${esc(auditAction(event))}</td><td>${esc(auditItem(event))}</td><td>${esc(auditWhere(event))}</td><td><span class="audit-result ${event.blocked ? 'blocked' : ''}">${esc(auditResult(event))}</span></td></tr>`).join('') : '<tr><td colspan="6" class="muted">No recorded events match these filters.</td></tr>';
     document.querySelectorAll('[data-audit-event]').forEach(row => row.onclick = () => renderAuditDetail(Number(row.dataset.auditEvent)));
     renderAuditDetail(auditEvents.length ? 0 : -1);
   };
