@@ -16,6 +16,7 @@ interface ContainerCollection {
   account_display_name?: string;
   access_role?:          string;
   owner_user_id?:        string;
+  org_id?:               string;
   shared_folders?:       { folderPath: string; role: string }[];
 }
 
@@ -47,7 +48,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
     orgSharing:      false,
     publicLinks:     false,
     onlineOnly:      false,
-  } as const;
+  };
+  onlineOnlyReason = '';
 
   private files: FilesItem[] = [];
   private currentVersions = new Map<string, string>();
@@ -75,12 +77,17 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   async load():Promise<FilesSnapshot> {
-    const [collections, status] = await Promise.all([
+    const [collections, status, capabilities] = await Promise.all([
       ipcRenderer.invoke('sulla-files:collections') as Promise<ContainerCollection[]>,
       ipcRenderer.invoke('files-ui:status'),
+      ipcRenderer.invoke('files-ui:capabilities') as Promise<{ orgSharing:boolean; publicLinks:boolean; onlineOnly:boolean; onlineOnlyReason?:string }>,
     ]);
     const collection = collections.find(item => item.name === 'Files') ?? collections.find(item => item.kind === 'knowledge');
     if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/Files to initialize it.');
+    Object.assign(this.capabilities, capabilities, {
+      orgSharing: capabilities.orgSharing && ['manage', 'owner', 'edit'].includes(collection.access_role ?? ''),
+    });
+    this.onlineOnlyReason = capabilities.onlineOnlyReason ?? '';
     const [active, trash] = await Promise.all([
       ipcRenderer.invoke('sulla-files:list', { collectionId: collection.id }) as Promise<ContainerFile[]>,
       ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<ContainerFile[]>,
@@ -94,6 +101,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
         id:              collection.id,
         name:            collection.name,
         home:            collection.home,
+        orgId:           collection.org_id,
         retentionPolicy: collection.retention_policy ?? { trashDays: 90 },
         storageQuota:    collection.storage_quota === undefined ? undefined : Number(collection.storage_quota),
         keptBytes:       collection.kept_bytes === undefined ? undefined : Number(collection.kept_bytes),
@@ -143,4 +151,11 @@ export class DesktopFilesDataSource implements FilesDataSource {
   restoreVersion(fileId:string, versionId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:restore-version', { fileId, versionId }) }
   restoreTrash(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash-restore', { fileId }) }
   trashFile(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash', { fileId }) }
+  createPublicLink(fileId:string, options:{ mode?:'view'|'download'; keepAvailable?:boolean } = {}):Promise<{ url:string }> {
+    return ipcRenderer.invoke('files-ui:create-link', { fileId, mode: options.mode ?? 'view', keepAvailable: options.keepAvailable ?? false });
+  }
+  shareFolder(collectionId:string, folderPath:string, principalId:string, role:'view'|'edit'):Promise<void> {
+    return ipcRenderer.invoke('sulla-files:share', { collectionId, folderPath, principalType: 'user', principalId, role });
+  }
+  keepOnMac():Promise<void> { return Promise.resolve() }
 }

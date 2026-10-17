@@ -214,9 +214,12 @@ export class BackendGraphWebSocketService {
         // Run in flight — steer it without starting a new execution
         const attachments = data?.metadata?.attachments as any[] | undefined;
         const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+        const files = Array.isArray(data?.metadata?.fileReferences) ? data.metadata.fileReferences : [];
+        const fileContext = files.length ? `\n\n<attached_files>\n${ files.map((file:any) => `- ${ file.name ?? file.path } · file ${ file.fileId } · version ${ file.versionId } · path ${ file.path }`).join('\n') }\nWhen returning one of these files, include a sulla-file:// link with fileId, version, path, and name query parameters so Desktop renders a durable file card.\n</attached_files>` : '';
+        const contextualContent = `${ content }${ fileContext }`;
         const messageContent: any = hasAttachments
-          ? [{ type: 'text', text: content }, ...attachments.filter((a: any) => a?.type === 'image' && a?.source?.type === 'base64')]
-          : content;
+          ? [{ type: 'text', text: contextualContent }, ...attachments.filter((a: any) => a?.type === 'image' && a?.source?.type === 'base64')]
+          : contextualContent;
 
         injectSteer(existing.state, {
           id:        nextMessageId(),
@@ -412,12 +415,15 @@ export class BackendGraphWebSocketService {
       // Append user message — include image attachments as content blocks if present
       const attachments = metadata?.attachments as any[] | undefined;
       const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+      const files = Array.isArray(metadata?.fileReferences) ? metadata.fileReferences : [];
+      const fileContext = files.length ? `\n\n<attached_files>\n${ files.map((file:any) => `- ${ file.name ?? file.path } · file ${ file.fileId } · version ${ file.versionId } · path ${ file.path }`).join('\n') }\nWhen returning one of these files, include a sulla-file:// link with fileId, version, path, and name query parameters so Desktop renders a durable file card.\n</attached_files>` : '';
+      const contextualMessage = `${ message }${ fileContext }`;
       const messageContent: any = hasAttachments
         ? [
-          { type: 'text', text: message },
+          { type: 'text', text: contextualMessage },
           ...attachments.filter((a: any) => a?.type === 'image' && a?.source?.type === 'base64'),
         ]
-        : message;
+        : contextualMessage;
 
       state.messages.push({
         id:        nextMessageId(),

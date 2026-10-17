@@ -121,6 +121,19 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
   app.patch('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.setKeepAvailable({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, Boolean(request.body.keepAvailable), request.header('x-sulla-cloud-token') ?? '')) } catch (error) { next(error) } });
 
   app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try { const rows = await db.query("SELECT * FROM collections WHERE kind='knowledge' ORDER BY name"); const visible:any[] = []; for (const collection of rows.rows) { const access = await grants(request, collection.id); if (access.role || access.paths.length) visible.push({ ...collection, access_role: access.role ?? null, shared_folders: access.paths }); } response.json(visible) } catch (error) { next(error) } });
+  app.post('/v1/agent-files/query', async(request:RequestWithIdentity, response, next) => {
+    try {
+      const runIds = Array.isArray(request.body.runIds) ? [...new Set(request.body.runIds.filter((value:unknown):value is string => typeof value === 'string' && value.length > 0))].slice(0, 100) : [];
+      if (!runIds.length) return response.json([]);
+      const actor = identity(request);
+      const rows = await db.query(`SELECT f.*,c.kind AS collection_kind,c.agent_run_id
+        FROM files f JOIN collections c ON c.id=f.collection_id
+        WHERE c.owner_user_id=$1 AND (c.agent_run_id=ANY($2::text[]) OR (f.created_by_type='agent-run' AND f.created_by_id=ANY($2::text[])))
+          AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+        ORDER BY f.updated_at DESC`, [actor.userId, runIds]);
+      response.json(rows.rows.filter(row => !isProtectedPath(row.path)));
+    } catch (error) { next(error) }
+  });
   app.post('/v1/collections', async(request:RequestWithIdentity, response, next) => {
     try {
       const actor = identity(request); const collection = request.body.collection;

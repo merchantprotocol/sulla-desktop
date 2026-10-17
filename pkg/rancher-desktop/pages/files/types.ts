@@ -36,7 +36,7 @@ export interface FilesVersion {
 }
 
 export interface FilesSnapshot {
-  collection: { id: string; name: string; home: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
+  collection: { id: string; name: string; home: string; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
   files: FilesItem[];
   status: {
     state: FilesSyncState;
@@ -82,4 +82,8 @@ export interface FilesDataSource {
   restoreVersion(fileId:string, versionId:string): Promise<void>;
   restoreTrash(fileId:string): Promise<void>;
   trashFile(fileId:string): Promise<void>;
+  createPublicLink?(fileId:string, options?:{ mode?:'view'|'download'; keepAvailable?:boolean }):Promise<{ url:string }>;
+  shareFolder?(collectionId:string, folderPath:string, principalId:string, role:'view'|'edit'):Promise<void>;
+  keepOnMac?(fileId:string):Promise<void>;
+  onlineOnlyReason?:string;
 }

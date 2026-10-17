@@ -27,7 +27,7 @@ import type { ChatController } from '../controller/ChatController';
 import type {
   Artifact, ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, HtmlPayload,
 } from '../models/Artifact';
-import type { Attachment } from '../models/Attachment';
+import { kindFromName, type Attachment } from '../models/Attachment';
 import type {
   Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
   ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, SubAgentExchangeMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
@@ -301,7 +301,7 @@ export class PersonaAdapter {
   async send(text: string, attachments: Attachment[], inputSource?: 'voice'): Promise<void> {
     this.ci.query.value = text;
     const mapped = attachments
-      .map(a => a.file ? fileToAttachmentInput(a.file) : null)
+      .map(a => a.file ? fileToAttachmentInput(a.file) : a.fileRef?.mime.startsWith('image/') ? filesReferenceToAttachmentInput(a.fileRef) : null)
       .filter(Boolean) as Promise<{ mediaType: string; base64: string }>[];
 
     const resolved = await Promise.all(mapped);
@@ -311,6 +311,7 @@ export class PersonaAdapter {
       ...(this.controller.thread.value.agentId ? { agentId: this.controller.thread.value.agentId } : {}),
       ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),
       ...(this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
+      ...(attachments.some(a => a.fileRef) ? { fileReferences: attachments.filter(a => a.fileRef).map(a => ({ ...a.fileRef, name: a.name, attachmentId: a.id })) } : {}),
     };
     await this.ci.send(selection, resolved.length ? resolved : undefined);
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
@@ -325,11 +326,12 @@ export class PersonaAdapter {
    */
   async inject(text: string, attachments: Attachment[]): Promise<void> {
     const mapped = attachments
-      .map(a => a.file ? fileToAttachmentInput(a.file) : null)
+      .map(a => a.file ? fileToAttachmentInput(a.file) : a.fileRef?.mime.startsWith('image/') ? filesReferenceToAttachmentInput(a.fileRef) : null)
       .filter(Boolean) as Promise<{ mediaType: string; base64: string }>[];
 
     const resolved = await Promise.all(mapped);
-    await this.ci.injectMessage(text, resolved.length ? resolved : undefined);
+    const metadata = attachments.some(a => a.fileRef) ? { fileReferences: attachments.filter(a => a.fileRef).map(a => ({ ...a.fileRef, name: a.name, attachmentId: a.id })) } : undefined;
+    await this.ci.injectMessage(text, resolved.length ? resolved : undefined, metadata);
   }
 
   stop(): void { this.ci.stop() }
@@ -528,15 +530,16 @@ export class PersonaAdapter {
 
     // User turn
     if (b.role === 'user') {
+      const fileReferences = Array.isArray((b as any).fileReferences) ? (b as any).fileReferences : [];
       return {
         id,
         kind:        'user',
         createdAt,
         text:        b.content ?? '',
-        attachments: b.image
-          ? [{
+        attachments: b.image || fileReferences.length
+          ? [...(b.image ? [{
             id: newAttachmentId(), name: b.image.alt || 'image', size: '', kind: 'image',
-          }]
+          }] : []), ...fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item }))]
           : undefined,
       } satisfies UserMessage;
     }
@@ -1226,6 +1229,13 @@ async function fileToAttachmentInput(file: File): Promise<{ mediaType: string; b
   let binary = '';
   for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
   return { mediaType: file.type || 'application/octet-stream', base64: btoa(binary) };
+}
+
+async function filesReferenceToAttachmentInput(file:{ fileId:string; versionId:string; mime:string }):Promise<{ mediaType:string; base64:string }> {
+  const result = await ipcRenderer.invoke('files-ui:reference-content', { fileId: file.fileId, versionId: file.versionId }) as { mime:string; data:Uint8Array };
+  const bytes = new Uint8Array(result.data); let binary = '';
+  for (let index = 0; index < bytes.byteLength; index++) binary += String.fromCharCode(bytes[index]);
+  return { mediaType: result.mime || file.mime, base64: btoa(binary) };
 }
 
 function mapWorkflowNodeState(

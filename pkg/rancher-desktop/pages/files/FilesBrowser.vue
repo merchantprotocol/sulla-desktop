@@ -141,8 +141,9 @@
               v-if="snapshot?.collection.memberCount !== undefined"
               class="btn sm ghost"
               type="button"
-              :aria-disabled="!dataSource.capabilities.orgSharing"
-              title="Coming soon · folder sharing arrives with organization sharing"
+              :disabled="!dataSource.capabilities.orgSharing"
+              title="Share this folder with an organization member"
+              @click="shareCurrentFolder"
             >
               <span
                 class="bi"
@@ -152,8 +153,9 @@
             <button
               class="btn sm"
               type="button"
-              :aria-disabled="!dataSource.capabilities.publicLinks"
-              title="Coming soon · one share link through Sulla Cloud"
+              :disabled="!dataSource.capabilities.publicLinks || !selectedFileForShare"
+              title="Copy a public Sulla Cloud link for the selected file"
+              @click="shareSelectedFile"
             >
               <span
                 class="bi"
@@ -391,9 +393,9 @@
                       <button
                         class="btn ico"
                         type="button"
-                        :aria-disabled="!dataSource.capabilities.publicLinks"
-                        title="Share · coming soon"
-                        @click.stop
+                        :disabled="!dataSource.capabilities.publicLinks || entry.folder"
+                        title="Copy public link"
+                        @click.stop="shareEntry(entry)"
                         v-html="icons.share"
                       /><button
                         class="btn ico"
@@ -560,8 +562,9 @@
           <button
             class="btn"
             type="button"
-            disabled
-            title="Coming soon · public links use Sulla Cloud pass-through"
+            :disabled="!dataSource.capabilities.publicLinks"
+            title="Copy a public Sulla Cloud link"
+            @click="shareEntry(selected)"
           >
             Share
           </button>
@@ -569,7 +572,7 @@
             class="btn"
             type="button"
             :disabled="!dataSource.capabilities.onlineOnly"
-            title="Coming soon · online-only arrives in phase 3"
+            :title="dataSource.onlineOnlyReason || 'Make this file online only'"
           >
             Online only
           </button>
@@ -602,7 +605,7 @@
             </dd><dt>Version</dt><dd>v{{ selected.versionCount }}</dd>
           </dl>
           <section class="coming-card">
-            <strong>Share link</strong><p>One Jumpshare-style link through Sulla Cloud, with “Keep available when my computer is off.”</p><span>Coming soon</span>
+            <strong>Share link</strong><p>{{ dataSource.capabilities.publicLinks ? 'Create a Sulla Cloud link. Choose whether Cloud keeps an encrypted copy available while this Mac is off.' : 'Sign in to Sulla Cloud to create public links.' }}</p><button v-if="dataSource.capabilities.publicLinks" class="btn sm" type="button" @click="shareEntry(selected, true)">Copy link · keep available</button>
           </section>
         </div>
         <div
@@ -860,10 +863,28 @@ const groups = computed(() => [
   { label: 'Files', entries: visibleEntries.value.filter(entry => !entry.folder) },
 ].filter(group => group.entries.length));
 const allVisibleSelected = computed(() => Boolean(visibleEntries.value.length) && visibleEntries.value.every(entry => selectedKeys.value.has(entry.key)));
+const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !entry.folder && selectedKeys.value.has(entry.key)) ?? selected.value);
 
 async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); error.value = '' } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
 async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
 async function newFolder() { const name = window.prompt('Name this folder'); if (!name?.trim()) return; await props.dataSource.createFolder([currentPath.value, name.trim()].filter(Boolean).join('/')); await refresh(true) }
+async function shareEntry(entry:DisplayEntry | null, keepAvailable = false) {
+  if (!entry || entry.folder || !props.dataSource.createPublicLink) return;
+  busy.value = true;
+  try {
+    const link = await props.dataSource.createPublicLink(entry.id, { keepAvailable });
+    await navigator.clipboard.writeText(link.url);
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false }
+}
+async function shareSelectedFile() { await shareEntry(selectedFileForShare.value ?? null) }
+async function shareCurrentFolder() {
+  if (!snapshot.value || !props.dataSource.shareFolder || !currentPath.value) return;
+  const principalId = window.prompt('Sulla organization member ID');
+  if (!principalId?.trim()) return;
+  const role = window.confirm('Allow this member to edit files? Choose Cancel for view-only access.') ? 'edit' : 'view';
+  busy.value = true;
+  try { await props.dataSource.shareFolder(snapshot.value.collection.id, currentPath.value, principalId.trim(), role); await refresh(true) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false }
+}
 async function togglePause() { if (!snapshot.value) return; snapshot.value.status = await props.dataSource.setPaused(syncState.value !== 'paused') }
 function selectSection(next:Section) { section.value = next; currentPath.value = ''; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set() }
 function openRoot() { section.value = 'files'; currentPath.value = ''; selected.value = null; selectedKeys.value = new Set() }

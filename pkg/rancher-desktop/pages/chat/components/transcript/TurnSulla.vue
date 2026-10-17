@@ -31,6 +31,7 @@
       class="chat-body"
       v-html="rendered"
     />
+    <ChatFileCard v-for="file in fileReferences" :key="`${file.fileId}:${file.versionId}`" :reference="file" />
     <TurnActions
       role="sulla"
       :pinned="msg.pinned"
@@ -54,6 +55,7 @@ import { computed, ref } from 'vue';
 import IsolatedHtml from './IsolatedHtml.vue';
 import TurnActions from './TurnActions.vue';
 import ChatContextMenu from '../../ChatContextMenu.vue';
+import ChatFileCard from '../files/ChatFileCard.vue';
 import { useChatController } from '../../controller/useChatController';
 import { renderMarkdown } from '../../messages/markdown';
 
@@ -84,6 +86,15 @@ const timeLabel = computed(() => {
 const isHtmlDocument = computed(() => HTML_DOC_RE.test(props.msg.text || ''));
 
 const rendered = computed(() => renderMarkdown(props.msg.text));
+const fileReferences = computed(() => {
+  const refs = [...(props.msg.fileReferences ?? [])].map(item => ({ ...item.fileRef!, name: item.name })).filter(item => item.fileId);
+  const expression = /sulla-file:\/\/([a-zA-Z0-9_-]+)(?:\?([^\s)]+))?/g;
+  for (const match of props.msg.text.matchAll(expression)) {
+    const params = new URLSearchParams(match[2] ?? ''); const path = params.get('path') ?? params.get('name') ?? match[1];
+    refs.push({ fileId: match[1], versionId: params.get('version') ?? '', path, name: params.get('name') ?? path.split('/').pop() ?? path });
+  }
+  return refs.filter((item, index) => refs.findIndex(other => other.fileId === item.fileId && other.versionId === item.versionId) === index);
+});
 
 function copy(): void {
   navigator.clipboard?.writeText(props.msg.text).catch(() => undefined);

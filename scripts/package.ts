@@ -6,9 +6,12 @@
 'use strict';
 
 import fs from 'fs';
+import os from 'os';
 import * as path from 'path';
 
 import { flipFuses, FuseV1Options, FuseVersion } from '@electron/fuses';
+import { findIdentity } from 'app-builder-lib/out/codeSign/macCodeSign';
+import { MacPackager } from 'app-builder-lib/out/macPackager';
 import { executeAppBuilder, log } from 'builder-util';
 import {
   AfterPackContext, Arch, build, CliOptions, Configuration, LinuxTargetSpecificOptions,
@@ -49,7 +52,7 @@ class Builder {
     const { stdout } = await spawnFile('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], { stdio: 'pipe' });
     const identities = stdout.split('\n').filter(line => line.includes('"Developer ID Application:'));
     const identityNames = [...new Set(identities
-      .map(line => line.match(/"([^"]+)"\s*$/)?.[1])
+      .map(line => /"([^"]+)"\s*$/.exec(line)?.[1])
       .filter((name): name is string => Boolean(name))
       .map(bareName))];
 
@@ -198,6 +201,41 @@ class Builder {
     // runs before codesign, not inside afterPack.
     // await this.flipFuses(context);
     await this.writeLinuxDesktopFile(context);
+    await this.buildFinderSyncExtension(context);
+    await this.signFinderSyncExtension(context);
+  }
+
+  protected async buildFinderSyncExtension(context:AfterPackContext):Promise<void> {
+    if (context.electronPlatformName !== 'darwin') return;
+    const output = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sulla-finder-sync-'));
+    try {
+      const arch = context.arch === Arch.x64 ? 'x86_64' : 'arm64';
+      await spawnFile('/usr/bin/xcodebuild', [
+        '-project', path.join(process.cwd(), 'native/SullaFinderSync/SullaFinderSync.xcodeproj'),
+        '-target', 'SullaFinderSync', '-configuration', 'Release', '-sdk', 'macosx',
+        `ARCHS=${ arch }`, 'ONLY_ACTIVE_ARCH=YES', 'CODE_SIGNING_ALLOWED=NO',
+        `CONFIGURATION_BUILD_DIR=${ output }`,
+      ], { stdio: 'inherit' });
+      const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
+      const plugins = path.join(appPath, 'Contents', 'PlugIns');
+      await fs.promises.mkdir(plugins, { recursive: true });
+      await fs.promises.cp(path.join(output, 'SullaFinderSync.appex'), path.join(plugins, 'SullaFinderSync.appex'), { recursive: true });
+    } finally {
+      await fs.promises.rm(output, { recursive: true, force: true });
+    }
+  }
+
+  protected async signFinderSyncExtension(context:AfterPackContext):Promise<void> {
+    if (!(context.packager instanceof MacPackager)) return;
+    const { keychainFile } = await context.packager.codeSigningInfo.value;
+    const identity = await findIdentity('Developer ID Application', context.packager.platformSpecificBuildOptions.identity, keychainFile);
+    if (!identity) throw new Error('Finder Sync packaging could not resolve the Developer ID signing identity.');
+    const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
+    const extensionPath = path.join(appPath, 'Contents', 'PlugIns', 'SullaFinderSync.appex');
+    const args = ['--force', '--sign', identity.hash || identity.name, '--timestamp', '--options', 'runtime'];
+    if (keychainFile) args.push('--keychain', keychainFile);
+    args.push('--entitlements', path.join(process.cwd(), 'native/SullaFinderSync/SullaFinderSync/SullaFinderSync.entitlements'), extensionPath);
+    await spawnFile('/usr/bin/codesign', args, { stdio: 'inherit' });
   }
 
   async package(): Promise<CliOptions> {

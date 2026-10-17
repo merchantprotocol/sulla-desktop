@@ -28,6 +28,8 @@ export interface CreateShareInput {
 export interface LinkService {
   create(input:CreateShareInput):Promise<ShareLink>;
   list():Promise<ShareLink[]>;
+  revoke(id:string):Promise<void>;
+  setKeepAvailable(id:string, enabled:boolean):Promise<ShareLink>;
 }
 
 export class SharingUnavailableError extends Error {}
@@ -89,6 +91,29 @@ export class SullaFilesLinkService implements LinkService {
     const body = await response.json(); const values = Array.isArray(body) ? body : body.links ?? body.shares ?? [];
 
     return values.map(normalize);
+  }
+
+  async revoke(id:string):Promise<void> {
+    const cloudToken = await getCurrentAccessToken();
+    if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before revoking a public link');
+    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }`], {
+      method:  'DELETE',
+      headers: { 'x-sulla-cloud-token': cloudToken },
+    });
+    if (!response.ok) throw new Error(`Revoke share failed (${ response.status })`);
+  }
+
+  async setKeepAvailable(id:string, enabled:boolean):Promise<ShareLink> {
+    const cloudToken = await getCurrentAccessToken();
+    if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before changing link availability');
+    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }`], {
+      method:  'PATCH',
+      headers: { 'content-type': 'application/json', 'x-sulla-cloud-token': cloudToken },
+      body:    JSON.stringify({ keepAvailable: enabled }),
+    });
+    if (!response.ok) throw new Error(`Update share failed (${ response.status })`);
+
+    return normalize(await response.json());
   }
 }
 

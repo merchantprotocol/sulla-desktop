@@ -224,7 +224,7 @@ export class ChatController {
       createdAt:   Date.now(),
       turnId:      newTurnId(),
       text:        trimmed,
-      attachments: attachments.map(a => ({ id: a.id, name: a.name, size: a.size, kind: a.kind })),
+      attachments: attachments.map(a => ({ id: a.id, name: a.name, size: a.size, kind: a.kind, fileRef: a.fileRef })),
     };
     this.appendMessage(userMsg);
     this.staged.value = [];  // clear staging after send
