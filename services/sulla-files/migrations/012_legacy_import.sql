@@ -42,6 +42,12 @@ CREATE TABLE files_legacy_version_map (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE files_legacy_audit_map (
+  source_audit_id BIGINT PRIMARY KEY REFERENCES audit_log(id),
+  shadow_audit_id BIGINT UNIQUE NOT NULL REFERENCES audit_log(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX files_legacy_file_map_collection ON files_legacy_file_map(source_collection_id);
 
 INSERT INTO files_protected_files(file_id)

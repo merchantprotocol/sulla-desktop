@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -41,12 +41,27 @@ test('corrupt, missing, wrong-key, and linked source chunks fail closed', async(
   const item = await fixture([Buffer.from('authenticated synthetic content')]); const sourcePath = join(item.sourceRoot, collectionId, item.ids[0].slice(0, 2), item.ids[0]);
   try {
     const store = new Store(item.targetRoot); const common = { collectionId, chunkIds: item.ids, totalSize: item.parts[0].length, sourceRoot: item.sourceRoot, shadowKeys: item.shadowKeys, store, shadowCollectionId: shadowId };
+    const linkedRoot = join(item.root, 'linked-root'); await symlink(item.sourceRoot, linkedRoot, 'dir');
+    await assert.rejects(readLegacyChunk(linkedRoot, collectionId, item.ids[0]), /ELOOP|linked|symbolic/i);
     await assert.rejects(convertLegacyManifest({ ...common, sourceKeys: { data: randomBytes(32), dedup: item.sourceKeys.dedup } }), /decrypt|cipher|import/i);
     const original = await readLegacyChunk(item.sourceRoot, collectionId, item.ids[0]);
     await writeFile(sourcePath, Buffer.concat([original.subarray(0, original.length - 1), Buffer.from([original.at(-1)! ^ 1])]));
     await assert.rejects(convertLegacyManifest({ ...common, sourceKeys: item.sourceKeys }));
-    await rm(sourcePath); await assert.rejects(convertLegacyManifest({ ...common, sourceKeys: item.sourceKeys }), /ENOENT/);
+    await rm(sourcePath); await assert.rejects(convertLegacyManifest({ ...common, sourceKeys: item.sourceKeys }), /does not exist|ENOENT/);
     const outside = join(item.root, 'outside'); await writeFile(outside, original); await symlink(outside, sourcePath);
     await assert.rejects(convertLegacyManifest({ ...common, sourceKeys: item.sourceKeys }), /ELOOP|linked|symbolic/i);
+  } finally { item.sourceKeys.data.fill(0); item.sourceKeys.dedup.fill(0); item.shadowKeys.data.fill(0); item.shadowKeys.dedup.fill(0); await rm(item.root, { recursive: true }) }
+});
+
+test('source casing is preserved and ambiguous case-folded directories fail closed', async() => {
+  const item = await fixture([Buffer.from('case-sensitive source')]);
+  const upper = collectionId.toUpperCase();
+  try {
+    await rename(join(item.sourceRoot, collectionId), join(item.sourceRoot, upper));
+    assert.ok((await readLegacyChunk(item.sourceRoot, collectionId, item.ids[0])).length > 0);
+    const duplicate = join(item.sourceRoot, collectionId, item.ids[0].slice(0, 2));
+    await mkdir(duplicate, { recursive: true });
+    await writeFile(join(duplicate, item.ids[0]), await encryptChunk(item.parts[0], item.sourceKeys.data, item.ids[0]));
+    await assert.rejects(readLegacyChunk(item.sourceRoot, collectionId, item.ids[0]), /ambiguous collection identities/);
   } finally { item.sourceKeys.data.fill(0); item.sourceKeys.dedup.fill(0); item.shadowKeys.data.fill(0); item.shadowKeys.dedup.fill(0); await rm(item.root, { recursive: true }) }
 });
