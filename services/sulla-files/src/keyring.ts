@@ -7,6 +7,7 @@ import type pg from 'pg';
 const CONTEXT = 'sulla:files:master-check:v1';
 const CHECK = Buffer.from('sulla-files-keychain-master-v1');
 export interface CollectionKeys { data: Uint8Array; dedup: Uint8Array }
+type Queryable = Pick<pg.Pool, 'query'>;
 
 /** Plaintext exists only in this process. Persisted envelopes require the Desktop keychain key. */
 export class FilesKeyring {
@@ -74,12 +75,12 @@ export class FilesKeyring {
     } catch (error) { dataKey.fill(0); throw error }
   }
 
-  async keys(id:string):Promise<CollectionKeys> {
+  async keys(id:string, queryable:Queryable = this.db):Promise<CollectionKeys> {
     if (!this.master) throw Object.assign(new Error('Files is locked'), { status: 503 });
     const cached = this.cache.get(id); if (cached) return cached;
     const epoch = this.epoch; const master = Buffer.from(this.master);
     try {
-      const row = (await this.db.query('SELECT data_key,dedup_key FROM files_collection_keys WHERE collection_id=$1', [id])).rows[0];
+      const row = (await queryable.query('SELECT data_key,dedup_key FROM files_collection_keys WHERE collection_id=$1', [id])).rows[0];
       if (!row) throw new Error('Collection key unavailable; secure key exchange is required');
       const keys = await this.unwrap(id, row.data_key, row.dedup_key, master);
       if (epoch !== this.epoch) { keys.data.fill(0); keys.dedup.fill(0); throw new Error('Files was locked during key access') }
@@ -120,7 +121,7 @@ export class FilesKeyring {
 export class LegacyServerKeyring extends FilesKeyring {
   constructor(db:pg.Pool, private readonly signingKey:string | Buffer) { super(db) }
   override get unlocked():boolean { return true }
-  override async keys(id:string):Promise<CollectionKeys> {
+  override async keys(id:string, _queryable?:Queryable):Promise<CollectionKeys> {
     return {
       data: createHmac('sha256', this.signingKey).update(`sulla:files:data-key:v1:${ id }`).digest(),
       dedup: createHmac('sha256', this.signingKey).update(`sulla:files:dedup-key:v1:${ id }`).digest(),
