@@ -158,6 +158,14 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { field: 'client_secret', target: 'header', name: 'authorization', scheme: 'BasicClient' },
     ],
   },
+  'oauth.register': {
+    integrations: ['robinhood'],
+    hosts: ['agent.robinhood.com'],
+    methods: ['POST'],
+    credentialOptional: true,
+    injections: [],
+    pathPattern: /^\/oauth\/trading\/register$/,
+  },
   'oauth.adopt': {
     requireItemSites: true,
     methods: ['POST'],

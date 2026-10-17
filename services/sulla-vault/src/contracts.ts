@@ -267,6 +267,7 @@ export interface BrokerIntegrationMetadataResponse {
     accountId:  string;
     label:      string;
     connected:  boolean;
+    credentialRequired: boolean;
     active:     boolean;
     revision:   number;
     properties: Record<string, string>;

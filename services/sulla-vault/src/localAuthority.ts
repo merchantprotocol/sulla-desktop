@@ -1076,10 +1076,12 @@ export class LocalVaultAuthority {
       const explicitStatus = properties.connection_status?.toLowerCase();
       const hasCredential = Object.entries(sourceProperties)
         .some(([name, value]) => CREDENTIAL_PROPERTY_PATTERN.test(name) && typeof value === 'string' && value.length > 0);
+      const credentialRequired = Object.keys(sourceProperties).some(name => CREDENTIAL_PROPERTY_PATTERN.test(name));
       return {
         accountId,
         label: properties.account_label || accountId,
         connected: explicitStatus ? ['connected', 'true'].includes(explicitStatus) : hasCredential,
+        credentialRequired,
         active: accountId === activeAccountId,
         revision: item.revision,
         properties,
@@ -1292,7 +1294,7 @@ export class LocalVaultAuthority {
     if (input.responseType === 'stream' || input.responseType === 'binary-stream') {
       throw new LocalVaultError('invalid_operation', 400, 'Use execute-stream for streaming operations');
     }
-    if (['oauth.exchange', 'oauth.adopt', 'oauth.refresh', 'oauth.revoke'].includes(input.operation)) {
+    if (['oauth.exchange', 'oauth.adopt', 'oauth.refresh', 'oauth.revoke', 'oauth.register'].includes(input.operation)) {
       return this.executeOAuthMutation(input, serviceId, token);
     }
     const prepared = await this.prepareBrokerRequest(input, serviceId, token);
@@ -1438,6 +1440,11 @@ export class LocalVaultAuthority {
         await this.clearOAuthTokens(prepared);
         await this.audit(input, prepared.item!, false, null);
         return { ...result, body: { revoked: true } };
+      }
+      if (input.operation === 'oauth.register') {
+        const clientId = await this.storeOAuthRegistration(prepared, result.body);
+        await this.audit(input, prepared.item!, false, null);
+        return { ...result, body: { updated: true, operation: 'oauth.register', client_id: clientId } };
       }
       await this.storeOAuthTokens(prepared, result.body);
       await this.audit(input, prepared.item!, false, null);
@@ -1602,6 +1609,7 @@ export class LocalVaultAuthority {
         throw new LocalVaultError('invalid_operation', 400, 'Transcription request is invalid');
       }
     }
+    if (input.operation === 'oauth.register') headers['content-type'] = 'application/json';
     this.requireGeneration(generation);
     return {
       target,
@@ -1917,6 +1925,31 @@ export class LocalVaultAuthority {
     if (typeof response.token_type === 'string') integration.properties.token_type = response.token_type;
     if (typeof response.id_token === 'string' && response.id_token) integration.properties.id_token = response.id_token;
     await this.persistOAuthItem(prepared, keys);
+  }
+
+  private async storeOAuthRegistration(prepared: PreparedBrokerRequest, body: unknown): Promise<string> {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth registration response is invalid');
+    }
+    const response = body as Record<string, unknown>;
+    if (typeof response.client_id !== 'string' || response.client_id.length < 1 || response.client_id.length > 4096) {
+      throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth registration response did not contain a valid client identity');
+    }
+    const keys = this.requireKeys();
+    this.requireGeneration(prepared.generation);
+    if (!prepared.item || !prepared.plaintext?.integration) {
+      throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
+    }
+    prepared.plaintext.integration.properties.oauth_client_id = response.client_id;
+    for (const field of ['client_secret', 'registration_access_token'] as const) {
+      const value = response[field];
+      if (value !== undefined && (typeof value !== 'string' || !value || Buffer.byteLength(value) > MAX_CREDENTIAL_BYTES)) {
+        throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth registration response contained invalid secret material');
+      }
+      if (typeof value === 'string') prepared.plaintext.integration.properties[field] = value;
+    }
+    await this.persistOAuthItem(prepared, keys);
+    return response.client_id;
   }
 
   private async clearOAuthTokens(prepared: PreparedBrokerRequest): Promise<void> {

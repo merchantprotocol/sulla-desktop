@@ -10,6 +10,7 @@ import { migrate } from './db.js';
 import { createApp } from './app.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
 import { LocalVaultAuthority, LocalVaultError, localAuthorityTestHooks } from './localAuthority.js';
+import { validateOAuthRegistrationRequest } from './oauthPolicy.js';
 import { validateOperation } from './operationPolicy.js';
 import {
   bootstrapSessionKeyInput,
@@ -114,6 +115,27 @@ test('enterprise gateway policy binds methods, paths, and credential injection',
   assert.throws(() => validateOperation({ ...request, method: 'DELETE' }, 'gateway.example.com', policy), /method_denied/);
   assert.throws(() => validateOperation({ ...request, url: 'https://gateway.example.com/api/desktop/sessions/id' }, 'gateway.example.com', policy), /method_denied/);
   assert.doesNotThrow(() => validateOperation({ ...request, method: 'DELETE', url: 'https://gateway.example.com/api/desktop/sessions/id' }, 'gateway.example.com', policy));
+});
+
+test('Robinhood registration accepts only bounded loopback public-client metadata', () => {
+  const body = {
+    client_name: 'Sulla Desktop - Robinhood',
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+    redirect_uris: ['http://127.0.0.1:49152/oauth/callback'],
+  };
+  assert.doesNotThrow(() => validateOAuthRegistrationRequest(body));
+  assert.throws(() => validateOAuthRegistrationRequest({ ...body, redirect_uris: ['https://attacker.example/callback'] }), /invalid_registration_metadata/);
+  assert.throws(() => validateOAuthRegistrationRequest({ ...body, client_secret: 'caller-controlled' }), /invalid_registration_metadata/);
+  const request: any = {
+    claims: { sub: 'user', agent_id: 'desktop-oauth', pod_id: 'desktop-main' },
+    operation: 'oauth.register', ref: { integrationId: 'robinhood', accountId: 'default' },
+    url: 'https://agent.robinhood.com/oauth/trading/register', method: 'POST', body,
+    headers: {}, injections: [], responseType: 'json',
+  };
+  assert.doesNotThrow(() => validateOperation(request, 'agent.robinhood.com', DEFAULT_AGENT_POLICY));
+  assert.throws(() => validateOperation({ ...request, url: 'https://agent.robinhood.com/oauth/register' }, 'agent.robinhood.com', DEFAULT_AGENT_POLICY), /path_denied/);
 });
 
 test('bodyless MCP stream statuses do not require content type', () => {
@@ -295,6 +317,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     assert.equal(metadata.accounts[0].accountId, 'default');
     assert.equal(metadata.accounts[0].label, 'Synthetic account');
     assert.equal(metadata.accounts[0].connected, true);
+    assert.equal(metadata.accounts[0].credentialRequired, true);
     assert.equal(metadata.accounts[0].active, true);
     assert.ok(metadata.accounts[0].revision >= 1);
     assert.equal(metadata.accounts[0].properties.expires_at, refreshed.item.integration.properties.expires_at);
@@ -304,6 +327,42 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     assert.equal(metadata.accounts[0].properties.api_key, undefined);
     assert.equal(metadata.accounts[0].properties.client_secret, undefined);
     assert.equal((await authority.setActiveIntegrationAccount('sulla-tools', TOKEN.broker, 'openai', 'default')).activeAccountId, 'default');
+
+    const robinhoodItem = structuredClone(oauthItem.item);
+    robinhoodItem.name = 'Synthetic Robinhood';
+    robinhoodItem.integration.integrationId = 'robinhood';
+    robinhoodItem.integration.accountId = 'default';
+    robinhoodItem.integration.properties = { provider_id: 'robinhood', account_label: 'Synthetic Robinhood' };
+    const robinhoodCreated = await authority.saveHumanItem(unlocked.sessionId, unlocked.csrf, { item: robinhoodItem });
+    (authority as any).send = async(_url: URL, _method: string, headers: Record<string, string>, body: unknown) => {
+      assert.equal(headers['content-type'], 'application/json');
+      validateOAuthRegistrationRequest(body);
+      return {
+        status: 200, headers: {},
+        body: { client_id: 'synthetic-public-client', client_secret: 'synthetic-registration-secret', registration_access_token: 'synthetic-registration-token' },
+      };
+    };
+    const registration = await authority.execute({
+      ...request,
+      claims: { ...request.claims, credential_scope: { integration_id: 'robinhood', account_id: 'default' } },
+      operation: 'oauth.register', ref: { integrationId: 'robinhood', accountId: 'default' },
+      url: 'https://agent.robinhood.com/oauth/trading/register', method: 'POST',
+      body: {
+        client_name: 'Sulla Desktop - Robinhood', grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'], token_endpoint_auth_method: 'none',
+        redirect_uris: ['http://127.0.0.1:49152/oauth/callback'],
+      },
+      headers: {}, injections: [], responseType: 'json',
+    }, 'sulla-tools', TOKEN.broker);
+    assert.deepEqual(registration.body, { updated: true, operation: 'oauth.register', client_id: 'synthetic-public-client' });
+    const registered: any = await authority.revealHumanItem(unlocked.sessionId, unlocked.csrf, robinhoodCreated.id);
+    assert.equal(registered.item.integration.properties.oauth_client_id, 'synthetic-public-client');
+    assert.equal(registered.item.integration.properties.client_secret, 'synthetic-registration-secret');
+    assert.equal(registered.item.integration.properties.registration_access_token, 'synthetic-registration-token');
+    const robinhoodMetadata = await authority.integrationMetadata('sulla-tools', TOKEN.broker, 'robinhood');
+    assert.equal(robinhoodMetadata.accounts[0].properties.oauth_client_id, 'synthetic-public-client');
+    assert.equal(robinhoodMetadata.accounts[0].properties.client_secret, undefined);
+    assert.equal(robinhoodMetadata.accounts[0].properties.registration_access_token, undefined);
 
     (authority as any).send = async(_url: URL, _method: string, _headers: Record<string, string>, body: unknown) => {
       assert.ok(body instanceof URLSearchParams);
