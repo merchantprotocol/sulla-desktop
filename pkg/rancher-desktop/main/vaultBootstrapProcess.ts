@@ -27,7 +27,7 @@ import {
   type CacheUpdateFetchResponse,
 } from '../../../services/sulla-vault/src/contracts';
 import { verifyVaultCertificate } from './vaultTlsVerifier';
-import { openVaultCacheEnvelope } from './vaultCacheEnvelope';
+import { openVaultCacheEnvelope, sealLegacyVaultKey } from './vaultCacheEnvelope';
 
 const API = 'https://127.0.0.1:30135';
 const CALLER_ID = 'sulla-desktop-bootstrap';
@@ -153,7 +153,6 @@ async function updateMasterCache(): Promise<void> {
   let sessionKey: Buffer | undefined;
   let masterKey: Buffer | undefined;
   let legacyVmk: Buffer | undefined;
-  let sealedLegacy: Buffer | undefined;
   try {
     const clientNonce = randomBytes(32).toString('base64url');
     const challenge = await jsonRequest<CacheUpdateChallengeResponse>('/v1/desktop/cache/challenge', {
@@ -174,13 +173,8 @@ async function updateMasterCache(): Promise<void> {
     if (legacyPath && fs.existsSync(legacyPath)) {
       legacyVmk = unwrapKey(legacyPath);
       if (legacyVmk.byteLength !== 32) throw new Error('Legacy vault key has an invalid length');
-      const legacyNonce = randomBytes(12);
-      const legacyCipher = createCipheriv('aes-256-gcm', sessionKey, legacyNonce);
-      const legacyCiphertext = Buffer.concat([legacyCipher.update(legacyVmk), legacyCipher.final()]);
-      sealedLegacy = Buffer.concat([legacyNonce, legacyCipher.getAuthTag(), legacyCiphertext]);
-      legacyCiphertext.fill(0);
     }
-    const sealedLegacyVmk = sealedLegacy?.toString('base64url');
+    const sealedLegacyVmk = legacyVmk ? sealLegacyVaultKey(legacyVmk, sessionKey) : undefined;
     const sealedLegacySha256 = sealedLegacyVmk
       ? createHash('sha256').update(sealedLegacyVmk).digest('base64url')
       : '-';
@@ -204,7 +198,6 @@ async function updateMasterCache(): Promise<void> {
     sessionKey?.fill(0);
     masterKey?.fill(0);
     legacyVmk?.fill(0);
-    sealedLegacy?.fill(0);
   }
 }
 
