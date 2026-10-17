@@ -432,14 +432,12 @@ function onAgentCommand(_event: any, args: any) {
   case 'open-tab': {
     // `packages` is the user-facing name of the `marketplace` view.
     const mode = args.mode === 'packages' ? 'marketplace' : args.mode;
-    const tab = createTab('about:blank', { mode: mode || 'welcome' });
+    const filesNavigation = mode === 'files' && (args.fileId || args.path || args.section)
+      ? { fileId: args.fileId, path: args.path, section: args.section }
+      : undefined;
+    const tab = createTab('about:blank', { mode: mode || 'welcome', filesNavigation });
 
     router.push(`/Browser/${ tab.id }`);
-    if (mode === 'files' && (args.fileId || args.path || args.section)) {
-      setTimeout(() => window.dispatchEvent(new CustomEvent('sulla:files-navigate', {
-        detail: { tabId: tab.id, fileId: args.fileId, path: args.path, section: args.section },
-      })), 80);
-    }
     break;
   }
   case 'open-url': {

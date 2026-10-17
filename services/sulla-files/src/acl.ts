@@ -22,11 +22,12 @@ export async function resolveCollectionGrants(db:pg.Pool | pg.PoolClient, identi
 
 export async function searchableScopes(db:pg.Pool, identityDb:pg.Pool | undefined, actor:FilesIdentity):Promise<CollectionSearchScope[]> {
   const collections = await db.query("SELECT id FROM collections WHERE kind='knowledge'"); const scopes:CollectionSearchScope[] = [];
+  const requiredRole = actor.agentId || actor.jobId ? 'use-by-agents' : 'view';
   for (const collection of collections.rows) {
     const access = await resolveCollectionGrants(db, identityDb, actor, collection.id);
-    if (access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL.view) scopes.push({ collectionId: collection.id, paths: [] });
+    if (access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[requiredRole]) scopes.push({ collectionId: collection.id, paths: [] });
     else {
-      const paths = access.paths.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL.view).map(grant => grant.folderPath);
+      const paths = access.paths.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[requiredRole]).map(grant => grant.folderPath);
       if (paths.length) scopes.push({ collectionId: collection.id, paths });
     }
   }

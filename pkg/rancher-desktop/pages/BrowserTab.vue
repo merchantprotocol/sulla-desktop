@@ -252,7 +252,11 @@
 
     <template v-else-if="tabMode === 'files'">
       <div class="flex-1 min-h-0 overflow-hidden">
-        <FilesPage :tab-id="props.tabId" />
+        <FilesPage
+          :tab-id="props.tabId"
+          :navigation="getTab(props.tabId)?.filesNavigation"
+          @navigation-consumed="updateTab(props.tabId, { filesNavigation: undefined })"
+        />
       </div>
     </template>
 

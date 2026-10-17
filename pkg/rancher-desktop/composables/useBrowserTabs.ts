@@ -4,6 +4,12 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'agents' | 'projects' | 'files' | 'decide' | 'usage';
 
+export interface FilesNavigationPayload {
+  fileId?:  string;
+  path?:    string;
+  section?: string;
+}
+
 export interface BrowserTab {
   id:       string;
   url:      string;
@@ -14,6 +20,8 @@ export interface BrowserTab {
   assetId?: string;
   /** Raw HTML content for document-mode tabs (rendered in Shadow DOM) */
   content?: string;
+  /** Consumed by a Files tab after it mounts, so navigation is never timer-dependent. */
+  filesNavigation?: FilesNavigationPayload;
   /**
    * Last time something touched this tab (create, updateTab, URL/title/content
    * change from backend). Used for idle-close of agent tabs. Only populated
@@ -436,7 +444,7 @@ export function useBrowserTabs() {
     usage:        'Usage',
   };
 
-  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat'] }): BrowserTab {
+  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
       id:             generateId(),
@@ -447,6 +455,7 @@ export function useBrowserTabs() {
       mode,
       lastAccessedAt: Date.now(),
       ...(opts?.agentChat ? { agentChat: opts.agentChat } : {}),
+      ...(opts?.filesNavigation ? { filesNavigation: opts.filesNavigation } : {}),
     };
 
     tabs.push(tab);

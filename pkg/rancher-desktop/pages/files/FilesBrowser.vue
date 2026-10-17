@@ -709,9 +709,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
+
 import type { FilesDataSource, FilesItem, FilesSnapshot, FilesVersion } from './types';
 
-const props = defineProps<{ dataSource: FilesDataSource; tabId:string }>();
+const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
+const emit = defineEmits<{ 'navigation-consumed': [] }>();
 type Section = 'files' | 'shared' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
 interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
@@ -945,10 +948,7 @@ function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set()
 function toggleStar(id:string) { const next = new Set(starred.value); next.has(id) ? next.delete(id) : next.add(id); starred.value = next; localStorage.setItem('sulla:files-starred', JSON.stringify([...next])) }
 function trackUpload(progress:{ current: number; name: string; percent: number; done: boolean }) { const log = progress.current <= 1 && !uploadLog.value.some(item => item.name === progress.name) ? [] : uploadLog.value.map(item => item.name === progress.name ? item : { ...item, done: true, percent: 100 }); const rest = log.filter(item => item.name !== progress.name); uploadLog.value = [...rest, { name: progress.name, percent: progress.percent, done: progress.done || progress.percent >= 100 }] }
 function onKeydown(event:KeyboardEvent) { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchInput.value?.focus() } }
-async function onNavigate(event:Event) {
-  const detail = (event as CustomEvent<{ tabId:string; fileId?:string; path?:string; section?:string }>).detail;
-  if (detail?.tabId !== props.tabId) return;
-  if (!snapshot.value) await refresh();
+async function navigateTo(detail:FilesNavigationPayload) {
   const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
   if (!file && detail.path) {
     openPath(detail.path);
@@ -966,9 +966,12 @@ watch(view, value => localStorage.setItem('sulla:files-view', value));
 let searchTimer:ReturnType<typeof setTimeout> | undefined;
 watch(query, (value) => { if (searchTimer) clearTimeout(searchTimer); if (!value.trim() || section.value === 'trash') { searchResults.value = null; return } searchTimer = setTimeout(async() => { try { searchResults.value = await props.dataSource.search(value.trim()) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } }, 220) });
 watch(detailTab, value => { if (value === 'versions' && selected.value && !versions.value.length) loadVersions(selected.value); });
+let mounted = false;
+async function consumeNavigation() { if (!mounted || !props.navigation || !snapshot.value) return; await navigateTo(props.navigation); emit('navigation-consumed') }
+watch(() => props.navigation, () => consumeNavigation());
 let stopUploadProgress:(() => void) | undefined;
-onMounted(() => { refresh(); window.addEventListener('keydown', onKeydown); window.addEventListener('sulla:files-navigate', onNavigate); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); refreshTimer = setInterval(() => refresh(true), 12_000) });
-onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); window.removeEventListener('sulla:files-navigate', onNavigate); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); });
+onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); await consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); await consumeNavigation() }, 12_000) });
+onBeforeUnmount(() => { mounted = false; window.removeEventListener('keydown', onKeydown); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); });
 </script>
 
 <style scoped>

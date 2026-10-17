@@ -68,16 +68,25 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
   async function grants(request:RequestWithIdentity, collectionId:string):Promise<{ role?: string; paths: { folderPath: string; role: string }[]; collection: any }> {
     return resolveCollectionGrants(db, identityDb, identity(request), collectionId);
   }
+  function requireScratchRun(actor:FilesIdentity, collection:any):void {
+    if (collection.kind !== 'scratch' || (!actor.agentId && !actor.jobId)) return;
+    if (!actor.jobId || collection.agent_run_id !== actor.jobId) throw new HttpError(403, 'scratch collection is scoped to its owner and agent run');
+    if (collection.thread_id && actor.threadId && collection.thread_id !== actor.threadId) throw new HttpError(403, 'scratch collection belongs to another thread');
+  }
   async function requireCollection(request:RequestWithIdentity, collectionId:string, right:Right, allowShared = false) {
-    if (right === 'view' && (identity(request).agentId || identity(request).jobId)) right = 'use-by-agents';
+    const actor = identity(request);
+    if (right === 'view' && (actor.agentId || actor.jobId)) right = 'use-by-agents';
     const access = await grants(request, collectionId);
+    requireScratchRun(actor, access.collection);
     if ((access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[right]) || (allowShared && access.paths.some(path => ROLE_LEVEL[path.role] >= ROLE_LEVEL[right]))) return access;
     throw new HttpError(403, 'access denied');
   }
   async function requirePath(request:RequestWithIdentity, collectionId:string, path:string, right:Right) {
     if (isProtectedPath(path)) throw protectedPathError();
-    if (right === 'view' && (identity(request).agentId || identity(request).jobId)) right = 'use-by-agents';
+    const actor = identity(request);
+    if (right === 'view' && (actor.agentId || actor.jobId)) right = 'use-by-agents';
     const access = await grants(request, collectionId);
+    requireScratchRun(actor, access.collection);
     if (access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[right]) return access;
     if (access.paths.some(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[right] && (path === grant.folderPath || path.startsWith(`${ grant.folderPath }/`)))) return access;
     throw new HttpError(403, 'access denied');
@@ -150,9 +159,7 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
       await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'delete')", [file.collection_id, file.id, deleted.id]);
     }
     await client.query('COMMIT');
-    await db.query(`UPDATE chunks c SET refcount=0 WHERE NOT EXISTS (SELECT 1 FROM files f JOIN file_versions v ON v.file_id=f.id JOIN manifests m ON m.hash=v.manifest_hash CROSS JOIN jsonb_array_elements_text(m.chunk_ids) ids(chunk_id) WHERE f.deleted_at IS NULL AND NOT v.deleted AND v.chunk_collection_id=c.collection_id AND ids.chunk_id=c.id)`);
-    const dead = await db.query('DELETE FROM chunks WHERE refcount=0 RETURNING collection_id,id'); for (const chunk of dead.rows) await store.delete(chunk.collection_id, chunk.id);
-    response.json({ expiredFiles: expired.length, deletedChunks: dead.rows.length });
+    response.json({ expiredFiles: expired.length });
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
 
   app.post('/v1/search', async(request:RequestWithIdentity, response, next) => { try { if (!search) return response.status(503).json({ error: 'search unavailable' }); response.json(await search.search(request.body, await searchableScopes(db, identityDb, identity(request)))) } catch (error) { next(error) } });
@@ -293,6 +300,7 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
   app.post('/v1/agent-runs/:runId/keep', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
     const actor = identity(request); const source = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND agent_run_id=$2 AND kind='scratch'", [actor.userId, request.params.runId])).rows[0];
     if (!source) throw new HttpError(404, 'scratch run not found');
+    requireScratchRun(actor, source);
     if (source.thread_id && actor.threadId && source.thread_id !== actor.threadId) throw new HttpError(403, 'scratch run belongs to another thread');
     const targetCollectionId = String(request.body.collectionId ?? ''); await requireCollection(request, targetCollectionId, 'edit'); const target = await collectionRow(targetCollectionId);
     if (target.kind === 'scratch') throw new HttpError(400, 'Keep target must be a permanent collection');
