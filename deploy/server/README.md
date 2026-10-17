@@ -8,15 +8,17 @@ On a fresh Ubuntu 24.04 LTS server:
 curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo bash
 ```
 
-When it finishes, it prints the exact line to paste on each additional server so it joins the cluster. That line has this form:
+The installer opens `/dev/tty`, so the wizard works when the script is piped from `curl`. It asks for Docker Compose or Kubernetes, public URL, TLS or ingress settings, storage, organization, and first owner details. The owner password is entered twice with terminal echo disabled and derived inside the vault container; plaintext is never sent to the service, printed, or stored.
+
+To add a Kubernetes worker later, pass only the server URL:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo K3S_URL=https://FIRST_SERVER_IP:6443 K3S_TOKEN=<token> bash
+curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo K3S_URL=https://FIRST_SERVER_IP:6443 bash
 ```
 
-The kit is saved to `/opt/sulla/server`, and rerunning the line is safe. The step-by-step version is below.
+The join token is requested through a hidden terminal prompt. The kit and root-readable `server.env` are saved to `/opt/sulla/server`; rerunning the installer keeps the database, generated service secrets, first owner, and organization.
 
-This kit turns one or more freshly installed Ubuntu 24.04 LTS servers into a native k3s cluster and deploys Sulla's PostgreSQL, Redis, and function runtimes.
+Compose builds the vault image from the exact resolved source commit. Kubernetes requires a pinned image tag or digest and deploys PostgreSQL plus the Sulla Vault console. Agent and workflow runtime wiring is outside this initial server-console kit.
 
 Sulla Desktop's built-in k3s runs **inside a Lima virtual machine**. Other physical machines cannot join that private cluster as nodes. A multi-server cluster therefore needs k3s installed natively on Ubuntu, which is what these scripts do.
 
@@ -82,10 +84,12 @@ Verify the first node:
 sudo kubectl get nodes -o wide
 ```
 
-It should report `Ready`. Then retrieve the join token:
+It should report `Ready`. When adding a worker, keep the token out of output and shell history:
 
 ```bash
-sudo cat /var/lib/rancher/k3s/server/node-token
+read -rsp 'Node token: ' K3S_TOKEN </dev/tty; echo
+sudo K3S_TOKEN="$K3S_TOKEN" ./join-node.sh https://192.168.1.10:6443
+unset K3S_TOKEN
 ```
 
 Treat that token like a password. Do not paste it into tickets, chat, logs, or a committed file.
@@ -118,13 +122,11 @@ On the first server:
 sudo ./deploy-sulla.sh
 ```
 
-The deploy script creates the `sulla` namespace, generates a random PostgreSQL password with OpenSSL if the credential Secret does not already exist, applies the Kustomize base, waits for every Deployment, and prints the final Pods, PVCs, and Services. Rerunning it preserves the existing Secret and data.
+The installer generates PostgreSQL, JWT, and bootstrap secrets once and saves them in `server.env` with mode `0600`. The deploy script applies those values through a Kubernetes Secret, renders the selected storage and pinned image settings, waits for both Deployments, and prints the final Pods, PVC, and Services. Rerunning it preserves the same secrets and database volume.
 
-All Services are `ClusterIP`. PostgreSQL, Redis, and the runtimes are reachable only inside the cluster; this kit deliberately creates no NodePorts or public ingress.
+PostgreSQL stays `ClusterIP`. The wizard can create an Ingress or leave routing to an existing ingress. It prints the real console login URL only after rollout and first-owner bootstrap succeed.
 
-The PostgreSQL, Redis, functions, and runtime cache volumes use k3s's `local-path` storage class. After a claim is first provisioned, its volume has node affinity and its workload stays tied to that node. This is simple and appropriate for the bridge setup, but it is not replicated storage: if that node or its disk dies, another node does not have the data. Back up PostgreSQL before relying on it for irreplaceable data.
-
-The three runtime images currently have only the repository's existing `:latest` references. They are called out with TODO comments in `k8s/runtimes.yaml`; replace them with immutable version tags or digests when the image pipeline publishes those. PostgreSQL and Redis use verified versioned tags.
+The PostgreSQL volume uses the storage class and size selected in the wizard. With k3s's default `local-path`, the volume has node affinity and is not replicated. Back up PostgreSQL before relying on it for irreplaceable data.
 
 Useful checks:
 
@@ -132,7 +134,7 @@ Useful checks:
 sudo kubectl -n sulla get pods,pvc,services -o wide
 sudo kubectl -n sulla get events --sort-by=.lastTimestamp
 sudo kubectl -n sulla logs deployment/postgres --tail=100
-sudo kubectl -n sulla logs deployment/redis --tail=100
+sudo kubectl -n sulla logs deployment/sulla-vault --tail=100
 ```
 
 ## Troubleshooting

@@ -27,17 +27,17 @@ spec:
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: sulla-credentials
+                  name: sulla-server
                   key: postgres-username
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: sulla-credentials
+                  name: sulla-server
                   key: postgres-password
             - name: POSTGRES_DB
               valueFrom:
                 secretKeyRef:
-                  name: sulla-credentials
+                  name: sulla-server
                   key: postgres-database
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
