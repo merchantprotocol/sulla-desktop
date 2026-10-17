@@ -16,6 +16,9 @@ spec:
           ports: [{name: http, containerPort: 8787}]
           env:
             - {name: SULLA_VAULT_MODE, value: server}
+            # Override Kubernetes' legacy service-link variable for the
+            # identically named sulla-vault Service (tcp://... is not a port).
+            - {name: SULLA_VAULT_PORT, value: "8787"}
             - {name: SULLA_VAULT_DATABASE_URL, valueFrom: {secretKeyRef: {name: sulla-server, key: database-url}}}
             - {name: SULLA_VAULT_JWT_SECRET, valueFrom: {secretKeyRef: {name: sulla-server, key: jwt-secret}}}
             - {name: SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN, valueFrom: {secretKeyRef: {name: sulla-server, key: bootstrap-token}}}

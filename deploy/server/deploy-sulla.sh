@@ -82,7 +82,8 @@ EOF
 EOF
   "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$ingress"; rm -f "$ingress"
 fi
-"${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment --all --timeout=5m
+"${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/postgres --timeout=5m
+"${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-vault --timeout=5m
 
 printf '\nSulla services are ready:\n'
 "${KUBECTL[@]}" --namespace "$NAMESPACE" get pods,pvc,services -o wide
