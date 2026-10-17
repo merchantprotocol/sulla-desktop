@@ -76,7 +76,9 @@ main() {
     log "Using saved configuration from $SULLA_DIR/server.env."
   fi
   if [[ -z ${SULLA_SOURCE_SHA:-} ]]; then
-    SULLA_SOURCE_SHA="$(curl -fsSL "https://api.github.com/repos/merchantprotocol/sulla-desktop/commits/${SULLA_REF}" | sed -n 's/^[[:space:]]*"sha": "\([0-9a-f]\{40\}\)",/\1/p' | head -1)"
+    commit_json="$(curl -fsSL "https://api.github.com/repos/merchantprotocol/sulla-desktop/commits/${SULLA_REF}")"
+    SULLA_SOURCE_SHA="$(sed -n 's/^[[:space:]]*"sha": "\([0-9a-f]\{40\}\)",/\1/p' <<<"$commit_json")"
+    SULLA_SOURCE_SHA="${SULLA_SOURCE_SHA%%$'\n'*}"
   fi
   [[ "$SULLA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "could not resolve SULLA_REF=${SULLA_REF} to a commit"
   if [[ -z ${K3S_URL:-} && "$saved_configuration" == false ]]; then
