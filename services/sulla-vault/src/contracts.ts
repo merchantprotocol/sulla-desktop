@@ -191,6 +191,7 @@ export interface BrokerRelayCreateRequest {
   claims:    BrokerClaims;
   operation: 'slack.socket-mode' | 'discord.gateway';
   ref:       BrokerCredentialRef;
+  approvalId?: string;
 }
 export interface BrokerRelayCreateResponse { relayId: string; expiresAt: number }
 export interface BrokerRelaySendRequest { sequence?: number; type: string; payload: unknown }

@@ -93,7 +93,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' },
     ],
   },
-  'provider.models': {
+  'provider.discovery': {
     integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom'],
     requireItemSites: true,
     methods: ['GET'],
@@ -105,7 +105,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     ],
     pathPattern: /^\/(?:v1|v1beta)\/models(?:\/.*)?$/,
   },
-  'tts.synthesize': {
+  'provider.audio': {
     integrations: ['elevenlabs', 'grok'],
     methods: ['POST'],
     allowStreaming: true,

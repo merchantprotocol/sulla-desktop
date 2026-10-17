@@ -26,15 +26,20 @@ import {
 
 import { makeLoginVerifier, verifyLoginHash } from './auth.js';
 import { trustedOriginsForIntegration, validateOperation } from './operationPolicy.js';
+import { createRelayId, DefaultVaultRelayManager } from './relays.js';
 
 import type { VaultConfig } from './config.js';
 import type {
   BrokerExecuteRequest,
   BrokerExecuteResponse,
+  BrokerRelayCreateRequest,
+  BrokerRelayCreateResponse,
+  BrokerRelaySendRequest,
   HumanBackupEnvelope,
   LegacyMigrationResponse,
   LocalVaultState,
 } from './contracts.js';
+import type { VaultRelayEvent, VaultRelayManager } from './relays.js';
 import {
   bootstrapChallengeProofInput,
   bootstrapServerProofInput,
@@ -352,10 +357,15 @@ export class LocalVaultAuthority {
   private readonly approvals = new Map<string, { digest: string; expiresAt: number }>();
   private readonly humanSessions = new Map<string, HumanSession>();
   private readonly oauthRefreshQueues = new Map<string, Promise<void>>();
+  private readonly relaySessions = new Map<string, { generation: number; controller: AbortController }>();
   private migrationState: LocalVaultState = 'locked';
   private stagedCacheUpdate: StagedCacheUpdate | null = null;
 
-  constructor(private readonly db: Database, private readonly config: VaultConfig) {
+  constructor(
+    private readonly db: Database,
+    private readonly config: VaultConfig,
+    private readonly relayManager: VaultRelayManager = new DefaultVaultRelayManager(),
+  ) {
     if (config.mode === 'desktop') {
       const credentials = [
         ['bootstrap', config.bootstrapServiceToken],
@@ -634,6 +644,9 @@ export class LocalVaultAuthority {
     this.generation += 1;
     for (const request of this.inFlight) request.destroy(new LocalVaultError('vault_locked', 423, 'Vault locked during request'));
     this.inFlight.clear();
+    for (const relay of this.relaySessions.values()) relay.controller.abort(new Error('vault_locked'));
+    this.relaySessions.clear();
+    this.relayManager.closeAll('vault_locked');
     this.keys?.userKey.fill(0);
     this.keys?.privateKey.fill(0);
     this.keys?.legacyVmk?.fill(0);
@@ -1167,6 +1180,95 @@ export class LocalVaultAuthority {
     return result;
   }
 
+  async createRelay(
+    input: BrokerRelayCreateRequest,
+    serviceId: string,
+    token: string | undefined,
+  ): Promise<BrokerRelayCreateResponse> {
+    this.requireBrokerIdentity(serviceId, token);
+    const expected = input.operation === 'slack.socket-mode'
+      ? { integrationId: 'slack', host: 'slack.com', fields: ['app_token', 'app_level_token'] }
+      : input.operation === 'discord.gateway'
+        ? { integrationId: 'discord', host: 'discord.com', fields: ['bot_token', 'token'] }
+        : null;
+    if (!expected || input.ref.integrationId !== expected.integrationId) {
+      throw new LocalVaultError('policy_denied', 403, 'Relay operation is not registered for this integration');
+    }
+    const request: BrokerExecuteRequest = {
+      claims: input.claims,
+      operation: input.operation,
+      ref: input.ref,
+      url: `https://${ expected.host }/vault-relay`,
+      method: 'POST',
+      headers: {},
+      body: null,
+      injections: [],
+      approvalId: input.approvalId,
+      responseType: 'json',
+    };
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const item = await this.loadBrokerItem(request, expected.host);
+    const plaintext = JSON.parse(await decryptItemText(
+      { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
+      keys.userKey,
+      { itemId: item.id, ownerId: item.owner_user_id ?? keys.userId },
+    )) as VaultItemPlaintext;
+    const digest = operationDigest(request);
+    if ((item.agent_policy ?? plaintext.agentPolicy).askFirst) {
+      const approval = input.approvalId ? this.approvals.get(input.approvalId) : undefined;
+      if (!approval || approval.expiresAt <= Date.now() || approval.digest !== digest) {
+        if (input.approvalId) this.approvals.delete(input.approvalId);
+        this.pendingApprovals.set(digest, Date.now() + APPROVAL_TTL_MS);
+        throw new LocalVaultError('approval_required', 428, digest);
+      }
+      this.approvals.delete(input.approvalId!);
+    }
+    const credential = expected.fields.map(field => credentialField(plaintext, field)).find(Boolean);
+    if (!credential) throw new LocalVaultError('credential_field_missing', 404, 'Relay credential is unavailable');
+    const relayId = createRelayId();
+    const controller = new AbortController();
+    this.relaySessions.set(relayId, { generation, controller });
+    try {
+      const handle = await this.relayManager.open({ relayId, operation: input.operation, credential, abortSignal: controller.signal });
+      this.requireGeneration(generation);
+      await this.audit(request, item, false, null);
+      return handle;
+    } catch (error) {
+      controller.abort(error);
+      this.relaySessions.delete(relayId);
+      this.relayManager.close(relayId, 'open_failed');
+      throw error;
+    }
+  }
+
+  relayEvents(relayId: string, serviceId: string, token: string | undefined, signal: AbortSignal): AsyncIterable<VaultRelayEvent> {
+    this.requireBrokerIdentity(serviceId, token);
+    this.requireRelay(relayId);
+    return this.relayManager.events(relayId, signal);
+  }
+
+  async sendRelay(
+    relayId: string,
+    command: BrokerRelaySendRequest,
+    serviceId: string,
+    token: string | undefined,
+  ): Promise<void> {
+    this.requireBrokerIdentity(serviceId, token);
+    this.requireRelay(relayId);
+    await this.relayManager.send(relayId, command);
+    this.requireRelay(relayId);
+  }
+
+  closeRelay(relayId: string, serviceId: string, token: string | undefined): void {
+    this.requireBrokerIdentity(serviceId, token);
+    const relay = this.relaySessions.get(relayId);
+    if (!relay) return;
+    relay.controller.abort(new Error('relay_closed'));
+    this.relaySessions.delete(relayId);
+    this.relayManager.close(relayId, 'caller_closed');
+  }
+
   private async executeOAuthRefresh(input: BrokerExecuteRequest, serviceId: string, token: string | undefined): Promise<BrokerExecuteResponse> {
     const queueKey = `${ input.ref.integrationId ?? '' }/${ input.ref.accountId ?? '' }`;
     const previous = this.oauthRefreshQueues.get(queueKey) ?? Promise.resolve();
@@ -1304,6 +1406,15 @@ export class LocalVaultAuthority {
       throw new LocalVaultError('vault_unavailable', 503, 'Bootstrap identity is not configured');
     }
     return this.config.bootstrapServiceToken;
+  }
+
+  private requireRelay(relayId: string): { generation: number; controller: AbortController } {
+    const relay = this.relaySessions.get(relayId);
+    if (!relay || relay.controller.signal.aborted) {
+      throw new LocalVaultError('invalid_operation', 404, 'Relay session is unavailable');
+    }
+    this.requireGeneration(relay.generation);
+    return relay;
   }
 
   private requireKeys(): UnlockedKeys {
