@@ -11,17 +11,21 @@ services:
       SULLA_VAULT_MODE: desktop
       SULLA_VAULT_ADMIN_DATABASE_URL: postgresql://sulla:sulla_dev_password@postgres:5432/sulla
       SULLA_VAULT_DATABASE_URL: postgresql://sulla:sulla_dev_password@postgres:5432/sulla_vault
-      SULLA_VAULT_JWT_SECRET: ${SULLA_VAULT_JWT_SECRET}
-      SULLA_VAULT_DESKTOP_LOGIN_HASH: ${SULLA_VAULT_DESKTOP_LOGIN_HASH}
-      SULLA_VAULT_DESKTOP_PUBLIC_KEY: ${SULLA_VAULT_DESKTOP_PUBLIC_KEY}
-      SULLA_VAULT_DESKTOP_ENCRYPTED_PRIVATE_KEY: ${SULLA_VAULT_DESKTOP_ENCRYPTED_PRIVATE_KEY}
-      SULLA_VAULT_DESKTOP_ENCRYPTED_USER_KEY: ${SULLA_VAULT_DESKTOP_ENCRYPTED_USER_KEY}
-      SULLA_VAULT_DESKTOP_KDF: ${SULLA_VAULT_DESKTOP_KDF}
+      SULLA_VAULT_LEGACY_DATABASE_URL: postgresql://sulla:sulla_dev_password@postgres:5432/sulla
+      SULLA_VAULT_BOOTSTRAP_TOKEN: ${SULLA_VAULT_BOOTSTRAP_TOKEN}
+      SULLA_VAULT_DESKTOP_CONTROL_TOKEN: ${SULLA_VAULT_DESKTOP_CONTROL_TOKEN}
+      SULLA_VAULT_APPROVAL_TOKEN: ${SULLA_VAULT_APPROVAL_TOKEN}
+      SULLA_VAULT_BROKER_TOKEN: ${SULLA_VAULT_BROKER_TOKEN}
+      SULLA_VAULT_HUMAN_UI_ORIGIN: https://127.0.0.1:30135
+      SULLA_VAULT_TLS_CERTIFICATE_PATH: /run/sulla-vault-tls/tls.crt
+      SULLA_VAULT_TLS_PRIVATE_KEY_PATH: /run/sulla-vault-tls/tls.key
     ports:
       - "127.0.0.1:30135:8787"
+    volumes:
+      - "${SULLA_VAULT_TLS_DIRECTORY}:/run/sulla-vault-tls:ro"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8787/healthz"]
+      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://127.0.0.1:8787/healthz"]
       interval: 10s
       timeout: 3s
       retries: 5

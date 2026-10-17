@@ -66,7 +66,6 @@ import paths from '@pkg/utils/paths';
 import { executable } from '@pkg/utils/resources';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { defined, RecursivePartial } from '@pkg/utils/typeUtils';
-import { provisionAgentKeyForContainer } from '@pkg/vault-broker/provisionAgentKey';
 import { openSudoPrompt } from '@pkg/window';
 
 /* eslint @typescript-eslint/switch-exhaustiveness-check: "error" */
@@ -305,7 +304,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   #containerEngineClient: ContainerEngineClient | undefined;
   #activeOptionalSullaServices = new Set<string>();
   #optionalSullaFallbackImages = new Map<string, { env: string; image: string }>();
-  #toolsAgentKey: Awaited<ReturnType<typeof provisionAgentKeyForContainer>> | undefined;
 
   get containerEngineClient() {
     if (this.#containerEngineClient) {
@@ -2968,6 +2966,70 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
   }
 
+  private async loadOrCreateVaultServiceIdentities(): Promise<{
+    bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string;
+  }> {
+    if (!Electron.safeStorage.isEncryptionAvailable()) {
+      throw new Error('OS-protected storage is required for the local vault service identities');
+    }
+    const files = {
+      bootstrapToken: 'vault-bootstrap-identity.enc',
+      controlToken:   'vault-control-token.enc',
+      approvalToken:  'vault-approval-token.enc',
+      brokerToken:    'vault-broker-token.enc',
+    } as const;
+    await fs.promises.mkdir(paths.appHome, { recursive: true });
+    const readProtected = async(file: string): Promise<string | undefined> => {
+      try {
+        const value = Electron.safeStorage.decryptString(await fs.promises.readFile(path.join(paths.appHome, file)));
+        return value.length >= 32 ? value : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    let identities = {
+      bootstrapToken: await readProtected(files.bootstrapToken),
+      controlToken:   await readProtected(files.controlToken),
+      approvalToken:  await readProtected(files.approvalToken),
+      brokerToken:    await readProtected(files.brokerToken),
+    };
+    if (Object.values(identities).some(value => !value) || new Set(Object.values(identities)).size !== 4) {
+      identities = {
+        bootstrapToken: crypto.randomBytes(48).toString('base64url'),
+        controlToken:   crypto.randomBytes(48).toString('base64url'),
+        approvalToken:  crypto.randomBytes(48).toString('base64url'),
+        brokerToken:    crypto.randomBytes(48).toString('base64url'),
+      };
+    }
+    const writeProtected = async(file: string, value: string): Promise<void> => {
+      const target = path.join(paths.appHome, file);
+      const temporary = `${ target }.${ process.pid }.tmp`;
+      await fs.promises.writeFile(temporary, Electron.safeStorage.encryptString(value), { mode: 0o600 });
+      await fs.promises.rename(temporary, target);
+    };
+    // Repair every exported role identity on every start. These files contain
+    // only safeStorage ciphertext and are never mounted into a container.
+    await writeProtected(files.bootstrapToken, identities.bootstrapToken!);
+    await writeProtected(files.controlToken, identities.controlToken!);
+    await writeProtected(files.approvalToken, identities.approvalToken!);
+    await writeProtected(files.brokerToken, identities.brokerToken!);
+
+    return identities as { bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string };
+  }
+
+  private async prepareVaultTlsIdentity(): Promise<{ fingerprint: string }> {
+    const certificate = await this.execCommand(
+      { capture: true, root: true }, 'sh', '-c',
+      "set -eu; command -v openssl >/dev/null || { echo 'openssl is required by the bundled Lima image for vault TLS' >&2; exit 127; }; install -d -o 1000 -g 1000 -m 700 /var/lib/sulla/vault-tls; if [ ! -s /var/lib/sulla/vault-tls/tls.key ] || [ ! -s /var/lib/sulla/vault-tls/tls.crt ] || ! openssl x509 -in /var/lib/sulla/vault-tls/tls.crt -noout -checkhost sulla_vault >/dev/null 2>&1; then openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 3650 -subj '/CN=sulla-vault.local' -addext 'subjectAltName=DNS:sulla-vault.local,DNS:sulla_vault,IP:127.0.0.1' -keyout /var/lib/sulla/vault-tls/tls.key -out /var/lib/sulla/vault-tls/tls.crt >/dev/null 2>&1; fi; chown 1000:1000 /var/lib/sulla/vault-tls /var/lib/sulla/vault-tls/tls.key /var/lib/sulla/vault-tls/tls.crt; chmod 700 /var/lib/sulla/vault-tls; chmod 600 /var/lib/sulla/vault-tls/tls.key; chmod 644 /var/lib/sulla/vault-tls/tls.crt; cat /var/lib/sulla/vault-tls/tls.crt",
+    );
+    const fingerprint = new crypto.X509Certificate(certificate).fingerprint256;
+    await fs.promises.mkdir(paths.appHome, { recursive: true });
+    await fs.promises.writeFile(path.join(paths.appHome, 'vault-tls-certificate.pem'), certificate, { mode: 0o600 });
+    await fs.promises.writeFile(path.join(paths.appHome, 'vault-tls-fingerprint'), `${ fingerprint }\n`, { mode: 0o600 });
+
+    return { fingerprint };
+  }
+
   /**
    * Prepares the Docker Compose file for Sulla services by parsing and modifying dynamic values like passwords.
    */
@@ -2976,8 +3038,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     const sullaServicePassword = escapeForCompose(await SullaSettingsModel.getServicePassword());
+    let vaultIdentities: { bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string } | undefined;
     this.#optionalSullaFallbackImages.clear();
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
+      vaultIdentities = await this.loadOrCreateVaultServiceIdentities();
+      await this.prepareVaultTlsIdentity();
       const vaultImage = resolveSullaServiceImage(
         'sulla-vault', process.cwd(), Electron.app.getVersion(), process.env.SULLA_VAULT_IMAGE,
       );
@@ -2998,11 +3063,20 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           SULLA_VAULT_MODE: 'desktop',
           SULLA_VAULT_ADMIN_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
           SULLA_VAULT_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla_vault`,
+          SULLA_VAULT_LEGACY_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+          SULLA_VAULT_BOOTSTRAP_TOKEN: vaultIdentities.bootstrapToken,
+          SULLA_VAULT_DESKTOP_CONTROL_TOKEN: vaultIdentities.controlToken,
+          SULLA_VAULT_APPROVAL_TOKEN: vaultIdentities.approvalToken,
+          SULLA_VAULT_BROKER_TOKEN: vaultIdentities.brokerToken,
+          SULLA_VAULT_HUMAN_UI_ORIGIN: 'https://127.0.0.1:30135',
+          SULLA_VAULT_TLS_CERTIFICATE_PATH: '/run/sulla-vault-tls/tls.crt',
+          SULLA_VAULT_TLS_PRIVATE_KEY_PATH: '/run/sulla-vault-tls/tls.key',
         },
         // 30121 on the host belongs to sullaSecretsServer; the vault must not share it.
         ports: ['127.0.0.1:30135:8787'],
+        volumes: ['/var/lib/sulla/vault-tls:/run/sulla-vault-tls:ro'],
         restart: 'unless-stopped',
-        healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8787/healthz'], interval: '10s', timeout: '3s', retries: 5 },
+        healthcheck: { test: ['CMD', 'wget', '--no-check-certificate', '-qO-', 'https://127.0.0.1:8787/healthz'], interval: '10s', timeout: '3s', retries: 5 },
       };
     }
 
@@ -3058,24 +3132,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         env: 'SULLA_TOOLS_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-tools:latest',
       });
     }
-    let toolsAgentKeyPath: string | undefined;
-
-    if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
-      try {
-        const nextKey = await provisionAgentKeyForContainer(
-          `/dev/shm/sulla-tools-secrets/agent-key-${ crypto.randomUUID() }.json`,
-        );
-
-        this.#toolsAgentKey?.remove();
-        this.#toolsAgentKey = nextKey;
-        toolsAgentKeyPath = nextKey.path;
-      } catch (error) {
-        console.warn('[Sulla] Vault agent key unavailable for optional tools service:', error);
-      }
-    } else {
-      this.#toolsAgentKey?.remove();
-      this.#toolsAgentKey = undefined;
-    }
     compose.services.tools = {
       ...toolsImage,
       image: resolvedToolsImage,
@@ -3089,15 +3145,16 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_DESKTOP_EXECUTOR_URL: 'http://host.docker.internal:3000',
-        ...(toolsAgentKeyPath ? {
-          SULLA_AGENT_KEY_FILE:          '/run/secrets/sulla-agent-key',
-          SULLA_VAULT_BROKER_URL:        'http://sulla_vault:8787',
+        ...(vaultIdentities ? {
+          SULLA_VAULT_BROKER_URL:        'https://sulla_vault:8787',
           SULLA_VAULT_BROKER_SERVICE_ID: 'sulla-tools',
+          SULLA_VAULT_BROKER_TOKEN:      vaultIdentities.brokerToken,
+          NODE_EXTRA_CA_CERTS:           '/run/sulla-vault-ca/tls.crt',
         } : {}),
       },
       extra_hosts: ['host.docker.internal:host-gateway'],
       ports: ['127.0.0.1:30123:3000'],
-      volumes: toolsAgentKeyPath ? [`${ toolsAgentKeyPath }:/run/secrets/sulla-agent-key:ro`] : [],
+      volumes: vaultIdentities ? ['/var/lib/sulla/vault-tls/tls.crt:/run/sulla-vault-ca/tls.crt:ro'] : [],
       restart: 'unless-stopped',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
@@ -3582,8 +3639,6 @@ CREDFWD_URL='http://${ SLIRP.HOST_GATEWAY }:${ stateInfo.port }'
         await this.setState(State.ERROR);
         throw ex;
       } finally {
-        this.#toolsAgentKey?.remove();
-        this.#toolsAgentKey = undefined;
         this.currentAction = Action.NONE;
       }
     });

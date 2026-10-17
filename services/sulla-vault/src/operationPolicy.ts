@@ -1,0 +1,165 @@
+import type { AgentPolicy } from '@sulla/vault-crypto';
+
+import type { BrokerExecuteRequest, BrokerInjection } from './contracts.js';
+
+export interface BrokerOperationPolicy {
+  integrations?:   string[];
+  hosts?:          string[];
+  requireItemSites?: boolean;
+  methods:         string[];
+  injections:      BrokerInjection[];
+  allowStreaming?: boolean;
+  binaryRequest?:  boolean;
+  binaryResponse?: boolean;
+  pathPattern?:    RegExp;
+}
+
+const authHeaders = (fields: string[], names = ['authorization']): BrokerInjection[] => fields.flatMap(field =>
+  names.flatMap(name => ['Bearer', 'raw'].map(scheme => ({ field, target: 'header' as const, name, scheme: scheme as 'Bearer' | 'raw' }))));
+
+export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationPolicy>> = {
+  'github.api': {
+    integrations: ['github'],
+    hosts: ['api.github.com'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    injections: authHeaders(['token'], ['authorization']),
+  },
+  'github.graphql': {
+    integrations: ['github'],
+    hosts: ['api.github.com'],
+    methods: ['POST'],
+    injections: authHeaders(['token'], ['authorization']),
+  },
+  'github.git': {
+    integrations: ['github'],
+    hosts: ['github.com'],
+    methods: ['GET', 'POST'],
+    injections: [{ field: 'token', target: 'header', name: 'authorization', scheme: 'GitHubBasic' }],
+    allowStreaming: true,
+    binaryRequest: true,
+    binaryResponse: true,
+    pathPattern: /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/(?:info\/refs|git-upload-pack|git-receive-pack)$/,
+  },
+  'slack.web-api': {
+    integrations: ['slack'],
+    hosts: ['slack.com'],
+    methods: ['GET', 'POST'],
+    injections: authHeaders(['bot_token', 'scopes_token', 'app_token', 'app_level_token']),
+  },
+  'discord.rest': {
+    integrations: ['discord'],
+    hosts: ['discord.com', 'discordapp.com'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    injections: [
+      { field: 'bot_token', target: 'header', name: 'authorization', scheme: 'Bot' },
+      { field: 'token', target: 'header', name: 'authorization', scheme: 'Bot' },
+    ],
+  },
+  'mcp.http': {
+    integrations: ['mcp'],
+    requireItemSites: true,
+    methods: ['GET', 'POST'],
+    allowStreaming: true,
+    injections: [
+      ...authHeaders(['auth_token', 'bearer_token']),
+      { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
+    ],
+  },
+  'catalog.http': {
+    requireItemSites: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    injections: [
+      ...authHeaders(['auth_token', 'bearer_token', 'api_token']),
+      { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
+      { field: 'api_key', target: 'header', name: 'api-key', scheme: 'raw' },
+    ],
+  },
+  'provider.inference': {
+    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom'],
+    requireItemSites: true,
+    methods: ['POST'],
+    allowStreaming: true,
+    injections: [
+      ...authHeaders(['api_key', 'api_token', 'bearer_token', 'access_token']),
+      { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
+      { field: 'api_key', target: 'header', name: 'api-key', scheme: 'raw' },
+      { field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' },
+    ],
+  },
+  'oauth.refresh': {
+    requireItemSites: true,
+    methods: ['POST'],
+    injections: [
+      { field: 'refresh_token', target: 'json', name: 'refresh_token', scheme: 'raw' },
+      { field: 'refresh_token', target: 'query', name: 'refresh_token', scheme: 'raw' },
+      { field: 'client_id', target: 'json', name: 'client_id', scheme: 'raw' },
+      { field: 'client_secret', target: 'json', name: 'client_secret', scheme: 'raw' },
+      { field: 'client_id', target: 'query', name: 'client_id', scheme: 'raw' },
+      { field: 'client_secret', target: 'query', name: 'client_secret', scheme: 'raw' },
+    ],
+  },
+};
+
+function exactInjection(left: BrokerInjection, right: BrokerInjection): boolean {
+  return left.field === right.field && left.target === right.target &&
+    left.name.toLowerCase() === right.name.toLowerCase() && (left.scheme ?? 'raw') === (right.scheme ?? 'raw');
+}
+
+function hostMatches(host: string, allowed: string): boolean {
+  const normalized = allowed.toLowerCase().replace(/^\*\./, '');
+  return host === normalized || (allowed.startsWith('*.') && host.endsWith(`.${ normalized }`));
+}
+
+export function validateOperation(
+  input: BrokerExecuteRequest,
+  hostname: string,
+  itemPolicy: AgentPolicy,
+): BrokerOperationPolicy {
+  const policy = BROKER_OPERATION_POLICIES[input.operation];
+  if (!policy) throw new Error('unknown_operation');
+  if (!input.ref.integrationId || (policy.integrations && !policy.integrations.includes(input.ref.integrationId))) {
+    throw new Error('integration_denied');
+  }
+  if (!policy.methods.includes(input.method.toUpperCase())) throw new Error('method_denied');
+  const allowedHosts = policy.requireItemSites ? itemPolicy.sites : policy.hosts;
+  if (!allowedHosts?.length || !allowedHosts.some(allowed => hostMatches(hostname.toLowerCase(), allowed))) {
+    throw new Error('destination_denied');
+  }
+  const streaming = input.responseType === 'stream' || input.responseType === 'binary-stream';
+  if (streaming && !policy.allowStreaming) throw new Error('streaming_denied');
+  if (input.responseType === 'binary-stream' && !policy.binaryResponse) throw new Error('binary_denied');
+  if (input.bodyEncoding !== undefined && (!policy.binaryRequest || input.bodyEncoding !== 'base64' || typeof input.body !== 'string')) {
+    throw new Error('binary_denied');
+  }
+  if (policy.pathPattern && !policy.pathPattern.test(new URL(input.url).pathname)) throw new Error('path_denied');
+  for (const injection of input.injections) {
+    if (!policy.injections.some(candidate => exactInjection(candidate, injection))) throw new Error('injection_denied');
+  }
+  if (!input.injections.length) throw new Error('credential_injection_required');
+  return policy;
+}
+
+export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
+  github:    ['api.github.com', 'github.com'],
+  slack:     ['slack.com'],
+  discord:   ['discord.com', 'discordapp.com'],
+  openai:    ['api.openai.com'],
+  anthropic: ['api.anthropic.com'],
+  google:    ['generativelanguage.googleapis.com'],
+  grok:      ['api.x.ai'],
+  kimi:      ['api.moonshot.cn'],
+  nvidia:    ['integrate.api.nvidia.com'],
+  alibaba:   ['coding-intl.dashscope.aliyuncs.com'],
+  groq:      ['api.groq.com'],
+  mistral:   ['api.mistral.ai'],
+  cerebras:  ['api.cerebras.ai'],
+  together:  ['api.together.xyz'],
+  cohere:    ['api.cohere.ai', 'api.cohere.com'],
+  deepseek:  ['api.deepseek.com'],
+  arcee:     ['api.arcee.ai'],
+};
+
+export function trustedOriginsForIntegration(integrationId: string): string[] {
+  return [...(TRUSTED_INTEGRATION_ORIGINS[integrationId] ?? [])];
+}
+
