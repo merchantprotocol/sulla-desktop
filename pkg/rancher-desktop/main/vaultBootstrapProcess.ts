@@ -27,7 +27,7 @@ import {
   type CacheUpdateFetchResponse,
 } from '../../../services/sulla-vault/src/contracts';
 import { verifyVaultCertificate } from './vaultTlsVerifier';
-import { openVaultCacheEnvelope } from './vaultCacheEnvelope';
+import { openVaultCacheEnvelope, sealLegacyVaultKey } from './vaultCacheEnvelope';
 
 const API = 'https://127.0.0.1:30135';
 const CALLER_ID = 'sulla-desktop-bootstrap';
@@ -152,6 +152,7 @@ async function updateMasterCache(): Promise<void> {
   const identity = Buffer.from(unwrapString(requiredEnv('SULLA_VAULT_BOOTSTRAP_IDENTITY_PATH')), 'utf8');
   let sessionKey: Buffer | undefined;
   let masterKey: Buffer | undefined;
+  let legacyVmk: Buffer | undefined;
   try {
     const clientNonce = randomBytes(32).toString('base64url');
     const challenge = await jsonRequest<CacheUpdateChallengeResponse>('/v1/desktop/cache/challenge', {
@@ -168,11 +169,21 @@ async function updateMasterCache(): Promise<void> {
     sessionKey = createHmac('sha256', identity).update(cacheUpdateSessionKeyInput(
       CALLER_ID, clientNonce, challenge.serverNonce, challenge.challengeId, challenge.expiresAt,
     ), 'utf8').digest();
+    const legacyPath = process.env.SULLA_VAULT_LEGACY_VMK_PATH;
+    if (legacyPath && fs.existsSync(legacyPath)) {
+      legacyVmk = unwrapKey(legacyPath);
+      if (legacyVmk.byteLength !== 32) throw new Error('Legacy vault key has an invalid length');
+    }
+    const sealedLegacyVmk = legacyVmk ? sealLegacyVaultKey(legacyVmk, sessionKey) : undefined;
+    const sealedLegacySha256 = sealedLegacyVmk
+      ? createHash('sha256').update(sealedLegacyVmk).digest('base64url')
+      : '-';
     const response = await jsonRequest<CacheUpdateFetchResponse>('/v1/desktop/cache/fetch', {
       callerId: CALLER_ID,
       challengeId: challenge.challengeId,
+      ...(sealedLegacyVmk ? { sealedLegacyVmk } : {}),
       clientProof: hmac(identity, cacheUpdateFetchProofInput(
-        CALLER_ID, clientNonce, challenge.serverNonce, challenge.challengeId, challenge.expiresAt,
+        CALLER_ID, clientNonce, challenge.serverNonce, challenge.challengeId, challenge.expiresAt, sealedLegacySha256,
       )),
     });
     masterKey = openVaultCacheEnvelope(response.sealedMaster, sessionKey);
@@ -186,6 +197,7 @@ async function updateMasterCache(): Promise<void> {
     identity.fill(0);
     sessionKey?.fill(0);
     masterKey?.fill(0);
+    legacyVmk?.fill(0);
   }
 }
 

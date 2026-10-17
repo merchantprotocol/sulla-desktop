@@ -1,4 +1,22 @@
-import { createDecipheriv } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+
+/** Seals the legacy VMK for the one-use cache helper request. */
+export function sealLegacyVaultKey(legacyVmk: Buffer, sessionKey: Buffer, nonce = randomBytes(12)): string {
+  if (legacyVmk.byteLength !== 32 || sessionKey.byteLength !== 32 || nonce.byteLength !== 12) {
+    throw new Error('Vault legacy-key envelope material has an invalid length');
+  }
+  let ciphertext: Buffer | undefined;
+  let packed: Buffer | undefined;
+  try {
+    const cipher = createCipheriv('aes-256-gcm', sessionKey, nonce);
+    ciphertext = Buffer.concat([cipher.update(legacyVmk), cipher.final()]);
+    packed = Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]);
+    return packed.toString('base64url');
+  } finally {
+    ciphertext?.fill(0);
+    packed?.fill(0);
+  }
+}
 
 /** Opens the service-sealed cache update without exposing it outside the helper. Caller owns and must zero the result. */
 export function openVaultCacheEnvelope(sealedMaster: string, sessionKey: Buffer): Buffer {
