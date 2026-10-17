@@ -6,7 +6,7 @@
  * service, performs one sealed handoff, zeros buffers, and exits. It exposes no
  * IPC server and never sends key bytes to its parent process.
  */
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -27,6 +27,7 @@ import {
   type CacheUpdateFetchResponse,
 } from '../../../services/sulla-vault/src/contracts';
 import { verifyVaultCertificate } from './vaultTlsVerifier';
+import { openVaultCacheEnvelope } from './vaultCacheEnvelope';
 
 const API = 'https://127.0.0.1:30135';
 const CALLER_ID = 'sulla-desktop-bootstrap';
@@ -150,8 +151,6 @@ async function bootstrap(): Promise<BootstrapUnlockResponse> {
 async function updateMasterCache(): Promise<void> {
   const identity = Buffer.from(unwrapString(requiredEnv('SULLA_VAULT_BOOTSTRAP_IDENTITY_PATH')), 'utf8');
   let sessionKey: Buffer | undefined;
-  let packed: Buffer | undefined;
-  let plaintext: Buffer | undefined;
   let masterKey: Buffer | undefined;
   try {
     const clientNonce = randomBytes(32).toString('base64url');
@@ -176,15 +175,7 @@ async function updateMasterCache(): Promise<void> {
         CALLER_ID, clientNonce, challenge.serverNonce, challenge.challengeId, challenge.expiresAt,
       )),
     });
-    packed = Buffer.from(response.sealedMaster, 'base64url');
-    if (packed.byteLength < 29) throw new Error('Vault cache update is truncated');
-    const decipher = createDecipheriv('aes-256-gcm', sessionKey, packed.subarray(0, 12));
-    decipher.setAuthTag(packed.subarray(12, 28));
-    plaintext = Buffer.concat([decipher.update(packed.subarray(28)), decipher.final()]);
-    const decoded = JSON.parse(plaintext.toString('utf8')) as { masterKey?: string };
-    if (typeof decoded.masterKey !== 'string') throw new Error('Vault cache update did not contain a master key');
-    masterKey = Buffer.from(decoded.masterKey, 'base64url');
-    if (masterKey.byteLength !== 32) throw new Error('Vault cache update master key has an invalid length');
+    masterKey = openVaultCacheEnvelope(response.sealedMaster, sessionKey);
     const encrypted = safeStorage.encryptString(masterKey.toString('base64url'));
     try {
       writeFileAtomic(requiredEnv('SULLA_VAULT_MASTER_KEY_PATH'), encrypted);
@@ -194,8 +185,6 @@ async function updateMasterCache(): Promise<void> {
   } finally {
     identity.fill(0);
     sessionKey?.fill(0);
-    packed?.fill(0);
-    plaintext?.fill(0);
     masterKey?.fill(0);
   }
 }
