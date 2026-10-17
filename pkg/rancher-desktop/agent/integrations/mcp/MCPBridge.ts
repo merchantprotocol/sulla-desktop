@@ -5,9 +5,6 @@
  * aggregated across all servers, and routes tool calls to the correct server.
  */
 
-import { issueLocalBrokerContext, usesContainerVaultAuthority } from '../../../vault-broker';
-import { getIntegrationService } from '../../services/IntegrationService';
-
 import { MCPClient } from './MCPClient';
 import {
   generateConfigs,
@@ -16,6 +13,9 @@ import {
   type GenerateResult,
   type DiffResult,
 } from './MCPConfigGenerator';
+import { issueLocalBrokerContext, usesContainerVaultAuthority } from '../../../vault-broker';
+import { getIntegrationService } from '../../services/IntegrationService';
+
 import type { MCPToolDefinition, MCPToolCallResult } from './MCPClient';
 import type { ToolExecutionContext } from '../../tools/executionContext';
 
@@ -86,18 +86,22 @@ export class MCPBridge {
       return;
     }
 
+    const accountMetadata = usesContainerVaultAuthority()
+      ? (await svc.getAccounts(INTEGRATION_ID)).find(account => account.account_id === accountId)
+      : undefined;
+    const credentialFree = usesContainerVaultAuthority() && accountMetadata?.credentialRequired === false;
     const authToken = usesContainerVaultAuthority()
       ? undefined
       : (await svc.getIntegrationValue(INTEGRATION_ID, 'auth_token', accountId))?.value || undefined;
-    const defaultExecutionContext = usesContainerVaultAuthority()
+    const defaultExecutionContext = usesContainerVaultAuthority() && !credentialFree
       ? await issueLocalBrokerContext({
-        agentId: 'mcp-bridge',
-        podId:   'desktop-main',
+        agentId:         'mcp-bridge',
+        podId:           'desktop-main',
         credentialScope: { integration_id: INTEGRATION_ID, account_id: accountId },
       })
       : undefined;
 
-    const client = new MCPClient(serverUrl, accountId, authToken, defaultExecutionContext);
+    const client = new MCPClient(serverUrl, accountId, authToken, defaultExecutionContext, credentialFree);
     await client.initialize();
     this.clients.set(accountId, client);
 
