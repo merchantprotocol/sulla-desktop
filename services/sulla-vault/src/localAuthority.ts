@@ -1337,12 +1337,15 @@ export class LocalVaultAuthority {
       { itemId: item.id, ownerId: item.owner_user_id ?? keys.userId },
     )) as VaultItemPlaintext;
     let gatewayUrl: string | undefined;
+    let gatewayAddress: { address: string; family: 4 | 6 } | undefined;
     if (input.operation === 'enterprise.gateway') {
       const rawGatewayUrl = expected.gatewayField ? credentialField(plaintext, expected.gatewayField) : undefined;
       if (!rawGatewayUrl) throw new LocalVaultError('credential_field_missing', 404, 'Enterprise gateway URL is unavailable');
       try {
         const gateway = enterpriseGatewayOrigin(rawGatewayUrl);
         gatewayUrl = gateway.origin;
+        const pinned = await this.validateTarget(gateway.origin);
+        gatewayAddress = { address: pinned.pinnedAddress, family: pinned.pinnedFamily };
         request.url = `${ gateway.origin }/vault-relay`;
         const siteDecision = agentPolicyAllows(item.agent_policy ?? plaintext.agentPolicy, {
           agentId: input.claims.agent_id, level: 'autofill', host: gateway.hostname, onServer: false,
@@ -1368,7 +1371,9 @@ export class LocalVaultAuthority {
     const controller = new AbortController();
     this.relaySessions.set(relayId, { generation, controller });
     try {
-      const handle = await this.relayManager.open({ relayId, operation: input.operation, credential, gatewayUrl, abortSignal: controller.signal });
+      const handle = await this.relayManager.open({
+        relayId, operation: input.operation, credential, gatewayUrl, gatewayAddress, abortSignal: controller.signal,
+      });
       this.requireGeneration(generation);
       await this.audit(request, item, false, null);
       return handle;

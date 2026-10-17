@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import https from 'node:https';
 
 import NodeWebSocket, { type RawData } from 'ws';
 
@@ -13,6 +14,8 @@ export interface VaultRelayOpenRequest {
   credential:  string;
   /** Decrypted routing metadata accepted only for the typed enterprise relay. */
   gatewayUrl?: string;
+  /** Address resolved and SSRF-checked by the authority; TLS still verifies gatewayUrl's hostname. */
+  gatewayAddress?: { address: string; family: 4 | 6 };
   abortSignal: AbortSignal;
 }
 
@@ -520,6 +523,7 @@ class DiscordRelaySession extends BaseRelaySession {
 
 class EnterpriseGatewayRelaySession extends BaseRelaySession {
   private readonly gatewayOrigin: string;
+  private readonly gatewayAgent: https.Agent;
   private lobbySocket:   NodeWebSocket | null = null;
   private sessionSocket: NodeWebSocket | null = null;
   private audioSocket:   NodeWebSocket | null = null;
@@ -530,13 +534,21 @@ class EnterpriseGatewayRelaySession extends BaseRelaySession {
   private sessionReconnectTimer: NodeJS.Timeout | null = null;
   private audioReconnectTimer: NodeJS.Timeout | null = null;
 
-  constructor(relayId: string, credential: string, gatewayUrl: string, abortSignal: AbortSignal) {
+  constructor(
+    relayId: string, credential: string, gatewayUrl: string,
+    gatewayAddress: { address: string; family: 4 | 6 } | undefined,
+    abortSignal: AbortSignal,
+  ) {
     super(relayId, 'enterprise.gateway', credential, abortSignal);
     const target = new URL(gatewayUrl);
     if (target.protocol !== 'https:' || target.username || target.password || target.search || target.hash) {
       throw new Error('relay_destination_denied');
     }
     this.gatewayOrigin = target.origin;
+    if (!gatewayAddress) throw new Error('relay_destination_denied');
+    this.gatewayAgent = new https.Agent({
+      lookup: (_hostname, _options, callback) => callback(null, gatewayAddress.address, gatewayAddress.family),
+    });
   }
 
   async start(): Promise<void> {
@@ -622,6 +634,7 @@ class EnterpriseGatewayRelaySession extends BaseRelaySession {
     this.audioSocket = null;
     this.sessionId = null;
     this.audioSessionId = null;
+    this.gatewayAgent.destroy();
     super.close(reason);
   }
 
@@ -637,7 +650,7 @@ class EnterpriseGatewayRelaySession extends BaseRelaySession {
     url.searchParams.set('appName', 'SullaDesktop');
     url.searchParams.set('appVersion', '1.0.0');
     url.searchParams.set('hostname', 'sulla-desktop');
-    const socket = new NodeWebSocket(url, { headers: { authorization: `Bearer ${ this.credential }` } });
+    const socket = new NodeWebSocket(url, { agent: this.gatewayAgent, headers: { authorization: `Bearer ${ this.credential }` } });
     this.lobbySocket = socket;
     await this.awaitOpen(socket);
     this.sendJson(socket, { event_type: 'capabilities', reliable_delivery: true });
@@ -657,7 +670,7 @@ class EnterpriseGatewayRelaySession extends BaseRelaySession {
     const url = this.websocketUrl(`/ws/listener/${ encodeURIComponent(sessionId) }`);
     url.searchParams.set('apiKey', this.credential);
     this.sensitiveValues.add(url.toString());
-    const socket = new NodeWebSocket(url);
+    const socket = new NodeWebSocket(url, { agent: this.gatewayAgent });
     this.sessionSocket = socket;
     await this.awaitOpen(socket);
     this.sendJson(socket, { event_type: 'capabilities', reliable_delivery: true });
@@ -672,7 +685,7 @@ class EnterpriseGatewayRelaySession extends BaseRelaySession {
   private async connectAudio(sessionId: string): Promise<void> {
     this.clearAudioReconnect();
     this.audioSocket?.close(1000, 'audio_replaced');
-    const socket = new NodeWebSocket(this.websocketUrl(`/ws/audio/${ encodeURIComponent(sessionId) }`));
+    const socket = new NodeWebSocket(this.websocketUrl(`/ws/audio/${ encodeURIComponent(sessionId) }`), { agent: this.gatewayAgent });
     this.audioSocket = socket;
     await this.awaitOpen(socket);
     this.output.push('gateway.audio.open', { sessionId });
@@ -788,6 +801,7 @@ export class DefaultVaultRelayManager implements VaultRelayManager {
           request.relayId,
           request.credential,
           request.gatewayUrl ?? '',
+          request.gatewayAddress,
           request.abortSignal,
         );
     this.sessions.set(request.relayId, session);
