@@ -71,6 +71,10 @@ function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadI
     const m = ctx.messages[i];
     if (isUserTurnBoundary(m, msgThreadId)) break;
     if (isAssistantOutputBoundary(m, msgThreadId)) break;
+    // A tool is an ordered work-log entry. Thinking emitted after it must
+    // start a new backend message so renderer grouping keeps thought → tool
+    // → thought chronology instead of mutating the earlier thought in place.
+    if (m.kind === 'tool') break;
     if (m.kind === 'thinking' && m.role === 'assistant') {
       existingIdx = i;
       break;
@@ -774,115 +778,10 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
       return;
     }
 
-    // Render lightweight tools as thinking text, not tool cards
-    const THINKING_TOOL_NAMES = new Set([
-      'file_search', 'read_file',
-      'add_observational_memory', 'remove_observational_memory',
-      'search_observations', 'list_observations',
-      'vault_list', 'vault_is_enabled', 'search_conversations',
-      'recall_index_lookup', 'recall_index_store',
-      'search_history', 'github_read_file', 'get_human_presence', 'list_tabs',
-      'check_agent_jobs', 'github_get_issue', 'github_get_issues',
-      'github_list_branches', 'git_log',
-    ]);
-    if (THINKING_TOOL_NAMES.has(toolName)) {
-      let thinkingText = '';
-      if (toolName === 'file_search') {
-        const query = typeof args.query === 'string' ? args.query : '';
-        const dir = (typeof args.dirPath === 'string' ? args.dirPath : '~').replace(/^\/Users\/[^/]+/, '~');
-        thinkingText = `Searching for "${ query }" in ${ dir }`;
-      } else if (toolName === 'add_observational_memory') {
-        const content = typeof args.content === 'string' ? args.content : '';
-        const truncated = content.length > 80 ? content.slice(0, 80) + '...' : content;
-        thinkingText = `Remembering: "${ truncated }"`;
-      } else if (toolName === 'remove_observational_memory') {
-        const id = typeof args.id === 'string' ? args.id : '';
-        thinkingText = `Forgetting observation ${ id }`;
-      } else if (toolName === 'search_observations') {
-        const query = typeof args.query === 'string' ? args.query : '';
-        const archived = args.include_archived === true ? ', including archived ones' : '';
-        thinkingText = query
-          ? `Recalling what I know about "${ query }"${ archived }`
-          : `Searching my observations${ archived }`;
-      } else if (toolName === 'list_observations') {
-        const priority = typeof args.priority === 'string' ? args.priority : '';
-        const archived = args.include_archived === true ? ', including archived ones' : '';
-        thinkingText = priority
-          ? `Reviewing my ${ priority }-priority observations${ archived }`
-          : `Reviewing everything I've observed so far${ archived }`;
-      } else if (toolName === 'vault_list') {
-        thinkingText = 'Checking saved credentials in vault';
-      } else if (toolName === 'vault_is_enabled') {
-        const accountType = typeof args.account_type === 'string' ? args.account_type : '';
-        thinkingText = accountType ? `Checking if ${ accountType } is connected` : 'Checking integration connection status';
-      } else if (toolName === 'recall_index_lookup') {
-        const topic = typeof args.topic === 'string' ? args.topic : '';
-        const pathCount = Array.isArray(args.paths) ? args.paths.length : 0;
-        const parts = [topic ? `"${ topic }"` : '', pathCount ? `${ pathCount } file(s)` : ''].filter(Boolean);
-        thinkingText = `Checking memory index for ${ parts.join(' + ') || 'cached research' }`;
-      } else if (toolName === 'recall_index_store') {
-        const topic = typeof args.topic === 'string' ? args.topic : '';
-        const fileCount = Array.isArray(args.files) ? args.files.length : 0;
-        const parts = [fileCount ? `${ fileCount } digest(s)` : '', topic ? `topic "${ topic }"` : ''].filter(Boolean);
-        thinkingText = `Saving ${ parts.join(' + ') || 'research' } to memory index`;
-      } else if (toolName === 'search_conversations') {
-        const action = typeof args.action === 'string' ? args.action : 'search';
-        const query = typeof args.query === 'string' ? args.query : '';
-        const type = typeof args.type === 'string' ? ` (${ args.type })` : '';
-        if (action === 'search' && query) {
-          thinkingText = `Searching conversations for "${ query }"${ type }`;
-        } else if (action === 'recent') {
-          thinkingText = `Loading recent conversations${ type }`;
-        } else if (action === 'get') {
-          const id = typeof args.id === 'string' ? args.id : typeof args.threadId === 'string' ? args.threadId : '';
-          thinkingText = `Retrieving conversation ${ id }`;
-        } else {
-          thinkingText = `Searching conversations${ query ? ` for "${ query }"` : '' }`;
-        }
-      } else if (toolName === 'search_history') {
-        const query = typeof args.query === 'string' ? args.query : '';
-        thinkingText = query ? `Searching browsing history for "${ query }"` : 'Browsing recent history';
-      } else if (toolName === 'github_read_file') {
-        const owner = typeof args.owner === 'string' ? args.owner : '';
-        const repo = typeof args.repo === 'string' ? args.repo : '';
-        const path = typeof args.path === 'string' ? args.path : '';
-        const ref = typeof args.ref === 'string' ? ` @ ${ args.ref }` : '';
-        thinkingText = `Reading ${ owner }/${ repo }/${ path }${ ref }`;
-      } else if (toolName === 'get_human_presence') {
-        thinkingText = 'Checking if user is available';
-      } else if (toolName === 'list_tabs') {
-        thinkingText = 'Checking open browser tabs';
-      } else if (toolName === 'check_agent_jobs') {
-        const jobId = typeof args.jobId === 'string' ? args.jobId : '';
-        thinkingText = jobId ? `Checking agent job ${ jobId }` : 'Checking all agent jobs';
-      } else if (toolName === 'github_get_issue') {
-        const owner = typeof args.owner === 'string' ? args.owner : '';
-        const repo = typeof args.repo === 'string' ? args.repo : '';
-        const num = typeof args.issue_number === 'number' ? args.issue_number : '';
-        thinkingText = `Reading issue ${ owner }/${ repo }#${ num }`;
-      } else if (toolName === 'github_get_issues') {
-        const owner = typeof args.owner === 'string' ? args.owner : '';
-        const repo = typeof args.repo === 'string' ? args.repo : '';
-        const state = typeof args.state === 'string' ? args.state : 'open';
-        thinkingText = `Listing ${ state } issues on ${ owner }/${ repo }`;
-      } else if (toolName === 'github_list_branches') {
-        const owner = typeof args.owner === 'string' ? args.owner : '';
-        const repo = typeof args.repo === 'string' ? args.repo : '';
-        thinkingText = `Listing branches on ${ owner }/${ repo }`;
-      } else if (toolName === 'git_log') {
-        const dir = (typeof args.absolutePath === 'string' ? args.absolutePath : '').replace(/^\/Users\/[^/]+/, '~');
-        const limit = typeof args.limit === 'number' ? args.limit : 20;
-        thinkingText = `Reviewing last ${ limit } commits in ${ dir }`;
-      } else {
-        const filePath = (typeof args.path === 'string' ? args.path : typeof args.filePath === 'string' ? args.filePath : '').replace(/^\/Users\/[^/]+/, '~');
-        const start = args.startLine;
-        const end = args.endLine;
-        const range = start ? ` (lines ${ start }${ end ? `-${ end }` : '+' })` : '';
-        thinkingText = `Opening ${ filePath }${ range }`;
-      }
-      appendThinkingMessage(ctx, agentId, msgThreadId, thinkingText);
-      return;
-    }
+    // Every tool call stays structured so the renderer can keep its status,
+    // input, and result inside the thinking bubble. The old allowlist turned
+    // selected calls into plain text and let generic CLI `exec` calls escape
+    // as separate transcript cards.
 
     if (toolRunId) {
       const messageId = `${ Date.now() }_tool_${ toolRunId }`;

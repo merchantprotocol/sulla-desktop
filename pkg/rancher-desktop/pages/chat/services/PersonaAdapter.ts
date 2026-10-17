@@ -673,9 +673,10 @@ export class PersonaAdapter {
         tool: b.toolCard.label || b.toolCard.toolName || 'Tool',
         desc: b.toolCard.summary || b.toolCard.description || '',
         status,
-        meta: b.toolCard.outputFormat === 'text'
-          ? (typeof b.toolCard.output === 'string' ? truncMiddle(b.toolCard.output, 60) : undefined)
-          : undefined,
+        input:        b.toolCard.input,
+        output:       toolOutputDetail(b.toolCard.output, b.toolCard.result),
+        error:        b.toolCard.error ?? undefined,
+        outputFormat: b.toolCard.outputFormat,
       } satisfies ToolMessage;
     }
 
@@ -1208,10 +1209,15 @@ function firstLineOf(s: string): string {
   return l.length > 90 ? l.slice(0, 87) + '…' : l;
 }
 
-function truncMiddle(s: string, max: number): string {
-  if (s.length <= max) return s;
-  const half = Math.floor((max - 1) / 2);
-  return s.slice(0, half) + '…' + s.slice(-half);
+function toolOutputDetail(output: unknown, result: unknown): string | undefined {
+  if (typeof output === 'string' && output.length > 0) return output;
+  if (result === undefined || result === null) return undefined;
+  if (typeof result === 'string') return result;
+  try {
+    return JSON.stringify(result, null, 2);
+  } catch {
+    return String(result);
+  }
 }
 
 async function fileToAttachmentInput(file: File): Promise<{ mediaType: string; base64: string }> {

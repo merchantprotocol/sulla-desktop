@@ -86,7 +86,10 @@ export interface ToolMessage extends MessageBase {
   desc:       string;        // short human description
   status:     'running' | 'ok' | 'error';
   meta?:      string;        // "8 hits · 120ms" | "exit 0 · 94ms" | …
+  input?:     string;        // formatted invocation details
   output?:    string;        // captured output (may be truncated)
+  error?:     string;        // failure detail
+  outputFormat?: 'text' | 'code' | 'url' | 'json';
 }
 
 // ─── Tool approval ────────────────────────────────────────────────
