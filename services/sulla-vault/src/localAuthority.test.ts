@@ -132,6 +132,14 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     const preserved: any = await authority.revealHumanItem(unlocked.sessionId, unlocked.csrf, listed[0].id as string);
     assert.equal(preserved.item.name, 'Owner edited v2 credential');
 
+    await db.query(`INSERT INTO integration_values(integration_id,account_id,property,value) VALUES ('broken','rollback','api_key','$VAULT$truncated')`);
+    await assert.rejects(authority.migrateLegacy('sulla-desktop-control', TOKEN.control),
+      (error: any) => error.code === 'migration_failed');
+    assert.equal((await db.query("SELECT 1 FROM items WHERE integration_ref='broken/rollback'")).rowCount, 0);
+    assert.equal((await db.query("SELECT 1 FROM integration_values WHERE integration_id='broken' AND account_id='rollback'")).rowCount, 1);
+    await db.query("DELETE FROM integration_values WHERE integration_id='broken' AND account_id='rollback'");
+    assert.equal((await authority.migrateLegacy('sulla-desktop-control', TOKEN.control)).state, 'unlocked');
+
     const user = await db.query<{ id: string }>('SELECT id FROM users LIMIT 1');
     const request: any = {
       claims: { sub: user.rows[0].id, agent_id: 'sulla', pod_id: 'synthetic', credential_scope: { integration_id: 'openai', account_id: 'default' } },
