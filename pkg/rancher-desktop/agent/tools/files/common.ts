@@ -5,6 +5,7 @@ import { getSullaFilesService } from '../../files/runtime';
 import { BaseTool } from '../base';
 
 import { issueCapabilityToken } from '@pkg/runtime/capabilityToken';
+import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 
 import type { ToolExecutionContext } from '../executionContext';
 
@@ -39,7 +40,7 @@ export abstract class FilesTool extends BaseTool {
   protected async containerRequest(path: string, input: unknown, init: RequestInit = {}): Promise<Response> {
     const context = this.context(input);
     const secret = await SullaSettingsModel.getServicePassword();
-    const signingKey = process.env.SULLA_FILES_CAPABILITY_SIGNING_KEY || process.env.SULLA_FILES_INTERNAL_TOKEN || secret;
+    const signingKey = sullaFilesCapabilityKey(secret);
     const token = issueCapabilityToken({ sub: context.sub, device_id: context.device_id, scopes: ['files/*'], expiresInSeconds: 300 }, signingKey);
     const headers = new Headers(init.headers); headers.set('Authorization', `Bearer ${ token }`);
     if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
