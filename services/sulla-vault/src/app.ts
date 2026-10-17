@@ -304,6 +304,12 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     app.get('/v1/human/items', async(request, response) => {
       response.json({ items: await localAuthority.listHumanItems(humanCookie(request), request.header('x-csrf-token')) });
     });
+    app.get('/v1/human/activity', async(request, response) => {
+      response.json({ events: await localAuthority.listHumanItemActivity(
+        humanCookie(request), request.header('x-csrf-token'),
+        typeof request.query.item === 'string' ? request.query.item : undefined,
+      ) });
+    });
     app.post('/v1/human/items', async(request, response) => {
       response.status(201).json(await localAuthority.saveHumanItem(humanCookie(request), request.header('x-csrf-token'), request.body));
     });

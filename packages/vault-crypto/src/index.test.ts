@@ -64,6 +64,7 @@ test('agent policy blocks only-me, over-level, other agents, expired and off-sit
   assert.equal(agentPolicyAllows(policy, { agentId: 'other', level: 'metadata' }).allowed, false);
   assert.equal(agentPolicyAllows(policy, { agentId: 'sulla', level: 'autofill', host: 'evilgithub.com' }).allowed, false);
   assert.equal(agentPolicyAllows({ ...policy, expiresAt: '2000-01-01T00:00:00Z' }, { agentId: 'sulla', level: 'metadata' }).allowed, false);
+  assert.equal(agentPolicyAllows({ ...policy, expiresAt: 'not-a-date' }, { agentId: 'sulla', level: 'metadata' }).allowed, false);
   assert.equal(agentPolicyAllows(policy, { agentId: 'sulla', level: 'autofill', onServer: true }).allowed, false);
   assert.equal(agentPolicyFromLegacyLlmAccess('').level, 'autofill');
   assert.equal(agentPolicyFromLegacyLlmAccess('none').mode, 'only_me');

@@ -3574,7 +3574,7 @@
   var $2 = (id) => document.getElementById(id);
   var esc = (value) => String(value ?? "").replace(/[&<>'"]/g, (c2) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[c2]);
   var initials = (value) => value.split(/\s+/).slice(0, 2).map((x2) => x2[0]?.toUpperCase()).join("") || "SV";
-  var state = { token: "", email: "", user: null, userKey: null, privateKey: null, org: null, orgKey: null, members: [], groups: [], collections: [], selected: null, access: { members: [], groups: [] }, collectionKeys: /* @__PURE__ */ new Map(), itemNames: /* @__PURE__ */ new Map(), audit: [], auditOffset: 0, authMode: "signin", recovery: null };
+  var state = { token: "", email: "", user: null, userKey: null, privateKey: null, org: null, orgKey: null, members: [], groups: [], collections: [], selected: null, access: { members: [], groups: [] }, collectionKeys: /* @__PURE__ */ new Map(), itemNames: /* @__PURE__ */ new Map(), audit: [], auditOffset: 0, authMode: "signin", recovery: null, collectionItems: [], collectionActivity: [] };
   var idleTimer = 0;
   function armIdle() {
     window.clearTimeout(idleTimer);
@@ -3786,14 +3786,44 @@
     $2("collection-empty").hidden = true;
     $2("collection-detail").hidden = false;
     $2("collection-title").textContent = state.selected.name;
-    const items = await api(`/v1/collections/${id}/items`).catch(() => ({ items: [] }));
-    $2("collection-meta").textContent = `${items.items.length} item${items.items.length === 1 ? "" : "s"} \xB7 access is enforced for people and their agents`;
+    const [items, activity] = await Promise.all([
+      api(`/v1/collections/${id}/items`).catch(() => ({ items: [] })),
+      api(`/v1/orgs/${state.org.id}/audit?collection=${encodeURIComponent(id)}&limit=50`).catch(() => ({ events: [] }))
+    ]);
+    state.collectionItems = [];
+    const key = state.collectionKeys.get(id);
+    for (const row of items.items) {
+      try {
+        if (!key) throw new Error("Collection key unavailable");
+        const value = JSON.parse(await decryptItemText({ version: 1, encryptedItemKey: row.encrypted_item_key, ciphertext: row.ciphertext, agentWrappedItemKey: row.agent_wrapped_item_key }, key, { itemId: row.id, ownerId: id }));
+        state.collectionItems.push({ id: row.id, name: value.name || "Vault item", type: value.type || row.item_type, agentPolicy: value.agentPolicy, updatedAt: row.updated_at });
+        state.itemNames.set(row.id, value.name || "Vault item");
+      } catch {
+        state.collectionItems.push({ id: row.id, name: "Encrypted item", type: row.item_type, updatedAt: row.updated_at });
+      }
+    }
+    state.collectionActivity = activity.events || [];
+    $2("collection-meta").textContent = `${state.collectionItems.length} item${state.collectionItems.length === 1 ? "" : "s"} \xB7 access is enforced for people and their agents`;
+    $2("collection-item-count").textContent = String(state.collectionItems.length);
+    renderCollectionItems();
+    renderCollectionActivity();
     try {
       state.access = await api(`/v1/collections/${id}/access`);
     } catch {
       state.access = { members: state.members.map((m2) => ({ ...m2, can_view: state.selected.can_view, can_use_by_agents: state.selected.can_use_by_agents, can_edit: state.selected.can_edit, can_manage: state.selected.can_manage })), groups: [] };
     }
     renderRights();
+    showCollectionTab("items");
+  }
+  function showCollectionTab(tab) {
+    document.querySelectorAll(".collection-tab").forEach((panel) => panel.hidden = panel.id !== `collection-${tab}`);
+    document.querySelectorAll("[data-collection-tab]").forEach((button) => button.classList.toggle("active", button.dataset.collectionTab === tab));
+  }
+  function renderCollectionItems() {
+    $2("collection-items").innerHTML = state.collectionItems.length ? state.collectionItems.map((item) => `<div class="collection-item"><span class="tile">${esc(initials(item.name))}</span><div><b>${esc(item.name)}</b><small>${esc(item.type || "item")} \xB7 edited ${esc(new Date(item.updatedAt).toLocaleDateString())}</small></div><span class="pill ${item.agentPolicy?.mode === "agents" ? "acc" : ""}">${item.agentPolicy?.mode === "agents" ? "Agents " + esc(item.agentPolicy.level) : "Only owner"}</span></div>`).join("") : '<div class="empty"><b>No items in this collection</b><span>Collection item creation is not available in this console yet.</span></div>';
+  }
+  function renderCollectionActivity() {
+    $2("collection-activity").innerHTML = state.collectionActivity.length ? `<table><tbody>${state.collectionActivity.map((event) => `<tr><td><b>${esc(actionLabel(event.action))}</b><br><span class="muted">${esc(state.itemNames.get(event.item_id) || "Collection")}</span></td><td><span class="result ${event.blocked ? "bad" : "ok"}">${event.blocked ? "Blocked" : "Allowed"}</span><br><span class="muted">${esc(new Date(event.created_at).toLocaleString())}</span></td></tr>`).join("")}</tbody></table>` : '<div class="empty"><b>No collection activity yet</b><span>Authorized actions will appear here without secret values.</span></div>';
   }
   function effective(row, key) {
     return ["owner", "admin"].includes(row.role) || Boolean(row[key]);
@@ -4051,6 +4081,7 @@
   $2("lock").onclick = () => lock();
   document.querySelectorAll("[data-page]").forEach((b2) => b2.onclick = () => showPage(b2.dataset.page));
   document.querySelectorAll("[data-go]").forEach((b2) => b2.onclick = () => showPage(b2.dataset.go));
+  document.querySelectorAll("[data-collection-tab]").forEach((b2) => b2.onclick = () => showCollectionTab(b2.dataset.collectionTab));
   $2("collection-search").addEventListener("input", renderCollections);
   $2("new-collection").onclick = () => void createCollection();
   $2("invite").onclick = () => void invite();

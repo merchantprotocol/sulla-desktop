@@ -793,8 +793,31 @@ export class LocalVaultAuthority {
         { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
         { itemId: row.id, ownerId: keys.userId },
       )) as VaultItemPlaintext;
-      return { id: row.id, type: item.type, name: item.name, username: item.username, uris: item.uris, revision: Number(row.revision), updatedAt: row.updated_at };
+      return {
+        id: row.id, type: item.type, name: item.name, favorite: item.favorite, username: item.username,
+        uris: item.uris, folder: item.folder, agentPolicy: item.agentPolicy,
+        integration: item.integration ? { integrationId: item.integration.integrationId, accountId: item.integration.accountId } : undefined,
+        revision: Number(row.revision), updatedAt: row.updated_at,
+      };
     }));
+  }
+
+  async listHumanItemActivity(
+    sessionId: string | undefined, csrf: string | undefined, itemId?: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const session = this.validateHumanSession(sessionId, csrf);
+    if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
+    const keys = this.requireKeys();
+    const params: unknown[] = [keys.userId];
+    const itemFilter = itemId ? 'AND a.item_id=$2' : '';
+    if (itemId) params.push(itemId);
+    const result = await this.db.query(
+      `SELECT a.id,a.item_id,a.action,a.pod_id,a.metadata,a.blocked,a.reason,a.created_at
+         FROM audit_log a JOIN items i ON i.id=a.item_id
+        WHERE i.owner_user_id=$1 ${ itemFilter }
+        ORDER BY a.created_at DESC LIMIT 100`, params,
+    );
+    return result.rows;
   }
 
   async revealHumanItem(sessionId: string | undefined, csrf: string | undefined, itemId: string): Promise<Record<string, unknown>> {
@@ -823,6 +846,13 @@ export class LocalVaultAuthority {
     const keys = this.requireKeys();
     if (!input.item || typeof input.item.name !== 'string' || !input.item.name.trim() || !input.item.agentPolicy) {
       throw new LocalVaultError('invalid_operation', 400, 'Vault item is invalid');
+    }
+    const policy = input.item.agentPolicy;
+    if (!['only_me', 'agents'].includes(policy.mode) || !['metadata', 'autofill', 'full'].includes(policy.level) ||
+        !Array.isArray(policy.agents) || !policy.agents.every(value => typeof value === 'string') ||
+        !Array.isArray(policy.sites) || !policy.sites.every(value => typeof value === 'string') ||
+        (policy.expiresAt !== null && (typeof policy.expiresAt !== 'string' || !Number.isFinite(Date.parse(policy.expiresAt))))) {
+      throw new LocalVaultError('invalid_operation', 400, 'Agent access policy is invalid');
     }
     const id = input.id ?? randomUUID();
     const encrypted = await encryptItem(JSON.stringify(input.item), keys.userKey, { itemId: id, ownerId: keys.userId });
