@@ -3038,6 +3038,15 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     const sullaServicePassword = escapeForCompose(await SullaSettingsModel.getServicePassword());
+    const tokenFile = path.join(paths.appHome, 'chat-api-token.json');
+    let sullaApiToken = '';
+    try {
+      sullaApiToken = JSON.parse(await fs.promises.readFile(tokenFile, 'utf-8')).token || '';
+    } catch {
+      sullaApiToken = await SullaSettingsModel.get('sullaApiToken') || '';
+    }
+    if (!sullaApiToken) throw new Error('Sulla API token is unavailable while preparing container services');
+    sullaApiToken = escapeForCompose(sullaApiToken);
     let vaultIdentities: { bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string } | undefined;
     this.#optionalSullaFallbackImages.clear();
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
