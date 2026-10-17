@@ -11,14 +11,14 @@ export async function backup(config:Config):Promise<string> {
   if (!config.backupTarget) throw new Error('SULLA_FILES_BACKUP_TARGET is required');
   await mkdir(config.backupTarget, { recursive: true, mode: 0o700 });
   const destination = join(config.backupTarget, `sulla-files-${ new Date().toISOString().replace(/[:.]/g, '-') }.tar.gz`);
-  await command('tar', ['-czf', destination, '-C', dirname(config.dataRoot), basename(config.dataRoot)]);
+  await command('tar', ['--exclude=master.key', '-czf', destination, '-C', dirname(config.dataRoot), basename(config.dataRoot)]);
   console.log(`[SullaFiles] backup created ${ destination }`); return destination;
 }
 export async function restore(config:Config, archive?:string):Promise<string> {
   if (!config.backupTarget && !archive) throw new Error('SULLA_FILES_BACKUP_TARGET or an archive path is required');
   const selected = archive ? resolve(archive) : join(config.backupTarget!, (await readdir(config.backupTarget!)).filter(name => name.endsWith('.tar.gz')).sort().at(-1) ?? '');
   if (!selected.endsWith('.tar.gz')) throw new Error('No backup archive found');
-  await mkdir(dirname(config.dataRoot), { recursive: true }); await command('tar', ['-xzf', selected, '-C', dirname(config.dataRoot)]);
+  await mkdir(dirname(config.dataRoot), { recursive: true }); await command('tar', ['--exclude=master.key', '-xzf', selected, '-C', dirname(config.dataRoot)]);
   console.log(`[SullaFiles] restored ${ selected } into ${ config.dataRoot }`); return selected;
 }
 export async function nightlyBackups(config:Config):Promise<never> {

@@ -1,4 +1,5 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { assertUnprotectedFile, isProtectedPath } from './protectedFiles.js';
+import { randomBytes } from 'node:crypto';
 import { basename, posix } from 'node:path';
 
 import { decryptChunk } from './crypto.js';
@@ -165,8 +166,8 @@ export class SharesService {
     if (share.target_type === 'folder' && !requestedPath) {
       const prefix = `${ share.folder_path }/`;
       const escapedPrefix = prefix.replace(/[\\%_]/g, '\\$&');
-      const files = (await this.db.query("SELECT path,mime,size FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND path LIKE $2 ESCAPE E'\\\\' ORDER BY path", [share.collection_id, `${ escapedPrefix }%`])).rows
-        .map(row => ({ ...row, path: row.path.slice(prefix.length) }));
+      const files = (await this.db.query("SELECT path,mime,size FROM files WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=files.id) AND collection_id=$1 AND deleted_at IS NULL AND path LIKE $2 ESCAPE E'\\\\' ORDER BY path", [share.collection_id, `${ escapedPrefix }%`])).rows
+        .filter(row => !isProtectedPath(row.path)).map(row => ({ ...row, path: row.path.slice(prefix.length) }));
       return { bytes: Buffer.from(JSON.stringify({ name: share.display_name, files })), mime: 'application/json', name: `${ share.display_name }.json` };
     }
     let file;
@@ -178,9 +179,10 @@ export class SharesService {
       file = (await this.db.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL', [share.collection_id, full])).rows[0];
     }
     if (!file) throw Object.assign(new Error('shared file not found'), { status: 404 });
+    await assertUnprotectedFile(this.db, file);
     const version = (await this.db.query(`SELECT v.chunk_collection_id,m.chunk_ids FROM file_versions v JOIN manifests m ON m.hash=v.manifest_hash WHERE v.id=$1 AND v.deleted=FALSE`, [file.current_version_id])).rows[0];
     if (!version) throw Object.assign(new Error('shared file has no readable version'), { status: 404 });
-    const key = createHmac('sha256', this.config.capabilitySigningKey).update(`sulla:files:data-key:v1:${ version.chunk_collection_id }`).digest();
+    const key = (await this.config.keyring!.keys(version.chunk_collection_id)).data;
     const chunks: Buffer[] = []; for (const chunkId of version.chunk_ids) chunks.push(await decryptChunk(await this.store.get(version.chunk_collection_id, chunkId), key, chunkId));
     return { bytes: Buffer.concat(chunks), mime: file.mime, name: basename(file.path) };
   }

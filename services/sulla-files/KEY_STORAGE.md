@@ -1,0 +1,11 @@
+# Files key storage
+
+Desktop Files starts locked. Electron supplies a 32-byte master key through the authenticated local unlock endpoint after retrieving it from OS-protected storage. The service never accepts a master key from environment variables, command arguments, compose configuration, or a plaintext file. Restarting the container clears its memory and requires another Desktop unlock.
+
+The database stores an authenticated master-key verifier and wrapped collection keys. Unlock runs a transaction: existing collections retain their original data/deduplication keys, now wrapped by the independent master; newly created Desktop collections receive random keys. A wrong master or malformed wrapped key fails closed. Losing the OS-protected master prevents unlocking; generating a replacement does not repair existing ciphertext.
+
+Legacy collections are marked `legacy-signing-v1`. Migration preserves content and does **not** rotate those historically signing-derived data keys. Someone with the old signing secret can still derive those historical keys. Removing that exposure requires a separate, data-safe content-key rotation. Standalone server mode retains its existing signing-derived protocol; this is not a Desktop fallback. Sync continues for existing migrated legacy collections. Random or unknown collection keys fail closed with an explicit secure-key-exchange error; the current peer protocol cannot exchange those keys.
+
+The old `master.key` wrapped metadata but was not used to encrypt file content, so migration does not need to read it. Files does not recreate it. Historical indexed master-key files and their chunks receive persistent deny markers, including after a rename. Ingestion, preview, share relay, search, backup and restore reject or exclude this reserved path as defense in depth. Existing external copies or backups are not automatically erased.
+
+The local unlock API returns success only after initialization. File APIs stay unavailable while locked. Lock drains background work before clearing the master and cached collection-key buffers. Immutable runtime/HTTP strings cannot be reliably scrubbed by JavaScript; no key is intentionally written to disk or logs.
