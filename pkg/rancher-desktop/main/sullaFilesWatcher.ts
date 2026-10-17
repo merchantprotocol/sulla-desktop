@@ -13,6 +13,7 @@ import { spawnFile } from '@pkg/utils/childProcess';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
+import { resolveSullaFilesUserRoot } from '@pkg/utils/sullaFilesPaths';
 
 const console = Logging.background;
 const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/'];
@@ -50,7 +51,7 @@ function ignored(relativePath:string, patterns:string[]):boolean {
 }
 
 class SullaFilesWatcher {
-  readonly folder = path.join(os.homedir(), 'sulla', 'Files');
+  readonly folder = resolveSullaFilesUserRoot().activePath;
   private watcher?:     fs.FSWatcher;
   private rescanTimer?: NodeJS.Timeout;
   private safetyTimer?: NodeJS.Timeout;
@@ -76,10 +77,6 @@ class SullaFilesWatcher {
         body.fill(0);
       }
     },
-    [
-      { sourcePath: path.join(this.folder, 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-shared-master-key.enc') },
-      { sourcePath: path.join(paths.sullaHome, 'private-files-quarantine', 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-quarantined-master-key.enc') },
-    ],
   );
 
   private async appUnlocked(): Promise<boolean> {
@@ -212,7 +209,7 @@ class SullaFilesWatcher {
 
       return { ...status, location: !status.serverConfigured ? 'local' : serverLabel?.endsWith('sulla.cloud') ? 'cloud' : 'server', serverLabel: serverLabel?.endsWith('sulla.cloud') ? 'Sulla Cloud' : serverLabel };
     } catch {
-      return { state: 'error', pendingFiles: 0, lastError: 'Files container is off; files remain safely in ~/sulla/Files', serverConfigured: false, location: 'local' };
+      return { state: 'error', pendingFiles: 0, lastError: 'Files container is off; files remain safely in ~/sulla/files', serverConfigured: false, location: 'local' };
     }
   }
 

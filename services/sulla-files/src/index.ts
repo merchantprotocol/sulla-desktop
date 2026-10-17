@@ -6,6 +6,7 @@ import { connect, connectOptional, migrate } from './db.js';
 import { desktopIndexSource, storedIndexSource } from './indexSource.js';
 import { IndexingQueue } from './indexing.js';
 import { LocalFilesManager } from './localManager.js';
+import { runLegacyPreflight } from './legacyPreflight.js';
 import { PotionEmbedder } from './potionEmbedder.js';
 import { RecordingEnrichmentQueue } from './recordingEnrichment.js';
 import { FileSearch } from './search.js';
@@ -14,6 +15,7 @@ const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
 if (command === 'restore') { await restore(config, process.argv[3]); process.exit(0) }
 const db = await connect(config.databaseUrl); await migrate(db);
+if (config.mode === 'desktop' && config.filesRoot) config.legacyPreflight = await runLegacyPreflight(db, config.filesRoot, { caseInsensitive: process.env.SULLA_FILES_CASE_INSENSITIVE_ROOT === '1' });
 config.keyring = config.mode === 'desktop' ? new FilesKeyring(db) : new LegacyServerKeyring(db, config.capabilitySigningKey);
 const identityDb = await connectOptional(config.vaultDatabaseUrl);
 const embedder = PotionEmbedder.load(config.modelDir);

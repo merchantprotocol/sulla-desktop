@@ -84,7 +84,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
       ipcRenderer.invoke('files-ui:capabilities') as Promise<{ orgSharing:boolean; publicLinks:boolean; onlineOnly:boolean; onlineOnlyReason?:string }>,
     ]);
     const collection = collections.find(item => item.name === 'Files') ?? collections.find(item => item.kind === 'knowledge');
-    if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/Files to initialize it.');
+    if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/files to initialize it.');
     Object.assign(this.capabilities, capabilities, {
       orgSharing: capabilities.orgSharing && ['manage', 'owner'].includes(collection.access_role ?? ''),
     });

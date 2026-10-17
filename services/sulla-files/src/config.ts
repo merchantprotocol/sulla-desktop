@@ -1,10 +1,12 @@
 import type { FilesKeyring } from './keyring.js';
+import type { LegacyPreflightStatus } from './legacyPreflight.js';
 import { resolve } from 'node:path';
 
 import { deriveCapabilitySigningKey } from './auth.js';
 
 export interface Config {
   keyring?: FilesKeyring;
+  legacyPreflight?: LegacyPreflightStatus;
   port:                 number;
   databaseUrl:          string;
   vaultDatabaseUrl?:    string;

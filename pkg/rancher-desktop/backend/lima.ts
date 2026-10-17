@@ -61,6 +61,7 @@ import * as childProcess from '@pkg/utils/childProcess';
 import clone from '@pkg/utils/clone';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
+import { resolveSullaFilesUserRoot } from '@pkg/utils/sullaFilesPaths';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { executable } from '@pkg/utils/resources';
@@ -3112,6 +3113,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         env: 'SULLA_FILES_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-files:latest',
       });
     }
+    const filesUserRoot = resolveSullaFilesUserRoot();
     compose.services.sulla_files = {
       ...filesImage,
       image: resolvedFilesImage,
@@ -3128,6 +3130,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_GID:                   String(os.userInfo().gid),
         SULLA_FILES_CAPABILITY_SIGNING_KEY: sullaFilesCapabilityKey(sullaServicePassword),
         SULLA_FILES_LOCAL_TOKEN:           sullaServicePassword,
+        SULLA_FILES_CASE_INSENSITIVE_ROOT: process.platform === 'darwin' ? '1' : '0',
         ...(process.env.SULLA_CLOUD_API_URL ? { SULLA_CLOUD_API_URL: process.env.SULLA_CLOUD_API_URL } : {}),
         ...(process.env.SULLA_FILES_SERVER_URL ? { SULLA_FILES_SERVER_URL: process.env.SULLA_FILES_SERVER_URL } : {}),
         ...(process.env.SULLA_FILES_USER_ID ? { SULLA_FILES_USER_ID: process.env.SULLA_FILES_USER_ID } : {}),
@@ -3136,7 +3139,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       ports: ['127.0.0.1:30124:8792'],
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
-        `${ path.join(os.homedir(), 'sulla', 'Files') }:/data/files`,
+        `${ filesUserRoot.activePath }:/data/files`,
       ],
       restart: 'unless-stopped',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8792/healthz'], interval: '5s', timeout: '3s', retries: 10 },
@@ -3156,7 +3159,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const sullaDataDir = path.join(paths.appHome, 'data');
 
     await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-postgres'), { recursive: true });
-    await fs.promises.mkdir(path.join(os.homedir(), 'sulla', 'Files'), { recursive: true });
+    await fs.promises.mkdir(filesUserRoot.activePath, { recursive: true });
     compose.volumes ??= {};
     compose.volumes['sulla-files-data'] ??= {};
 

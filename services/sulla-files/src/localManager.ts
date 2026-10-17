@@ -1,4 +1,5 @@
 import { isProtectedPath } from './protectedFiles.js';
+import { isLegacyInternalPath } from './legacyPreflight.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, readFile, readdir, realpath, rename, stat } from 'node:fs/promises';
@@ -19,6 +20,7 @@ interface RuntimeState {
   state: 'synced' | 'syncing' | 'paused' | 'error'; pendingFiles: number; pendingBytes: number;
   processedBytes: number; totalBytes: number; estimatedSeconds?: number; lastError?: string;
   lastScanAt?: string; lastSyncAt?: string; serverConfigured: boolean;
+  legacyImport?: Config['legacyPreflight'];
 }
 interface WatchedRow { collection_id: string; path: string; file_id: string; content_hash: string; size: string; mtime_ms: string; role?: string }
 
@@ -90,7 +92,7 @@ export class LocalFilesManager {
   async close():Promise<void> { this.stopped = true; if (this.syncTimer) clearInterval(this.syncTimer); await this.running?.catch(() => undefined); }
   status():RuntimeState {
     const elapsed = Math.max(0.001, (Date.now() - this.progressStartedAt) / 1_000); const rate = this.processedBytes / elapsed;
-    return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, pendingBytes: this.pendingBytes, processedBytes: this.processedBytes, totalBytes: this.totalBytes, estimatedSeconds: this.running && rate > 0 ? Math.max(1, Math.ceil(this.pendingBytes / rate)) : undefined, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl) };
+    return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, pendingBytes: this.pendingBytes, processedBytes: this.processedBytes, totalBytes: this.totalBytes, estimatedSeconds: this.running && rate > 0 ? Math.max(1, Math.ceil(this.pendingBytes / rate)) : undefined, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl), legacyImport: this.config.legacyPreflight };
   }
 
   async recent(limit:number, exactPath?:string):Promise<any[]> {
@@ -140,12 +142,12 @@ export class LocalFilesManager {
   private safe(relativePath:string):string { const absolute = resolve(this.config.filesRoot!, relativePath); if (absolute !== this.config.filesRoot && !absolute.startsWith(`${ this.config.filesRoot }${ sep }`)) throw new Error('path escapes Files folder'); return absolute }
   private async diskFiles(root = this.config.filesRoot!, prefix = ''):Promise<string[]> {
     const ignores = await this.ignores(); const output:string[] = [];
-    for (const entry of await readdir(root, { withFileTypes: true })) { const rel = prefix ? `${ prefix }/${ entry.name }` : entry.name; if (isProtectedPath(rel) || matchIgnore(rel, ignores)) continue; if (entry.isDirectory()) output.push(...await this.diskFiles(join(root, entry.name), rel)); else if (entry.isFile() && rel !== '.sullaignore') output.push(rel); }
+    for (const entry of await readdir(root, { withFileTypes: true })) { const rel = prefix ? `${ prefix }/${ entry.name }` : entry.name; if (isProtectedPath(rel) || isLegacyInternalPath(rel, this.config.legacyPreflight) || matchIgnore(rel, ignores)) continue; if (entry.isDirectory()) output.push(...await this.diskFiles(join(root, entry.name), rel)); else if (entry.isFile() && rel !== '.sullaignore') output.push(rel); }
     return output;
   }
 
   private async scanFolder():Promise<void> {
-    const disk = await this.diskFiles(); const diskSet = new Set(disk); const states = (await this.db.query<WatchedRow>(`SELECT w.*,a.role FROM watched_folder_state w JOIN collection_acl a ON a.collection_id=w.collection_id AND a.principal_type='user' AND a.principal_id=$1`, [this.config.userId])).rows;
+    const disk = await this.diskFiles(); const diskSet = new Set(disk); const states = (await this.db.query<WatchedRow>(`SELECT w.*,a.role FROM watched_folder_state w JOIN collection_acl a ON a.collection_id=w.collection_id AND a.principal_type='user' AND a.principal_id=$1`, [this.config.userId])).rows.filter(row => !isLegacyInternalPath(row.path, this.config.legacyPreflight));
     const owned = states.filter(row => row.collection_id === this.collectionId); const missing = new Map(owned.filter(row => !diskSet.has(row.path)).map(row => [row.content_hash, row]));
     const diskInfo = new Map<string, { size:number; mtimeMs:number }>();
     for (const filePath of disk) { const info = await stat(this.safe(filePath)); diskInfo.set(filePath, { size: info.size, mtimeMs: info.mtimeMs }) }
