@@ -157,6 +157,7 @@
             <VaultPage
               surface="popup"
               :site-url="pageUrl"
+              :tab-id="props.tabId"
             />
           </div>
         </div>

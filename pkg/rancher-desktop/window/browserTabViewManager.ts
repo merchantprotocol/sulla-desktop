@@ -866,6 +866,52 @@ export class BrowserTabViewManager {
     }
   }
 
+  getTrustedMainFrameOrigin(tabId: string): string | null {
+    return trustedFrameOrigin(this.views.get(tabId)?.webContents.mainFrame);
+  }
+
+  /**
+   * Final, human-approved handoff from the container vault into one verified
+   * browser tab. Credential values are transient here and never cross a
+   * renderer IPC, tool response, automation bridge, or log statement.
+   */
+  async injectContainerVaultFill(
+    tabId: string, expectedOrigin: string, username: string, password: string,
+  ): Promise<{ success: boolean; usernameOk: boolean; passwordOk: boolean }> {
+    const view = this.views.get(tabId);
+    const frame = view?.webContents.mainFrame;
+    if (!view || !frame || trustedFrameOrigin(frame) !== expectedOrigin) {
+      return { success: false, usernameOk: false, passwordOk: false };
+    }
+    const script = `
+      (function() {
+        var username = ${ JSON.stringify(username) };
+        var password = ${ JSON.stringify(password) };
+        try {
+          var bridge = window.sullaBridge;
+          if (!bridge || typeof bridge.detectLoginForm !== 'function' || typeof bridge.setValue !== 'function') {
+            return { success: false, usernameOk: false, passwordOk: false };
+          }
+          var form = bridge.detectLoginForm();
+          if (!form || !form.hasLoginForm) return { success: false, usernameOk: false, passwordOk: false };
+          var usernameOk = !username || Boolean(form.usernameHandle && bridge.setValue(form.usernameHandle, username));
+          var passwordOk = !password || Boolean(form.passwordHandle && bridge.setValue(form.passwordHandle, password));
+          return { success: usernameOk && passwordOk, usernameOk: usernameOk, passwordOk: passwordOk };
+        } finally {
+          username = '';
+          password = '';
+        }
+      })();
+    `;
+    const result = await frame.executeJavaScript(script, true) as { success?: boolean; usernameOk?: boolean; passwordOk?: boolean };
+    if (trustedFrameOrigin(frame) !== expectedOrigin) return { success: false, usernameOk: false, passwordOk: false };
+    return {
+      success: result?.success === true,
+      usernameOk: result?.usernameOk === true,
+      passwordOk: result?.passwordOk === true,
+    };
+  }
+
   // ---------------------------------------------------------------------------
   // Accessors
   // ---------------------------------------------------------------------------

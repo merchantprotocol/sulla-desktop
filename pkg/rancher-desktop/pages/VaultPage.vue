@@ -25,6 +25,7 @@ const props = withDefaults(defineProps<{
   accountId?: string;
   surface?: 'page' | 'popup';
   siteUrl?: string;
+  tabId?: string;
 }>(), { surface: 'page', siteUrl: '' });
 const loading = ref(true);
 const error = ref('');
@@ -46,6 +47,7 @@ async function open(): Promise<void> {
       accountId:     props.accountId,
       surface:       props.surface,
       siteUrl:       props.siteUrl,
+      tabId:         props.tabId,
     });
     loading.value = false;
   } catch (cause) {
