@@ -3,11 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { shell } from 'electron';
+import { app, shell } from 'electron';
+
+import { SullaFilesKeychain } from './sullaFilesKeychain';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import Logging from '@pkg/utils/logging';
+import paths from '@pkg/utils/paths';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 
 const console = Logging.background;
@@ -47,8 +50,84 @@ class SullaFilesWatcher {
   private safetyTimer?: NodeJS.Timeout;
   private resumeTimer?: NodeJS.Timeout;
   private started = false;
+  private stopped = false;
+  private lockGeneration = 0;
+  private readonly keychain = new SullaFilesKeychain(
+    path.join(paths.appHome, 'files-master-key.enc'),
+    async() => (await import('electron')).safeStorage,
+    async(key) => {
+      const generation = this.lockGeneration;
+      const body = Buffer.from(JSON.stringify({ masterKey: key.toString('base64') }));
+      try {
+        await this.requireAppUnlocked();
+        const response = await this.rawLocalRequest('/v1/local/unlock', { method: 'POST', body });
+        if (!response.ok) throw new Error('Files keychain bootstrap failed');
+        if (generation !== this.lockGeneration || this.stopped || !await this.appUnlocked()) {
+          await this.rawLocalRequest('/v1/local/lock', { method: 'POST' });
+          throw new Error('Files is shutting down');
+        }
+      } finally {
+        body.fill(0);
+      }
+    },
+    [
+      { sourcePath: path.join(this.folder, 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-shared-master-key.enc') },
+      { sourcePath: path.join(paths.sullaHome, 'private-files-quarantine', 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-quarantined-master-key.enc') },
+    ],
+  );
+
+  private async appUnlocked(): Promise<boolean> {
+    const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+    return getVaultKeyService().isUnlocked();
+  }
+
+  private async requireAppUnlocked(): Promise<void> {
+    if (this.stopped || !await this.appUnlocked()) throw new Error('Files is locked with the application');
+  }
+
+  async lockService(): Promise<void> {
+    this.lockGeneration++;
+    // Let an in-flight unlock finish before locking, preventing a late response
+    // from undoing an explicit user lock. New unlocks check the app vault state.
+    await this.keychain.settled();
+    const response = await this.rawLocalRequest('/v1/local/lock', { method: 'POST' });
+    if (!response.ok) throw new Error('Files service could not be locked');
+  }
+
+  private async ensureUnlocked(): Promise<void> {
+    await this.requireAppUnlocked();
+    const response = await this.rawLocalRequest('/healthz');
+    if (!response.ok) throw new Error('Files service is unavailable');
+    const health = await response.json();
+    // Never send a master key to an older image with no memory-only protocol.
+    if (typeof health.locked !== 'boolean') throw new Error('Files service requires a keychain-compatible update');
+    if (health.locked) await this.keychain.unlock();
+    await this.requireAppUnlocked();
+  }
+
+  private async rawLocalRequest(endpoint:string, init:RequestInit = {}):Promise<Response> {
+    const token = await SullaSettingsModel.getServicePassword();
+    return fetch(`${ API }${ endpoint }`, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any), 'x-sulla-files-token': token }, redirect: 'error', signal: AbortSignal.timeout(30_000) });
+  }
+
+  private async isLockedResponse(response: Response): Promise<boolean> {
+    if (response.status !== 503) return false;
+    const body = await response.clone().json().catch(() => ({}));
+    return body.code === 'FILES_LOCKED';
+  }
+
+  private async localRequest(endpoint:string, init:RequestInit):Promise<Response> {
+    await this.ensureUnlocked();
+    const response = await this.rawLocalRequest(endpoint, init);
+    if (!await this.isLockedResponse(response)) return response;
+    // A restart between the health check and request is safe to retry once:
+    // locked services reject requests before executing any operation.
+    await this.ensureUnlocked();
+    return this.rawLocalRequest(endpoint, init);
+  }
+
   async initialize():Promise<void> {
-    if (this.started) return; this.started = true; await fs.promises.mkdir(this.folder, { recursive: true, mode: 0o700 });
+    if (this.started) return; this.started = true; this.stopped = false; app.once('before-quit', () => this.shutdown()); await fs.promises.mkdir(this.folder, { recursive: true, mode: 0o700 });
     try { this.watcher = fs.watch(this.folder, { recursive: process.platform !== 'linux', persistent: false }, (_event, filename) => { if (filename) this.changed(filename.toString()).catch(error => console.warn('[SullaFiles] watch event failed:', error)); }) } catch (error) { console.warn('[SullaFiles] host folder watcher unavailable; periodic rescans remain active:', error) }
     this.safetyTimer = setInterval(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] periodic rescan failed:', error)), 5 * 60_000); this.safetyTimer.unref();
     setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] startup rescan failed:', error)), 2_000).unref();
@@ -57,7 +136,7 @@ class SullaFilesWatcher {
     else if (pauseUntil) await SullaSettingsModel.set('sullaFilesPauseUntil', 0, 'number');
   }
 
-  shutdown():void { this.watcher?.close(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
+  shutdown():void { this.stopped = true; this.lockService().catch(() => undefined); this.watcher?.close(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
   private async patterns():Promise<string[]> { try { return [...DEFAULT_IGNORES, ...(await fs.promises.readFile(path.join(this.folder, '.sullaignore'), 'utf8')).split(/\r?\n/)] } catch { return DEFAULT_IGNORES } }
   private async changed(relativePath:string):Promise<void> {
     if (ignored(relativePath, await this.patterns())) return; const absolute = path.resolve(this.folder, relativePath); if (!absolute.startsWith(`${ this.folder }${ path.sep }`)) return;
@@ -65,7 +144,10 @@ class SullaFilesWatcher {
     if (this.rescanTimer) clearTimeout(this.rescanTimer); this.rescanTimer = setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] debounced rescan failed:', error)), 350);
   }
 
-  private async request(endpoint:string, init:RequestInit = {}):Promise<Response> { const token = await SullaSettingsModel.getServicePassword(); return fetch(`${ API }${ endpoint }`, { ...init, headers: { 'x-sulla-files-token': token, 'content-type': 'application/json', ...(init.headers as any) }, signal: AbortSignal.timeout(3_000) }) }
+  private async request(endpoint:string, init:RequestInit = {}):Promise<Response> {
+    return this.localRequest(endpoint, init);
+  }
+
   private async capabilityToken():Promise<string> {
     const key = sullaFilesCapabilityKey(await SullaSettingsModel.getServicePassword()); const now = Math.floor(Date.now() / 1_000); const encode = (value:string) => Buffer.from(value).toString('base64url'); const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
     const deviceId = await getDesktopDeviceId().catch(() => os.hostname());
@@ -77,7 +159,15 @@ class SullaFilesWatcher {
   async requestFiles(endpoint:string, init:RequestInit = {}, server = false):Promise<Response> {
     const base = server && process.env.SULLA_FILES_SERVER_URL ? process.env.SULLA_FILES_SERVER_URL : API; const token = await this.capabilityToken();
 
-    return fetch(new URL(endpoint, base), { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, signal: AbortSignal.timeout(30_000) });
+    const url = new URL(endpoint, base);
+    if (url.origin !== new URL(base).origin) throw new Error('Files endpoint must use the configured service');
+    const send = () => fetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error' as const, signal: AbortSignal.timeout(30_000) });
+    if (base !== API) return send();
+    await this.ensureUnlocked();
+    const response = await send();
+    if (!await this.isLockedResponse(response)) return response;
+    await this.ensureUnlocked();
+    return send();
   }
 
   async notifyRescan():Promise<void> { try { const response = await this.request('/v1/local/rescan', { method: 'POST' }); if (!response.ok) throw new Error(`HTTP ${ response.status }`); } catch (error) { console.debug('[SullaFiles] optional container is offline; folder remains local-only:', error) } }

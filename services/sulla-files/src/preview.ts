@@ -1,5 +1,6 @@
+import { assertUnprotectedFile } from './protectedFiles.js';
 import { execFile } from 'node:child_process';
-import { createHmac, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -32,7 +33,8 @@ export async function loadFileContent(db:pg.Pool, config:Config, store:Store, fi
   );
   const row = result.rows[0];
   if (!row) return undefined;
-  const key = createHmac('sha256', config.capabilitySigningKey).update(`sulla:files:data-key:v1:${ row.chunk_collection_id }`).digest();
+  await assertUnprotectedFile(db, row);
+  const key = (await config.keyring!.keys(row.chunk_collection_id)).data;
   const parts:Buffer[] = [];
   for (const id of row.chunk_ids ?? []) parts.push(await decryptChunk(await store.get(row.chunk_collection_id, id), key, id));
   return { buffer: Buffer.concat(parts), mime: row.mime, fileId: row.id, versionId: row.version_id, path: row.path };

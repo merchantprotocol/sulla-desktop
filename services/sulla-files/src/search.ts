@@ -24,7 +24,7 @@ function filteredWhere(input:SearchInput, scopes:CollectionSearchScope[], args:a
     const collection = args.push(scope.collectionId); const paths = args.push(scope.paths);
     return `(f.collection_id=$${ collection } AND (cardinality($${ paths }::text[])=0 OR EXISTS(SELECT 1 FROM unnest($${ paths }::text[]) p WHERE f.path=p OR starts_with(f.path,p||'/'))))`;
   });
-  const where = [`(${ grants.join(' OR ') })`, 'f.deleted_at IS NULL'];
+  const where = [`(${ grants.join(' OR ') })`, 'f.deleted_at IS NULL', "lower(f.path) !~ '(^|/)master[.]key($|/)'", 'NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)'];
   if (input.folder) where.push(`f.path LIKE $${ args.push(`${ input.folder.replace(/[\\%_]/g, value => `\\${ value }`) }%`) } ESCAPE '\\'`);
   if (input.type) where.push(`f.mime=$${ args.push(input.type) }`);
   if (input.person) where.push(`(f.person_id=$${ args.push(input.person) } OR f.created_by_id=$${ args.length })`);

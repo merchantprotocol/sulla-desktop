@@ -1,10 +1,11 @@
-import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { isProtectedPath } from './protectedFiles.js';
+import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, open, readFile, readdir, rename, stat } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rename, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 
 import { issueCapabilityToken } from './auth.js';
-import { chunkId, decryptChunk, encrypt, encryptChunk } from './crypto.js';
+import { chunkId, decryptChunk, encryptChunk } from './crypto.js';
 import { Store } from './store.js';
 
 import type { Config } from './config.js';
@@ -12,7 +13,7 @@ import type { IndexingQueue } from './indexing.js';
 import type pg from 'pg';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
-const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/'];
+const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/', 'master.key'];
 
 interface RuntimeState {
   state: 'synced' | 'syncing' | 'paused' | 'error'; pendingFiles: number; pendingBytes: number;
@@ -45,9 +46,19 @@ function collectionIdFor(userId:string):string {
   return `${ value.slice(0, 8).join('') }-${ value.slice(8, 12).join('') }-${ value.slice(12, 16).join('') }-${ value.slice(16, 20).join('') }-${ value.slice(20).join('') }`;
 }
 
+/** Resolve symlinks before allowing plaintext watched files beside private storage. */
+export async function assertSeparateStorageRoots(filesRoot:string, dataRoot:string, chunkRoot:string):Promise<void> {
+  const [files, data, chunks] = await Promise.all([realpath(filesRoot), realpath(dataRoot), realpath(chunkRoot)]);
+  const contains = (parent:string, child:string) => child === parent || child.startsWith(parent.endsWith(sep) ? parent : `${ parent }${ sep }`);
+  for (const privateRoot of [data, chunks]) {
+    if (contains(files, privateRoot) || contains(privateRoot, files)) throw new Error('Files watched folder must not overlap private data or chunk storage');
+  }
+}
+
 export class LocalFilesManager {
   private readonly store: Store;
   private collectionId?:  string;
+  private stopped = false;
   private running?:       Promise<void>;
   private paused:         boolean;
   private lastError?:     string;
@@ -62,9 +73,12 @@ export class LocalFilesManager {
   constructor(private readonly db:pg.Pool, private readonly config:Config, private readonly indexer?:IndexingQueue) { this.store = new Store(config.chunkRoot); this.paused = config.paused }
 
   async initialize():Promise<void> {
+    this.stopped = false;
     if (!this.config.filesRoot) return;
     await mkdir(this.config.filesRoot, { recursive: true, mode: 0o700 });
     await mkdir(this.config.dataRoot, { recursive: true, mode: 0o700 });
+    await mkdir(this.config.chunkRoot, { recursive: true, mode: 0o700 });
+    await assertSeparateStorageRoots(this.config.filesRoot, this.config.dataRoot, this.config.chunkRoot);
     this.collectionId = await this.ensureCollection();
     const saved = await this.db.query('SELECT paused,last_error,last_scan_at,last_sync_at FROM files_runtime_state WHERE id=TRUE');
     if (saved.rows[0]) { this.paused ||= saved.rows[0].paused; this.lastError = saved.rows[0].last_error; this.lastScanAt = saved.rows[0].last_scan_at?.toISOString?.(); this.lastSyncAt = saved.rows[0].last_sync_at?.toISOString?.() }
@@ -73,7 +87,7 @@ export class LocalFilesManager {
     this.syncTimer.unref();
   }
 
-  close():void { if (this.syncTimer) clearInterval(this.syncTimer); }
+  async close():Promise<void> { this.stopped = true; if (this.syncTimer) clearInterval(this.syncTimer); await this.running?.catch(() => undefined); }
   status():RuntimeState {
     const elapsed = Math.max(0.001, (Date.now() - this.progressStartedAt) / 1_000); const rate = this.processedBytes / elapsed;
     return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, pendingBytes: this.pendingBytes, processedBytes: this.processedBytes, totalBytes: this.totalBytes, estimatedSeconds: this.running && rate > 0 ? Math.max(1, Math.ceil(this.pendingBytes / rate)) : undefined, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl) };
@@ -83,9 +97,9 @@ export class LocalFilesManager {
     const result = await this.db.query(`SELECT f.id,f.path,f.mime,f.size,f.updated_at,(f.path ILIKE '%conflicted copy%') AS conflict,m.duration_seconds
       FROM files f JOIN collection_acl a ON a.collection_id=f.collection_id AND a.principal_type='user' AND a.principal_id=$1
       LEFT JOIN recording_metadata m ON m.file_id=f.id
-      WHERE f.deleted_at IS NULL AND ($2::text IS NULL OR f.path=$2) ORDER BY f.updated_at DESC LIMIT $3`, [this.config.userId, exactPath ?? null, Math.max(1, Math.min(Number.isFinite(limit) ? limit : 4, 100))]);
+      WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.deleted_at IS NULL AND ($2::text IS NULL OR f.path=$2) ORDER BY f.updated_at DESC LIMIT $3`, [this.config.userId, exactPath ?? null, Math.max(1, Math.min(Number.isFinite(limit) ? limit : 4, 100))]);
     const syncState = this.status().state;
-    return result.rows.map(row => ({ id: row.id, path: row.path, mime: row.mime, size: Number(row.size), updatedAt: row.updated_at, conflict: row.conflict, durationSeconds: row.duration_seconds == null ? undefined : Number(row.duration_seconds), syncState: syncState === 'error' ? 'error' : syncState === 'syncing' ? 'syncing' : 'synced' }));
+    return result.rows.filter(row => !isProtectedPath(row.path)).map(row => ({ id: row.id, path: row.path, mime: row.mime, size: Number(row.size), updatedAt: row.updated_at, conflict: row.conflict, durationSeconds: row.duration_seconds == null ? undefined : Number(row.duration_seconds), syncState: syncState === 'error' ? 'error' : syncState === 'syncing' ? 'syncing' : 'synced' }));
   }
 
   async setPaused(paused:boolean):Promise<RuntimeState> {
@@ -97,6 +111,7 @@ export class LocalFilesManager {
   async rescan():Promise<void> { return this.serial(async() => { await this.scanFolder(); if (!this.paused) await this.syncNow(); }) }
   async sync():Promise<void> { if (this.paused || !this.config.serverUrl) return; return this.serial(() => this.syncNow()) }
   private async serial(operation:()=>Promise<void>):Promise<void> {
+    if (this.stopped) throw new Error('Files is locked');
     if (this.running) return this.running;
     this.running = operation().then(() => { this.lastError = undefined }).catch(error => { this.fail(error); throw error }).finally(() => { this.running = undefined });
     return this.running;
@@ -104,36 +119,28 @@ export class LocalFilesManager {
 
   private fail(error:unknown):void { this.lastError = error instanceof Error ? error.message : String(error); this.db.query("UPDATE files_runtime_state SET state='error',last_error=$1,updated_at=NOW() WHERE id=TRUE", [this.lastError]).catch(dbError => console.error('[SullaFiles] failed to record runtime error', dbError)) }
 
-  private async masterKey():Promise<Uint8Array> {
-    const path = join(this.config.dataRoot, 'master.key');
-    try { const key = await readFile(path); if (key.length !== 32) throw new Error('invalid Files master key'); return key } catch (error:any) {
-      if (error?.code !== 'ENOENT') throw error;
-      const key = randomBytes(32); const handle = await open(path, 'wx', 0o600); try { await handle.write(key) } finally { await handle.close() } return key;
-    }
-  }
-
   private async ensureCollection():Promise<string> {
-    const id = collectionIdFor(this.config.userId); const existing = await this.db.query("SELECT id FROM collections WHERE id=$1 AND owner_user_id=$2 AND kind='knowledge'", [id, this.config.userId]);
-    if (existing.rows[0]) { if (this.config.orgId) await this.db.query('UPDATE collections SET org_id=$2,updated_at=NOW() WHERE id=$1', [id, this.config.orgId]); return existing.rows[0].id }
-    const master = await this.masterKey(); const data = createHmac('sha256', this.config.capabilitySigningKey).update(`sulla:files:data-key:v1:${ id }`).digest(); const dedup = createHmac('sha256', this.config.capabilitySigningKey).update(`sulla:files:dedup-key:v1:${ id }`).digest();
-    const encryptedData = await encrypt(data, master, `sulla:files:data-key:v1:${ id }`); const encryptedDedup = await encrypt(dedup, master, `sulla:files:dedup-key:v1:${ id }`);
-    await this.db.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy)
-      VALUES($1,$2,$3,'Files','knowledge',$4,$5,$6,$7)`, [id, this.config.orgId ?? null, this.config.userId, this.config.serverUrl ? 'synced' : 'desktop-only', encryptedData, encryptedDedup, { trashDays: 90 }]);
-    await this.db.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')", [id, this.config.userId]); return id;
-  }
-
-  private keys(collectionId = this.collectionId!):{ data: Uint8Array; dedup: Uint8Array } {
-    return {
-      data:  createHmac('sha256', this.config.capabilitySigningKey).update(`sulla:files:data-key:v1:${ collectionId }`).digest(),
-      dedup: createHmac('sha256', this.config.capabilitySigningKey).update(`sulla:files:dedup-key:v1:${ collectionId }`).digest(),
-    };
+    const id = collectionIdFor(this.config.userId);
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const existing = await client.query("SELECT id FROM collections WHERE id=$1 AND owner_user_id=$2 AND kind='knowledge'", [id, this.config.userId]);
+      if (!existing.rows[0]) {
+        await client.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy)
+          VALUES($1,$2,$3,'Files','knowledge',$4,'{}','{}',$5)`, [id, this.config.orgId ?? null, this.config.userId, this.config.serverUrl ? 'synced' : 'desktop-only', { trashDays: 90 }]);
+        const wrapped = await this.config.keyring!.create(id, client);
+        await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
+        await client.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')", [id, this.config.userId]);
+      } else if (this.config.orgId) await client.query('UPDATE collections SET org_id=$2,updated_at=NOW() WHERE id=$1', [id, this.config.orgId]);
+      await client.query('COMMIT'); return id;
+    } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
   private async ignores():Promise<string[]> { try { return [...DEFAULT_IGNORES, ...(await readFile(join(this.config.filesRoot!, '.sullaignore'), 'utf8')).split(/\r?\n/)] } catch { return DEFAULT_IGNORES } }
   private safe(relativePath:string):string { const absolute = resolve(this.config.filesRoot!, relativePath); if (absolute !== this.config.filesRoot && !absolute.startsWith(`${ this.config.filesRoot }${ sep }`)) throw new Error('path escapes Files folder'); return absolute }
   private async diskFiles(root = this.config.filesRoot!, prefix = ''):Promise<string[]> {
     const ignores = await this.ignores(); const output:string[] = [];
-    for (const entry of await readdir(root, { withFileTypes: true })) { const rel = prefix ? `${ prefix }/${ entry.name }` : entry.name; if (matchIgnore(rel, ignores)) continue; if (entry.isDirectory()) output.push(...await this.diskFiles(join(root, entry.name), rel)); else if (entry.isFile() && rel !== '.sullaignore') output.push(rel); }
+    for (const entry of await readdir(root, { withFileTypes: true })) { const rel = prefix ? `${ prefix }/${ entry.name }` : entry.name; if (isProtectedPath(rel) || matchIgnore(rel, ignores)) continue; if (entry.isDirectory()) output.push(...await this.diskFiles(join(root, entry.name), rel)); else if (entry.isFile() && rel !== '.sullaignore') output.push(rel); }
     return output;
   }
 
@@ -154,7 +161,7 @@ export class LocalFilesManager {
   }
 
   private async ingest(collectionId:string, path:string, mtimeMs:number, old:WatchedRow | undefined, missing:Map<string, WatchedRow>):Promise<boolean> {
-    const keys = this.keys(collectionId); const whole = createHash('sha256'); const ids:string[] = []; const chunks:any[] = []; let total = 0;
+    const keys = await this.config.keyring!.keys(collectionId); const whole = createHash('sha256'); const ids:string[] = []; const chunks:any[] = []; let total = 0;
     for await (const part of createReadStream(this.safe(path), { highWaterMark: CHUNK_BYTES })) { const plain = Buffer.from(part); total += plain.length; whole.update(plain); const id = chunkId(plain, keys.dedup); ids.push(id); if (!await this.store.has(collectionId, id)) { const encrypted = await encryptChunk(plain, keys.data, id); await this.store.put(collectionId, id, encrypted); chunks.push({ id, size: plain.length, storedSize: encrypted.length }) } }
     if (total === 0) { const empty = Buffer.alloc(0); const id = chunkId(empty, keys.dedup); ids.push(id); if (!await this.store.has(collectionId, id)) { const encrypted = await encryptChunk(empty, keys.data, id); await this.store.put(collectionId, id, encrypted); chunks.push({ id, size: 0, storedSize: encrypted.length }) } }
     const contentHash = whole.digest('hex'); if (old?.content_hash === contentHash) { await this.db.query('UPDATE watched_folder_state SET size=$3,mtime_ms=$4 WHERE collection_id=$1 AND path=$2', [collectionId, path, total, Math.trunc(mtimeMs)]); return false }
@@ -193,9 +200,12 @@ export class LocalFilesManager {
   private headers(extra:Record<string, string> = {}):Record<string, string> { return { authorization: `Bearer ${ issueCapabilityToken({ sub: this.config.userId, device_id: this.config.deviceId, scopes: ['files/*'] }, this.config.capabilitySigningKey) }`, ...extra } }
   private async remote(path:string, init:RequestInit = {}):Promise<any> { const response = await fetch(new URL(path, this.config.serverUrl), { ...init, headers: { ...this.headers({ 'content-type': 'application/json' }), ...(init.headers as any) } }); if (!response.ok) { const body:any = await response.json().catch(() => ({})); throw Object.assign(new Error(body.error ?? `sync HTTP ${ response.status }`), { status: response.status, body }) } return response.status === 204 ? undefined : response.json() }
   private async syncNow():Promise<void> {
-    if (!this.config.serverUrl) return; await this.db.query("UPDATE files_runtime_state SET state='syncing',last_error=NULL,updated_at=NOW() WHERE id=TRUE");
+    if (!this.config.serverUrl) return;
+    await this.config.keyring!.requireLegacySync(this.collectionId!);
+    await this.db.query("UPDATE files_runtime_state SET state='syncing',last_error=NULL,updated_at=NOW() WHERE id=TRUE");
     const collection = (await this.db.query('SELECT * FROM collections WHERE id=$1', [this.collectionId])).rows[0]; await this.remote('/v1/collections', { method: 'POST', body: JSON.stringify({ collection }) });
     const remoteCollections:any[] = await this.remote('/v1/collections');
+    for (const remote of remoteCollections) await this.config.keyring!.requireLegacySync(remote.id);
     for (const remote of remoteCollections) {
       if (remote.id !== this.collectionId) {
         await this.db.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encryption,encrypted_data_key,dedup_key_ciphertext,retention_policy)
@@ -253,7 +263,7 @@ export class LocalFilesManager {
   }
 
   private async materialize(bundle:any):Promise<void> {
-    const keys = this.keys(bundle.version.chunk_collection_id); const target = this.safe(bundle.file.path); await mkdir(dirname(target), { recursive: true }); const temp = `${ target }.sulla-conflict-${ randomUUID() }`; const output = createWriteStream(temp, { mode: 0o600 });
+    const keys = await this.config.keyring!.keys(bundle.version.chunk_collection_id); const target = this.safe(bundle.file.path); await mkdir(dirname(target), { recursive: true }); const temp = `${ target }.sulla-conflict-${ randomUUID() }`; const output = createWriteStream(temp, { mode: 0o600 });
     let lastId:string | undefined; let lastPlain:Buffer | undefined;
     try { for (const id of bundle.manifest.chunk_ids) { let plain:Buffer; if (id === lastId && lastPlain) plain = lastPlain; else { let encrypted:Uint8Array; if (await this.store.has(bundle.version.chunk_collection_id, id)) encrypted = await this.store.get(bundle.version.chunk_collection_id, id); else { const response = await fetch(new URL(`/v1/chunks/${ bundle.version.chunk_collection_id }/${ id }`, this.config.serverUrl), { headers: this.headers() }); if (!response.ok) throw new Error(`chunk download failed ${ response.status }`); encrypted = new Uint8Array(await response.arrayBuffer()); await this.store.put(bundle.version.chunk_collection_id, id, encrypted) } plain = await decryptChunk(encrypted, keys.data, id); lastId = id; lastPlain = plain } if (!output.write(plain)) await new Promise<void>(resolve => output.once('drain', () => resolve())); } output.end(); await new Promise<void>((resolve, reject) => { output.once('finish', resolve); output.once('error', reject) }); await rename(temp, target) } catch (error) { output.destroy(); throw error }
   }
