@@ -159,13 +159,17 @@ export function initSullaFilesIpc():void {
     if (!response.ok) throw new Error(`Files content failed (${ response.status })`);
     return { mime: response.headers.get('content-type') ?? 'application/octet-stream', data: new Uint8Array(await response.arrayBuffer()) };
   });
-  ipcMain.handle('files-ui:chat-inventory', async() => {
-    const groups = await collectionsWithFiles();
-    return groups.flatMap(item => item.files.map(file => reference(file, item.collection)));
+  ipcMain.handle('files-ui:chat-inventory', async(_event, runIds:string[]) => {
+    const response = await getSullaFilesWatcher().requestFiles('/v1/agent-files/query', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runIds }),
+    });
+    if (!response.ok) throw new Error(`Chat Files inventory failed (${ response.status })`);
+    const files = await response.json() as any[];
+    return files.map(file => reference(file, { id: file.collection_id, kind: file.collection_kind, agent_run_id: file.agent_run_id }));
   });
   ipcMain.handle('files-ui:capture-screenshot', (_event, mode:ScreenshotMode = 'area') => getSullaFilesCaptureService().screenshot(mode));
   ipcMain.handle('files-ui:toggle-recording', (_event, input:{ mic:boolean; camera:boolean }) => getSullaFilesCaptureService().toggleRecording(input));
-  ipcMain.handle('files-ui:create-link', (_event, input:{ fileId:string; mode:'view'|'download'; password?:string; expiresAt?:string; keepAvailable:boolean }) => getSullaFilesLinkService().create(input));
+  ipcMain.handle('files-ui:create-link', (_event, input:{ fileId:string; mode:'view' | 'download'; password?:string; expiresAt?:string; keepAvailable:boolean }) => getSullaFilesLinkService().create(input));
   ipcMain.handle('files-ui:list-links', () => getSullaFilesLinkService().list());
   ipcMain.handle('files-ui:revoke-link', (_event, id:string) => getSullaFilesLinkService().revoke(id));
   ipcMain.handle('files-ui:set-link-keep', (_event, input:{ id:string; enabled:boolean }) => getSullaFilesLinkService().setKeepAvailable(input.id, input.enabled));

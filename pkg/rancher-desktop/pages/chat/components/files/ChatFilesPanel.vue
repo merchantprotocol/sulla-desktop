@@ -1,35 +1,82 @@
 <template>
   <aside class="chat-files">
-    <header><span>◇</span><b>Files in this chat</b><button type="button" @click="$emit('open-files')">Open Files</button></header>
-    <section v-if="attached.length"><h3>Attached</h3><FileRow v-for="file in attached" :key="file.fileId" :file="file" @open="open" /></section>
-    <section v-if="madeHere.length"><h3>Made here</h3><FileRow v-for="file in madeHere" :key="file.fileId" :file="file" @open="open" /></section>
-    <section v-if="scratch.length"><h3>Scratch</h3><div v-for="file in scratch" :key="file.fileId" class="row"><span class="icon">◇</span><div><b>{{ file.name }}</b><small>{{ file.agentRunId || file.createdById || 'agent run' }}</small></div><button type="button" @click="keep(file)">Keep</button></div></section>
-    <p v-if="!attached.length && !madeHere.length && !scratch.length" class="empty">Files attached to this conversation and files made by its agents show up here.</p>
+    <header>
+      <span>◇</span><b>Files in this chat</b><button
+        type="button"
+        @click="$emit('open-files')"
+      >
+        Open Files
+      </button>
+    </header>
+    <section v-if="attached.length">
+      <h3>Attached</h3><FileRow
+        v-for="item in attached"
+        :key="item.fileId"
+        :file="item"
+        @open="open"
+      />
+    </section>
+    <section v-if="madeHere.length">
+      <h3>Made here</h3><FileRow
+        v-for="item in madeHere"
+        :key="item.fileId"
+        :file="item"
+        @open="open"
+      />
+    </section>
+    <section v-if="scratch.length">
+      <h3>Scratch</h3><div
+        v-for="item in scratch"
+        :key="item.fileId"
+        class="row"
+      >
+        <span class="icon">◇</span><div><b>{{ item.name }}</b><small>{{ item.agentRunId || item.createdById || 'agent run' }}</small></div><button
+          type="button"
+          @click="keep(item)"
+        >
+          Keep
+        </button>
+      </div>
+    </section>
+    <p
+      v-if="!attached.length && !madeHere.length && !scratch.length"
+      class="empty"
+    >
+      Files attached to this conversation and files made by its agents show up here.
+    </p>
   </aside>
 </template>
 
 <script setup lang="ts">
 import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref } from 'vue';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 import { useChatController } from '../../controller/useChatController';
 
-interface RefFile { fileId:string; versionId:string; path:string; name:string; mime:string; size:number; collectionId?:string; collectionKind?:string; createdByType?:string; createdById?:string; agentRunId?:string }
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+interface RefFile { fileId: string; versionId: string; path: string; name: string; mime: string; size: number; collectionId?: string; collectionKind?: string; createdByType?: string; createdById?: string; agentRunId?: string }
 defineEmits<(e:'open-files')=>void>();
 const controller = useChatController(); const inventory = ref<RefFile[]>([]); let timer:ReturnType<typeof setInterval> | undefined;
 const messageRefs = computed(() => controller.messages.value.flatMap(message => message.kind === 'user' ? (message.attachments ?? []).flatMap(item => item.fileRef ? [{ ...item.fileRef, name: item.name }] : []) : message.kind === 'sulla' ? (message.fileReferences ?? []).flatMap(item => item.fileRef ? [{ ...item.fileRef, name: item.name }] : []) : []));
 const attached = computed(() => messageRefs.value.filter(file => file.createdByType !== 'agent-run'));
-const runIds = computed(() => new Set(messageRefs.value.map(file => file.agentRunId || file.createdById).filter(Boolean)));
-const madeHere = computed(() => inventory.value.filter(file => file.collectionKind !== 'scratch' && file.createdByType === 'agent-run' && (!runIds.value.size || runIds.value.has(file.agentRunId || file.createdById))));
-const scratch = computed(() => inventory.value.filter(file => file.collectionKind === 'scratch' && (!runIds.value.size || runIds.value.has(file.agentRunId || file.createdById))));
-async function refresh() { inventory.value = await ipcRenderer.invoke('files-ui:chat-inventory').catch(() => []) }
+const runIds = computed(() => new Set([
+  controller.thread.value.id,
+  controller.thread.value.backendThreadId,
+  ...controller.messages.value.flatMap(message => message.kind === 'subagent_exchange' ? [message.jobId, message.conversationId] : []),
+  ...messageRefs.value.filter(file => file.createdByType === 'agent-run').map(file => file.agentRunId || file.createdById),
+].filter((value): value is string => Boolean(value))));
+const madeHere = computed(() => inventory.value.filter(file => file.collectionKind !== 'scratch' && file.createdByType === 'agent-run' && runIds.value.has(file.agentRunId || file.createdById || '')));
+const scratch = computed(() => inventory.value.filter(file => file.collectionKind === 'scratch' && runIds.value.has(file.agentRunId || file.createdById || '')));
+async function refresh() { inventory.value = await ipcRenderer.invoke('files-ui:chat-inventory', [...runIds.value]).catch(() => []) }
 async function open(file:RefFile) { await ipcRenderer.invoke('files-ui:open-file', file.path) }
 async function keep(file:RefFile) {
-  const target = inventory.value.find(item => item.collectionKind === 'knowledge')?.collectionId;
+  const collections = await ipcRenderer.invoke('sulla-files:collections') as { id: string; kind: string }[];
+  const target = collections.find(item => item.kind === 'knowledge')?.id;
   if (!target) throw new Error('No persistent Files collection is available');
   await ipcRenderer.invoke('sulla-files:keep', { fileId: file.fileId, collectionId: target, path: file.path }); await refresh();
 }
-const FileRow = defineComponent({ props: { file: { type:Object as () => RefFile, required:true } }, emits:['open'], setup(props,{emit}) { return () => h('div',{class:'row'},[h('span',{class:'icon'},'◇'),h('div',[h('b',props.file.name),h('small',`v${ props.file.versionId.slice(0,6) } · persistent reference`)]),h('button',{type:'button',onClick:()=>emit('open',props.file)},'Open')]) } });
-onMounted(() => { void refresh(); timer = setInterval(refresh, 15_000) }); onBeforeUnmount(() => { if (timer) clearInterval(timer) });
+const FileRow = defineComponent({ props: { file: { type: Object as () => RefFile, required: true } }, emits: ['open'], setup(props, { emit }) { return () => h('div', { class: 'row' }, [h('span', { class: 'icon' }, '◇'), h('div', [h('b', props.file.name), h('small', `v${ props.file.versionId.slice(0, 6) } · persistent reference`)]), h('button', { type: 'button', onClick: () => emit('open', props.file) }, 'Open')]) } });
+onMounted(() => { refresh().catch(() => undefined); timer = setInterval(refresh, 15_000) }); onBeforeUnmount(() => { if (timer) clearInterval(timer); });
 </script>
 
 <style scoped>

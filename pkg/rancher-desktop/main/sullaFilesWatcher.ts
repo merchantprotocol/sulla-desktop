@@ -9,6 +9,7 @@ import { SullaFilesKeychain } from './sullaFilesKeychain';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { spawnFile } from '@pkg/utils/childProcess';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
@@ -18,24 +19,29 @@ const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modu
 const API = 'http://127.0.0.1:30124';
 
 export interface SullaFilesStatus {
-  state:            'synced' | 'syncing' | 'paused' | 'error' | 'conflict';
-  pendingFiles:     number;
-  pendingBytes?:    number;
-  processedBytes?:  number;
-  totalBytes?:      number;
+  state:             'synced' | 'syncing' | 'paused' | 'error' | 'conflict';
+  pendingFiles:      number;
+  pendingBytes?:     number;
+  processedBytes?:   number;
+  totalBytes?:       number;
   estimatedSeconds?: number;
-  lastError?:       string;
-  lastScanAt?:      string;
-  lastSyncAt?:      string;
-  serverConfigured: boolean;
-  location?:        'local' | 'server' | 'cloud';
-  serverLabel?:     string;
+  lastError?:        string;
+  lastScanAt?:       string;
+  lastSyncAt?:       string;
+  serverConfigured:  boolean;
+  location?:         'local' | 'server' | 'cloud';
+  serverLabel?:      string;
 }
 
 export interface RecentSullaFile {
-  id: string; path: string; mime: string; size: number; updatedAt: string; conflict: boolean;
+  id:               string;
+  path:             string;
+  mime:             string;
+  size:             number;
+  updatedAt:        string;
+  conflict:         boolean;
   durationSeconds?: number;
-  syncState: 'synced' | 'syncing' | 'error';
+  syncState:        'synced' | 'syncing' | 'error';
 }
 
 function ignored(relativePath:string, patterns:string[]):boolean {
@@ -170,7 +176,30 @@ class SullaFilesWatcher {
     return send();
   }
 
-  async notifyRescan():Promise<void> { try { const response = await this.request('/v1/local/rescan', { method: 'POST' }); if (!response.ok) throw new Error(`HTTP ${ response.status }`); } catch (error) { console.debug('[SullaFiles] optional container is offline; folder remains local-only:', error) } }
+  async notifyRescan():Promise<void> {
+    try {
+      const response = await this.request('/v1/local/rescan', { method: 'POST' }); if (!response.ok) throw new Error(`HTTP ${ response.status }`);
+      await this.refreshFinderBadges();
+    } catch (error) { console.debug('[SullaFiles] optional container is offline; folder remains local-only:', error) }
+  }
+
+  private async refreshFinderBadges():Promise<void> {
+    if (process.platform !== 'darwin') return;
+    const collectionsResponse = await this.requestFiles('/v1/collections');
+    if (!collectionsResponse.ok) return;
+    const collections = await collectionsResponse.json() as { id: string }[];
+    for (const collection of collections) {
+      const response = await this.requestFiles(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=&trash=false`);
+      if (!response.ok) continue;
+      const files = await response.json() as { path: string; sync_state?: string }[];
+      for (const file of files) {
+        const target = path.resolve(this.folder, file.path);
+        if (!target.startsWith(`${ this.folder }${ path.sep }`)) continue;
+        try { await spawnFile('/usr/bin/xattr', ['-w', 'io.sulla.files.sync-state', file.sync_state || 'synced', target]) } catch { /* Finder metadata is best-effort. */ }
+      }
+    }
+  }
+
   async status():Promise<SullaFilesStatus> {
     try {
       const response = await this.request('/v1/local/status'); if (!response.ok) throw new Error(`HTTP ${ response.status }`);
@@ -185,6 +214,7 @@ class SullaFilesWatcher {
   }
 
   async setPaused(paused:boolean):Promise<SullaFilesStatus> { const response = await this.request('/v1/local/pause', { method: 'POST', body: JSON.stringify({ paused }) }); if (!response.ok) throw new Error(`Files pause failed (${ response.status })`); return await response.json() as SullaFilesStatus }
+
   async pauseFor(ms:number):Promise<SullaFilesStatus> {
     await SullaSettingsModel.set('sullaFilesPauseUntil', Date.now() + ms, 'number');
     if (this.resumeTimer) clearTimeout(this.resumeTimer);
@@ -194,16 +224,19 @@ class SullaFilesWatcher {
     }, ms); this.resumeTimer.unref();
     return this.setPaused(true);
   }
+
   async recentFiles(limit = 4):Promise<RecentSullaFile[]> {
     const response = await this.request(`/v1/local/recent?limit=${ Math.max(1, Math.min(limit, 20)) }`);
     if (!response.ok) throw new Error(`Recent Files request failed (${ response.status })`);
     return await response.json() as RecentSullaFile[];
   }
+
   async findFile(relativePath:string):Promise<RecentSullaFile | undefined> {
     const response = await this.request(`/v1/local/recent?limit=100&path=${ encodeURIComponent(relativePath) }`);
     if (!response.ok) return undefined;
     return (await response.json() as RecentSullaFile[])[0];
   }
+
   async openFolder():Promise<void> { const error = await shell.openPath(this.folder); if (error) throw new Error(error); }
 }
 

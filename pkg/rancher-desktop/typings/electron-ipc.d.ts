@@ -454,6 +454,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:pick-upload':  () => number;
   'files-ui:upload-paths': (paths: string[]) => number;
   'files-ui:create-folder': (relativePath: string) => void;
+  'files-ui:chat-inventory': (runIds: string[]) => any[];
   'sulla-files:collections':     () => any[];
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
   'sulla-files:metadata':        (input: { fileId: string }) => any;

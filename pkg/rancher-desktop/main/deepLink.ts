@@ -20,10 +20,14 @@
  *       detail view for the requested template.
  */
 
+import path from 'node:path';
 import { URL } from 'url';
 
 import Electron from 'electron';
 
+import { getSullaFilesLinkService } from '@pkg/main/sullaFilesLinkService';
+import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
+import { spawnFile } from '@pkg/utils/childProcess';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
 
@@ -70,7 +74,7 @@ export function handleDeepLink(rawUrl: string): void {
     } catch (err) {
       console.error('[deep-link] openMain failed:', err);
     }
-    void dispatchWhenReady(rawUrl);
+    dispatchWhenReady(rawUrl).catch(err => console.error('[deep-link] dispatch failed:', err));
   }).catch((err) => {
     console.error('[deep-link] whenReady rejected:', err);
   });
@@ -117,6 +121,11 @@ function dispatch(target: Electron.BrowserWindow, rawUrl: string): void {
   const section = parsed.hostname;
   const action = parsed.pathname.replace(/^\/+/, '');
 
+  if (section === 'files' && ['share', 'history', 'keep', 'online-only'].includes(action)) {
+    handleFilesAction(target, action, parsed.searchParams.get('path') ?? '').catch(err => console.error('[deep-link] Files action failed:', err));
+    return;
+  }
+
   // Use Cases is the current name; marketplace and packages stay working.
   if ((section === 'marketplace' || section === 'packages' || section === 'use-cases') && action === 'install') {
     const id = parsed.searchParams.get('id');
@@ -134,6 +143,32 @@ function dispatch(target: Electron.BrowserWindow, rawUrl: string): void {
   }
 
   console.warn('[deep-link] unhandled URL:', rawUrl);
+}
+
+async function handleFilesAction(target:Electron.BrowserWindow, action:string, absolutePath:string):Promise<void> {
+  const watcher = getSullaFilesWatcher(); const resolved = path.resolve(absolutePath);
+  if (!resolved.startsWith(`${ watcher.folder }${ path.sep }`)) {
+    await Electron.dialog.showMessageBox(target, { type: 'error', message: 'That item is outside Sulla Files.' }); return;
+  }
+  const relativePath = path.relative(watcher.folder, resolved).split(path.sep).join('/');
+  const file = await watcher.findFile(relativePath);
+  if (!file) { await Electron.dialog.showMessageBox(target, { type: 'info', message: 'Sulla is still indexing this file. Try again after sync finishes.' }); return }
+  if (action === 'share') {
+    try {
+      const link = await getSullaFilesLinkService().create({ fileId: file.id, mode: 'view', keepAvailable: false });
+      Electron.clipboard.writeText(link.url);
+      await Electron.dialog.showMessageBox(target, { type: 'info', message: 'Sulla Files link copied.' });
+    } catch (error) { await Electron.dialog.showMessageBox(target, { type: 'error', message: error instanceof Error ? error.message : String(error) }) }
+    return;
+  }
+  if (action === 'online-only') {
+    await Electron.dialog.showMessageBox(target, { type: 'warning', message: 'This file was not removed from your Mac.', detail: 'Online-only needs secure collection-key exchange before Sulla can guarantee recovery. The local copy remains intact.' }); return;
+  }
+  if (action === 'keep') {
+    await spawnFile('/usr/bin/xattr', ['-w', 'io.sulla.files.sync-state', 'synced', resolved]);
+  }
+  target.focus();
+  target.webContents.send('agent-command', { command: 'open-tab', mode: 'files', path: relativePath, section: action === 'history' ? 'versions' : 'files' });
 }
 
 function delay(ms: number): Promise<void> {
