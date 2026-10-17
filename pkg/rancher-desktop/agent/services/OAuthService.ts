@@ -42,11 +42,6 @@ interface OAuthTokenRow {
   updated_at:     Date;
 }
 
-interface DynamicClientRegistrationResponse {
-  client_id?:    string;
-  [key: string]: unknown;
-}
-
 // ─── Active refresh timers ────────────────────────────────────────
 
 const refreshTimers = new Map<string, NodeJS.Timeout>();
@@ -132,10 +127,6 @@ export class OAuthService {
       throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
     }
     const cfg = provider.config;
-    if (usesContainerVaultAuthority() && cfg.registrationEndpoint) {
-      throw new Error('unsupported_secret_egress: dynamic OAuth client registration requires a vault-owned typed operation');
-    }
-
     // Resolve effective client_id (built-in takes precedence for public clients).
     // Providers with registrationEndpoint can fill this after the callback
     // server starts, because DCR needs the actual redirect_uri for this flow.
@@ -171,15 +162,17 @@ export class OAuthService {
 
     try {
       if (!effectiveClientId && cfg.registrationEndpoint) {
-        const registration = await this.registerDynamicClient(cfg, redirectUri);
+        const registration = await this.registerDynamicClient(cfg, redirectUri, integrationId, accountId);
         effectiveClientId = registration.clientId;
-        const integrationService = getIntegrationService();
-        await integrationService.setIntegrationValue({
-          integration_id: integrationId,
-          account_id:     accountId,
-          property:       'oauth_client_id',
-          value:          effectiveClientId,
-        });
+        if (!usesContainerVaultAuthority()) {
+          const integrationService = getIntegrationService();
+          await integrationService.setIntegrationValue({
+            integration_id: integrationId,
+            account_id:     accountId,
+            property:       'oauth_client_id',
+            value:          effectiveClientId,
+          });
+        }
         console.log(`${ LOG_PREFIX } Registered OAuth client for ${ integrationId }/${ accountId }`);
       }
 
@@ -342,7 +335,9 @@ export class OAuthService {
   private async registerDynamicClient(
     cfg: OAuthProviderConfig,
     redirectUri: string,
-  ): Promise<{ clientId: string; response: DynamicClientRegistrationResponse }> {
+    integrationId: string,
+    accountId: string,
+  ): Promise<{ clientId: string }> {
     if (!cfg.registrationEndpoint) {
       throw new Error(`${ LOG_PREFIX } OAuth provider ${ cfg.id } has no registrationEndpoint`);
     }
@@ -355,6 +350,36 @@ export class OAuthService {
       ...cfg.registrationClientMetadata,
       redirect_uris:              [redirectUri],
     };
+
+    if (usesContainerVaultAuthority()) {
+      const context = await issueLocalBrokerContext({
+        agentId:         'oauth-register',
+        podId:           'desktop-main',
+        credentialScope: { integration_id: integrationId, account_id: accountId },
+      });
+      const broker = requireConfiguredCredentialBroker();
+      const result = await broker.execute(broker.requestFor(context, {
+        operation:  'oauth.register',
+        ref:        { integrationId, accountId },
+        url:        cfg.registrationEndpoint,
+        method:     'POST',
+        headers:    {
+          'content-type': 'application/json',
+          accept:         'application/json',
+          'user-agent':   'Sulla-Desktop/1.0',
+        },
+        body:       metadata,
+        injections: [],
+      }));
+      const body = result.body;
+      const clientId = body && typeof body === 'object' && typeof (body as Record<string, unknown>).client_id === 'string'
+        ? (body as Record<string, string>).client_id
+        : '';
+      if (result.status < 200 || result.status >= 300 || !clientId) {
+        throw new Error(`${ LOG_PREFIX } Vault-owned dynamic client registration failed`);
+      }
+      return { clientId };
+    }
 
     const res = await fetch(cfg.registrationEndpoint, {
       method:  'POST',
@@ -371,12 +396,12 @@ export class OAuthService {
       throw new Error(`${ LOG_PREFIX } Dynamic client registration failed (${ res.status }): ${ text }`);
     }
 
-    const json = await res.json() as DynamicClientRegistrationResponse;
+    const json = await res.json() as { client_id?: string };
     if (!json.client_id || typeof json.client_id !== 'string') {
       throw new Error(`${ LOG_PREFIX } Dynamic client registration response missing client_id`);
     }
 
-    return { clientId: json.client_id, response: json };
+    return { clientId: json.client_id };
   }
 
   // ── Exchange auth code for tokens ─────────────────────────────

@@ -2881,33 +2881,39 @@ export class PlaybookController<TState = any> {
 
     const options: Record<string, any> = { accountId };
     const { issueLocalBrokerContext, usesContainerVaultAuthority } = await import('../../vault-broker');
+    const endpoint = client.getEndpoint(endpointName);
+    const requiresVaultScope = endpoint?.endpoint.auth !== 'none';
     if (usesContainerVaultAuthority()) {
-      const metadata = (state as any).metadata ?? {};
-      const agentIdentity = String(metadata.agentId ?? metadata.wsChannel ?? '').trim();
-      const threadId = String(metadata.threadId ?? '').trim();
-      if (!agentIdentity || !threadId) throw new Error('Integration call requires trusted graph identity');
-      options.executionContext = await issueLocalBrokerContext({
-        agentId: agentIdentity,
-        podId:   String(metadata.podId ?? `desktop:${ threadId }`),
-        credentialScope: { integration_id: integrationSlug, account_id: accountId },
-        threadId,
-        jobId: metadata.jobId,
-        workflowExecutionId: metadata.activeWorkflow?.executionId,
-        orgId: metadata.orgId,
-        signal: metadata.options?.abort?.signal,
-      });
-    } else try {
-      const { getIntegrationService } = await import('../services/IntegrationService');
-      const integrationService = getIntegrationService();
-      const values = await integrationService.getFormValues(integrationSlug, accountId);
-      const apiKeyVal = values.find((v: { property: string; value: string }) =>
-        v.property === 'api_key' || v.property === 'apiKey' || v.property === 'token',
-      );
-      if (apiKeyVal?.value) options.apiKey = apiKeyVal.value;
-      const tokenVal = values.find((v: { property: string; value: string }) => v.property === 'access_token');
-      if (tokenVal?.value) options.token = tokenVal.value;
-    } catch (err) {
-      console.warn('[PlaybookController] Could not load credentials:', err);
+      if (requiresVaultScope) {
+        const metadata = (state as any).metadata ?? {};
+        const agentIdentity = String(metadata.agentId ?? metadata.wsChannel ?? '').trim();
+        const threadId = String(metadata.threadId ?? '').trim();
+        if (!agentIdentity || !threadId) throw new Error('Integration call requires trusted graph identity');
+        options.executionContext = await issueLocalBrokerContext({
+          agentId: agentIdentity,
+          podId:   String(metadata.podId ?? `desktop:${ threadId }`),
+          credentialScope: { integration_id: integrationSlug, account_id: accountId },
+          threadId,
+          jobId: metadata.jobId,
+          workflowExecutionId: metadata.activeWorkflow?.executionId,
+          orgId: metadata.orgId,
+          signal: metadata.options?.abort?.signal,
+        });
+      }
+    } else {
+      try {
+        const { getIntegrationService } = await import('../services/IntegrationService');
+        const integrationService = getIntegrationService();
+        const values = await integrationService.getFormValues(integrationSlug, accountId);
+        const apiKeyVal = values.find((v: { property: string; value: string }) =>
+          v.property === 'api_key' || v.property === 'apiKey' || v.property === 'token',
+        );
+        if (apiKeyVal?.value) options.apiKey = apiKeyVal.value;
+        const tokenVal = values.find((v: { property: string; value: string }) => v.property === 'access_token');
+        if (tokenVal?.value) options.token = tokenVal.value;
+      } catch (err) {
+        console.warn('[PlaybookController] Could not load credentials:', err);
+      }
     }
 
     const result = await client.call(endpointName, defaults, options);

@@ -61,7 +61,12 @@ export class MCPClient {
     private accountId: string,
     private authToken?: string,
     private defaultExecutionContext?: ToolExecutionContext,
-  ) {}
+    private credentialFree = false,
+  ) {
+    if (credentialFree && authToken) {
+      throw new Error('unsupported_secret_egress: credential-free MCP transport cannot accept an auth token');
+    }
+  }
 
   get connected(): boolean {
     return this._connected;
@@ -254,7 +259,7 @@ export class MCPClient {
       requestInit.headers = { Authorization: `Bearer ${ this.authToken }` };
     }
     const skipTls = this.serverUrl.startsWith('https:') && this.isLocalUrl();
-    const fetchImpl = usesContainerVaultAuthority()
+    const fetchImpl = usesContainerVaultAuthority() && !this.credentialFree
       ? this.createBrokerFetch()
       : skipTls ? this.createTlsPermissiveFetch() : fetch;
     return new StreamableHTTPClientTransport(
@@ -299,7 +304,7 @@ export class MCPClient {
       new URL(this.serverUrl),
       {
         requestInit,
-        ...(usesContainerVaultAuthority()
+        ...(usesContainerVaultAuthority() && !this.credentialFree
           ? { fetch: this.createBrokerFetch() }
           : skipTls ? { fetch: this.createTlsPermissiveFetch() } : {}),
       },

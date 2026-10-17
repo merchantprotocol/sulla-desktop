@@ -1239,7 +1239,11 @@ export class ChatCompletionsServer {
 
       // Route MCP calls to the MCPBridge instead of ConfigApiClient
       if (slug === 'mcp') {
-        const executionContext = usesContainerVaultAuthority()
+        const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+        const mcpAccount = usesContainerVaultAuthority()
+          ? (await getIntegrationService().getAccounts('mcp')).find(account => account.account_id === accountId)
+          : undefined;
+        const executionContext = usesContainerVaultAuthority() && mcpAccount?.credentialRequired !== false
           ? await issueLocalBrokerContext({
             agentId: 'desktop-integration-api', podId: 'desktop-main',
             credentialScope: { integration_id: slug, account_id: accountId },
@@ -1283,7 +1287,7 @@ export class ChatCompletionsServer {
       }
 
       const { params = {}, body, raw } = req.body || {};
-      const executionContext = usesContainerVaultAuthority()
+      const executionContext = usesContainerVaultAuthority() && epConfig.endpoint.auth !== 'none'
         ? await issueLocalBrokerContext({
           agentId: 'desktop-integration-api', podId: 'desktop-main',
           credentialScope: { integration_id: slug, account_id: accountId },
