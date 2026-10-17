@@ -16,7 +16,6 @@ import {
   bootstrapChallengeProofInput,
   bootstrapServerProofInput,
   bootstrapSessionKeyInput,
-  bootstrapUnlockProofInput,
   cacheUpdateChallengeProofInput,
   cacheUpdateFetchProofInput,
   cacheUpdateServerProofInput,
@@ -26,6 +25,7 @@ import {
   type CacheUpdateChallengeResponse,
   type CacheUpdateFetchResponse,
 } from '../../../services/sulla-vault/src/contracts';
+import { bootstrapUnlockProofInputForSealed } from '../../../services/sulla-vault/src/bootstrapProof';
 import { verifyVaultCertificate } from './vaultTlsVerifier';
 import { openVaultCacheEnvelope, sealLegacyVaultKey } from './vaultCacheEnvelope';
 
@@ -128,15 +128,14 @@ async function bootstrap(): Promise<BootstrapUnlockResponse> {
     const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     const sealed = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
     const sealedUnlock = sealed.toString('base64url');
-    const sealedSha256 = createHash('sha256').update(sealed).digest('base64url');
     sealed.fill(0);
 
     return await jsonRequest<BootstrapUnlockResponse>('/v1/desktop/bootstrap/unlock', {
       callerId: CALLER_ID,
       challengeId: challenge.challengeId,
       sealedUnlock,
-      clientProof: hmac(identity, bootstrapUnlockProofInput(
-        CALLER_ID, clientNonce, challenge.serverNonce, challenge.challengeId, challenge.expiresAt, sealedSha256,
+      clientProof: hmac(identity, bootstrapUnlockProofInputForSealed(
+        CALLER_ID, clientNonce, challenge.serverNonce, challenge.challengeId, challenge.expiresAt, sealedUnlock,
       )),
     });
   } finally {

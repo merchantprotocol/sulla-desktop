@@ -8,13 +8,13 @@ import { DEFAULT_AGENT_POLICY, deriveMasterKey } from '@sulla/vault-crypto';
 
 import { migrate } from './db.js';
 import { createApp } from './app.js';
+import { bootstrapUnlockProofInputForSealed } from './bootstrapProof.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
 import { LocalVaultAuthority, LocalVaultError, localAuthorityTestHooks } from './localAuthority.js';
 import { validateOAuthRegistrationRequest } from './oauthPolicy.js';
 import { validateOperation } from './operationPolicy.js';
 import {
   bootstrapSessionKeyInput,
-  bootstrapUnlockProofInput,
   cacheUpdateChallengeProofInput,
   cacheUpdateFetchProofInput,
   cacheUpdateServerProofInput,
@@ -438,8 +438,9 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
       const clear = Buffer.from(JSON.stringify({ masterKey: Buffer.from(master.key).toString('base64url') }));
       const ciphertext = Buffer.concat([cipher.update(clear), cipher.final()]);
       const sealed = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64url');
-      const sealedDigest = createHash('sha256').update(sealed).digest('base64url');
-      const unlockProof = proof(bootstrapUnlockProofInput(callerId, clientNonce, challenge.serverNonce, challenge.challengeId, challenge.expiresAt, sealedDigest));
+      const unlockProof = proof(bootstrapUnlockProofInputForSealed(
+        callerId, clientNonce, challenge.serverNonce, challenge.challengeId, challenge.expiresAt, sealed,
+      ));
       assert.equal((await authority.unlock({ callerId, challengeId: challenge.challengeId, clientProof: unlockProof, sealedUnlock: sealed })).state, 'unlocked');
       await assert.rejects(authority.unlock({ callerId, challengeId: challenge.challengeId, clientProof: unlockProof, sealedUnlock: sealed }),
         (error: any) => error.code === 'invalid_bootstrap_challenge');
