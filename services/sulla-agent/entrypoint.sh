@@ -22,4 +22,12 @@ if [ -n "${SULLA_AGENT_INSTRUCTIONS_B64:-}" ]; then
   unset SULLA_AGENT_INSTRUCTIONS_B64
 fi
 
+# In transport mode Desktop keeps the canonical graph/control plane and uses
+# this container as one persistent job-scoped process and filesystem runtime.
+# Provider CLIs are started with authenticated `docker exec` calls and the
+# lifecycle owner removes the container in its finally path.
+if [ "${SULLA_AGENT_MODE:-}" = "transport" ]; then
+  exec sleep infinity
+fi
+
 exec node /usr/local/libexec/sulla-agent-supervisor.mjs

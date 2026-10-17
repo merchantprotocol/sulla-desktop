@@ -332,7 +332,7 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
   // Codex's Responses provider appends `/responses`; Anthropic's SDK appends
   // `/v1/messages` to its base URL.
   const baseUrl = definition.cli === 'codex' ? `${ endpointBase }/v1` : endpointBase;
-  const environment = definition.cli === 'codex'
+  const environment: Readonly<Record<string, string>> = definition.cli === 'codex'
     ? { SULLA_PROVIDER_BRIDGE_TOKEN: capability }
     : { ANTHROPIC_API_KEY: capability, ANTHROPIC_BASE_URL: baseUrl };
   const config: ProviderCliOpaqueConfig = Object.freeze({

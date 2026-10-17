@@ -460,6 +460,7 @@ export class SpawnAgentWorker extends BaseTool {
       }
 
       let subStateRef: any;
+      let containerLifecycle: import('../../services/AgentContainerLauncher').AgentContainerLifecycle | undefined;
       try {
         const { graph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(
           agentConfigChannel,
@@ -521,54 +522,28 @@ export class SpawnAgentWorker extends BaseTool {
         const runLocation = String(subState.metadata.agent?.runLocation ?? 'vm');
         if (runLocation === 'container') {
           const provider = String(subState.metadata.agent?.provider ?? '').trim();
-          if (provider !== 'claude-code' && provider !== 'codex') {
-            throw new Error(`Agent ${ selector ?? label } uses run_location=container but provider ${ provider || '(unset)' } is not a CLI worker`);
-          }
           if (!activityJobId) throw new Error('Container agents require a durable job identity');
-          const persistenceNotice = `\n\n[Container workspace] Work in the job workspace shown by pwd. It is a bounded host-backed directory that survives container exit; do not write outside it. The container itself is always removed when the job ends.`;
           const promptMessage = subState.messages[subState.messages.length - 1];
-          const prompt = `${ typeof promptMessage?.content === 'string' ? promptMessage.content : task.prompt }${ persistenceNotice }`;
-          const instructions = [
-            String(subState.metadata.agent?.prompt ?? ''),
-            'Use the baked-in `sulla` CLI for Sulla tools. Call agents/return_result before exiting.',
-          ].filter(Boolean).join('\n\n');
-          const { runAgentContainer } = await import('../../services/AgentContainerLauncher');
-          const container = await runAgentContainer({
+          if (typeof promptMessage?.content === 'string') {
+            promptMessage.content += '\n\n[Container workspace] Agent-local file, shell, and Git work runs in the bounded job workspace shown by pwd. The workspace survives container exit; the container itself is removed when this job ends.';
+          }
+          const { createAgentContainerLifecycle } = await import('../../services/AgentContainerLauncher');
+          containerLifecycle = await createAgentContainerLifecycle({
             jobId: activityJobId,
             taskIndex: index,
             provider,
             model: subState.metadata.agent?.model,
-            prompt,
-            instructions,
             workspacePath: task.workspacePath,
             state: subState,
-            signal: jobAbortSignal,
+            signal: combined?.signal ?? jobAbortSignal,
           });
-          const settled = (await getJob(activityJobId))?.tasks[index];
-          const result = settled?.returnedAt
-            ? returnedJobResult(settled, label, threadId)
-            : { label, status: 'error' as const, output: `failed: no_contract — container exited without returning its "${ contract.name }" contract.\n\nOutput:\n${ container.output }`, threadId, contract: contract.name };
-          await safeFinishDelegation(delegationId, {
-            outcome: result.status === 'completed' ? 'completed' : 'failed',
-            detail: result.status === 'completed' ? '' : `${ result.status }: ${ result.output }`,
-          });
-          await updateJobTask(activityJobId, index, { status: result.status, threadId, finishedAt: Date.now() });
-          await emitSubAgentExchange(parentChannel, parentThreadId, {
-            direction: 'from_agent',
-            agentId: selector || parentChannel,
-            label,
-            summary: result.status === 'completed' ? `${ label } finished` : `${ label } is ${ result.status }`,
-            detail: result.output,
-            status: result.status === 'completed' ? 'done' : 'failed',
-            jobId: activityJobId,
-            taskIndex: index,
-            conversationId: threadId,
-          });
-          return result;
         }
 
         // Execute the sub-agent graph
-        let finalState = await graph.execute(subState);
+        const executeGraph = () => containerLifecycle
+          ? containerLifecycle.execute(() => graph.execute(subState))
+          : graph.execute(subState);
+        let finalState = await executeGraph();
         const returnedTask = async() => {
           if (!activityJobId) return undefined;
           const settled = (await getJob(activityJobId))?.tasks[index];
@@ -579,7 +554,7 @@ export class SpawnAgentWorker extends BaseTool {
         let returned = await returnedTask();
         if (!returned && contract.schema && jobAbortSignal?.aborted !== true) {
           subState.messages.push({ role: 'user', content: CONTRACT_REMINDER });
-          finalState = await graph.execute(subState);
+          finalState = await executeGraph();
           returned = await returnedTask();
         }
 
@@ -638,6 +613,9 @@ export class SpawnAgentWorker extends BaseTool {
           threadId,
         };
       } finally {
+        await containerLifecycle?.close().catch(error => {
+          console.warn(`[spawn_agent] Container lifecycle cleanup failed for ${ threadId }: ${ (error as Error).message }`);
+        });
         if (subStateRef?.metadata) subStateRef.metadata.delegatedRunActive = false;
         // Deregister from parent's active-sub-agents list so stale threadIds
         // don't receive abort signals after the subagent has already exited

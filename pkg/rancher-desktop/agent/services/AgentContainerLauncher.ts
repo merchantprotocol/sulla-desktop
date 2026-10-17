@@ -6,11 +6,25 @@ import * as path from 'node:path';
 
 import Electron from 'electron';
 
-import { registerAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
+import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
 import { RunActivity } from './RunActivity';
+import { getIntegrationService } from './IntegrationService';
 import { getWebSocketClientService } from './WebSocketClientService';
-import { getLocalVaultPrincipalId, usesContainerVaultAuthority } from '../../vault-broker';
+import {
+  createProviderCliBridge,
+  getLocalVaultPrincipalId,
+  usesContainerVaultAuthority,
+  type ProviderCliBridgeLease,
+} from '../../vault-broker';
 import { redisClient } from '../database/RedisClient';
+import {
+  withProviderExecutionTransport,
+  type ProviderExecutionTransport,
+  type ProviderFileRef,
+  type ProviderFileRequest,
+  type ProviderName,
+  type ProviderTransportContext,
+} from '../languagemodels/ProviderExecutionTransport';
 import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaDocsDir } from '../utils/sullaPaths';
@@ -52,6 +66,15 @@ export interface AgentContainerResult {
   output:        string;
   containerName: string;
 }
+
+export interface AgentContainerLifecycle {
+  readonly containerName: string;
+  readonly workspacePath: string;
+  execute<T>(action: () => T): T;
+  close(): Promise<void>;
+}
+
+export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'>;
 
 function safeName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 80);
@@ -208,6 +231,408 @@ async function prepareCheckout(source: string | undefined, workspacePath: string
     await limactl(['git', 'clone', '--local', '--no-hardlinks', resolved, checkout]);
   }
   return checkout;
+}
+
+function assertWorkspacePath(root: string, candidate: string): string {
+  const resolvedRoot = path.resolve(root);
+  const resolved = path.resolve(candidate);
+  const relative = path.relative(resolvedRoot, resolved);
+
+  if (path.isAbsolute(relative) || relative.split(path.sep).includes('..')) {
+    throw new Error(`Container provider path escaped its job workspace: ${ candidate }`);
+  }
+  return resolved;
+}
+
+class ContainerProviderFileTransport {
+  constructor(private readonly workspacePath: string) {}
+
+  write(request: ProviderFileRequest): ProviderFileRef {
+    const root = path.join(this.workspacePath, '.sulla-provider-files');
+    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+    fs.chmodSync(root, 0o700);
+    const safeName = request.suggestedName.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 120) || 'provider-file';
+    const target = assertWorkspacePath(root, path.join(root, `${ crypto.randomUUID() }-${ safeName }`));
+    const fd = fs.openSync(
+      target,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0),
+      request.mode ?? 0o600,
+    );
+    try {
+      fs.writeFileSync(fd, request.data);
+    } finally {
+      fs.closeSync(fd);
+    }
+    let disposed = false;
+
+    return {
+      path: target,
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        try { fs.unlinkSync(target) } catch { /* already removed */ }
+      },
+    };
+  }
+}
+
+interface ContainerProviderTransportOptions {
+  containerName: string;
+  workspacePath: string;
+  secretDir:     string;
+  bridgeFor(provider: ProviderName): Promise<ProviderCliBridgeLease>;
+  ownsBridge(ref: string): boolean;
+}
+
+class ContainerProviderExecutionTransport implements ProviderExecutionTransport {
+  readonly runtime = 'container' as const;
+  readonly files: ContainerProviderFileTransport;
+  private readonly processPids = new WeakMap<childProcess.ChildProcessWithoutNullStreams, string>();
+  private readonly toolConfigs = new Map<string, Promise<{ ref: string; claudePath: string; codexOverrides: readonly string[] }>>();
+
+  constructor(private readonly options: ContainerProviderTransportOptions) {
+    this.files = new ContainerProviderFileTransport(options.workspacePath);
+  }
+
+  async context(input: Parameters<ProviderExecutionTransport['context']>[0]): Promise<ProviderTransportContext> {
+    const bridge = await this.options.bridgeFor(input.provider);
+    let toolConfig: { ref: string; claudePath: string; codexOverrides: readonly string[] } | undefined;
+    if (input.toolSessionId) toolConfig = await this.ensureToolConfig(input.toolSessionId);
+
+    return {
+      runtime:        'container',
+      provider:       input.provider,
+      conversationId: input.conversationId,
+      workspaceRoot:  this.options.workspacePath,
+      auth:           { kind: 'broker', opaqueConfigRef: bridge.config.opaqueConfigRef },
+      session:        {
+        providerSessionId:       input.providerSessionId,
+        toolSessionId:           input.toolSessionId,
+        opaqueProviderConfigRef: bridge.config.opaqueConfigRef,
+        providerConfig:          bridge.config,
+        ...(toolConfig
+          ? {
+            opaqueToolConfigRef: toolConfig.ref,
+            toolConfig: {
+              opaqueConfigRef:       toolConfig.ref,
+              ...(input.provider === 'codex'
+                ? {
+                  codexConfigOverrides: toolConfig.codexOverrides,
+                  environment: { SULLA_MCP_SESSION_TOKEN: input.toolSessionId, SULLA_TOOL_SESSION: input.toolSessionId },
+                }
+                : { claudeConfigPath: toolConfig.claudePath }),
+            },
+          }
+          : {}),
+      },
+    };
+  }
+
+  spawn(request: Parameters<ProviderExecutionTransport['spawn']>[0]): childProcess.ChildProcessWithoutNullStreams {
+    if (request.context.runtime !== 'container' || request.context.workspaceRoot !== this.options.workspacePath ||
+        request.context.auth.kind !== 'broker' || !this.options.ownsBridge(request.context.auth.opaqueConfigRef)) {
+      throw new Error('Provider process is outside this container lifecycle');
+    }
+    const command = request.providerCommand;
+    if (!/^[a-zA-Z0-9._/-]+$/.test(command.executable)) throw new Error('Container provider executable is invalid');
+    const cwd = assertWorkspacePath(this.options.workspacePath, command.cwd ?? this.options.workspacePath);
+    const pidFile = `/tmp/sulla-provider-${ crypto.randomUUID() }.pid`;
+    const args = ['shell', '0', '--', 'docker', 'exec', '--interactive', '--workdir', cwd];
+    const environment: Record<string, string> = {};
+    for (const [key, value] of Object.entries(command.env ?? {})) {
+      if (!/^[A-Z][A-Z0-9_]*$/.test(key) || typeof value !== 'string' || /[\0\r\n]/.test(value)) {
+        throw new Error(`Container provider environment contains invalid ${ key }`);
+      }
+      environment[key] = value;
+    }
+    args.push(
+      this.options.containerName,
+      '/bin/sh', '-c', [
+        'set -eu',
+        'IFS= read -r encoded_env',
+        'env_json=$(printf "%s" "$encoded_env" | base64 -d)',
+        'for key in $(printf "%s" "$env_json" | jq -r "keys[]"); do value=$(printf "%s" "$env_json" | jq -r --arg key "$key" \'.[$key]\'); export "$key=$value"; done',
+        'unset encoded_env env_json key value',
+        'umask 077',
+        'printf "%s %s\\n" "$$" "$(cut -d " " -f 22 /proc/$$/stat)" > "$1"',
+        'shift',
+        'exec "$@"',
+      ].join('; '),
+      'sulla-provider', pidFile, command.executable, ...command.args,
+    );
+    const proc = childProcess.spawn(paths.limactl, args, {
+      env:   { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
+      stdio: request.stdio ?? ['pipe', 'pipe', 'pipe'],
+    }) as childProcess.ChildProcessWithoutNullStreams;
+    proc.stdin.on('error', () => { /* provider may exit during bootstrap */ });
+    proc.stdin.write(`${ Buffer.from(JSON.stringify(environment)).toString('base64') }\n`);
+    this.processPids.set(proc, pidFile);
+    return proc;
+  }
+
+  async terminate(request: Parameters<ProviderExecutionTransport['terminate']>[0]): Promise<void> {
+    const pidFile = this.processPids.get(request.process);
+    try { request.process.kill(`SIG${ request.signal }`) } catch { /* already exited */ }
+    if (!pidFile) return;
+    const signal = request.signal === 'INT' ? 'TERM' : request.signal;
+    const script = [
+      'set -eu',
+      'record=$(cat "$1" 2>/dev/null || true)',
+      'pid=${record%% *}',
+      'born=${record#* }',
+      '[ -n "$pid" ] && [ "$pid" != "$record" ] || exit 0',
+      '[ -r "/proc/$pid/stat" ] || exit 0',
+      'current=$(cut -d " " -f 22 "/proc/$pid/stat")',
+      '[ "$current" = "$born" ] || exit 0',
+      'descend() { for status in /proc/[0-9]*/status; do child=$(sed -n "s/^Pid:[[:space:]]*//p" "$status" 2>/dev/null || true); parent=$(sed -n "s/^PPid:[[:space:]]*//p" "$status" 2>/dev/null || true); if [ "$parent" = "$1" ]; then descend "$child" "$2"; kill -"$2" "$child" 2>/dev/null || true; fi; done; }',
+      'descend "$pid" "$2"',
+      'kill -"$2" "$pid" 2>/dev/null || true',
+      '[ "$2" != KILL ] || rm -f "$1"',
+    ].join('; ');
+    await limactl(['docker', 'exec', this.options.containerName, '/bin/sh', '-c', script, 'sulla-kill', pidFile, signal]).catch(() => {});
+  }
+
+  private ensureToolConfig(sessionId: string): Promise<{ ref: string; claudePath: string; codexOverrides: readonly string[] }> {
+    const existing = this.toolConfigs.get(sessionId);
+    if (existing) return existing;
+    const created = (async() => {
+      if (!/^[a-zA-Z0-9._-]+$/.test(sessionId)) throw new Error('Container tool session id is invalid');
+      const mcpUrl = getMCPServerHost().getVmReachableUrl();
+      const target = `/run/secrets/sulla-agent/mcp-${ sessionId }.json`;
+      const payload = JSON.stringify({
+        mcpServers: {
+          'sulla-native': { type: 'http', url: mcpUrl, headers: { Authorization: `Bearer ${ sessionId }` } },
+        },
+      });
+      await limactl(
+        ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown "$2:$3" "$1"; sudo chmod 0400 "$1"', 'sh', `${ this.options.secretDir }/mcp-${ sessionId }.json`, String(CONTAINER_UID), String(CONTAINER_GID)],
+        Buffer.from(payload).toString('base64'),
+      );
+      const ref = crypto.randomUUID();
+      return {
+        ref,
+        claudePath: target,
+        codexOverrides: [
+          `mcp_servers.sulla-native.url=${ JSON.stringify(mcpUrl) }`,
+          'mcp_servers.sulla-native.bearer_token_env_var="SULLA_MCP_SESSION_TOKEN"',
+          'mcp_servers.sulla-native.default_tools_approval_mode="approve"',
+        ],
+      };
+    })();
+    this.toolConfigs.set(sessionId, created);
+    return created;
+  }
+}
+
+/**
+ * Start one job-scoped container while the canonical Desktop graph remains
+ * the control plane. Agent-local tools and CLI provider processes are scoped
+ * into this lifecycle; non-CLI providers retain their canonical transport.
+ */
+export async function createAgentContainerLifecycle(run: AgentContainerLifecycleRun): Promise<AgentContainerLifecycle> {
+  const image = await ensureAgentImage();
+  const runtime = new LimaDockerRuntimeDriver();
+  const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
+  const capabilityJti = crypto.randomUUID();
+  const lifecycleAbort = new AbortController();
+  let capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
+  let secretDir: string | undefined;
+  let containerId: string | undefined;
+  let unregisterRuntime: (() => void) | undefined;
+  const providerBridges = new Map<ProviderName, Promise<ProviderCliBridgeLease>>();
+  const providerBridgeRefs = new Set<string>();
+  let toolSession: ReturnType<ReturnType<typeof getMCPServerHost>['registerSession']> | undefined;
+  let renewTimer: ReturnType<typeof setInterval> | undefined;
+  let livenessTimer: ReturnType<typeof setInterval> | undefined;
+  let checkingLiveness = false;
+  let closePromise: Promise<void> | undefined;
+
+  try {
+    const installationSecret = getChatCompletionsServer().getApiToken();
+    if (!installationSecret) throw new Error('Desktop tool API is not initialized');
+    const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
+    const deviceId = metadata.deviceId ?? await getDesktopDeviceId();
+    const subject = usesContainerVaultAuthority()
+      ? await getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
+      : metadata.userId;
+    if (!subject) throw new Error('Agent capability requires an authenticated user identity');
+    const agentId = metadata.agentId ?? run.state.metadata.wsChannel;
+    if (!agentId) throw new Error('Agent container requires an agent identity');
+    const allowed = metadata.allowedToolNames ?? [];
+    const scopes = allowed.length === 0 || allowed.includes('exec') ? ['*'] : allowed;
+    const issueLease = () => issueCapabilityToken({
+      sub: subject, org_id: metadata.orgId, agent_id: agentId, pod_id: containerName,
+      thread_id: metadata.threadId, job_id: run.jobId, device_id: deviceId,
+      scopes, jti: capabilityJti, expiresInSeconds: Math.ceil(LEASE_MS / 1000),
+    }, deriveCapabilitySigningKey(installationSecret));
+    const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
+      .then(response => response.ok).catch(() => false);
+    if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
+
+    toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
+    const workspacePath = path.join(os.homedir(), 'sulla', 'workspaces', 'agents', `${ safeName(run.jobId) }-${ run.taskIndex }`);
+    await fs.promises.mkdir(workspacePath, { recursive: true, mode: 0o700 });
+    await fs.promises.chmod(workspacePath, 0o700);
+    const checkout = await prepareCheckout(run.workspacePath, workspacePath);
+    const providerWorkspace = checkout ?? workspacePath;
+    secretDir = await provisionContainerSecrets(containerName, {
+      SULLA_API_TOKEN: issueLease(), SULLA_TOOL_SESSION: toolSession.id,
+    });
+    containerId = await runtime.create({
+      name: containerName,
+      image,
+      labels: {
+        'com.sulla.workload': 'agent', 'com.sulla.job-id': run.jobId,
+        'com.sulla.task-index': String(run.taskIndex), 'com.sulla.capability-jti': capabilityJti,
+        'com.sulla.capability-exp': String(capabilityExpiresAt),
+      },
+      autoRemove: true, stdinOpen: true,
+      env: {
+        SULLA_AGENT_MODE: 'transport', SULLA_HOST: 'sulla_tools', SULLA_TOOL_API_URL: 'http://sulla_tools:3000',
+        SULLA_AGENT_PROVIDER: run.provider, SULLA_AGENT_MODEL: run.model ?? '',
+      },
+      binds: [`${ secretDir }:/run/secrets/sulla-agent:rw`, `${ workspacePath }:${ workspacePath }:rw`, `${ resolveSullaDocsDir() }:/opt/sulla-docs:ro`],
+      network: 'sulla_default', workingDir: providerWorkspace, user: `${ CONTAINER_UID }:${ CONTAINER_GID }`,
+      tmpfs: { '/home/sulla': `rw,uid=${ CONTAINER_UID },gid=${ CONTAINER_GID },mode=0700` },
+      memoryLimit: MEMORY, cpuLimit: CPUS,
+    });
+    await runtime.start(containerId);
+    const mcpUrl = new URL(getMCPServerHost().getVmReachableUrl());
+    await limactl([
+      'docker', 'exec', containerName, 'curl', '--fail', '--silent', '--show-error', '--max-time', '3',
+      `${ mcpUrl.origin }/healthz`,
+    ]).catch(error => {
+      throw new Error(`Container cannot reach the graph MCP host ${ mcpUrl.hostname }: ${ (error as Error).message }`);
+    });
+    const binding = {
+      podId: containerName, subject, orgId: metadata.orgId, agentId, jobId: run.jobId,
+      threadId: metadata.threadId, deviceId, workspacePath: providerWorkspace,
+    };
+    unregisterRuntime = registerAgentContainerRuntime(binding);
+    const abortGraph = (reason: string) => {
+      log.warn(`[AgentContainer] ${ containerName } failed: ${ reason }`);
+      const graphAbort = run.state.metadata.options?.abort as { abort?: () => void } | undefined;
+      try { graphAbort?.abort?.() } catch { /* graph is already unwinding */ }
+      lifecycleAbort.abort();
+    };
+    const bridgeFor = (provider: ProviderName): Promise<ProviderCliBridgeLease> => {
+      const existing = providerBridges.get(provider);
+      if (existing) return existing;
+      const created = (async() => {
+        const integrationId = provider === 'codex' ? 'openai' : 'anthropic';
+        const accountId = await getIntegrationService().getActiveAccountId(integrationId);
+        const bridgeContext = () => {
+          const now = Math.floor(Date.now() / 1000);
+          return {
+            v: 1 as const, iss: 'sulla-desktop', aud: 'sulla-tools' as const, sub: subject,
+            org_id: metadata.orgId, agent_id: agentId, pod_id: containerName,
+            thread_id: metadata.threadId, job_id: run.jobId, device_id: deviceId,
+            credential_scope: { integration_id: integrationId, account_id: accountId }, scopes: [],
+            iat: now, exp: now + Math.ceil(LEASE_MS / 1000), jti: capabilityJti, request_id: crypto.randomUUID(),
+          };
+        };
+        const bridge = await createProviderCliBridge({
+          context: bridgeContext(), provider, accountId,
+          models: run.provider === provider && run.model && run.model !== provider ? [run.model] : undefined,
+          advertisedHost: mcpUrl.hostname, signal: lifecycleAbort.signal,
+          authorize: async() => {
+            const context = bridgeContext();
+            requireAgentContainerRuntime(context);
+            if (await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`)) return false;
+            return context;
+          },
+        });
+        providerBridgeRefs.add(bridge.config.opaqueConfigRef);
+        return bridge;
+      })();
+      providerBridges.set(provider, created);
+      created.catch(() => providerBridges.delete(provider));
+      return created;
+    };
+    const providerTransport = new ContainerProviderExecutionTransport({
+      containerName, workspacePath: providerWorkspace, secretDir, bridgeFor,
+      ownsBridge: ref => providerBridgeRefs.has(ref),
+    });
+    renewTimer = setInterval(() => {
+      capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
+      getMCPServerHost().rebindSession(toolSession.id, run.state, LEASE_MS);
+      if (secretDir) replaceContainerSecret(secretDir, 'SULLA_API_TOKEN', issueLease()).catch(error => {
+        log.warn(`[AgentContainer] capability renewal failed for ${ containerName }: ${ (error as Error).message }`);
+        abortGraph('capability renewal failed');
+      });
+    }, RENEW_MS);
+    renewTimer.unref();
+    livenessTimer = setInterval(() => {
+      if (checkingLiveness || closePromise) return;
+      checkingLiveness = true;
+      runtime.inspect(containerName).then(details => {
+        if (!closePromise && details?.State?.Running !== true) abortGraph('persistent runtime exited');
+      }).catch(() => {
+        if (!closePromise) abortGraph('persistent runtime disappeared');
+      }).finally(() => {
+        checkingLiveness = false;
+      });
+    }, 15_000);
+    livenessTimer.unref();
+    run.signal?.addEventListener('abort', () => lifecycleAbort.abort(), { once: true });
+
+    const close = () => {
+      if (closePromise) return closePromise;
+      // Defer the abort until after the sentinel is assigned: abort dispatch is
+      // synchronous and otherwise re-enters close() before closePromise exists.
+      closePromise = Promise.resolve().then(async() => {
+        lifecycleAbort.abort();
+        if (renewTimer) clearInterval(renewTimer);
+        if (livenessTimer) clearInterval(livenessTimer);
+        unregisterRuntime?.();
+        unregisterRuntime = undefined;
+        toolSession?.revoke();
+        const bridges = await Promise.allSettled([...providerBridges.values()]);
+        for (const bridge of bridges) {
+          if (bridge.status !== 'fulfilled') continue;
+          bridge.value.revoke();
+          await bridge.value.close().catch(() => {});
+        }
+        providerBridgeRefs.clear();
+        await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
+        await runtime.remove(containerName).catch(() => {});
+        if (secretDir) await removeContainerSecrets(secretDir);
+      })();
+      return closePromise;
+    };
+
+    lifecycleAbort.signal.addEventListener('abort', () => { close().catch(() => {}) }, { once: true });
+    if (run.signal?.aborted) {
+      await close();
+      const error = new Error('Agent container lifecycle was aborted before graph execution');
+      error.name = 'AbortError';
+      throw error;
+    }
+    return {
+      containerName,
+      workspacePath: providerWorkspace,
+      execute<T>(action: () => T): T {
+        return withAgentContainerRuntime(binding, () => withProviderExecutionTransport(providerTransport, action));
+      },
+      close,
+    };
+  } catch (error) {
+    lifecycleAbort.abort();
+    if (renewTimer) clearInterval(renewTimer);
+    if (livenessTimer) clearInterval(livenessTimer);
+    unregisterRuntime?.();
+    toolSession?.revoke();
+    const bridges = await Promise.allSettled([...providerBridges.values()]);
+    for (const bridge of bridges) {
+      if (bridge.status !== 'fulfilled') continue;
+      bridge.value.revoke();
+      await bridge.value.close().catch(() => {});
+    }
+    await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
+    if (containerId) await runtime.remove(containerId).catch(() => {});
+    if (secretDir) await removeContainerSecrets(secretDir);
+    throw error;
+  }
 }
 
 export async function runAgentContainer(run: AgentContainerRun): Promise<AgentContainerResult> {
