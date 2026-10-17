@@ -29,6 +29,7 @@ import { validateCatalogRequest } from './catalogPolicy.js';
 import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
 import { trustedOriginsForIntegration, validateOperation } from './operationPolicy.js';
 import { validateOAuthDestination } from './oauthPolicy.js';
+import { pinnedLookup } from './pinnedLookup.js';
 import { createRelayId, DefaultVaultRelayManager } from './relays.js';
 
 import type { VaultConfig } from './config.js';
@@ -1707,7 +1708,7 @@ export class LocalVaultAuthority {
         method,
         headers,
         timeout: 120_000,
-        lookup: (_hostname, _options, callback) => callback(null, prepared.target.pinnedAddress, prepared.target.pinnedFamily),
+        lookup: pinnedLookup(prepared.target.pinnedAddress, prepared.target.pinnedFamily),
       }, response => {
         if (prepared.generation !== this.generation) {
           response.destroy(new LocalVaultError('vault_locked', 423, 'Vault locked during request'));
@@ -1818,7 +1819,7 @@ export class LocalVaultAuthority {
         method,
         headers,
         timeout: 30_000,
-        lookup: (_hostname, _options, callback) => callback(null, url.pinnedAddress, url.pinnedFamily),
+        lookup: pinnedLookup(url.pinnedAddress, url.pinnedFamily),
       }, response => {
         if (generation !== this.generation) {
           response.destroy(new LocalVaultError('vault_locked', 423, 'Vault locked during request'));

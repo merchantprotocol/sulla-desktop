@@ -4,6 +4,7 @@ import https from 'node:https';
 import NodeWebSocket, { type RawData } from 'ws';
 
 import type { BrokerRelaySendRequest } from './contracts.js';
+import { pinnedLookup } from './pinnedLookup.js';
 
 export type VaultRelayOperation = 'slack.socket-mode' | 'discord.gateway' | 'enterprise.gateway';
 
@@ -547,7 +548,7 @@ class EnterpriseGatewayRelaySession extends BaseRelaySession {
     this.gatewayOrigin = target.origin;
     if (!gatewayAddress) throw new Error('relay_destination_denied');
     this.gatewayAgent = new https.Agent({
-      lookup: (_hostname, _options, callback) => callback(null, gatewayAddress.address, gatewayAddress.family),
+      lookup: pinnedLookup(gatewayAddress.address, gatewayAddress.family),
     });
   }
 
