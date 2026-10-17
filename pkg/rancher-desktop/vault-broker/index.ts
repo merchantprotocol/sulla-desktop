@@ -30,6 +30,13 @@ export type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 const TOOLS_VAULT_ENDPOINT = 'https://sulla_vault:8787';
 const DESKTOP_VAULT_ENDPOINT = 'https://127.0.0.1:30135';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_RELAY_EVENT_LINE_BYTES = 512 * 1024;
+
+export interface VaultRelayEvent {
+  sequence: number;
+  type:     string;
+  payload:  unknown;
+}
 
 export interface VaultBrokerServiceIdentity {
   serviceId:    string;
@@ -188,8 +195,10 @@ export class LocalVaultBrokerClient {
     operation: BrokerRelayCreateRequest['operation'],
     ref: BrokerRelayCreateRequest['ref'],
     signal?: AbortSignal,
+    approvalId?: string,
   ): Promise<BrokerRelayCreateResponse> {
     const request: BrokerRelayCreateRequest = { claims: claimsFromContext(ctx), operation, ref };
+    if (approvalId) (request as BrokerRelayCreateRequest & { approvalId?: string }).approvalId = approvalId;
     const response = await this.transport(`${ this.endpoint }/v1/broker/relay/session`, {
       method:  'POST',
       headers: await this.serviceHeaders(true),
@@ -207,6 +216,44 @@ export class LocalVaultBrokerClient {
     });
     if (!response.ok) await this.throwRelayResponse(response);
     return response;
+  }
+
+  async * relayEventStream(relayId: string, signal?: AbortSignal): AsyncIterable<VaultRelayEvent> {
+    const response = await this.relayEvents(relayId, signal);
+    if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/x-ndjson')) {
+      await response.body?.cancel();
+      throw new VaultBrokerError('invalid_response', 'Vault relay returned an invalid content type', 502);
+    }
+    if (!response.body) throw new VaultBrokerError('vault_unavailable', 'Vault relay returned no event stream', 502);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    try {
+      while (!signal?.aborted) {
+        const { done, value } = await reader.read();
+        pending += decoder.decode(value, { stream: !done });
+        if (Buffer.byteLength(pending) > MAX_RELAY_EVENT_LINE_BYTES && !pending.includes('\n')) {
+          throw new VaultBrokerError('response_too_large', 'Vault relay event exceeds the client bound', 502);
+        }
+        const lines = pending.split('\n');
+        pending = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          if (Buffer.byteLength(line) > MAX_RELAY_EVENT_LINE_BYTES) {
+            throw new VaultBrokerError('response_too_large', 'Vault relay event exceeds the client bound', 502);
+          }
+          const event = JSON.parse(line) as Partial<VaultRelayEvent>;
+          if (!Number.isSafeInteger(event.sequence) || typeof event.type !== 'string') {
+            throw new VaultBrokerError('invalid_response', 'Vault relay returned an invalid event', 502);
+          }
+          yield event as VaultRelayEvent;
+        }
+        if (done) break;
+      }
+      if (pending.trim()) throw new VaultBrokerError('invalid_response', 'Vault relay ended with a partial event', 502);
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
   }
 
   async relaySend(relayId: string, payload: BrokerRelaySendRequest, signal?: AbortSignal): Promise<void> {

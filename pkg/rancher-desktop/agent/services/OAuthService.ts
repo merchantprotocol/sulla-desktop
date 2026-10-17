@@ -8,6 +8,11 @@ import { BrowserWindow, shell } from 'electron';
 
 import { getIntegrationService } from './IntegrationService';
 import { startOAuthCallbackServer } from './OAuthCallbackServer';
+import {
+  issueLocalBrokerContext,
+  requireConfiguredCredentialBroker,
+  usesContainerVaultAuthority,
+} from '../../vault-broker';
 import { postgresClient } from '../database/PostgresClient';
 import { getOAuthProvider, type OAuthTokenSet } from '../integrations/oauth';
 
@@ -122,6 +127,9 @@ export class OAuthService {
     accountId = 'default',
     extraScopes: string[] = [],
   ): Promise<OAuthTokenSet> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth code exchange must complete inside the local vault authority');
+    }
     const provider = getOAuthProvider(providerId);
     if (!provider) {
       throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
@@ -427,6 +435,46 @@ export class OAuthService {
     }
     const cfg = provider.config;
 
+    if (usesContainerVaultAuthority()) {
+      const context = await issueLocalBrokerContext({
+        agentId:         'oauth-refresh',
+        podId:           'desktop-main',
+        credentialScope: { integration_id: integrationId, account_id: accountId },
+      });
+      const injections = cfg.clientAuthMethod === 'header'
+        ? [
+          { field: 'refresh_token', target: 'form' as const, name: 'refresh_token', scheme: 'raw' as const },
+          { field: 'client_secret', target: 'header' as const, name: 'authorization', scheme: 'BasicClient' as const },
+        ]
+        : cfg.clientAuthMethod === 'none'
+          ? [
+            { field: 'refresh_token', target: 'form' as const, name: 'refresh_token', scheme: 'raw' as const },
+            { field: 'client_id', target: 'form' as const, name: 'client_id', scheme: 'raw' as const },
+          ]
+          : [
+            { field: 'refresh_token', target: 'form' as const, name: 'refresh_token', scheme: 'raw' as const },
+            { field: 'client_id', target: 'form' as const, name: 'client_id', scheme: 'raw' as const },
+            { field: 'client_secret', target: 'form' as const, name: 'client_secret', scheme: 'raw' as const },
+          ];
+      const broker = requireConfiguredCredentialBroker();
+      const result = await broker.execute(broker.requestFor(context, {
+        operation:  'oauth.refresh',
+        ref:        { integrationId, accountId },
+        url:        cfg.tokenUrl,
+        method:     'POST',
+        headers:    { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+        body:       { grant_type: 'refresh_token', ...cfg.extraTokenParams },
+        injections,
+      }));
+      if (result.status < 200 || result.status >= 300 || !result.body || typeof result.body !== 'object') {
+        throw new Error(`${ LOG_PREFIX } Vault-owned token refresh failed`);
+      }
+      // The authority persisted the rotated credentials and deliberately
+      // returns metadata only. Keep that boundary explicit in the legacy
+      // return type until all callers consume refresh metadata directly.
+      return result.body as OAuthTokenSet;
+    }
+
     const stored = await this.getStoredTokens(integrationId, accountId);
     if (!stored?.refresh_token) {
       throw new Error(`${ LOG_PREFIX } No refresh token for ${ integrationId }/${ accountId }`);
@@ -498,6 +546,9 @@ export class OAuthService {
     providerId: string,
     tokens: OAuthTokenSet,
   ): Promise<void> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth token adoption must complete inside the local vault authority');
+    }
     const provider = getOAuthProvider(providerId);
     if (!provider) {
       throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
@@ -588,6 +639,9 @@ export class OAuthService {
   // ── Revoke tokens ─────────────────────────────────────────────
 
   async revokeTokens(integrationId: string, accountId = 'default'): Promise<void> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth revocation must complete inside the local vault authority');
+    }
     const stored = await this.getStoredTokens(integrationId, accountId);
     if (!stored) return;
 
@@ -646,6 +700,9 @@ export class OAuthService {
     clientId?: string,
     clientSecret?: string,
   ): Promise<string> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth access tokens stay inside the local vault authority');
+    }
     const tokens = await this.ensureFreshTokens(integrationId, accountId, clientId, clientSecret);
 
     return tokens.access_token;
@@ -657,6 +714,9 @@ export class OAuthService {
     clientId?: string,
     clientSecret?: string,
   ): Promise<OAuthTokenSet> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth token sets stay inside the local vault authority');
+    }
     const stored = await this.getStoredTokens(integrationId, accountId);
     if (!stored) {
       throw new Error(`${ LOG_PREFIX } No OAuth tokens for ${ integrationId }/${ accountId }`);
@@ -717,6 +777,9 @@ export class OAuthService {
     providerId: string,
     tokens: OAuthTokenSet,
   ): Promise<void> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth token storage is owned by the local vault authority');
+    }
     normalizeTokenExpiry(tokens);
 
     await postgresClient.query(
@@ -752,6 +815,9 @@ export class OAuthService {
   // ── DB: Read tokens ───────────────────────────────────────────
 
   async getStoredTokens(integrationId: string, accountId = 'default'): Promise<OAuthTokenRow | null> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth token records stay inside the local vault authority');
+    }
     return postgresClient.queryOne<OAuthTokenRow>(
       `SELECT * FROM oauth_tokens WHERE integration_id = $1 AND account_id = $2`,
       [integrationId, accountId],
@@ -789,6 +855,7 @@ export class OAuthService {
   // ── Resume refresh timers on startup ──────────────────────────
 
   async resumeRefreshTimers(): Promise<void> {
+    if (usesContainerVaultAuthority()) return;
     try {
       const rows = await postgresClient.query<OAuthTokenRow>(
         `SELECT * FROM oauth_tokens WHERE refresh_token IS NOT NULL`,

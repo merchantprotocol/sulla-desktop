@@ -207,6 +207,9 @@ export class IntegrationService {
     if (!integrationId || !property) {
       throw new Error('Integration values require an integration_id and property.');
     }
+    if (usesContainerVaultAuthority() && !LOCAL_METADATA_PROPERTIES.has(property)) {
+      throw new Error('unsupported_secret_egress: edit credentials in the isolated local vault UI');
+    }
 
     const accountId = typeof input.account_id === 'string' && input.account_id.trim()
       ? input.account_id.trim()
@@ -316,6 +319,12 @@ export class IntegrationService {
 
   /** Get form values for the active account (or a specific account) */
   async getFormValues(integrationId: string, accountId?: string): Promise<IntegrationValue[]> {
+    if (usesContainerVaultAuthority()) {
+      // Compatibility callers may still ask for "form" values while building
+      // provider clients. Return only routing-safe metadata; credential fields
+      // are injected at the final outbound broker hop.
+      return this.getMetadataValues(integrationId, accountId);
+    }
     const acctId = accountId || await this.getActiveAccountId(integrationId);
 
     const models = await IntegrationValueModel.getFormValues(integrationId, acctId, SYSTEM_PROPERTIES);

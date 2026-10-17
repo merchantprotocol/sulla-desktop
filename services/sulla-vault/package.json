@@ -17,6 +17,7 @@
     "express": "5.2.1",
     "jsonwebtoken": "9.0.3",
     "pg": "8.18.0",
+    "ws": "8.20.0",
     "yaml": "2.8.2"
   },
   "devDependencies": {
@@ -24,6 +25,7 @@
     "@types/jsonwebtoken": "9.0.10",
     "@types/node": "22.19.15",
     "@types/pg": "8.16.0",
+    "@types/ws": "8.18.1",
     "esbuild": "0.25.12",
     "typescript": "5.9.3"
   }
