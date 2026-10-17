@@ -1,7 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
-import { BrowserWindow, dialog, shell } from 'electron';
+import { BrowserWindow, dialog, protocol, shell } from 'electron';
 
 import { getIpcMainProxy } from './ipcMain';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
@@ -108,19 +111,79 @@ async function openReference(input:{ fileId:string; versionId?:string }):Promise
   if (!versionId) throw new Error('This file has no readable version.');
   const versions = await json(`/v1/files/${ encodeURIComponent(input.fileId) }/history`) as any[];
   if (!versions.some(version => version.id === versionId)) throw new Error('That file version is no longer available.');
-  const response = await getSullaFilesWatcher().requestFiles(`/v1/files/${ encodeURIComponent(input.fileId) }/preview?versionId=${ encodeURIComponent(versionId) }`);
+  const response = await getSullaFilesWatcher().requestFilesStream(`/v1/files/${ encodeURIComponent(input.fileId) }/preview?versionId=${ encodeURIComponent(versionId) }`);
   if (!response.ok) throw new Error(`Files content failed (${ response.status })`);
   const cacheRoot = path.join(paths.cache, 'files-open');
   await fs.promises.mkdir(cacheRoot, { recursive: true, mode: 0o700 });
   const safeId = `${ input.fileId }-${ versionId }`.replace(/[^a-zA-Z0-9_-]/g, '_');
   const safeName = path.basename(String(file.path || 'file')).replace(/[^a-zA-Z0-9._ -]/g, '_');
   const target = path.join(cacheRoot, `${ safeId }-${ safeName }`);
-  await fs.promises.writeFile(target, Buffer.from(await response.arrayBuffer()), { mode: 0o600 });
+  const temp = `${ target }.partial-${ process.pid }-${ randomUUID() }`;
+  let ownsTemp = false;
+  if (!response.body) throw new Error('Files content response was empty');
+  try {
+    const handle = await fs.promises.open(temp, 'wx', 0o600); ownsTemp = true;
+    await pipeline(Readable.fromWeb(response.body as any), handle.createWriteStream());
+    await fs.promises.rename(temp, target);
+    ownsTemp = false;
+  } catch (error) { if (ownsTemp) await fs.promises.rm(temp, { force: true }); throw error }
   const error = await shell.openPath(target);
   if (error) throw new Error(error);
 }
 
+async function downloadReference(event:Electron.IpcMainInvokeEvent, input:{ fileId:string; versionId?:string; name:string }):Promise<boolean> {
+  const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+  const picked = owner ? await dialog.showSaveDialog(owner, { defaultPath: path.basename(input.name) }) : await dialog.showSaveDialog({ defaultPath: path.basename(input.name) });
+  if (picked.canceled || !picked.filePath) return false;
+  const query = input.versionId ? `?versionId=${ encodeURIComponent(input.versionId) }` : '';
+  const response = await getSullaFilesWatcher().requestFilesStream(`/v1/files/${ encodeURIComponent(input.fileId) }/download${ query }`);
+  if (!response.ok || !response.body) throw new Error(`Files download failed (${ response.status })`);
+  const temp = `${ picked.filePath }.sulla-partial-${ process.pid }-${ randomUUID() }`;
+  let ownsTemp = false;
+  try {
+    const handle = await fs.promises.open(temp, 'wx', 0o600); ownsTemp = true;
+    await pipeline(Readable.fromWeb(response.body as any), handle.createWriteStream());
+    await fs.promises.rename(temp, picked.filePath);
+    ownsTemp = false;
+  } catch (error) { if (ownsTemp) await fs.promises.rm(temp, { force: true }); throw error }
+  return true;
+}
+
+const mediaCapabilities = new Map<string, { fileId:string; versionId?:string; expiresAt:number }>();
+function mediaCapability(input:{ fileId:string; versionId?:string }):string {
+  const now = Date.now();
+  for (const [token, capability] of mediaCapabilities) if (capability.expiresAt <= now) mediaCapabilities.delete(token);
+  const token = randomUUID();
+  mediaCapabilities.set(token, { ...input, expiresAt: now + 4 * 60 * 60_000 });
+  return `sulla-files-media://content/${ token }`;
+}
+
+function passiveMedia(mime:string):boolean {
+  return /^(?:video\/|audio\/)/i.test(mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(mime);
+}
+
+function initFilesMediaProtocol():void {
+  if (protocol.isProtocolHandled('sulla-files-media')) return;
+  protocol.handle('sulla-files-media', async(request) => {
+    const url = new URL(request.url);
+    if (url.hostname !== 'content' || !['GET', 'HEAD'].includes(request.method)) return new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } });
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (parts.length !== 1) return new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } });
+    const capability = mediaCapabilities.get(parts[0]);
+    if (!capability || capability.expiresAt <= Date.now()) { mediaCapabilities.delete(parts[0]); return new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } }) }
+    const endpoint = `/v1/files/${ encodeURIComponent(capability.fileId) }/preview${ capability.versionId ? `?versionId=${ encodeURIComponent(capability.versionId) }` : '' }`;
+    const upstream = await getSullaFilesWatcher().requestFilesStream(endpoint, { method: request.method, headers: request.headers.get('range') ? { range: request.headers.get('range')! } : undefined }, request.signal);
+    const mime = upstream.headers.get('content-type') ?? '';
+    if (upstream.ok && !passiveMedia(mime)) { await upstream.body?.cancel(); return new Response(null, { status: 415, headers: { 'cache-control': 'no-store' } }) }
+    const headers = new Headers(upstream.headers);
+    headers.set('cache-control', 'private, no-store');
+    headers.set('x-content-type-options', 'nosniff');
+    return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers });
+  });
+}
+
 export function initSullaFilesIpc():void {
+  try { initFilesMediaProtocol() } catch (error) { console.error('Files media protocol failed to initialize:', error) }
   ipcMain.handle('sulla-files:collections', () => json('/v1/collections'));
   ipcMain.handle('sulla-files:list', (_event, input:{ collectionId:string; path?:string; trash?:boolean }) => json(`/v1/files?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`));
   ipcMain.handle('sulla-files:metadata', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }`));
@@ -213,6 +276,13 @@ export function initSullaFilesIpc():void {
     await getSullaFilesWatcher().notifyRescan();
   });
   ipcMain.handle('files-ui:open-file', (_event, input:{ fileId:string; versionId?:string }) => openReference(input));
+  ipcMain.handle('files-ui:download-file', (event, input:{ fileId:string; versionId?:string; name:string }) => downloadReference(event, input));
+  ipcMain.handle('files-ui:media-url', async(event, input:{ fileId:string; versionId?:string }) => {
+    const senderUrl = event.senderFrame?.url;
+    if (!senderUrl || new URL(senderUrl).protocol !== 'app:') throw new Error('Files media URLs are only available to the Sulla application');
+    await json(`/v1/files/${ encodeURIComponent(input.fileId) }`);
+    return mediaCapability(input);
+  });
   ipcMain.handle('files-ui:pick-upload', async(event) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const picked = owner

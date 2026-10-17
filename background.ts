@@ -183,6 +183,7 @@ if (process.platform === 'linux') {
 // Scheme must be registered before the app is ready
 Electron.protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { secure: true, standard: true } },
+  { scheme: 'sulla-files-media', privileges: { secure: true, standard: true, supportFetchAPI: true } },
 ]);
 
 process.on('unhandledRejection', (reason: any, promise: any) => {

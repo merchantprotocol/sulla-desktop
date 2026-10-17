@@ -451,6 +451,8 @@ export interface IpcMainInvokeEvents {
   'files-ui:set-paused':   (paused: boolean) => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
   'files-ui:open-folder':  () => void;
   'files-ui:open-file':    (input: { fileId: string; versionId?: string }) => void;
+  'files-ui:download-file': (input: { fileId: string; versionId?: string; name: string }) => boolean;
+  'files-ui:media-url':     (input: { fileId: string; versionId?: string }) => string;
   'files-ui:pick-upload':  () => number;
   'files-ui:upload-paths': (paths: string[]) => number;
   'files-ui:create-folder': (relativePath: string) => void;

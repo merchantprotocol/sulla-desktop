@@ -175,6 +175,20 @@ class SullaFilesWatcher {
     await this.ensureUnlocked();
     const response = await send();
     if (!await this.isLockedResponse(response)) return response;
+    await response.body?.cancel();
+    await this.ensureUnlocked();
+    return send();
+  }
+
+  async requestFilesStream(endpoint:string, init:RequestInit = {}, signal?:AbortSignal):Promise<Response> {
+    const token = await this.capabilityToken();
+    const url = new URL(endpoint, API);
+    if (url.origin !== new URL(API).origin) throw new Error('Files endpoint must use the local service');
+    const send = () => fetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error' as const, signal });
+    await this.ensureUnlocked();
+    const response = await send();
+    if (!await this.isLockedResponse(response)) return response;
+    await response.body?.cancel();
     await this.ensureUnlocked();
     return send();
   }

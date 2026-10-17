@@ -56,6 +56,17 @@ export interface FilesPreview {
   path: string;
 }
 
+export interface RecordingSegment { start:number; end:number; text:string }
+export interface RecordingChapter { start:number; end:number; title:string }
+export interface FilesDetail {
+  provenance: { type:string; id:string };
+  version: FilesVersion;
+  recording?: { version_id:string; language?:string; transcript:RecordingSegment[]; chapters:RecordingChapter[]; duration_seconds?:number; generator?:string; generated_at?:string };
+  links: { id:string; path:string; mime:string; kind:'links_to' | 'created_by' | 'derived_from'; direction:'incoming' | 'outgoing'; createdAt:string }[];
+  activity: { id:string; who_type:string; who_id:string; device_or_run_id?:string; action:string; at:string; details?:Record<string, unknown> }[];
+  access: { role?:string; inherited:{ id:string; folder_path:string; principal_type:SharePrincipalType; principal_id:string; role:'view' | 'edit' }[] };
+}
+
 export interface FilesCapabilities {
   upload: boolean;
   versionHistory: boolean;
@@ -115,6 +126,8 @@ export interface ShareLink {
   assetKind: ShareAssetKind;
   source?: string;
   targetId?: string;
+  targetType?: 'file' | 'capture' | 'artifact';
+  collectionId?: string;
   revokedAt?: string;
   createdAt?: string;
 }
@@ -128,9 +141,12 @@ export interface ShareActivity {
 
 export interface FilesDataSource {
   capabilities: FilesCapabilities;
+  syntheticPreview?:boolean;
   load(): Promise<FilesSnapshot>;
   history(fileId:string): Promise<FilesVersion[]>;
   preview(fileId:string, versionId?:string): Promise<FilesPreview>;
+  detail(fileId:string):Promise<FilesDetail>;
+  mediaUrl(fileId:string, versionId?:string):Promise<string>;
   search(query:string): Promise<FilesItem[]>;
   setPaused(paused:boolean): Promise<FilesSnapshot['status']>;
   chooseUpload(): Promise<number>;
@@ -139,6 +155,7 @@ export interface FilesDataSource {
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
   openFile(fileId:string, versionId?:string): Promise<void>;
+  downloadFile(fileId:string, name:string, versionId?:string):Promise<boolean>;
   restoreVersion(fileId:string, versionId:string): Promise<void>;
   restoreTrash(fileId:string): Promise<void>;
   trashFile(fileId:string): Promise<void>;

@@ -8,5 +8,5 @@ import { SyntheticFilesDataSource } from './SyntheticFilesDataSource';
 
 const dataSource = new SyntheticFilesDataSource();
 const route = useRoute();
-const navigation = { section: typeof route.query.section === 'string' ? route.query.section : 'shared-by-me' };
+const navigation = { section: typeof route.query.section === 'string' ? route.query.section : 'detail', fileId: typeof route.query.fileId === 'string' ? route.query.fileId : 'synthetic-file' };
 </script>

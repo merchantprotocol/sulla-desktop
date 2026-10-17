@@ -77,7 +77,7 @@
       </div>
     </nav>
 
-    <main class="main">
+    <main v-if="!selected" class="main">
       <div class="top">
         <div class="crumbs">
           <template v-if="crumbs.length">
@@ -472,181 +472,18 @@
       </div>
     </main>
 
-    <transition name="detail">
-      <aside
-        v-if="selected && !selected.folder"
-        class="detail-panel"
-      >
-        <header>
-          <div class="file-name">
-            <span
-              class="fi"
-              :class="selected.kindClass"
-              v-html="selected.icon"
-            /><span><strong>{{ selected.name }}</strong><small>{{ selected.mime }}</small></span>
-          </div><button
-            type="button"
-            aria-label="Close details"
-            @click="selected = null"
-          >
-            ×
-          </button>
-        </header>
-        <div class="preview-box">
-          <span
-            v-if="previewLoading"
-            class="loader"
-          />
-          <img
-            v-else-if="previewUrl && selected.mime.startsWith('image/')"
-            :src="previewUrl"
-            :alt="selected.name"
-          >
-          <video
-            v-else-if="previewUrl && selected.mime.startsWith('video/')"
-            :src="previewUrl"
-            controls
-          />
-          <audio
-            v-else-if="previewUrl && selected.mime.startsWith('audio/')"
-            :src="previewUrl"
-            controls
-          />
-          <iframe
-            v-else-if="previewUrl && selected.mime === 'application/pdf'"
-            :src="previewUrl"
-            :title="selected.name"
-          />
-          <pre v-else-if="previewText !== null">{{ previewText }}</pre>
-          <div
-            v-else
-            class="preview-placeholder"
-          >
-            <span
-              class="large-glyph"
-              v-html="selected.icon"
-            /><p>{{ previewError || 'Preview isn’t available for this file type.' }}</p><button
-              v-if="section !== 'trash'"
-              class="btn"
-              type="button"
-              @click="dataSource.openFile(selected.id, selected.currentVersionId)"
-            >
-              Open file
-            </button>
-          </div>
-        </div>
-        <div class="detail-actions">
-          <button
-            v-if="section !== 'trash'"
-            class="btn pri"
-            type="button"
-            @click="dataSource.openFile(selected.id, selected.currentVersionId)"
-          >
-            Open
-          </button>
-          <button
-            v-if="section === 'trash'"
-            class="btn"
-            type="button"
-            :disabled="busy"
-            @click="restoreTrashed"
-          >
-            Restore
-          </button>
-          <button
-            v-else
-            class="btn"
-            type="button"
-            :disabled="busy"
-            @click="trashSelected"
-          >
-            Move to Trash
-          </button>
-          <button
-            class="btn"
-            type="button"
-            :disabled="!dataSource.capabilities.publicLinks"
-            title="Copy a public Sulla Cloud link"
-            @click="shareEntry(selected)"
-          >
-            Share
-          </button>
-          <button
-            class="btn"
-            type="button"
-            :disabled="!dataSource.capabilities.onlineOnly"
-            :title="dataSource.onlineOnlyReason || 'Make this file online only'"
-          >
-            Online only
-          </button>
-        </div>
-        <div class="detail-tabs">
-          <button
-            type="button"
-            :class="{ active: detailTab === 'details' }"
-            @click="detailTab = 'details'"
-          >
-            Details
-          </button><button
-            type="button"
-            :class="{ active: detailTab === 'versions' }"
-            @click="detailTab = 'versions'"
-          >
-            Versions <span>{{ versions.length || selected.versionCount }}</span>
-          </button>
-        </div>
-        <div
-          v-if="detailTab === 'details'"
-          class="detail-body"
-        >
-          <dl>
-            <dt>Type</dt><dd>{{ selected.mime }}</dd><dt>Size</dt><dd>{{ formatBytes(selected.size) }}</dd><dt>Location</dt><dd>~/sulla/Files/{{ selected.path }}</dd><dt>Modified</dt><dd>{{ formatDate(selected.updatedAt, true) }}</dd><dt>Sync</dt><dd>
-              <span class="status-inline"><span
-                class="sync-dot tiny"
-                :class="syncState"
-              />{{ syncLine }}</span>
-            </dd><dt>Version</dt><dd>v{{ selected.versionCount }}</dd>
-          </dl>
-          <section class="coming-card">
-            <strong>Share link</strong><p>{{ dataSource.capabilities.publicLinks ? 'Create a Sulla Cloud link. Choose whether Cloud keeps an encrypted copy available while this Mac is off.' : 'Sign in to Sulla Cloud to create public links.' }}</p><button v-if="dataSource.capabilities.publicLinks" class="btn sm" type="button" @click="shareEntry(selected)">Manage link</button>
-          </section>
-        </div>
-        <div
-          v-else
-          class="versions-list"
-        >
-          <div
-            v-if="versionsLoading"
-            class="mini-state"
-          >
-            <span class="loader" /> Loading history…
-          </div>
-          <div
-            v-for="(version, index) in versions"
-            :key="version.id"
-            class="version-row"
-          >
-            <span class="version-number">v{{ versions.length - index }}</span><span><strong>{{ version.message || 'File updated' }}</strong><small>{{ formatDate(version.created_at, true) }} · {{ formatBytes(version.size) }}<template v-if="version.device_id"> · {{ version.device_id }}</template></small></span>
-            <span
-              v-if="version.current && !version.deleted"
-              class="current-pill"
-            >Current</span><button
-              v-else-if="!version.deleted"
-              class="btn sm"
-              type="button"
-              :disabled="busy"
-              title="Restore this version as a new version"
-              @click="restoreVersion(version.id)"
-            >
-              Restore
-            </button>
-          </div>
-          <p class="version-note">
-            Restoring creates a new version. Existing versions are never overwritten.
-          </p>
-        </div>
-      </aside>
-    </transition>
+    <FileDetail
+      v-else-if="snapshot"
+      :key="`${selected.id}:${selected.currentVersionId}`"
+      :item="selected"
+      :collection="snapshot.collection"
+      :data-source="dataSource"
+      :initial-tab="detailTab === 'versions' ? 'Versions' : 'Details'"
+      @close="selected = null"
+      @share="shareEntry(selected)"
+      @restored="selected = null; refresh(true)"
+      @open-linked="openLinked"
+    />
 
     <div
       v-if="dragging"
@@ -697,12 +534,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import FileDetail from './FileDetail.vue';
 import ShareSheet from './ShareSheet.vue';
 import SharedByMe from './SharedByMe.vue';
 
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
-import type { FilesDataSource, FilesItem, FilesSnapshot, FilesVersion } from './types';
+import type { FilesDataSource, FilesItem, FilesSnapshot } from './types';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
@@ -750,8 +588,8 @@ const selectedKeys = ref(new Set<string>()); const uploadProgress = ref<{ curren
 const uploadLog = ref<{ name: string; percent: number; done: boolean }[]>([]);
 // In-progress upload first, then the ones already finished in this batch (the stream only reports the current file).
 const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done), ...uploadLog.value.filter(item => item.done).reverse()]);
-const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details'); const versions = ref<FilesVersion[]>([]); const versionsLoading = ref(false);
-const previewUrl = ref(''); const previewText = ref<string | null>(null); const previewError = ref(''); const previewLoading = ref(false); const dragging = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
+const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details');
+const dragging = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
 const starred = ref(new Set<string>(JSON.parse(localStorage.getItem('sulla:files-starred') || '[]')));
 const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string; assetKind?:'file' | 'capture' | 'artifact' } | null>(null);
 
@@ -897,12 +735,8 @@ function openPath(next:string) { section.value = 'files'; currentPath.value = ne
 function focusEntry(entry:DisplayEntry, event:MouseEvent) { if (event.metaKey || event.ctrlKey) { toggleSelected(entry.key); return } selectedKeys.value = new Set([entry.key]) }
 function activate(entry:DisplayEntry) { if (entry.folder) openPath(entry.path); else selectEntry(entry); }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
-async function selectEntry(entry:DisplayEntry) { if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details'; versions.value = []; await loadVersions(entry); const previewVersion = entry.deletedAt ? versions.value.find(version => !version.deleted)?.id : undefined; await loadPreview(entry, previewVersion) }
-async function loadVersions(entry:DisplayEntry) { versionsLoading.value = true; try { versions.value = await props.dataSource.history(entry.id) } catch { versions.value = [] } finally { versionsLoading.value = false } }
-async function loadPreview(entry:DisplayEntry, versionId?:string) { if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); previewUrl.value = ''; previewText.value = null; previewError.value = ''; if (entry.size > 64 * 1024 * 1024) { previewError.value = 'This file is too large for an inline preview. Open it in its default app.'; return } previewLoading.value = true; try { const result = await props.dataSource.preview(entry.id, versionId); const binary = new Uint8Array(result.data); if (result.mime.startsWith('text/') || /json|yaml|javascript|typescript/.test(result.mime)) previewText.value = new TextDecoder().decode(binary); else previewUrl.value = URL.createObjectURL(new Blob([binary], { type: result.mime })); } catch (cause) { previewError.value = cause instanceof Error ? cause.message : String(cause) } finally { previewLoading.value = false } }
-async function restoreVersion(versionId:string) { if (!selected.value) return; busy.value = true; try { await props.dataSource.restoreVersion(selected.value.id, versionId); selected.value = null; await refresh(true) } finally { busy.value = false } }
-async function restoreTrashed() { if (!selected.value) return; busy.value = true; try { await props.dataSource.restoreTrash(selected.value.id); selected.value = null; await refresh(true) } finally { busy.value = false } }
-async function trashSelected() { if (!selected.value) return; busy.value = true; try { await props.dataSource.trashFile(selected.value.id); selected.value = null; await refresh(true) } finally { busy.value = false } }
+function selectEntry(entry:DisplayEntry) { if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
+async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await props.dataSource.openFile(fileId); }
 function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }
 async function onDrop(event:DragEvent) { dragging.value = false; const paths = [...(event.dataTransfer?.files ?? [])].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value)); if (!paths.length) { error.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return } busy.value = true; try { await props.dataSource.uploadPaths(paths); setTimeout(() => refresh(true), 700) } finally { busy.value = false } }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
@@ -926,7 +760,7 @@ function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set()
 function toggleStar(id:string) { const next = new Set(starred.value); next.has(id) ? next.delete(id) : next.add(id); starred.value = next; localStorage.setItem('sulla:files-starred', JSON.stringify([...next])) }
 function trackUpload(progress:{ current: number; name: string; percent: number; done: boolean }) { const log = progress.current <= 1 && !uploadLog.value.some(item => item.name === progress.name) ? [] : uploadLog.value.map(item => item.name === progress.name ? item : { ...item, done: true, percent: 100 }); const rest = log.filter(item => item.name !== progress.name); uploadLog.value = [...rest, { name: progress.name, percent: progress.percent, done: progress.done || progress.percent >= 100 }] }
 function onKeydown(event:KeyboardEvent) { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchInput.value?.focus() } }
-async function navigateTo(detail:FilesNavigationPayload) {
+function navigateTo(detail:FilesNavigationPayload) {
   if (detail.section === 'shared-by-me') { selectSection('sharedByMe'); return }
   const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
   if (!file && detail.path) {
@@ -935,7 +769,7 @@ async function navigateTo(detail:FilesNavigationPayload) {
     return;
   }
   if (!file) { error.value = 'That file is no longer available in this collection.'; return }
-  await selectEntry(toDisplay(file));
+  selectEntry(toDisplay(file));
   if (detail.section === 'versions') detailTab.value = 'versions';
   if (detail.section === 'share-review') shareEntry(toDisplay(file));
 }
@@ -943,13 +777,12 @@ async function navigateTo(detail:FilesNavigationPayload) {
 watch(view, value => localStorage.setItem('sulla:files-view', value));
 let searchTimer:ReturnType<typeof setTimeout> | undefined;
 watch(query, (value) => { if (searchTimer) clearTimeout(searchTimer); if (!value.trim() || section.value === 'trash') { searchResults.value = null; return } searchTimer = setTimeout(async() => { try { searchResults.value = await props.dataSource.search(value.trim()) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } }, 220) });
-watch(detailTab, value => { if (value === 'versions' && selected.value && !versions.value.length) loadVersions(selected.value); });
 let mounted = false;
-async function consumeNavigation() { if (!mounted || !props.navigation || !snapshot.value) return; await navigateTo(props.navigation); emit('navigation-consumed') }
+function consumeNavigation() { if (!mounted || !props.navigation || !snapshot.value) return; navigateTo(props.navigation); emit('navigation-consumed') }
 watch(() => props.navigation, () => consumeNavigation());
 let stopUploadProgress:(() => void) | undefined;
-onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); await consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); await consumeNavigation() }, 12_000) });
-onBeforeUnmount(() => { mounted = false; window.removeEventListener('keydown', onKeydown); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); });
+onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); consumeNavigation() }, 12_000) });
+onBeforeUnmount(() => { mounted = false; window.removeEventListener('keydown', onKeydown); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
 </script>
 
 <style scoped>

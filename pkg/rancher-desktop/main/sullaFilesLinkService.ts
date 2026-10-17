@@ -19,6 +19,8 @@ export interface ShareLink {
   assetKind:      'file' | 'capture' | 'artifact';
   source?:        string;
   targetId?:      string;
+  targetType?:    'file' | 'capture' | 'artifact';
+  collectionId?:  string;
   revokedAt?:     string;
   lastViewedAt?:  string;
   createdAt?:     string;
@@ -64,6 +66,8 @@ function normalize(value:any):ShareLink {
     assetKind:     value.assetKind ?? value.asset_kind ?? 'file',
     source:        value.source_label ?? value.source ?? undefined,
     targetId:      value.fileId ?? value.file_id ?? undefined,
+    targetType:    value.targetType ?? value.target_type ?? undefined,
+    collectionId:  value.collectionId ?? value.collection_id ?? undefined,
     revokedAt:     value.revokedAt ?? value.revoked_at ?? undefined,
     lastViewedAt:  value.lastViewedAt ?? value.last_viewed_at ?? undefined,
     createdAt:     value.createdAt ?? value.created_at ?? undefined,
