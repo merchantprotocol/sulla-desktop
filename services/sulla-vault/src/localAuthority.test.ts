@@ -4,11 +4,12 @@ import http from 'node:http';
 import test from 'node:test';
 
 import pg from 'pg';
-import { deriveMasterKey } from '@sulla/vault-crypto';
+import { DEFAULT_AGENT_POLICY, deriveMasterKey } from '@sulla/vault-crypto';
 
 import { migrate } from './db.js';
 import { createApp } from './app.js';
 import { LocalVaultAuthority, LocalVaultError, localAuthorityTestHooks } from './localAuthority.js';
+import { validateOperation } from './operationPolicy.js';
 import {
   bootstrapSessionKeyInput,
   bootstrapUnlockProofInput,
@@ -82,6 +83,24 @@ test('private and reserved IPv4/IPv6 destinations are denied', () => {
   assert.equal(localAuthorityTestHooks.privateAddress('2606:4700:4700::1111'), false);
 });
 
+test('audio policy binds each provider credential to its own host, path, and injection', () => {
+  const base: any = {
+    claims: { sub: 'user', agent_id: 'agent', pod_id: 'pod' },
+    operation: 'provider.audio',
+    ref: { integrationId: 'elevenlabs', accountId: 'default' },
+    url: 'https://api.elevenlabs.io/v1/text-to-speech/voice_1/stream',
+    method: 'POST',
+    injections: [{ field: 'api_key', target: 'header', name: 'xi-api-key', scheme: 'raw' }],
+    responseType: 'binary-stream',
+  };
+  assert.doesNotThrow(() => validateOperation(base, 'api.elevenlabs.io', DEFAULT_AGENT_POLICY));
+  assert.throws(() => validateOperation({
+    ...base,
+    url: 'https://api.x.ai/v1/tts',
+    injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+  }, 'api.x.ai', DEFAULT_AGENT_POLICY), /destination_denied/);
+});
+
 test('stream redaction covers short, unicode, encoded, and every split boundary', () => {
   const secrets = ['x', 'short', 'påss word'];
   const text = `before x Bearer short ${ encodeURIComponent('påss word') } after`;
@@ -105,7 +124,13 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     await migrate(db);
     await db.query(`CREATE TABLE integration_values(value_id bigserial primary key,integration_id text not null,account_id text not null,property text not null,value text not null,is_default boolean not null default false,created_at timestamptz default now(),updated_at timestamptz default now())`);
     await db.query(`CREATE TABLE oauth_tokens(token_id bigserial primary key,integration_id text not null,account_id text not null,provider_id text not null,access_token text not null,refresh_token text,token_type text,scope text,expires_at bigint,created_at timestamptz default now(),updated_at timestamptz default now())`);
-    await db.query(`INSERT INTO integration_values(integration_id,account_id,property,value) VALUES ('openai','default','api_key','synthetic-only-secret'),('openai','default','llm_access','autofill')`);
+    const legacyVmk = randomBytes(32);
+    const legacyNonce = randomBytes(12);
+    const legacyCipher = createCipheriv('aes-256-gcm', legacyVmk, legacyNonce);
+    const legacyCiphertext = Buffer.concat([legacyCipher.update('synthetic-only-secret'), legacyCipher.final()]);
+    const legacyValue = `$VAULT$${ Buffer.concat([legacyNonce, legacyCipher.getAuthTag(), legacyCiphertext]).toString('base64') }`;
+    legacyCiphertext.fill(0);
+    await db.query(`INSERT INTO integration_values(integration_id,account_id,property,value) VALUES ('openai','default','api_key',$1),('openai','default','llm_access','autofill')`, [legacyValue]);
     const authority = new LocalVaultAuthority(db, config(url.toString()));
     const grant = authority.createHumanSession('sulla-desktop-control', TOKEN.control);
     await assert.rejects(authority.unlockHumanSession(grant.sessionId, undefined, 'synthetic password'), (error: any) => error.code === 'invalid_csrf');
@@ -113,6 +138,33 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     assert.equal(unlocked.phase, 'unlocked');
     assert.equal(unlocked.state, 'migration_required');
     assert.throws(() => authority.validateHumanSession(grant.sessionId, grant.csrf), (error: any) => error.code === 'invalid_human_session');
+    assert.equal(authority.status().cacheUpdateRequired, true);
+    const attachCaller = 'sulla-desktop-bootstrap';
+    const attachNonce = randomBytes(32).toString('base64url');
+    const attachChallenge = authority.createCacheUpdateChallenge(
+      attachCaller, attachNonce, proof(cacheUpdateChallengeProofInput(attachCaller, attachNonce)),
+    );
+    const attachSessionKey = createHmac('sha256', TOKEN.bootstrap).update(cacheUpdateSessionKeyInput(
+      attachCaller, attachNonce, attachChallenge.serverNonce, attachChallenge.challengeId, attachChallenge.expiresAt,
+    )).digest();
+    const attachIv = randomBytes(12);
+    const attachCipher = createCipheriv('aes-256-gcm', attachSessionKey, attachIv);
+    const attachCiphertext = Buffer.concat([attachCipher.update(legacyVmk), attachCipher.final()]);
+    const sealedLegacyVmk = Buffer.concat([attachIv, attachCipher.getAuthTag(), attachCiphertext]).toString('base64url');
+    attachCiphertext.fill(0);
+    const sealedLegacySha256 = createHash('sha256').update(sealedLegacyVmk).digest('base64url');
+    const attachProof = proof(cacheUpdateFetchProofInput(
+      attachCaller, attachNonce, attachChallenge.serverNonce, attachChallenge.challengeId,
+      attachChallenge.expiresAt, sealedLegacySha256,
+    ));
+    authority.fetchCacheUpdate({
+      callerId: attachCaller, challengeId: attachChallenge.challengeId, clientProof: attachProof, sealedLegacyVmk,
+    });
+    assert.throws(() => authority.fetchCacheUpdate({
+      callerId: attachCaller, challengeId: attachChallenge.challengeId, clientProof: attachProof, sealedLegacyVmk,
+    }), (error: any) => error.code === 'invalid_bootstrap_challenge');
+    attachSessionKey.fill(0);
+    legacyVmk.fill(0);
     const first = await authority.migrateLegacy('sulla-desktop-control', TOKEN.control);
     assert.equal(first.imported, 2);
     const legacyBefore = await db.query('SELECT * FROM integration_values ORDER BY value_id');
@@ -123,6 +175,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
 
     const listed = await authority.listHumanItems(unlocked.sessionId, unlocked.csrf);
     const detail: any = await authority.revealHumanItem(unlocked.sessionId, unlocked.csrf, listed[0].id as string);
+    assert.equal(detail.item.integration.properties.api_key, 'synthetic-only-secret');
     detail.item.name = 'Owner edited v2 credential';
     detail.item.agentPolicy.askFirst = true;
     await authority.saveHumanItem(unlocked.sessionId, unlocked.csrf, detail);
