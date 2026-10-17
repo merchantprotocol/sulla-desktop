@@ -18,12 +18,14 @@ credential plaintext, wrapped key, or decrypt callback crosses into the caller.
 | MCP HTTP | Routed, service edge cases pending | SDK `Request` method/headers/body/signal are preserved through execute-stream. Service must support explicitly credential-free items and 202/204 empty responses. |
 | MCP stdio | Blocked fail-closed required | Secret env/stdin is incompatible; only an opaque request-capability protocol is acceptable. |
 | Slack Web API | Service operation ready, consumer pending | Must replace Bolt/WebClient token construction with scoped `slack.web-api` requests. |
-| Slack Socket Mode | Relay contract published, payload schema/implementation pending | Client transport is available, but sanitized event and typed ACK/command payloads must be frozen before replacing Bolt. |
+| Slack Web API | Routed | Tool calls use `slack.web-api` with the verified execution context and active account scope; token presence is not exposed to health checks. |
+| Slack Socket Mode | Vault relay implementation published; caller adoption pending | The vault-owned relay performs provider auth and emits sanitized events with typed ACK commands. Bolt must not be instantiated with vault credentials. |
 | Discord REST/gateway | Relay contract published, payload schema/implementation pending | Must replace discord.js token login and REST calls with `discord.rest` plus the service-owned gateway relay. |
 | Model/provider HTTP streaming | Routed | Provider SDK-compatible fetch adapters use execute-stream with exact provider/account scope, preserve non-2xx provider responses and propagate abort without a local key fallback. |
+| Codex/Claude CLI providers and agent containers | Vault-backed lane unsupported unless opaque proxy configuration is accepted | Independent user-managed CLI login files are outside this migration and must not be read or copied. Credentials sourced from Sulla vault may never be materialized into CLI files or environment; use the existing broker base-URL path where supported and otherwise fail closed. |
 | Provider model discovery | Service operation missing | Live authenticated `GET /models` needs provider-specific host/path and header policies; chat inference remains POST-only. Static catalog fallback is safe but not full live functionality. |
 | Text-to-speech providers | Service operation missing | ElevenLabs/Grok audio needs a typed outbound operation with exact paths, key injection and bounded binary streaming. It cannot use the textual catalog/inference adapters. |
-| Browser autofill | Service contract missing | Requires a human-approved vault-to-isolated-target operation carrying an opaque browser target and exact inspected origin; current Desktop script construction still sees plaintext. |
+| Agent browser autofill | Intentionally unsupported | The generic agent-readable browser is not an isolated human target. Fail with `unsupported_secret_egress`; container-hosted human reveal remains supported. |
 
 ## Release blockers
 

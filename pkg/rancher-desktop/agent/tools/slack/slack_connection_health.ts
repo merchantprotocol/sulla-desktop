@@ -1,3 +1,4 @@
+import { usesContainerVaultAuthority } from '../../../vault-broker';
 import { registry } from '../../integrations';
 import { slackClient } from '../../integrations/slack/SlackClient';
 import { getIntegrationService } from '../../services/IntegrationService';
@@ -41,23 +42,28 @@ export class SlackConnectionHealthWorker extends BaseTool {
 
     try {
       const service = getIntegrationService();
+      const containerAuthority = usesContainerVaultAuthority();
       console.log('[slack_connection_health] Initializing IntegrationService...', { invocationId });
       await service.initialize();
       console.log('[slack_connection_health] IntegrationService initialized', { invocationId });
 
       const connectionStatus = await service.getConnectionStatus(SLACK_ID);
-      const botToken = (await service.getIntegrationValue(SLACK_ID, 'bot_token'))?.value;
-      const appToken = (
-        (await service.getIntegrationValue(SLACK_ID, 'scopes_token'))?.value ||
+      // Container authority deliberately exposes no token-presence oracle. A
+      // real brokered auth.test below is the only credential health signal.
+      const botToken = containerAuthority ? null : (await service.getIntegrationValue(SLACK_ID, 'bot_token'))?.value;
+      const appToken = containerAuthority
+        ? null
+        : (
+          (await service.getIntegrationValue(SLACK_ID, 'scopes_token'))?.value ||
         (await service.getIntegrationValue(SLACK_ID, 'app_token'))?.value ||
         (await service.getIntegrationValue(SLACK_ID, 'app_level_token'))?.value
-      );
+        );
 
       console.log('[slack_connection_health] Integration values fetched', {
         invocationId,
         connectedInDb: !!connectionStatus?.connected,
-        hasBotToken:   !!botToken,
-        hasAppToken:   !!appToken,
+        hasBotToken:   containerAuthority ? 'vault-owned' : !!botToken,
+        hasAppToken:   containerAuthority ? 'vault-owned' : !!appToken,
       });
 
       console.log('[slack_connection_health] Pre-check state:', {
@@ -98,7 +104,7 @@ export class SlackConnectionHealthWorker extends BaseTool {
         }
         try {
           console.log('[slack_connection_health] Running auth.test', { invocationId });
-          const auth = await client.apiCall('auth.test', {});
+          const auth = await client.apiCall('auth.test', {}, this.executionContext);
           authOk = auth?.ok !== false;
           authError = authOk ? null : (auth?.error || 'auth_test_failed');
           console.log('[slack_connection_health] auth.test result', {
@@ -131,7 +137,7 @@ export class SlackConnectionHealthWorker extends BaseTool {
 
         try {
           console.log('[slack_connection_health] Running users.list data pull', { invocationId });
-          const response = await client.apiCall('users.list', { limit: 1 });
+          const response = await client.apiCall('users.list', { limit: 1 }, this.executionContext);
           const members = Array.isArray((response)?.members) ? (response).members : [];
 
           dataPullCount = members.length;
@@ -191,7 +197,7 @@ export class SlackConnectionHealthWorker extends BaseTool {
           });
 
           // If registry still null, try direct singleton init as last resort
-          if (!slack && slackClient) {
+          if (!containerAuthority && !slack && slackClient) {
             console.warn(`[slack_connection_health] Registry returned null, attempting direct slackClient.initialize() (attempt ${ attempt })`);
             await slackClient.initialize();
             slack = slackClient as unknown as SlackClient;
@@ -240,8 +246,9 @@ export class SlackConnectionHealthWorker extends BaseTool {
         healthy,
         connectedInDb:         !!connectionStatus?.connected,
         singletonConnected,
-        hasBotToken:           !!botToken,
-        hasAppToken:           !!appToken,
+        credentialCustody:     containerAuthority ? 'container-vault' : 'legacy-desktop',
+        hasBotToken:           containerAuthority ? null : !!botToken,
+        hasAppToken:           containerAuthority ? null : !!appToken,
         registryClientPresent: !!slack,
         validateAuth,
         authOk,
