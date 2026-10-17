@@ -336,13 +336,13 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
               ...(input.provider === 'codex'
                 ? {
                   codexConfigOverrides: toolConfig.codexOverrides,
-                  environment:          { SULLA_MCP_SESSION_TOKEN: input.toolSessionId, SULLA_TOOL_SESSION: input.toolSessionId },
+                  environment:          { SULLA_MCP_SESSION_TOKEN: input.toolSessionId!, SULLA_TOOL_SESSION: input.toolSessionId! },
                 }
                 : {
                   claudeConfigPath: toolConfig.claudePath,
                   environment:      {
-                    SULLA_MCP_SESSION_TOKEN: input.toolSessionId,
-                    SULLA_TOOL_SESSION:      input.toolSessionId,
+                    SULLA_MCP_SESSION_TOKEN: input.toolSessionId!,
+                    SULLA_TOOL_SESSION:      input.toolSessionId!,
                   },
                 }),
             },
@@ -647,7 +647,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     });
     renewTimer = setInterval(() => {
       capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
-      getMCPServerHost().rebindSession(toolSession.id, run.state, LEASE_MS);
+      getMCPServerHost().rebindSession(toolSession!.id, run.state, LEASE_MS);
       if (secretDir) {
         replaceContainerSecret(secretDir, 'SULLA_API_TOKEN', issueLease()).catch(error => {
           log.warn(`[AgentContainer] capability renewal failed for ${ containerName }: ${ (error as Error).message }`);
@@ -670,7 +670,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     livenessTimer.unref();
     run.signal?.addEventListener('abort', () => lifecycleAbort.abort(), { once: true });
 
-    const close = () => {
+    const close = (): Promise<void> => {
       if (closePromise) return closePromise;
       // Defer the abort until after the sentinel is assigned: abort dispatch is
       // synchronous and otherwise re-enters close() before closePromise exists.
@@ -690,7 +690,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         providerBridgeRefs.clear();
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
         await cleanupContainerResources(runtime, containerId, secretDir);
-      })();
+      });
       return closePromise;
     };
 

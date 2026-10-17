@@ -505,7 +505,7 @@ export class MCPServerHost {
     const runtime = currentAgentContainerRuntime();
     if (!runtime) return undefined;
     const now = Math.floor(Date.now() / 1000);
-    const allowed = state.metadata.allowedToolNames ?? [];
+    const allowed = (state.metadata as { allowedToolNames?: string[] }).allowedToolNames ?? [];
 
     return {
       v:         1,
