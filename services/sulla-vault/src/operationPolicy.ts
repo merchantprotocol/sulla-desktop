@@ -16,13 +16,15 @@ export interface BrokerOperationPolicy {
   credentialOptional?: boolean;
   pathPattern?:    RegExp;
   /** Provider-specific authority that must remain coupled as one trust decision. */
-  bindings?:       ReadonlyArray<{
+  bindings?:       readonly {
     integration: string;
     hosts?:      string[];
     injections:  BrokerInjection[];
     requiredInjections?: BrokerInjection[];
+    /** Optional exact one-of sets for integrations with mutually exclusive credential modes. */
+    injectionSets?: readonly (readonly BrokerInjection[])[];
     pathPattern?: RegExp;
-  }>;
+  }[];
 }
 
 const authHeaders = (fields: string[], names = ['authorization']): BrokerInjection[] => fields.flatMap(field =>
@@ -106,7 +108,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     ],
   },
   'provider.cli': {
-    integrations: ['openai', 'codex', 'anthropic'],
+    integrations: ['openai', 'codex', 'anthropic', 'claude-code'],
     methods: ['POST'],
     allowStreaming: true,
     injections: [],
@@ -134,6 +136,19 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
         integration: 'anthropic',
         hosts: ['api.anthropic.com'],
         injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+        pathPattern: /^\/v1\/messages(?:\/count_tokens)?$/,
+      },
+      {
+        integration: 'claude-code',
+        hosts: ['api.anthropic.com'],
+        injections: [
+          { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
+          { field: 'oauth_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+        ],
+        injectionSets: [
+          [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+          [{ field: 'oauth_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        ],
         pathPattern: /^\/v1\/messages(?:\/count_tokens)?$/,
       },
     ],
@@ -288,6 +303,10 @@ export function validateOperation(
   if (binding?.requiredInjections?.some(required => !input.injections.some(candidate => exactInjection(candidate, required)))) {
     throw new Error('injection_denied');
   }
+  if (binding?.injectionSets && !binding.injectionSets.some(set => set.length === input.injections.length &&
+    set.every(required => input.injections.some(candidate => exactInjection(candidate, required))))) {
+    throw new Error('injection_denied');
+  }
   if (!input.injections.length && !policy.credentialOptional) throw new Error('credential_injection_required');
   return policy;
 }
@@ -299,6 +318,7 @@ export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
   openai:    ['api.openai.com'],
   codex:     ['chatgpt.com'],
   anthropic: ['api.anthropic.com'],
+  'claude-code': ['api.anthropic.com'],
   google:    ['generativelanguage.googleapis.com'],
   grok:      ['api.x.ai'],
   elevenlabs: ['api.elevenlabs.io'],

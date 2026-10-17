@@ -32,7 +32,8 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
 ]);
 
 export type ProviderCliName = 'claude-code' | 'codex';
-export type ProviderCliIntegration = 'anthropic' | 'codex' | 'openai';
+export type ProviderCliIntegration = 'anthropic' | 'claude-code' | 'codex' | 'openai';
+export type ProviderCliAuthMode = 'api-key' | 'oauth';
 
 interface ProviderDefinition {
   cli:         ProviderCliName;
@@ -40,6 +41,7 @@ interface ProviderDefinition {
   origin:      string;
   routes:      ReadonlyMap<string, string>;
   injections:  readonly BrokerInjection[];
+  authMode?:   ProviderCliAuthMode;
 }
 
 const PROVIDERS: readonly ProviderDefinition[] = [
@@ -75,6 +77,29 @@ const PROVIDERS: readonly ProviderDefinition[] = [
       ['/v1/messages/count_tokens', '/v1/messages/count_tokens'],
     ]),
     injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+    authMode:   'api-key',
+  },
+  {
+    cli:         'claude-code',
+    integration: 'claude-code',
+    origin:      'https://api.anthropic.com',
+    routes:      new Map([
+      ['/v1/messages', '/v1/messages'],
+      ['/v1/messages/count_tokens', '/v1/messages/count_tokens'],
+    ]),
+    injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+    authMode:   'api-key',
+  },
+  {
+    cli:         'claude-code',
+    integration: 'claude-code',
+    origin:      'https://api.anthropic.com',
+    routes:      new Map([
+      ['/v1/messages', '/v1/messages'],
+      ['/v1/messages/count_tokens', '/v1/messages/count_tokens'],
+    ]),
+    injections: [{ field: 'oauth_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+    authMode:   'oauth',
   },
 ] as const;
 
@@ -82,6 +107,8 @@ export interface ProviderCliBridgeIdentity {
   context:   ToolExecutionContext;
   provider:  ProviderCliName;
   accountId: string;
+  /** Required for Claude Code because API-key and subscription OAuth accounts share one integration. */
+  authMode?: ProviderCliAuthMode;
   /** Optional exact model allowlist supplied by the lifecycle capability. */
   models?:   readonly string[];
 }
@@ -117,11 +144,12 @@ export interface ProviderCliBridgeLease {
 
 function assertIdentity(input: ProviderCliBridgeIdentity): ProviderDefinition {
   const ctx = input.context;
+  const authMode = input.authMode ?? (input.provider === 'claude-code' ? 'api-key' : undefined);
   if (!ctx.sub || !ctx.agent_id || !ctx.pod_id || !ctx.device_id || !ctx.thread_id || !ctx.job_id) {
     throw new Error('Provider CLI bridge requires live subject, agent, device, thread, and job identity');
   }
   const definition = PROVIDERS.find(candidate => candidate.cli === input.provider &&
-    candidate.integration === ctx.credential_scope?.integration_id);
+    candidate.integration === ctx.credential_scope?.integration_id && candidate.authMode === authMode);
   if (!definition || !input.accountId || ctx.credential_scope?.account_id !== input.accountId) {
     throw new Error('Provider CLI bridge identity is outside the exact provider account scope');
   }
@@ -237,6 +265,7 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
     context:   options.context,
     provider:  options.provider,
     accountId: options.accountId,
+    authMode:  options.authMode,
     models:    options.models ? Object.freeze([...options.models]) : undefined,
   });
   if (!await liveContext(options, identity)) throw new Error('Provider CLI bridge identity is not active');
@@ -271,13 +300,16 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
         return;
       }
       const incoming = new URL(request.url ?? '/', 'http://provider-bridge.invalid');
-      if (request.method !== 'POST' || incoming.search || incoming.hash || !incoming.pathname.startsWith(scopedPrefix)) {
+      if (request.method !== 'POST' || incoming.hash || !incoming.pathname.startsWith(scopedPrefix)) {
         sendError(response, 404, 'unsupported_provider_route');
         return;
       }
       const incomingPath = incoming.pathname.slice(scopedPrefix.length);
       const upstreamPath = definition.routes.get(incomingPath);
-      if (!upstreamPath) {
+      const upstreamSearch = definition.cli === 'claude-code' && incoming.search === '?beta=true'
+        ? incoming.search
+        : '';
+      if (!upstreamPath || (incoming.search && !upstreamSearch)) {
         sendError(response, 404, 'unsupported_provider_route');
         return;
       }
@@ -322,7 +354,7 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
       const upstream = await broker.executeStream(broker.requestFor(context, {
         operation:    'provider.cli',
         ref:          { integrationId: definition.integration, accountId: options.accountId },
-        url:          `${ definition.origin }${ upstreamPath }`,
+        url:          `${ definition.origin }${ upstreamPath }${ upstreamSearch }`,
         method:       'POST',
         headers,
         body,
@@ -362,7 +394,9 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
   const baseUrl = definition.cli === 'codex' ? `${ endpointBase }/v1` : endpointBase;
   const environment = definition.cli === 'codex'
     ? { SULLA_PROVIDER_BRIDGE_TOKEN: capability }
-    : { ANTHROPIC_API_KEY: capability, ANTHROPIC_BASE_URL: baseUrl };
+    : definition.authMode === 'oauth'
+      ? { CLAUDE_CODE_OAUTH_TOKEN: capability, ANTHROPIC_BASE_URL: baseUrl }
+      : { ANTHROPIC_API_KEY: capability, ANTHROPIC_BASE_URL: baseUrl };
   const config: ProviderCliOpaqueConfig = Object.freeze({
     opaqueConfigRef,
     baseUrl,

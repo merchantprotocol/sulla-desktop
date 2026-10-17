@@ -145,6 +145,63 @@ test('routes ChatGPT OAuth through authority-owned bearer and account injection'
   }
 });
 
+test('routes Claude subscription OAuth through an opaque bearer capability', async() => {
+  let captured: BrokerExecuteRequest | undefined;
+  const oauthContext: ToolExecutionContext = {
+    ...context,
+    credential_scope: { integration_id: 'claude-code', account_id: 'oauth' },
+  };
+  const lease = await createProviderCliBridge({
+    context:   oauthContext,
+    provider:  'claude-code',
+    accountId: 'oauth',
+    authMode:  'oauth',
+    authorize: () => oauthContext,
+    broker:    {
+      requestFor: (ctx, request) => ({
+        ...request,
+        claims: {
+          sub:              ctx.sub,
+          agent_id:         ctx.agent_id!,
+          pod_id:           ctx.pod_id!,
+          device_id:        ctx.device_id,
+          org_id:           ctx.org_id,
+          thread_id:        ctx.thread_id,
+          job_id:           ctx.job_id,
+          credential_scope: ctx.credential_scope,
+        },
+      }),
+      executeStream: request => {
+        captured = request;
+        return Promise.resolve(new Response('data: synthetic\n\n', { status: 200 }));
+      },
+    },
+  });
+  try {
+    const capability = lease.config.environment.CLAUDE_CODE_OAUTH_TOKEN;
+    assert.equal(typeof capability, 'string');
+    assert.equal(lease.config.environment.ANTHROPIC_API_KEY, undefined);
+    const response = await fetch(`${ lease.config.baseUrl }/v1/messages?beta=true`, {
+      method:  'POST',
+      headers: { authorization: `Bearer ${ capability }` },
+      body:    JSON.stringify({ model: 'claude-sonnet-4-6', messages: [] }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(captured?.url, 'https://api.anthropic.com/v1/messages?beta=true');
+    assert.deepEqual(captured?.ref, { integrationId: 'claude-code', accountId: 'oauth' });
+    assert.deepEqual(captured?.injections, [
+      { field: 'oauth_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+    ]);
+
+    const unsupported = await fetch(`${ lease.config.baseUrl }/v1/messages?redirect=https://attacker.invalid`, {
+      method: 'POST', headers: { authorization: `Bearer ${ capability }` }, body: '{}',
+    });
+    assert.equal(unsupported.status, 404);
+  } finally {
+    await lease.close();
+  }
+});
+
 test('extracts only bounded ChatGPT account routing metadata from synthetic JWTs', () => {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const token = `${ encode({ alg: 'none' }) }.${ encode({
@@ -422,4 +479,23 @@ test('provider CLI authority policy binds provider, host, path, and injection', 
     ...chatgptRequest,
     injections: [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
   }, 'chatgpt.com', syntheticAgentPolicy), /injection_denied/);
+
+  const claudeOauthRequest: BrokerExecuteRequest = {
+    ...request,
+    claims: {
+      ...request.claims,
+      credential_scope: { integration_id: 'claude-code', account_id: 'oauth' },
+    },
+    ref:        { integrationId: 'claude-code', accountId: 'oauth' },
+    url:        'https://api.anthropic.com/v1/messages?beta=true',
+    injections: [{ field: 'oauth_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+  };
+  assert.doesNotThrow(() => validateOperation(claudeOauthRequest, 'api.anthropic.com', syntheticAgentPolicy));
+  assert.throws(() => validateOperation({
+    ...claudeOauthRequest,
+    injections: [
+      ...claudeOauthRequest.injections,
+      { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
+    ],
+  }, 'api.anthropic.com', syntheticAgentPolicy), /injection_denied/);
 });
