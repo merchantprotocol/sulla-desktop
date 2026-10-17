@@ -72,7 +72,7 @@
 
           <div class="composer-tools">
             <ComposerAttach :open="filesMenuOpen" @pick="toggleFilesMenu" />
-            <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" @browse="browseFiles" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
+            <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" :uploading="filesImporting" :upload-error="filesImportError" @browse="browseFiles" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
             <HeartbeatControl />
             <button class="model-btn" type="button" :title="selectionTitle" @click="controller.openModal('model')">
               <span class="model-avatar">{{ modelInitial }}</span>
@@ -92,13 +92,6 @@
             />
           </div>
 
-          <input
-            ref="fileInputRef"
-            type="file"
-            multiple
-            class="hidden-file-input"
-            @change="onFilesSelected"
-          >
         </div>
       </div>
 
@@ -184,10 +177,11 @@ function looksLikeUrl(input: string): boolean {
 const draft        = ref('');
 const inputRef     = ref<InstanceType<typeof ComposerInput> | null>(null);
 const wrapEl       = ref<HTMLElement | null>(null);
-const fileInputRef = ref<HTMLInputElement | null>(null);
 const filesMenuOpen = ref(false);
 const recentFiles = ref<FilesReference[]>([]);
 const screenRecording = ref(false);
+const filesImporting = ref(false);
+const filesImportError = ref('');
 
 // ─── Placeholder + keyboard hints ──────────────────────────────────
 const placeholder = computed(() => {
@@ -199,7 +193,7 @@ const placeholder = computed(() => {
 const isNoir = ref(typeof document !== 'undefined' && document.documentElement.classList.contains('theme-noir'));
 let themeObserver: MutationObserver | null = null;
 
-const canSendDraft = computed(() => draft.value.trim().length > 0 || controller.staged.value.length > 0);
+const canSendDraft = computed(() => !filesImporting.value && (draft.value.trim().length > 0 || controller.staged.value.length > 0));
 const { label: selectionLabel, title: selectionTitle } = useSelectionLabel();
 const modelInitial = computed(() => selectionLabel.value.trim().charAt(0).toUpperCase() || 'S');
 const contextLimit = computed(() => {
@@ -351,6 +345,9 @@ function choosePopoverItem(idx: number): void {
 
 // ─── Send ──────────────────────────────────────────────────────────
 function onSend(text: string): void {
+  // An import is not an attachment until Files returns a durable identity.
+  // Holding send here prevents a draft from racing ahead without the file.
+  if (filesImporting.value) return;
   const trimmed = text.trim();
 
   // Only navigate on the very first message (empty history) — no surrounding words.
@@ -398,29 +395,64 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 // ─── Attachments ──────────────────────────────────────────────────
-// Paperclip click opens the native file picker; each chosen file is
-// wrapped into an Attachment (with an object-URL preview for images)
-// and staged on the controller. Resetting the input's `value` after a
-// pick lets the user re-select the same file next time without us
-// swallowing the change event.
+// Uploads cross the privileged main-process Files importer. The renderer never
+// receives source paths or stages the transient File: a returned durable
+// fileId/versionId is the only success condition.
 async function toggleFilesMenu():Promise<void> {
   filesMenuOpen.value = !filesMenuOpen.value;
   if (filesMenuOpen.value) recentFiles.value = await ipcRenderer.invoke('files-ui:recent-references', 5).catch(() => []);
 }
 
 async function browseFiles():Promise<void> {
-  const selected = await ipcRenderer.invoke('files-ui:pick-reference') as FilesReference[];
-  selected.forEach(stageFilesReference); filesMenuOpen.value = false;
+  filesImportError.value = '';
+  try {
+    const selected = await ipcRenderer.invoke('files-ui:pick-reference') as FilesReference[];
+    stageFilesReferences(selected);
+  } catch (error) {
+    filesImportError.value = error instanceof Error ? error.message : 'Could not attach this Files item.';
+    filesMenuOpen.value = true;
+  }
 }
 
-function uploadFromMac():void {
-  filesMenuOpen.value = false;
-  fileInputRef.value?.click();
+async function uploadFromMac():Promise<void> {
+  if (filesImporting.value) return;
+  filesImportError.value = '';
+  filesImporting.value = true;
+  try {
+    // The authenticated main-process importer returns [] on picker cancellation.
+    // A later-file failure can include already committed references alongside a
+    // recoverable error, so chat never loses track of a successful Files import.
+    const result = await ipcRenderer.invoke('files-ui:pick-upload-references');
+    const imported = Array.isArray(result) ? result : result.references;
+    if (!Array.isArray(imported)) throw new Error('Files did not return imported file references.');
+    stageFilesReferences(imported as FilesReference[]);
+    if (!Array.isArray(result) && result.error) {
+      filesImportError.value = result.error;
+      filesMenuOpen.value = true;
+    }
+  } catch (error) {
+    filesImportError.value = error instanceof Error ? error.message : 'Could not import this file into Files.';
+    filesMenuOpen.value = true;
+  } finally {
+    filesImporting.value = false;
+  }
 }
 
 function stageFilesReference(file:FilesReference):void {
-  controller.stageAttachment(AttachmentService.fromFilesReference(file));
-  filesMenuOpen.value = false;
+  try {
+    stageFilesReferences([file]);
+  } catch (error) {
+    filesImportError.value = error instanceof Error ? error.message : 'Could not attach this Files item.';
+    filesMenuOpen.value = true;
+  }
+}
+
+function stageFilesReferences(files:FilesReference[]):void {
+  // Validate the entire response before mutating staging. A malformed item
+  // cannot leave a partial selection that looks like a successful import.
+  const attachments = files.map(file => AttachmentService.fromFilesReference(file));
+  attachments.forEach(attachment => controller.stageAttachment(attachment));
+  if (attachments.length) filesMenuOpen.value = false;
 }
 
 async function takeScreenshot():Promise<void> {
@@ -438,17 +470,6 @@ async function toggleScreenRecording():Promise<void> {
     const ref = recent.find(file => file.fileId === result.capture?.fileId);
     if (ref) stageFilesReference(ref);
   }
-}
-
-function onFilesSelected(ev: Event): void {
-  const input = ev.target as HTMLInputElement;
-  const files = input.files;
-  if (files && files.length > 0) {
-    for (const file of Array.from(files)) {
-      controller.stageAttachment(AttachmentService.fromFile(file));
-    }
-  }
-  input.value = '';
 }
 
 // ─── Voice ─────────────────────────────────────────────────────────
