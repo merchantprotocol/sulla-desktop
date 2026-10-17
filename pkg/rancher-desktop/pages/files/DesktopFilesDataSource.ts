@@ -49,6 +49,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     publicLinks:     false,
     onlineOnly:      false,
   };
+
   onlineOnlyReason = '';
 
   private files: FilesItem[] = [];
@@ -85,7 +86,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     const collection = collections.find(item => item.name === 'Files') ?? collections.find(item => item.kind === 'knowledge');
     if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/Files to initialize it.');
     Object.assign(this.capabilities, capabilities, {
-      orgSharing: capabilities.orgSharing && ['manage', 'owner', 'edit'].includes(collection.access_role ?? ''),
+      orgSharing: capabilities.orgSharing && ['manage', 'owner'].includes(collection.access_role ?? ''),
     });
     this.onlineOnlyReason = capabilities.onlineOnlyReason ?? '';
     const [active, trash] = await Promise.all([
@@ -147,15 +148,19 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   openFolder():Promise<void> { return ipcRenderer.invoke('files-ui:open-folder') }
-  openFile(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:open-file', path) }
+  openFile(fileId:string, versionId?:string):Promise<void> { return ipcRenderer.invoke('files-ui:open-file', { fileId, versionId }) }
   restoreVersion(fileId:string, versionId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:restore-version', { fileId, versionId }) }
   restoreTrash(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash-restore', { fileId }) }
   trashFile(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash', { fileId }) }
-  createPublicLink(fileId:string, options:{ mode?:'view'|'download'; keepAvailable?:boolean } = {}):Promise<{ url:string }> {
+  createPublicLink(fileId:string, options:{ mode?:'view' | 'download'; keepAvailable?:boolean } = {}):Promise<{ url:string }> {
     return ipcRenderer.invoke('files-ui:create-link', { fileId, mode: options.mode ?? 'view', keepAvailable: options.keepAvailable ?? false });
   }
-  shareFolder(collectionId:string, folderPath:string, principalId:string, role:'view'|'edit'):Promise<void> {
+
+  shareFolder(collectionId:string, folderPath:string, principalId:string, role:'view' | 'edit'):Promise<void> {
     return ipcRenderer.invoke('sulla-files:share', { collectionId, folderPath, principalType: 'user', principalId, role });
   }
-  keepOnMac():Promise<void> { return Promise.resolve() }
+
+  listMembers(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[] }> {
+    return ipcRenderer.invoke('sulla-files:members', { orgId });
+  }
 }

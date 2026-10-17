@@ -20,7 +20,7 @@ import { ConversationKeywordsModel } from '../database/models/ConversationKeywor
 import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { getSullaFilesService } from '../files/runtime';
+import { filesContainerJson } from '../files/containerClient';
 import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '../memory/MemoryRecallService';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
@@ -947,20 +947,14 @@ async function runFilesRecall(state: BaseThreadState): Promise<string> {
     if (!userId) return '';
     const terms = extractRecallTerms([query], 16);
     if (!terms.length) return '';
-    const now = Math.floor(Date.now() / 1000);
-    const recall = getSullaFilesService().searchAll({
-      v:          1,
-      iss:        'sulla-desktop',
-      aud:        'sulla-tools',
+    const recall = filesContainerJson<any[]>('/v1/search', {
       sub:        userId,
       org_id:     meta.orgId,
       device_id:  meta.deviceId,
-      scopes:     ['files/*'],
-      iat:        now,
-      exp:        now + 300,
-      jti:        `recall-${ now }`,
-      request_id: `recall-${ now }`,
-    }, query, {}, { terms, timeoutMs: 250 });
+      agent_id:   meta.agentId,
+      job_id:     meta.jobId,
+      thread_id:  meta.threadId,
+    }, { method: 'POST', body: JSON.stringify({ query, terms, limit: 5 }) });
     const rows = await Promise.race([
       recall,
       new Promise<any[]>((resolve) => {

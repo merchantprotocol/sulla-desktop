@@ -435,6 +435,11 @@ function onAgentCommand(_event: any, args: any) {
     const tab = createTab('about:blank', { mode: mode || 'welcome' });
 
     router.push(`/Browser/${ tab.id }`);
+    if (mode === 'files' && (args.fileId || args.path || args.section)) {
+      setTimeout(() => window.dispatchEvent(new CustomEvent('sulla:files-navigate', {
+        detail: { tabId: tab.id, fileId: args.fileId, path: args.path, section: args.section },
+      })), 80);
+    }
     break;
   }
   case 'open-url': {

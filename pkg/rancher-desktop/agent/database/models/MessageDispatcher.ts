@@ -16,6 +16,7 @@
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { formatToolCard, formatToolResult } from '@pkg/agent/tools/toolCardFormatters';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
+import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { ChatMessage, AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 import type { Ref } from 'vue';
@@ -694,6 +695,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     kind,
     content:   finalContent,
   };
+  const explicitReferences = Array.isArray(data?.fileReferences) ? data.fileReferences : Array.isArray(data?.metadata?.fileReferences) ? data.metadata.fileReferences : [];
+  const parsedReferences = role === 'assistant' ? parseDurableFileReferences(finalContent) : [];
+  if (explicitReferences.length || parsedReferences.length) {
+    message.fileReferences = [...explicitReferences, ...parsedReferences].filter((item:any, index, values) =>
+      values.findIndex((candidate:any) => candidate.fileId === item.fileId && candidate.versionId === item.versionId) === index);
+  }
 
   if (kind === 'channel_message') {
     message.channelMeta = {

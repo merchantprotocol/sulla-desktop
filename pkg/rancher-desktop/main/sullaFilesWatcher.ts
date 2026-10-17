@@ -134,6 +134,9 @@ class SullaFilesWatcher {
 
   async initialize():Promise<void> {
     if (this.started) return; this.started = true; this.stopped = false; app.once('before-quit', () => this.shutdown()); await fs.promises.mkdir(this.folder, { recursive: true, mode: 0o700 });
+    if (process.platform === 'darwin') {
+      try { await spawnFile('/usr/bin/defaults', ['write', 'group.io.sulla.desktop', 'FilesRoot', this.folder]) } catch (error) { console.warn('[SullaFiles] Finder extension root configuration failed:', error) }
+    }
     try { this.watcher = fs.watch(this.folder, { recursive: process.platform !== 'linux', persistent: false }, (_event, filename) => { if (filename) this.changed(filename.toString()).catch(error => console.warn('[SullaFiles] watch event failed:', error)); }) } catch (error) { console.warn('[SullaFiles] host folder watcher unavailable; periodic rescans remain active:', error) }
     this.safetyTimer = setInterval(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] periodic rescan failed:', error)), 5 * 60_000); this.safetyTimer.unref();
     setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] startup rescan failed:', error)), 2_000).unref();
@@ -195,7 +198,7 @@ class SullaFilesWatcher {
       for (const file of files) {
         const target = path.resolve(this.folder, file.path);
         if (!target.startsWith(`${ this.folder }${ path.sep }`)) continue;
-        try { await spawnFile('/usr/bin/xattr', ['-w', 'io.sulla.files.sync-state', file.sync_state || 'synced', target]) } catch { /* Finder metadata is best-effort. */ }
+        try { await spawnFile('/usr/bin/xattr', ['-w', 'io.sulla.files.sync-state', file.sync_state || 'unknown', target]) } catch { /* Finder metadata is best-effort. */ }
       }
     }
   }

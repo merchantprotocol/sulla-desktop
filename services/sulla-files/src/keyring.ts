@@ -47,7 +47,7 @@ export class FilesKeyring {
           keys.data.fill(0); keys.dedup.fill(0);
         }
       } else {
-        const rows = (await client.query('SELECT id FROM collections')).rows;
+        const rows = (await client.query("SELECT id FROM collections WHERE compatibility_state='native'")).rows;
         for (const row of rows) {
           // The legacy master.key wrapped metadata only; content used these deterministic keys.
           const data = createHmac('sha256', legacySigningKey).update(`sulla:files:data-key:v1:${ row.id }`).digest();

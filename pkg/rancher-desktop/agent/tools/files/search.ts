@@ -1,4 +1,4 @@
-import { FilesTool, filesService } from './common';
+import { FilesTool } from './common';
 
 import type { ToolResponse } from '../base';
-export class FilesSearchWorker extends FilesTool { name = ''; description = ''; protected async _validatedCall(input:any):Promise<ToolResponse> { const filters = { folder: input.folder, type: input.type, person: input.person, from: input.from ? new Date(input.from) : undefined, to: input.to ? new Date(input.to) : undefined }; const rows = input.collection_id ? await filesService().search(this.context(input), input.collection_id, input.query, filters) : await filesService().searchAll(this.context(input), input.query, filters); return { successBoolean: true, responseString: JSON.stringify(rows) } } }
+export class FilesSearchWorker extends FilesTool { name = ''; description = ''; protected async _validatedCall(input:any):Promise<ToolResponse> { const rows = await this.containerJson('/v1/search', input, { method: 'POST', body: JSON.stringify({ collectionId: input.collection_id, query: input.query, folder: input.folder, type: input.type, person: input.person, from: input.from, to: input.to }) }); return { successBoolean: true, responseString: JSON.stringify(rows) } } }

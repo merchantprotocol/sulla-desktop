@@ -252,7 +252,7 @@
 
     <template v-else-if="tabMode === 'files'">
       <div class="flex-1 min-h-0 overflow-hidden">
-        <FilesPage />
+        <FilesPage :tab-id="props.tabId" />
       </div>
     </template>
 

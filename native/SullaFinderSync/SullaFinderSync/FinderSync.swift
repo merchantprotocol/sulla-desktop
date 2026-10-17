@@ -3,11 +3,24 @@ import Darwin
 import FinderSync
 
 private let syncAttribute = "io.sulla.files.sync-state"
+private let appGroup = "group.io.sulla.desktop"
 
 final class FinderSync: FIFinderSync {
+    private var watchedRoot: URL?
+    private var directorySource: DispatchSourceFileSystemObject?
+    private var visibleURLs = Set<URL>()
+
     override init() {
         super.init()
-        FIFinderSyncController.default().directoryURLs = [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("sulla/Files", isDirectory: true)]
+        if let configured = UserDefaults(suiteName: appGroup)?.string(forKey: "FilesRoot"), !configured.isEmpty {
+            let root = URL(fileURLWithPath: configured, isDirectory: true).standardizedFileURL
+            watchedRoot = root
+            FIFinderSyncController.default().directoryURLs = [root]
+            subscribe(to: root)
+        } else {
+            // Fail closed: the extension's sandbox home is not the user's home.
+            FIFinderSyncController.default().directoryURLs = []
+        }
         registerBadges()
     }
 
@@ -17,6 +30,7 @@ final class FinderSync: FIFinderSync {
         controller.setBadgeImage(badge(color: .systemBlue, symbol: "arrow.triangle.2.circlepath"), label: "Syncing", forBadgeIdentifier: "syncing")
         controller.setBadgeImage(badge(color: .secondaryLabelColor, symbol: "icloud"), label: "Online only", forBadgeIdentifier: "online-only")
         controller.setBadgeImage(badge(color: .systemRed, symbol: "exclamationmark"), label: "Conflict", forBadgeIdentifier: "conflict")
+        controller.setBadgeImage(badge(color: .systemGray, symbol: "questionmark"), label: "Sync state unavailable", forBadgeIdentifier: "unknown")
     }
 
     private func badge(color: NSColor, symbol: String) -> NSImage {
@@ -31,35 +45,56 @@ final class FinderSync: FIFinderSync {
     }
 
     override func requestBadgeIdentifier(for url: URL) {
-        let state = extendedAttribute(url: url, name: syncAttribute) ?? "synced"
+        visibleURLs.insert(url.standardizedFileURL)
+        let state = extendedAttribute(url: url, name: syncAttribute) ?? "unknown"
         FIFinderSyncController.default().setBadgeIdentifier(state, for: url)
     }
 
+    override func endObservingDirectory(at url: URL) {
+        visibleURLs = Set(visibleURLs.filter { !$0.path.hasPrefix(url.standardizedFileURL.path) })
+    }
+
     override func menu(for menuKind: FIMenuKind) -> NSMenu? {
-        guard let target = FIFinderSyncController.default().targetedURL() else { return nil }
+        let controller = FIFinderSyncController.default()
+        guard let target = controller.targetedURL() else { return nil }
+        let selection = controller.selectedItemURLs() ?? []
+        let targets = selection.contains(target) ? selection : [target]
         let menu = NSMenu(title: "Sulla Files")
-        add(menu, title: "Share with Sulla", action: #selector(share(_:)), target: target)
-        add(menu, title: "Version history", action: #selector(history(_:)), target: target)
+        add(menu, title: targets.count > 1 ? "Review sharing for selected items" : "Share with Sulla", action: #selector(share(_:)), targets: targets)
+        add(menu, title: targets.count > 1 ? "Version history for selected items" : "Version history", action: #selector(history(_:)), targets: targets)
         menu.addItem(.separator())
-        add(menu, title: "Keep on this Mac", action: #selector(keep(_:)), target: target)
-        add(menu, title: "Make online only", action: #selector(onlineOnly(_:)), target: target)
+        unavailable(menu, title: "Keep on this Mac — unavailable")
+        unavailable(menu, title: "Make online only — unavailable")
         return menu
     }
 
-    private func add(_ menu: NSMenu, title: String, action: Selector, target: URL) {
+    private func add(_ menu: NSMenu, title: String, action: Selector, targets: [URL]) {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.target = self; item.representedObject = target; menu.addItem(item)
+        item.target = self; item.representedObject = targets; menu.addItem(item)
     }
+    private func unavailable(_ menu: NSMenu, title: String) { let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); item.isEnabled = false; menu.addItem(item) }
 
     @objc private func share(_ sender: NSMenuItem) { open(action: "share", sender: sender) }
     @objc private func history(_ sender: NSMenuItem) { open(action: "history", sender: sender) }
-    @objc private func keep(_ sender: NSMenuItem) { open(action: "keep", sender: sender) }
-    @objc private func onlineOnly(_ sender: NSMenuItem) { open(action: "online-only", sender: sender) }
-
     private func open(action: String, sender: NSMenuItem) {
-        guard let file = sender.representedObject as? URL, var parts = URLComponents(string: "sulla://files/\(action)") else { return }
-        parts.queryItems = [URLQueryItem(name: "path", value: file.path)]
-        if let url = parts.url { NSWorkspace.shared.open(url) }
+        guard let files = sender.representedObject as? [URL] else { return }
+        for file in files {
+            guard var parts = URLComponents(string: "sulla://files/\(action)") else { continue }
+            parts.queryItems = [URLQueryItem(name: "path", value: file.path)]
+            if let url = parts.url { NSWorkspace.shared.open(url) }
+        }
+    }
+
+    private func subscribe(to root: URL) {
+        let descriptor = open(root.path, O_EVTONLY)
+        guard descriptor >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .attrib, .rename], queue: .main)
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            for url in self.visibleURLs { self.requestBadgeIdentifier(for: url) }
+        }
+        source.setCancelHandler { close(descriptor) }
+        source.resume(); directorySource = source
     }
 
     private func extendedAttribute(url: URL, name: String) -> String? {

@@ -78,12 +78,13 @@ export interface FilesDataSource {
   createFolder(path:string): Promise<void>;
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
-  openFile(path:string): Promise<void>;
+  openFile(fileId:string, versionId?:string): Promise<void>;
   restoreVersion(fileId:string, versionId:string): Promise<void>;
   restoreTrash(fileId:string): Promise<void>;
   trashFile(fileId:string): Promise<void>;
-  createPublicLink?(fileId:string, options?:{ mode?:'view'|'download'; keepAvailable?:boolean }):Promise<{ url:string }>;
-  shareFolder?(collectionId:string, folderPath:string, principalId:string, role:'view'|'edit'):Promise<void>;
+  createPublicLink?(fileId:string, options?:{ mode?:'view' | 'download'; keepAvailable?:boolean }):Promise<{ url:string }>;
+  shareFolder?(collectionId:string, folderPath:string, principalId:string, role:'view' | 'edit'):Promise<void>;
+  listMembers?(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[] }>;
   keepOnMac?(fileId:string):Promise<void>;
   onlineOnlyReason?:string;
 }

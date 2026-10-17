@@ -72,7 +72,7 @@
 
           <div class="composer-tools">
             <ComposerAttach :open="filesMenuOpen" @pick="toggleFilesMenu" />
-            <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" @browse="browseFiles" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
+            <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" @browse="browseFiles" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
             <HeartbeatControl />
             <button class="model-btn" type="button" :title="selectionTitle" @click="controller.openModal('model')">
               <span class="model-avatar">{{ modelInitial }}</span>
@@ -411,6 +411,11 @@ async function toggleFilesMenu():Promise<void> {
 async function browseFiles():Promise<void> {
   const selected = await ipcRenderer.invoke('files-ui:pick-reference') as FilesReference[];
   selected.forEach(stageFilesReference); filesMenuOpen.value = false;
+}
+
+function uploadFromMac():void {
+  filesMenuOpen.value = false;
+  fileInputRef.value?.click();
 }
 
 function stageFilesReference(file:FilesReference):void {

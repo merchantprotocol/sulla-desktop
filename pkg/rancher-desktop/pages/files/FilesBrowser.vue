@@ -526,7 +526,7 @@
               v-if="section !== 'trash'"
               class="btn"
               type="button"
-              @click="dataSource.openFile(selected.path)"
+              @click="dataSource.openFile(selected.id, selected.currentVersionId)"
             >
               Open file
             </button>
@@ -537,7 +537,7 @@
             v-if="section !== 'trash'"
             class="btn pri"
             type="button"
-            @click="dataSource.openFile(selected.path)"
+            @click="dataSource.openFile(selected.id, selected.currentVersionId)"
           >
             Open
           </button>
@@ -687,6 +687,22 @@
         />
       </div>
     </div>
+    <div v-if="shareDialog" class="share-modal" role="dialog" aria-modal="true" aria-label="Share folder">
+      <div class="share-card">
+        <h2>Share {{ currentPath || 'My Files' }}</h2>
+        <p>Select an organization member and the access they should receive.</p>
+        <label v-for="member in shareMembers" :key="member.id" class="member-row">
+          <input v-model="sharePrincipalId" type="radio" :value="member.id">
+          <span><b>{{ member.email }}</b><small>{{ member.role }}</small></span>
+        </label>
+        <p v-if="!shareMembers.length" class="empty">No eligible organization members are available.</p>
+        <div class="share-actions">
+          <button class="btn" type="button" @click="closeShareDialog">Cancel</button>
+          <button class="btn" type="button" :disabled="!sharePrincipalId || busy" @click="confirmFolderShare('view')">Share to view</button>
+          <button class="btn pri" type="button" :disabled="!sharePrincipalId || busy" @click="confirmFolderShare('edit')">Share to edit</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -695,7 +711,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import type { FilesDataSource, FilesItem, FilesSnapshot, FilesVersion } from './types';
 
-const props = defineProps<{ dataSource: FilesDataSource }>();
+const props = defineProps<{ dataSource: FilesDataSource; tabId:string }>();
 type Section = 'files' | 'shared' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
 interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
@@ -743,6 +759,7 @@ const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done
 const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details'); const versions = ref<FilesVersion[]>([]); const versionsLoading = ref(false);
 const previewUrl = ref(''); const previewText = ref<string | null>(null); const previewError = ref(''); const previewLoading = ref(false); const dragging = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
 const starred = ref(new Set<string>(JSON.parse(localStorage.getItem('sulla:files-starred') || '[]')));
+const shareDialog = ref(false); const shareMembers = ref<{ id:string; email:string; role:string }[]>([]); const sharePrincipalId = ref('');
 
 const activeFiles = computed(() => snapshot.value?.files.filter(file => !file.deletedAt) ?? []);
 const trashFiles = computed(() => snapshot.value?.files.filter(file => file.deletedAt) ?? []);
@@ -878,12 +895,19 @@ async function shareEntry(entry:DisplayEntry | null, keepAvailable = false) {
 }
 async function shareSelectedFile() { await shareEntry(selectedFileForShare.value ?? null) }
 async function shareCurrentFolder() {
-  if (!snapshot.value || !props.dataSource.shareFolder || !currentPath.value) return;
-  const principalId = window.prompt('Sulla organization member ID');
-  if (!principalId?.trim()) return;
-  const role = window.confirm('Allow this member to edit files? Choose Cancel for view-only access.') ? 'edit' : 'view';
+  if (!snapshot.value?.collection.orgId || !props.dataSource.shareFolder || !props.dataSource.listMembers || !currentPath.value || !props.dataSource.capabilities.orgSharing) return;
   busy.value = true;
-  try { await props.dataSource.shareFolder(snapshot.value.collection.id, currentPath.value, principalId.trim(), role); await refresh(true) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false }
+  try {
+    const result = await props.dataSource.listMembers(snapshot.value.collection.orgId);
+    shareMembers.value = result.members.filter(member => member.id !== snapshot.value?.collection.ownerUserId);
+    sharePrincipalId.value = ''; shareDialog.value = true; error.value = '';
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false }
+}
+function closeShareDialog() { shareDialog.value = false; sharePrincipalId.value = '' }
+async function confirmFolderShare(role:'view' | 'edit') {
+  if (!snapshot.value || !props.dataSource.shareFolder || !sharePrincipalId.value) return;
+  busy.value = true;
+  try { await props.dataSource.shareFolder(snapshot.value.collection.id, currentPath.value, sharePrincipalId.value, role); closeShareDialog(); await refresh(true) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false }
 }
 async function togglePause() { if (!snapshot.value) return; snapshot.value.status = await props.dataSource.setPaused(syncState.value !== 'paused') }
 function selectSection(next:Section) { section.value = next; currentPath.value = ''; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set() }
@@ -921,14 +945,30 @@ function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set()
 function toggleStar(id:string) { const next = new Set(starred.value); next.has(id) ? next.delete(id) : next.add(id); starred.value = next; localStorage.setItem('sulla:files-starred', JSON.stringify([...next])) }
 function trackUpload(progress:{ current: number; name: string; percent: number; done: boolean }) { const log = progress.current <= 1 && !uploadLog.value.some(item => item.name === progress.name) ? [] : uploadLog.value.map(item => item.name === progress.name ? item : { ...item, done: true, percent: 100 }); const rest = log.filter(item => item.name !== progress.name); uploadLog.value = [...rest, { name: progress.name, percent: progress.percent, done: progress.done || progress.percent >= 100 }] }
 function onKeydown(event:KeyboardEvent) { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchInput.value?.focus() } }
+async function onNavigate(event:Event) {
+  const detail = (event as CustomEvent<{ tabId:string; fileId?:string; path?:string; section?:string }>).detail;
+  if (detail?.tabId !== props.tabId) return;
+  if (!snapshot.value) await refresh();
+  const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
+  if (!file && detail.path) {
+    openPath(detail.path);
+    if (detail.section === 'share-review') await shareCurrentFolder();
+    return;
+  }
+  if (!file) { error.value = 'That file is no longer available in this collection.'; return }
+  await selectEntry(toDisplay(file));
+  if (detail.section === 'versions') detailTab.value = 'versions';
+  // A share deep link only opens this review surface. Link creation still
+  // requires the user to press the visible Share action.
+}
 
 watch(view, value => localStorage.setItem('sulla:files-view', value));
 let searchTimer:ReturnType<typeof setTimeout> | undefined;
 watch(query, (value) => { if (searchTimer) clearTimeout(searchTimer); if (!value.trim() || section.value === 'trash') { searchResults.value = null; return } searchTimer = setTimeout(async() => { try { searchResults.value = await props.dataSource.search(value.trim()) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } }, 220) });
 watch(detailTab, value => { if (value === 'versions' && selected.value && !versions.value.length) loadVersions(selected.value); });
 let stopUploadProgress:(() => void) | undefined;
-onMounted(() => { refresh(); window.addEventListener('keydown', onKeydown); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); refreshTimer = setInterval(() => refresh(true), 12_000) });
-onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); });
+onMounted(() => { refresh(); window.addEventListener('keydown', onKeydown); window.addEventListener('sulla:files-navigate', onNavigate); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); refreshTimer = setInterval(() => refresh(true), 12_000) });
+onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); window.removeEventListener('sulla:files-navigate', onNavigate); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); });
 </script>
 
 <style scoped>
@@ -988,6 +1028,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); stopUp
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "tnum" 1, "cv11" 1;
 }
+.share-modal{position:fixed;z-index:50;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.58)}.share-card{width:min(480px,calc(100vw - 40px));max-height:70vh;overflow:auto;padding:22px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--card-solid);box-shadow:var(--shadow-lg)}.share-card h2{margin:0}.share-card>p{color:var(--muted)}.member-row{display:flex;align-items:center;gap:10px;padding:10px;border-top:1px solid var(--line)}.member-row span,.member-row b,.member-row small{display:block}.member-row small{color:var(--dim)}.share-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 
 /* Noir Light reproduces the approved mockup palette exactly. */
 :global(.theme-noir-light) .files-browser {

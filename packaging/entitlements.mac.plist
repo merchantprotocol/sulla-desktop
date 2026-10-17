@@ -18,5 +18,7 @@
     <true/>
     <key>com.apple.security.hypervisor</key>
     <true/>
+    <key>com.apple.security.application-groups</key>
+    <array><string>group.io.sulla.desktop</string></array>
 </dict>
 </plist>

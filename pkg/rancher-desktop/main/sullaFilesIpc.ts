@@ -9,6 +9,7 @@ import { getSullaFilesLinkService } from './sullaFilesLinkService';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
 
 import Logging from '@pkg/utils/logging';
+import paths from '@pkg/utils/paths';
 
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
@@ -90,11 +91,33 @@ async function collectionsWithFiles():Promise<{ collection:any; files:any[] }[]>
   })));
 }
 
-async function findReferenceByPath(relativePath:string):Promise<FileReference | undefined> {
+async function findReferenceByPath(relativePath:string, collectionId?:string):Promise<FileReference | undefined> {
+  const matches:FileReference[] = [];
   for (const item of await collectionsWithFiles()) {
+    if (collectionId && item.collection.id !== collectionId) continue;
     const file = item.files.find(candidate => candidate.path === relativePath);
-    if (file) return reference(file, item.collection);
+    if (file) matches.push(reference(file, item.collection));
   }
+  if (matches.length > 1) throw new Error(`More than one collection contains ${ relativePath }; choose it from Files instead.`);
+  return matches[0];
+}
+
+async function openReference(input:{ fileId:string; versionId?:string }):Promise<void> {
+  const file = await json(`/v1/files/${ encodeURIComponent(input.fileId) }`);
+  const versionId = input.versionId || file.current_version_id;
+  if (!versionId) throw new Error('This file has no readable version.');
+  const versions = await json(`/v1/files/${ encodeURIComponent(input.fileId) }/history`) as any[];
+  if (!versions.some(version => version.id === versionId)) throw new Error('That file version is no longer available.');
+  const response = await getSullaFilesWatcher().requestFiles(`/v1/files/${ encodeURIComponent(input.fileId) }/preview?versionId=${ encodeURIComponent(versionId) }`);
+  if (!response.ok) throw new Error(`Files content failed (${ response.status })`);
+  const cacheRoot = path.join(paths.cache, 'files-open');
+  await fs.promises.mkdir(cacheRoot, { recursive: true, mode: 0o700 });
+  const safeId = `${ input.fileId }-${ versionId }`.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeName = path.basename(String(file.path || 'file')).replace(/[^a-zA-Z0-9._ -]/g, '_');
+  const target = path.join(cacheRoot, `${ safeId }-${ safeName }`);
+  await fs.promises.writeFile(target, Buffer.from(await response.arrayBuffer()), { mode: 0o600 });
+  const error = await shell.openPath(target);
+  if (error) throw new Error(error);
 }
 
 export function initSullaFilesIpc():void {
@@ -142,12 +165,16 @@ export function initSullaFilesIpc():void {
     const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
     if (picked.canceled) return [];
     const root = getSullaFilesWatcher().folder;
+    const collections = await json('/v1/collections') as any[];
+    const watchedCollection = collections.find(collection => collection.name === 'Files');
+    if (!watchedCollection) throw new Error('The local Files collection is unavailable.');
     const refs:FileReference[] = [];
     for (const selected of picked.filePaths) {
-      const resolved = path.resolve(selected);
-      if (!resolved.startsWith(`${ root }${ path.sep }`)) throw new Error('Choose a file inside ~/sulla/Files');
-      const relativePath = path.relative(root, resolved).split(path.sep).join('/');
-      const found = await findReferenceByPath(relativePath);
+      const [realRoot, resolved] = await Promise.all([fs.promises.realpath(root), fs.promises.realpath(selected)]);
+      if (!resolved.startsWith(`${ realRoot }${ path.sep }`)) throw new Error('Choose a file inside ~/sulla/Files');
+      if (!(await fs.promises.stat(resolved)).isFile()) throw new Error('Choose a regular file from Sulla Files.');
+      const relativePath = path.relative(realRoot, resolved).split(path.sep).join('/');
+      const found = await findReferenceByPath(relativePath, watchedCollection.id);
       if (!found) throw new Error(`${ path.basename(selected) } is still being indexed. Try again after sync finishes.`);
       refs.push(found);
     }
@@ -159,9 +186,9 @@ export function initSullaFilesIpc():void {
     if (!response.ok) throw new Error(`Files content failed (${ response.status })`);
     return { mime: response.headers.get('content-type') ?? 'application/octet-stream', data: new Uint8Array(await response.arrayBuffer()) };
   });
-  ipcMain.handle('files-ui:chat-inventory', async(_event, runIds:string[]) => {
+  ipcMain.handle('files-ui:chat-inventory', async(_event, input:{ runIds:string[]; threadId:string }) => {
     const response = await getSullaFilesWatcher().requestFiles('/v1/agent-files/query', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runIds }),
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input),
     });
     if (!response.ok) throw new Error(`Chat Files inventory failed (${ response.status })`);
     const files = await response.json() as any[];
@@ -182,11 +209,7 @@ export function initSullaFilesIpc():void {
     await fs.promises.mkdir(target, { recursive: false });
     await getSullaFilesWatcher().notifyRescan();
   });
-  ipcMain.handle('files-ui:open-file', async(_event, relativePath:string) => {
-    const root = getSullaFilesWatcher().folder; const target = path.resolve(root, relativePath);
-    if (!target.startsWith(`${ root }${ path.sep }`)) throw new Error('File path escapes ~/sulla/Files');
-    const error = await shell.openPath(target); if (error) throw new Error(error);
-  });
+  ipcMain.handle('files-ui:open-file', (_event, input:{ fileId:string; versionId?:string }) => openReference(input));
   ipcMain.handle('files-ui:pick-upload', async(event) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const picked = owner

@@ -450,11 +450,11 @@ export interface IpcMainInvokeEvents {
   'files-ui:status':       () => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
   'files-ui:set-paused':   (paused: boolean) => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
   'files-ui:open-folder':  () => void;
-  'files-ui:open-file':    (relativePath: string) => void;
+  'files-ui:open-file':    (input: { fileId: string; versionId?: string }) => void;
   'files-ui:pick-upload':  () => number;
   'files-ui:upload-paths': (paths: string[]) => number;
   'files-ui:create-folder': (relativePath: string) => void;
-  'files-ui:chat-inventory': (runIds: string[]) => any[];
+  'files-ui:chat-inventory': (input: { runIds: string[]; threadId: string }) => any[];
   'sulla-files:collections':     () => any[];
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
   'sulla-files:metadata':        (input: { fileId: string }) => any;

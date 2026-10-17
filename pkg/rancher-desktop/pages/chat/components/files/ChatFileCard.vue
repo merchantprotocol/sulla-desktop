@@ -11,7 +11,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{ reference:{ fileId:string; versionId?:string; path:string; name:string; createdByType?:string; createdById?:string } }>();
 const provenance = computed(() => props.reference.createdByType === 'agent-run' ? `Made by ${ props.reference.createdById || 'Sulla' } · persistent Files version` : 'From Sulla Files · persistent version');
-async function open() { await ipcRenderer.invoke('files-ui:open-file', props.reference.path) }
+async function open() { await ipcRenderer.invoke('files-ui:open-file', { fileId: props.reference.fileId, versionId: props.reference.versionId }) }
 async function history() {
   const versions = await ipcRenderer.invoke('sulla-files:history', { fileId: props.reference.fileId }) as any[];
   window.alert(versions.map((version, index) => `v${ versions.length - index } · ${ new Date(version.created_at).toLocaleString() }`).join('\n') || 'No earlier versions');

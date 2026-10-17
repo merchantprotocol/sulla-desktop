@@ -20,14 +20,13 @@
  *       detail view for the requested template.
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'url';
 
 import Electron from 'electron';
 
-import { getSullaFilesLinkService } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
-import { spawnFile } from '@pkg/utils/childProcess';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
 
@@ -146,29 +145,34 @@ function dispatch(target: Electron.BrowserWindow, rawUrl: string): void {
 }
 
 async function handleFilesAction(target:Electron.BrowserWindow, action:string, absolutePath:string):Promise<void> {
-  const watcher = getSullaFilesWatcher(); const resolved = path.resolve(absolutePath);
-  if (!resolved.startsWith(`${ watcher.folder }${ path.sep }`)) {
+  const watcher = getSullaFilesWatcher();
+  let root:string; let resolved:string;
+  try { [root, resolved] = await Promise.all([fs.promises.realpath(watcher.folder), fs.promises.realpath(absolutePath)]) } catch {
+    await Electron.dialog.showMessageBox(target, { type: 'error', message: 'That Sulla Files item is unavailable.' }); return;
+  }
+  if (!resolved.startsWith(`${ root }${ path.sep }`)) {
     await Electron.dialog.showMessageBox(target, { type: 'error', message: 'That item is outside Sulla Files.' }); return;
   }
-  const relativePath = path.relative(watcher.folder, resolved).split(path.sep).join('/');
-  const file = await watcher.findFile(relativePath);
-  if (!file) { await Electron.dialog.showMessageBox(target, { type: 'info', message: 'Sulla is still indexing this file. Try again after sync finishes.' }); return }
-  if (action === 'share') {
-    try {
-      const link = await getSullaFilesLinkService().create({ fileId: file.id, mode: 'view', keepAvailable: false });
-      Electron.clipboard.writeText(link.url);
-      await Electron.dialog.showMessageBox(target, { type: 'info', message: 'Sulla Files link copied.' });
-    } catch (error) { await Electron.dialog.showMessageBox(target, { type: 'error', message: error instanceof Error ? error.message : String(error) }) }
+  const relativePath = path.relative(root, resolved).split(path.sep).join('/');
+  const info = await fs.promises.stat(resolved);
+  if (info.isDirectory()) {
+    if (action === 'history') {
+      await Electron.dialog.showMessageBox(target, { type: 'info', message: 'Version history is available for files, not folders.' }); return;
+    }
+    target.focus();
+    target.webContents.send('agent-command', { command: 'open-tab', mode: 'files', path: relativePath, section: action === 'share' ? 'share-review' : 'files' });
     return;
   }
+  const file = await watcher.findFile(relativePath);
+  if (!file) { await Electron.dialog.showMessageBox(target, { type: 'info', message: 'Sulla is still indexing this file. Try again after sync finishes.' }); return }
   if (action === 'online-only') {
     await Electron.dialog.showMessageBox(target, { type: 'warning', message: 'This file was not removed from your Mac.', detail: 'Online-only needs secure collection-key exchange before Sulla can guarantee recovery. The local copy remains intact.' }); return;
   }
   if (action === 'keep') {
-    await spawnFile('/usr/bin/xattr', ['-w', 'io.sulla.files.sync-state', 'synced', resolved]);
+    await Electron.dialog.showMessageBox(target, { type: 'warning', message: 'Keep on this Mac is unavailable.', detail: 'Sulla will not claim this succeeded until it can verify a durable remote copy and rehydration key.' }); return;
   }
   target.focus();
-  target.webContents.send('agent-command', { command: 'open-tab', mode: 'files', path: relativePath, section: action === 'history' ? 'versions' : 'files' });
+  target.webContents.send('agent-command', { command: 'open-tab', mode: 'files', fileId: file.id, path: relativePath, section: action === 'history' ? 'versions' : action === 'share' ? 'share-review' : 'files' });
 }
 
 function delay(ms: number): Promise<void> {

@@ -22,6 +22,7 @@ import { asArtifactId, asMessageId, newAttachmentId, newMessageId, type Artifact
 
 import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { ChatController } from '../controller/ChatController';
 import type {
@@ -488,7 +489,8 @@ export class PersonaAdapter {
     const wfNode = b.workflowNode
       ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
       : '';
-    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ running }|${ tool }|${ subAgent }|${ wfNode }`;
+    const fileReferences = Array.isArray(b.fileReferences) ? b.fileReferences.map((item:any) => `${ item.fileId }:${ item.versionId }`).join(',') : '';
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ running }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }`;
   }
 
   private syncRunState(running: boolean): void {
@@ -834,12 +836,14 @@ export class PersonaAdapter {
 
           return { id, kind: 'html', createdAt, html, artifactId } satisfies HtmlMessage;
         }
+        const fileReferences = [...(Array.isArray(b.fileReferences) ? b.fileReferences : []), ...parseDurableFileReferences(raw)];
         return {
           id,
           kind:  'sulla',
           createdAt,
           text:  raw,
           model: this.controller.model.value.name,
+          fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,
         } satisfies SullaMessage;
       }
       return {
@@ -867,12 +871,14 @@ export class PersonaAdapter {
     }
 
     // Fallback — plain assistant text
+    const fileReferences = [...(Array.isArray(b.fileReferences) ? b.fileReferences : []), ...parseDurableFileReferences(b.content ?? '')];
     return {
       id,
       kind:  'sulla',
       createdAt,
       text:  b.content ?? '',
       model: this.controller.model.value.name,
+      fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,
     } satisfies SullaMessage;
   }
 

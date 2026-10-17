@@ -1,16 +1,9 @@
 import { hostname } from 'node:os';
 
-import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
-import { getSullaFilesService } from '../../files/runtime';
+import { filesContainerRequest } from '../../files/containerClient';
 import { BaseTool } from '../base';
 
-import { issueCapabilityToken } from '@pkg/runtime/capabilityToken';
-import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
-
 import type { ToolExecutionContext } from '../executionContext';
-
-export const filesService = getSullaFilesService;
-const FILES_API = process.env.SULLA_FILES_API_URL?.replace(/\/+$/, '') || 'http://127.0.0.1:30124';
 
 export abstract class FilesTool extends BaseTool {
   protected context(_input?: unknown): ToolExecutionContext {
@@ -39,13 +32,12 @@ export abstract class FilesTool extends BaseTool {
 
   protected async containerRequest(path: string, input: unknown, init: RequestInit = {}): Promise<Response> {
     const context = this.context(input);
-    const secret = await SullaSettingsModel.getServicePassword();
-    const signingKey = sullaFilesCapabilityKey(secret);
-    const token = issueCapabilityToken({ sub: context.sub, device_id: context.device_id, scopes: ['files/*'], expiresInSeconds: 300 }, signingKey);
-    const headers = new Headers(init.headers); headers.set('Authorization', `Bearer ${ token }`);
-    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-    const response = await fetch(`${ FILES_API }${ path }`, { ...init, headers });
-    if (!response.ok) throw new Error(`Sulla Files returned ${ response.status }: ${ (await response.text()).slice(0, 200) }`);
-    return response;
+    return filesContainerRequest(path, context, init);
+  }
+
+  protected async containerJson<T = any>(path: string, input: unknown, init: RequestInit = {}): Promise<T> {
+    const response = await this.containerRequest(path, input, init);
+
+    return response.status === 204 ? undefined as T : await response.json() as T;
   }
 }

@@ -492,8 +492,9 @@ export class BackendGraphWebSocketService {
         if (leftovers.length) {
           const text = leftovers.map(steerText).filter(Boolean).join('\n\n');
           const images = leftovers.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'image') : []);
+          const fileReferences = leftovers.flatMap((message:any) => Array.isArray(message.metadata?.fileReferences) ? message.metadata.fileReferences : []);
           console.log(`[BackendGraphWS] ${ leftovers.length } steer(s) arrived as thread ${ threadId } finished — running them as a follow-up turn`);
-          this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, images.length ? { attachments: images } : undefined)
+          this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, images.length || fileReferences.length ? { attachments: images, fileReferences } : undefined)
             .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up steer:', err));
         }
       }

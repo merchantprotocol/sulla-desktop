@@ -1,4 +1,4 @@
-import { FilesTool, filesService } from './common';
+import { FilesTool } from './common';
 
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
@@ -12,7 +12,7 @@ export class FilesLinkWorker extends FilesTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const context = this.context(input);
     if (input.target_file_id && input.kind) {
-      await filesService().link(context, input.file_id, input.target_file_id, input.kind);
+      await this.containerJson('/v1/file-edges', input, { method: 'POST', body: JSON.stringify({ fileId: input.file_id, targetFileId: input.target_file_id, kind: input.kind }) });
       return { successBoolean: true, responseString: 'File link saved.' };
     }
 

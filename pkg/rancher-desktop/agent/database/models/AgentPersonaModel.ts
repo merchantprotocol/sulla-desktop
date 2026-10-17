@@ -284,6 +284,7 @@ export class AgentPersonaService {
         contentType: firstImage.source.media_type,
       };
     }
+    if (Array.isArray(extraMetadata?.fileReferences)) localMessage.fileReferences = extraMetadata.fileReferences;
     this.messages.push(localMessage);
     this.markMessagesChanged();
 

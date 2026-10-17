@@ -7,12 +7,17 @@ import { issueCapabilityToken } from './auth.js';
 const signingKey = 'sulla-files-test-signing-key-32-bytes!';
 const memberToken = issueCapabilityToken({ sub: 'member-1', device_id: 'member-device', scopes: ['files/*'] }, signingKey);
 const outsiderToken = issueCapabilityToken({ sub: 'outsider-1', device_id: 'outsider-device', scopes: ['files/*'] }, signingKey);
+const viewerToken = issueCapabilityToken({ sub: 'viewer-1', device_id: 'viewer-device', scopes: ['files/*'] }, signingKey);
+const agentViewerToken = issueCapabilityToken({ sub: 'agent-viewer-1', agent_id: 'agent-1', job_id: 'run-1', thread_id: 'thread-1', device_id: 'agent-device', scopes: ['files/*'] }, signingKey);
 
 function fakeDb() {
   return {
     query(sql:string, params:any[] = []) {
       if (sql === 'SELECT * FROM collections WHERE id=$1') return { rows: [{ id: 'collection-a', org_id: 'org-a', owner_user_id: 'owner-1', kind: 'knowledge' }], rowCount: 1 };
-      if (sql.startsWith('SELECT role FROM collection_acl')) return { rows: [], rowCount: 0 };
+      if (sql.startsWith('SELECT role FROM collection_acl')) {
+        const allowed = params[1] === 'viewer-1' || params[1] === 'agent-viewer-1';
+        return { rows: allowed ? [{ role: 'view' }] : [], rowCount: allowed ? 1 : 0 };
+      }
       if (sql.includes('SELECT folder_path,role FROM folder_shares')) return { rows: params[1] === 'member-1' ? [{ folder_path: 'Team', role: 'view' }] : [], rowCount: params[1] === 'member-1' ? 1 : 0 };
       if (sql === 'SELECT * FROM files WHERE id=$1') return { rows: [{ id: params[0], collection_id: 'collection-a', path: 'Private/plan.md', current_version_id: 'version-private' }], rowCount: 1 };
       if (sql.includes('FROM journal j')) {
@@ -36,6 +41,15 @@ test('folder ACL denies unrelated org members and paths outside the grant', asyn
     assert.equal(outsideOrg.status, 403);
     const outsideFolder = await fetch(`${ baseUrl }/v1/files/private-file`, { headers: { authorization: `Bearer ${ memberToken }` } });
     assert.equal(outsideFolder.status, 403);
+  });
+});
+
+test('agent reads require use-by-agents permission, not a human view grant', async() => {
+  await withServer(async baseUrl => {
+    const human = await fetch(`${ baseUrl }/v1/files/private-file`, { headers: { authorization: `Bearer ${ viewerToken }` } });
+    assert.equal(human.status, 200);
+    const agent = await fetch(`${ baseUrl }/v1/files/private-file`, { headers: { authorization: `Bearer ${ agentViewerToken }` } });
+    assert.equal(agent.status, 403);
   });
 });
 
