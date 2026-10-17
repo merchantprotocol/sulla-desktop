@@ -863,7 +863,7 @@ export class LocalVaultAuthority {
         [id, keys.userId, input.item.type, encrypted.ciphertext, encrypted.encryptedItemKey, input.item.agentPolicy,
           input.item.integration ? `${ input.item.integration.integrationId }/${ input.item.integration.accountId }` : null],
       );
-      return { id, revision: created.rows[0].revision };
+      return { id, revision: Number(created.rows[0].revision) };
     }
     const revision = Number(input.revision);
     if (!Number.isSafeInteger(revision) || revision < 1) throw new LocalVaultError('invalid_operation', 400, 'Item revision is required');
@@ -876,7 +876,7 @@ export class LocalVaultAuthority {
         id, keys.userId, revision],
     );
     if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; reload and retry');
-    return { id, revision: updated.rows[0].revision };
+    return { id, revision: Number(updated.rows[0].revision) };
   }
 
   async deleteHumanItem(sessionId: string | undefined, csrf: string | undefined, itemId: string, revision: number): Promise<void> {
