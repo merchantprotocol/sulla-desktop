@@ -78,10 +78,12 @@ function chapters(segments:Segment[]):Array<{ start:number; end:number; title:st
 export class RecordingEnrichmentQueue {
   private timer?: NodeJS.Timeout;
   private running = false;
+  private stopped = false;
 
   constructor(private readonly db:pg.Pool, private readonly filesRoot:string) {}
 
   async start():Promise<void> {
+    this.stopped = false;
     await this.db.query("UPDATE recording_enrichment_jobs SET status='pending',available_at=NOW(),started_at=NULL WHERE status='processing'");
     if (await runtime()) await this.db.query("UPDATE recording_enrichment_jobs SET status='pending',available_at=NOW() WHERE status='waiting_runtime'");
     this.timer = setInterval(() => this.drain().catch(error => console.error('[SullaFiles] recording enrichment failed', error)), 2_000);
@@ -89,13 +91,13 @@ export class RecordingEnrichmentQueue {
     this.wake();
   }
 
-  close():void { if (this.timer) clearInterval(this.timer) }
+  async close():Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); while (this.running) await new Promise(resolve => setTimeout(resolve, 10)); }
   wake():void { setTimeout(() => this.drain().catch(error => console.error('[SullaFiles] recording enrichment failed', error)), 0).unref() }
 
   private async drain():Promise<void> {
-    if (this.running) return;
+    if (this.stopped || this.running) return;
     this.running = true;
-    try { while (await this.processOne()) { /* drain persisted jobs */ } } finally { this.running = false }
+    try { while (!this.stopped && await this.processOne()) { /* drain persisted jobs */ } } finally { this.running = false }
   }
 
   private async processOne():Promise<boolean> {

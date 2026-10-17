@@ -19,6 +19,7 @@ export class IndexingQueue {
   private readonly embedder: PotionEmbedder;
   private timer?:            NodeJS.Timeout;
   private running = false;
+  private stopped = false;
   private vectorTable?:      boolean;
 
   constructor(private readonly db:pg.Pool, private readonly source:(file:any) => Promise<{ path: string; cleanup?: () => Promise<void> }>, model:PotionEmbedder | string) {
@@ -27,6 +28,7 @@ export class IndexingQueue {
   }
 
   async start():Promise<void> {
+    this.stopped = false;
     await this.db.query("UPDATE file_index_jobs SET status='pending',available_at=NOW() WHERE status='indexing'");
     await this.db.query(`INSERT INTO file_index_jobs(file_id,version_id,status)
       SELECT f.id,f.current_version_id,'pending' FROM files f
@@ -36,7 +38,7 @@ export class IndexingQueue {
     this.timer.unref(); this.wake();
   }
 
-  close():void { if (this.timer) clearInterval(this.timer); }
+  async close():Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); while (this.running) await new Promise(resolve => setTimeout(resolve, 10)); }
   wake():void { setTimeout(() => this.drain().catch(error => console.error('[SullaFiles] index queue failed', error)), 0).unref() }
   async flush():Promise<void> {
     await this.drain();
@@ -50,9 +52,9 @@ export class IndexingQueue {
   }
 
   private async drain():Promise<void> {
-    if (this.running) return;
+    if (this.stopped || this.running) return;
     this.running = true;
-    try { while (await this.processOne()) { /* drain persisted work */ } } finally { this.running = false }
+    try { while (!this.stopped && await this.processOne()) { /* drain persisted work */ } } finally { this.running = false }
   }
 
   private async processOne():Promise<boolean> {

@@ -3197,7 +3197,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         `${ path.join(os.homedir(), 'sulla', 'Files') }:/data/files`,
       ],
       restart: 'unless-stopped',
-      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8792/healthz'], interval: '5s', timeout: '3s', retries: 10 },
+      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8792/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
     // Modify dynamic values like passwords

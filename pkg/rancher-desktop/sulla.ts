@@ -311,6 +311,8 @@ export async function instantiateSullaStart(): Promise<void> {
 
       getVaultBackupService().stop();
       getVaultKeyService().lock();
+      const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+      await getSullaFilesWatcher().lockService().catch(() => undefined);
     },
   );
 
@@ -939,6 +941,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('vault:lock-vault', async() => {
+    const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+    const filesLock = getSullaFilesWatcher().lockService();
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     // Mark local state locked immediately, but do not report success until the
     // container confirms it zeroed keys and revoked every session.
@@ -948,6 +952,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     // Clear focus so every native browser tab detaches and the login
     // screen is the topmost thing in the window.
     tabViewManager.setFocusedTab(null);
+    await filesLock;
     return true;
   });
 
