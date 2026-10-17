@@ -44,6 +44,8 @@ export interface LocalVaultErrorResponse {
 export interface LocalVaultStatusResponse {
   state:     LocalVaultState;
   unlocked:  boolean;
+  /** Present only while unlocked; callers bind capability claims to this UUID. */
+  principalId?: string;
   migration: { required: boolean; lastBatchId?: string; error?: string };
 }
 
@@ -111,6 +113,36 @@ export interface HumanSessionResponse {
   /** Pre-unlock sessions can only set up, unlock, or recover the vault. */
   phase:     'pre-unlock' | 'unlocked';
 }
+
+export interface HumanUnlockRequest { password: string }
+export interface HumanUnlockResponse {
+  csrf:      string;
+  expiresAt: number;
+  phase:     'unlocked';
+  state:     LocalVaultState;
+  /** No master material leaves the container; the user unlocks each start unless the isolated bootstrap cache is separately updated. */
+  cacheMode: 'password-each-start';
+}
+
+export interface HumanPasswordChangeRequest { currentPassword: string; nextPassword: string }
+export interface HumanRecoveryConfigureRequest { recoveryCode: string }
+export interface HumanRecoveryUnlockRequest { recoveryCode: string; nextPassword: string }
+export interface HumanBackupExportRequest { backupPassword: string }
+export interface HumanBackupEnvelope {
+  version:    1;
+  salt:       string;
+  parameters: { memoryBytes: number; operations: number };
+  envelope:   { version: 1; algorithm: 'xchacha20-poly1305'; nonce: string; ciphertext: string };
+}
+export interface HumanBackupImportRequest { backupPassword: string; backup: HumanBackupEnvelope }
+
+export interface BrokerRelayCreateRequest {
+  claims:    BrokerClaims;
+  operation: 'slack.socket-mode' | 'discord.gateway';
+  ref:       BrokerCredentialRef;
+}
+export interface BrokerRelayCreateResponse { relayId: string; expiresAt: number }
+export interface BrokerRelaySendRequest { sequence?: number; type: string; payload: unknown }
 
 export type DesktopControlAction = 'status' | 'lock' | 'migrate' | 'create-human-session';
 
