@@ -46,7 +46,7 @@ export interface IntegrationAccount {
 
 // Special properties that are not shown in forms
 const SYSTEM_PROPERTIES = ['connection_status', 'connected_at', 'last_sync_at', 'account_label'];
-const LOCAL_METADATA_PROPERTIES = new Set([...SYSTEM_PROPERTIES, 'active_account', 'llm_access', 'server_url', 'base_url', 'provider']);
+const LOCAL_METADATA_PROPERTIES = new Set([...SYSTEM_PROPERTIES, 'active_account', 'llm_access', 'server_url', 'base_url', 'provider', 'model']);
 
 type IntegrationValueCallback = (value: IntegrationValue, action: 'created' | 'updated' | 'deleted') => void;
 
@@ -324,6 +324,13 @@ export class IntegrationService {
     return models.map(m => this.modelToValue(m));
   }
 
+  /** Read the non-secret configuration needed to select and route an integration. */
+  async getMetadataValues(integrationId: string, accountId?: string): Promise<IntegrationValue[]> {
+    const acctId = accountId || await this.getActiveAccountId(integrationId);
+    const models = await IntegrationValueModel.findMetadataByAccount(integrationId, acctId);
+    return models.map(model => this.modelToValue(model));
+  }
+
   async getSerializableFormValues(integrationId: string, accountId: string): Promise<VaultCredentialReadResult> {
     try {
       const models = await IntegrationValueModel.getFormValues(integrationId, accountId, SYSTEM_PROPERTIES);
@@ -364,8 +371,14 @@ export class IntegrationService {
         });
         if (value !== null) {
           return {
-            value_id: -1, integration_id: integrationId, account_id: acctId,
-            property, value, is_default: false, created_at: new Date(0), updated_at: new Date(0),
+            value_id:       -1,
+            integration_id: integrationId,
+            account_id:     acctId,
+            property,
+            value,
+            is_default:     false,
+            created_at:     new Date(0),
+            updated_at:     new Date(0),
           };
         }
       }

@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
 import type {
@@ -20,6 +22,7 @@ export type {
 export type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
 const DEFAULT_VAULT_ENDPOINT = 'http://sulla_vault:8787';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function usesContainerVaultAuthority(): boolean {
   return process.env.SULLA_VAULT_MODE !== 'server';
@@ -73,6 +76,69 @@ async function errorBody(response: Response): Promise<LocalVaultErrorResponse> {
     error:   'vault_unavailable',
     message: `Vault broker request failed (${ response.status })`,
   })) as Promise<LocalVaultErrorResponse>;
+}
+
+/** Resolve the unlocked local vault owner through the control-authenticated channel. */
+export async function getLocalVaultPrincipalId(signal?: AbortSignal): Promise<string> {
+  if (!usesContainerVaultAuthority()) throw new Error('Local vault principal is only available in Desktop authority mode');
+  const serviceId = process.env.SULLA_VAULT_DESKTOP_CONTROL_SERVICE_ID;
+  const token = process.env.SULLA_VAULT_DESKTOP_CONTROL_TOKEN;
+  if (!serviceId || !token) throw new VaultBrokerError('vault_unavailable', 'Vault control identity is not configured', 503);
+  const endpoint = assertEndpoint(
+    process.env.SULLA_VAULT_CONTROL_URL ?? process.env.SULLA_VAULT_BROKER_URL ?? DEFAULT_VAULT_ENDPOINT,
+  );
+  const response = await fetch(`${ endpoint }/v1/desktop/status`, {
+    headers: {
+      authorization:        `Bearer ${ token }`,
+      'x-sulla-service-id': serviceId,
+    },
+    signal,
+  });
+  if (!response.ok) {
+    const body = await errorBody(response);
+    throw new VaultBrokerError(body.error, body.message, response.status);
+  }
+  const status = await response.json() as { principalId?: unknown; unlocked?: boolean };
+  if (!status.unlocked) throw new VaultBrokerError('vault_locked', 'Vault is locked', 423);
+  if (typeof status.principalId !== 'string' || !UUID_PATTERN.test(status.principalId)) {
+    throw new VaultBrokerError('invalid_caller_identity', 'Vault did not return an authenticated local principal', 503);
+  }
+  return status.principalId;
+}
+
+export async function issueLocalBrokerContext(input: {
+  agentId:          string;
+  podId:            string;
+  credentialScope: NonNullable<ToolExecutionContext['credential_scope']>;
+  requestId?:       string;
+  threadId?:        string;
+  jobId?:           string;
+  workflowExecutionId?: string;
+  orgId?:           string;
+  signal?:          AbortSignal;
+}): Promise<ToolExecutionContext> {
+  if (!input.agentId.trim() || !input.podId.trim()) {
+    throw new VaultBrokerError('invalid_caller_identity', 'Broker context requires trusted agent and pod identities', 401);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    v:                     1,
+    iss:                   'sulla-desktop',
+    aud:                   'sulla-tools',
+    sub:                   await getLocalVaultPrincipalId(input.signal),
+    org_id:                input.orgId,
+    agent_id:              input.agentId,
+    pod_id:                input.podId,
+    thread_id:             input.threadId,
+    job_id:                input.jobId,
+    workflow_execution_id: input.workflowExecutionId,
+    credential_scope:      input.credentialScope,
+    scopes:                [],
+    iat:                   now,
+    exp:                   now + 300,
+    jti:                   crypto.randomUUID(),
+    request_id:            input.requestId ?? crypto.randomUUID(),
+  };
 }
 
 export class LocalVaultBrokerClient {
