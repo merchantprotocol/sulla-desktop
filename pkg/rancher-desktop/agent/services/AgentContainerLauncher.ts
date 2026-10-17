@@ -8,6 +8,7 @@ import Electron from 'electron';
 import { redisClient } from '../database/RedisClient';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { ensureCodexAuthFile, codexAuthPath } from '../util/codexAuthFile';
+import { getLocalVaultPrincipalId, usesContainerVaultAuthority } from '../../vault-broker';
 
 import { resolveSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
@@ -207,12 +208,16 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const installationSecret = getChatCompletionsServer().getApiToken();
     if (!installationSecret) throw new Error('Desktop tool API is not initialized');
     const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
+    const subject = usesContainerVaultAuthority()
+      ? await getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
+      : metadata.userId;
+    if (!subject) throw new Error('Agent capability requires an authenticated user identity');
     const allowed = metadata.allowedToolNames ?? [];
     const scopes = allowed.length === 0 || allowed.includes('exec') ? ['*'] : allowed;
     const capability = issueCapabilityToken({
-      sub:              metadata.userId ?? 'desktop-user',
+      sub:              subject,
       org_id:           metadata.orgId,
-      agent_id:         metadata.agentId,
+      agent_id:         metadata.agentId ?? run.state.metadata.wsChannel,
       pod_id:           containerName,
       thread_id:        metadata.threadId,
       job_id:           run.jobId,
