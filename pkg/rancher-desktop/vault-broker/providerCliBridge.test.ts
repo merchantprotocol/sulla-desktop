@@ -3,6 +3,7 @@ import http from 'node:http';
 import test from 'node:test';
 
 import { createProviderCliBridge } from './providerCliBridge';
+import { extractChatgptAccountId } from '../../../services/sulla-vault/src/chatgptOAuth';
 import { validateOperation } from '../../../services/sulla-vault/src/operationPolicy';
 
 import type { BrokerExecuteRequest, ToolExecutionContext } from './index';
@@ -90,6 +91,71 @@ test('streams a provider request through an exact identity-bound vault operation
   } finally {
     await lease.close();
   }
+});
+
+test('routes ChatGPT OAuth through authority-owned bearer and account injection', async() => {
+  let captured: BrokerExecuteRequest | undefined;
+  const oauthContext: ToolExecutionContext = {
+    ...context,
+    credential_scope: { integration_id: 'codex', account_id: 'subscription-1' },
+  };
+  const lease = await createProviderCliBridge({
+    context:   oauthContext,
+    provider:  'codex',
+    accountId: 'subscription-1',
+    authorize: () => oauthContext,
+    broker:    {
+      requestFor: (ctx, request) => ({
+        ...request,
+        claims: {
+          sub:              ctx.sub,
+          agent_id:         ctx.agent_id!,
+          pod_id:           ctx.pod_id!,
+          device_id:        ctx.device_id,
+          org_id:           ctx.org_id,
+          thread_id:        ctx.thread_id,
+          job_id:           ctx.job_id,
+          credential_scope: ctx.credential_scope,
+        },
+      }),
+      executeStream: request => {
+        captured = request;
+        return Promise.resolve(new Response('data: synthetic\n\n', { status: 200 }));
+      },
+    },
+  });
+  try {
+    const response = await fetch(`${ lease.config.baseUrl }/responses`, {
+      method:  'POST',
+      headers: { authorization: `Bearer ${ lease.config.environment.SULLA_PROVIDER_BRIDGE_TOKEN }` },
+      body:    JSON.stringify({ model: 'synthetic', input: 'fixture' }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(captured?.url, 'https://chatgpt.com/backend-api/codex/responses');
+    assert.deepEqual(captured?.ref, { integrationId: 'codex', accountId: 'subscription-1' });
+    assert.deepEqual(captured?.injections, [
+      { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+      { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+    ]);
+    assert.equal(captured?.headers?.originator, 'codex_cli_rs');
+    assert.equal(captured?.headers?.['session-id'], 'thread-1');
+    assert.equal(captured?.headers?.['thread-id'], 'thread-1');
+  } finally {
+    await lease.close();
+  }
+});
+
+test('extracts only bounded ChatGPT account routing metadata from synthetic JWTs', () => {
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const token = `${ encode({ alg: 'none' }) }.${ encode({
+    'https://api.openai.com/auth': { chatgpt_account_id: 'workspace-synthetic' },
+  }) }.signature`;
+  assert.equal(extractChatgptAccountId(token), 'workspace-synthetic');
+  assert.equal(extractChatgptAccountId('not-a-jwt'), undefined);
+  const unsafe = `${ encode({ alg: 'none' }) }.${ encode({
+    'https://api.openai.com/auth': { chatgpt_account_id: 'bad\r\nheader' },
+  }) }.signature`;
+  assert.equal(extractChatgptAccountId(unsafe), undefined);
 });
 
 test('rejects arbitrary destinations and revokes when live identity is inactive', async() => {
@@ -337,4 +403,23 @@ test('provider CLI authority policy binds provider, host, path, and injection', 
   assert.throws(() => validateOperation({
     ...request, url: 'https://attacker.invalid/v1/responses',
   }, 'attacker.invalid', syntheticAgentPolicy), /destination_denied/);
+
+  const chatgptRequest: BrokerExecuteRequest = {
+    ...request,
+    claims: {
+      ...request.claims,
+      credential_scope: { integration_id: 'codex', account_id: 'account-1' },
+    },
+    ref:        { integrationId: 'codex', accountId: 'account-1' },
+    url:        'https://chatgpt.com/backend-api/codex/responses',
+    injections: [
+      { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+      { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+    ],
+  };
+  assert.doesNotThrow(() => validateOperation(chatgptRequest, 'chatgpt.com', syntheticAgentPolicy));
+  assert.throws(() => validateOperation({
+    ...chatgptRequest,
+    injections: [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+  }, 'chatgpt.com', syntheticAgentPolicy), /injection_denied/);
 });

@@ -26,6 +26,7 @@ import {
 
 import { makeLoginVerifier, verifyLoginHash } from './auth.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
+import { extractChatgptAccountId } from './chatgptOAuth.js';
 import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
 import { trustedOriginsForIntegration, validateOperation } from './operationPolicy.js';
 import { validateOAuthDestination } from './oauthPolicy.js';
@@ -1990,6 +1991,8 @@ export class LocalVaultAuthority {
     if (typeof response.scope === 'string') integration.properties.scope = response.scope;
     if (typeof response.token_type === 'string') integration.properties.token_type = response.token_type;
     if (typeof response.id_token === 'string' && response.id_token) integration.properties.id_token = response.id_token;
+    const chatgptAccountId = extractChatgptAccountId(response.id_token, response.access_token);
+    if (chatgptAccountId) integration.properties.chatgpt_account_id = chatgptAccountId;
     await this.persistOAuthItem(prepared, keys);
   }
 
