@@ -444,7 +444,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     streamJsonInput:   boolean;
     disallowedTools:   string;
     systemPromptPath?: string | null;
-    environment?: Readonly<Record<string, string>>;
+    environment?:      Readonly<Record<string, string>>;
   }): { executable: string; args: string[]; env?: NodeJS.ProcessEnv } {
     const args = [
       '-p',
@@ -539,7 +539,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
         streamJsonInput: true,
         disallowedTools,
         systemPromptPath,
-        environment: providerConfig?.environment,
+        environment:     providerConfig?.environment,
       });
       const proc = transport.spawn({
         context: transportContext,
@@ -1296,7 +1296,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       streamJsonInput: speculative,
       disallowedTools,
       systemPromptPath,
-      environment: providerConfig?.environment,
+      environment:     providerConfig?.environment,
     });
 
     const cleanupMcp = () => {
