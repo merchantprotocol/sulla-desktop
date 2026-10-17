@@ -18,6 +18,7 @@ export class RemoteModelService extends OpenAICompatibleService {
       model:   config.model,
       baseUrl: config.baseUrl,
       apiKey:  config.apiKey,
+      accountId: config.accountId,
     });
   }
 }

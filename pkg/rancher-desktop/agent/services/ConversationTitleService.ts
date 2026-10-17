@@ -67,6 +67,12 @@ export async function generateTitle(messages: TitleMessage[]): Promise<string> {
     const llm = await getSubconsciousService();
 
     if (llm) {
+      const providerId = llm.getProviderId();
+      const accountId = await llm.getAccountId();
+      const executionContext = providerId && accountId
+        ? await (await import('../languagemodels/providerBroker'))
+          .issueServiceProviderExecutionContext('conversation-title', providerId, accountId)
+        : undefined;
       const prompt = relevantMessages
         .map(m => `${ m.role }: ${ typeof m.content === 'string' ? m.content.slice(0, 300) : String(m.content).slice(0, 300) }`)
         .join('\n');
@@ -83,6 +89,7 @@ export async function generateTitle(messages: TitleMessage[]): Promise<string> {
       ], {
         maxTokens:   30,
         temperature: 0.3,
+        executionContext,
       });
 
       if (response?.content) {

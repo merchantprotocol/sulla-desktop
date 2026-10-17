@@ -6,17 +6,17 @@ import * as path from 'node:path';
 
 import Electron from 'electron';
 
+import { RunActivity } from './RunActivity';
+import { getLocalVaultPrincipalId, usesContainerVaultAuthority } from '../../vault-broker';
 import { redisClient } from '../database/RedisClient';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { ensureCodexAuthFile, codexAuthPath } from '../util/codexAuthFile';
 import { onSteer, steerText } from '../utils/steerChannel';
-import { RunActivity } from './RunActivity';
 
 import { resolveSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
-import { getCurrentUserId } from '@pkg/main/sullaCloudAuth';
 import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/containerRuntime';
 import Logging from '@pkg/utils/logging';
@@ -258,13 +258,16 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     if (!installationSecret) throw new Error('Desktop tool API is not initialized');
     const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
     const deviceId = metadata.deviceId ?? await getDesktopDeviceId();
-    const userId = metadata.userId ?? (await getCurrentUserId() || 'desktop-user');
+    const subject = usesContainerVaultAuthority()
+      ? await getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
+      : metadata.userId;
+    if (!subject) throw new Error('Agent capability requires an authenticated user identity');
     const allowed = metadata.allowedToolNames ?? [];
     const scopes = allowed.length === 0 || allowed.includes('exec') ? ['*'] : allowed;
     const issueLease = () => issueCapabilityToken({
-      sub:              userId,
+      sub:              subject,
       org_id:           metadata.orgId,
-      agent_id:         metadata.agentId,
+      agent_id:         metadata.agentId ?? run.state.metadata.wsChannel,
       pod_id:           containerName,
       thread_id:        metadata.threadId,
       job_id:           run.jobId,
@@ -332,9 +335,11 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       const renewTimer = setInterval(() => {
         capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
         getMCPServerHost().rebindSession(session.id, run.state, LEASE_MS);
-        if (secretDir) replaceContainerSecret(secretDir, 'SULLA_API_TOKEN', issueLease()).catch(error => {
-          log.warn(`[AgentContainer] capability renewal failed for ${ containerName }: ${ (error as Error).message }`);
-        });
+        if (secretDir) {
+          replaceContainerSecret(secretDir, 'SULLA_API_TOKEN', issueLease()).catch(error => {
+            log.warn(`[AgentContainer] capability renewal failed for ${ containerName }: ${ (error as Error).message }`);
+          });
+        }
       }, RENEW_MS);
       const resetIdle = () => {
         clearTimeout(idleTimer);
@@ -370,7 +375,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         run.signal.addEventListener('abort', () => {
           proc.stdin.write(`${ JSON.stringify({ type: 'cancel' }) }\n`);
           const forceTimer = setTimeout(() => {
-            void runtime.remove(containerName).catch(error => {
+            runtime.remove(containerName).catch(error => {
               log.warn(`[AgentContainer] abort cleanup failed for ${ containerName }: ${ (error as Error).message }`);
             });
           }, 6_000);

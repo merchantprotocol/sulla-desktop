@@ -210,6 +210,12 @@ export class WorkflowRegistry {
   ): Promise<WorkflowDefinition | null> {
     const { getLLMService } = await import('@pkg/agent/languagemodels');
     const llm = await getLLMService('remote');
+    const providerId = llm.getProviderId();
+    const accountId = await llm.getAccountId();
+    const executionContext = providerId && accountId
+      ? await (await import('../languagemodels/providerBroker'))
+        .issueServiceProviderExecutionContext('workflow-router', providerId, accountId)
+      : undefined;
 
     const workflowList = candidates
       .map((c, i) => `${ i + 1 }. "${ c.definition.name }": ${ c.triggerDescription }`)
@@ -224,7 +230,7 @@ ${ workflowList }`;
     const response = await llm.chat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: message },
-    ]);
+    ], { executionContext });
 
     const rawContent = typeof response === 'string' ? response : (response?.content ?? '');
     const selected = parseInt(rawContent.trim(), 10);

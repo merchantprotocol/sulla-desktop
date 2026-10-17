@@ -4,75 +4,38 @@
  * phone hits — calls, leads, messages — so "show me my last call from
  * mobile" works without picking up the phone.
  *
- * Resolution:
- * - Base URL: vault `sulla-cloud` → `mobile_api_url`, else the default below.
- * - Auth: vault `sulla-cloud` → `api_token` (JWT — same one mobile uses).
+ * The credential never enters this process. The local vault validates the
+ * exact Sulla Cloud operation and injects the account token outbound.
  */
+
+import type { ToolExecutionContext } from '../executionContext';
+import { requireConfiguredCredentialBroker } from '../../../vault-broker';
 
 const DEFAULT_API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 
 export class MobileApiClient {
-  private baseUrlPromise: Promise<string> | null = null;
-  private tokenPromise: Promise<string | null> | null = null;
-
-  private async getBaseUrl(): Promise<string> {
-    if (!this.baseUrlPromise) {
-      this.baseUrlPromise = (async() => {
-        try {
-          const { getIntegrationService } = await import('../../services/IntegrationService');
-          const svc = getIntegrationService();
-          const result = await svc.getIntegrationValue('sulla-cloud', 'mobile_api_url');
-          if (result?.value) return String(result.value).replace(/\/+$/, '');
-        } catch { /* fall through */ }
-        return DEFAULT_API_BASE;
-      })();
+  async request<T>(ctx: ToolExecutionContext | undefined, method: string, pathSegment: string, body?: unknown): Promise<T> {
+    if (!ctx?.agent_id || !ctx.pod_id) throw new Error('Sulla Cloud requires a verified caller identity');
+    const { getIntegrationService } = await import('../../services/IntegrationService');
+    const accountId = await getIntegrationService().getActiveAccountId('sulla-cloud');
+    if (ctx.credential_scope?.integration_id !== 'sulla-cloud' || ctx.credential_scope.account_id !== accountId) {
+      throw new Error('Sulla Cloud requires an exact signed credential scope from the trusted tool boundary');
     }
-    return this.baseUrlPromise;
-  }
-
-  private async getToken(): Promise<string | null> {
-    if (!this.tokenPromise) {
-      this.tokenPromise = (async() => {
-        try {
-          const { getIntegrationService } = await import('../../services/IntegrationService');
-          const svc = getIntegrationService();
-          const result = await svc.getIntegrationValue('sulla-cloud', 'api_token');
-          return result?.value ? String(result.value) : null;
-        } catch { return null; }
-      })();
-    }
-    return this.tokenPromise;
-  }
-
-  invalidate(): void {
-    this.baseUrlPromise = null;
-    this.tokenPromise = null;
-  }
-
-  async request<T>(method: string, pathSegment: string, body?: unknown): Promise<T> {
-    const base = await this.getBaseUrl();
-    const token = await this.getToken();
-    if (!token) {
-      throw new Error('No Sulla Cloud token in vault (sulla-cloud/api_token). Sign in on your phone and sync the token.');
-    }
-
-    const headers: Record<string, string> = {
-      Accept:         'application/json',
-      Authorization:  `Bearer ${ token }`,
-    };
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
-
-    const res = await fetch(`${ base }${ pathSegment }`, {
+    const broker = requireConfiguredCredentialBroker();
+    const result = await broker.execute(broker.requestFor(ctx, {
+      operation: 'sulla-cloud.api',
+      ref:       { integrationId: 'sulla-cloud', accountId },
+      url:       `${ DEFAULT_API_BASE }${ pathSegment }`,
       method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Mobile API ${ method } ${ pathSegment } → HTTP ${ res.status }: ${ text || res.statusText }`);
+      headers:   { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      body,
+      injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+      responseType: 'json',
+    }));
+    if (result.status < 200 || result.status >= 300) {
+      throw new Error(`Mobile API ${ method } ${ pathSegment } returned HTTP ${ result.status }`);
     }
-    if (res.status === 204) return undefined as T;
-    return await res.json() as T;
+    return result.body as T;
   }
 }
 

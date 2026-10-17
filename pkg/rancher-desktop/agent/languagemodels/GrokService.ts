@@ -1,6 +1,9 @@
 import { type LLMServiceConfig } from './BaseLanguageModel';
 import { OpenAICompatibleService } from './OpenAICompatibleService';
+import { usesContainerVaultAuthority } from '../../vault-broker';
 import { getIntegrationService } from '../services/IntegrationService';
+
+import type { BrokerInjection } from '../../vault-broker';
 
 /**
  * xAI Grok LLM provider.
@@ -70,12 +73,23 @@ export class GrokService extends OpenAICompatibleService {
     // onTokenReceived busts this cached instance on every refresh so a live
     // token is re-read here. The UI stores OAuth tokens under the fixed
     // 'oauth' account id (see AgentIntegrationDetail.handleOAuthConnect).
+    let accountId = await integrationService.getActiveAccountId('grok');
     let apiKey = valMap.api_key || '';
     let oauthMode = false;
-    try {
-      apiKey = await integrationService.getOAuthAccessToken('grok', 'oauth');
-      oauthMode = true;
-    } catch { /* not OAuth-connected — fall back to api_key */ }
+    if (usesContainerVaultAuthority()) {
+      const oauthAccount = (await integrationService.getAccounts('grok'))
+        .find(account => account.account_id === 'oauth' && account.connected);
+      if (oauthAccount) {
+        accountId = oauthAccount.account_id;
+        oauthMode = true;
+      }
+    } else {
+      try {
+        apiKey = await integrationService.getOAuthAccessToken('grok', 'oauth');
+        accountId = 'oauth';
+        oauthMode = true;
+      } catch { /* not OAuth-connected — fall back to api_key */ }
+    }
 
     let model = valMap.model || '';
     if (oauthMode) {
@@ -95,6 +109,7 @@ export class GrokService extends OpenAICompatibleService {
       model,
       baseUrl: oauthMode ? GROK_SUBSCRIPTION_BASE_URL : GROK_METERED_BASE_URL,
       apiKey,
+      accountId,
     }, oauthMode);
   }
 
@@ -108,6 +123,12 @@ export class GrokService extends OpenAICompatibleService {
 
   override getContextWindow(): number {
     return GROK_SUBSCRIPTION_CONTEXT_WINDOWS[this.model] ?? super.getContextWindow();
+  }
+
+  protected override brokerInjections(): BrokerInjection[] {
+    return this.oauthMode
+      ? [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }]
+      : super.brokerInjections();
   }
 
   /**

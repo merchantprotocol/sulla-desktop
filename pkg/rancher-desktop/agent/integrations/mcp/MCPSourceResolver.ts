@@ -15,6 +15,7 @@ import path from 'node:path';
 import yaml from 'yaml';
 
 import { MCPClient } from './MCPClient';
+import { usesContainerVaultAuthority } from '../../../vault-broker';
 
 import type { MCPToolDefinition } from './MCPClient';
 
@@ -72,7 +73,15 @@ export async function probeServer(
   url: string,
   authToken?: string,
 ): Promise<{ transport: 'streamable-http' | 'sse'; tools: MCPToolDefinition[] } | ProbeFailure> {
-  const client = new MCPClient(url, '__probe__', authToken);
+  if (usesContainerVaultAuthority() && authToken) {
+    return {
+      url,
+      transport:  'streamable-http',
+      error:      'unsupported_secret_egress: MCP credentials must be configured in the isolated vault UI',
+      suggestion: 'Save the MCP server in the vault UI, then retry discovery without supplying a token.',
+    };
+  }
+  const client = new MCPClient(url, '__probe__', authToken, undefined, usesContainerVaultAuthority() && !authToken);
   try {
     await client.initialize();
     const tools = client.tools;
