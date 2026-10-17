@@ -4,6 +4,8 @@
   let csrf = '';
   let targetOrigin = '';
   const root = document.getElementById('popup-content');
+  const lock = document.getElementById('popup-lock');
+  const openVault = document.getElementById('open-vault');
   const svg = (name) => {
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     icon.setAttribute('class', 'i sm');
@@ -48,15 +50,7 @@
       const name = document.createElement('b'); name.textContent = item.name || new URL(targetOrigin).hostname;
       const username = document.createElement('span'); username.textContent = item.username || 'Saved login';
       meta.append(name, username);
-      const fill = document.createElement('button'); fill.type = 'button'; fill.className = 'fill'; fill.textContent = 'Fill';
-      fill.onclick = async() => {
-        fill.disabled = true; fill.textContent = 'Filling…';
-        try {
-          await api(`/v1/human/items/${encodeURIComponent(item.id)}/fill`, { method: 'POST', body: '{}' });
-          fill.textContent = 'Filled';
-        } catch (error) { fill.disabled = false; fill.textContent = 'Fill'; root.prepend(notice(error.message, true)); }
-      };
-      row.append(tile, meta, fill); root.append(row);
+      row.append(tile, meta); root.append(row);
     });
   };
   const renderUnlock = () => {
@@ -74,6 +68,23 @@
         csrf = result.csrf; password.value = ''; await renderMatches();
       } catch (error) { errorLine.textContent = error.message; submit.disabled = false; }
     };
+  };
+  lock.onclick = async() => {
+    lock.disabled = true;
+    try {
+      const result = await api('/v1/human/lock', { method: 'POST', body: '{}' });
+      csrf = result.csrf;
+      renderUnlock();
+    } catch (error) {
+      root.prepend(notice(error.message, true));
+    } finally {
+      lock.disabled = false;
+    }
+  };
+  openVault.onclick = event => {
+    event.preventDefault();
+    if (!csrf) return root.prepend(notice('The protected vault session is missing', true));
+    location.assign(`/vault/#csrf=${encodeURIComponent(csrf)}`);
   };
   const start = async() => {
     const fragment = new URLSearchParams(location.hash.slice(1));

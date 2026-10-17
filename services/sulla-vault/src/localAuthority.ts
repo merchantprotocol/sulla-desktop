@@ -40,7 +40,6 @@ import type {
   BrokerRelayCreateRequest,
   BrokerRelayCreateResponse,
   BrokerRelaySendRequest,
-  BrowserFillPayload,
   BrowserFillTarget,
   HumanBackupEnvelope,
   LegacyMigrationResponse,
@@ -57,7 +56,7 @@ import {
   cacheUpdateServerProofInput,
   cacheUpdateSessionKeyInput,
 } from './contracts.js';
-import type { Database } from './db.js';
+import type { Database, Queryable } from './db.js';
 
 const CHALLENGE_TTL_MS = 30_000;
 const CACHE_UPDATE_TTL_MS = 60_000;
@@ -65,7 +64,6 @@ const CHALLENGE_RATE_WINDOW_MS = 60_000;
 const CHALLENGE_RATE_LIMIT = 10;
 const APPROVAL_TTL_MS = 2 * 60_000;
 const HUMAN_SESSION_TTL_MS = 15 * 60_000;
-const BROWSER_FILL_TTL_MS = 30_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
 const MAX_TRANSCRIPTION_REQUEST_BYTES = 17 * 1024 * 1024;
 const MAX_STREAM_BYTES = 25 * 1024 * 1024;
@@ -77,6 +75,29 @@ const SAFE_INTEGRATION_METADATA_FIELDS = new Set([
   'expires_at', 'token_type', 'scope',
 ]);
 const CREDENTIAL_PROPERTY_PATTERN = /(?:^|_)(?:token|key|secret|password|credential)$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const BROKER_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}$/;
+const CHATGPT_AUTH_CLAIM = 'https://api.openai.com/auth';
+const CHATGPT_ACCOUNT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,200}$/;
+
+export function extractBoundedChatgptAccountId(...tokens: unknown[]): string | undefined {
+  for (const token of tokens) {
+    if (typeof token !== 'string' || token.length > MAX_CREDENTIAL_BYTES) continue;
+    const parts = token.split('.');
+    if (parts.length !== 3 || !parts[1]) continue;
+    try {
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as unknown;
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) continue;
+      const auth = (payload as Record<string, unknown>)[CHATGPT_AUTH_CLAIM];
+      if (!auth || typeof auth !== 'object' || Array.isArray(auth)) continue;
+      const accountId = (auth as Record<string, unknown>).chatgpt_account_id;
+      if (typeof accountId === 'string' && accountId.trim() === accountId && CHATGPT_ACCOUNT_ID_PATTERN.test(accountId)) {
+        return accountId;
+      }
+    } catch { /* malformed tokens do not produce routing metadata */ }
+  }
+  return undefined;
+}
 
 function safeIntegrationMetadata(
   source: Record<string, unknown>,
@@ -147,10 +168,6 @@ interface HumanSession {
   expiresAt: number;
   phase:     'pre-unlock' | 'unlocked';
   browserTarget?: BrowserFillTarget;
-}
-
-interface PendingBrowserFill extends BrowserFillPayload {
-  timer: ReturnType<typeof setTimeout>;
 }
 
 interface UnlockedKeys {
@@ -406,9 +423,9 @@ export class LocalVaultAuthority {
   private readonly pendingApprovals = new Map<string, number>();
   private readonly approvals = new Map<string, { digest: string; expiresAt: number }>();
   private readonly humanSessions = new Map<string, HumanSession>();
-  private readonly pendingBrowserFills = new Map<string, PendingBrowserFill>();
   private readonly oauthRefreshQueues = new Map<string, Promise<void>>();
   private readonly relaySessions = new Map<string, { generation: number; controller: AbortController }>();
+  private securityOperationTail: Promise<void> = Promise.resolve();
   private migrationState: LocalVaultState = 'locked';
   private stagedCacheUpdate: StagedCacheUpdate | null = null;
 
@@ -545,6 +562,7 @@ export class LocalVaultAuthority {
     clientProof: string;
     sealedUnlock: string;
   }): Promise<{ state: LocalVaultState }> {
+    return this.runSecurityOperation(async() => {
     const attemptGeneration = this.generation;
     const challenge = this.challenges.get(input.challengeId);
     this.challenges.delete(input.challengeId);
@@ -589,6 +607,7 @@ export class LocalVaultAuthority {
       masterKey.fill(0);
       if (legacyVmk && this.keys?.legacyVmk !== legacyVmk) legacyVmk.fill(0);
     }
+    });
   }
 
   async unlockWithPassword(password: string): Promise<{ state: LocalVaultState; cacheUpdateRequired: boolean }> {
@@ -679,7 +698,7 @@ export class LocalVaultAuthority {
         next.legacyVmk?.fill(0);
         throw new LocalVaultError('vault_locked', 423, 'Unlock was cancelled by a concurrent lock');
       }
-      this.lock();
+      this.lockNow();
       this.keys = next;
       this.generation += 1;
       const activeGeneration = this.generation;
@@ -691,7 +710,11 @@ export class LocalVaultAuthority {
       return { state: this.migrationState };
   }
 
-  lock(): void {
+  async lock(): Promise<void> {
+    await this.runSecurityOperation(async() => this.lockNow());
+  }
+
+  private lockNow(): void {
     this.generation += 1;
     for (const request of this.inFlight) request.destroy(new LocalVaultError('vault_locked', 423, 'Vault locked during request'));
     this.inFlight.clear();
@@ -709,8 +732,6 @@ export class LocalVaultAuthority {
     this.pendingApprovals.clear();
     this.approvals.clear();
     this.humanSessions.clear();
-    for (const fill of this.pendingBrowserFills.values()) clearTimeout(fill.timer);
-    this.pendingBrowserFills.clear();
     this.stagedCacheUpdate?.masterKey.fill(0);
     this.stagedCacheUpdate = null;
   }
@@ -755,6 +776,7 @@ export class LocalVaultAuthority {
   async unlockHumanSession(sessionId: string | undefined, csrf: string | undefined, password: string): Promise<{
     sessionId: string; csrf: string; expiresAt: number; phase: 'unlocked'; state: LocalVaultState; cacheMode: 'helper-update-required';
   }> {
+    return this.runSecurityOperation(async() => {
     const session = this.validateHumanSession(sessionId, csrf);
     if (session.phase !== 'pre-unlock') throw new LocalVaultError('invalid_human_session', 409, 'Vault is already unlocked');
     const result = await this.unlockWithPassword(password);
@@ -762,6 +784,7 @@ export class LocalVaultAuthority {
     const next = this.issueHumanSession(session.browserTarget);
     if (next.phase !== 'unlocked') throw new LocalVaultError('vault_unavailable', 503, 'Vault unlock did not establish an unlocked session');
     return { ...next, phase: 'unlocked', state: result.state, cacheMode: 'helper-update-required' };
+    });
   }
 
   exchangeHumanGrant(sessionId: string | undefined, csrf: string | undefined): {
@@ -772,37 +795,80 @@ export class LocalVaultAuthority {
     return this.issueHumanSession(session.browserTarget);
   }
 
-  lockHumanSession(sessionId: string | undefined, csrf: string | undefined): {
-    sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock'; state: 'locked';
+  humanSessionStatus(sessionId: string | undefined, csrf: string | undefined): {
+    csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked';
   } {
     const session = this.validateHumanSession(sessionId, csrf);
-    this.lock();
-    const next = this.issueHumanSession(session.browserTarget);
-    if (next.phase !== 'pre-unlock') throw new LocalVaultError('vault_unavailable', 503, 'Vault did not lock');
-    return { ...next, phase: 'pre-unlock', state: 'locked' };
+    return { csrf: session.csrf, expiresAt: session.expiresAt, phase: session.phase };
+  }
+
+  async lockHumanSession(sessionId: string | undefined, csrf: string | undefined): Promise<{
+    sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock'; state: 'locked';
+  }> {
+    return this.runSecurityOperation(async() => {
+      const session = this.validateHumanSession(sessionId, csrf);
+      this.lockNow();
+      const next = this.issueHumanSession(session.browserTarget);
+      if (next.phase !== 'pre-unlock') throw new LocalVaultError('vault_unavailable', 503, 'Vault did not lock');
+      return { ...next, phase: 'pre-unlock', state: 'locked' };
+    });
   }
 
   async listHumanItems(sessionId: string | undefined, csrf: string | undefined): Promise<Array<Record<string, unknown>>> {
+    return this.runSecurityOperation(async() => {
     const session = this.validateHumanSession(sessionId, csrf);
     if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     const keys = this.requireKeys();
+    const generation = this.generation;
     const rows = await this.db.query<ItemRow & { item_type: string; updated_at: string }>(
       `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision,item_type,updated_at
          FROM items WHERE owner_user_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC`, [keys.userId],
     );
-    return Promise.all(rows.rows.map(async row => {
+    const items = await Promise.all(rows.rows.map(async row => {
       const item = JSON.parse(await decryptItemText(
         { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
         { itemId: row.id, ownerId: keys.userId },
       )) as VaultItemPlaintext;
-      return { id: row.id, type: item.type, name: item.name, username: item.username, uris: item.uris, revision: Number(row.revision), updatedAt: row.updated_at };
+      return {
+        id: row.id, type: item.type, name: item.name, favorite: item.favorite, username: item.username,
+        uris: item.uris, folder: item.folder, agentPolicy: item.agentPolicy,
+        integration: item.integration ? { integrationId: item.integration.integrationId, accountId: item.integration.accountId } : undefined,
+        revision: Number(row.revision), updatedAt: row.updated_at,
+      };
     }));
+    this.requireGeneration(generation);
+    return items;
+    });
+  }
+
+  async listHumanItemActivity(
+    sessionId: string | undefined, csrf: string | undefined, itemId?: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    return this.runSecurityOperation(async() => {
+    const session = this.validateHumanSession(sessionId, csrf);
+    if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const params: unknown[] = [keys.userId];
+    const itemFilter = itemId ? 'AND a.item_id=$2' : '';
+    if (itemId) params.push(itemId);
+    const result = await this.db.query(
+      `SELECT a.id,a.item_id,a.action,a.pod_id,a.metadata,a.blocked,a.reason,a.created_at
+         FROM audit_log a JOIN items i ON i.id=a.item_id
+        WHERE i.owner_user_id=$1 ${ itemFilter }
+        ORDER BY a.created_at DESC LIMIT 100`, params,
+    );
+    this.requireGeneration(generation);
+    return result.rows;
+    });
   }
 
   async revealHumanItem(sessionId: string | undefined, csrf: string | undefined, itemId: string): Promise<Record<string, unknown>> {
+    return this.runSecurityOperation(async() => {
     const session = this.validateHumanSession(sessionId, csrf);
     if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     const keys = this.requireKeys();
+    const generation = this.generation;
     const result = await this.db.query<ItemRow>(
       `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision
          FROM items WHERE id=$1 AND owner_user_id=$2 AND deleted_at IS NULL`, [itemId, keys.userId],
@@ -813,79 +879,50 @@ export class LocalVaultAuthority {
       { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
       { itemId: row.id, ownerId: keys.userId },
     )) as VaultItemPlaintext;
+    this.requireGeneration(generation);
+    await this.auditHumanAction(this.db, keys.userId, 'human_item_reveal', row.id);
+    this.requireGeneration(generation);
     return { id: row.id, revision: Number(row.revision), item };
-  }
-
-  async requestHumanBrowserFill(sessionId: string | undefined, csrf: string | undefined, itemId: string): Promise<{ requestId: string; expiresAt: number }> {
-    const session = this.validateHumanSession(sessionId, csrf);
-    if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
-    if (!session.browserTarget) throw new LocalVaultError('policy_denied', 403, 'This vault session is not bound to a browser tab');
-    const keys = this.requireKeys();
-    const result = await this.db.query<ItemRow>(
-      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision
-         FROM items WHERE id=$1 AND owner_user_id=$2 AND deleted_at IS NULL`, [itemId, keys.userId],
-    );
-    const row = result.rows[0];
-    if (!row) throw new LocalVaultError('policy_denied', 404, 'Vault item was not found');
-    const item = JSON.parse(await decryptItemText(
-      { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
-      { itemId: row.id, ownerId: keys.userId },
-    )) as VaultItemPlaintext;
-    const originMatches = (item.uris ?? []).some(entry => {
-      try { return new URL(entry.uri).origin === session.browserTarget!.origin } catch { return false }
     });
-    if (!originMatches) throw new LocalVaultError('policy_denied', 403, 'Credential does not match the active page origin');
-    const username = typeof item.username === 'string' ? item.username : '';
-    const password = typeof item.password === 'string' ? item.password : '';
-    if (!username && !password) throw new LocalVaultError('credential_field_missing', 409, 'Credential has no fillable fields');
-    const requestId = randomUUID();
-    const expiresAt = Date.now() + BROWSER_FILL_TTL_MS;
-    const previous = this.pendingBrowserFills.get(session.browserTarget.tabId);
-    if (previous) clearTimeout(previous.timer);
-    const timer = setTimeout(() => {
-      const current = this.pendingBrowserFills.get(session.browserTarget!.tabId);
-      if (current?.requestId === requestId) this.pendingBrowserFills.delete(session.browserTarget!.tabId);
-    }, BROWSER_FILL_TTL_MS);
-    timer.unref?.();
-    this.pendingBrowserFills.set(session.browserTarget.tabId, { requestId, ...session.browserTarget, username, password, expiresAt, timer });
-    return { requestId, expiresAt };
-  }
-
-  consumeBrowserFill(callerId: string, token: string | undefined, tabId: string): BrowserFillPayload | null {
-    this.requireControlIdentity(callerId, token);
-    const pending = this.pendingBrowserFills.get(tabId);
-    if (!pending) return null;
-    this.pendingBrowserFills.delete(tabId);
-    clearTimeout(pending.timer);
-    if (pending.expiresAt <= Date.now()) return null;
-    const { timer: _timer, ...payload } = pending;
-    return payload;
   }
 
   async saveHumanItem(
     sessionId: string | undefined, csrf: string | undefined,
     input: { id?: string; revision?: number; item: VaultItemPlaintext },
   ): Promise<{ id: string; revision: number }> {
+    return this.runSecurityOperation(async() => {
     const session = this.validateHumanSession(sessionId, csrf);
     if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     const keys = this.requireKeys();
+    const generation = this.generation;
     if (!input.item || typeof input.item.name !== 'string' || !input.item.name.trim() || !input.item.agentPolicy) {
       throw new LocalVaultError('invalid_operation', 400, 'Vault item is invalid');
     }
+    const policy = input.item.agentPolicy;
+    if (!['only_me', 'agents'].includes(policy.mode) || !['metadata', 'autofill', 'full'].includes(policy.level) ||
+        !Array.isArray(policy.agents) || !policy.agents.every(value => typeof value === 'string') ||
+        !Array.isArray(policy.sites) || !policy.sites.every(value => typeof value === 'string') ||
+        (policy.expiresAt !== null && (typeof policy.expiresAt !== 'string' || !Number.isFinite(Date.parse(policy.expiresAt))))) {
+      throw new LocalVaultError('invalid_operation', 400, 'Agent access policy is invalid');
+    }
     const id = input.id ?? randomUUID();
     const encrypted = await encryptItem(JSON.stringify(input.item), keys.userKey, { itemId: id, ownerId: keys.userId });
-    if (!input.id) {
-      const created = await this.db.query<{ revision: number }>(
+    const result = await this.runTransaction(async client => {
+      if (!input.id) {
+      const created = await client.query<{ revision: number }>(
         `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
          VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING revision`,
         [id, keys.userId, input.item.type, encrypted.ciphertext, encrypted.encryptedItemKey, input.item.agentPolicy,
           input.item.integration ? `${ input.item.integration.integrationId }/${ input.item.integration.accountId }` : null],
       );
-      return { id, revision: created.rows[0].revision };
-    }
+      this.requireGeneration(generation);
+      await this.auditHumanAction(client, keys.userId, 'human_item_created', id);
+      this.requireGeneration(generation);
+      return { id, revision: Number(created.rows[0].revision) };
+      }
     const revision = Number(input.revision);
     if (!Number.isSafeInteger(revision) || revision < 1) throw new LocalVaultError('invalid_operation', 400, 'Item revision is required');
-    const updated = await this.db.query<{ revision: number }>(
+    const updated = await client.query<{ revision: number }>(
       `UPDATE items SET item_type=$1,ciphertext=$2,encrypted_item_key=$3,agent_policy=$4,integration_ref=$5,
               revision=revision+1,updated_at=now()
         WHERE id=$6 AND owner_user_id=$7 AND revision=$8 AND deleted_at IS NULL RETURNING revision`,
@@ -894,28 +931,44 @@ export class LocalVaultAuthority {
         id, keys.userId, revision],
     );
     if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; reload and retry');
-    return { id, revision: updated.rows[0].revision };
+    this.requireGeneration(generation);
+    await this.auditHumanAction(client, keys.userId, 'human_item_updated', id);
+    this.requireGeneration(generation);
+    return { id, revision: Number(updated.rows[0].revision) };
+    });
+    return result;
+    });
   }
 
   async deleteHumanItem(sessionId: string | undefined, csrf: string | undefined, itemId: string, revision: number): Promise<void> {
+    return this.runSecurityOperation(async() => {
     const session = this.validateHumanSession(sessionId, csrf);
     if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     const keys = this.requireKeys();
-    const result = await this.db.query(
+    const generation = this.generation;
+    await this.runTransaction(async client => {
+    const result = await client.query(
       `UPDATE items SET deleted_at=now(),revision=revision+1,updated_at=now()
         WHERE id=$1 AND owner_user_id=$2 AND revision=$3 AND deleted_at IS NULL RETURNING id`,
       [itemId, keys.userId, revision],
     );
     if (!result.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; reload and retry');
+    this.requireGeneration(generation);
+    await this.auditHumanAction(client, keys.userId, 'human_item_deleted', itemId);
+    this.requireGeneration(generation);
+    });
+    });
   }
 
   async changeHumanPassword(
     sessionId: string | undefined, csrf: string | undefined, currentPassword: string, nextPassword: string,
   ): Promise<{ cacheMode: 'helper-update-required' }> {
+    return this.runSecurityOperation(async() => {
     const session = this.validateHumanSession(sessionId, csrf);
     if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     if (!currentPassword || !nextPassword) throw new LocalVaultError('invalid_credentials', 400, 'Current and new passwords are required');
     const keys = this.requireKeys();
+    const generation = this.generation;
     const account = await this.db.query<{
       login_hash_salt: Buffer; login_hash_verifier: Buffer;
       kdf: { password?: { salt: string; parameters: { memoryBytes: number; operations: number } } };
@@ -930,45 +983,60 @@ export class LocalVaultAuthority {
       }
       const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
       const wrapped = await encryptWithKey(keys.userKey, next.key, 'sulla:user-key:v1');
-      await this.db.query(
+      await this.runTransaction(async client => {
+      await client.query(
         `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
         [verifier.salt, verifier.verifier, wrapped,
           { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } }, keys.userId],
       );
+      this.requireGeneration(generation);
+      await this.auditHumanAction(client, keys.userId, 'human_password_changed');
+      this.requireGeneration(generation);
+      });
       this.stageCacheUpdate(next.key);
       return { cacheMode: 'helper-update-required' };
     } finally {
       current.key.fill(0);
       next.key.fill(0);
     }
+    });
   }
 
   async configureHumanRecovery(
     sessionId: string | undefined, csrf: string | undefined, recoveryCode: string,
   ): Promise<void> {
+    return this.runSecurityOperation(async() => {
     const session = this.validateHumanSession(sessionId, csrf);
     if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     if (recoveryCode.length < 12) throw new LocalVaultError('invalid_credentials', 400, 'Recovery code is too short');
     const keys = this.requireKeys();
+    const generation = this.generation;
     const recovery = await deriveMasterKey(recoveryCode);
     try {
       const verifier = makeLoginVerifier(await deriveLoginHash(recovery.key));
       const wrapped = await encryptWithKey(keys.userKey, recovery.key, 'sulla:recovery-user-key:v1');
-      await this.db.query(
+      await this.runTransaction(async client => {
+      await client.query(
         `INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key)
          VALUES ($1,$2,$3,$4)
          ON CONFLICT(user_id) DO UPDATE SET recovery_salt=$2,recovery_verifier=$3,encrypted_user_key=$4,updated_at=now()`,
         [keys.userId, JSON.stringify({ kdf: recovery.salt, verifier: verifier.salt.toString('base64url'), parameters: recovery.parameters }),
           verifier.verifier.toString('base64url'), wrapped],
       );
+      this.requireGeneration(generation);
+      await this.auditHumanAction(client, keys.userId, 'human_recovery_configured');
+      this.requireGeneration(generation);
+      });
     } finally {
       recovery.key.fill(0);
     }
+    });
   }
 
   async recoverHumanSession(
     sessionId: string | undefined, csrf: string | undefined, recoveryCode: string, nextPassword: string,
   ): Promise<{ sessionId: string; csrf: string; expiresAt: number; phase: 'unlocked'; state: LocalVaultState; cacheMode: 'helper-update-required' }> {
+    return this.runSecurityOperation(async() => {
     const session = this.validateHumanSession(sessionId, csrf);
     if (session.phase !== 'pre-unlock') throw new LocalVaultError('invalid_human_session', 409, 'Recovery requires a locked vault');
     const attemptGeneration = this.generation;
@@ -988,11 +1056,15 @@ export class LocalVaultAuthority {
       recoveredUserKey = await decryptWithKey(row.encrypted_user_key, recovery.key, 'sulla:recovery-user-key:v1');
       const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
       const wrapped = await encryptWithKey(recoveredUserKey, next.key, 'sulla:user-key:v1');
-      await this.db.query(
+      await this.runTransaction(async client => {
+      await client.query(
         `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
         [verifier.salt, verifier.verifier, wrapped,
           { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } }, row.user_id],
       );
+      this.requireStableGeneration(attemptGeneration);
+      await this.auditHumanAction(client, row.user_id, 'human_recovery_unlocked');
+      });
       const unlocked = await this.activateMasterKey(next.key, undefined,
         { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } }, attemptGeneration);
       this.stageCacheUpdate(next.key);
@@ -1004,15 +1076,18 @@ export class LocalVaultAuthority {
       next.key.fill(0);
       recoveredUserKey?.fill(0);
     }
+    });
   }
 
   async exportHumanBackup(
     sessionId: string | undefined, csrf: string | undefined, backupPassword: string,
   ): Promise<HumanBackupEnvelope> {
+    return this.runSecurityOperation(async() => {
     const session = this.validateHumanSession(sessionId, csrf);
     if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     if (!backupPassword) throw new LocalVaultError('invalid_credentials', 400, 'Backup password is required');
     const keys = this.requireKeys();
+    const generation = this.generation;
     const [user, items, recovery] = await Promise.all([
       this.db.query('SELECT id,email,login_hash_salt,login_hash_verifier,public_key,encrypted_private_key,encrypted_user_key,kdf FROM users WHERE id=$1', [keys.userId]),
       this.db.query('SELECT id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref,revision,created_at,updated_at FROM items WHERE owner_user_id=$1 AND deleted_at IS NULL', [keys.userId]),
@@ -1023,18 +1098,24 @@ export class LocalVaultAuthority {
       const payload = Buffer.from(JSON.stringify({ version: 1, user: user.rows[0], items: items.rows, recovery: recovery.rows[0] ?? null }));
       const envelope = await encryptWithKey(payload, backup.key, 'sulla:local-backup:v1');
       payload.fill(0);
+      this.requireGeneration(generation);
+      await this.auditHumanAction(this.db, keys.userId, 'human_backup_exported');
+      this.requireGeneration(generation);
       return { version: 1, salt: backup.salt, parameters: backup.parameters, envelope };
     } finally {
       backup.key.fill(0);
     }
+    });
   }
 
   async importHumanBackup(
     sessionId: string | undefined, csrf: string | undefined, backupPassword: string, backupEnvelope: HumanBackupEnvelope,
   ): Promise<void> {
+    return this.runSecurityOperation(async() => {
     const session = this.validateHumanSession(sessionId, csrf);
     if (session.phase !== 'pre-unlock') throw new LocalVaultError('invalid_human_session', 409, 'Backup import requires a locked vault');
     if (!backupPassword || backupEnvelope?.version !== 1) throw new LocalVaultError('invalid_operation', 400, 'Backup input is invalid');
+    const attemptGeneration = this.generation;
     const existing = await this.db.query('SELECT 1 FROM users LIMIT 1');
     if (existing.rowCount) throw new LocalVaultError('policy_denied', 409, 'Backup import requires an empty local vault');
     const backup = await deriveMasterKey(backupPassword, backupEnvelope.salt, backupEnvelope.parameters);
@@ -1070,6 +1151,8 @@ export class LocalVaultAuthority {
             [payload.user.id, payload.recovery.recovery_salt, payload.recovery.recovery_verifier, payload.recovery.encrypted_user_key],
           );
         }
+        this.requireStableGeneration(attemptGeneration);
+        await this.auditHumanAction(client, payload.user.id, 'human_backup_imported');
         await client.query('COMMIT');
       } catch (error) {
         await client.query('ROLLBACK');
@@ -1084,6 +1167,7 @@ export class LocalVaultAuthority {
       backup.key.fill(0);
       clear?.fill(0);
     }
+    });
   }
 
   requireControlIdentity(callerId: string, token: string | undefined): void {
@@ -1188,7 +1272,36 @@ export class LocalVaultAuthority {
     }
   }
 
+  private validateBrokerRequestIdentity(input: BrokerExecuteRequest, callerId: string, token: string | undefined): void {
+    this.requireBrokerIdentity(callerId, token);
+    const claims = input?.claims;
+    const validIdentifier = (value: unknown) => typeof value === 'string' && BROKER_IDENTIFIER_PATTERN.test(value);
+    if (!input || typeof input.operation !== 'string' || !/^[a-z][a-z0-9_.:-]{1,79}$/i.test(input.operation) ||
+        !claims || !UUID_PATTERN.test(claims.sub) || !validIdentifier(claims.agent_id) || !validIdentifier(claims.pod_id) ||
+        (claims.org_id !== undefined && !UUID_PATTERN.test(claims.org_id)) ||
+        (claims.thread_id !== undefined && !validIdentifier(claims.thread_id)) ||
+        (claims.job_id !== undefined && !validIdentifier(claims.job_id)) ||
+        (claims.workflow_execution_id !== undefined && !validIdentifier(claims.workflow_execution_id))) {
+      throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller identity is invalid');
+    }
+    const scope = claims.credential_scope;
+    if (scope && (!validIdentifier(scope.integration_id) || !validIdentifier(scope.account_id) ||
+        (scope.repository !== undefined && !validIdentifier(scope.repository)))) {
+      throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller scope is invalid');
+    }
+    const ref = input.ref;
+    if (!ref || (ref.integrationId !== undefined && !validIdentifier(ref.integrationId)) ||
+        (ref.accountId !== undefined && !validIdentifier(ref.accountId)) ||
+        (ref.itemId !== undefined && !UUID_PATTERN.test(ref.itemId)) || !Array.isArray(input.injections)) {
+      throw new LocalVaultError('invalid_operation', 400, 'Broker credential reference is invalid');
+    }
+  }
+
   async migrateLegacy(callerId: string, token: string | undefined): Promise<LegacyMigrationResponse> {
+    return this.runSecurityOperation(() => this.migrateLegacyInternal(callerId, token));
+  }
+
+  private async migrateLegacyInternal(callerId: string, token: string | undefined): Promise<LegacyMigrationResponse> {
     this.requireControlIdentity(callerId, token);
     const keys = this.requireKeys();
     const generation = this.generation;
@@ -1357,19 +1470,25 @@ export class LocalVaultAuthority {
   }
 
   async execute(input: BrokerExecuteRequest, serviceId: string, token: string | undefined): Promise<BrokerExecuteResponse> {
-    if (input.responseType === 'stream' || input.responseType === 'binary-stream') {
-      throw new LocalVaultError('invalid_operation', 400, 'Use execute-stream for streaming operations');
+    this.validateBrokerRequestIdentity(input, serviceId, token);
+    try {
+      if (input.responseType === 'stream' || input.responseType === 'binary-stream') {
+        throw new LocalVaultError('invalid_operation', 400, 'Use execute-stream for streaming operations');
+      }
+      if (['oauth.exchange', 'oauth.adopt', 'oauth.refresh', 'oauth.revoke', 'oauth.register'].includes(input.operation)) {
+        return await this.executeOAuthMutation(input, serviceId, token);
+      }
+      const prepared = await this.prepareBrokerRequest(input, serviceId, token);
+      const result = await this.send(
+        prepared.target, input.method, prepared.headers, prepared.body,
+        input.responseType ?? 'json', prepared.secrets, prepared.generation, true, prepared.maxRequestBytes,
+      );
+      if (prepared.item) await this.audit(input, prepared.item, false, null);
+      return result;
+    } catch (error) {
+      if (error instanceof LocalVaultError) await this.auditBrokerDenial(input, error.code);
+      throw error;
     }
-    if (['oauth.exchange', 'oauth.adopt', 'oauth.refresh', 'oauth.revoke', 'oauth.register'].includes(input.operation)) {
-      return this.executeOAuthMutation(input, serviceId, token);
-    }
-    const prepared = await this.prepareBrokerRequest(input, serviceId, token);
-    const result = await this.send(
-      prepared.target, input.method, prepared.headers, prepared.body,
-      input.responseType ?? 'json', prepared.secrets, prepared.generation, true, prepared.maxRequestBytes,
-    );
-    if (prepared.item) await this.audit(input, prepared.item, false, null);
-    return result;
   }
 
   async createRelay(
@@ -1502,19 +1621,25 @@ export class LocalVaultAuthority {
       if (result.status < 200 || result.status >= 300) {
         throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth upstream rejected the request');
       }
-      if (input.operation === 'oauth.revoke') {
-        await this.clearOAuthTokens(prepared);
-        await this.audit(input, prepared.item!, false, null);
-        return { ...result, body: { revoked: true } };
-      }
-      if (input.operation === 'oauth.register') {
-        const clientId = await this.storeOAuthRegistration(prepared, result.body);
-        await this.audit(input, prepared.item!, false, null);
-        return { ...result, body: { updated: true, operation: 'oauth.register', client_id: clientId } };
-      }
-      await this.storeOAuthTokens(prepared, result.body);
-      await this.audit(input, prepared.item!, false, null);
-      return { ...result, body: this.sanitizeOAuthResult(input.operation, result.body) };
+      return await this.runSecurityOperation(() => this.runTransaction(async(client) => {
+        this.requireGeneration(prepared.generation);
+        if (input.operation === 'oauth.revoke') {
+          await this.clearOAuthTokens(prepared, client);
+          await this.audit(input, prepared.item!, false, null, client);
+          this.requireGeneration(prepared.generation);
+          return { ...result, body: { revoked: true } };
+        }
+        if (input.operation === 'oauth.register') {
+          const clientId = await this.storeOAuthRegistration(prepared, result.body, client);
+          await this.audit(input, prepared.item!, false, null, client);
+          this.requireGeneration(prepared.generation);
+          return { ...result, body: { updated: true, operation: 'oauth.register', client_id: clientId } };
+        }
+        await this.storeOAuthTokens(prepared, result.body, client);
+        await this.audit(input, prepared.item!, false, null, client);
+        this.requireGeneration(prepared.generation);
+        return { ...result, body: this.sanitizeOAuthResult(input.operation, result.body) };
+      }));
     } finally {
       release();
       if (this.oauthRefreshQueues.get(queueKey) === queued) this.oauthRefreshQueues.delete(queueKey);
@@ -1527,13 +1652,19 @@ export class LocalVaultAuthority {
     token: string | undefined,
     sink: BrokerStreamSink,
   ): Promise<void> {
+    this.validateBrokerRequestIdentity(input, serviceId, token);
     const streamInput = {
       ...input,
       responseType: input.responseType === 'binary-stream' ? 'binary-stream' as const : 'stream' as const,
     };
-    const prepared = await this.prepareBrokerRequest(streamInput, serviceId, token);
-    await this.sendStream(prepared, streamInput, sink);
-    if (prepared.item) await this.audit(streamInput, prepared.item, false, null);
+    try {
+      const prepared = await this.prepareBrokerRequest(streamInput, serviceId, token);
+      await this.sendStream(prepared, streamInput, sink);
+      if (prepared.item) await this.audit(streamInput, prepared.item, false, null);
+    } catch (error) {
+      if (error instanceof LocalVaultError) await this.auditBrokerDenial(streamInput, error.code);
+      throw error;
+    }
   }
 
   private async prepareBrokerRequest(
@@ -1541,10 +1672,7 @@ export class LocalVaultAuthority {
     serviceId: string,
     token: string | undefined,
   ): Promise<PreparedBrokerRequest> {
-    this.requireBrokerIdentity(serviceId, token);
-    if (!input.claims?.sub || !input.claims.agent_id || !input.claims.pod_id) {
-      throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller identity is incomplete');
-    }
+    this.validateBrokerRequestIdentity(input, serviceId, token);
     if (!/^[a-z][a-z0-9_.:-]{1,79}$/i.test(input.operation)) {
       throw new LocalVaultError('invalid_operation', 400, 'Broker operation is invalid');
     }
@@ -1624,6 +1752,8 @@ export class LocalVaultAuthority {
       }
       this.approvals.delete(input.approvalId!);
     }
+
+    await this.backfillChatgptAccountRouting(item, plaintext, keys, generation);
 
     const secrets: string[] = [];
     const headers: Record<string, string> = { ...(input.headers ?? {}) };
@@ -1716,6 +1846,49 @@ export class LocalVaultAuthority {
     }
   }
 
+  private requireStableGeneration(generation: number): void {
+    if (generation !== this.generation) {
+      throw new LocalVaultError('vault_locked', 423, 'Vault state changed during request');
+    }
+  }
+
+  private runSecurityOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.securityOperationTail;
+    let release!: () => void;
+    this.securityOperationTail = new Promise<void>(resolve => { release = resolve; });
+    return (async() => {
+      await previous;
+      try {
+        return await operation();
+      } finally {
+        release();
+      }
+    })();
+  }
+
+  private async auditHumanAction(db: Queryable, actorId: string, action: string, itemId: string | null = null): Promise<void> {
+    await db.query(
+      `INSERT INTO audit_log(actor_user_id,item_id,action,metadata,blocked)
+       VALUES ($1,$2,$3,'{}'::jsonb,false)`,
+      [actorId, itemId, action],
+    );
+  }
+
+  private async runTransaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await operation(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   private async validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6 }> {
     let url: URL;
     try { url = new URL(raw); } catch { throw new LocalVaultError('invalid_destination', 400, 'Destination URL is invalid'); }
@@ -1763,13 +1936,11 @@ export class LocalVaultAuthority {
     // attempt to decrypt a collection item with that key; collection-key
     // custody remains a separate server-mode path until explicitly supported.
     if (!item || !personal || item.collection_id) {
-      if (item) await this.audit(input, item, true, 'User cannot use this credential');
       throw new LocalVaultError('policy_denied', 403, 'Credential is unavailable to this caller');
     }
     if (host) {
       const siteDecision = agentPolicyAllows(item.agent_policy, { agentId: input.claims.agent_id, level: 'autofill', host, onServer: false });
       if (!siteDecision.allowed) {
-        await this.audit(input, item, true, siteDecision.reason ?? 'Credential policy denied the destination');
         throw new LocalVaultError('policy_denied', 403, siteDecision.reason ?? 'Credential policy denied the destination');
       }
     }
@@ -1970,7 +2141,7 @@ export class LocalVaultAuthority {
     });
   }
 
-  private async storeOAuthTokens(prepared: PreparedBrokerRequest, body: unknown): Promise<void> {
+  private async storeOAuthTokens(prepared: PreparedBrokerRequest, body: unknown, db: Queryable): Promise<void> {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth token response is invalid');
     }
@@ -1990,10 +2161,12 @@ export class LocalVaultAuthority {
     if (typeof response.scope === 'string') integration.properties.scope = response.scope;
     if (typeof response.token_type === 'string') integration.properties.token_type = response.token_type;
     if (typeof response.id_token === 'string' && response.id_token) integration.properties.id_token = response.id_token;
-    await this.persistOAuthItem(prepared, keys);
+    const chatgptAccountId = extractBoundedChatgptAccountId(response.id_token, response.access_token);
+    if (chatgptAccountId) integration.properties.chatgpt_account_id = chatgptAccountId;
+    prepared.item.revision = await this.persistOAuthItem(prepared, keys, db);
   }
 
-  private async storeOAuthRegistration(prepared: PreparedBrokerRequest, body: unknown): Promise<string> {
+  private async storeOAuthRegistration(prepared: PreparedBrokerRequest, body: unknown, db: Queryable): Promise<string> {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth registration response is invalid');
     }
@@ -2014,23 +2187,40 @@ export class LocalVaultAuthority {
       }
       if (typeof value === 'string') prepared.plaintext.integration.properties[field] = value;
     }
-    await this.persistOAuthItem(prepared, keys);
+    prepared.item.revision = await this.persistOAuthItem(prepared, keys, db);
     return response.client_id;
   }
 
-  private async clearOAuthTokens(prepared: PreparedBrokerRequest): Promise<void> {
+  private async clearOAuthTokens(prepared: PreparedBrokerRequest, db: Queryable): Promise<void> {
     const keys = this.requireKeys();
     this.requireGeneration(prepared.generation);
     if (!prepared.item || !prepared.plaintext?.integration) {
       throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
     }
-    for (const field of ['access_token', 'refresh_token', 'id_token', 'expires_in', 'expires_at', 'scope', 'token_type']) {
+    for (const field of ['access_token', 'refresh_token', 'id_token', 'chatgpt_account_id', 'expires_in', 'expires_at', 'scope', 'token_type']) {
       delete prepared.plaintext.integration.properties[field];
     }
-    await this.persistOAuthItem(prepared, keys);
+    prepared.item.revision = await this.persistOAuthItem(prepared, keys, db);
   }
 
-  private async persistOAuthItem(prepared: PreparedBrokerRequest, keys: UnlockedKeys): Promise<void> {
+  private async backfillChatgptAccountRouting(
+    item: ItemRow, plaintext: VaultItemPlaintext, keys: UnlockedKeys, generation: number,
+  ): Promise<void> {
+    const properties = plaintext.integration?.properties;
+    if (!properties || properties.chatgpt_account_id) return;
+    const accountId = extractBoundedChatgptAccountId(properties.id_token, properties.access_token);
+    if (!accountId) return;
+    properties.chatgpt_account_id = accountId;
+    item.revision = await this.runSecurityOperation(async() => {
+      this.requireGeneration(generation);
+      return await this.persistOAuthItem({ item, plaintext, generation }, keys, this.db);
+    });
+  }
+
+  private async persistOAuthItem(
+    prepared: Pick<PreparedBrokerRequest, 'item' | 'plaintext' | 'generation'>, keys: UnlockedKeys,
+    db: Queryable,
+  ): Promise<number> {
     if (!prepared.item || !prepared.plaintext) throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
     const ownerId = prepared.item.collection_id ?? prepared.item.owner_user_id ?? keys.userId;
     const encrypted = await encryptItem(JSON.stringify(prepared.plaintext), keys.userKey, {
@@ -2038,13 +2228,15 @@ export class LocalVaultAuthority {
       ownerId,
     });
     this.requireGeneration(prepared.generation);
-    const updated = await this.db.query(
+    const updated = await db.query(
       `UPDATE items SET ciphertext=$1,encrypted_item_key=$2,agent_wrapped_item_key=NULL,
               revision=revision+1,updated_at=now()
         WHERE id=$3 AND revision=$4 AND deleted_at IS NULL RETURNING revision`,
       [encrypted.ciphertext, encrypted.encryptedItemKey, prepared.item.id, prepared.item.revision],
     );
     if (!updated.rowCount) throw new LocalVaultError('migration_failed', 409, 'OAuth item changed during token update');
+    this.requireGeneration(prepared.generation);
+    return Number(updated.rows[0].revision);
   }
 
   private sanitizeOAuthResult(operation: string, body: unknown): Record<string, unknown> {
@@ -2078,12 +2270,37 @@ export class LocalVaultAuthority {
     }
   }
 
-  private async audit(input: BrokerExecuteRequest, item: ItemRow, blocked: boolean, reason: string | null): Promise<void> {
-    await this.db.query(
+  private async audit(
+    input: BrokerExecuteRequest,
+    item: ItemRow,
+    blocked: boolean,
+    reason: string | null,
+    db: Queryable = this.db,
+  ): Promise<void> {
+    await db.query(
       `INSERT INTO audit_log(actor_user_id,org_id,collection_id,item_id,action,pod_id,metadata,blocked,reason)
        VALUES ($1,$2,$3,$4,'vault_outbound_request',$5,$6,$7,$8)`,
       [input.claims.sub, item.org_id ?? null, item.collection_id, item.id, input.claims.pod_id,
         { agentId: input.claims.agent_id, operation: input.operation, destination: new URL(input.url).origin }, blocked, reason],
+    );
+  }
+
+  private async auditBrokerDenial(input: BrokerExecuteRequest, reason: string): Promise<void> {
+    let destination: string | undefined;
+    try {
+      const parsed = new URL(input.url);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') destination = parsed.origin;
+    } catch {
+      // Invalid destinations are represented by the denial reason, never copied into audit metadata.
+    }
+    await this.db.query(
+      `INSERT INTO audit_log(actor_user_id,item_id,action,pod_id,metadata,blocked,reason)
+       VALUES ($1,NULL,'vault_outbound_request',$2,$3,true,$4)`,
+      [input.claims.sub, input.claims.pod_id, {
+        agentId: input.claims.agent_id,
+        operation: input.operation,
+        ...(destination ? { destination } : {}),
+      }, reason],
     );
   }
 }

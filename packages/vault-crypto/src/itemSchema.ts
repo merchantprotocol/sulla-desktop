@@ -89,13 +89,28 @@ export function agentPolicyAllows(
   request: { agentId: string; level: AgentAccessLevel; host?: string; onServer?: boolean; now?: Date },
 ): { allowed: boolean; reason?: string } {
   if (policy?.mode !== 'agents') return { allowed: false, reason: 'Only the owner can use this item' };
+  if (!['metadata', 'autofill', 'full'].includes(policy.level) || !Array.isArray(policy.agents) || !Array.isArray(policy.sites)) {
+    return { allowed: false, reason: 'The agent access policy is invalid' };
+  }
   const rank: Record<AgentAccessLevel, number> = { metadata: 0, autofill: 1, full: 2 };
   if (rank[request.level] > rank[policy.level]) return { allowed: false, reason: `Agents are limited to ${ policy.level }` };
   if (policy.agents.length && !policy.agents.includes(request.agentId)) return { allowed: false, reason: 'This agent is not on the allowed list' };
-  if (policy.expiresAt && (request.now ?? new Date()) > new Date(policy.expiresAt)) return { allowed: false, reason: 'Agent access has expired' };
+  if (policy.expiresAt) {
+    const expiry = Date.parse(policy.expiresAt);
+    if (!Number.isFinite(expiry)) return { allowed: false, reason: 'The agent access expiry is invalid' };
+    if ((request.now ?? new Date()).getTime() >= expiry) return { allowed: false, reason: 'Agent access has expired' };
+  }
   if (request.onServer && !policy.allowServerAgents) return { allowed: false, reason: 'Server agents are not allowed for this item' };
-  if (policy.sites.length && request.host) {
-    const host = request.host.toLowerCase();
+  if (policy.sites.length) {
+    const host = request.host?.trim().toLowerCase();
+    if (!host) return { allowed: false, reason: 'A valid destination host is required by this item policy' };
+    try {
+      if (new URL(`https://${ host }`).hostname.toLowerCase() !== host) {
+        return { allowed: false, reason: 'A valid destination host is required by this item policy' };
+      }
+    } catch {
+      return { allowed: false, reason: 'A valid destination host is required by this item policy' };
+    }
     if (!policy.sites.some((s) => host === s.toLowerCase() || host.endsWith(`.${ s.toLowerCase() }`))) {
       return { allowed: false, reason: `Not allowed on ${ host }` };
     }

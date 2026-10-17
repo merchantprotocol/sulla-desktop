@@ -11,7 +11,7 @@
     }
   });
 
-  // ../../../../../mnt/data/devcache/deps/sulla-desktop-0ed85271cbb25ba4/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
+  // ../../../../../../../mnt/data/devcache/deps/sulla-desktop-0ed85271cbb25ba4/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
   var import_meta = {};
   async function A(A3 = {}) {
     var I2, g2 = A3, C2 = !!globalThis.window, B2 = !!globalThis.WorkerGlobalScope, Q2 = (globalThis.process?.versions?.node && globalThis.process, import_meta.url);
@@ -209,7 +209,7 @@
   }
   var libsodium_sumo_default = A;
 
-  // ../../../../../mnt/data/devcache/deps/sulla-desktop-0ed85271cbb25ba4/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
+  // ../../../../../../../mnt/data/devcache/deps/sulla-desktop-0ed85271cbb25ba4/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
   var r;
   var t = {};
   if (void 0 === globalThis.crypto || "function" != typeof globalThis.crypto.getRandomValues) throw new Error("globalThis.crypto.getRandomValues is not available. The ESM build of libsodium requires a secure random source (available in all browsers and Node.js 19+).");
@@ -3438,7 +3438,7 @@
   }, t.add = o, t.base64_variants = m, t.compare = l, t.from_base64 = x, t.from_hex = b, t.from_string = v, t.increment = p, t.is_zero = h, t.memcmp = i, t.memzero = y, t.output_formats = T, t.pad = u, t.unpad = d, t.ready = s, t.symbols = c, t.to_base64 = E, t.to_hex = f, t.to_string = g;
   var libsodium_wrappers_default = t;
 
-  // packages/vault-crypto/src/index.ts
+  // ../../packages/vault-crypto/src/index.ts
   var VERSION = 1;
   var KEY_BYTES = 32;
   var SALT_BYTES = 16;
@@ -3571,7 +3571,7 @@
     return decryptWithKey(encryptedCollectionKey, orgKey, "sulla:collection-key:v1");
   }
 
-  // services/sulla-vault/console/app.ts
+  // console/app.ts
   var text = new TextEncoder();
   var decoder = new TextDecoder();
   var $2 = (id) => document.getElementById(id);

@@ -732,7 +732,6 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('browser-tab-view:exec-js', async(_event: Electron.IpcMainInvokeEvent, tabId: string, code: string) => {
-    if (tabViewManager.isVaultProtected(tabId)) throw new Error('vault_protected_tab: navigate before using browser automation');
     return tabViewManager.executeJavaScript(tabId, code);
   });
 
@@ -746,8 +745,6 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   let vaultStatusPoll: ReturnType<typeof setInterval> | undefined;
   let vaultStatusRunning = false;
-  let vaultFillPoll: ReturnType<typeof setInterval> | undefined;
-  let vaultFillRunning = false;
   let vaultMigrationRun: Promise<unknown> | undefined;
   const refreshVaultStatus = async() => {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
@@ -838,21 +835,6 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       vaultStatusRunning = true;
       void refreshVaultStatus().catch(error => console.warn('[vault] Status refresh failed:', error)).finally(() => { vaultStatusRunning = false });
     }, 1_000);
-    if (vaultFillPoll) clearInterval(vaultFillPoll);
-    if (popupTabId && popupOrigin) vaultFillPoll = setInterval(() => {
-      if (vaultFillRunning) return;
-      vaultFillRunning = true;
-      void getDesktopVaultClient().consumeBrowserFill(popupTabId).then(async(fill) => {
-        if (!fill || fill.tabId !== popupTabId || fill.origin !== popupOrigin) return;
-        try {
-          await tabViewManager.injectContainerVaultFill(popupTabId, popupOrigin, fill.username, fill.password);
-        } finally {
-          fill.username = '';
-          fill.password = '';
-        }
-      }).catch(error => console.warn('[vault] Browser fill transport failed:', error instanceof Error ? error.message : 'unknown error'))
-        .finally(() => { vaultFillRunning = false });
-    }, 200);
     return { state: 'opened', expiresAt: humanSession.expiresAt };
   });
 
@@ -870,9 +852,6 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     vaultViewManager.hide();
     if (vaultStatusPoll) clearInterval(vaultStatusPoll);
     vaultStatusPoll = undefined;
-    if (vaultFillPoll) clearInterval(vaultFillPoll);
-    vaultFillPoll = undefined;
-    vaultFillRunning = false;
   });
 
   ipcMainProxy.handle('vault:is-setup', async() => {

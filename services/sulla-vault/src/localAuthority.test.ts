@@ -4,13 +4,13 @@ import http from 'node:http';
 import test from 'node:test';
 
 import pg from 'pg';
-import { DEFAULT_AGENT_POLICY, deriveMasterKey } from '@sulla/vault-crypto';
+import { DEFAULT_AGENT_POLICY, deriveMasterKey, encryptItem } from '@sulla/vault-crypto';
 
 import { migrate } from './db.js';
 import { createApp } from './app.js';
 import { bootstrapUnlockProofInputForSealed } from './bootstrapProof.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
-import { LocalVaultAuthority, LocalVaultError, localAuthorityTestHooks } from './localAuthority.js';
+import { extractBoundedChatgptAccountId, LocalVaultAuthority, LocalVaultError, localAuthorityTestHooks } from './localAuthority.js';
 import { validateOAuthRegistrationRequest } from './oauthPolicy.js';
 import { validateOperation } from './operationPolicy.js';
 import {
@@ -57,11 +57,11 @@ test('bootstrap challenge rejects forgery, replay, expiry, and consumes unlock c
     (error: any) => error.code === 'invalid_bootstrap_challenge');
   await assert.rejects(authority.unlock({ callerId, challengeId: challenge.challengeId, clientProof: 'x', sealedUnlock: 'x' }),
     (error: any) => error.code === 'invalid_bootstrap_challenge');
-  authority.lock();
+  await authority.lock();
   assert.equal(authority.status().unlocked, false);
 });
 
-test('browser fills are origin-bound, control-authenticated, expiring, and one-use', () => {
+test('browser popup sessions preserve an origin-bound target', () => {
   const authority = new LocalVaultAuthority({ query: async() => ({ rowCount: 0, rows: [] }) } as any, config('postgresql://synthetic/unused'));
   const target = { tabId: 'tab-123', origin: 'https://login.example.com' };
   const grant = authority.createHumanSession('sulla-desktop-control', TOKEN.control, target);
@@ -72,15 +72,208 @@ test('browser fills are origin-bound, control-authenticated, expiring, and one-u
     () => authority.createHumanSession('sulla-desktop-control', TOKEN.control, { tabId: 'tab-123', origin: 'javascript:alert(1)' }),
     (error: any) => error.code === 'invalid_destination',
   );
-  const fill = { requestId: 'fill-1', ...target, username: 'synthetic-user', password: 'synthetic-password', expiresAt: Date.now() + 1_000, timer: setTimeout(() => {}, 1_000) };
-  (authority as any).pendingBrowserFills.set(target.tabId, fill);
-  assert.throws(() => authority.consumeBrowserFill('sulla-desktop-control', 'wrong', target.tabId),
-    (error: any) => error.code === 'invalid_service_identity');
-  const { timer: _timer, ...payload } = fill;
-  assert.deepEqual(authority.consumeBrowserFill('sulla-desktop-control', TOKEN.control, target.tabId), payload);
-  assert.equal(authority.consumeBrowserFill('sulla-desktop-control', TOKEN.control, target.tabId), null);
-  (authority as any).pendingBrowserFills.set(target.tabId, { ...fill, timer: setTimeout(() => {}, 1_000), expiresAt: Date.now() - 1 });
-  assert.equal(authority.consumeBrowserFill('sulla-desktop-control', TOKEN.control, target.tabId), null);
+});
+
+test('ChatGPT account routing extraction accepts only bounded authority-owned JWT claims', () => {
+  const token = (accountId: unknown) => [
+    'synthetic',
+    Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: accountId } })).toString('base64url'),
+    'synthetic',
+  ].join('.');
+  assert.equal(extractBoundedChatgptAccountId(token('acct_synthetic-123')), 'acct_synthetic-123');
+  assert.equal(extractBoundedChatgptAccountId(token(' padded ')), undefined);
+  assert.equal(extractBoundedChatgptAccountId(token('x'.repeat(201))), undefined);
+  assert.equal(extractBoundedChatgptAccountId('not-a-jwt'), undefined);
+});
+
+test('lock linearizes behind in-flight plaintext reads and mutations', async() => {
+  const actorId = '11111111-1111-4111-8111-111111111111';
+  const itemId = '22222222-2222-4222-8222-222222222222';
+  const userKey = randomBytes(32);
+  const encrypted = await encryptItem(JSON.stringify({
+    type: 'login', name: 'Synthetic race item', password: 'synthetic-only-secret', favorite: false,
+    uris: [], agentPolicy: DEFAULT_AGENT_POLICY,
+  }), userKey, { itemId, ownerId: actorId });
+  let releaseRead!: () => void;
+  let releaseMutation!: () => void;
+  const readStarted = new Promise<void>(resolve => { releaseRead = resolve; });
+  const mutationStarted = new Promise<void>(resolve => { releaseMutation = resolve; });
+  let allowRead!: () => void;
+  let allowMutation!: () => void;
+  const readGate = new Promise<void>(resolve => { allowRead = resolve; });
+  const mutationGate = new Promise<void>(resolve => { allowMutation = resolve; });
+  const events: string[] = [];
+  const db = {
+    query: async(sql: string) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] };
+      if (sql.includes('FROM items WHERE id=$1')) {
+        releaseRead();
+        await readGate;
+        return { rowCount: 1, rows: [{
+          id: itemId, owner_user_id: actorId, collection_id: null,
+          ciphertext: encrypted.ciphertext, encrypted_item_key: encrypted.encryptedItemKey,
+          agent_policy: DEFAULT_AGENT_POLICY, revision: 1,
+        }] };
+      }
+      if (sql.startsWith('UPDATE items SET deleted_at')) {
+        releaseMutation();
+        await mutationGate;
+        events.push('mutation-committed');
+        return { rowCount: 1, rows: [{ id: itemId }] };
+      }
+      if (sql.includes('INSERT INTO audit_log')) return { rowCount: 1, rows: [] };
+      throw new Error(`Unexpected query: ${ sql }`);
+    },
+  } as any;
+  db.connect = async() => ({ query: db.query, release() {} });
+  const authority = new LocalVaultAuthority(db, config('postgresql://synthetic/unused'));
+  (authority as any).keys = { userId: actorId, publicKey: '', userKey, privateKey: randomBytes(32) };
+  (authority as any).migrationState = 'unlocked';
+  (authority as any).humanSessions.set('session', { csrf: 'csrf', expiresAt: Date.now() + 60_000, phase: 'unlocked' });
+
+  const reveal = authority.revealHumanItem('session', 'csrf', itemId).then(result => { events.push('reveal-returned'); return result; });
+  await readStarted;
+  const firstLock = authority.lock().then(() => { events.push('first-lock-complete'); });
+  allowRead();
+  const detail = await reveal;
+  await firstLock;
+  assert.equal((detail as any).item.password, 'synthetic-only-secret');
+  assert.deepEqual(events, ['reveal-returned', 'first-lock-complete']);
+
+  (authority as any).keys = { userId: actorId, publicKey: '', userKey: randomBytes(32), privateKey: randomBytes(32) };
+  (authority as any).migrationState = 'unlocked';
+  (authority as any).humanSessions.set('session-2', { csrf: 'csrf-2', expiresAt: Date.now() + 60_000, phase: 'unlocked' });
+  const mutation = authority.deleteHumanItem('session-2', 'csrf-2', itemId, 1).then(() => { events.push('mutation-returned'); });
+  await mutationStarted;
+  const secondLock = authority.lock().then(() => { events.push('second-lock-complete'); });
+  allowMutation();
+  await Promise.all([mutation, secondLock]);
+  assert.deepEqual(events.slice(-3), ['mutation-committed', 'mutation-returned', 'second-lock-complete']);
+});
+
+test('legacy migration and lock share one security-operation order', async() => {
+  const events: string[] = [];
+  let releaseMigration!: () => void;
+  let migrationStarted!: () => void;
+  const gate = new Promise<void>(resolve => { releaseMigration = resolve; });
+  const started = new Promise<void>(resolve => { migrationStarted = resolve; });
+  const authority = new LocalVaultAuthority({} as any, config('postgresql://synthetic/unused'));
+  (authority as any).keys = { userId: '11111111-1111-4111-8111-111111111111', publicKey: '', userKey: randomBytes(32), privateKey: randomBytes(32) };
+  (authority as any).migrateLegacyInternal = async() => {
+    migrationStarted();
+    await gate;
+    events.push('migration-complete');
+    return { batchId: 'synthetic', imported: 0, skipped: 0, state: 'unlocked' };
+  };
+  const migration = authority.migrateLegacy('sulla-desktop-control', TOKEN.control);
+  await started;
+  const lock = authority.lock().then(() => { events.push('lock-complete'); });
+  releaseMigration();
+  await Promise.all([migration, lock]);
+  assert.deepEqual(events, ['migration-complete', 'lock-complete']);
+});
+
+test('human item mutation rolls back when its audit insert fails', async() => {
+  const events: string[] = [];
+  const actorId = '11111111-1111-4111-8111-111111111111';
+  const client = {
+    async query(sql: string) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') { events.push(sql); return { rowCount: 0, rows: [] }; }
+      if (sql.includes('INSERT INTO items')) { events.push('item-insert'); return { rowCount: 1, rows: [{ revision: 1 }] }; }
+      if (sql.includes('INSERT INTO audit_log')) { events.push('audit-insert'); throw new Error('synthetic audit failure'); }
+      throw new Error(`Unexpected query: ${ sql }`);
+    },
+    release() { events.push('release'); },
+  };
+  const authority = new LocalVaultAuthority({ connect: async() => client } as any, config('postgresql://synthetic/unused'));
+  (authority as any).keys = { userId: actorId, publicKey: '', userKey: randomBytes(32), privateKey: randomBytes(32) };
+  (authority as any).humanSessions.set('session', { csrf: 'csrf', expiresAt: Date.now() + 60_000, phase: 'unlocked' });
+  await assert.rejects(authority.saveHumanItem('session', 'csrf', {
+    item: { type: 'login', name: 'Synthetic rollback', password: 'synthetic', uris: [], favorite: false, agentPolicy: DEFAULT_AGENT_POLICY },
+  }), /synthetic audit failure/);
+  assert.deepEqual(events, ['BEGIN', 'item-insert', 'audit-insert', 'ROLLBACK', 'release']);
+});
+
+test('OAuth credential mutation rolls back when its success audit insert fails', async() => {
+  const actorId = '11111111-1111-4111-8111-111111111111';
+  const itemId = '22222222-2222-4222-8222-222222222222';
+  const userKey = randomBytes(32);
+  const item = {
+    id: itemId, owner_user_id: actorId, collection_id: null,
+    ciphertext: {}, encrypted_item_key: {}, agent_policy: DEFAULT_AGENT_POLICY, revision: 7,
+  };
+  const plaintext: any = {
+    type: 'apiKey', name: 'Synthetic OAuth rollback', favorite: false, agentPolicy: DEFAULT_AGENT_POLICY,
+    integration: {
+      integrationId: 'openai', accountId: 'synthetic',
+      properties: { access_token: 'synthetic-old-token', refresh_token: 'synthetic-refresh-token' },
+    },
+  };
+  let committedRevision = item.revision;
+  let pendingRevision = committedRevision;
+  let committedCiphertext = 'synthetic-original-ciphertext';
+  let pendingCiphertext = committedCiphertext;
+  const events: string[] = [];
+  const client = {
+    async query(sql: string, params?: unknown[]) {
+      if (sql === 'BEGIN') {
+        events.push('BEGIN');
+        pendingRevision = committedRevision;
+        pendingCiphertext = committedCiphertext;
+        return { rowCount: 0, rows: [] };
+      }
+      if (sql.startsWith('UPDATE items SET ciphertext=')) {
+        events.push('item-update');
+        pendingRevision += 1;
+        pendingCiphertext = JSON.stringify(params?.[0]);
+        assert.notEqual(pendingCiphertext, committedCiphertext);
+        return { rowCount: 1, rows: [{ revision: pendingRevision }] };
+      }
+      if (sql.includes('INSERT INTO audit_log')) {
+        events.push('audit-insert');
+        assert.doesNotMatch(JSON.stringify(params), /synthetic-(?:new-token|next-refresh-token)/);
+        throw new Error('synthetic audit failure');
+      }
+      if (sql === 'COMMIT') {
+        events.push('COMMIT');
+        committedRevision = pendingRevision;
+        committedCiphertext = pendingCiphertext;
+        return { rowCount: 0, rows: [] };
+      }
+      if (sql === 'ROLLBACK') {
+        events.push('ROLLBACK');
+        pendingRevision = committedRevision;
+        pendingCiphertext = committedCiphertext;
+        return { rowCount: 0, rows: [] };
+      }
+      throw new Error(`Unexpected query: ${ sql }`);
+    },
+    release() { events.push('release'); },
+  };
+  const db = { connect: async() => client } as any;
+  const authority = new LocalVaultAuthority(db, config('postgresql://synthetic/unused'));
+  (authority as any).keys = { userId: actorId, publicKey: '', userKey, privateKey: randomBytes(32) };
+  (authority as any).generation = 1;
+  (authority as any).prepareBrokerRequest = async() => ({
+    target: Object.assign(new URL('https://auth.openai.com/oauth/token'), { pinnedAddress: '93.184.216.34', pinnedFamily: 4 }),
+    headers: {}, body: {}, secrets: [], generation: 1, maxRequestBytes: 1024, item, plaintext,
+  });
+  (authority as any).send = async() => ({
+    status: 200, headers: {}, body: { access_token: 'synthetic-new-token', refresh_token: 'synthetic-next-refresh-token' },
+  });
+  const input: any = {
+    claims: { sub: actorId, agent_id: 'synthetic-agent', pod_id: 'synthetic-pod' },
+    operation: 'oauth.refresh', ref: { integrationId: 'openai', accountId: 'synthetic' },
+    url: 'https://auth.openai.com/oauth/token', method: 'POST', headers: {}, body: {}, injections: [], responseType: 'json',
+  };
+
+  await assert.rejects(
+    authority.execute(input, 'sulla-tools', TOKEN.broker),
+    /synthetic audit failure/,
+  );
+  assert.equal(committedRevision, 7);
+  assert.equal(committedCiphertext, 'synthetic-original-ciphertext');
+  assert.deepEqual(events, ['BEGIN', 'item-update', 'audit-insert', 'ROLLBACK', 'release']);
 });
 
 test('approval digest binds headers, body, account, repository and response mode', () => {
@@ -443,7 +636,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     }, 'sulla-tools', TOKEN.broker);
     assert.equal(publicMcp.status, 200);
 
-    authority.lock();
+    await authority.lock();
     assert.equal(authority.status().unlocked, false);
     await assert.rejects(authority.listHumanItems(unlocked.sessionId, unlocked.csrf), (error: any) => ['invalid_human_session', 'vault_locked'].includes(error.code));
 
@@ -471,7 +664,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
       master.key.fill(0);
     }
 
-    authority.lock();
+    await authority.lock();
     const nested = await db.query<{ kdf: { password: { salt: string; parameters: { memoryBytes: number; operations: number } } } }>('SELECT kdf FROM users LIMIT 1');
     await db.query('UPDATE users SET kdf=$1', [{ salt: nested.rows[0].kdf.password.salt, parameters: nested.rows[0].kdf.password.parameters }]);
     const legacyGrant = authority.createHumanSession('sulla-desktop-control', TOKEN.control);
@@ -507,7 +700,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     const abandonedChallenge = authority.createCacheUpdateChallenge(
       cacheCaller, abandonedNonce, proof(cacheUpdateChallengeProofInput(cacheCaller, abandonedNonce)),
     );
-    authority.lock();
+    await authority.lock();
     assert.equal(authority.status().cacheUpdateRequired, false);
     assert.throws(() => authority.fetchCacheUpdate({
       callerId: cacheCaller,
@@ -549,6 +742,21 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
       const denied = await execute(request);
       assert.equal(denied.status, 428);
       assert.equal(denied.headers.get('x-sulla-vault-error'), 'approval_required');
+      const denialAudit = await db.query<{
+        blocked: boolean; reason: string; item_id: string | null; metadata: Record<string, unknown>;
+      }>(
+        `SELECT blocked,reason,item_id,metadata FROM audit_log
+          WHERE actor_user_id=$1 AND action='vault_outbound_request' AND blocked=true
+          ORDER BY created_at DESC LIMIT 1`,
+        [user.rows[0].id],
+      );
+      assert.equal(denialAudit.rowCount, 1);
+      assert.equal(denialAudit.rows[0].blocked, true);
+      assert.equal(denialAudit.rows[0].reason, 'approval_required');
+      assert.equal(denialAudit.rows[0].item_id, null);
+      assert.deepEqual(denialAudit.rows[0].metadata, {
+        agentId: 'sulla', operation: 'provider.inference', destination: 'https://api.openai.com',
+      });
       const operationId = (await denied.json() as any).operationId;
       const approved = await fetch(`${ base }/v1/broker/approve`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-sulla-service-id': 'sulla-desktop-approval', authorization: `Bearer ${ TOKEN.approval }` },
@@ -575,6 +783,11 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
       assert.match(exchange.headers.get('set-cookie') ?? '', /; Secure(?:;|$)/);
       const exchangeBody: any = await exchange.json();
       const exchangeCookie = exchange.headers.get('set-cookie')!.split(';')[0];
+      const resumed = await fetch(`${ base }/v1/human/session`, {
+        headers: { cookie: exchangeCookie, 'x-csrf-token': exchangeBody.csrf, origin: 'https://127.0.0.1:30135' },
+      });
+      assert.equal(resumed.status, 200);
+      assert.equal((await resumed.json() as any).phase, 'unlocked');
       const locked = await fetch(`${ base }/v1/human/lock`, {
         method: 'POST',
         headers: { cookie: exchangeCookie, 'x-csrf-token': exchangeBody.csrf, origin: 'https://127.0.0.1:30135' },
