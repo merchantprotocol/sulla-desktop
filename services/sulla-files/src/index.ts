@@ -1,10 +1,11 @@
-import { FilesKeyring, LegacyServerKeyring } from './keyring.js';
 import { createApp } from './app.js';
 import { backup, nightlyBackups, restore } from './backup.js';
 import { loadConfig } from './config.js';
 import { connect, connectOptional, migrate } from './db.js';
 import { desktopIndexSource, storedIndexSource } from './indexSource.js';
 import { IndexingQueue } from './indexing.js';
+import { FilesKeyring, LegacyServerKeyring } from './keyring.js';
+import { runLegacyPreflight } from './legacyPreflight.js';
 import { LocalFilesManager } from './localManager.js';
 import { PotionEmbedder } from './potionEmbedder.js';
 import { RecordingEnrichmentQueue } from './recordingEnrichment.js';
@@ -19,6 +20,7 @@ const db = await connect(config.databaseUrl); await migrate(db);
 if (config.mode === 'desktop') {
   await cleanupStaleUploads(db, new Store(config.chunkRoot)).catch(error => { console.warn('[SullaFiles] stale upload cleanup deferred:', error) });
 }
+if (config.mode === 'desktop' && config.filesRoot) config.legacyPreflight = await runLegacyPreflight(db, config.filesRoot, { caseInsensitive: config.caseInsensitiveRoot });
 config.keyring = config.mode === 'desktop' ? new FilesKeyring(db) : new LegacyServerKeyring(db, config.capabilitySigningKey);
 const identityDb = await connectOptional(config.vaultDatabaseUrl);
 const embedder = PotionEmbedder.load(config.modelDir);

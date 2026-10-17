@@ -1,16 +1,20 @@
-import type { FilesKeyring } from './keyring.js';
 import { resolve } from 'node:path';
 
 import { deriveCapabilitySigningKey } from './auth.js';
 
+import type { FilesKeyring } from './keyring.js';
+import type { LegacyPreflightStatus } from './legacyPreflight.js';
+
 export interface Config {
   keyring?: FilesKeyring;
+  legacyPreflight?: LegacyPreflightStatus;
   port:                 number;
   databaseUrl:          string;
   vaultDatabaseUrl?:    string;
   chunkRoot:            string;
   dataRoot:             string;
   filesRoot?:           string;
+  caseInsensitiveRoot:  boolean;
   backupTarget?:        string;
   capabilitySigningKey: string | Buffer;
   serverJwtSecret?:     string;
@@ -41,6 +45,7 @@ export function loadConfig():Config {
     chunkRoot:        resolve(process.env.SULLA_FILES_CHUNK_ROOT ?? '/var/lib/sulla-files/chunks'),
     dataRoot:         resolve(process.env.SULLA_FILES_DATA_ROOT ?? '/var/lib/sulla-files'),
     filesRoot:        mode === 'desktop' ? resolve(process.env.SULLA_FILES_FOLDER ?? '/data/files') : undefined,
+    caseInsensitiveRoot: process.env.SULLA_FILES_CASE_INSENSITIVE_ROOT === '1',
     backupTarget:     process.env.SULLA_FILES_BACKUP_TARGET ? resolve(process.env.SULLA_FILES_BACKUP_TARGET) : undefined,
     capabilitySigningKey,
     serverJwtSecret:  process.env.SULLA_FILES_JWT_SECRET,

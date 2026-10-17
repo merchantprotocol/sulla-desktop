@@ -47,6 +47,7 @@ export interface FilesSnapshot {
     serverConfigured: boolean;
     location?: 'local' | 'server' | 'cloud';
     serverLabel?: string;
+    legacyImport?: { state: 'clear' | 'secure-import-required'; protectedPrefix?: string; code?: string; action?: string };
   };
 }
 

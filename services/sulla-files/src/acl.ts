@@ -6,7 +6,7 @@ export interface CollectionGrant { role?: string; paths: { folderPath: string; r
 export interface CollectionSearchScope { collectionId: string; paths: string[] }
 
 export async function resolveCollectionGrants(db:pg.Pool | pg.PoolClient, identityDb:pg.Pool | undefined, actor:FilesIdentity, collectionId:string):Promise<CollectionGrant> {
-  const result = await db.query('SELECT * FROM collections WHERE id=$1', [collectionId]); const collection = result.rows[0];
+  const result = await db.query('SELECT * FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE', [collectionId]); const collection = result.rows[0];
   if (!collection) throw Object.assign(new Error('collection not found'), { status: 404 });
   if (collection.owner_user_id === actor.userId) return { role: 'manage', paths: [], collection };
   let groups:string[] = [];
@@ -21,7 +21,7 @@ export async function resolveCollectionGrants(db:pg.Pool | pg.PoolClient, identi
 }
 
 export async function searchableScopes(db:pg.Pool, identityDb:pg.Pool | undefined, actor:FilesIdentity):Promise<CollectionSearchScope[]> {
-  const collections = await db.query("SELECT id FROM collections WHERE kind='knowledge'"); const scopes:CollectionSearchScope[] = [];
+  const collections = await db.query("SELECT id FROM collections WHERE kind='knowledge' AND published=TRUE AND legacy_source=FALSE"); const scopes:CollectionSearchScope[] = [];
   const requiredRole = actor.agentId || actor.jobId ? 'use-by-agents' : 'view';
   for (const collection of collections.rows) {
     const access = await resolveCollectionGrants(db, identityDb, actor, collection.id);

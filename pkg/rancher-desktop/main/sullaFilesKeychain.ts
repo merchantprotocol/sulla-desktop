@@ -12,13 +12,15 @@ export interface FilesSafeStorage {
 
 /** Never retains a plaintext key after the authenticated bootstrap completes. */
 export class SullaFilesKeychain {
-  private opening?: Promise<void>;
+  private opening?:   Promise<void>;
+  private archiving?: Promise<void>;
 
   constructor(
     private readonly keyPath: string,
     private readonly storage: () => Promise<FilesSafeStorage>,
     private readonly bootstrap: (key: Buffer) => Promise<void>,
     private readonly legacyKeys: { sourcePath: string; archivePath: string }[] = [],
+    private readonly legacyImporter?: (master:Buffer, legacyMasters:Buffer[]) => Promise<void>,
   ) {}
 
   unlock(): Promise<void> {
@@ -27,7 +29,49 @@ export class SullaFilesKeychain {
   }
 
   async settled(): Promise<void> {
-    await this.opening?.catch(() => undefined);
+    await Promise.all([this.opening?.catch(() => undefined), this.archiving?.catch(() => undefined)]);
+  }
+
+  /** Decrypt archived masters only inside Electron's safeStorage process. */
+  async importLegacy():Promise<void> {
+    if (!this.legacyImporter) throw new Error('Files legacy importer is unavailable');
+    const storage = await this.storage();
+    if (!storage.isEncryptionAvailable() || storage.getSelectedStorageBackend?.() === 'basic_text') throw new Error('Secure OS key storage is unavailable');
+    const master = await this.loadMaster(storage); const legacyMasters:Buffer[] = [];
+    try {
+      for (const legacy of this.legacyKeys) {
+        let file;
+        try { file = await fs.promises.open(legacy.archivePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW) } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw error;
+        }
+        try {
+          const info = await file.stat(); if (!info.isFile() || info.size > 16_384) throw new Error('Invalid archived key');
+          const value = Buffer.from(storage.decryptString(await file.readFile()), 'base64');
+          if (value.length !== 32) { value.fill(0); throw new Error('Invalid archived key') }
+          legacyMasters.push(value);
+        } finally { await file.close() }
+      }
+      if (!legacyMasters.length) throw new Error('No archived legacy Files master is available');
+      await this.legacyImporter(master, legacyMasters);
+    } finally { master.fill(0); for (const key of legacyMasters) key.fill(0); }
+  }
+
+  /** Run only after the service confirms legacy classification has completed. */
+  archiveLegacyKeys():Promise<void> {
+    if (this.legacyKeys.length === 0) return Promise.resolve();
+    this.archiving ??= this.archiveAllLegacyKeys().finally(() => { this.archiving = undefined });
+    return this.archiving;
+  }
+
+  private async archiveAllLegacyKeys():Promise<void> {
+    try {
+      const storage = await this.storage();
+      if (!storage.isEncryptionAvailable() || storage.getSelectedStorageBackend?.() === 'basic_text') throw new Error('Secure OS key storage is unavailable');
+      for (const legacy of this.legacyKeys) await this.archiveLegacyKey(storage, legacy);
+    } catch {
+      throw new Error('Files could not secure legacy key material using the OS keychain');
+    }
   }
 
   /** Preserve old key material under OS protection before retiring plaintext. */
@@ -59,8 +103,7 @@ export class SullaFilesKeychain {
           await archive.close();
         }
       } catch (error) {
-        // An interrupted previous migration is recoverable only if the existing
-        // archive decrypts to exactly the same key. Never overwrite a conflict.
+        // Resume only when the durable archive decrypts to this exact source.
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       }
       const archive = await fs.promises.open(legacy.archivePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -73,8 +116,6 @@ export class SullaFilesKeychain {
         await archive.close();
       }
       if (verified.length !== 32 || !crypto.timingSafeEqual(original, verified)) throw new Error('Legacy archive conflict');
-      // Persist the directory entry as well as the archive contents before the
-      // plaintext is unlinked. Unsupported durability primitives fail closed.
       const directory = await fs.promises.open(path.dirname(legacy.archivePath), fs.constants.O_RDONLY);
       try { await directory.sync() } finally { await directory.close() }
       const latest = await fs.promises.lstat(legacy.sourcePath);
@@ -98,52 +139,7 @@ export class SullaFilesKeychain {
       if (!storage.isEncryptionAvailable() || storage.getSelectedStorageBackend?.() === 'basic_text') {
         throw new Error('Secure OS key storage is unavailable');
       }
-      await fs.promises.mkdir(path.dirname(this.keyPath), { recursive: true, mode: 0o700 });
-      for (const legacy of this.legacyKeys) await this.archiveLegacyKey(storage, legacy);
-      try {
-        const file = await fs.promises.open(this.keyPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-        try {
-          const info = await file.stat();
-          if (!info.isFile() || info.size > 16_384) throw new Error('Invalid encrypted key');
-          const encoded = storage.decryptString(await file.readFile());
-          if (!/^[A-Za-z0-9+/]{43}=$/.test(encoded)) throw new Error('Invalid encrypted key');
-          key = Buffer.from(encoded, 'base64');
-          if (key.length !== 32) throw new Error('Invalid encrypted key');
-        } finally {
-          await file.close();
-        }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        key = crypto.randomBytes(32);
-        const encrypted = storage.encryptString(key.toString('base64'));
-        // Never overwrite the only recoverable key. Partial writes fail closed.
-        const file = await fs.promises.open(this.keyPath, 'wx', 0o600);
-        try {
-          await file.writeFile(encrypted);
-          await file.sync();
-        } finally {
-          await file.close();
-        }
-      }
-      // The service may commit a verifier immediately after bootstrap. Verify
-      // the on-disk ciphertext and persist its directory entry first so a crash
-      // cannot leave committed file data with a missing/unrecoverable master.
-      let persisted: Buffer | undefined;
-      const persistedFile = await fs.promises.open(this.keyPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-      try {
-        const info = await persistedFile.stat();
-        if (!info.isFile() || info.size > 16_384) throw new Error('Invalid encrypted key');
-        const encoded = storage.decryptString(await persistedFile.readFile());
-        if (!/^[A-Za-z0-9+/]{43}=$/.test(encoded)) throw new Error('Invalid encrypted key');
-        persisted = Buffer.from(encoded, 'base64');
-        if (persisted.length !== 32 || !crypto.timingSafeEqual(key, persisted)) throw new Error('Encrypted key verification failed');
-        await persistedFile.sync();
-      } finally {
-        persisted?.fill(0);
-        await persistedFile.close();
-      }
-      const directory = await fs.promises.open(path.dirname(this.keyPath), fs.constants.O_RDONLY);
-      try { await directory.sync() } finally { await directory.close() }
+      key = await this.loadMaster(storage);
       await this.bootstrap(key);
     } catch {
       // Neither Electron nor HTTP errors may leak decrypted material to logs.
@@ -151,5 +147,36 @@ export class SullaFilesKeychain {
     } finally {
       key?.fill(0);
     }
+  }
+
+  private async loadMaster(storage:FilesSafeStorage):Promise<Buffer> {
+    await fs.promises.mkdir(path.dirname(this.keyPath), { recursive: true, mode: 0o700 });
+    let key:Buffer;
+    try {
+      const file = await fs.promises.open(this.keyPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const info = await file.stat(); if (!info.isFile() || info.size > 16_384) throw new Error('Invalid encrypted key');
+        const encoded = storage.decryptString(await file.readFile());
+        if (!/^[A-Za-z0-9+/]{43}=$/.test(encoded)) throw new Error('Invalid encrypted key');
+        key = Buffer.from(encoded, 'base64'); if (key.length !== 32) throw new Error('Invalid encrypted key');
+      } finally { await file.close() }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      key = crypto.randomBytes(32); const encrypted = storage.encryptString(key.toString('base64'));
+      const file = await fs.promises.open(this.keyPath, 'wx', 0o600);
+      try { await file.writeFile(encrypted); await file.sync() } finally { await file.close() }
+    }
+    let persisted:Buffer | undefined;
+    const file = await fs.promises.open(this.keyPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const info = await file.stat(); if (!info.isFile() || info.size > 16_384) throw new Error('Invalid encrypted key');
+      const encoded = storage.decryptString(await file.readFile()); if (!/^[A-Za-z0-9+/]{43}=$/.test(encoded)) throw new Error('Invalid encrypted key');
+      persisted = Buffer.from(encoded, 'base64');
+      if (persisted.length !== 32 || !crypto.timingSafeEqual(key, persisted)) throw new Error('Encrypted key verification failed');
+      await file.sync();
+    } finally { persisted?.fill(0); await file.close() }
+    const directory = await fs.promises.open(path.dirname(this.keyPath), fs.constants.O_RDONLY);
+    try { await directory.sync() } finally { await directory.close() }
+    return key;
   }
 }

@@ -102,10 +102,13 @@ describe('Files keychain bootstrap', () => {
     const legacy = ['shared', 'quarantined'].map(name => ({ sourcePath: path.join(directory, `${ name }.key`), archivePath: path.join(directory, `${ name }.enc`) }));
     const originals = [crypto.randomBytes(32), crypto.randomBytes(32)];
     for (const [index, item] of legacy.entries()) await fs.promises.writeFile(item.sourcePath, originals[index]);
-    await new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => {
-      expect(legacy.every(item => !fs.existsSync(item.sourcePath))).toBe(true);
-      return Promise.resolve();
-    }, legacy).unlock();
+    let bootstrapped = false;
+    const keychain = new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => { bootstrapped = true; return Promise.resolve() }, legacy);
+    await keychain.archiveLegacyKeys();
+    expect(bootstrapped).toBe(false);
+    expect(legacy.every(item => !fs.existsSync(item.sourcePath))).toBe(true);
+    await keychain.unlock();
+    expect(bootstrapped).toBe(true);
     for (const [index, item] of legacy.entries()) {
       const archived = await fs.promises.readFile(item.archivePath);
       expect(archived.includes(originals[index])).toBe(false);
@@ -130,9 +133,11 @@ describe('Files keychain bootstrap', () => {
       await fs.promises.symlink(sourcePath, actualSource);
     }
     let bootstrapped = false;
-    await expect(new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => { bootstrapped = true; return Promise.resolve() }, [{ sourcePath: actualSource, archivePath }]).unlock()).rejects.toThrow('Files could not unlock using the OS keychain');
+    const keychain = new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => { bootstrapped = true; return Promise.resolve() }, [{ sourcePath: actualSource, archivePath }]);
+    await expect(keychain.archiveLegacyKeys()).rejects.toThrow('Files could not secure legacy key material using the OS keychain');
     expect(await fs.promises.readFile(sourcePath)).toEqual(original);
     expect(bootstrapped).toBe(false);
+    expect(fs.existsSync(keyPath)).toBe(false);
     original.fill(0);
   });
 
@@ -144,7 +149,8 @@ describe('Files keychain bootstrap', () => {
     await fs.promises.writeFile(sourcePath, original);
     const encrypted = provider.encryptString(original.toString('base64'));
     await fs.promises.writeFile(archivePath, encrypted);
-    await new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => Promise.resolve(), [{ sourcePath, archivePath }]).unlock();
+    const keychain = new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => Promise.resolve(), [{ sourcePath, archivePath }]);
+    await keychain.archiveLegacyKeys();
     expect(fs.existsSync(sourcePath)).toBe(false);
     expect(await fs.promises.readFile(archivePath)).toEqual(encrypted);
     original.fill(0);
@@ -159,5 +165,4 @@ describe('Files keychain bootstrap', () => {
     // Preserve the encrypted file for recovery; never replace it on failure.
     expect(fs.existsSync(keyPath)).toBe(true);
   });
-
 });

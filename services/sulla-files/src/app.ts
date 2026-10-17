@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 
 import express from 'express';
 
@@ -6,6 +7,8 @@ import { resolveCollectionGrants, ROLE_LEVEL, searchableScopes } from './acl.js'
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, encryptChunk } from './crypto.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
+import { LegacyFilesImporter } from './legacyImport.js';
+import { runLegacyPreflight } from './legacyPreflight.js';
 import { loadFileContent, thumbnail } from './preview.js';
 import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 import { SharesService } from './shares.js';
@@ -51,6 +54,10 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
       if (!config.keyring || typeof request.body?.masterKey !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(request.body.masterKey)) return response.status(400).json({ error: 'Invalid Files master key' });
       key = Buffer.from(request.body.masterKey, 'base64'); delete request.body.masterKey;
       await serial(async() => {
+        if (config.filesRoot) {
+          config.legacyPreflight = await runLegacyPreflight(db, config.filesRoot, { caseInsensitive: config.caseInsensitiveRoot });
+          if (config.legacyPreflight.state === 'secure-import-required') throw new Error('Legacy Files secure import is required');
+        }
         await config.keyring!.unlock(key!, config.capabilitySigningKey);
         try { await onUnlock?.(); ready = true } catch (error) { ready = false; try { await onLock?.() } finally { config.keyring!.close() } throw error }
       });
@@ -62,12 +69,32 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
     if (config.mode !== 'desktop') return response.sendStatus(404);
     await serial(async() => { ready = false; try { await onLock?.() } finally { config.keyring?.close() } }); response.json({ ok: true });
   });
+  app.post('/v1/local/legacy-import', async(request, response) => {
+    if (config.mode !== 'desktop' || !config.filesRoot || !config.legacyPreflight?.protectedPrefix || /[/\\]/.test(config.legacyPreflight.protectedPrefix)) return response.sendStatus(404);
+    let master:Buffer | undefined; const legacy:Buffer[] = [];
+    try {
+      if (typeof request.body?.masterKey !== 'string' || !Array.isArray(request.body?.legacyMasterKeys)) throw new Error('Invalid import request');
+      master = Buffer.from(request.body.masterKey, 'base64');
+      for (const encoded of request.body.legacyMasterKeys) {
+        if (typeof encoded !== 'string') throw new Error('Invalid import request');
+        legacy.push(Buffer.from(encoded, 'base64'));
+      }
+      delete request.body.masterKey; delete request.body.legacyMasterKeys;
+      if (master.length !== 32 || legacy.length === 0 || legacy.some(key => key.length !== 32)) throw new Error('Invalid import request');
+      const importer = new LegacyFilesImporter(db, join(config.filesRoot, config.legacyPreflight.protectedPrefix), config.chunkRoot);
+      const result = await serial(() => importer.run(master!, legacy));
+      config.legacyPreflight = { state: 'clear', protectedPrefix: config.legacyPreflight?.protectedPrefix };
+      return response.json({ ok: true, ...result });
+    } catch { return response.status(409).json({ error: 'Legacy Files import failed; source data remains protected' }) } finally {
+      master?.fill(0); for (const key of legacy) key.fill(0); if (request.body) { delete request.body.masterKey; delete request.body.legacyMasterKeys }
+    }
+  });
   app.use((request, response, next) => {
     if (request.path !== '/healthz' && !ready) return response.status(503).json({ code: 'FILES_LOCKED', error: 'Files is locked; Desktop keychain unlock is required' });
     next();
   });
   const identity = (request:RequestWithIdentity):FilesIdentity => { if (!request.filesIdentity) throw new HttpError(401, 'identity required'); return request.filesIdentity };
-  async function collectionRow(collectionId:string):Promise<any> { const result = await db.query('SELECT * FROM collections WHERE id=$1', [collectionId]); if (!result.rows[0]) throw new HttpError(404, 'collection not found'); return result.rows[0] }
+  async function collectionRow(collectionId:string):Promise<any> { const result = await db.query('SELECT * FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE', [collectionId]); if (!result.rows[0]) throw new HttpError(404, 'collection not found'); return result.rows[0] }
   async function grants(request:RequestWithIdentity, collectionId:string):Promise<{ role?: string; paths: { folderPath: string; role: string }[]; collection: any }> {
     return resolveCollectionGrants(db, identityDb, identity(request), collectionId);
   }
@@ -123,10 +150,10 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
       return collection;
     }
     if (!actor.jobId) {
-      const existing = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND kind='knowledge' AND compatibility_state='native' ORDER BY created_at LIMIT 1", [actor.userId])).rows[0];
+      const existing = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND kind='knowledge' AND compatibility_state='native' AND published=TRUE AND legacy_source=FALSE ORDER BY created_at LIMIT 1", [actor.userId])).rows[0];
       if (existing) return existing;
     } else {
-      const existing = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND agent_run_id=$2 AND kind='scratch'", [actor.userId, actor.jobId])).rows[0];
+      const existing = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND agent_run_id=$2 AND kind='scratch' AND published=TRUE AND legacy_source=FALSE", [actor.userId, actor.jobId])).rows[0];
       if (existing) {
         if (existing.thread_id && actor.threadId && existing.thread_id !== actor.threadId) throw new HttpError(403, 'agent run belongs to another thread');
         return existing;
@@ -146,7 +173,7 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
-  app.get('/healthz', (_request, response) => response.json({ ok: true, mode: config.mode, locked: !ready }));
+  app.get('/healthz', (_request, response) => response.json({ ok: true, mode: config.mode, locked: !ready, legacyImport: config.legacyPreflight }));
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
   app.get('/v1/local/recent', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.recent(Number(request.query.limit ?? 4), typeof request.query.path === 'string' ? request.query.path : undefined)) } catch (error) { next(error) } });
   app.post('/v1/local/rescan', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.rescan().catch(error => console.error('[SullaFiles] rescan failed', error)); response.status(202).json({ accepted: true }) });
@@ -186,7 +213,7 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
   app.patch('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.update({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.body, request.header('x-sulla-cloud-token') ?? '')) } catch (error) { next(error) } });
   app.post('/v1/links/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.restore({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.header('x-sulla-cloud-token') ?? '', typeof request.body.password === 'string' ? request.body.password : undefined)) } catch (error) { next(error) } });
 
-  app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try { const rows = await db.query("SELECT * FROM collections WHERE kind='knowledge' ORDER BY name"); const visible:any[] = []; for (const collection of rows.rows) { const access = await grants(request, collection.id); if (access.role || access.paths.length) visible.push({ ...collection, access_role: access.role ?? null, shared_folders: access.paths }); } response.json(visible) } catch (error) { next(error) } });
+  app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try { const rows = await db.query("SELECT * FROM collections WHERE kind='knowledge' AND published=TRUE AND legacy_source=FALSE ORDER BY name"); const visible:any[] = []; for (const collection of rows.rows) { const access = await grants(request, collection.id); if (access.role || access.paths.length) visible.push({ ...collection, access_role: access.role ?? null, shared_folders: access.paths }); } response.json(visible) } catch (error) { next(error) } });
   app.post('/v1/agent-files/query', async(request:RequestWithIdentity, response, next) => {
     try {
       const runIds = Array.isArray(request.body.runIds) ? [...new Set(request.body.runIds.filter((value:unknown):value is string => typeof value === 'string' && value.length > 0))].slice(0, 100) : [];
@@ -195,12 +222,14 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
       if (!threadId) throw new HttpError(400, 'threadId is required');
       const legacy = await db.query(`SELECT count(*)::int AS count FROM files f JOIN collections c ON c.id=f.collection_id
         JOIN file_versions v ON v.id=f.current_version_id JOIN collections chunks ON chunks.id=v.chunk_collection_id
-        WHERE c.owner_user_id=$1 AND (c.compatibility_state='legacy-external-data' OR chunks.compatibility_state='legacy-external-data')
+        WHERE c.owner_user_id=$1 AND ((c.compatibility_state='legacy-external-data' AND NOT EXISTS(SELECT 1 FROM files_legacy_collection_map m WHERE m.source_collection_id=c.id AND m.published_at IS NOT NULL))
+          OR (chunks.compatibility_state='legacy-external-data' AND NOT EXISTS(SELECT 1 FROM files_legacy_collection_map m WHERE m.source_collection_id=chunks.id AND m.published_at IS NOT NULL)))
           AND (c.agent_run_id=ANY($2::text[]) OR f.created_by_type='agent-run' AND f.created_by_id=ANY($2::text[]))`, [actor.userId, runIds]);
       if (Number(legacy.rows[0]?.count ?? 0) > 0) throw new HttpError(409, 'Legacy agent files need an explicit secure import from the retired external chunk store; records were preserved and were not opened');
       const rows = await db.query(`SELECT f.*,c.kind AS collection_kind,c.agent_run_id
         FROM files f JOIN collections c ON c.id=f.collection_id JOIN file_versions v ON v.id=f.current_version_id JOIN collections chunks ON chunks.id=v.chunk_collection_id
-        WHERE c.owner_user_id=$1 AND c.compatibility_state='native' AND chunks.compatibility_state='native' AND (c.thread_id=$3 OR c.thread_id IS NULL)
+        WHERE c.owner_user_id=$1 AND c.compatibility_state='native' AND c.published=TRUE AND c.legacy_source=FALSE
+          AND chunks.compatibility_state='native' AND chunks.published=TRUE AND chunks.legacy_source=FALSE AND (c.thread_id=$3 OR c.thread_id IS NULL)
           AND (c.agent_run_id=ANY($2::text[]) OR (f.created_by_type='agent-run' AND f.created_by_id=ANY($2::text[])))
           AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
         ORDER BY f.updated_at DESC`, [actor.userId, runIds, threadId]);
@@ -352,7 +381,7 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
     await client.query('COMMIT'); await audit(request, 'keep-agent-file', kept); response.json({ ...kept, provenance: { type: source.created_by_type, id: source.created_by_id } });
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
   app.post('/v1/agent-runs/:runId/keep', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
-    const actor = identity(request); const source = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND agent_run_id=$2 AND kind='scratch'", [actor.userId, request.params.runId])).rows[0];
+    const actor = identity(request); const source = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND agent_run_id=$2 AND kind='scratch' AND published=TRUE AND legacy_source=FALSE", [actor.userId, request.params.runId])).rows[0];
     if (!source) throw new HttpError(404, 'scratch run not found');
     requireScratchRun(actor, source);
     if (source.thread_id && actor.threadId && source.thread_id !== actor.threadId) throw new HttpError(403, 'scratch run belongs to another thread');
@@ -373,7 +402,7 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
   app.post('/v1/agent-runs/:runId/end', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request); if (actor.jobId !== request.params.runId) throw new HttpError(403, 'run identity mismatch');
     const result = await db.query(`UPDATE files f SET expires_at=NOW()+INTERVAL '14 days',updated_at=NOW()
-      FROM collections c WHERE f.collection_id=c.id AND c.owner_user_id=$1 AND c.agent_run_id=$2 AND c.kind='scratch' AND f.expires_at IS NULL AND f.deleted_at IS NULL RETURNING f.id`, [actor.userId, actor.jobId]);
+      FROM collections c WHERE f.collection_id=c.id AND c.owner_user_id=$1 AND c.agent_run_id=$2 AND c.kind='scratch' AND c.published=TRUE AND c.legacy_source=FALSE AND f.expires_at IS NULL AND f.deleted_at IS NULL RETURNING f.id`, [actor.userId, actor.jobId]);
     response.json({ count: result.rowCount ?? result.rows.length });
   } catch (error) { next(error) } });
   app.use((error:any, _request:any, response:any, _next:any) => response.status(error.status ?? (error.code === '23505' ? 409 : 500)).json({ error: _request.path === '/v1/local/unlock' || error.type === 'entity.parse.failed' ? 'Invalid request' : error.message ?? 'server error' })); return app;

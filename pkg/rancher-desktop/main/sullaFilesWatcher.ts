@@ -13,6 +13,7 @@ import { spawnFile } from '@pkg/utils/childProcess';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
+import { resolveSullaFilesUserRoot } from '@pkg/utils/sullaFilesPaths';
 
 const console = Logging.background;
 const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/'];
@@ -50,7 +51,7 @@ function ignored(relativePath:string, patterns:string[]):boolean {
 }
 
 class SullaFilesWatcher {
-  readonly folder = path.join(os.homedir(), 'sulla', 'Files');
+  readonly folder = resolveSullaFilesUserRoot().activePath;
   private watcher?:     fs.FSWatcher;
   private rescanTimer?: NodeJS.Timeout;
   private safetyTimer?: NodeJS.Timeout;
@@ -80,6 +81,13 @@ class SullaFilesWatcher {
       { sourcePath: path.join(this.folder, 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-shared-master-key.enc') },
       { sourcePath: path.join(paths.sullaHome, 'private-files-quarantine', 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-quarantined-master-key.enc') },
     ],
+    async(master, legacyMasters) => {
+      const body = Buffer.from(JSON.stringify({ masterKey: master.toString('base64'), legacyMasterKeys: legacyMasters.map(key => key.toString('base64')) }));
+      try {
+        const response = await this.rawLocalRequest('/v1/local/legacy-import', { method: 'POST', body }, 30 * 60_000);
+        if (!response.ok) throw new Error('Legacy Files import failed');
+      } finally { body.fill(0) }
+    },
   );
 
   private async appUnlocked(): Promise<boolean> {
@@ -107,13 +115,21 @@ class SullaFilesWatcher {
     const health = await response.json();
     // Never send a master key to an older image with no memory-only protocol.
     if (typeof health.locked !== 'boolean') throw new Error('Files service requires a keychain-compatible update');
-    if (health.locked) await this.keychain.unlock();
+    if (!health.legacyImport || !['clear', 'secure-import-required'].includes(health.legacyImport.state)) throw new Error('Files service requires a legacy-preflight-compatible update');
+    if (health.locked) {
+      // The service has migrated/classified metadata before this point. Secure
+      // legacy plaintext custody separately, then refuse native unlock until
+      // explicit recovery has installed the external collection keys.
+      await this.keychain.archiveLegacyKeys();
+      if (health.legacyImport.state === 'secure-import-required') await this.keychain.importLegacy();
+      await this.keychain.unlock();
+    }
     await this.requireAppUnlocked();
   }
 
-  private async rawLocalRequest(endpoint:string, init:RequestInit = {}):Promise<Response> {
+  private async rawLocalRequest(endpoint:string, init:RequestInit = {}, timeoutMs = 30_000):Promise<Response> {
     const token = await SullaSettingsModel.getServicePassword();
-    return fetch(`${ API }${ endpoint }`, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any), 'x-sulla-files-token': token }, redirect: 'error', signal: AbortSignal.timeout(30_000) });
+    return fetch(`${ API }${ endpoint }`, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any), 'x-sulla-files-token': token }, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
   }
 
   private async isLockedResponse(response: Response): Promise<boolean> {
@@ -226,7 +242,7 @@ class SullaFilesWatcher {
 
       return { ...status, location: !status.serverConfigured ? 'local' : serverLabel?.endsWith('sulla.cloud') ? 'cloud' : 'server', serverLabel: serverLabel?.endsWith('sulla.cloud') ? 'Sulla Cloud' : serverLabel };
     } catch {
-      return { state: 'error', pendingFiles: 0, lastError: 'Files container is off; files remain safely in ~/sulla/Files', serverConfigured: false, location: 'local' };
+      return { state: 'error', pendingFiles: 0, lastError: 'Files container is off; files remain safely in ~/sulla/files', serverConfigured: false, location: 'local' };
     }
   }
 

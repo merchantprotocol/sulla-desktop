@@ -26,7 +26,7 @@ function database(ids:string[] = ['legacy']) {
       if (sql === 'BEGIN') snapshot = { verifier, rows: new Map(rows) };
       else if (sql === 'ROLLBACK') { verifier = snapshot.verifier; rows.clear(); for (const [id,row] of snapshot.rows) rows.set(id,row) }
       else if (sql.startsWith('SELECT verifier')) return { rows: verifier ? [{ verifier }] : [] };
-      else if (sql === 'SELECT id FROM collections') return { rows: ids.map(id => ({ id })) };
+      else if (sql === "SELECT id FROM collections WHERE compatibility_state='native'") return { rows: ids.map(id => ({ id })) };
       else if (sql.startsWith('INSERT INTO files_key_state')) verifier = values[0];
       else if (sql.startsWith('INSERT INTO files_collection_keys')) rows.set(values[0], { collection_id: values[0], data_key: values[1], dedup_key: values[2] });
       else if (sql.startsWith('SELECT collection_id,data_key')) return { rows: [...rows.values()] };
@@ -60,6 +60,14 @@ test('new collection keys are random, not signing-derived, and survive restart',
   const before = Buffer.from((await ring.keys('new')).data);
   assert.notDeepEqual(before, createHmac('sha256', signing).update('sulla:files:data-key:v1:new').digest());
   ring.close(); await ring.unlock(key, 'other'); assert.deepEqual(Buffer.from((await ring.keys('new')).data), before); ring.close();
+});
+
+test('unknown external random-key collections never receive replacement keys', async() => {
+  const db = database(['native']); const ring = new FilesKeyring(db); const key = randomBytes(32);
+  await ring.unlock(key, signing);
+  assert.deepEqual([...db.rows.keys()], ['native']);
+  await assert.rejects(ring.keys('external-random-key'), /secure key exchange is required/);
+  ring.close();
 });
 
 function gate() { let release!:()=>void; const promise = new Promise<void>(resolve => { release = resolve }); return { promise, release } }
