@@ -81,6 +81,13 @@ class SullaFilesWatcher {
       { sourcePath: path.join(this.folder, 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-shared-master-key.enc') },
       { sourcePath: path.join(paths.sullaHome, 'private-files-quarantine', 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-quarantined-master-key.enc') },
     ],
+    async(master, legacyMasters) => {
+      const body = Buffer.from(JSON.stringify({ masterKey: master.toString('base64'), legacyMasterKeys: legacyMasters.map(key => key.toString('base64')) }));
+      try {
+        const response = await this.rawLocalRequest('/v1/local/legacy-import', { method: 'POST', body }, 30 * 60_000);
+        if (!response.ok) throw new Error('Legacy Files import failed');
+      } finally { body.fill(0) }
+    },
   );
 
   private async appUnlocked(): Promise<boolean> {
@@ -114,15 +121,15 @@ class SullaFilesWatcher {
       // legacy plaintext custody separately, then refuse native unlock until
       // explicit recovery has installed the external collection keys.
       await this.keychain.archiveLegacyKeys();
-      if (health.legacyImport.state === 'secure-import-required') throw new Error(health.legacyImport.action || 'Legacy Files secure import is required');
+      if (health.legacyImport.state === 'secure-import-required') await this.keychain.importLegacy();
       await this.keychain.unlock();
     }
     await this.requireAppUnlocked();
   }
 
-  private async rawLocalRequest(endpoint:string, init:RequestInit = {}):Promise<Response> {
+  private async rawLocalRequest(endpoint:string, init:RequestInit = {}, timeoutMs = 30_000):Promise<Response> {
     const token = await SullaSettingsModel.getServicePassword();
-    return fetch(`${ API }${ endpoint }`, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any), 'x-sulla-files-token': token }, redirect: 'error', signal: AbortSignal.timeout(30_000) });
+    return fetch(`${ API }${ endpoint }`, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any), 'x-sulla-files-token': token }, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
   }
 
   private async isLockedResponse(response: Response): Promise<boolean> {

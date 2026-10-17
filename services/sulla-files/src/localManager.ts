@@ -126,7 +126,8 @@ export class LocalFilesManager {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
-      const existing = await client.query("SELECT id FROM collections WHERE id=$1 AND owner_user_id=$2 AND kind='knowledge'", [id, this.config.userId]);
+      const existing = await client.query(`SELECT c.id FROM collections c WHERE c.owner_user_id=$2 AND c.kind='knowledge' AND c.published=TRUE AND c.legacy_source=FALSE
+        AND (c.id=$1 OR c.id=(SELECT shadow_collection_id FROM files_legacy_collection_map WHERE source_collection_id=$1)) ORDER BY (c.id=$1) DESC LIMIT 1`, [id, this.config.userId]);
       if (!existing.rows[0]) {
         await client.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy)
           VALUES($1,$2,$3,'Files','knowledge',$4,'{}','{}',$5)`, [id, this.config.orgId ?? null, this.config.userId, this.config.serverUrl ? 'synced' : 'desktop-only', { trashDays: 90 }]);
@@ -134,7 +135,7 @@ export class LocalFilesManager {
         await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
         await client.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')", [id, this.config.userId]);
       } else if (this.config.orgId) await client.query('UPDATE collections SET org_id=$2,updated_at=NOW() WHERE id=$1', [id, this.config.orgId]);
-      await client.query('COMMIT'); return id;
+      await client.query('COMMIT'); return existing.rows[0]?.id ?? id;
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 

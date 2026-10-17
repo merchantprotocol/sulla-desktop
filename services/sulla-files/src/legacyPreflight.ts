@@ -31,11 +31,12 @@ function rootEntry(entries:Awaited<ReturnType<typeof rootEntries>>, expected:str
   return matches[0];
 }
 
-async function hasLegacyChunkShape(chunksRoot:string):Promise<boolean> {
+async function legacyChunkCollections(chunksRoot:string):Promise<string[]> {
   let collections;
   try { collections = await readdir(chunksRoot, { withFileTypes: true }) } catch (error) {
     throw new Error('Legacy Files preflight could not inspect chunk-store metadata', { cause: error });
   }
+  const found:string[] = [];
   for (const collection of collections) {
     const id = collection.name.toLowerCase();
     if (!collection.isDirectory() || !UUID.test(id)) continue;
@@ -49,10 +50,10 @@ async function hasLegacyChunkShape(chunksRoot:string):Promise<boolean> {
       try { chunks = await readdir(join(chunksRoot, collection.name, bucket.name), { withFileTypes: true }) } catch (error) {
         throw new Error('Legacy Files preflight could not inspect bucket metadata', { cause: error });
       }
-      if (chunks.some(chunk => chunk.isFile() && CHUNK.test(chunk.name))) return true;
+      if (chunks.some(chunk => chunk.isFile() && CHUNK.test(chunk.name))) { found.push(id); break }
     }
   }
-  return false;
+  return found;
 }
 
 /** Metadata-only classification. No legacy key or chunk content is opened. */
@@ -88,10 +89,15 @@ export async function runLegacyPreflight(db:pg.Pool, filesRoot:string, options:{
   // The retired runtime's exact root-level UUID/bucket/hash shape is itself
   // containment evidence. Its master may already be in OS custody/quarantine,
   // and its collection ids may never have reached this database.
-  const externalLayout = Boolean(chunksName && await hasLegacyChunkShape(chunksRoot));
-  const detected = externalLayout || externalIds.length > 0 || Boolean(masterMarker && chunksName);
-  const required = detected || previous?.state === 'secure-import-required';
-  const protectedPrefix = required ? String(previous?.protected_prefix || chunksName || 'chunks') : undefined;
+  const layoutIds = chunksName ? await legacyChunkCollections(chunksRoot) : [];
+  const published = (await db.query('SELECT source_collection_id::text FROM files_legacy_collection_map WHERE published_at IS NOT NULL')).rows.map(row => String(row.source_collection_id));
+  const completed = Boolean((await db.query("SELECT 1 FROM files_legacy_imports WHERE id=TRUE AND state='completed'")).rowCount);
+  const unresolved = externalIds.some(id => !published.includes(id)) || layoutIds.some(id => !published.includes(id));
+  const detected = layoutIds.length > 0 || externalIds.length > 0 || Boolean(masterMarker && chunksName);
+  const required = unresolved || (!completed && (detected || previous?.state === 'secure-import-required'));
+  // Retain the prefix after conversion: the original ciphertext remains an
+  // immutable recovery source and must never enter watcher/search/share paths.
+  const protectedPrefix = previous?.protected_prefix || (detected ? chunksName || 'chunks' : undefined);
   await db.query(`INSERT INTO files_legacy_preflight(id,state,protected_prefix,reason,detected_at,checked_at)
     VALUES(TRUE,$1,$2,$3,CASE WHEN $1='secure-import-required' THEN NOW() ELSE NULL END,NOW())
     ON CONFLICT(id) DO UPDATE SET state=CASE WHEN files_legacy_preflight.state='secure-import-required' THEN files_legacy_preflight.state ELSE EXCLUDED.state END,
@@ -114,7 +120,7 @@ export async function runLegacyPreflight(db:pg.Pool, filesRoot:string, options:{
 }
 
 export function isLegacyInternalPath(path:string, status?:LegacyPreflightStatus):boolean {
-  if (status?.state !== 'secure-import-required' || !status.protectedPrefix) return false;
+  if (!status?.protectedPrefix) return false;
   const normalized = path.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '').toLowerCase();
   const prefix = status.protectedPrefix.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '').toLowerCase();
   return normalized === prefix || normalized.startsWith(`${ prefix }/`);
