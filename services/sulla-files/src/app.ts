@@ -23,6 +23,7 @@ class HttpError extends Error { constructor(public readonly status:number, messa
 function cleanPath(value:unknown, allowEmpty = true):string {
   if (typeof value !== 'string') throw new HttpError(400, 'path must be a string');
   const path = value.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
+  if (!path && allowEmpty) return '';
   if ((!allowEmpty && !path) || path.split('/').some(part => !part || part === '.' || part === '..')) throw new HttpError(400, 'invalid Files path');
   return path;
 }
