@@ -202,6 +202,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
         callerId: requiredString(request.body.callerId, 'callerId'),
         challengeId: requiredString(request.body.challengeId, 'challengeId'),
         clientProof: requiredString(request.body.clientProof, 'clientProof'),
+        sealedLegacyVmk: typeof request.body.sealedLegacyVmk === 'string' ? request.body.sealedLegacyVmk : undefined,
       }));
     });
     app.get('/v1/desktop/status', (request, response) => {
@@ -1198,8 +1199,9 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     response.status(201).json(result.rows[0]);
   });
 
-  app.use((error: unknown, _request: AuthenticatedRequest, response: Response, _next: NextFunction) => {
+  app.use((error: unknown, request: AuthenticatedRequest, response: Response, _next: NextFunction) => {
     if (error instanceof LocalVaultError) {
+      if (request.path.startsWith('/v1/broker/')) response.setHeader('X-Sulla-Vault-Error', error.code);
       response.status(error.status).json({
         error: error.code,
         message: error.code === 'approval_required' ? 'Owner approval is required' : error.message,

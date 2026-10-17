@@ -153,6 +153,8 @@ async function updateMasterCache(): Promise<void> {
   let packed: Buffer | undefined;
   let plaintext: Buffer | undefined;
   let masterKey: Buffer | undefined;
+  let legacyVmk: Buffer | undefined;
+  let sealedLegacy: Buffer | undefined;
   try {
     const clientNonce = randomBytes(32).toString('base64url');
     const challenge = await jsonRequest<CacheUpdateChallengeResponse>('/v1/desktop/cache/challenge', {
@@ -169,11 +171,26 @@ async function updateMasterCache(): Promise<void> {
     sessionKey = createHmac('sha256', identity).update(cacheUpdateSessionKeyInput(
       CALLER_ID, clientNonce, challenge.serverNonce, challenge.challengeId, challenge.expiresAt,
     ), 'utf8').digest();
+    const legacyPath = process.env.SULLA_VAULT_LEGACY_VMK_PATH;
+    if (legacyPath && fs.existsSync(legacyPath)) {
+      legacyVmk = unwrapKey(legacyPath);
+      if (legacyVmk.byteLength !== 32) throw new Error('Legacy vault key has an invalid length');
+      const legacyNonce = randomBytes(12);
+      const legacyCipher = createCipheriv('aes-256-gcm', sessionKey, legacyNonce);
+      const legacyCiphertext = Buffer.concat([legacyCipher.update(legacyVmk), legacyCipher.final()]);
+      sealedLegacy = Buffer.concat([legacyNonce, legacyCipher.getAuthTag(), legacyCiphertext]);
+      legacyCiphertext.fill(0);
+    }
+    const sealedLegacyVmk = sealedLegacy?.toString('base64url');
+    const sealedLegacySha256 = sealedLegacyVmk
+      ? createHash('sha256').update(sealedLegacyVmk).digest('base64url')
+      : '-';
     const response = await jsonRequest<CacheUpdateFetchResponse>('/v1/desktop/cache/fetch', {
       callerId: CALLER_ID,
       challengeId: challenge.challengeId,
+      ...(sealedLegacyVmk ? { sealedLegacyVmk } : {}),
       clientProof: hmac(identity, cacheUpdateFetchProofInput(
-        CALLER_ID, clientNonce, challenge.serverNonce, challenge.challengeId, challenge.expiresAt,
+        CALLER_ID, clientNonce, challenge.serverNonce, challenge.challengeId, challenge.expiresAt, sealedLegacySha256,
       )),
     });
     packed = Buffer.from(response.sealedMaster, 'base64url');
@@ -197,6 +214,8 @@ async function updateMasterCache(): Promise<void> {
     packed?.fill(0);
     plaintext?.fill(0);
     masterKey?.fill(0);
+    legacyVmk?.fill(0);
+    sealedLegacy?.fill(0);
   }
 }
 

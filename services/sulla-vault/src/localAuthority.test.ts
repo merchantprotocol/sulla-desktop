@@ -290,6 +290,7 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
       });
       const denied = await execute(request);
       assert.equal(denied.status, 428);
+      assert.equal(denied.headers.get('x-sulla-vault-error'), 'approval_required');
       const operationId = (await denied.json() as any).operationId;
       const approved = await fetch(`${ base }/v1/broker/approve`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-sulla-service-id': 'sulla-desktop-approval', authorization: `Bearer ${ TOKEN.approval }` },

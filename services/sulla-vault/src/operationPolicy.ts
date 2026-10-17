@@ -12,6 +12,13 @@ export interface BrokerOperationPolicy {
   binaryRequest?:  boolean;
   binaryResponse?: boolean;
   pathPattern?:    RegExp;
+  /** Provider-specific authority that must remain coupled as one trust decision. */
+  bindings?:       ReadonlyArray<{
+    integration: string;
+    hosts:       string[];
+    injections:  BrokerInjection[];
+    pathPattern?: RegExp;
+  }>;
 }
 
 const authHeaders = (fields: string[], names = ['authorization']): BrokerInjection[] => fields.flatMap(field =>
@@ -86,6 +93,58 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' },
     ],
   },
+  'provider.models': {
+    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom'],
+    requireItemSites: true,
+    methods: ['GET'],
+    injections: [
+      ...authHeaders(['api_key', 'api_token', 'bearer_token', 'access_token']),
+      { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
+      { field: 'api_key', target: 'header', name: 'api-key', scheme: 'raw' },
+      { field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' },
+    ],
+    pathPattern: /^\/(?:v1|v1beta)\/models(?:\/.*)?$/,
+  },
+  'tts.synthesize': {
+    integrations: ['elevenlabs', 'grok'],
+    methods: ['POST'],
+    allowStreaming: true,
+    binaryResponse: true,
+    injections: [],
+    bindings: [
+      {
+        integration: 'elevenlabs',
+        hosts: ['api.elevenlabs.io'],
+        injections: [{ field: 'api_key', target: 'header', name: 'xi-api-key', scheme: 'raw' }],
+        pathPattern: /^\/v1\/text-to-speech\/[A-Za-z0-9_-]+\/stream$/,
+      },
+      {
+        integration: 'grok',
+        hosts: ['api.x.ai'],
+        injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        pathPattern: /^\/v1\/tts$/,
+      },
+    ],
+  },
+  'oauth.exchange': {
+    requireItemSites: true,
+    methods: ['POST'],
+    injections: [
+      { field: 'client_id', target: 'form', name: 'client_id', scheme: 'raw' },
+      { field: 'client_secret', target: 'form', name: 'client_secret', scheme: 'raw' },
+      { field: 'client_secret', target: 'header', name: 'authorization', scheme: 'BasicClient' },
+    ],
+  },
+  'oauth.adopt': {
+    requireItemSites: true,
+    methods: ['POST'],
+    injections: [
+      { field: 'id_token', target: 'form', name: 'subject_token', scheme: 'raw' },
+      { field: 'access_token', target: 'form', name: 'subject_token', scheme: 'raw' },
+      { field: 'client_id', target: 'form', name: 'client_id', scheme: 'raw' },
+      { field: 'client_secret', target: 'header', name: 'authorization', scheme: 'BasicClient' },
+    ],
+  },
   'oauth.refresh': {
     requireItemSites: true,
     methods: ['POST'],
@@ -99,6 +158,17 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { field: 'client_secret', target: 'query', name: 'client_secret', scheme: 'raw' },
       { field: 'client_id', target: 'form', name: 'client_id', scheme: 'raw' },
       { field: 'client_secret', target: 'form', name: 'client_secret', scheme: 'raw' },
+      { field: 'client_secret', target: 'header', name: 'authorization', scheme: 'BasicClient' },
+    ],
+  },
+  'oauth.revoke': {
+    requireItemSites: true,
+    methods: ['POST'],
+    injections: [
+      { field: 'access_token', target: 'form', name: 'token', scheme: 'raw' },
+      { field: 'refresh_token', target: 'form', name: 'token', scheme: 'raw' },
+      { field: 'access_token', target: 'query', name: 'token', scheme: 'raw' },
+      { field: 'refresh_token', target: 'query', name: 'token', scheme: 'raw' },
       { field: 'client_secret', target: 'header', name: 'authorization', scheme: 'BasicClient' },
     ],
   },
@@ -125,7 +195,9 @@ export function validateOperation(
     throw new Error('integration_denied');
   }
   if (!policy.methods.includes(input.method.toUpperCase())) throw new Error('method_denied');
-  const allowedHosts = policy.requireItemSites ? itemPolicy.sites : policy.hosts;
+  const binding = policy.bindings?.find(candidate => candidate.integration === input.ref.integrationId);
+  if (policy.bindings && !binding) throw new Error('integration_denied');
+  const allowedHosts = binding?.hosts ?? (policy.requireItemSites ? itemPolicy.sites : policy.hosts);
   if (!allowedHosts?.length || !allowedHosts.some(allowed => hostMatches(hostname.toLowerCase(), allowed))) {
     throw new Error('destination_denied');
   }
@@ -135,9 +207,11 @@ export function validateOperation(
   if (input.bodyEncoding !== undefined && (!policy.binaryRequest || input.bodyEncoding !== 'base64' || typeof input.body !== 'string')) {
     throw new Error('binary_denied');
   }
-  if (policy.pathPattern && !policy.pathPattern.test(new URL(input.url).pathname)) throw new Error('path_denied');
+  const pathPattern = binding?.pathPattern ?? policy.pathPattern;
+  if (pathPattern && !pathPattern.test(new URL(input.url).pathname)) throw new Error('path_denied');
+  const allowedInjections = binding?.injections ?? policy.injections;
   for (const injection of input.injections) {
-    if (!policy.injections.some(candidate => exactInjection(candidate, injection))) throw new Error('injection_denied');
+    if (!allowedInjections.some(candidate => exactInjection(candidate, injection))) throw new Error('injection_denied');
   }
   if (!input.injections.length) throw new Error('credential_injection_required');
   return policy;
@@ -151,6 +225,7 @@ export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
   anthropic: ['api.anthropic.com'],
   google:    ['generativelanguage.googleapis.com'],
   grok:      ['api.x.ai'],
+  elevenlabs: ['api.elevenlabs.io'],
   kimi:      ['api.moonshot.cn'],
   nvidia:    ['integrate.api.nvidia.com'],
   alibaba:   ['coding-intl.dashscope.aliyuncs.com'],

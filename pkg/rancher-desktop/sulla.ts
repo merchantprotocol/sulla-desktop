@@ -743,12 +743,18 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   let vaultStatusPoll: ReturnType<typeof setInterval> | undefined;
   let vaultStatusRunning = false;
+  let vaultMigrationRun: Promise<void> | null = null;
   const refreshVaultStatus = async() => {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const client = getDesktopVaultClient();
     const wasUnlocked = client.isUnlocked();
     let status = await client.status();
     if (status.cacheUpdateRequired && await vaultKey.refreshMasterCache()) status = await client.status();
+    if (status.unlocked && status.migration.required) {
+      vaultMigrationRun ??= client.migrate().then(() => undefined).finally(() => { vaultMigrationRun = null });
+      await vaultMigrationRun;
+      status = await client.status();
+    }
     if (status.unlocked !== wasUnlocked) {
       const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
       setUserLoggedIn(status.unlocked);

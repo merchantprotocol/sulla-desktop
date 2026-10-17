@@ -403,22 +403,41 @@ export class LocalVaultAuthority {
     };
   }
 
-  fetchCacheUpdate(input: { callerId: string; challengeId: string; clientProof: string }): { sealedMaster: string } {
+  fetchCacheUpdate(input: { callerId: string; challengeId: string; clientProof: string; sealedLegacyVmk?: string }): { sealedMaster: string } {
     this.expireStagedCacheUpdate();
     const challenge = this.cacheChallenges.get(input.challengeId);
     this.cacheChallenges.delete(input.challengeId);
     const staged = this.stagedCacheUpdate;
+    const sealedLegacySha256 = input.sealedLegacyVmk
+      ? createHash('sha256').update(input.sealedLegacyVmk).digest('base64url')
+      : '-';
     if (!challenge || !staged || challenge.callerId !== input.callerId || challenge.expiresAt <= Date.now() ||
         staged.generation !== this.generation ||
         !constantEqual(input.clientProof, hmac(this.bootstrapToken(), cacheUpdateFetchProofInput(
-          input.callerId, challenge.clientNonce, challenge.serverNonce, input.challengeId, challenge.expiresAt)))) {
+          input.callerId, challenge.clientNonce, challenge.serverNonce, input.challengeId, challenge.expiresAt, sealedLegacySha256)))) {
       throw new LocalVaultError('invalid_bootstrap_challenge', 401, 'Cache update challenge is invalid or expired');
     }
     const sessionKey = createHmac('sha256', this.bootstrapToken())
       .update(cacheUpdateSessionKeyInput(input.callerId, challenge.clientNonce, challenge.serverNonce,
         input.challengeId, challenge.expiresAt)).digest();
     const clear = Buffer.from(JSON.stringify({ masterKey: staged.masterKey.toString('base64url') }));
+    let legacyPacked: Buffer | undefined;
+    let legacyVmk: Buffer | undefined;
     try {
+      if (input.sealedLegacyVmk) {
+        if (this.migrationState !== 'migration_required') {
+          throw new LocalVaultError('invalid_unlock_material', 409, 'Legacy migration material is not expected');
+        }
+        legacyPacked = Buffer.from(input.sealedLegacyVmk, 'base64url');
+        if (legacyPacked.byteLength < 29) throw new LocalVaultError('invalid_unlock_material', 400, 'Sealed legacy material is truncated');
+        const decipher = createDecipheriv('aes-256-gcm', sessionKey, legacyPacked.subarray(0, 12));
+        decipher.setAuthTag(legacyPacked.subarray(12, 28));
+        legacyVmk = Buffer.concat([decipher.update(legacyPacked.subarray(28)), decipher.final()]);
+        if (legacyVmk.byteLength !== 32) throw new LocalVaultError('invalid_unlock_material', 400, 'Legacy material has an invalid length');
+        this.requireGeneration(staged.generation);
+        this.keys!.legacyVmk?.fill(0);
+        this.keys!.legacyVmk = Buffer.from(legacyVmk);
+      }
       const nonce = randomBytes(12);
       return { sealedMaster: sealCacheUpdate(clear, sessionKey, nonce) };
     } finally {
@@ -427,6 +446,8 @@ export class LocalVaultAuthority {
       staged.masterKey.fill(0);
       this.stagedCacheUpdate = null;
       this.cacheChallenges.clear();
+      legacyPacked?.fill(0);
+      legacyVmk?.fill(0);
     }
   }
 

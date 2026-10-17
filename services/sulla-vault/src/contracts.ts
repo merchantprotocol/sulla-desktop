@@ -130,8 +130,9 @@ export function cacheUpdateSessionKeyInput(
 
 export function cacheUpdateFetchProofInput(
   callerId: string, clientNonce: string, serverNonce: string, challengeId: string, expiresAt: number,
+  sealedLegacySha256 = '-',
 ): string {
-  return `cache-fetch:${ callerId }:${ clientNonce }:${ serverNonce }:${ challengeId }:${ expiresAt }`;
+  return `cache-fetch:${ callerId }:${ clientNonce }:${ serverNonce }:${ challengeId }:${ expiresAt }:${ sealedLegacySha256 }`;
 }
 
 export type CacheUpdateChallengeRequest = BootstrapChallengeRequest;
@@ -141,6 +142,8 @@ export interface CacheUpdateFetchRequest {
   callerId:    string;
   challengeId: string;
   clientProof: string;
+  /** Optional AES-256-GCM sealed 32-byte legacy VMK, accepted only while migration is required. */
+  sealedLegacyVmk?: string;
 }
 
 export interface CacheUpdateFetchResponse {
