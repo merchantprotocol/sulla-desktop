@@ -15,12 +15,12 @@ COPY services/sulla-files/src ./src
 RUN npm run build && npm prune --omit=dev
 FROM node:24-alpine
 ENV NODE_ENV=production
-WORKDIR /app
+WORKDIR /app/services/sulla-files
 RUN apk add --no-cache antiword ffmpeg poppler-utils su-exec tesseract-ocr tesseract-ocr-data-eng unzip
 COPY --from=build /app/services/sulla-files/package.json ./package.json
 COPY --from=build /app/services/sulla-files/node_modules ./node_modules
 COPY --from=build /app/services/sulla-files/dist ./dist
-COPY --from=build /app/models ./models
+COPY --from=build /app/models /app/models
 COPY --from=build /app/packages/vault-crypto/package.json /app/packages/vault-crypto/package.json
 COPY --from=build /app/packages/vault-crypto/dist /app/packages/vault-crypto/dist
 COPY --from=build /app/packages/vault-crypto/node_modules /app/packages/vault-crypto/node_modules
