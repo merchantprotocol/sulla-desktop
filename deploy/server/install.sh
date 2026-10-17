@@ -169,7 +169,21 @@ main() {
     tar -xzf "$archive" --strip-components=1 -C "$source_dir"
     compose=(docker compose --env-file /dev/null -f "$SULLA_DIR/compose.yaml")
     "${compose[@]}" build --pull vault
-    if ! "${compose[@]}" up -d --wait --wait-timeout 300; then
+    if ! "${compose[@]}" up -d; then
+      "${compose[@]}" ps >&2 || true
+      "${compose[@]}" logs --tail=100 vault >&2 || true
+      fail "Sulla services failed to start"
+    fi
+    healthy=false; deadline=$((SECONDS + 300))
+    while (( SECONDS < deadline )); do
+      vault_id="$("${compose[@]}" ps -q vault 2>/dev/null || true)"
+      if [[ -n "$vault_id" && "$(docker inspect --format '{{.State.Health.Status}}' "$vault_id" 2>/dev/null || true)" == healthy ]]; then
+        healthy=true
+        break
+      fi
+      sleep 2
+    done
+    if [[ "$healthy" != true ]]; then
       "${compose[@]}" ps >&2 || true
       "${compose[@]}" logs --tail=100 vault >&2 || true
       fail "Sulla services did not become healthy within 5 minutes"
