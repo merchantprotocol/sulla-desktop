@@ -16,10 +16,11 @@
  * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
  */
 
-import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ConversationKeywordsModel } from '../database/models/ConversationKeywordsModel';
+import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { getSullaFilesService } from '../files/runtime';
 import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '../memory/MemoryRecallService';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
@@ -148,6 +149,7 @@ export async function runSubconsciousMiddleware(
   meta.teamDirectoryContext = '';
   meta.skillRecallContext = '';
   meta.subagentDirectoryContext = '';
+  meta.filesContext = '';
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     console.log('[SubconsciousMiddleware] Skipped — running inside a workflow');
     return;
@@ -312,6 +314,14 @@ export async function runSubconsciousMiddleware(
     launched.push('conversation-reader');
     const conversationRecallPromise = runConversationReader(state);
     awaitedTasks.push(timed('conversation-reader', 'Recalling prior conversations', conversationRecallPromise.then(ctx => { (state.metadata as any).conversationContext = ctx })));
+  }
+
+  // R9b. Files recall — deterministic, ACL-gated and intentionally tiny.
+  // The primary agent gets references only; it must call files_get when it
+  // actually needs file contents.
+  if (options.includeObservations && analyzable) {
+    launched.push('files-recall');
+    awaitedTasks.push(timed('files-recall', 'Recalling related files', runFilesRecall(state).then(ctx => { meta.filesContext = ctx })));
   }
 
   // R10. Team recall — lead agents (non-empty can_call) get a Team directory
@@ -928,6 +938,44 @@ async function runSubagentDirectory(state: BaseThreadState): Promise<void> {
   }
 }
 
+async function runFilesRecall(state: BaseThreadState): Promise<string> {
+  try {
+    const query = extractLatestUserText(state);
+    if (!query) return '';
+    const meta = state.metadata as any;
+    const userId = meta.userId ?? meta.ownerUserId;
+    if (!userId) return '';
+    const terms = extractRecallTerms([query], 16);
+    if (!terms.length) return '';
+    const now = Math.floor(Date.now() / 1000);
+    const recall = getSullaFilesService().searchAll({
+      v:          1,
+      iss:        'sulla-desktop',
+      aud:        'sulla-tools',
+      sub:        userId,
+      org_id:     meta.orgId,
+      device_id:  meta.deviceId,
+      scopes:     ['files/*'],
+      iat:        now,
+      exp:        now + 300,
+      jti:        `recall-${ now }`,
+      request_id: `recall-${ now }`,
+    }, query, {}, { terms, timeoutMs: 250 });
+    const rows = await Promise.race([
+      recall,
+      new Promise<any[]>((resolve) => {
+        const timer = setTimeout(() => resolve([]), 300);
+
+        timer.unref();
+      }),
+    ]);
+    return rows.slice(0, 5).map((row: any) => `${ row.title } (${ row.path }) — ${ row.why }${ row.snippet ? `: ${ row.snippet.replace(/\s+/g, ' ').slice(0, 140) }` : '' }`).join('\n');
+  } catch (error) {
+    console.warn('[SubconsciousMiddleware] files recall unavailable:', error instanceof Error ? error.message : error);
+    return '';
+  }
+}
+
 /** Fire-and-forget post-turn Reflex Trainer (teaches the Reflex engine). */
 async function runReflexTrainer(state: BaseThreadState): Promise<void> {
   const startTime = Date.now();
@@ -1098,7 +1146,7 @@ export async function runConversationReader(state: BaseThreadState): Promise<str
 const IDENTITY_RECALL_MAX_CHARS = 3_000;
 
 /** `[id] L<level>·<category> date — content (basis: …)`, within the char budget. */
-export function formatIdentityRecallLines(hits: Array<{ id: string; level: number; category: string | null; content: string; basis: string | null; created_at: string | Date }>): string {
+export function formatIdentityRecallLines(hits: { id: string; level: number; category: string | null; content: string; basis: string | null; created_at: string | Date }[]): string {
   const lines: string[] = [];
   let used = 0;
 
@@ -1115,7 +1163,7 @@ export function formatIdentityRecallLines(hits: Array<{ id: string; level: numbe
 }
 
 /** One line per prior thread; the primary agent drills in with recall_conversations. */
-export function formatConversationRecallLines(hits: Array<{ thread_id: string; title: string | null; summary: string | null; last_seen: string | Date; matched_terms: string[] }>): string {
+export function formatConversationRecallLines(hits: { thread_id: string; title: string | null; summary: string | null; last_seen: string | Date; matched_terms: string[] }[]): string {
   return hits.map((h) => {
     const title = (h.title || 'Untitled conversation').replace(/\s+/g, ' ').trim().slice(0, 120);
     const summary = h.summary ? ` — ${ h.summary.replace(/\s+/g, ' ').trim().slice(0, 240) }` : '';

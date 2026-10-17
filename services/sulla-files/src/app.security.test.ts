@@ -25,7 +25,7 @@ function fakeDb() {
 }
 
 async function withServer(fn:(baseUrl:string) => Promise<void>) {
-  const server = createApp(fakeDb(), { chunkRoot: '/tmp/sulla-files-sharing-test', dataRoot: '/tmp/sulla-files-sharing-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, mode: 'server', deviceId: 'test', userId: 'owner-1', paused: false }).listen(0);
+  const server = createApp(fakeDb(), { chunkRoot: '/tmp/sulla-files-sharing-test', dataRoot: '/tmp/sulla-files-sharing-test', modelDir: '/tmp/sulla-files-sharing-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, localToken: 'local-test-token', mode: 'server', deviceId: 'test', userId: 'owner-1', cloudUrl: 'https://cloud.invalid', paused: false }).listen(0);
   await new Promise<void>(resolve => server.once('listening', resolve));
   try { await fn(`http://127.0.0.1:${ (server.address() as any).port }`) } finally { server.close() }
 }
@@ -45,5 +45,14 @@ test('shared-folder sync journal contains only the granted subtree', async() => 
     assert.equal(response.status, 200);
     const rows:any[] = await response.json();
     assert.deepEqual(rows.map(row => row.file.path), ['Team/notes.md']);
+  });
+});
+
+test('share relay requires local authentication and denies unknown links', async() => {
+  await withServer(async baseUrl => {
+    const unauthenticated = await fetch(`${ baseUrl }/v1/local/shares/not-shared/content`);
+    assert.equal(unauthenticated.status, 401);
+    const unknown = await fetch(`${ baseUrl }/v1/local/shares/not-shared/content`, { headers: { 'x-sulla-files-token': 'local-test-token' } });
+    assert.equal(unknown.status, 404);
   });
 });

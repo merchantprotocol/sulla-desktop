@@ -15,6 +15,8 @@ interface ContainerCollection {
   member_count?:         number | string;
   account_display_name?: string;
   access_role?:          string;
+  owner_user_id?:        string;
+  shared_folders?:       { folderPath: string; role: string }[];
 }
 
 interface ContainerFile {
@@ -99,6 +101,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
         memberCount:     collection.member_count === undefined ? undefined : Number(collection.member_count),
         accountName:     collection.account_display_name,
         accountRole:     collection.access_role,
+        ownerUserId:     collection.owner_user_id,
+        sharedFolders:   collection.shared_folders?.map(folder => folder.folderPath),
       },
       files: this.files,
       status,

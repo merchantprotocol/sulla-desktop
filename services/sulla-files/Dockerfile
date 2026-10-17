@@ -1,4 +1,6 @@
 FROM node:24-alpine AS build
+COPY services/sulla-files/scripts/build-potion-model.mjs /tmp/build-potion-model.mjs
+RUN node /tmp/build-potion-model.mjs /app/models/potion-retrieval-32M && rm /app/models/potion-retrieval-32M/model.safetensors
 WORKDIR /app/services/sulla-files
 COPY services/sulla-files/package.json ./
 RUN npm install --ignore-scripts
@@ -8,10 +10,11 @@ RUN npm run build && npm prune --omit=dev
 FROM node:24-alpine
 ENV NODE_ENV=production
 WORKDIR /app
-RUN apk add --no-cache ffmpeg poppler-utils su-exec
+RUN apk add --no-cache antiword ffmpeg poppler-utils su-exec tesseract-ocr tesseract-ocr-data-eng unzip
 COPY --from=build /app/services/sulla-files/package.json ./package.json
 COPY --from=build /app/services/sulla-files/node_modules ./node_modules
 COPY --from=build /app/services/sulla-files/dist ./dist
+COPY --from=build /app/models ./models
 COPY services/sulla-files/migrations ./migrations
 COPY services/sulla-files/entrypoint.sh /usr/local/bin/sulla-files-entrypoint
 RUN mkdir -p /var/lib/sulla-files/chunks /data/files /backup && chown -R node:node /var/lib/sulla-files /data/files /backup
