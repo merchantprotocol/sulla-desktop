@@ -23,7 +23,7 @@
   .match .m b .mini.agents { color: #fff; background: var(--accent); }
   .match .m b .mini.personal { color: var(--read-3); background: rgba(26,35,50,.06); }
   .mini.personal { color: var(--read-3); background: rgba(26,35,50,.06); }
-  .fill { height: 30px; padding: 0 14px; border-radius: 15px; color: #fff; font: 600 12px var(--sans); display: inline-flex; align-items: center; background: linear-gradient(180deg, var(--accent-2), var(--accent)); box-shadow: 0 0 12px rgba(58,127,160,.28); }
+  .fill { height: 30px; padding: 0 14px; border: 0; border-radius: 15px; color: #fff; font: 600 12px var(--sans); display: inline-flex; align-items: center; background: linear-gradient(180deg, var(--accent-2), var(--accent)); box-shadow: 0 0 12px rgba(58,127,160,.28); cursor: pointer; }
   .otp { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: rgba(255,255,255,.75); border: 1px solid var(--hair); }
   .otp .code { font: 600 20px var(--mono); letter-spacing: .14em; color: var(--accent); }
   .ring { width: 22px; height: 22px; border-radius: 50%; background: conic-gradient(var(--accent-2) 0 62%, var(--read-5) 62% 100%); -webkit-mask: radial-gradient(circle, transparent 6px, #000 7px); }
@@ -97,7 +97,7 @@
     <span class="icon-btn"><svg class="i sm"><use href="#lock"/></svg></span>
   </div>
 
-  <div class="content">
+  <div class="content" id="popup-content">
     <div class="search"><svg class="i"><use href="#search"/></svg>Search my vault + Northwind</div>
 
     <div class="site"><svg class="i sm"><use href="#lock"/></svg>Logins for <b>github.com</b></div>
@@ -144,4 +144,5 @@
     <span><svg class="i"><use href="#cog"/></svg>Settings</span>
   </div>
 </div>
+<script src="popup.js"></script>
 </body></html>

@@ -61,6 +61,28 @@ test('bootstrap challenge rejects forgery, replay, expiry, and consumes unlock c
   assert.equal(authority.status().unlocked, false);
 });
 
+test('browser fills are origin-bound, control-authenticated, expiring, and one-use', () => {
+  const authority = new LocalVaultAuthority({ query: async() => ({ rowCount: 0, rows: [] }) } as any, config('postgresql://synthetic/unused'));
+  const target = { tabId: 'tab-123', origin: 'https://login.example.com' };
+  const grant = authority.createHumanSession('sulla-desktop-control', TOKEN.control, target);
+  assert.deepEqual(grant.browserTarget, target);
+  const exchanged = authority.exchangeHumanGrant(grant.sessionId, grant.csrf);
+  assert.deepEqual(exchanged.browserTarget, target);
+  assert.throws(
+    () => authority.createHumanSession('sulla-desktop-control', TOKEN.control, { tabId: 'tab-123', origin: 'javascript:alert(1)' }),
+    (error: any) => error.code === 'invalid_destination',
+  );
+  const fill = { requestId: 'fill-1', ...target, username: 'synthetic-user', password: 'synthetic-password', expiresAt: Date.now() + 1_000, timer: setTimeout(() => {}, 1_000) };
+  (authority as any).pendingBrowserFills.set(target.tabId, fill);
+  assert.throws(() => authority.consumeBrowserFill('sulla-desktop-control', 'wrong', target.tabId),
+    (error: any) => error.code === 'invalid_service_identity');
+  const { timer: _timer, ...payload } = fill;
+  assert.deepEqual(authority.consumeBrowserFill('sulla-desktop-control', TOKEN.control, target.tabId), payload);
+  assert.equal(authority.consumeBrowserFill('sulla-desktop-control', TOKEN.control, target.tabId), null);
+  (authority as any).pendingBrowserFills.set(target.tabId, { ...fill, timer: setTimeout(() => {}, 1_000), expiresAt: Date.now() - 1 });
+  assert.equal(authority.consumeBrowserFill('sulla-desktop-control', TOKEN.control, target.tabId), null);
+});
+
 test('approval digest binds headers, body, account, repository and response mode', () => {
   const base: any = {
     claims: { sub: 'user', agent_id: 'agent', pod_id: 'pod', credential_scope: { integration_id: 'github', account_id: 'one', repository: 'o/r' } },

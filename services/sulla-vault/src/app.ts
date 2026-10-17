@@ -218,13 +218,23 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       localAuthority.lock();
       response.json({ state: 'locked', unlocked: false, migration: { required: false } });
     });
+    app.post('/v1/desktop/browser-fill/consume', (request, response) => {
+      const identity = serviceIdentity(request);
+      response.json({ fill: localAuthority.consumeBrowserFill(
+        identity.serviceId, identity.token, requiredString(request.body.tabId, 'tabId'),
+      ) });
+    });
     app.post('/v1/desktop/migrate', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.migrateLegacy(identity.serviceId, identity.token));
     });
     app.post('/v1/human/session', (request, response) => {
       const identity = serviceIdentity(request);
-      const session = localAuthority.createHumanSession(identity.serviceId, identity.token);
+      const target = request.body?.browserTarget;
+      const session = localAuthority.createHumanSession(identity.serviceId, identity.token, target ? {
+        tabId: requiredString(target.tabId, 'browserTarget.tabId'),
+        origin: requiredString(target.origin, 'browserTarget.origin'),
+      } : undefined);
       const fragment = new URLSearchParams({ grant: session.sessionId, csrf: session.csrf }).toString();
       response.json({ url: `${ config.humanUiOrigin }/vault/#${ fragment }`, csrf: session.csrf, expiresAt: session.expiresAt, phase: session.phase });
     });
@@ -248,7 +258,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
         requiredString(request.body.grant, 'grant'), requiredString(request.body.csrf, 'csrf'),
       );
       setHumanCookie(response, session.sessionId, session.expiresAt);
-      response.json({ csrf: session.csrf, expiresAt: session.expiresAt, phase: session.phase });
+      response.json({ csrf: session.csrf, expiresAt: session.expiresAt, phase: session.phase, targetOrigin: session.browserTarget?.origin });
     });
     app.post('/v1/human/unlock', async(request, response) => {
       const result = await localAuthority.unlockHumanSession(
@@ -302,6 +312,11 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     });
     app.post('/v1/human/items/:itemId/reveal', async(request, response) => {
       response.json(await localAuthority.revealHumanItem(humanCookie(request), request.header('x-csrf-token'), requiredString(request.params.itemId, 'itemId')));
+    });
+    app.post('/v1/human/items/:itemId/fill', async(request, response) => {
+      response.json(await localAuthority.requestHumanBrowserFill(
+        humanCookie(request), request.header('x-csrf-token'), requiredString(request.params.itemId, 'itemId'),
+      ));
     });
     app.patch('/v1/human/items/:itemId', async(request, response) => {
       response.json(await localAuthority.saveHumanItem(humanCookie(request), request.header('x-csrf-token'), { ...request.body, id: request.params.itemId }));

@@ -5,6 +5,8 @@ import path from 'node:path';
 import { safeStorage, session } from 'electron';
 
 import type {
+  BrowserFillPayload,
+  BrowserFillTarget,
   HumanSessionResponse,
   LegacyMigrationResponse,
   LocalVaultErrorResponse,
@@ -116,14 +118,23 @@ export class DesktopVaultClient {
     return result;
   }
 
-  async createHumanSession(): Promise<HumanVaultSession> {
-    const result = await this.request<HumanSessionResponse>('/v1/human/session', { method: 'POST' });
+  async createHumanSession(browserTarget?: BrowserFillTarget): Promise<HumanVaultSession> {
+    const result = await this.request<HumanSessionResponse>('/v1/human/session', {
+      method: 'POST', body: browserTarget ? JSON.stringify({ browserTarget }) : undefined,
+    });
     const url = new URL(result.url, this.api);
     if (url.origin !== new URL(this.api).origin || !url.pathname.startsWith('/vault/')) {
       throw new LocalVaultError('invalid_human_session', 'Vault returned an invalid human-session URL', 502);
     }
     // CSRF is intentionally discarded: only the same-origin container page uses it.
     return { url: url.toString(), expiresAt: result.expiresAt, phase: result.phase };
+  }
+
+  async consumeBrowserFill(tabId: string): Promise<BrowserFillPayload | null> {
+    const result = await this.request<{ fill: BrowserFillPayload | null }>('/v1/desktop/browser-fill/consume', {
+      method: 'POST', body: JSON.stringify({ tabId }),
+    });
+    return result.fill;
   }
 
   isUnlocked(): boolean { return this.lastStatus.unlocked }

@@ -40,6 +40,8 @@ import type {
   BrokerRelayCreateRequest,
   BrokerRelayCreateResponse,
   BrokerRelaySendRequest,
+  BrowserFillPayload,
+  BrowserFillTarget,
   HumanBackupEnvelope,
   LegacyMigrationResponse,
   LocalVaultState,
@@ -63,6 +65,7 @@ const CHALLENGE_RATE_WINDOW_MS = 60_000;
 const CHALLENGE_RATE_LIMIT = 10;
 const APPROVAL_TTL_MS = 2 * 60_000;
 const HUMAN_SESSION_TTL_MS = 15 * 60_000;
+const BROWSER_FILL_TTL_MS = 30_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
 const MAX_TRANSCRIPTION_REQUEST_BYTES = 17 * 1024 * 1024;
 const MAX_STREAM_BYTES = 25 * 1024 * 1024;
@@ -143,6 +146,11 @@ interface HumanSession {
   csrf:      string;
   expiresAt: number;
   phase:     'pre-unlock' | 'unlocked';
+  browserTarget?: BrowserFillTarget;
+}
+
+interface PendingBrowserFill extends BrowserFillPayload {
+  timer: ReturnType<typeof setTimeout>;
 }
 
 interface UnlockedKeys {
@@ -398,6 +406,7 @@ export class LocalVaultAuthority {
   private readonly pendingApprovals = new Map<string, number>();
   private readonly approvals = new Map<string, { digest: string; expiresAt: number }>();
   private readonly humanSessions = new Map<string, HumanSession>();
+  private readonly pendingBrowserFills = new Map<string, PendingBrowserFill>();
   private readonly oauthRefreshQueues = new Map<string, Promise<void>>();
   private readonly relaySessions = new Map<string, { generation: number; controller: AbortController }>();
   private migrationState: LocalVaultState = 'locked';
@@ -700,21 +709,32 @@ export class LocalVaultAuthority {
     this.pendingApprovals.clear();
     this.approvals.clear();
     this.humanSessions.clear();
+    for (const fill of this.pendingBrowserFills.values()) clearTimeout(fill.timer);
+    this.pendingBrowserFills.clear();
     this.stagedCacheUpdate?.masterKey.fill(0);
     this.stagedCacheUpdate = null;
   }
 
-  createHumanSession(callerId: string, token: string | undefined): { sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked' } {
+  createHumanSession(callerId: string, token: string | undefined, browserTarget?: BrowserFillTarget): { sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked'; browserTarget?: BrowserFillTarget } {
     this.requireControlIdentity(callerId, token);
-    return this.issueHumanSession();
+    if (browserTarget) {
+      if (!/^[A-Za-z0-9._:-]{1,160}$/.test(browserTarget.tabId)) throw new LocalVaultError('invalid_operation', 400, 'Browser target is invalid');
+      let parsed: URL;
+      try { parsed = new URL(browserTarget.origin); } catch { throw new LocalVaultError('invalid_destination', 400, 'Browser origin is invalid') }
+      if (!['https:', 'http:'].includes(parsed.protocol) || parsed.origin !== browserTarget.origin) {
+        throw new LocalVaultError('invalid_destination', 400, 'Browser origin is invalid');
+      }
+    }
+    return this.issueHumanSession(browserTarget);
   }
 
-  private issueHumanSession(): { sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked' } {
+  private issueHumanSession(browserTarget?: BrowserFillTarget): { sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked'; browserTarget?: BrowserFillTarget } {
     const sessionId = randomBytes(32).toString('base64url');
     const session = {
       csrf: randomBytes(32).toString('base64url'),
       expiresAt: Date.now() + HUMAN_SESSION_TTL_MS,
       phase: this.keys ? 'unlocked' as const : 'pre-unlock' as const,
+      browserTarget,
     };
     this.humanSessions.set(sessionId, session);
     return { sessionId, ...session };
@@ -739,25 +759,25 @@ export class LocalVaultAuthority {
     if (session.phase !== 'pre-unlock') throw new LocalVaultError('invalid_human_session', 409, 'Vault is already unlocked');
     const result = await this.unlockWithPassword(password);
     // activateMasterKey invalidates every pre-unlock grant before installing keys.
-    const next = this.issueHumanSession();
+    const next = this.issueHumanSession(session.browserTarget);
     if (next.phase !== 'unlocked') throw new LocalVaultError('vault_unavailable', 503, 'Vault unlock did not establish an unlocked session');
     return { ...next, phase: 'unlocked', state: result.state, cacheMode: 'helper-update-required' };
   }
 
   exchangeHumanGrant(sessionId: string | undefined, csrf: string | undefined): {
-    sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked';
+    sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked'; browserTarget?: BrowserFillTarget;
   } {
-    this.validateHumanSession(sessionId, csrf);
+    const session = this.validateHumanSession(sessionId, csrf);
     this.humanSessions.delete(sessionId!);
-    return this.issueHumanSession();
+    return this.issueHumanSession(session.browserTarget);
   }
 
   lockHumanSession(sessionId: string | undefined, csrf: string | undefined): {
     sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock'; state: 'locked';
   } {
-    this.validateHumanSession(sessionId, csrf);
+    const session = this.validateHumanSession(sessionId, csrf);
     this.lock();
-    const next = this.issueHumanSession();
+    const next = this.issueHumanSession(session.browserTarget);
     if (next.phase !== 'pre-unlock') throw new LocalVaultError('vault_unavailable', 503, 'Vault did not lock');
     return { ...next, phase: 'pre-unlock', state: 'locked' };
   }
@@ -794,6 +814,52 @@ export class LocalVaultAuthority {
       { itemId: row.id, ownerId: keys.userId },
     )) as VaultItemPlaintext;
     return { id: row.id, revision: Number(row.revision), item };
+  }
+
+  async requestHumanBrowserFill(sessionId: string | undefined, csrf: string | undefined, itemId: string): Promise<{ requestId: string; expiresAt: number }> {
+    const session = this.validateHumanSession(sessionId, csrf);
+    if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
+    if (!session.browserTarget) throw new LocalVaultError('policy_denied', 403, 'This vault session is not bound to a browser tab');
+    const keys = this.requireKeys();
+    const result = await this.db.query<ItemRow>(
+      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision
+         FROM items WHERE id=$1 AND owner_user_id=$2 AND deleted_at IS NULL`, [itemId, keys.userId],
+    );
+    const row = result.rows[0];
+    if (!row) throw new LocalVaultError('policy_denied', 404, 'Vault item was not found');
+    const item = JSON.parse(await decryptItemText(
+      { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
+      { itemId: row.id, ownerId: keys.userId },
+    )) as VaultItemPlaintext;
+    const originMatches = (item.uris ?? []).some(entry => {
+      try { return new URL(entry.uri).origin === session.browserTarget!.origin } catch { return false }
+    });
+    if (!originMatches) throw new LocalVaultError('policy_denied', 403, 'Credential does not match the active page origin');
+    const username = typeof item.username === 'string' ? item.username : '';
+    const password = typeof item.password === 'string' ? item.password : '';
+    if (!username && !password) throw new LocalVaultError('credential_field_missing', 409, 'Credential has no fillable fields');
+    const requestId = randomUUID();
+    const expiresAt = Date.now() + BROWSER_FILL_TTL_MS;
+    const previous = this.pendingBrowserFills.get(session.browserTarget.tabId);
+    if (previous) clearTimeout(previous.timer);
+    const timer = setTimeout(() => {
+      const current = this.pendingBrowserFills.get(session.browserTarget!.tabId);
+      if (current?.requestId === requestId) this.pendingBrowserFills.delete(session.browserTarget!.tabId);
+    }, BROWSER_FILL_TTL_MS);
+    timer.unref?.();
+    this.pendingBrowserFills.set(session.browserTarget.tabId, { requestId, ...session.browserTarget, username, password, expiresAt, timer });
+    return { requestId, expiresAt };
+  }
+
+  consumeBrowserFill(callerId: string, token: string | undefined, tabId: string): BrowserFillPayload | null {
+    this.requireControlIdentity(callerId, token);
+    const pending = this.pendingBrowserFills.get(tabId);
+    if (!pending) return null;
+    this.pendingBrowserFills.delete(tabId);
+    clearTimeout(pending.timer);
+    if (pending.expiresAt <= Date.now()) return null;
+    const { timer: _timer, ...payload } = pending;
+    return payload;
   }
 
   async saveHumanItem(

@@ -745,6 +745,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   let vaultStatusPoll: ReturnType<typeof setInterval> | undefined;
   let vaultStatusRunning = false;
+  let vaultFillPoll: ReturnType<typeof setInterval> | undefined;
+  let vaultFillRunning = false;
   let vaultMigrationRun: Promise<unknown> | undefined;
   const refreshVaultStatus = async() => {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
@@ -809,13 +811,16 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   ipcMainProxy.handle('vault:view-open', async(
     event: Electron.IpcMainInvokeEvent,
     bounds: Electron.Rectangle,
-    hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string },
+    hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string },
   ) => {
-    const mainWindow = window.getWindow('main-agent');
-    if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted vault view caller');
+    requireTrustedVaultRenderer(event);
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const { vaultViewManager } = await import('@pkg/window/vaultViewManager');
-    const humanSession = await getDesktopVaultClient().createHumanSession();
+    const popupTabId = hint?.surface === 'popup' && typeof hint.tabId === 'string' ? hint.tabId : undefined;
+    const popupOrigin = popupTabId ? tabViewManager.getTrustedMainFrameOrigin(popupTabId) ?? undefined : undefined;
+    const humanSession = await getDesktopVaultClient().createHumanSession(
+      popupTabId && popupOrigin ? { tabId: popupTabId, origin: popupOrigin } : undefined,
+    );
     const target = new URL(humanSession.url);
     const safeMetadata = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : undefined;
     const integrationId = safeMetadata(hint?.integrationId);
@@ -824,12 +829,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     if (accountId) target.searchParams.set('account', accountId);
     if (hint?.surface === 'popup') {
       target.pathname = '/vault/popup.html';
-      try {
-        const site = new URL(hint.siteUrl || '');
-        if (site.protocol === 'http:' || site.protocol === 'https:') {
-          target.searchParams.set('site', site.hostname);
-        }
-      } catch { /* about:blank and malformed page URLs intentionally omit site context */ }
+      if (popupOrigin) target.searchParams.set('site', new URL(popupOrigin).hostname);
     }
     await vaultViewManager.show(target.toString(), bounds);
     if (!vaultStatusPoll) vaultStatusPoll = setInterval(() => {
@@ -837,6 +837,21 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       vaultStatusRunning = true;
       void refreshVaultStatus().catch(error => console.warn('[vault] Status refresh failed:', error)).finally(() => { vaultStatusRunning = false });
     }, 1_000);
+    if (vaultFillPoll) clearInterval(vaultFillPoll);
+    if (popupTabId && popupOrigin) vaultFillPoll = setInterval(() => {
+      if (vaultFillRunning) return;
+      vaultFillRunning = true;
+      void getDesktopVaultClient().consumeBrowserFill(popupTabId).then(async(fill) => {
+        if (!fill || fill.tabId !== popupTabId || fill.origin !== popupOrigin) return;
+        try {
+          await tabViewManager.injectContainerVaultFill(popupTabId, popupOrigin, fill.username, fill.password);
+        } finally {
+          fill.username = '';
+          fill.password = '';
+        }
+      }).catch(error => console.warn('[vault] Browser fill transport failed:', error instanceof Error ? error.message : 'unknown error'))
+        .finally(() => { vaultFillRunning = false });
+    }, 200);
     return { state: 'opened', expiresAt: humanSession.expiresAt };
   });
 
@@ -854,6 +869,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     vaultViewManager.hide();
     if (vaultStatusPoll) clearInterval(vaultStatusPoll);
     vaultStatusPoll = undefined;
+    if (vaultFillPoll) clearInterval(vaultFillPoll);
+    vaultFillPoll = undefined;
+    vaultFillRunning = false;
   });
 
   ipcMainProxy.handle('vault:is-setup', async() => {

@@ -159,6 +159,18 @@ export interface HumanSessionResponse {
   phase:     'pre-unlock' | 'unlocked';
 }
 
+export interface BrowserFillTarget {
+  tabId:  string;
+  origin: string;
+}
+
+export interface BrowserFillPayload extends BrowserFillTarget {
+  requestId: string;
+  username:  string;
+  password:  string;
+  expiresAt: number;
+}
+
 export interface HumanUnlockRequest { password: string }
 export interface HumanLockResponse {
   csrf:      string;
