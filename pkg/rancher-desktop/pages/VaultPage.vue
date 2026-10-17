@@ -1,5 +1,10 @@
 <template>
-  <div ref="host" class="vault-host" aria-label="Password Manager">
+  <div
+    ref="host"
+    class="vault-host"
+    :class="{ popup: props.surface === 'popup' }"
+    aria-label="Password Manager"
+  >
     <div v-if="error" class="vault-state">
       <strong>Vault unavailable</strong>
       <span>{{ error }}</span>
@@ -15,7 +20,12 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const host = ref<HTMLElement | null>(null);
-const props = defineProps<{ integrationId?: string; accountId?: string }>();
+const props = withDefaults(defineProps<{
+  integrationId?: string;
+  accountId?: string;
+  surface?: 'page' | 'popup';
+  siteUrl?: string;
+}>(), { surface: 'page', siteUrl: '' });
 const loading = ref(true);
 const error = ref('');
 let observer: ResizeObserver | null = null;
@@ -34,6 +44,8 @@ async function open(): Promise<void> {
     await ipcRenderer.invoke('vault:view-open', bounds(), {
       integrationId: props.integrationId,
       accountId:     props.accountId,
+      surface:       props.surface,
+      siteUrl:       props.siteUrl,
     });
     loading.value = false;
   } catch (cause) {
@@ -57,6 +69,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .vault-host { position: relative; width: 100%; height: 100%; min-height: 420px; background: var(--bg-page, #0d1117); }
+.vault-host.popup { min-height: 100%; background: #f4f7fb; }
 .vault-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .75rem; color: var(--text-secondary, #8b949e); }
 .vault-state strong { color: var(--text-primary, #e6edf3); }
 .vault-state button { border: 1px solid var(--border-default, #30363d); border-radius: .5rem; padding: .5rem .9rem; background: var(--accent-primary, #5096b3); color: #fff; }
