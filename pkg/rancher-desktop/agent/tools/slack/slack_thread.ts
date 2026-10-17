@@ -20,7 +20,7 @@ export class SlackThreadWorker extends BaseTool {
           responseString: `Slack integration is not initialized for command ${ this.name }`,
         };
       }
-      const replies = await slack.getThreadReplies(channel, ts);
+      const replies = await slack.getThreadReplies(channel, ts, this.executionContext);
       if (!replies || replies.length === 0) {
         return {
           successBoolean: false,

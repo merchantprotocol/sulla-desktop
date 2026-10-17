@@ -125,88 +125,14 @@ export async function initiateWindowContext(): Promise<void> {
   }
 }
 
-/**
- * Post-unlock vault housekeeping: encrypt any legacy plaintext rows and make
- * sure automatic encrypted backups are running. Idempotent and never throws.
- */
-async function onVaultUnlocked(masterPassword?: string): Promise<void> {
-  const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-
-  if (!getVaultKeyService().isUnlocked()) return;
-
-  // Legacy housekeeping needs Postgres; a login during startup can beat it.
-  // Keep it separate so it never blocks the Sulla Vault unlock below.
+/** Refresh non-secret state only; migration and backup run inside the container. */
+async function onVaultUnlocked(): Promise<void> {
   try {
-    const { IntegrationValueModel } = await import('@pkg/agent/database/models/IntegrationValueModel');
-    const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
-
-    await IntegrationValueModel.migrateToEncrypted();
-    getVaultBackupService().start(cb => getIntegrationService().onValueChange(() => cb()));
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    await getDesktopVaultClient().status();
   } catch (err) {
-    console.error('[Vault] Post-unlock housekeeping failed:', err);
+    console.warn('[Vault] Container state is unavailable:', (err as Error).message);
   }
-
-  try {
-    if (masterPassword) {
-      unlockSullaVaultWithRetry(masterPassword).catch(() => undefined);
-    } else {
-      const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-
-      await getDesktopVaultClient().unlockFromKeychain();
-    }
-  } catch (err) {
-    console.error('[Vault] Sulla Vault unlock failed:', err);
-  }
-}
-
-const VAULT_UNLOCK_RETRY_MS = 5_000;
-const VAULT_UNLOCK_DEADLINE_MS = 3 * 60_000;
-
-function isServiceNotReady(err: any): boolean {
-  const code = err?.cause?.code ?? err?.code;
-
-  return code === 'ECONNREFUSED' || code === 'ECONNRESET' ||
-    /fetch failed|ECONNREFUSED|Vault request failed \(5\d\d\)/.test(String(err?.message));
-}
-
-/**
- * Unlock Sulla Vault and copy legacy credentials in. At login the vault server
- * and Postgres may still be starting, so retry until they answer.
- */
-async function unlockSullaVaultWithRetry(masterPassword: string): Promise<void> {
-  const deadline = Date.now() + VAULT_UNLOCK_DEADLINE_MS;
-
-  for (;;) {
-    try {
-      await unlockSullaVault(masterPassword, true);
-
-      return;
-    } catch (err) {
-      if (!isServiceNotReady(err) || Date.now() >= deadline) {
-        console.error('[Vault] Sulla Vault unlock failed:', err);
-
-        return;
-      }
-      await new Promise(resolve => setTimeout(resolve, VAULT_UNLOCK_RETRY_MS));
-    }
-  }
-}
-
-async function unlockSullaVault(masterPassword: string, waitForImport = false): Promise<void> {
-  const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-  const { importLegacyVault } = await import('@pkg/agent/services/VaultImportService');
-
-  await getDesktopVaultClient().unlock(masterPassword);
-  const imported = importLegacyVault(masterPassword);
-
-  if (waitForImport) {
-    await imported;
-
-    return;
-  }
-  void imported.catch(() => {
-    console.error('[Vault] Legacy vault import failed; details omitted');
-  });
 }
 
 /**
@@ -813,8 +739,121 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
   const vaultKey = getVaultKeyService();
 
+  const denyLegacyVaultIpc = (): never => {
+    throw new Error('unsupported_secret_egress: use the isolated vault window');
+  };
+
+  let vaultStatusPoll: ReturnType<typeof setInterval> | undefined;
+  let vaultStatusRunning = false;
+  let vaultMigrationRun: Promise<unknown> | undefined;
+  const refreshVaultStatus = async() => {
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    const client = getDesktopVaultClient();
+    const wasUnlocked = client.isUnlocked();
+    let status = await client.status();
+    if (status.cacheUpdateRequired && await vaultKey.refreshMasterCache()) status = await client.status();
+    if (status.state === 'migration_required') {
+      vaultMigrationRun ??= client.migrate().finally(() => { vaultMigrationRun = undefined });
+      await vaultMigrationRun;
+      status = await client.status();
+    }
+    if (status.unlocked !== wasUnlocked) {
+      const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+      setUserLoggedIn(status.unlocked);
+    }
+    return status;
+  };
+
+  ipcMainProxy.handle('vault:status', refreshVaultStatus);
+
+  const vaultMetadataId = (value: unknown, name: 'integrationId' | 'accountId'): string => {
+    const pattern = name === 'integrationId'
+      ? /^[a-z0-9][a-z0-9._:-]{0,127}$/i
+      : /^[a-z0-9][a-z0-9._:@+-]{0,191}$/i;
+    if (typeof value !== 'string' || !pattern.test(value)) {
+      throw new Error(`Invalid ${ name }`);
+    }
+    return value;
+  };
+  const requireTrustedVaultRenderer = (event: Electron.IpcMainInvokeEvent): void => {
+    const mainWindow = window.getWindow('main-agent');
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+      throw new Error('Untrusted vault metadata caller');
+    }
+  };
+
+  // Narrow metadata-only bridge for renderer integration settings. The broker
+  // response is pre-sanitized by the vault and contains no credential fields.
+  ipcMainProxy.handle('vault:integration-metadata', async(
+    event: Electron.IpcMainInvokeEvent,
+    input: { integrationId: string; accountId?: string },
+  ) => {
+    requireTrustedVaultRenderer(event);
+    const integrationId = vaultMetadataId(input?.integrationId, 'integrationId');
+    const accountId = input?.accountId === undefined ? undefined : vaultMetadataId(input.accountId, 'accountId');
+    const { requireConfiguredCredentialBroker } = await import('@pkg/vault-broker');
+    return requireConfiguredCredentialBroker().integrationMetadata(integrationId, accountId);
+  });
+
+  ipcMainProxy.handle('vault:integration-active-account', async(
+    event: Electron.IpcMainInvokeEvent,
+    input: { integrationId: string; accountId: string },
+  ) => {
+    requireTrustedVaultRenderer(event);
+    const integrationId = vaultMetadataId(input?.integrationId, 'integrationId');
+    const accountId = vaultMetadataId(input?.accountId, 'accountId');
+    const { requireConfiguredCredentialBroker } = await import('@pkg/vault-broker');
+    return requireConfiguredCredentialBroker().setActiveIntegrationAccount(integrationId, accountId);
+  });
+
+  ipcMainProxy.handle('vault:view-open', async(
+    event: Electron.IpcMainInvokeEvent,
+    bounds: Electron.Rectangle,
+    hint?: { integrationId?: string; accountId?: string },
+  ) => {
+    const mainWindow = window.getWindow('main-agent');
+    if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted vault view caller');
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    const { vaultViewManager } = await import('@pkg/window/vaultViewManager');
+    const humanSession = await getDesktopVaultClient().createHumanSession();
+    const target = new URL(humanSession.url);
+    const safeMetadata = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : undefined;
+    const integrationId = safeMetadata(hint?.integrationId);
+    const accountId = safeMetadata(hint?.accountId);
+    if (integrationId) target.searchParams.set('integration', integrationId);
+    if (accountId) target.searchParams.set('account', accountId);
+    await vaultViewManager.show(target.toString(), bounds);
+    if (!vaultStatusPoll) vaultStatusPoll = setInterval(() => {
+      if (vaultStatusRunning) return;
+      vaultStatusRunning = true;
+      void refreshVaultStatus().catch(error => console.warn('[vault] Status refresh failed:', error)).finally(() => { vaultStatusRunning = false });
+    }, 1_000);
+    return { state: 'opened', expiresAt: humanSession.expiresAt };
+  });
+
+  ipcMainProxy.handle('vault:view-bounds', async(event: Electron.IpcMainInvokeEvent, bounds: Electron.Rectangle) => {
+    const mainWindow = window.getWindow('main-agent');
+    if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted vault view caller');
+    const { vaultViewManager } = await import('@pkg/window/vaultViewManager');
+    vaultViewManager.setBounds(bounds);
+  });
+
+  ipcMainProxy.handle('vault:view-hide', async(event: Electron.IpcMainInvokeEvent) => {
+    const mainWindow = window.getWindow('main-agent');
+    if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted vault view caller');
+    const { vaultViewManager } = await import('@pkg/window/vaultViewManager');
+    vaultViewManager.hide();
+    if (vaultStatusPoll) clearInterval(vaultStatusPoll);
+    vaultStatusPoll = undefined;
+  });
+
   ipcMainProxy.handle('vault:is-setup', async() => {
-    return vaultKey.isSetUp();
+    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+    const client = getDesktopVaultClient();
+    await client.status();
+    // Unknown service metadata must lead to the pre-unlock/setup container UI,
+    // never a Desktop-side setup form or a false "already configured" state.
+    return client.isSetUp() ?? false;
   });
 
   ipcMainProxy.handle('vault:can-verify', async() => {
@@ -830,15 +869,17 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('vault:setup', async(_event: Electron.IpcMainInvokeEvent, data: { masterPassword: string }) => {
+    denyLegacyVaultIpc();
     // Throws VAULT_ALREADY_SET_UP rather than orphaning an existing vault.
     const result = await vaultKey.setupFromMasterPassword(data.masterPassword);
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
     setUserLoggedIn(true);
-    await onVaultUnlocked(data.masterPassword);
+    await onVaultUnlocked();
     return { recoveryKey: result.recoveryKey };
   });
 
   ipcMainProxy.handle('vault:change-password', async(_event: Electron.IpcMainInvokeEvent, data: { currentPassword: string; newPassword: string }) => {
+    denyLegacyVaultIpc();
     // Re-wraps the vault key only: stored credentials, the recovery key and
     // existing backups all stay valid. Throws VAULT_WRONG_PASSWORD.
     await vaultKey.changePassword(data?.currentPassword, data?.newPassword);
@@ -848,16 +889,18 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('vault:unlock-password', async(_event: Electron.IpcMainInvokeEvent, data: { password: string }) => {
+    denyLegacyVaultIpc();
     const success = await vaultKey.recoverFromMasterPassword(data.password);
     if (success) {
       const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
       setUserLoggedIn(true);
-      await onVaultUnlocked(data.password);
+      await onVaultUnlocked();
     }
     return success;
   });
 
   ipcMainProxy.handle('vault:unlock-recovery', async(_event: Electron.IpcMainInvokeEvent, data: { recoveryKey: string }) => {
+    denyLegacyVaultIpc();
     const success = await vaultKey.recoverFromRecoveryKey(data.recoveryKey);
     if (success) {
       const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
@@ -875,6 +918,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('vault:backup-now', async() => {
+    denyLegacyVaultIpc();
     const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
 
     try {
@@ -897,12 +941,12 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('vault:lock-vault', async() => {
-    // Manual vault lock — zeros VMK, agent loses access to encrypted credentials
-    vaultKey.lock();
     const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
     const filesLock = getSullaFilesWatcher().lockService();
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-    getDesktopVaultClient().lock();
+    // Mark local state locked immediately, but do not report success until the
+    // container confirms it zeroed keys and revoked every session.
+    await getDesktopVaultClient().lock();
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
     setUserLoggedIn(false);
     // Clear focus so every native browser tab detaches and the login
@@ -917,28 +961,34 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return getDesktopVaultClient().ensureUnlocked();
   });
   ipcMainProxy.handle('vault:v2-list', async() => {
+    denyLegacyVaultIpc();
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     return getDesktopVaultClient().list();
   });
   ipcMainProxy.handle('vault:v2-get', async(_event: Electron.IpcMainInvokeEvent, id: string) => {
+    denyLegacyVaultIpc();
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     return getDesktopVaultClient().get(id);
   });
   ipcMainProxy.handle('vault:v2-save', async(_event: Electron.IpcMainInvokeEvent, data: { id?: string; revision?: number; plaintext: unknown }) => {
+    denyLegacyVaultIpc();
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     return getDesktopVaultClient().save(data.id, data.plaintext as any, data.revision);
   });
   ipcMainProxy.handle('vault:v2-delete', async(_event: Electron.IpcMainInvokeEvent, data: { id: string; revision: number }) => {
+    denyLegacyVaultIpc();
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     await getDesktopVaultClient().remove(data.id, data.revision);
     return true;
   });
   ipcMainProxy.handle('vault:v2-audit', async(_event: Electron.IpcMainInvokeEvent, itemId?: string) => {
+    denyLegacyVaultIpc();
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     return getDesktopVaultClient().auditFor(itemId);
   });
 
   ipcMainProxy.handle('vault:read-account', async(_event: Electron.IpcMainInvokeEvent, data: { integrationId: string; accountId: string }) => {
+    denyLegacyVaultIpc();
     try {
       const result = await getIntegrationService().getSerializableFormValues(data.integrationId, data.accountId);
       return result;
@@ -956,6 +1006,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   // Sync decrypt/encrypt for renderer-side IntegrationValueModel
   const { ipcMain } = await import('electron');
   ipcMain.on('vault:decrypt-sync', (event, encrypted: unknown) => {
+    event.returnValue = '';
+    return;
     try {
       if (typeof encrypted !== 'string') {
         event.returnValue = '';
@@ -974,6 +1026,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMain.on('vault:encrypt-sync', (event, plaintext: unknown) => {
+    event.returnValue = '';
+    return;
     // '' means "refused": the renderer model throws instead of persisting
     // plaintext. Only a never-configured vault stores values as-is.
     try {
@@ -1008,6 +1062,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   const fsPromises = await import('fs/promises');
 
   ipcMainProxy.handle('vault:export', async(_event: Electron.IpcMainInvokeEvent, data: { encrypted: boolean }) => {
+    denyLegacyVaultIpc();
     try {
       const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
       const service = getIS();
@@ -1079,6 +1134,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   const userPickedImportFiles = new Set<string>();
 
   ipcMainProxy.handle('vault:import', async(_event: Electron.IpcMainInvokeEvent, data?: { filePath?: string; password?: string; recoveryKey?: string }) => {
+    denyLegacyVaultIpc();
     try {
       let filePath = data?.filePath;
 
@@ -1312,6 +1368,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
 
   ipcMainProxy.handle('vault:save-credential', async(_event: Electron.IpcMainInvokeEvent, data: { origin: string; username: string; password: string }) => {
+    denyLegacyVaultIpc();
     try {
       const service = getIntegrationService();
       await service.initialize();
@@ -1345,6 +1402,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('vault:autofill', async(_event: Electron.IpcMainInvokeEvent, data: { tabId?: string; accountId: string }) => {
+    denyLegacyVaultIpc();
     try {
       const service = getIntegrationService();
       await service.initialize();

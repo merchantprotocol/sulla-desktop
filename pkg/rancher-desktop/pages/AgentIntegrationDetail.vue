@@ -318,9 +318,25 @@
                   </p>
                 </div>
 
+                <div
+                  v-if="integration.properties && integration.properties.length > 0"
+                  class="mb-6 rounded-lg border border-sky-500/30 bg-sky-500/10 p-4"
+                >
+                  <p class="mb-3 text-sm text-slate-300">
+                    Credential values are edited only inside the isolated local vault.
+                  </p>
+                  <button
+                    type="button"
+                    class="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500"
+                    @click="openSecureVault(editingAccountId || undefined)"
+                  >
+                    {{ editingAccountId ? 'Edit in secure vault' : 'Open secure vault' }}
+                  </button>
+                </div>
+
                 <!-- OAuth sign-in section (completely independent of credentials form) -->
                 <div
-                  v-if="(integration.authType === 'oauth' || integration.oauth) && !isEditingAccount"
+                  v-if="(integration.authType === 'oauth' || integration.oauth) && !isEditingAccount && (!integration.properties || integration.properties.length === 0)"
                   class="space-y-2 mb-6"
                 >
                   <button
@@ -382,7 +398,7 @@
 
                 <!-- Divider when both OAuth and credentials are available -->
                 <div
-                  v-if="integration.oauth && integration.authType !== 'oauth' && !isEditingAccount"
+                  v-if="integration.oauth && integration.authType !== 'oauth' && !isEditingAccount && (!integration.properties || integration.properties.length === 0)"
                   class="flex items-center gap-3 mb-6"
                 >
                   <div class="flex-1 border-t border-slate-300 dark:border-slate-600" />
@@ -391,7 +407,7 @@
                 </div>
 
                 <!-- Credentials section (account label + properties + connect button) -->
-                <div v-if="integration.authType !== 'oauth' || isEditingAccount">
+                <div v-if="(!integration.properties || integration.properties.length === 0) && (integration.authType !== 'oauth' || isEditingAccount)">
                   <!-- Account Label -->
                   <div
                     class="space-y-2 mb-4"
@@ -1111,6 +1127,10 @@ const refreshAccounts = async() => {
 };
 
 const startAddAccount = () => {
+  if (integration.value?.properties?.length) {
+    openSecureVault();
+    return;
+  }
   isAddingAccount.value = true;
   isEditingAccount.value = false;
   editingAccountId.value = null;
@@ -1148,6 +1168,11 @@ const loadFormDataForAccount = async(integrationId: string, accountId: string) =
 const startEditAccount = async(accountId: string) => {
   if (!integration.value) return;
 
+  if (integration.value.properties?.length) {
+    openSecureVault(accountId);
+    return;
+  }
+
   isLoading.value = true;
   try {
     isAddingAccount.value = false;
@@ -1162,6 +1187,13 @@ const startEditAccount = async(accountId: string) => {
   } finally {
     isLoading.value = false;
   }
+};
+
+const openSecureVault = (accountId?: string) => {
+  if (!integration.value) return;
+  window.dispatchEvent(new CustomEvent('sulla:open-secure-vault', {
+    detail: { integrationId: integration.value.id, accountId },
+  }));
 };
 
 /** Set a specific account as the active one */

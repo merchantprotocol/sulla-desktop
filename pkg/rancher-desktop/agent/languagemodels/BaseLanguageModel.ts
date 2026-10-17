@@ -2,7 +2,11 @@
 // This allows the agent to use either Ollama or remote APIs interchangeably
 
 import { createHash } from 'crypto';
+
+import { usesContainerVaultAuthority } from '../../vault-broker';
 import { MeterableUsageModel } from '../database/models/MeterableUsageModel';
+
+import type { ToolExecutionContext } from '../tools/executionContext';
 
 export enum FinishReason {
   Stop = 'stop',
@@ -43,7 +47,7 @@ function promptMetrics(messages: ChatMessage[]): { promptChars: number; promptTo
   }, 0);
   return {
     promptChars,
-    promptTokens: Math.ceil(promptChars / 4),
+    promptTokens:    Math.ceil(promptChars / 4),
     toolResultChars,
     toolResultShare: promptChars ? Number((toolResultChars / promptChars).toFixed(4)) : 0,
   };
@@ -64,7 +68,7 @@ export interface ChatMessage {
  */
 export interface StreamCallbacks {
   /** Called for each text token/delta as it arrives from the LLM. */
-  onToken: (token: string) => void;
+  onToken:      (token: string) => void;
   /**
    * Called for non-text status events from the underlying provider —
    * e.g. "Running Bash…", "Thinking…", "Reading /etc/hosts". Lets the UI
@@ -74,7 +78,7 @@ export interface StreamCallbacks {
    * Providers that don't emit rich events (OpenAI-compatible chat, etc.)
    * simply never call this. Callers that don't care can omit it.
    */
-  onActivity?: (message: string) => void;
+  onActivity?:  (message: string) => void;
   /**
    * Emitted when the provider's agent loop performs a file edit/write that
    * the UI should surface as a post-hoc PatchBlock in chat. Currently only
@@ -96,11 +100,11 @@ export interface StreamCallbacks {
    * normalizes completed command and MCP items from its JSON event stream.
    */
   onToolEvent?: (event: {
-    toolUseId:  string;
-    toolName:   string;
-    input?:     unknown;
+    toolUseId:   string;
+    toolName:    string;
+    input?:      unknown;
     resultChars: number;
-    isError?:   boolean;
+    isError?:    boolean;
   }) => void;
 }
 
@@ -110,17 +114,17 @@ export interface StreamCallbacks {
 export interface NormalizedResponse {
   content:  string;
   metadata: {
-    tokens_used:         number;
-    time_spent:          number;           // milliseconds
-    prompt_tokens?:      number;
-    completion_tokens?:  number;
-    model?:              string;
-    tool_calls?:         { id?: string; name: string; args: any }[];
-    finish_reason?:      FinishReason;
-    reasoning?:          string;
-    parsed_content?:     any;
-    rawProviderContent?: any;
-    streamingEmitted?:   boolean;
+    tokens_used:             number;
+    time_spent:              number;           // milliseconds
+    prompt_tokens?:          number;
+    completion_tokens?:      number;
+    model?:                  string;
+    tool_calls?:             { id?: string; name: string; args: any }[];
+    finish_reason?:          FinishReason;
+    reasoning?:              string;
+    parsed_content?:         any;
+    rawProviderContent?:     any;
+    streamingEmitted?:       boolean;
     /** The graph already persisted and displayed this assistant message. */
     reusedAssistantMessage?: boolean;
   };
@@ -138,10 +142,11 @@ export function usageTokenTotal(usage: any): number {
  * Provider-specific services extend this with their own fields.
  */
 export interface LLMServiceConfig {
-  id:      string;
-  model:   string;
-  baseUrl: string;
-  apiKey?: string;
+  id:         string;
+  model:      string;
+  baseUrl:    string;
+  apiKey?:    string;
+  accountId?: string;
 }
 
 /**
@@ -153,6 +158,7 @@ export interface RemoteProviderConfig {
   baseUrl: string;
   apiKey:  string;
   model:   string;
+  accountId?: string;
 }
 
 /**
@@ -200,6 +206,7 @@ export abstract class BaseLanguageModel {
   protected baseUrl:     string;
   protected apiKey?:     string;
   protected providerId?: string;
+  protected accountId?:  string;
   protected isInitialized = false;
   protected isHealthy = false;
 
@@ -211,6 +218,7 @@ export abstract class BaseLanguageModel {
       : config.baseUrl;
     this.apiKey = config.apiKey;
     this.providerId = config.id;
+    this.accountId = config.accountId;
   }
 
   /**
@@ -220,6 +228,7 @@ export abstract class BaseLanguageModel {
    */
   async refreshCredentials(): Promise<boolean> {
     if (!this.providerId) return false;
+    if (usesContainerVaultAuthority()) return false;
     try {
       const { getIntegrationService } = await import('../services/IntegrationService');
       const svc = getIntegrationService();
@@ -244,7 +253,12 @@ export abstract class BaseLanguageModel {
   // ─────────────────────────────────────────────────────────────
 
   async initialize(): Promise<boolean> {
-    this.isHealthy = await this.healthCheck();
+    // Container authority verifies credentials only while executing an
+    // authenticated outbound request. Desktop must never probe by loading a
+    // key locally, and it has no caller scope during registry initialization.
+    this.isHealthy = usesContainerVaultAuthority() && this.providerId !== 'ollama'
+      ? !!this.baseUrl
+      : await this.healthCheck();
     this.isInitialized = true;
     return this.isHealthy;
   }
@@ -269,6 +283,16 @@ export abstract class BaseLanguageModel {
     return this.constructor.name.replace('Service', '');
   }
 
+  getProviderId(): string | undefined {
+    return this.providerId;
+  }
+
+  async getAccountId(): Promise<string | undefined> {
+    if (this.accountId || !this.providerId) return this.accountId;
+    const { getIntegrationService } = await import('../services/IntegrationService');
+    return getIntegrationService().getActiveAccountId(this.providerId);
+  }
+
   /**
    * Returns the context window size (in tokens) for the current model.
    * Override in subclasses to return provider-specific values.
@@ -281,17 +305,18 @@ export abstract class BaseLanguageModel {
   async chat(
     messages: ChatMessage[],
     options: {
-      model?:          string;
-      maxTokens?:      number;
-      format?:         'json' | undefined;
-      temperature?:    number;
-      signal?:         AbortSignal;
-      timeoutSeconds?: number;
-      tools?:          any;
-      conversationId?: string;
-      nodeName?:       string;
-      profileId?:      string;
-      usageEventId?:   string;
+      model?:            string;
+      maxTokens?:        number;
+      format?:           'json' | undefined;
+      temperature?:      number;
+      signal?:           AbortSignal;
+      timeoutSeconds?:   number;
+      tools?:            any;
+      conversationId?:   string;
+      nodeName?:         string;
+      profileId?:        string;
+      usageEventId?:     string;
+      executionContext?: ToolExecutionContext;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
@@ -365,7 +390,7 @@ export abstract class BaseLanguageModel {
         } catch { /* best-effort */ }
       }
 
-        return normalized;
+      return normalized;
     } catch (error) {
       // Log the error
       if (convId) {
@@ -402,22 +427,23 @@ export abstract class BaseLanguageModel {
     messages: ChatMessage[],
     callbacks: StreamCallbacks,
     options: {
-      model?:          string;
-      maxTokens?:      number;
-      format?:         'json' | undefined;
-      temperature?:    number;
-      signal?:         AbortSignal;
-      timeoutSeconds?: number;
-      tools?:          any;
-      conversationId?: string;
-      nodeName?:       string;
-      profileId?:      string;
-      usageEventId?:   string;
+      model?:            string;
+      maxTokens?:        number;
+      format?:           'json' | undefined;
+      temperature?:      number;
+      signal?:           AbortSignal;
+      timeoutSeconds?:   number;
+      tools?:            any;
+      conversationId?:   string;
+      nodeName?:         string;
+      profileId?:        string;
+      usageEventId?:     string;
+      executionContext?: ToolExecutionContext;
       /** Calling graph state. Used by ClaudeCodeService to mint an MCP
        *  session so the in-VM CLI can call back into native tools that
        *  mutate state.metadata on this exact graph instance. Ignored by
        *  other language-model implementations. */
-      state?:          any;
+      state?:            any;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
@@ -456,10 +482,13 @@ export abstract class BaseLanguageModel {
         // Provider supports streaming — parse the SSE stream
         const normalized = await this.parseStreamResponse(
           streamResponse,
-          { ...callbacks, onToken: (token: string) => {
-            ttftMs ??= Math.round(performance.now() - startTime);
-            callbacks.onToken(token);
-          } },
+          {
+            ...callbacks,
+            onToken: (token: string) => {
+              ttftMs ??= Math.round(performance.now() - startTime);
+              callbacks.onToken(token);
+            },
+          },
           options.signal,
         );
 
@@ -488,7 +517,7 @@ export abstract class BaseLanguageModel {
           } catch { /* best-effort */ }
         }
 
-      return normalized;
+        return normalized;
       }
 
       // Provider does not support streaming — fall back to chat()
@@ -531,12 +560,12 @@ export abstract class BaseLanguageModel {
       } catch { /* unauthenticated/local installs use the explicit default */ }
     }
     await MeterableUsageModel.accrue({
-      profileId: effectiveProfileId,
-      dimension: 'ai_tokens',
+      profileId:      effectiveProfileId,
+      dimension:      'ai_tokens',
       quantity,
       idempotencyKey: usageEventId || derivedUsageEventId,
-      source: `model:${ this.getProviderName() }`,
-      metadata: {
+      source:         `model:${ this.getProviderName() }`,
+      metadata:       {
         provider:          this.getProviderName(),
         model:             response.metadata.model,
         input_tokens:      response.metadata.prompt_tokens,
@@ -547,8 +576,8 @@ export abstract class BaseLanguageModel {
 
   protected usageEventId(messages: ChatMessage[], options: { conversationId?: string }, effectiveModel: string): string {
     return `llm:${ createHash('sha256').update(JSON.stringify({
-      provider: this.getProviderName(),
-      model: effectiveModel,
+      provider:       this.getProviderName(),
+      model:          effectiveModel,
       conversationId: options.conversationId ?? '__default__',
       messages,
     })).digest('hex') }`;

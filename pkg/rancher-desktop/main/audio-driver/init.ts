@@ -542,9 +542,9 @@ function registerIpcHandlers(): void {
     log.info('IPC', 'transcribe-start', opts);
 
     // Resolve the selected STT provider. Defaults to local whisper; when the user
-    // picks Grok, fetch the metered xAI api key (OAuth tokens are rejected by api.x.ai).
+    // picks Grok, use the keyless vault adapter. The key never enters Desktop.
     let sttProvider: 'whisper' | 'grok' = 'whisper';
-    let grokApiKey: string | null = null;
+    let grokTranscriber: import('./service/whisper-transcribe').GrokTranscriber | null = null;
     try {
       const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
       sttProvider = (await SullaSettingsModel.get('audioSttProvider', 'whisper')) === 'grok' ? 'grok' : 'whisper';
@@ -552,13 +552,11 @@ function registerIpcHandlers(): void {
 
     if (sttProvider === 'grok') {
       try {
-        const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
-        grokApiKey = (await getIntegrationService().getIntegrationValue('grok', 'api_key'))?.value || null;
-      } catch { /* no key — fall back to whisper below */ }
-
-      if (!grokApiKey) {
-        log.warn('IPC', 'transcribe-start: Grok STT selected but no xAI api key — falling back to whisper');
-        sttProvider = 'whisper';
+        const { createGrokTranscriber } = await import('./service/grok-transcription');
+        grokTranscriber = await createGrokTranscriber();
+      } catch (error) {
+        log.warn('IPC', 'transcribe-start: Grok STT selected but vault transcription is unavailable', { error: (error as Error).message });
+        return { ok: false, provider: sttProvider, error: 'Grok STT credential is unavailable in the local vault' };
       }
     }
 
@@ -582,7 +580,7 @@ function registerIpcHandlers(): void {
       language:     opts.language,
       model:        opts.model,
       provider:     sttProvider,
-      grokApiKey,
+      grokTranscriber,
       profileId,
       sessionId:    opts.sessionId?.trim() || `transcription:${ crypto.randomUUID() }`,
       manualTurn:   !!opts.manualTurn,

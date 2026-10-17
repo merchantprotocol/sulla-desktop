@@ -1,10 +1,10 @@
 import { Octokit } from '@octokit/rest';
 
 import { extractPullRequestReferences } from './GitHubPullRequestHeadService';
-import { getIntegrationService } from './IntegrationService';
 import { evaluatePullRequestMergeReadiness } from './ProjectsIssueReview';
 import { ArtifactReceiptModel, type ArtifactReceiptRow } from '../database/models/ArtifactReceiptModel';
 import { WorkItemsModel, type WorkCommentRecord, type WorkTaskRecord } from '../database/models/WorkItemsModel';
+import { createGitHubServiceOctokit } from '../tools/github/octokit';
 
 export interface ProjectsPullRequestBrief {
   repository:     string;
@@ -52,9 +52,7 @@ function matchingNotes(lines: string[], expression: RegExp): string[] {
 }
 
 async function githubClient(): Promise<OctokitClient> {
-  const token = await getIntegrationService().getIntegrationValue('github', 'token');
-  if (!token) throw new Error('GitHub is not connected in the vault.');
-  return new Octokit({ auth: token.value });
+  return createGitHubServiceOctokit('projects-issue-detail');
 }
 
 async function loadPullRequestBriefs(

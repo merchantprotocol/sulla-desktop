@@ -1,5 +1,5 @@
 export type VaultConfig = { baseUrl: string; email?: string };
-const defaultConfig: VaultConfig = { baseUrl: 'http://127.0.0.1:30125' };
+const defaultConfig: VaultConfig = { baseUrl: 'http://127.0.0.1:30135' };
 export async function getConfig(): Promise<VaultConfig> { const stored = await chrome.storage.session.get(['vaultConfig']); return { ...defaultConfig, ...(stored.vaultConfig ?? {}) }; }
 export async function setConfig(config: VaultConfig): Promise<void> { await chrome.storage.session.set({ vaultConfig: config }); }
 export async function request(path: string, init: RequestInit = {}): Promise<any> {

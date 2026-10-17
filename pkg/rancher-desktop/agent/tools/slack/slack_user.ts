@@ -21,7 +21,7 @@ export class SlackUserWorker extends BaseTool {
           responseString: `Slack integration is not initialized for command ${ this.name }`,
         };
       }
-      const user = await slack.getUserInfo(userId);
+      const user = await slack.getUserInfo(userId, this.executionContext);
       return {
         successBoolean: true,
         responseString: `Slack user info for ${ userId }:\n- ID: ${ user.id }\n- Name: ${ user.name }\n- Real Name: ${ user.real_name || user.profile?.real_name || 'N/A' }`,

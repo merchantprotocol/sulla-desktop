@@ -1,6 +1,7 @@
 import { BaseTool, type ToolResponse } from '../base';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { requireConfiguredCredentialBroker, usesContainerVaultAuthority } from '@pkg/vault-broker';
 
 /** Integration id the Google Drive card stores its OAuth tokens under. */
 export const GDRIVE_INTEGRATION_ID = 'google_drive';
@@ -86,7 +87,26 @@ export abstract class DriveTool extends BaseTool {
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== '') url.searchParams.set(key, String(value));
     }
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${ await this.accessToken(accountId) }` } });
+    const account = accountId || await getIntegrationService().getActiveAccountId(GDRIVE_INTEGRATION_ID);
+    let res: Response;
+
+    if (usesContainerVaultAuthority()) {
+      const ctx = this.executionContext;
+      if (!ctx || ctx.credential_scope?.integration_id !== GDRIVE_INTEGRATION_ID || ctx.credential_scope.account_id !== account) {
+        throw new Error('Google Drive requires a verified credential scope for the selected account');
+      }
+      const broker = requireConfiguredCredentialBroker();
+      res = await broker.executeStream(broker.requestFor(ctx, {
+        operation:    'catalog.http',
+        ref:          { integrationId: GDRIVE_INTEGRATION_ID, accountId: account },
+        url:          url.toString(),
+        method:       'GET',
+        injections:   [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        responseType: 'stream',
+      }));
+    } else {
+      res = await fetch(url, { headers: { Authorization: `Bearer ${ await this.accessToken(account) }` } });
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       let message = body;

@@ -20,7 +20,7 @@ export class MobileListLeadsWorker extends BaseTool {
     if (urgency) qs.set('urgency', urgency);
 
     try {
-      const result = await getMobileApiClient().request<{ leads?: any[] }>('GET', `/leads?${ qs.toString() }`);
+      const result = await getMobileApiClient().request<{ leads?: any[] }>(this.executionContext, 'GET', `/leads?${ qs.toString() }`);
       const leads = result.leads ?? [];
       if (leads.length === 0) {
         return { successBoolean: true, responseString: 'No leads matched the filter.' };

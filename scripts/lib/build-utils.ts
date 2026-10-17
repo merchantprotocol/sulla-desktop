@@ -128,7 +128,7 @@ export default {
         __dirname:  false,
         __filename: false,
       },
-      entry:       { background: path.resolve(this.rootDir, 'background') },
+      entry:       { background: path.resolve(this.rootDir, 'bootstrapEntry') },
       experiments: { outputModule: true },
       externals:   [
         ...Object.keys(this.packageMeta.dependencies),

@@ -6,6 +6,7 @@
 import { Client, GatewayIntentBits, ReactionEmoji, ChannelType } from 'discord.js';
 
 import { incomingMessage } from './prompts/incoming_message';
+import { usesContainerVaultAuthority } from '../../../vault-broker';
 import {
   getIntegrationService,
   type IntegrationValue,
@@ -96,6 +97,13 @@ export class DiscordClient {
 
   async initialize(): Promise<boolean> {
     if (this.connected) return true;
+    // Discord is not registered in the Desktop integration registry today.
+    // Keep the dormant legacy SDK path incapable of reading a vault-owned bot
+    // token if it is accidentally invoked while container authority is active.
+    if (usesContainerVaultAuthority()) {
+      console.warn('[DiscordClient] Legacy token SDK is unavailable with container vault authority');
+      return false;
+    }
 
     const service = getIntegrationService();
     await service.initialize();

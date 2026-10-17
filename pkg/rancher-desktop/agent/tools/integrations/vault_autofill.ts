@@ -1,3 +1,4 @@
+import { usesContainerVaultAuthority } from '../../../vault-broker';
 import { getDesktopVaultClient } from '../../services/DesktopVaultClient';
 import { getIntegrationService } from '../../services/IntegrationService';
 import { BaseTool, ToolResponse } from '../base';
@@ -114,6 +115,12 @@ export class VaultAutofillWorker extends BaseTool {
   name = '';
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
+    if (usesContainerVaultAuthority()) {
+      return {
+        successBoolean: false,
+        responseString: 'unsupported_secret_egress: agent browser autofill cannot receive container-vault credentials; use the isolated human vault UI.',
+      };
+    }
     const { origin, assetId } = input;
 
     try {

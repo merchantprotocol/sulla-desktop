@@ -9,19 +9,23 @@
     "build:console": "node console/build.mjs",
     "start": "node dist/index.js",
     "test:security": "npm run build && node --test dist/rbac.test.js",
-    "test:sync": "npm run build && node --test dist/sync.test.js"
+    "test:sync": "npm run build && node --test dist/sync.test.js",
+    "test:local-authority": "npm run build && node --test dist/localAuthority.test.js"
   },
   "dependencies": {
     "@sulla/vault-crypto": "file:../../packages/vault-crypto",
     "express": "5.2.1",
     "jsonwebtoken": "9.0.3",
-    "pg": "8.18.0"
+    "pg": "8.18.0",
+    "ws": "8.20.0",
+    "yaml": "2.8.2"
   },
   "devDependencies": {
     "@types/express": "5.0.6",
     "@types/jsonwebtoken": "9.0.10",
     "@types/node": "22.19.15",
     "@types/pg": "8.16.0",
+    "@types/ws": "8.18.1",
     "esbuild": "0.25.12",
     "typescript": "5.9.3"
   }

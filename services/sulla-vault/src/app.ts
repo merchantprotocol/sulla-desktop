@@ -14,6 +14,7 @@ import {
   verifyLoginHash,
 } from './auth.js';
 import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } from './rbac.js';
+import { LocalVaultAuthority, LocalVaultError } from './localAuthority.js';
 
 import type { VaultConfig } from './config.js';
 import type { Database, Queryable } from './db.js';
@@ -138,8 +139,9 @@ async function authorizeItemFolder(
   throw new AccessDenied('Folder access denied');
 }
 
-export function createApp(db: Database, config: VaultConfig) {
+export function createApp(db: Database, config: VaultConfig, options: { localAuthority?: LocalVaultAuthority } = {}) {
   const app = express();
+  const localAuthority = config.mode === 'desktop' ? options.localAuthority ?? new LocalVaultAuthority(db, config) : null;
   app.disable('x-powered-by');
   app.use((request, response, next) => {
     const origin = request.header('origin');
@@ -154,12 +156,246 @@ export function createApp(db: Database, config: VaultConfig) {
     if (request.method === 'OPTIONS') { response.status(allowed ? 204 : 403).end(); return; }
     next();
   });
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: config.mode === 'desktop' ? '36mb' : '1mb' }));
 
   app.get('/healthz', async(_request, response) => {
     await db.query('SELECT 1');
     response.json({ ok: true, mode: config.mode });
   });
+
+  const serviceIdentity = (request: express.Request): { serviceId: string; token?: string } => ({
+    serviceId: request.header('x-sulla-service-id') ?? '',
+    token: request.header('authorization')?.replace(/^Bearer\s+/i, ''),
+  });
+  const humanCookie = (request: express.Request): string | undefined =>
+    request.header('cookie')?.split(';').map(value => value.trim()).find(value => value.startsWith('sulla_vault_human='))?.slice('sulla_vault_human='.length);
+  const setHumanCookie = (response: Response, sessionId: string, expiresAt: number): void => {
+    const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+    const secure = config.humanUiOrigin?.startsWith('https:') ? '; Secure' : '';
+    response.setHeader('Set-Cookie', `sulla_vault_human=${ sessionId }; HttpOnly; SameSite=Strict; Path=/v1/human; Max-Age=${ maxAge }${ secure }`);
+  };
+
+  if (localAuthority) {
+    app.post('/v1/desktop/bootstrap/challenge', (request, response) => {
+      response.json(localAuthority.createChallenge(
+        requiredString(request.body.callerId, 'callerId'),
+        requiredString(request.body.clientNonce, 'clientNonce'),
+        requiredString(request.body.clientProof, 'clientProof'),
+      ));
+    });
+    app.post('/v1/desktop/bootstrap/unlock', async(request, response) => {
+      response.json(await localAuthority.unlock({
+        callerId: requiredString(request.body.callerId, 'callerId'),
+        challengeId: requiredString(request.body.challengeId, 'challengeId'),
+        clientProof: requiredString(request.body.clientProof, 'clientProof'),
+        sealedUnlock: requiredString(request.body.sealedUnlock, 'sealedUnlock'),
+      }));
+    });
+    app.post('/v1/desktop/cache/challenge', (request, response) => {
+      response.json(localAuthority.createCacheUpdateChallenge(
+        requiredString(request.body.callerId, 'callerId'),
+        requiredString(request.body.clientNonce, 'clientNonce'),
+        requiredString(request.body.clientProof, 'clientProof'),
+      ));
+    });
+    app.post('/v1/desktop/cache/fetch', (request, response) => {
+      response.json(localAuthority.fetchCacheUpdate({
+        callerId: requiredString(request.body.callerId, 'callerId'),
+        challengeId: requiredString(request.body.challengeId, 'challengeId'),
+        clientProof: requiredString(request.body.clientProof, 'clientProof'),
+        sealedLegacyVmk: typeof request.body.sealedLegacyVmk === 'string' ? request.body.sealedLegacyVmk : undefined,
+      }));
+    });
+    app.get('/v1/desktop/status', (request, response) => {
+      const identity = serviceIdentity(request);
+      localAuthority.requireControlIdentity(identity.serviceId, identity.token);
+      const status = localAuthority.status();
+      response.json({ ...status, migration: { required: status.state === 'migration_required', error: status.state === 'migration_failed' ? 'migration_failed' : undefined } });
+    });
+    app.post('/v1/desktop/lock', (request, response) => {
+      const identity = serviceIdentity(request);
+      localAuthority.requireControlIdentity(identity.serviceId, identity.token);
+      localAuthority.lock();
+      response.json({ state: 'locked', unlocked: false, migration: { required: false } });
+    });
+    app.post('/v1/desktop/migrate', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.migrateLegacy(identity.serviceId, identity.token));
+    });
+    app.post('/v1/human/session', (request, response) => {
+      const identity = serviceIdentity(request);
+      const session = localAuthority.createHumanSession(identity.serviceId, identity.token);
+      const fragment = new URLSearchParams({ grant: session.sessionId, csrf: session.csrf }).toString();
+      response.json({ url: `${ config.humanUiOrigin }/vault/#${ fragment }`, csrf: session.csrf, expiresAt: session.expiresAt, phase: session.phase });
+    });
+    app.use('/v1/human', (request, response, next) => {
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('Referrer-Policy', 'no-referrer');
+      const origin = request.header('origin');
+      const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(request.method);
+      const fetchSite = request.header('sec-fetch-site');
+      if ((unsafe && origin !== config.humanUiOrigin) || (!unsafe && origin && origin !== config.humanUiOrigin) ||
+          (fetchSite && fetchSite !== 'same-origin')) {
+        response.status(403).json({ error: 'invalid_origin', message: 'Human vault origin is invalid' });
+        return;
+      }
+      if (origin) response.setHeader('Access-Control-Allow-Origin', config.humanUiOrigin!);
+      response.setHeader('Vary', 'Origin');
+      next();
+    });
+    app.post('/v1/human/session/exchange', (request, response) => {
+      const session = localAuthority.exchangeHumanGrant(
+        requiredString(request.body.grant, 'grant'), requiredString(request.body.csrf, 'csrf'),
+      );
+      setHumanCookie(response, session.sessionId, session.expiresAt);
+      response.json({ csrf: session.csrf, expiresAt: session.expiresAt, phase: session.phase });
+    });
+    app.post('/v1/human/unlock', async(request, response) => {
+      const result = await localAuthority.unlockHumanSession(
+        humanCookie(request), request.header('x-csrf-token'), requiredString(request.body.password, 'password'),
+      );
+      setHumanCookie(response, result.sessionId, result.expiresAt);
+      response.json({ csrf: result.csrf, expiresAt: result.expiresAt, phase: result.phase, state: result.state, cacheMode: result.cacheMode });
+    });
+    app.post('/v1/human/password', async(request, response) => {
+      response.json(await localAuthority.changeHumanPassword(
+        humanCookie(request), request.header('x-csrf-token'),
+        requiredString(request.body.currentPassword, 'currentPassword'), requiredString(request.body.nextPassword, 'nextPassword'),
+      ));
+    });
+    app.post('/v1/human/recovery/configure', async(request, response) => {
+      await localAuthority.configureHumanRecovery(
+        humanCookie(request), request.header('x-csrf-token'), requiredString(request.body.recoveryCode, 'recoveryCode'),
+      );
+      response.status(204).end();
+    });
+    app.post('/v1/human/recovery/unlock', async(request, response) => {
+      const result = await localAuthority.recoverHumanSession(
+        humanCookie(request), request.header('x-csrf-token'),
+        requiredString(request.body.recoveryCode, 'recoveryCode'), requiredString(request.body.nextPassword, 'nextPassword'),
+      );
+      setHumanCookie(response, result.sessionId, result.expiresAt);
+      response.json({ csrf: result.csrf, expiresAt: result.expiresAt, phase: result.phase, state: result.state, cacheMode: result.cacheMode });
+    });
+    app.post('/v1/human/backup/export', async(request, response) => {
+      response.json(await localAuthority.exportHumanBackup(
+        humanCookie(request), request.header('x-csrf-token'), requiredString(request.body.backupPassword, 'backupPassword'),
+      ));
+    });
+    app.post('/v1/human/backup/import', async(request, response) => {
+      await localAuthority.importHumanBackup(
+        humanCookie(request), request.header('x-csrf-token'), requiredString(request.body.backupPassword, 'backupPassword'),
+        requiredObject(request.body.backup, 'backup') as any,
+      );
+      response.status(204).end();
+    });
+    app.post('/v1/human/lock', (request, response) => {
+      const result = localAuthority.lockHumanSession(humanCookie(request), request.header('x-csrf-token'));
+      setHumanCookie(response, result.sessionId, result.expiresAt);
+      response.json({ csrf: result.csrf, expiresAt: result.expiresAt, phase: result.phase, state: result.state });
+    });
+    app.get('/v1/human/items', async(request, response) => {
+      response.json({ items: await localAuthority.listHumanItems(humanCookie(request), request.header('x-csrf-token')) });
+    });
+    app.post('/v1/human/items', async(request, response) => {
+      response.status(201).json(await localAuthority.saveHumanItem(humanCookie(request), request.header('x-csrf-token'), request.body));
+    });
+    app.post('/v1/human/items/:itemId/reveal', async(request, response) => {
+      response.json(await localAuthority.revealHumanItem(humanCookie(request), request.header('x-csrf-token'), requiredString(request.params.itemId, 'itemId')));
+    });
+    app.patch('/v1/human/items/:itemId', async(request, response) => {
+      response.json(await localAuthority.saveHumanItem(humanCookie(request), request.header('x-csrf-token'), { ...request.body, id: request.params.itemId }));
+    });
+    app.delete('/v1/human/items/:itemId', async(request, response) => {
+      await localAuthority.deleteHumanItem(humanCookie(request), request.header('x-csrf-token'), requiredString(request.params.itemId, 'itemId'), Number(request.query.revision));
+      response.status(204).end();
+    });
+    app.post('/v1/broker/approve', (request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(localAuthority.approve(identity.serviceId, identity.token, requiredString(request.body.operationId, 'operationId')));
+    });
+    app.get('/v1/broker/status', (request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(localAuthority.brokerStatus(identity.serviceId, identity.token));
+    });
+    app.get('/v1/broker/integrations/:integrationId/metadata', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.integrationMetadata(
+        identity.serviceId, identity.token, requiredString(request.params.integrationId, 'integrationId'),
+        typeof request.query.accountId === 'string' ? request.query.accountId : undefined,
+      ));
+    });
+    app.put('/v1/broker/integrations/:integrationId/active-account', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.setActiveIntegrationAccount(
+        identity.serviceId, identity.token, requiredString(request.params.integrationId, 'integrationId'),
+        requiredString(request.body.accountId, 'accountId'),
+      ));
+    });
+    app.post('/v1/broker/execute', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.execute(request.body, identity.serviceId, identity.token));
+    });
+    app.post('/v1/broker/execute-stream', async(request, response) => {
+      const identity = serviceIdentity(request);
+      await localAuthority.executeStream(request.body, identity.serviceId, identity.token, {
+        start: (status, headers) => { response.status(status); for (const [name, value] of Object.entries(headers)) response.setHeader(name, value); response.flushHeaders(); },
+        write: chunk => response.write(chunk),
+        onceDrain: callback => response.once('drain', callback),
+        end: () => response.end(),
+        destroy: error => response.destroy(error),
+        onAbort: callback => response.once('close', callback),
+      });
+    });
+    app.post('/v1/broker/relay/session', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.status(201).json(await localAuthority.createRelay(request.body, identity.serviceId, identity.token));
+    });
+    app.get('/v1/broker/relay/:relayId/events', async(request, response) => {
+      const identity = serviceIdentity(request);
+      const controller = new AbortController();
+      request.once('close', () => controller.abort());
+      response.status(200);
+      response.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+      response.setHeader('Cache-Control', 'no-store');
+      response.flushHeaders();
+      for await (const event of localAuthority.relayEvents(
+        requiredString(request.params.relayId, 'relayId'), identity.serviceId, identity.token, controller.signal,
+      )) {
+        if (controller.signal.aborted) break;
+        if (!response.write(`${ JSON.stringify(event) }\n`)) {
+          await new Promise<void>(resolve => response.once('drain', resolve));
+        }
+      }
+      response.end();
+    });
+    app.post('/v1/broker/relay/:relayId/send', async(request, response) => {
+      const identity = serviceIdentity(request);
+      await localAuthority.sendRelay(
+        requiredString(request.params.relayId, 'relayId'), request.body, identity.serviceId, identity.token,
+      );
+      response.status(204).end();
+    });
+    app.delete('/v1/broker/relay/:relayId', (request, response) => {
+      const identity = serviceIdentity(request);
+      localAuthority.closeRelay(requiredString(request.params.relayId, 'relayId'), identity.serviceId, identity.token);
+      response.status(204).end();
+    });
+    app.get(/^\/vault$/, (_request, response) => response.redirect(308, '/vault/'));
+    app.use('/vault', (_request, response, next) => {
+      response.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors app: rancher-desktop:");
+      response.setHeader('Referrer-Policy', 'no-referrer');
+      response.setHeader('Cache-Control', 'no-store');
+      next();
+    }, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../console/local')));
+
+    // Everything below this point is the remote/server ciphertext API. Local
+    // mode must never expose wrapped keys, JWT CRUD, or the retired broker
+    // credential endpoint, even to a token issued before a lock.
+    app.use('/v1', (_request, response) => {
+      response.status(404).json({ error: 'not_found', message: 'This API is unavailable in local vault mode' });
+    });
+  }
 
   app.post('/v1/accounts', async(request, response) => {
     if (config.mode !== 'server') {
@@ -1012,7 +1248,16 @@ export function createApp(db: Database, config: VaultConfig) {
     response.status(201).json(result.rows[0]);
   });
 
-  app.use((error: unknown, _request: AuthenticatedRequest, response: Response, _next: NextFunction) => {
+  app.use((error: unknown, request: AuthenticatedRequest, response: Response, _next: NextFunction) => {
+    if (error instanceof LocalVaultError) {
+      if (request.path.startsWith('/v1/broker/')) response.setHeader('X-Sulla-Vault-Error', error.code);
+      response.status(error.status).json({
+        error: error.code,
+        message: error.code === 'approval_required' ? 'Owner approval is required' : error.message,
+        ...(error.code === 'approval_required' ? { operationId: error.message } : {}),
+      });
+      return;
+    }
     if (error instanceof AccessDenied) {
       response.status(403).json({ error: 'forbidden' });
       return;

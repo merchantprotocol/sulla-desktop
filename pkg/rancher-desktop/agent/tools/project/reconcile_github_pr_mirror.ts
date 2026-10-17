@@ -1,10 +1,8 @@
-import { Octokit } from '@octokit/rest';
-
 import { GitHubPullRequestMirrorModel } from '../../database/models/GitHubPullRequestMirrorModel';
 import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { GitHubPullRequestMirrorService } from '../../services/GitHubPullRequestMirrorService';
-import { getIntegrationService } from '../../services/IntegrationService';
 import { BaseTool, ToolResponse } from '../base';
+import { createGitHubOctokit } from '../github/octokit';
 
 export class ReconcileGitHubPRMirrorWorker extends BaseTool {
   name = '';
@@ -22,12 +20,9 @@ export class ReconcileGitHubPRMirrorWorker extends BaseTool {
     if (!epicId || repositories.length === 0) {
       return { successBoolean: false, responseString: 'repositories and epic_id are required.' };
     }
-    const token = await getIntegrationService().getIntegrationValue('github', 'token');
-    if (!token) return { successBoolean: false, responseString: 'GitHub token not configured in vault.' };
-
     try {
       const result = await new GitHubPullRequestMirrorService(
-        new Octokit({ auth: token.value }), getProjectsApplicationService(), GitHubPullRequestMirrorModel,
+        await createGitHubOctokit(this.executionContext), getProjectsApplicationService(), GitHubPullRequestMirrorModel,
       ).reconcile({
         repositories,
         epicId,
