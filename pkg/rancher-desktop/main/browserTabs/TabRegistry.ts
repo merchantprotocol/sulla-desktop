@@ -182,7 +182,7 @@ class TabRegistryImpl {
     // A bridge means an agent is about to drive this tab: make sure a slept
     // background tab is awake (compositor + timers) before it does.
     manager.wakeView(assetId);
-    return new GuestBridge(wc, assetId);
+    return new GuestBridge(wc, assetId, () => !manager.isVaultProtected(assetId));
   }
 
   get(assetId: string): TabRecord | null {

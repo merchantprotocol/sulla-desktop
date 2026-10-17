@@ -69,9 +69,14 @@ checks plus a caller identifier. Errors use stable states: `vault_locked`,
 invalid in local mode. Arbitrary function environment injection is unsupported
 because it necessarily releases plaintext to agent code. Those calls fail with
 `unsupported_secret_egress`; supported functions must use an opaque broker
-request capability. Browser autofill remains a human-visible compatibility
-case: the vault may inject into a verified isolated browser target after human
-approval, but no agent-readable API returns the username or password.
+request capability. Browser autofill is a human-visible exception: the
+container binds the popup session to the browser process's exact tab and
+origin, decrypts only after the human clicks Fill, and exposes a 30-second
+one-use payload only to the pinned Desktop control channel. Desktop rechecks
+the live main-frame origin before and after injection. The filled tab is opaque
+to current and future agent DOM automation bridges until its next top-level
+navigation; no tool response, renderer IPC, or generic broker API returns the
+username or password.
 
 ## Request policy
 
@@ -124,7 +129,7 @@ migration test input.
 | Desktop integration metadata | `IntegrationService`, `IntegrationValueModel`, sync IPC | metadata and opaque refs only in local mode; no plaintext fallback | inventoried |
 | Tool/provider routing | `services/sulla-tools`, GitHub/Slack/Discord/OAuth/MCP/provider clients | typed vault operations as final outbound stage | inventoried |
 | Runtime functions | `SecretsCapabilityService`, `sullaSecretsServer`, launchers | remove plaintext env service; opaque request capability or fail closed | inventoried |
-| Browser autofill | `vault_autofill`, browser tab manager | verified human-only injection without plaintext tool result | inventoried |
+| Browser autofill | container popup, Desktop control client, browser tab manager | origin-bound one-use human injection; agent DOM access blocked while filled | implemented |
 | Vault broker legacy | `pkg/rancher-desktop/vault-broker/*`, Lima mounts | remove agent-key provisioning and decrypt callback | inventoried |
 | Desktop UI | vault route/window registration and `services/sulla-vault/console/local/*` | sandboxed container view, no Node/preload/general browser registry | in progress (UI worker) |
 
