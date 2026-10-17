@@ -200,7 +200,18 @@ export class GatewayConnectionController {
 
   private async getConfig(): Promise<{ url: string; apiKey: string } | null> {
     const { getIntegrationService } = await import('../services/IntegrationService');
+    const { usesContainerVaultAuthority } = await import('../../vault-broker');
     const integrationService = getIntegrationService();
+    if (usesContainerVaultAuthority()) {
+      try {
+        const accountId = await integrationService.getActiveAccountId('enterprise_gateway');
+        const metadata = await integrationService.getMetadataValues('enterprise_gateway', accountId);
+        const url = metadata.find(value => value.property === 'gateway_url')?.value?.trim();
+        return url ? { url, apiKey: '' } : null;
+      } catch {
+        return null;
+      }
+    }
     const [urlValue, keyValue] = await Promise.all([
       integrationService.getIntegrationValue('enterprise_gateway', 'gateway_url'),
       integrationService.getIntegrationValue('enterprise_gateway', 'api_key'),

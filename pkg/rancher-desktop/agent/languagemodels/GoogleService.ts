@@ -1,4 +1,5 @@
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type LLMServiceConfig } from './BaseLanguageModel';
+import { providerFetch } from './providerBroker';
 import { getIntegrationService } from '../services/IntegrationService';
 
 /**
@@ -74,7 +75,10 @@ export class GoogleService extends BaseLanguageModel {
 
         const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
         const fetchOpts = this.buildFetchOptions(body, signal);
-        const res = await fetch(url, fetchOpts);
+        const res = await providerFetch('google', url, fetchOpts, options?.executionContext, {
+          streaming:  false,
+          injections: [{ field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' }],
+        });
 
         if (!res.ok) {
           const text = await res.text().catch(() => '');

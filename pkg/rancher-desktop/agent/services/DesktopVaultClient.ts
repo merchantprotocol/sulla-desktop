@@ -18,7 +18,7 @@ import {
 } from '../../../../packages/vault-crypto/src/index';
 import paths from '../../utils/paths';
 
-const DEFAULT_API = 'http://127.0.0.1:30125';
+const DEFAULT_API = 'http://127.0.0.1:30135';
 // Server tokens last 12h; reopen a little before that so requests never 401.
 const SESSION_LIFETIME_MS = 11 * 60 * 60 * 1000;
 

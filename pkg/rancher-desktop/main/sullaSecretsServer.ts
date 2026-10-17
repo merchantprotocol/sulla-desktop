@@ -123,6 +123,10 @@ async function handleFetch(req: http.IncomingMessage, res: http.ServerResponse):
     writeJson(res, 200, { value });
   } catch (err) {
     if (err instanceof SecretsResolveError) {
+      if (err.outcome === 'unsupported_secret_egress') {
+        writeJson(res, 501, { error: 'unsupported_secret_egress' });
+        return;
+      }
       const status = statusForOutcome(err.outcome);
       writeJson(res, status, { error: err.outcome });
       return;
