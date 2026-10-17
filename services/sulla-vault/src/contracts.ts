@@ -250,6 +250,12 @@ export interface BrokerExecuteResponse {
   body:    unknown;
 }
 
+export interface BrokerStatusResponse {
+  state:        LocalVaultState;
+  unlocked:     boolean;
+  principalId?: string;
+}
+
 /**
  * /v1/broker/execute-stream returns upstream status and sanitized headers as
  * HTTP status/headers, then writes the sanitized body directly. It never wraps

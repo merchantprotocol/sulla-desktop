@@ -270,6 +270,12 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
       }
       assert.equal((await fetch(`${ base }/v1/human/items`)).status, 401);
       assert.equal((await fetch(`${ base }/v1/human/items`, { headers: { origin: 'https://attacker.invalid' } })).status, 403);
+      assert.equal((await fetch(`${ base }/v1/broker/status`)).status, 401);
+      const brokerStatus = await fetch(`${ base }/v1/broker/status`, {
+        headers: { 'x-sulla-service-id': 'sulla-tools', authorization: `Bearer ${ TOKEN.broker }` },
+      });
+      assert.equal(brokerStatus.status, 200);
+      assert.equal((await brokerStatus.json() as any).principalId, user.rows[0].id);
       const execute = async(body: unknown) => fetch(`${ base }/v1/broker/execute`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-sulla-service-id': 'sulla-tools', authorization: `Bearer ${ TOKEN.broker }` },
         body: JSON.stringify(body),

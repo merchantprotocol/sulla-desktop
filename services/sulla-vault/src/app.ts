@@ -312,6 +312,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       const identity = serviceIdentity(request);
       response.json(localAuthority.approve(identity.serviceId, identity.token, requiredString(request.body.operationId, 'operationId')));
     });
+    app.get('/v1/broker/status', (request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(localAuthority.brokerStatus(identity.serviceId, identity.token));
+    });
     app.post('/v1/broker/execute', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.execute(request.body, identity.serviceId, identity.token));

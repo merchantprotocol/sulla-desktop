@@ -3149,6 +3149,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           SULLA_VAULT_BROKER_URL:        'https://sulla_vault:8787',
           SULLA_VAULT_BROKER_SERVICE_ID: 'sulla-tools',
           SULLA_VAULT_BROKER_TOKEN:      vaultIdentities.brokerToken,
+          SULLA_VAULT_TLS_CA_FILE:       '/run/sulla-vault-ca/tls.crt',
           NODE_EXTRA_CA_CERTS:           '/run/sulla-vault-ca/tls.crt',
         } : {}),
       },

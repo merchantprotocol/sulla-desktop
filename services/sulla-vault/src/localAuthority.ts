@@ -950,6 +950,20 @@ export class LocalVaultAuthority {
     }
   }
 
+  brokerStatus(callerId: string, token: string | undefined): {
+    state: LocalVaultState; unlocked: boolean; principalId?: string;
+  } {
+    this.requireBrokerIdentity(callerId, token);
+    const { state, unlocked, principalId } = this.status();
+    return { state, unlocked, principalId };
+  }
+
+  private requireBrokerIdentity(callerId: string, token: string | undefined): void {
+    if (callerId !== this.config.brokerServiceId || !constantEqual(token, this.config.brokerServiceToken)) {
+      throw new LocalVaultError('invalid_service_identity', 401, 'Broker service identity is invalid');
+    }
+  }
+
   async migrateLegacy(callerId: string, token: string | undefined): Promise<LegacyMigrationResponse> {
     this.requireControlIdentity(callerId, token);
     const keys = this.requireKeys();
@@ -1178,9 +1192,7 @@ export class LocalVaultAuthority {
     serviceId: string,
     token: string | undefined,
   ): Promise<PreparedBrokerRequest> {
-    if (serviceId !== this.config.brokerServiceId || !constantEqual(token, this.config.brokerServiceToken)) {
-      throw new LocalVaultError('invalid_service_identity', 401, 'Broker service identity is invalid');
-    }
+    this.requireBrokerIdentity(serviceId, token);
     if (!input.claims?.sub || !input.claims.agent_id || !input.claims.pod_id) {
       throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller identity is incomplete');
     }
