@@ -150,4 +150,14 @@ describe('Files keychain bootstrap', () => {
     original.fill(0);
   });
 
+  it('does not bootstrap a newly created key unless persisted ciphertext decrypts to the same key', async() => {
+    const provider = storage();
+    provider.decryptString = () => crypto.randomBytes(32).toString('base64');
+    let bootstrapped = false;
+    await expect(new SullaFilesKeychain(keyPath, () => Promise.resolve(provider), () => { bootstrapped = true; return Promise.resolve() }).unlock()).rejects.toThrow('Files could not unlock using the OS keychain');
+    expect(bootstrapped).toBe(false);
+    // Preserve the encrypted file for recovery; never replace it on failure.
+    expect(fs.existsSync(keyPath)).toBe(true);
+  });
+
 });

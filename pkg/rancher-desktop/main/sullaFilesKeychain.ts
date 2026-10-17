@@ -125,6 +125,25 @@ export class SullaFilesKeychain {
           await file.close();
         }
       }
+      // The service may commit a verifier immediately after bootstrap. Verify
+      // the on-disk ciphertext and persist its directory entry first so a crash
+      // cannot leave committed file data with a missing/unrecoverable master.
+      let persisted: Buffer | undefined;
+      const persistedFile = await fs.promises.open(this.keyPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const info = await persistedFile.stat();
+        if (!info.isFile() || info.size > 16_384) throw new Error('Invalid encrypted key');
+        const encoded = storage.decryptString(await persistedFile.readFile());
+        if (!/^[A-Za-z0-9+/]{43}=$/.test(encoded)) throw new Error('Invalid encrypted key');
+        persisted = Buffer.from(encoded, 'base64');
+        if (persisted.length !== 32 || !crypto.timingSafeEqual(key, persisted)) throw new Error('Encrypted key verification failed');
+        await persistedFile.sync();
+      } finally {
+        persisted?.fill(0);
+        await persistedFile.close();
+      }
+      const directory = await fs.promises.open(path.dirname(this.keyPath), fs.constants.O_RDONLY);
+      try { await directory.sync() } finally { await directory.close() }
       await this.bootstrap(key);
     } catch {
       // Neither Electron nor HTTP errors may leak decrypted material to logs.
