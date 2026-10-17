@@ -274,6 +274,21 @@ export class ConfigApiClient {
     if (options.token || options.apiKey) {
       throw new Error('unsupported_secret_egress: explicit credential overrides are unavailable in Desktop vault mode');
     }
+
+    const headers = new Headers(init.headers);
+    headers.delete('authorization');
+    headers.delete('x-api-key');
+    headers.delete('api-key');
+    const directInit = { ...init, headers };
+
+    // Public catalog endpoints do not need a vault account, an unlocked vault,
+    // or a signed credential scope. Decide that before consulting vault-backed
+    // metadata so auth:none integrations remain usable while the vault is
+    // locked or has not been configured yet.
+    if (endpoint.endpoint.auth === 'none') {
+      return fetch(url, directInit);
+    }
+
     const ctx = options.executionContext;
     if (!ctx) throw new Error('catalog.http requires a verified execution context');
     const accountId = options.accountId || await getIntegrationService().getActiveAccountId(this.slug);
@@ -292,17 +307,10 @@ export class ConfigApiClient {
     } else if (auth.api_key_fallback?.enabled) {
       injections.push({ field: 'api_key', target: 'query', name: auth.api_key_fallback.param_name, scheme: 'raw' });
     }
-    const headers = new Headers(init.headers);
-    headers.delete('authorization');
-    headers.delete('x-api-key');
-    headers.delete('api-key');
     let body: unknown = typeof init.body === 'string' ? init.body : undefined;
     if (typeof body === 'string') {
       try { body = JSON.parse(body) } catch { /* preserve non-JSON request body */ }
     }
-    const credentialFree = endpoint.endpoint.auth === 'none' || !injections.length;
-    const directInit = { ...init, headers };
-    if (credentialFree) return fetch(url, directInit);
     const broker = requireConfiguredCredentialBroker();
     try {
       const result = await broker.execute(broker.requestFor(ctx, {

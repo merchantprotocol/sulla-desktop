@@ -47,6 +47,7 @@ export interface IntegrationAccount {
   label:          string;
   active:         boolean;
   connected:      boolean;
+  credentialRequired?: boolean;
   connected_at?:  Date;
 }
 
@@ -244,6 +245,9 @@ export class IntegrationService {
         label:          account.label,
         active:         account.active,
         connected:      account.connected,
+        // Older authorities may omit the routing bit; callers treat an absent
+        // value as credentialed and therefore fail closed through the broker.
+        credentialRequired: (account as typeof account & { credentialRequired?: boolean }).credentialRequired,
         connected_at:   account.properties.connected_at ? new Date(account.properties.connected_at) : undefined,
       }));
     }
