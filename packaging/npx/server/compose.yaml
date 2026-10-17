@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16.14-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sulla
+      POSTGRES_PASSWORD: ${SULLA_POSTGRES_PASSWORD}
+      POSTGRES_DB: sulla
+    volumes:
+      - ${SULLA_DATA_DIR}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sulla -d sulla"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  vault:
+    image: sulla-vault:${SULLA_IMAGE_TAG}
+    build:
+      context: ${SULLA_SOURCE_DIR}
+      dockerfile: services/sulla-vault/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      SULLA_VAULT_MODE: server
+      SULLA_VAULT_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla
+      SULLA_VAULT_JWT_SECRET: ${SULLA_VAULT_JWT_SECRET}
+      SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN: ${SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN}
+      SULLA_VAULT_HUMAN_UI_ORIGIN: ${SULLA_PUBLIC_URL}
+      SULLA_VAULT_TLS_CERTIFICATE_PATH: ${SULLA_TLS_CERT_CONTAINER_PATH:-}
+      SULLA_VAULT_TLS_PRIVATE_KEY_PATH: ${SULLA_TLS_KEY_CONTAINER_PATH:-}
+    ports:
+      - "${SULLA_BIND_ADDRESS}:${SULLA_PORT}:8787"
+    volumes:
+      - ${SULLA_TLS_DIR}:/run/sulla-tls:ro
+    healthcheck:
+      test: ["CMD-SHELL", "if [ -n \"$$SULLA_VAULT_TLS_CERTIFICATE_PATH\" ]; then wget --no-check-certificate -qO- https://127.0.0.1:8787/healthz; else wget -qO- http://127.0.0.1:8787/healthz; fi"]
+      interval: 5s
+      timeout: 3s
+      retries: 30

@@ -5,18 +5,24 @@
 On a prepared Ubuntu 24.04 LTS server:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo bash
+npx sulla-desktop server
 ```
 
-The installer opens `/dev/tty`, so the wizard works when the script is piped from `curl`. It asks for Docker Compose or Kubernetes, public URL, TLS or ingress settings, storage, organization, and first owner details. The owner password is entered twice with terminal echo disabled and derived inside the vault container; plaintext is never sent to the service, printed, or stored.
+The npm launcher ships the deployment kit, pins new installations to a source commit with a published matching server image, and requests root access through `sudo` when needed. It keeps the terminal attached while the installer asks for Docker Compose or Kubernetes, public URL, TLS or ingress settings, storage, organization, and first owner details. The owner password is entered twice with terminal echo disabled and derived inside the vault container; plaintext is never sent to the service, printed, stored, or placed in command arguments.
 
 To add a Kubernetes worker later, pass only the server URL:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo K3S_URL=https://FIRST_SERVER_IP:6443 bash
+K3S_URL=https://FIRST_SERVER_IP:6443 npx sulla-desktop server
 ```
 
-The join token is requested through a hidden terminal prompt. The kit and root-readable `server.env` are saved to `/opt/sulla/server`; rerunning the installer keeps the database, generated service secrets, first owner, and organization.
+The join token is requested through a hidden terminal prompt after elevation. The kit and root-readable `server.env` are saved to `/opt/sulla/server`; rerunning the installer keeps the database, generated service secrets, first owner, and organization.
+
+The direct `curl | sudo bash` entry point remains available for source checkouts and recovery:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo bash
+```
 
 Compose builds the vault image from the exact resolved source commit. Kubernetes defaults to the CI-published `sha-<12 characters>` image for that commit and proves the manifest is available before changing the cluster. The image workflow runs for every main-branch commit, so the installer never silently substitutes an older runtime. A custom pinned image tag or digest is also accepted and its pull is verified by the rollout. Agent and workflow runtime wiring is outside this initial server-console kit.
 
