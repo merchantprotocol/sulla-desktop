@@ -385,6 +385,8 @@ export async function instantiateSullaStart(): Promise<void> {
 
       getVaultBackupService().stop();
       getVaultKeyService().lock();
+      const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+      await getSullaFilesWatcher().lockService().catch(() => undefined);
     },
   );
 
@@ -897,6 +899,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   ipcMainProxy.handle('vault:lock-vault', async() => {
     // Manual vault lock — zeros VMK, agent loses access to encrypted credentials
     vaultKey.lock();
+    const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+    const filesLock = getSullaFilesWatcher().lockService();
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     getDesktopVaultClient().lock();
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
@@ -904,6 +908,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     // Clear focus so every native browser tab detaches and the login
     // screen is the topmost thing in the window.
     tabViewManager.setFocusedTab(null);
+    await filesLock;
     return true;
   });
 
