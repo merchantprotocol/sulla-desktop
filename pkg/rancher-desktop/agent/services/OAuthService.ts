@@ -127,6 +127,9 @@ export class OAuthService {
     accountId = 'default',
     extraScopes: string[] = [],
   ): Promise<OAuthTokenSet> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth code exchange must complete inside the local vault authority');
+    }
     const provider = getOAuthProvider(providerId);
     if (!provider) {
       throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
@@ -543,6 +546,9 @@ export class OAuthService {
     providerId: string,
     tokens: OAuthTokenSet,
   ): Promise<void> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth token adoption must complete inside the local vault authority');
+    }
     const provider = getOAuthProvider(providerId);
     if (!provider) {
       throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
@@ -633,6 +639,9 @@ export class OAuthService {
   // ── Revoke tokens ─────────────────────────────────────────────
 
   async revokeTokens(integrationId: string, accountId = 'default'): Promise<void> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth revocation must complete inside the local vault authority');
+    }
     const stored = await this.getStoredTokens(integrationId, accountId);
     if (!stored) return;
 
@@ -768,6 +777,9 @@ export class OAuthService {
     providerId: string,
     tokens: OAuthTokenSet,
   ): Promise<void> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth token storage is owned by the local vault authority');
+    }
     normalizeTokenExpiry(tokens);
 
     await postgresClient.query(
@@ -803,6 +815,9 @@ export class OAuthService {
   // ── DB: Read tokens ───────────────────────────────────────────
 
   async getStoredTokens(integrationId: string, accountId = 'default'): Promise<OAuthTokenRow | null> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth token records stay inside the local vault authority');
+    }
     return postgresClient.queryOne<OAuthTokenRow>(
       `SELECT * FROM oauth_tokens WHERE integration_id = $1 AND account_id = $2`,
       [integrationId, accountId],
@@ -840,6 +855,7 @@ export class OAuthService {
   // ── Resume refresh timers on startup ──────────────────────────
 
   async resumeRefreshTimers(): Promise<void> {
+    if (usesContainerVaultAuthority()) return;
     try {
       const rows = await postgresClient.query<OAuthTokenRow>(
         `SELECT * FROM oauth_tokens WHERE refresh_token IS NOT NULL`,
