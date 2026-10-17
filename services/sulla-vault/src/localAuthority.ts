@@ -1621,19 +1621,25 @@ export class LocalVaultAuthority {
       if (result.status < 200 || result.status >= 300) {
         throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth upstream rejected the request');
       }
-      if (input.operation === 'oauth.revoke') {
-        await this.clearOAuthTokens(prepared);
-        await this.audit(input, prepared.item!, false, null);
-        return { ...result, body: { revoked: true } };
-      }
-      if (input.operation === 'oauth.register') {
-        const clientId = await this.storeOAuthRegistration(prepared, result.body);
-        await this.audit(input, prepared.item!, false, null);
-        return { ...result, body: { updated: true, operation: 'oauth.register', client_id: clientId } };
-      }
-      await this.storeOAuthTokens(prepared, result.body);
-      await this.audit(input, prepared.item!, false, null);
-      return { ...result, body: this.sanitizeOAuthResult(input.operation, result.body) };
+      return await this.runSecurityOperation(() => this.runTransaction(async(client) => {
+        this.requireGeneration(prepared.generation);
+        if (input.operation === 'oauth.revoke') {
+          await this.clearOAuthTokens(prepared, client);
+          await this.audit(input, prepared.item!, false, null, client);
+          this.requireGeneration(prepared.generation);
+          return { ...result, body: { revoked: true } };
+        }
+        if (input.operation === 'oauth.register') {
+          const clientId = await this.storeOAuthRegistration(prepared, result.body, client);
+          await this.audit(input, prepared.item!, false, null, client);
+          this.requireGeneration(prepared.generation);
+          return { ...result, body: { updated: true, operation: 'oauth.register', client_id: clientId } };
+        }
+        await this.storeOAuthTokens(prepared, result.body, client);
+        await this.audit(input, prepared.item!, false, null, client);
+        this.requireGeneration(prepared.generation);
+        return { ...result, body: this.sanitizeOAuthResult(input.operation, result.body) };
+      }));
     } finally {
       release();
       if (this.oauthRefreshQueues.get(queueKey) === queued) this.oauthRefreshQueues.delete(queueKey);
@@ -2135,7 +2141,7 @@ export class LocalVaultAuthority {
     });
   }
 
-  private async storeOAuthTokens(prepared: PreparedBrokerRequest, body: unknown): Promise<void> {
+  private async storeOAuthTokens(prepared: PreparedBrokerRequest, body: unknown, db: Queryable): Promise<void> {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth token response is invalid');
     }
@@ -2157,10 +2163,10 @@ export class LocalVaultAuthority {
     if (typeof response.id_token === 'string' && response.id_token) integration.properties.id_token = response.id_token;
     const chatgptAccountId = extractBoundedChatgptAccountId(response.id_token, response.access_token);
     if (chatgptAccountId) integration.properties.chatgpt_account_id = chatgptAccountId;
-    prepared.item.revision = await this.persistOAuthItem(prepared, keys);
+    prepared.item.revision = await this.persistOAuthItem(prepared, keys, db);
   }
 
-  private async storeOAuthRegistration(prepared: PreparedBrokerRequest, body: unknown): Promise<string> {
+  private async storeOAuthRegistration(prepared: PreparedBrokerRequest, body: unknown, db: Queryable): Promise<string> {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth registration response is invalid');
     }
@@ -2181,11 +2187,11 @@ export class LocalVaultAuthority {
       }
       if (typeof value === 'string') prepared.plaintext.integration.properties[field] = value;
     }
-    await this.persistOAuthItem(prepared, keys);
+    prepared.item.revision = await this.persistOAuthItem(prepared, keys, db);
     return response.client_id;
   }
 
-  private async clearOAuthTokens(prepared: PreparedBrokerRequest): Promise<void> {
+  private async clearOAuthTokens(prepared: PreparedBrokerRequest, db: Queryable): Promise<void> {
     const keys = this.requireKeys();
     this.requireGeneration(prepared.generation);
     if (!prepared.item || !prepared.plaintext?.integration) {
@@ -2194,7 +2200,7 @@ export class LocalVaultAuthority {
     for (const field of ['access_token', 'refresh_token', 'id_token', 'chatgpt_account_id', 'expires_in', 'expires_at', 'scope', 'token_type']) {
       delete prepared.plaintext.integration.properties[field];
     }
-    prepared.item.revision = await this.persistOAuthItem(prepared, keys);
+    prepared.item.revision = await this.persistOAuthItem(prepared, keys, db);
   }
 
   private async backfillChatgptAccountRouting(
@@ -2205,11 +2211,15 @@ export class LocalVaultAuthority {
     const accountId = extractBoundedChatgptAccountId(properties.id_token, properties.access_token);
     if (!accountId) return;
     properties.chatgpt_account_id = accountId;
-    item.revision = await this.persistOAuthItem({ item, plaintext, generation }, keys);
+    item.revision = await this.runSecurityOperation(async() => {
+      this.requireGeneration(generation);
+      return await this.persistOAuthItem({ item, plaintext, generation }, keys, this.db);
+    });
   }
 
   private async persistOAuthItem(
     prepared: Pick<PreparedBrokerRequest, 'item' | 'plaintext' | 'generation'>, keys: UnlockedKeys,
+    db: Queryable,
   ): Promise<number> {
     if (!prepared.item || !prepared.plaintext) throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
     const ownerId = prepared.item.collection_id ?? prepared.item.owner_user_id ?? keys.userId;
@@ -2218,7 +2228,7 @@ export class LocalVaultAuthority {
       ownerId,
     });
     this.requireGeneration(prepared.generation);
-    const updated = await this.db.query(
+    const updated = await db.query(
       `UPDATE items SET ciphertext=$1,encrypted_item_key=$2,agent_wrapped_item_key=NULL,
               revision=revision+1,updated_at=now()
         WHERE id=$3 AND revision=$4 AND deleted_at IS NULL RETURNING revision`,
@@ -2260,8 +2270,14 @@ export class LocalVaultAuthority {
     }
   }
 
-  private async audit(input: BrokerExecuteRequest, item: ItemRow, blocked: boolean, reason: string | null): Promise<void> {
-    await this.db.query(
+  private async audit(
+    input: BrokerExecuteRequest,
+    item: ItemRow,
+    blocked: boolean,
+    reason: string | null,
+    db: Queryable = this.db,
+  ): Promise<void> {
+    await db.query(
       `INSERT INTO audit_log(actor_user_id,org_id,collection_id,item_id,action,pod_id,metadata,blocked,reason)
        VALUES ($1,$2,$3,$4,'vault_outbound_request',$5,$6,$7,$8)`,
       [input.claims.sub, item.org_id ?? null, item.collection_id, item.id, input.claims.pod_id,

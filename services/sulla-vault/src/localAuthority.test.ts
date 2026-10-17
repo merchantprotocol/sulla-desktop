@@ -194,6 +194,88 @@ test('human item mutation rolls back when its audit insert fails', async() => {
   assert.deepEqual(events, ['BEGIN', 'item-insert', 'audit-insert', 'ROLLBACK', 'release']);
 });
 
+test('OAuth credential mutation rolls back when its success audit insert fails', async() => {
+  const actorId = '11111111-1111-4111-8111-111111111111';
+  const itemId = '22222222-2222-4222-8222-222222222222';
+  const userKey = randomBytes(32);
+  const item = {
+    id: itemId, owner_user_id: actorId, collection_id: null,
+    ciphertext: {}, encrypted_item_key: {}, agent_policy: DEFAULT_AGENT_POLICY, revision: 7,
+  };
+  const plaintext: any = {
+    type: 'apiKey', name: 'Synthetic OAuth rollback', favorite: false, agentPolicy: DEFAULT_AGENT_POLICY,
+    integration: {
+      integrationId: 'openai', accountId: 'synthetic',
+      properties: { access_token: 'synthetic-old-token', refresh_token: 'synthetic-refresh-token' },
+    },
+  };
+  let committedRevision = item.revision;
+  let pendingRevision = committedRevision;
+  let committedCiphertext = 'synthetic-original-ciphertext';
+  let pendingCiphertext = committedCiphertext;
+  const events: string[] = [];
+  const client = {
+    async query(sql: string, params?: unknown[]) {
+      if (sql === 'BEGIN') {
+        events.push('BEGIN');
+        pendingRevision = committedRevision;
+        pendingCiphertext = committedCiphertext;
+        return { rowCount: 0, rows: [] };
+      }
+      if (sql.startsWith('UPDATE items SET ciphertext=')) {
+        events.push('item-update');
+        pendingRevision += 1;
+        pendingCiphertext = JSON.stringify(params?.[0]);
+        assert.notEqual(pendingCiphertext, committedCiphertext);
+        return { rowCount: 1, rows: [{ revision: pendingRevision }] };
+      }
+      if (sql.includes('INSERT INTO audit_log')) {
+        events.push('audit-insert');
+        assert.doesNotMatch(JSON.stringify(params), /synthetic-(?:new-token|next-refresh-token)/);
+        throw new Error('synthetic audit failure');
+      }
+      if (sql === 'COMMIT') {
+        events.push('COMMIT');
+        committedRevision = pendingRevision;
+        committedCiphertext = pendingCiphertext;
+        return { rowCount: 0, rows: [] };
+      }
+      if (sql === 'ROLLBACK') {
+        events.push('ROLLBACK');
+        pendingRevision = committedRevision;
+        pendingCiphertext = committedCiphertext;
+        return { rowCount: 0, rows: [] };
+      }
+      throw new Error(`Unexpected query: ${ sql }`);
+    },
+    release() { events.push('release'); },
+  };
+  const db = { connect: async() => client } as any;
+  const authority = new LocalVaultAuthority(db, config('postgresql://synthetic/unused'));
+  (authority as any).keys = { userId: actorId, publicKey: '', userKey, privateKey: randomBytes(32) };
+  (authority as any).generation = 1;
+  (authority as any).prepareBrokerRequest = async() => ({
+    target: Object.assign(new URL('https://auth.openai.com/oauth/token'), { pinnedAddress: '93.184.216.34', pinnedFamily: 4 }),
+    headers: {}, body: {}, secrets: [], generation: 1, maxRequestBytes: 1024, item, plaintext,
+  });
+  (authority as any).send = async() => ({
+    status: 200, headers: {}, body: { access_token: 'synthetic-new-token', refresh_token: 'synthetic-next-refresh-token' },
+  });
+  const input: any = {
+    claims: { sub: actorId, agent_id: 'synthetic-agent', pod_id: 'synthetic-pod' },
+    operation: 'oauth.refresh', ref: { integrationId: 'openai', accountId: 'synthetic' },
+    url: 'https://auth.openai.com/oauth/token', method: 'POST', headers: {}, body: {}, injections: [], responseType: 'json',
+  };
+
+  await assert.rejects(
+    authority.execute(input, 'sulla-tools', TOKEN.broker),
+    /synthetic audit failure/,
+  );
+  assert.equal(committedRevision, 7);
+  assert.equal(committedCiphertext, 'synthetic-original-ciphertext');
+  assert.deepEqual(events, ['BEGIN', 'item-update', 'audit-insert', 'ROLLBACK', 'release']);
+});
+
 test('approval digest binds headers, body, account, repository and response mode', () => {
   const base: any = {
     claims: { sub: 'user', agent_id: 'agent', pod_id: 'pod', credential_scope: { integration_id: 'github', account_id: 'one', repository: 'o/r' } },
