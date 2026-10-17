@@ -322,6 +322,8 @@ export class CliAgentService extends BaseLanguageModel {
       const activeToolEvents = new Map<string, { startedAt: number }>();
       let sawToolExecution = false;
       let unresolvedTool = false;
+      // Initialized after setup; keep this mutable so cleanup also works if AbortSignal fires before the timer starts.
+      // eslint-disable-next-line prefer-const
       let watchdog: ReturnType<typeof setInterval> | undefined;
       let terminationPromise: Promise<void> | undefined;
 
@@ -363,7 +365,7 @@ export class CliAgentService extends BaseLanguageModel {
           error.name = 'AbortError';
           rejectOnce(error);
         };
-        void stop().then(rejectAbort, rejectAbort);
+        stop().then(rejectAbort, rejectAbort);
       };
       if (options.signal?.aborted) abort();
       else options.signal?.addEventListener('abort', abort);
@@ -378,7 +380,7 @@ export class CliAgentService extends BaseLanguageModel {
           if (tools.every(tool => Date.now() - tool.startedAt < 30 * 60_000)) return;
           unresolvedTool = true;
           errorMessage = `${ this.spec.name } stopped reporting activity while a tool was unresolved.`;
-          void stop().then(() => {
+          stop().then(() => {
             proc.removeAllListeners('error');
             proc.on('error', () => { /* late child error after forced teardown */ });
             if (sessionId) this.setSession(conversationId, sessionId).catch(() => {});
@@ -388,7 +390,7 @@ export class CliAgentService extends BaseLanguageModel {
         }
         if (silentMs > STALL_TIMEOUT_MS) {
           errorMessage = `${ this.spec.name } stalled with no stream activity for 15 minutes.`;
-          void stop().then(() => {
+          stop().then(() => {
             proc.removeAllListeners('error');
             proc.on('error', () => { /* late child error after forced teardown */ });
             if (sessionId) this.setSession(conversationId, sessionId).catch(() => {});
@@ -510,7 +512,7 @@ export class CliAgentService extends BaseLanguageModel {
           }
         }
         if (existingSession && !retryWithoutSession && !sawToolExecution && code !== 0 && this.spec.isResumeFailure?.(combinedError)) {
-          void this.deleteSession(conversationId).then(() => this.runCli(messages, callbacks, options, true)).then(resolve, reject);
+          this.deleteSession(conversationId).then(() => this.runCli(messages, callbacks, options, true)).then(resolve, reject);
           return;
         }
         if (code === 127) {

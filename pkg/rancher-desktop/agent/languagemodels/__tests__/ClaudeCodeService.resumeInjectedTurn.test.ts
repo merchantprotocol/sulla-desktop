@@ -274,7 +274,7 @@ describe('CLI fault recovery lifecycle', () => {
 
   it('does not retry permanent provider failures and preserves normal fallback classification', async() => {
     let attempts = 0;
-    const fault = new Error('invalid api key');
+    const fault = new CliFaultError('process_exit', 'invalid api key', undefined, false, false);
     const run = runWithCliFaultRecovery('Synthetic CLI', () => {
       attempts += 1;
       return Promise.reject(fault);
@@ -286,14 +286,14 @@ describe('CLI fault recovery lifecycle', () => {
   });
 
   it('blocks provider fallback when a tool result is uncertain', () => {
-    const fault = new CliFaultError('stall', 'tool unresolved', undefined, false);
+    const fault = new CliFaultError('stall', 'tool unresolved', undefined, false, true);
 
     expect(classifyLLMFailure(fault)).toMatchObject({ kind: 'unavailable', retryPrimary: false, fallbackAllowed: false });
   });
 
   it('exhausts a non-retryable CLI safety fault and blocks every provider restart', async() => {
     const run = runWithCliFaultRecovery('Synthetic CLI', () => Promise.reject(
-      new CliFaultError('transport', 'teardown could not establish quiescence', undefined, false),
+      new CliFaultError('transport', 'teardown could not establish quiescence', undefined, false, true),
     ), { canRetry: () => true });
 
     const exhausted = await run.catch(error => error);

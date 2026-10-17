@@ -893,7 +893,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       const scheduleForcedSettlement = (makeError: () => Error) => {
         const barrier = terminationPromise;
         if (!barrier) return;
-        void barrier.then(async() => {
+        barrier.then(async() => {
           if (settled) return;
           settled = true;
           stopStallWatchdog();
@@ -916,6 +916,14 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           const persistenceError = await persistSession();
           cleanupMcp();
           reject(options.signal?.aborted ? makeError() : (persistenceError ?? error));
+        }).catch(error => {
+          if (settled) return;
+          settled = true;
+          stopStallWatchdog();
+          closeSteering(true);
+          options.signal?.removeEventListener('abort', onAbort);
+          cleanupMcp();
+          reject(error instanceof Error ? error : new Error(String(error)));
         });
       };
 
@@ -1357,7 +1365,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           /(?:failed|unable) to (?:load|resume|find).*(?:thread|rollout|conversation)|(?:thread|rollout|conversation).*(?:not found|does not exist|invalid|expired)/i.test(`${ errorMessage } ${ stderrBuffer.slice(-500) }`);
         if (resumeFailed) {
           log.warn(`[CodexService] Resume of "${ existingSession }" failed; retrying with a fresh session for conversationId=${ convId }`);
-          void this.deleteSession(convId).then(() => this.runCodex(messages, callbacks, options, true)).then(
+          this.deleteSession(convId).then(() => this.runCodex(messages, callbacks, options, true)).then(
             r => resolve(r),
             reject,
           );

@@ -1365,7 +1365,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         const scheduleForcedSettlement = (makeError: () => Error) => {
           const barrier = terminationPromise;
           if (!barrier) return;
-          void barrier.then(async() => {
+          barrier.then(async() => {
             if (settled) return;
             settled = true;
             stopHeartbeat();
@@ -1390,6 +1390,15 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
             const persistenceError = await persistSession();
             cleanupMcp();
             reject(options.signal?.aborted ? makeError() : (persistenceError ?? error));
+          }).catch(error => {
+            if (settled) return;
+            settled = true;
+            stopHeartbeat();
+            stopStallWatchdog();
+            closeSteering();
+            options.signal?.removeEventListener('abort', onAbort);
+            cleanupMcp();
+            reject(error instanceof Error ? error : new Error(String(error)));
           });
         };
         // stream-json input only: set once the replay echo of THIS turn's prompt
@@ -2106,7 +2115,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           // fresh session so the user doesn't see a dead-end error.
           if (sessionInUse && !retryWithoutSession) {
             log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked; retrying without --resume for conversationId=${ convId }`);
-            void this.deleteSession(convId).then(() => this.runClaude(messages, callbacks, options, true)).then(
+            this.deleteSession(convId).then(() => this.runClaude(messages, callbacks, options, true)).then(
               r => resolve(r),
               reject,
             );
