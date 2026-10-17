@@ -123,6 +123,43 @@
             </svg>
           </button>
         </form>
+        <div
+          v-if="tabMode === 'browser'"
+          class="browser-vault-control"
+        >
+          <button
+            class="browser-nav-btn browser-vault-btn"
+            :class="{ active: vaultPopupOpen }"
+            type="button"
+            aria-label="Open Sulla Passwords"
+            title="Sulla Passwords"
+            :aria-expanded="vaultPopupOpen"
+            @click.stop="toggleVaultPopup"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="h-4 w-4"
+            >
+              <path d="M12 3 5 6v5.5c0 4.6 3 8.3 7 9.5 4-1.2 7-4.9 7-9.5V6z" />
+            </svg>
+          </button>
+          <div
+            v-if="vaultPopupOpen"
+            class="browser-vault-popup"
+            role="dialog"
+            aria-label="Sulla Passwords"
+          >
+            <VaultPage
+              surface="popup"
+              :site-url="pageUrl"
+            />
+          </div>
+        </div>
       </div>
     </template>
 
@@ -729,6 +766,12 @@ const loading = ref(false);
 const canGoBack = ref(false);
 const canGoForward = ref(false);
 const viewCreated = ref(false);
+const vaultPopupOpen = ref(false);
+
+function toggleVaultPopup(): void {
+  promote();
+  vaultPopupOpen.value = !vaultPopupOpen.value;
+}
 
 // Vault save/autofill is now handled entirely in-page via GuestBridgePreload
 // (injected dropdown + save toast). No renderer-side banners needed.
@@ -951,6 +994,12 @@ function focusAddressBar() {
 
 // Handle keyboard shortcuts
 function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && vaultPopupOpen.value) {
+    e.preventDefault();
+    vaultPopupOpen.value = false;
+
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.key === 'l') {
     e.preventDefault();
     focusAddressBar();
@@ -964,6 +1013,7 @@ function onKeydown(e: KeyboardEvent) {
 // IPC state-update listener
 function onStateUpdate(_event: unknown, state: { tabId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; isLoading: boolean }) {
   if (state.tabId !== props.tabId) return;
+  if (state.url !== pageUrl.value) vaultPopupOpen.value = false;
   setPageUrl(state.url);
   canGoBack.value = state.canGoBack;
   canGoForward.value = state.canGoForward;
@@ -1003,6 +1053,7 @@ watch(shouldShowView, (visible) => {
     // Show this tab's side panel (if it has one) when tab becomes visible
     ipcRenderer.invoke('chrome-api:sidePanel:switchTab' as any, props.tabId);
   } else {
+    vaultPopupOpen.value = false;
     window.removeEventListener('keydown', onKeydown);
     // Tell main process this tab is no longer visible, but only let it clear
     // focus if this tab still owns focus. During tab switches, the newly
@@ -1179,6 +1230,41 @@ onUnmounted(() => {
 .browser-nav-btn:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+.browser-vault-control {
+  position: relative;
+  flex: none;
+}
+
+.browser-vault-btn.active {
+  color: var(--accent-primary);
+  background-color: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+.browser-vault-popup {
+  position: absolute;
+  top: calc(100% + 0.625rem);
+  right: 0;
+  width: 380px;
+  height: min(770px, calc(100vh - 7rem));
+  z-index: 30;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 30%, var(--border-default));
+  border-radius: 1rem;
+  background: #f4f7fb;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35), 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+@media (max-width: 520px) {
+  .browser-vault-popup {
+    position: fixed;
+    top: 6.25rem;
+    right: 0.75rem;
+    left: 0.75rem;
+    width: auto;
+    height: calc(100vh - 7.5rem);
+  }
 }
 
 .view-container {
