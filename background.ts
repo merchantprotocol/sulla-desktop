@@ -47,6 +47,7 @@ import { DashboardServer } from '@pkg/main/dashboardServer';
 import { DeploymentProfileError, readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import { DiagnosticsManager, DiagnosticsResultCollection } from '@pkg/main/diagnostics/diagnostics';
 import { ExtensionErrorCode, isExtensionError } from '@pkg/main/extensions';
+import { reportFailureUnlessShuttingDown } from '@pkg/main/failureLifecycle';
 import { ImageEventHandler } from '@pkg/main/imageEvents';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
@@ -1960,6 +1961,10 @@ function showErrorDialog(title: string, message: string, fatal?: boolean) {
 }
 
 async function handleFailure(payload: any) {
+  if (shuttingDown || gone) {
+    return;
+  }
+
   let titlePart = 'Error Starting Sulla Desktop';
   let message = 'There was an unknown error starting Sulla Desktop';
   let secondaryMessage = '';
@@ -1987,13 +1992,13 @@ async function handleFailure(payload: any) {
     titlePart = payload.context || titlePart;
   }
   console.log(`Sulla Desktop was unable to start:`, payload);
-  try {
+  await reportFailureUnlessShuttingDown<K8s.FailureDetails>({
+    isShuttingDown:    () => shuttingDown || gone,
     // getFailureDetails is going to read from existing log files.
     // Wait 1 second before reading them to allow recent writes to appear in them.
-    await util.promisify(setTimeout)(1_000);
-    const failureDetails: K8s.FailureDetails = await k8smanager.getFailureDetails(payload);
-
-    if (failureDetails) {
+    waitForLogs:       () => util.promisify(setTimeout)(1_000),
+    getFailureDetails: () => k8smanager.getFailureDetails(payload),
+    showFailureDetails: async(failureDetails) => {
       if (noModalDialogs) {
         console.log(titlePart);
         console.log(secondaryMessage || message);
@@ -2005,20 +2010,19 @@ async function handleFailure(payload: any) {
       } else {
         await window.openKubernetesErrorMessageWindow(titlePart, secondaryMessage || message, failureDetails);
       }
-
-      return;
-    }
-  } catch (e) {
-    console.log(`Failed to get failure details: `, e);
-  }
-  if (noModalDialogs) {
-    console.log(titlePart);
-    console.log(message);
-    gone = true;
-    Electron.app.quit();
-  } else {
-    showErrorDialog(titlePart, message, payload instanceof K8s.KubernetesError && payload.fatal);
-  }
+    },
+    showFallback: () => {
+      if (noModalDialogs) {
+        console.log(titlePart);
+        console.log(message);
+        gone = true;
+        Electron.app.quit();
+      } else {
+        showErrorDialog(titlePart, message, payload instanceof K8s.KubernetesError && payload.fatal);
+      }
+    },
+    onFailureDetailsError: e => console.log(`Failed to get failure details: `, e),
+  });
 }
 
 function doFullRestart(context: CommandWorkerInterface.CommandContext) {
