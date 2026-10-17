@@ -1,6 +1,4 @@
-import { Octokit } from '@octokit/rest';
-
-import { getIntegrationService } from '../../services/IntegrationService';
+import { createGitHubOctokit } from './octokit';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -24,13 +22,7 @@ export class GitHubAddIssueToProjectWorker extends BaseTool {
       return { successBoolean: false, responseString: 'Error: project_id (PVT_… board node id from github_list_projects) is required.' };
     }
 
-    const integrationService = getIntegrationService();
-    const tokenValue = await integrationService.getIntegrationValue('github', 'token');
-    if (!tokenValue) {
-      return { successBoolean: false, responseString: 'Error: GitHub token not configured.' };
-    }
-
-    const octokit = new Octokit({ auth: tokenValue.value });
+    const octokit = await createGitHubOctokit(this.executionContext);
 
     try {
       // Resolve the issue's GraphQL node id: prefer an explicit one, else REST owner/repo/number.

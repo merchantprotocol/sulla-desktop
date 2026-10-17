@@ -7,6 +7,9 @@ import type {
   BrokerClaims,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
+  BrokerRelayCreateRequest,
+  BrokerRelayCreateResponse,
+  BrokerRelaySendRequest,
   LocalVaultErrorResponse,
 } from '../../../services/sulla-vault/src/contracts';
 
@@ -17,12 +20,24 @@ export type {
   BrokerExecuteRequest,
   BrokerExecuteResponse,
   BrokerInjection,
+  BrokerRelayCreateRequest,
+  BrokerRelayCreateResponse,
+  BrokerRelaySendRequest,
   LocalVaultErrorResponse,
 } from '../../../services/sulla-vault/src/contracts';
 export type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
-const DEFAULT_VAULT_ENDPOINT = 'http://sulla_vault:8787';
+const TOOLS_VAULT_ENDPOINT = 'https://sulla_vault:8787';
+const DESKTOP_VAULT_ENDPOINT = 'https://127.0.0.1:30135';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export interface VaultBrokerServiceIdentity {
+  serviceId:    string;
+  serviceToken: string;
+}
+
+export type VaultBrokerIdentityProvider = () => Promise<VaultBrokerServiceIdentity>;
+export type VaultBrokerFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 export function usesContainerVaultAuthority(): boolean {
   return process.env.SULLA_VAULT_MODE !== 'server';
@@ -64,9 +79,8 @@ function claimsFromContext(ctx: ToolExecutionContext): BrokerClaims {
 
 function assertEndpoint(endpoint: string): string {
   const url = new URL(endpoint);
-  const isLocal = ['127.0.0.1', 'localhost', '::1', 'sulla_vault'].includes(url.hostname);
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLocal)) {
-    throw new Error('Vault broker endpoint must use HTTPS or an approved local service address');
+  if (url.protocol !== 'https:' || !['127.0.0.1', 'sulla_vault'].includes(url.hostname)) {
+    throw new Error('Vault broker endpoint must use HTTPS at the configured Desktop or tools service address');
   }
   return url.toString().replace(/\/$/, '');
 }
@@ -78,27 +92,10 @@ async function errorBody(response: Response): Promise<LocalVaultErrorResponse> {
   })) as Promise<LocalVaultErrorResponse>;
 }
 
-/** Resolve the unlocked local vault owner through the control-authenticated channel. */
+/** Resolve the unlocked local vault owner through the broker-authenticated status endpoint. */
 export async function getLocalVaultPrincipalId(signal?: AbortSignal): Promise<string> {
   if (!usesContainerVaultAuthority()) throw new Error('Local vault principal is only available in Desktop authority mode');
-  const serviceId = process.env.SULLA_VAULT_DESKTOP_CONTROL_SERVICE_ID;
-  const token = process.env.SULLA_VAULT_DESKTOP_CONTROL_TOKEN;
-  if (!serviceId || !token) throw new VaultBrokerError('vault_unavailable', 'Vault control identity is not configured', 503);
-  const endpoint = assertEndpoint(
-    process.env.SULLA_VAULT_CONTROL_URL ?? process.env.SULLA_VAULT_BROKER_URL ?? DEFAULT_VAULT_ENDPOINT,
-  );
-  const response = await fetch(`${ endpoint }/v1/desktop/status`, {
-    headers: {
-      authorization:        `Bearer ${ token }`,
-      'x-sulla-service-id': serviceId,
-    },
-    signal,
-  });
-  if (!response.ok) {
-    const body = await errorBody(response);
-    throw new VaultBrokerError(body.error, body.message, response.status);
-  }
-  const status = await response.json() as { principalId?: unknown; unlocked?: boolean };
+  const status = await requireConfiguredCredentialBroker().status(signal);
   if (!status.unlocked) throw new VaultBrokerError('vault_locked', 'Vault is locked', 423);
   if (typeof status.principalId !== 'string' || !UUID_PATTERN.test(status.principalId)) {
     throw new VaultBrokerError('invalid_caller_identity', 'Vault did not return an authenticated local principal', 503);
@@ -107,15 +104,15 @@ export async function getLocalVaultPrincipalId(signal?: AbortSignal): Promise<st
 }
 
 export async function issueLocalBrokerContext(input: {
-  agentId:          string;
-  podId:            string;
-  credentialScope: NonNullable<ToolExecutionContext['credential_scope']>;
-  requestId?:       string;
-  threadId?:        string;
-  jobId?:           string;
+  agentId:              string;
+  podId:                string;
+  credentialScope:      NonNullable<ToolExecutionContext['credential_scope']>;
+  requestId?:           string;
+  threadId?:            string;
+  jobId?:               string;
   workflowExecutionId?: string;
-  orgId?:           string;
-  signal?:          AbortSignal;
+  orgId?:               string;
+  signal?:              AbortSignal;
 }): Promise<ToolExecutionContext> {
   if (!input.agentId.trim() || !input.podId.trim()) {
     throw new VaultBrokerError('invalid_caller_identity', 'Broker context requires trusted agent and pod identities', 401);
@@ -144,9 +141,15 @@ export async function issueLocalBrokerContext(input: {
 export class LocalVaultBrokerClient {
   private readonly endpoint: string;
 
-  constructor(endpoint: string, private readonly serviceId: string, private readonly serviceToken: string) {
+  constructor(
+    endpoint: string,
+    private readonly identity: VaultBrokerServiceIdentity | VaultBrokerIdentityProvider,
+    private readonly transport: VaultBrokerFetch = (input, init) => fetch(input, init),
+  ) {
     this.endpoint = assertEndpoint(endpoint);
-    if (!serviceId || !serviceToken) throw new Error('Vault broker service identity is not configured');
+    if (typeof identity !== 'function' && (!identity.serviceId || !identity.serviceToken)) {
+      throw new Error('Vault broker service identity is not configured');
+    }
   }
 
   requestFor(ctx: ToolExecutionContext, request: Omit<BrokerExecuteRequest, 'claims'>): BrokerExecuteRequest {
@@ -157,6 +160,15 @@ export class LocalVaultBrokerClient {
     const response = await this.send('/v1/broker/execute', request, signal);
     if (!response.ok) await this.throwResponse(response, request);
     return response.json() as Promise<BrokerExecuteResponse>;
+  }
+
+  async status(signal?: AbortSignal): Promise<{ state: string; unlocked: boolean; principalId?: string }> {
+    const response = await this.transport(`${ this.endpoint }/v1/broker/status`, {
+      headers: await this.serviceHeaders(false),
+      signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    return response.json() as Promise<{ state: string; unlocked: boolean; principalId?: string }>;
   }
 
   async executeStream(request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> {
@@ -171,20 +183,80 @@ export class LocalVaultBrokerClient {
     return response;
   }
 
+  async createRelay(
+    ctx: ToolExecutionContext,
+    operation: BrokerRelayCreateRequest['operation'],
+    ref: BrokerRelayCreateRequest['ref'],
+    signal?: AbortSignal,
+  ): Promise<BrokerRelayCreateResponse> {
+    const request: BrokerRelayCreateRequest = { claims: claimsFromContext(ctx), operation, ref };
+    const response = await this.transport(`${ this.endpoint }/v1/broker/relay/session`, {
+      method:  'POST',
+      headers: await this.serviceHeaders(true),
+      body:    JSON.stringify(request),
+      signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    return response.json() as Promise<BrokerRelayCreateResponse>;
+  }
+
+  async relayEvents(relayId: string, signal?: AbortSignal): Promise<Response> {
+    const response = await this.transport(`${ this.endpoint }/v1/broker/relay/${ encodeURIComponent(relayId) }/events`, {
+      headers: await this.serviceHeaders(false),
+      signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    return response;
+  }
+
+  async relaySend(relayId: string, payload: BrokerRelaySendRequest, signal?: AbortSignal): Promise<void> {
+    const response = await this.transport(`${ this.endpoint }/v1/broker/relay/${ encodeURIComponent(relayId) }/send`, {
+      method:  'POST',
+      headers: await this.serviceHeaders(true),
+      body:    JSON.stringify(payload),
+      signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    await response.body?.cancel();
+  }
+
+  async closeRelay(relayId: string, signal?: AbortSignal): Promise<void> {
+    const response = await this.transport(`${ this.endpoint }/v1/broker/relay/${ encodeURIComponent(relayId) }`, {
+      method:  'DELETE',
+      headers: await this.serviceHeaders(false),
+      signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    await response.body?.cancel();
+  }
+
   private async send(path: string, request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> {
     if (!request.claims?.sub || !request.claims.agent_id || !request.claims.pod_id) {
       throw new VaultBrokerError('invalid_caller_identity', 'Vault broker request has incomplete caller claims', 401);
     }
-    return fetch(`${ this.endpoint }${ path }`, {
+    return this.transport(`${ this.endpoint }${ path }`, {
       method:  'POST',
-      headers: {
-        authorization:        `Bearer ${ this.serviceToken }`,
-        'content-type':       'application/json',
-        'x-sulla-service-id': this.serviceId,
-      },
-      body: JSON.stringify(request),
+      headers: await this.serviceHeaders(true),
+      body:    JSON.stringify(request),
       signal,
     });
+  }
+
+  private async serviceHeaders(json: boolean): Promise<Record<string, string>> {
+    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
+    if (!identity.serviceId || !identity.serviceToken) {
+      throw new VaultBrokerError('vault_unavailable', 'Vault broker service identity is not configured', 503);
+    }
+    return {
+      authorization:        `Bearer ${ identity.serviceToken }`,
+      'x-sulla-service-id': identity.serviceId,
+      ...(json ? { 'content-type': 'application/json' } : {}),
+    };
+  }
+
+  private async throwRelayResponse(response: Response): Promise<never> {
+    const body = await errorBody(response);
+    throw new VaultBrokerError(body.error, body.message, response.status);
   }
 
   private async throwResponse(response: Response, request: BrokerExecuteRequest): Promise<never> {
@@ -200,18 +272,25 @@ export class LocalVaultBrokerClient {
 export class LocalVaultApprovalClient {
   private readonly endpoint: string;
 
-  constructor(endpoint: string, private readonly serviceId: string, private readonly serviceToken: string) {
+  constructor(
+    endpoint: string,
+    private readonly identity: VaultBrokerServiceIdentity | VaultBrokerIdentityProvider,
+    private readonly transport: VaultBrokerFetch = (input, init) => fetch(input, init),
+  ) {
     this.endpoint = assertEndpoint(endpoint);
-    if (!serviceId || !serviceToken) throw new Error('Vault approval service identity is not configured');
+    if (typeof identity !== 'function' && (!identity.serviceId || !identity.serviceToken)) {
+      throw new Error('Vault approval service identity is not configured');
+    }
   }
 
   async approve(operationId: string): Promise<BrokerApprovalResponse> {
-    const response = await fetch(`${ this.endpoint }/v1/broker/approve`, {
+    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
+    const response = await this.transport(`${ this.endpoint }/v1/broker/approve`, {
       method:  'POST',
       headers: {
-        authorization:        `Bearer ${ this.serviceToken }`,
+        authorization:        `Bearer ${ identity.serviceToken }`,
         'content-type':       'application/json',
-        'x-sulla-service-id': this.serviceId,
+        'x-sulla-service-id': identity.serviceId,
       },
       body: JSON.stringify({ operationId }),
     });
@@ -224,14 +303,56 @@ export class LocalVaultApprovalClient {
 }
 
 let configuredBroker: LocalVaultBrokerClient | null | undefined;
+let configuredApproval: LocalVaultApprovalClient | null | undefined;
+
+export function configureCredentialBroker(broker: LocalVaultBrokerClient | null): void {
+  configuredBroker = broker;
+}
+
+function isElectronMainProcess(): boolean {
+  return Boolean(process.versions.electron) && (process as NodeJS.Process & { type?: string }).type === 'browser';
+}
+
+const toolsVaultFetch: VaultBrokerFetch = async(input, init) => {
+  const runtime = await import('./toolsTransport');
+  return runtime.toolsVaultFetch(input, init);
+};
+
+const desktopVaultFetch: VaultBrokerFetch = async(input, init) => {
+  const runtime = await import('./desktopTransport');
+  return runtime.desktopVaultFetch(input, init);
+};
+
+const desktopBrokerIdentity: VaultBrokerIdentityProvider = async() => {
+  const runtime = await import('./desktopTransport');
+  return runtime.loadDesktopBrokerIdentity();
+};
+
+const desktopApprovalIdentity: VaultBrokerIdentityProvider = async() => {
+  const runtime = await import('./desktopTransport');
+  return runtime.loadDesktopApprovalIdentity();
+};
 
 export function getConfiguredCredentialBroker(): LocalVaultBrokerClient | null {
   if (configuredBroker !== undefined) return configuredBroker;
   const token = process.env.SULLA_VAULT_BROKER_TOKEN;
   const serviceId = process.env.SULLA_VAULT_BROKER_SERVICE_ID;
-  configuredBroker = token && serviceId
-    ? new LocalVaultBrokerClient(process.env.SULLA_VAULT_BROKER_URL ?? DEFAULT_VAULT_ENDPOINT, serviceId, token)
-    : null;
+  if (token && serviceId) {
+    if (serviceId !== 'sulla-tools') throw new Error('Vault broker service identity must be sulla-tools');
+    configuredBroker = new LocalVaultBrokerClient(
+      process.env.SULLA_VAULT_BROKER_URL ?? TOOLS_VAULT_ENDPOINT,
+      { serviceId, serviceToken: token },
+      toolsVaultFetch,
+    );
+  } else if (isElectronMainProcess()) {
+    configuredBroker = new LocalVaultBrokerClient(
+      DESKTOP_VAULT_ENDPOINT,
+      desktopBrokerIdentity,
+      desktopVaultFetch,
+    );
+  } else {
+    configuredBroker = null;
+  }
   return configuredBroker;
 }
 
@@ -239,4 +360,13 @@ export function requireConfiguredCredentialBroker(): LocalVaultBrokerClient {
   const broker = getConfiguredCredentialBroker();
   if (!broker) throw new VaultBrokerError('vault_unavailable', 'Vault broker service identity is not configured', 503);
   return broker;
+}
+
+/** Available only to the trusted Electron main approval path. */
+export function getConfiguredApprovalClient(): LocalVaultApprovalClient | null {
+  if (configuredApproval !== undefined) return configuredApproval;
+  configuredApproval = isElectronMainProcess()
+    ? new LocalVaultApprovalClient(DESKTOP_VAULT_ENDPOINT, desktopApprovalIdentity, desktopVaultFetch)
+    : null;
+  return configuredApproval;
 }

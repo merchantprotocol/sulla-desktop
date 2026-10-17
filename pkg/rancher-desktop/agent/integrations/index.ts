@@ -3,6 +3,7 @@ import { IntegrationRegistry } from './IntegrationRegistry';
 import { isConnectionStatusSuppressed } from './integrationFlags';
 import { getIntegrationService } from '../services/IntegrationService';
 import { SlackClient, slackClient } from './slack/SlackClient';
+import { usesContainerVaultAuthority } from '../../vault-broker';
 
 export const registry = new IntegrationRegistry();
 // Token properties that should trigger a full hot-reload (invalidate + re-init)
@@ -80,6 +81,9 @@ async function disconnectIntegration(integrationId: string): Promise<void> {
  *
  */
 registry.register('slack', async() => {
+  // Desktop Web API calls use the outbound broker directly. Socket Mode is a
+  // separate vault-owned relay and must never cause Bolt to receive tokens.
+  if (usesContainerVaultAuthority()) return slackClient;
   const svc = getIntegrationService();
   await svc.initialize(); // ensure DB tables
 

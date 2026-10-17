@@ -17,8 +17,10 @@ import {
 } from '../../services/WebSocketClientService';
 import { withSuppressedConnectionStatus } from '../integrationFlags';
 import { incomingMessage } from './prompts/incoming_message';
+import { requireConfiguredCredentialBroker, usesContainerVaultAuthority } from '../../../vault-broker';
 
 import type { AgentGraphState } from '../../nodes/Graph';
+import type { ToolExecutionContext } from '../../tools/executionContext';
 import type { AllMiddlewareArgs, SlackEventMiddlewareArgs } from '@slack/bolt';
 import type { ChatPostMessageResponse, WebAPICallResult } from '@slack/web-api';
 
@@ -342,6 +344,10 @@ ${ incomingMessage }`.trim();
   }
 
   private async _doInitialize(): Promise<boolean> {
+    if (usesContainerVaultAuthority()) {
+      this.lastInitializeError = 'Slack Socket Mode requires the vault-owned relay session';
+      return false;
+    }
     console.log('[SlackClient] _doInitialize() entered', {
       hasApp:              !!this.app,
       connected:           this.connected,
@@ -460,17 +466,17 @@ ${ incomingMessage }`.trim();
   async sendMessage(
     channel: string,
     text: string,
-    thread_ts?: string,
+    threadTs?: string,
     blocks?: any[],
+    executionContext?: ToolExecutionContext,
   ): Promise<ChatPostMessageResponse & { ts: string }> {
-    await this.ensureConnected();
-    const result = await this.app!.client.chat.postMessage({
+    const result = await this.apiCall('chat.postMessage', {
       channel,
       text,
-      thread_ts,
+      thread_ts: threadTs,
       blocks,
       mrkdwn: true,
-    });
+    }, executionContext);
 
     if (!result.ts) {
       throw new Error('Slack API did not return a timestamp for the message');
@@ -481,11 +487,12 @@ ${ incomingMessage }`.trim();
 
   async replyInThread(
     channel: string,
-    thread_ts: string,
+    threadTs: string,
     text: string,
     blocks?: any[],
+    executionContext?: ToolExecutionContext,
   ): Promise<WebAPICallResult & { ts: string }> {
-    return this.sendMessage(channel, text, thread_ts, blocks);
+    return this.sendMessage(channel, text, threadTs, blocks, executionContext);
   }
 
   async updateMessage(
@@ -493,41 +500,40 @@ ${ incomingMessage }`.trim();
     ts: string,
     text: string,
     blocks?: any[],
+    executionContext?: ToolExecutionContext,
   ): Promise<WebAPICallResult> {
-    await this.ensureConnected();
-    return this.app!.client.chat.update({ channel, ts, text, blocks });
+    return this.apiCall('chat.update', { channel, ts, text, blocks }, executionContext);
   }
 
-  async addReaction(channel: string, ts: string, reaction: string): Promise<WebAPICallResult> {
-    await this.ensureConnected();
-    return this.app!.client.reactions.add({ channel, timestamp: ts, name: reaction });
+  async addReaction(channel: string, ts: string, reaction: string, executionContext?: ToolExecutionContext): Promise<WebAPICallResult> {
+    return this.apiCall('reactions.add', { channel, timestamp: ts, name: reaction }, executionContext);
   }
 
-  async removeReaction(channel: string, ts: string, reaction: string): Promise<WebAPICallResult> {
-    await this.ensureConnected();
-    return this.app!.client.reactions.remove({ channel, timestamp: ts, name: reaction });
+  async removeReaction(channel: string, ts: string, reaction: string, executionContext?: ToolExecutionContext): Promise<WebAPICallResult> {
+    return this.apiCall('reactions.remove', { channel, timestamp: ts, name: reaction }, executionContext);
   }
 
-  async joinChannel(channelId: string): Promise<WebAPICallResult> {
-    await this.ensureConnected();
-    return this.app!.client.conversations.join({ channel: channelId });
+  async joinChannel(channelId: string, executionContext?: ToolExecutionContext): Promise<WebAPICallResult> {
+    return this.apiCall('conversations.join', { channel: channelId }, executionContext);
   }
 
   // ────────────────────────────────────────────────
   // Fetch / read methods
   // ────────────────────────────────────────────────
 
-  async listChannels(types: ('public_channel' | 'private_channel' | 'im' | 'mpim')[] = ['public_channel']): Promise<any[]> {
-    await this.ensureConnected();
+  async listChannels(
+    types: ('public_channel' | 'private_channel' | 'im' | 'mpim')[] = ['public_channel'],
+    executionContext?: ToolExecutionContext,
+  ): Promise<any[]> {
     let channels: any[] = [];
     let cursor: string | undefined;
 
     do {
-      const response = await this.app!.client.conversations.list({
+      const response = await this.apiCall('conversations.list', {
         types: types.join(','),
         limit: 1000,
         cursor,
-      });
+      }, executionContext);
 
       channels = channels.concat(response.channels ?? []);
       cursor = response.response_metadata?.next_cursor;
@@ -536,20 +542,41 @@ ${ incomingMessage }`.trim();
     return channels;
   }
 
-  async getUserInfo(userId: string): Promise<any> {
-    await this.ensureConnected();
-    const res = await this.app!.client.users.info({ user: userId });
+  async getUserInfo(userId: string, executionContext?: ToolExecutionContext): Promise<any> {
+    const res = await this.apiCall('users.info', { user: userId }, executionContext);
     return res.user;
   }
 
-  async apiCall(method: string, params: Record<string, any> = {}): Promise<any> {
+  async apiCall(method: string, params: Record<string, any> = {}, executionContext?: ToolExecutionContext): Promise<any> {
+    if (usesContainerVaultAuthority()) {
+      if (!executionContext) throw new Error('slack.web-api requires a verified execution context');
+      const accountId = await getIntegrationService().getActiveAccountId(INTEGRATION_ID);
+      if (executionContext.credential_scope?.integration_id !== INTEGRATION_ID ||
+          executionContext.credential_scope.account_id !== accountId) {
+        throw new Error('slack.web-api requires a signed credential scope for the active Slack account');
+      }
+      const broker = requireConfiguredCredentialBroker();
+      const result = await broker.execute(broker.requestFor(executionContext, {
+        operation:    'slack.web-api',
+        ref:          { integrationId: INTEGRATION_ID, accountId },
+        url:          `https://slack.com/api/${ method }`,
+        method:       'POST',
+        headers:      { 'content-type': 'application/json; charset=utf-8' },
+        body:         params,
+        injections:   [{ field: TOKEN_PROPERTY, target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        responseType: 'json',
+      }));
+      const body = result.body as Record<string, any>;
+      if (result.status < 200 || result.status >= 300 || body?.ok === false) {
+        throw new Error(`Slack API ${ method } failed: ${ String(body?.error ?? result.status) }`);
+      }
+      return body;
+    }
     await this.ensureConnected();
     return this.app!.client.apiCall(method, params);
   }
 
-  async searchUsers(query: string, limit = 10): Promise<any[]> {
-    await this.ensureConnected();
-
+  async searchUsers(query: string, limit = 10, executionContext?: ToolExecutionContext): Promise<any[]> {
     const q = String(query || '').trim().toLowerCase();
     if (!q) {
       return [];
@@ -559,10 +586,10 @@ ${ incomingMessage }`.trim();
     let cursor: string | undefined;
 
     do {
-      const response = await this.app!.client.users.list({
+      const response = await this.apiCall('users.list', {
         limit: 200,
         cursor,
-      });
+      }, executionContext);
 
       users = users.concat(response.members ?? []);
       cursor = response.response_metadata?.next_cursor;
@@ -590,21 +617,20 @@ ${ incomingMessage }`.trim();
     limit = 50,
     oldest?: string,
     latest?: string,
+    executionContext?: ToolExecutionContext,
   ): Promise<any[]> {
-    await this.ensureConnected();
-    const res = await this.app!.client.conversations.history({
+    const res = await this.apiCall('conversations.history', {
       channel,
       limit,
       oldest,
       latest,
       inclusive: true,
-    });
+    }, executionContext);
     return res.messages ?? [];
   }
 
-  async getThreadReplies(channel: string, ts: string): Promise<any[]> {
-    await this.ensureConnected();
-    const res = await this.app!.client.conversations.replies({ channel, ts });
+  async getThreadReplies(channel: string, ts: string, executionContext?: ToolExecutionContext): Promise<any[]> {
+    const res = await this.apiCall('conversations.replies', { channel, ts }, executionContext);
     return res.messages ?? [];
   }
 

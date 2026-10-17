@@ -390,7 +390,9 @@ export class IntegrationService {
   /** Get all values for the active account (backward-compat) */
   async getIntegrationValues(integrationId: string, accountId?: string): Promise<IntegrationValue[]> {
     const acctId = accountId || await this.getActiveAccountId(integrationId);
-    const models = await IntegrationValueModel.findByAccount(integrationId, acctId);
+    const models = usesContainerVaultAuthority()
+      ? await IntegrationValueModel.findMetadataByAccount(integrationId, acctId)
+      : await IntegrationValueModel.findByAccount(integrationId, acctId);
     return models.map(m => this.modelToValue(m));
   }
 
