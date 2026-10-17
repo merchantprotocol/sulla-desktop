@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { ToolExecutionContext } from '../tools/executionContext';
+import type { ToolExecutionTarget } from '../tools/executionTargets';
 
 export interface AgentContainerRuntimeBinding {
   podId:         string;
@@ -47,4 +48,12 @@ export function requireAgentContainerRuntime(ctx: ToolExecutionContext): AgentCo
   }
 
   return binding;
+}
+
+export function containerRuntimeForExecution(
+  ctx: ToolExecutionContext,
+  executionTarget: ToolExecutionTarget | undefined,
+): AgentContainerRuntimeBinding | undefined {
+  if (executionTarget !== 'agent-local' || !ctx.pod_id) return undefined;
+  return requireAgentContainerRuntime(ctx);
 }

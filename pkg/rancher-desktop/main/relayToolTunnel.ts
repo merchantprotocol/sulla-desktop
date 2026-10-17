@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 
-import { requireAgentContainerRuntime, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
 import { toolRegistry } from '@pkg/agent/tools';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
@@ -40,9 +40,10 @@ async function executeThroughRegistry(
       },
     },
   };
-  const state = executionTarget === 'agent-local' ? isolatedState : (registered ?? isolatedState);
-  const result = executionTarget === 'agent-local'
-    ? await withAgentContainerRuntime(requireAgentContainerRuntime(ctx), () => tool.invoke(args, state))
+  const containerRuntime = containerRuntimeForExecution(ctx, executionTarget);
+  const state = containerRuntime ? isolatedState : (registered ?? isolatedState);
+  const result = containerRuntime
+    ? await withAgentContainerRuntime(containerRuntime, () => tool.invoke(args, state))
     : await tool.invoke(args, state);
 
   return result.success
