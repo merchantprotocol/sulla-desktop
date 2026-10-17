@@ -19,11 +19,17 @@ const REQUEST_TIMEOUT_MS = 15_000;
 let controlSession: Promise<Electron.Session> | undefined;
 
 async function getControlSession(): Promise<Electron.Session> {
-  return await (controlSession ??= (async() => {
+  controlSession ??= (async() => {
     const value = session.fromPartition('sulla-vault-control', { cache: false });
     await configureVaultPinnedSession(value);
     return value;
-  })());
+  })();
+  try {
+    return await controlSession;
+  } catch (error) {
+    controlSession = undefined;
+    throw error;
+  }
 }
 
 export class LocalVaultError extends Error {
