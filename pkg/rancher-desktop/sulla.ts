@@ -732,6 +732,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('browser-tab-view:exec-js', async(_event: Electron.IpcMainInvokeEvent, tabId: string, code: string) => {
+    if (tabViewManager.isVaultProtected(tabId)) throw new Error('vault_protected_tab: navigate before using browser automation');
     return tabViewManager.executeJavaScript(tabId, code);
   });
 

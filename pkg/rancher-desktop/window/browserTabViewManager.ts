@@ -125,6 +125,8 @@ export class BrowserTabViewManager {
   private acceptedCertHosts = new Set<string>(); // hosts where user clicked "Proceed"
   /** Credentials captured but not yet saved — keyed by tabId, auto-expires after 90s */
   private pendingCredentials = new Map<string, PendingCredential>();
+  /** Tabs containing a human-filled credential are opaque to agent DOM automation until top-level navigation. */
+  private vaultProtectedTabs = new Set<string>();
   /**
    * origin → saved website accounts. Built in one pass over the vault and
    * reused for VAULT_INDEX_TTL_MS so a login form doesn't cost N+1 vault
@@ -391,6 +393,7 @@ export class BrowserTabViewManager {
     this.lastActiveAt.delete(tabId);
     this.sleepingTabs.delete(tabId);
     this.faviconUrls.delete(tabId);
+    this.vaultProtectedTabs.delete(tabId);
     this.clearPendingCredentials(tabId);
     if (this.focusedTabId === tabId) {
       this.focusedTabId = null;
@@ -870,6 +873,10 @@ export class BrowserTabViewManager {
     return trustedFrameOrigin(this.views.get(tabId)?.webContents.mainFrame);
   }
 
+  isVaultProtected(tabId: string): boolean {
+    return this.vaultProtectedTabs.has(tabId);
+  }
+
   /**
    * Final, human-approved handoff from the container vault into one verified
    * browser tab. Credential values are transient here and never cross a
@@ -883,6 +890,7 @@ export class BrowserTabViewManager {
     if (!view || !frame || trustedFrameOrigin(frame) !== expectedOrigin) {
       return { success: false, usernameOk: false, passwordOk: false };
     }
+    this.vaultProtectedTabs.add(tabId);
     const script = `
       (function() {
         var username = ${ JSON.stringify(username) };
@@ -904,7 +912,10 @@ export class BrowserTabViewManager {
       })();
     `;
     const result = await frame.executeJavaScript(script, true) as { success?: boolean; usernameOk?: boolean; passwordOk?: boolean };
-    if (trustedFrameOrigin(frame) !== expectedOrigin) return { success: false, usernameOk: false, passwordOk: false };
+    if (trustedFrameOrigin(frame) !== expectedOrigin || result?.success !== true) {
+      this.vaultProtectedTabs.delete(tabId);
+      return { success: false, usernameOk: false, passwordOk: false };
+    }
     return {
       success: result?.success === true,
       usernameOk: result?.usernameOk === true,
@@ -1462,6 +1473,7 @@ export class BrowserTabViewManager {
 
     wc.on('did-navigate', () => {
       this.faviconUrls.delete(tabId);
+      this.vaultProtectedTabs.delete(tabId);
       sendState();
     });
     wc.on('did-navigate-in-page', sendState);
