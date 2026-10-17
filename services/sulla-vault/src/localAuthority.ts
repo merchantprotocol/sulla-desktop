@@ -1626,6 +1626,8 @@ export class LocalVaultAuthority {
       this.approvals.delete(input.approvalId!);
     }
 
+    await this.backfillChatgptAccountRouting(item, plaintext, keys, generation);
+
     const secrets: string[] = [];
     const headers: Record<string, string> = { ...(input.headers ?? {}) };
     headers['accept-encoding'] = 'identity';
@@ -1993,7 +1995,7 @@ export class LocalVaultAuthority {
     if (typeof response.id_token === 'string' && response.id_token) integration.properties.id_token = response.id_token;
     const chatgptAccountId = extractChatgptAccountId(response.id_token, response.access_token);
     if (chatgptAccountId) integration.properties.chatgpt_account_id = chatgptAccountId;
-    await this.persistOAuthItem(prepared, keys);
+    prepared.item.revision = await this.persistOAuthItem(prepared, keys);
   }
 
   private async storeOAuthRegistration(prepared: PreparedBrokerRequest, body: unknown): Promise<string> {
@@ -2017,7 +2019,7 @@ export class LocalVaultAuthority {
       }
       if (typeof value === 'string') prepared.plaintext.integration.properties[field] = value;
     }
-    await this.persistOAuthItem(prepared, keys);
+    prepared.item.revision = await this.persistOAuthItem(prepared, keys);
     return response.client_id;
   }
 
@@ -2027,13 +2029,30 @@ export class LocalVaultAuthority {
     if (!prepared.item || !prepared.plaintext?.integration) {
       throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
     }
-    for (const field of ['access_token', 'refresh_token', 'id_token', 'expires_in', 'expires_at', 'scope', 'token_type']) {
+    for (const field of ['access_token', 'refresh_token', 'id_token', 'chatgpt_account_id', 'expires_in', 'expires_at', 'scope', 'token_type']) {
       delete prepared.plaintext.integration.properties[field];
     }
-    await this.persistOAuthItem(prepared, keys);
+    prepared.item.revision = await this.persistOAuthItem(prepared, keys);
   }
 
-  private async persistOAuthItem(prepared: PreparedBrokerRequest, keys: UnlockedKeys): Promise<void> {
+  private async backfillChatgptAccountRouting(
+    item: ItemRow,
+    plaintext: VaultItemPlaintext,
+    keys: UnlockedKeys,
+    generation: number,
+  ): Promise<void> {
+    const properties = plaintext.integration?.properties;
+    if (!properties || properties.chatgpt_account_id) return;
+    const accountId = extractChatgptAccountId(properties.id_token, properties.access_token);
+    if (!accountId) return;
+    properties.chatgpt_account_id = accountId;
+    item.revision = await this.persistOAuthItem({ item, plaintext, generation }, keys);
+  }
+
+  private async persistOAuthItem(
+    prepared: Pick<PreparedBrokerRequest, 'item' | 'plaintext' | 'generation'>,
+    keys: UnlockedKeys,
+  ): Promise<number> {
     if (!prepared.item || !prepared.plaintext) throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
     const ownerId = prepared.item.collection_id ?? prepared.item.owner_user_id ?? keys.userId;
     const encrypted = await encryptItem(JSON.stringify(prepared.plaintext), keys.userKey, {
@@ -2048,6 +2067,7 @@ export class LocalVaultAuthority {
       [encrypted.ciphertext, encrypted.encryptedItemKey, prepared.item.id, prepared.item.revision],
     );
     if (!updated.rowCount) throw new LocalVaultError('migration_failed', 409, 'OAuth item changed during token update');
+    return Number(updated.rows[0].revision);
   }
 
   private sanitizeOAuthResult(operation: string, body: unknown): Record<string, unknown> {

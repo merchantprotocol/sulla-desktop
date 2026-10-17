@@ -15,6 +15,7 @@ import {
   createProviderCliBridge,
   getLocalVaultPrincipalId,
   usesContainerVaultAuthority,
+  type ProviderCliAuthMode,
   type ProviderCliBridgeLease,
 } from '../../vault-broker';
 import { redisClient } from '../database/RedisClient';
@@ -570,8 +571,9 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       const existing = providerBridges.get(provider);
       if (existing) return existing;
       const created = (async() => {
-        let integrationId: 'anthropic' | 'codex' | 'openai';
+        let integrationId: 'anthropic' | 'claude-code' | 'codex' | 'openai';
         let accountId: string;
+        let authMode: ProviderCliAuthMode | undefined;
         if (provider === 'codex') {
           try {
             accountId = await getIntegrationService().getActiveAccountId('codex');
@@ -582,8 +584,16 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             integrationId = 'openai';
           }
         } else {
-          integrationId = 'anthropic';
-          accountId = await getIntegrationService().getActiveAccountId(integrationId);
+          try {
+            accountId = await getIntegrationService().getActiveAccountId('claude-code');
+            integrationId = 'claude-code';
+            authMode = accountId === 'oauth' ? 'oauth' : 'api-key';
+          } catch (error) {
+            if ((error as Error).message !== 'No local vault account is configured for claude-code') throw error;
+            integrationId = 'anthropic';
+            accountId = await getIntegrationService().getActiveAccountId(integrationId);
+            authMode = 'api-key';
+          }
         }
         const bridgeContext = () => {
           const now = Math.floor(Date.now() / 1000);
@@ -610,6 +620,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           context:        bridgeContext(),
           provider,
           accountId,
+          authMode,
           models:         run.provider === provider && run.model && run.model !== provider ? [run.model] : undefined,
           advertisedHost: mcpUrl.hostname,
           signal:         lifecycleAbort.signal,

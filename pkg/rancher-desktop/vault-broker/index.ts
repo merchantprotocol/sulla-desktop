@@ -30,6 +30,7 @@ export type {
 export type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 export {
   createProviderCliBridge,
+  type ProviderCliAuthMode,
   type ProviderCliBridgeIdentity,
   type ProviderCliBridgeLease,
   type ProviderCliBridgeOptions,
