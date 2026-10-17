@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { BaseTool, ToolResponse } from '../base';
+import { hasContainerFileRuntime, readContainerPath } from '../util/containerFileRuntime';
 
 /**
  * ReadFile Tool — read file contents with optional line range.
@@ -18,6 +19,25 @@ export class ReadFileWorker extends BaseTool {
 
     if (!filePath) {
       return { successBoolean: false, responseString: 'Missing required field: path' };
+    }
+
+    if (hasContainerFileRuntime()) {
+      try {
+        const result = await readContainerPath(filePath);
+        if (result.kind === 'directory') {
+          return { successBoolean: true, responseString: `Directory listing (${ result.entries?.length ?? 0 } entries):\n${ (result.entries ?? []).join('\n') }` };
+        }
+        const lines = (result.content ?? '').split('\n');
+        const totalLines = result.totalLines ?? lines.length;
+        const startLine = Math.max(1, input.startLine || 1);
+        const endLine = Math.min(totalLines, input.endLine || totalLines);
+        const numbered = lines.slice(startLine - 1, endLine).map((line, index) => `${ startLine + index }: ${ line }`).join('\n');
+        const rangeInfo = startLine > 1 || endLine < totalLines ? ` (showing lines ${ startLine }-${ endLine })` : '';
+
+        return { successBoolean: true, responseString: `${ result.path } — ${ totalLines } total lines${ rangeInfo }\n\n${ numbered }` };
+      } catch (error) {
+        return { successBoolean: false, responseString: `Failed to read file: ${ error instanceof Error ? error.message : String(error) }` };
+      }
     }
 
     // Expand ~ to home directory

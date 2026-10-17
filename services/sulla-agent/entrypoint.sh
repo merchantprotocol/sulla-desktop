@@ -4,24 +4,17 @@ set -eu
 # Credentials are mounted from a VM tmpfs directory, never recorded in Docker's
 # environment config. Read each file once and unlink it before starting the CLI.
 secret_dir=/run/secrets/sulla-agent
-for secret_name in SULLA_API_TOKEN SULLA_TOOL_SESSION SULLA_AGENT_INSTRUCTIONS_B64 CODEX_AUTH_JSON_B64 CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY; do
+for secret_name in SULLA_API_TOKEN SULLA_TOOL_SESSION SULLA_AGENT_INSTRUCTIONS_B64; do
   secret_file="$secret_dir/$secret_name"
   if [ -f "$secret_file" ]; then
     secret_value=$(cat "$secret_file")
     # Capability/session leases stay mounted so the wrapper can pick up
-    # atomic renewals. One-shot provider credentials are removed immediately.
+    # atomic renewals. One-shot instructions are removed immediately.
     case "$secret_name" in SULLA_API_TOKEN|SULLA_TOOL_SESSION) ;; *) rm -f "$secret_file" ;; esac
     export "$secret_name=$secret_value"
     unset secret_value
   fi
 done
-
-if [ -n "${CODEX_AUTH_JSON_B64:-}" ]; then
-  install -d -m 700 "$CODEX_HOME"
-  printf '%s' "$CODEX_AUTH_JSON_B64" | base64 -d > "$CODEX_HOME/auth.json"
-  chmod 600 "$CODEX_HOME/auth.json"
-  unset CODEX_AUTH_JSON_B64
-fi
 
 if [ -n "${SULLA_AGENT_INSTRUCTIONS_B64:-}" ]; then
   printf '%s' "$SULLA_AGENT_INSTRUCTIONS_B64" | base64 -d > /tmp/sulla-agent-instructions.md

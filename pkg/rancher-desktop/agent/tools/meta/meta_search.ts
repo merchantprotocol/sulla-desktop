@@ -1,6 +1,7 @@
 import * as os from 'os';
 
 import { BaseTool, ToolResponse } from '../base';
+import { hasContainerFileRuntime, searchContainerPaths } from '../util/containerFileRuntime';
 
 import { resolveSullaDocsDir } from '@pkg/agent/utils/sullaPaths';
 import {
@@ -24,19 +25,41 @@ export class MetaSearchWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { query, limit, reindex } = input;
     const includeSullaDocs = input.includeSullaDocs !== false;
-    let dirPath = input.dirPath || os.homedir();
-    // Expand ~ to home directory — path.resolve doesn't handle tilde
-    if (dirPath.startsWith('~/')) {
-      dirPath = dirPath.replace('~', os.homedir());
-    } else if (dirPath === '~') {
-      dirPath = os.homedir();
-    }
+    let dirPath = input.dirPath || (hasContainerFileRuntime() ? '~' : os.homedir());
 
     if (!query) {
       return {
         successBoolean: false,
         responseString: 'Missing required field: query',
       };
+    }
+
+    if (hasContainerFileRuntime()) {
+      try {
+        const { roots, results } = await searchContainerPaths({ query, dirPath, limit, includeSullaDocs });
+        if (!results.length) return { successBoolean: true, responseString: `No results found for "${ query }" in ${ roots.join(' and ') }` };
+        const primary = results.filter(result => !result.docs);
+        const docs = results.filter(result => result.docs);
+        const render = (items: typeof results) => items.map((result, index) => [
+          `${ index + 1 }. ${ result.path }`,
+          result.line ? `   Line ${ result.line }` : '',
+          result.preview ? `   ${ result.preview }` : '',
+        ].filter(Boolean).join('\n')).join('\n\n');
+        const sections = [`Found ${ results.length } result(s) for "${ query }":`];
+        if (primary.length) sections.push(`\n## Results in ${ roots[0] } (${ primary.length })\n${ render(primary) }`);
+        if (docs.length) sections.push(`\n## Results in sulla-docs — /opt/sulla-docs (${ docs.length })\n${ render(docs) }`);
+
+        return { successBoolean: true, responseString: sections.join('\n') };
+      } catch (error) {
+        return { successBoolean: false, responseString: `Search failed: ${ error instanceof Error ? error.message : String(error) }` };
+      }
+    }
+
+    // Expand ~ to home directory — path.resolve doesn't handle tilde
+    if (dirPath.startsWith('~/')) {
+      dirPath = dirPath.replace('~', os.homedir());
+    } else if (dirPath === '~') {
+      dirPath = os.homedir();
     }
 
     // Resolve the sulla-docs dir once. If it can't be located, log and skip —

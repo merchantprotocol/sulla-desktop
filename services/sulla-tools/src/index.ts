@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { lookup } from 'node:dns/promises';
 
 import express from 'express';
 import Redis from 'ioredis';
@@ -27,26 +28,20 @@ const desktop: DesktopExecutor = config.relayUrl && config.relayToken
   ? new RelayDesktopExecutor({ relayUrl: config.relayUrl, serviceToken: config.relayToken, deviceId: config.relayDeviceId || undefined })
   : new HttpDesktopExecutor(config.desktopExecutorUrl, config.desktopExecutorToken);
 
-async function executeAgentLocal(ctx: ToolExecutionContext, tool: string, args: unknown, capability: string): Promise<unknown> {
+function normalizedAddress(value: string | undefined): string {
+  return String(value ?? '').replace(/^::ffff:/, '');
+}
+
+async function assertAgentContainerCaller(request: express.Request, ctx: ToolExecutionContext): Promise<void> {
   const pod = String(ctx.pod_id ?? '');
-  if (!/^sulla-agent-[a-zA-Z0-9_.-]+$/.test(pod)) throw new Error('agent-local tool call is not bound to a valid agent container');
-  const response = await fetch(`http://${ pod }:8789/v1/tools/${ encodeURIComponent(tool) }`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ capability }` },
-    body:    JSON.stringify(args ?? {}),
-    signal:  AbortSignal.timeout(config.requestTimeoutMs),
-  });
-  const result = await response.json().catch(() => ({ success: false, error: { code: 'invalid_response', message: `agent-local executor returned HTTP ${ response.status }` } })) as {
-    success?: boolean;
-    result?:  unknown;
-    error?:   { message?: string };
-  };
-  if (!response.ok || result?.success === false) throw new Error(result?.error?.message ?? String(result?.result ?? `agent-local executor returned HTTP ${ response.status }`));
-  return result.result;
+  if (!/^sulla-agent-[a-zA-Z0-9_.-]+$/.test(pod)) throw new Error('Agent-local capability is not bound to a valid container');
+  const callers = new Set((await lookup(pod, { all: true })).map(result => normalizedAddress(result.address)));
+  const source = normalizedAddress(request.socket.remoteAddress);
+  if (!source || !callers.has(source)) throw new Error('Agent-local capability does not belong to the calling container');
 }
 
 app.disable('x-powered-by');
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '1mb' }));
 app.get('/healthz', async(_request, response) => {
   try {
     await Promise.all([redis.ping(), pool.query('SELECT 1')]);
@@ -85,6 +80,7 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
   try {
     const claims = await verifyCapabilityToken(bearer, config.signingKey, { category, tool: tool.name, revocations });
     ctx = { ...claims, request_id: requestId };
+    if (tool.executionTarget === 'agent-local') await assertAgentContainerCaller(request, ctx);
   } catch (error) {
     const auth = error instanceof CapabilityTokenError ? error : new CapabilityTokenError('invalid', 'Capability verification failed');
     const status = auth.code === 'scope' ? 403 : 401;
@@ -113,10 +109,8 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
         executeCatalogTool(ctx, tool, args),
         new Promise((_resolve, reject) => setTimeout(() => reject(new Error('Tool deadline exceeded')), config.requestTimeoutMs)),
       ])
-      : tool.executionTarget === 'agent-local'
-        ? await executeAgentLocal(ctx, tool.name, args, bearer!)
-        : await desktop.execute(ctx, category, requested, args, { deadlineMs: config.requestTimeoutMs });
-    if (tool.executionTarget !== 'catalog' && tool.executionTarget !== 'agent-local') {
+      : await desktop.execute(ctx, category, requested, args, { deadlineMs: config.requestTimeoutMs });
+    if (tool.executionTarget !== 'catalog') {
       const forwarded = result as Awaited<ReturnType<typeof desktop.execute>>;
       if (!forwarded.success) status = forwarded.error?.code === 'deadline_exceeded' ? 504 : 503;
       return response.status(status).json({ ...forwarded, request_id: requestId });

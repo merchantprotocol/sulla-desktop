@@ -1,7 +1,8 @@
 import jwt from 'jsonwebtoken';
 
+import { requireAgentContainerRuntime, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
-import { getTool } from '@pkg/agent/tools';
+import { toolRegistry } from '@pkg/agent/tools';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { getCurrentUserId } from '@pkg/main/sullaCloudAuth';
@@ -18,21 +19,31 @@ async function executeThroughRegistry(
   args: unknown,
   signal: AbortSignal,
 ): Promise<RelayToolResult> {
-  const tool = await getTool(toolName);
+  // Tool instances carry mutable state, approval signals, and verified caller
+  // identity. A cached singleton lets concurrent calls overwrite each other.
+  const tool = await toolRegistry.createTool(toolName);
   tool.approvalSignal = signal;
+  tool.executionContext = ctx;
+  const executionTarget = toolRegistry.getExecutionTarget(toolName);
   const registered = ctx.thread_id ? GraphRegistry.get(ctx.thread_id)?.state : undefined;
-  const state = registered ?? {
+  const isolatedState = {
+    ...(registered ?? {}),
     toolExecutionContext: ctx,
     metadata:             {
-      threadId:             ctx.thread_id ?? '',
-      conversationId:       ctx.thread_id ?? '',
+      ...(registered?.metadata ?? {}),
+      threadId:             ctx.thread_id ?? registered?.metadata?.threadId ?? '',
+      conversationId:       ctx.thread_id ?? registered?.metadata?.conversationId ?? '',
       toolExecutionContext: ctx,
-      options:              { abort: { signal } },
+      options:              {
+        ...(registered?.metadata?.options ?? {}),
+        abort: { signal },
+      },
     },
   };
-  state.metadata.options ??= {};
-  state.metadata.options.abort = { signal };
-  const result = await tool.invoke(args, state);
+  const state = executionTarget === 'agent-local' ? isolatedState : (registered ?? isolatedState);
+  const result = executionTarget === 'agent-local'
+    ? await withAgentContainerRuntime(requireAgentContainerRuntime(ctx), () => tool.invoke(args, state))
+    : await tool.invoke(args, state);
 
   return result.success
     ? { success: true, result: result.result }
@@ -88,15 +99,15 @@ export async function startLocalToolTunnel(): Promise<RelayToolTunnel> {
     ? await getLocalVaultPrincipalId()
     : await getRelayUserId();
   if (!userId) throw new Error('Local tool relay requires an authenticated owner identity');
-  const deviceToken = jwt.sign({
-    sub: userId,
-    device_id: deviceId,
-    aud: 'sulla-relay-device',
-  }, secret, { algorithm: 'HS256', expiresIn: '7d' });
-
   localTunnel = new RelayToolTunnel({
     relayUrl: 'http://127.0.0.1:30126',
-    deviceToken,
+    // Mint on every connection. A long-lived Desktop process can reconnect
+    // after the previous relay credential expires without a restart.
+    deviceToken: () => jwt.sign({
+      sub: userId,
+      device_id: deviceId,
+      aud: 'sulla-relay-device',
+    }, secret, { algorithm: 'HS256', expiresIn: '15m' }),
     deviceId: () => Promise.resolve(deviceId),
     currentUserId: () => Promise.resolve(userId),
     execute: executeThroughRegistry,

@@ -59,6 +59,8 @@ interface SpawnTask {
   /** Projects task this sub-agent works. The job owns it for the whole run:
    *  assignee becomes the agent and no other writer may take the task. */
   projectTaskId?: string;
+  /** Existing worktree to clone into the container job's retained workspace. */
+  workspacePath?: string;
   /** What the child must return. Omit for the default {status, summary, output}. */
   contract?:   unknown;
   /** 'hidden' (default) runs in the background; 'tab' opens a live chat tab. */
@@ -538,6 +540,7 @@ export class SpawnAgentWorker extends BaseTool {
             model: subState.metadata.agent?.model,
             prompt,
             instructions,
+            workspacePath: task.workspacePath,
             state: subState,
             signal: jobAbortSignal,
           });

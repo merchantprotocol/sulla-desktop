@@ -6,12 +6,14 @@ import * as path from 'node:path';
 
 import Electron from 'electron';
 
+import { registerAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
 import { RunActivity } from './RunActivity';
+import { getWebSocketClientService } from './WebSocketClientService';
 import { getLocalVaultPrincipalId, usesContainerVaultAuthority } from '../../vault-broker';
 import { redisClient } from '../database/RedisClient';
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { ensureCodexAuthFile, codexAuthPath } from '../util/codexAuthFile';
 import { onSteer, steerText } from '../utils/steerChannel';
+import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
+import { resolveSullaDocsDir } from '../utils/sullaPaths';
 
 import { resolveSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
@@ -40,6 +42,8 @@ export interface AgentContainerRun {
   model?:       string | null;
   prompt:       string;
   instructions: string;
+  /** Explicit existing worktree used only to seed this job's isolated clone. */
+  workspacePath?: string;
   state:        BaseThreadState;
   signal?:      AbortSignal;
 }
@@ -142,27 +146,10 @@ async function ensureAgentImage(): Promise<string> {
   return imageReady;
 }
 
-async function claudeCredentials(): Promise<{ oauthToken: string; apiKey: string }> {
-  let oauthToken = '';
-  let apiKey = '';
-  try {
-    const { getIntegrationService } = await import('../services/IntegrationService');
-    for (const value of await getIntegrationService().getFormValues('claude-code')) {
-      if (value.property === 'oauth_token' && value.value) oauthToken = value.value;
-      if (value.property === 'api_key' && value.value) apiKey = value.value;
-    }
-  } catch { /* settings fallback below */ }
-  if (!oauthToken && !apiKey) {
-    oauthToken = (await SullaSettingsModel.get('claudeOAuthToken', '')) ?? '';
-    apiKey = (await SullaSettingsModel.get('claudeApiKey', '')) ?? '';
-  }
-  return { oauthToken, apiKey };
-}
-
-async function containerEnvironment(run: AgentContainerRun, token: string, sessionId: string, toolApiUrl: string): Promise<{
+function containerEnvironment(run: AgentContainerRun, token: string, sessionId: string, toolApiUrl: string): {
   env:     Record<string, string>;
   secrets: Record<string, string>;
-}> {
+} {
   const env: Record<string, string> = {
     SULLA_HOST:                   'sulla_tools',
     SULLA_TOOL_API_URL:           toolApiUrl,
@@ -174,15 +161,6 @@ async function containerEnvironment(run: AgentContainerRun, token: string, sessi
     SULLA_TOOL_SESSION:           sessionId,
     SULLA_AGENT_INSTRUCTIONS_B64: Buffer.from(run.instructions).toString('base64'),
   };
-  if (run.provider === 'codex') {
-    if (!await ensureCodexAuthFile()) throw new Error('No Codex credentials configured');
-    secrets.CODEX_AUTH_JSON_B64 = fs.readFileSync(codexAuthPath()).toString('base64');
-  } else if (run.provider === 'claude-code') {
-    const creds = await claudeCredentials();
-    if (!creds.oauthToken && !creds.apiKey) throw new Error('No Claude Code credentials configured');
-    if (creds.oauthToken) secrets.CLAUDE_CODE_OAUTH_TOKEN = creds.oauthToken;
-    if (creds.apiKey) secrets.ANTHROPIC_API_KEY = creds.apiKey;
-  }
   return { env, secrets };
 }
 
@@ -215,33 +193,21 @@ async function replaceContainerSecret(secretDir: string, name: string, value: st
   );
 }
 
-/**
- * A coding brief may name one existing isolated worktree. Mount only that
- * checkout and its Git metadata; never expose the repository root or home.
- */
-function authorizedCheckout(prompt: string): { workingDir?: string; binds: string[] } {
+/** Seed an isolated persistent clone; never mount shared Git metadata writable. */
+async function prepareCheckout(source: string | undefined, workspacePath: string): Promise<string | undefined> {
+  if (!source) return undefined;
   const worktreeRoot = path.join(os.homedir(), 'Sites', 'worktrees') + path.sep;
-  const candidates = prompt.match(/\/Users\/[^\s`"'<>]+\/Sites\/worktrees\/[^\s`"'<>.,;:]+/g) ?? [];
-  for (const candidate of candidates) {
-    try {
-      const resolved = fs.realpathSync(candidate);
-      if (!resolved.startsWith(worktreeRoot) || !fs.statSync(resolved).isDirectory()) continue;
-      const binds = [`${ resolved }:${ resolved }:rw`];
-      const dotGit = path.join(resolved, '.git');
-      if (fs.statSync(dotGit).isFile()) {
-        const match = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotGit, 'utf8'));
-        if (match) {
-          const gitDir = path.resolve(resolved, match[1].trim());
-          const marker = `${ path.sep }worktrees${ path.sep }`;
-          const markerIndex = gitDir.lastIndexOf(marker);
-          const commonGitDir = markerIndex > 0 ? gitDir.slice(0, markerIndex) : gitDir;
-          if (fs.statSync(commonGitDir).isDirectory()) binds.push(`${ commonGitDir }:${ commonGitDir }:rw`);
-        }
-      }
-      return { workingDir: resolved, binds };
-    } catch { /* Candidate does not exist or is not a worktree. */ }
+  const resolved = fs.realpathSync(source);
+  if (!resolved.startsWith(worktreeRoot) || !fs.statSync(resolved).isDirectory()) {
+    throw new Error('Container workspacePath must be an existing worktree under ~/Sites/worktrees');
   }
-  return { binds: [] };
+  const top = (await limactl(['git', '-C', resolved, 'rev-parse', '--show-toplevel'])).stdout.trim();
+  if (fs.realpathSync(top) !== resolved) throw new Error('container workspacePath must be a Git worktree root');
+  const checkout = path.join(workspacePath, 'checkout');
+  if (!fs.existsSync(path.join(checkout, '.git'))) {
+    await limactl(['git', 'clone', '--local', '--no-hardlinks', resolved, checkout]);
+  }
+  return checkout;
 }
 
 export async function runAgentContainer(run: AgentContainerRun): Promise<AgentContainerResult> {
@@ -253,6 +219,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
   const capabilityJti = crypto.randomUUID();
   let capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
   let containerId: string | undefined;
+  let unregisterRuntime: (() => void) | undefined;
   try {
     const installationSecret = getChatCompletionsServer().getApiToken();
     if (!installationSecret) throw new Error('Desktop tool API is not initialized');
@@ -279,13 +246,14 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
       .then(response => response.ok).catch(() => false);
     if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
-    const configuration = await containerEnvironment(
+    const configuration = containerEnvironment(
       run, issueLease(), session.id, 'http://sulla_tools:3000',
     );
     const workspacePath = path.join(os.homedir(), 'sulla', 'workspaces', 'agents', `${ safeName(run.jobId) }-${ run.taskIndex }`);
     await fs.promises.mkdir(workspacePath, { recursive: true, mode: 0o700 });
     await fs.promises.chmod(workspacePath, 0o700);
-    const checkout = authorizedCheckout(run.prompt);
+    const checkout = await prepareCheckout(run.workspacePath, workspacePath);
+    const docsPath = resolveSullaDocsDir();
     secretDir = await provisionContainerSecrets(containerName, configuration.secrets);
     containerId = await runtime.create({
       name:   containerName,
@@ -300,13 +268,23 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       autoRemove:  true,
       stdinOpen:   true,
       env:         configuration.env,
-      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`, `${ workspacePath }:${ workspacePath }:rw`, ...checkout.binds],
+      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`, `${ workspacePath }:${ workspacePath }:rw`, `${ docsPath }:/opt/sulla-docs:ro`],
       network:     'sulla_default',
-      workingDir:  checkout.workingDir ?? workspacePath,
+      workingDir:  checkout ?? workspacePath,
       user:        `${ CONTAINER_UID }:${ CONTAINER_GID }`,
       tmpfs:       { '/home/sulla': `rw,uid=${ CONTAINER_UID },gid=${ CONTAINER_GID },mode=0700` },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
+    });
+    unregisterRuntime = registerAgentContainerRuntime({
+      podId: containerName,
+      subject,
+      orgId: metadata.orgId,
+      agentId: metadata.agentId ?? run.state.metadata.wsChannel,
+      jobId: run.jobId,
+      threadId: metadata.threadId,
+      deviceId,
+      workspacePath: checkout ?? workspacePath,
     });
     const startedContainerId = containerId;
 
@@ -319,14 +297,22 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       let output = '';
+      let providerBuffer = '';
+      let streamText = '';
+      let lastStreamFlush = 0;
       let settled = false;
+      let abortForceTimer: ReturnType<typeof setTimeout> | undefined;
+      const pendingSteers = new Set<string>();
       let idleTimer: ReturnType<typeof setTimeout>;
       const unsubscribeSteer = onSteer(run.state, message => {
         const text = steerText(message).trim();
         if (!text || settled || proc.stdin.destroyed || proc.stdin.writableEnded) return false;
         try {
-          proc.stdin.write(`${ JSON.stringify({ type: 'steer', message: text }) }\n`);
-          RunActivity.touch(run.state.metadata);
+          const id = crypto.randomUUID();
+          pendingSteers.add(id);
+          proc.stdin.write(`${ JSON.stringify({ type: 'steer', id, message: text }) }\n`, error => {
+            if (error) pendingSteers.delete(id);
+          });
           return true;
         } catch {
           return false;
@@ -354,38 +340,111 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         settled = true;
         clearTimeout(idleTimer);
         clearInterval(renewTimer);
+        if (abortForceTimer) clearTimeout(abortForceTimer);
         unsubscribeSteer();
+        unregisterRuntime?.();
+        unregisterRuntime = undefined;
         session.revoke();
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
         if (secretDir) await removeContainerSecrets(secretDir);
+        emitProvider('', 'streaming_complete').catch(() => {});
+        emitProvider('', 'thinking_complete').catch(() => {});
         if (error) reject(error);
         else resolve({ output: output.slice(-200_000), containerName });
       };
-      const onData = (chunk: Buffer) => {
+      const emitProvider = async(content: string, kind: string) => {
+        const metadata = run.state.metadata as any;
+        const channel = metadata.parentWsChannel || metadata.wsChannel;
+        const threadId = metadata.parentConversationId || metadata.threadId;
+        if (!channel || !threadId) return;
+        await getWebSocketClientService().send(channel, {
+          type: 'assistant_message',
+          data: { content, role: 'assistant', kind, thread_id: threadId, timestamp: Date.now() },
+        }).catch(() => {});
+      };
+      const flushStream = (force = false) => {
+        const now = Date.now();
+        if (!force && now - lastStreamFlush < 50) return;
+        lastStreamFlush = now;
+        const content = stripProtocolTagsStreaming(streamText);
+        if (content.trim()) emitProvider(content, 'streaming').catch(() => {});
+      };
+      const activity = (message: string) => {
+        if (!message) return;
+        flushStream(true);
+        if (streamText.trim()) emitProvider('', 'streaming_complete').catch(() => {});
+        streamText = '';
+        emitProvider(message, 'thinking').catch(() => {});
+      };
+      const processProviderLine = (line: string) => {
+        let event: any;
+        try { event = JSON.parse(line) } catch { return }
+        if (event.type === 'sulla.steer.ack' && typeof event.id === 'string') {
+          if (pendingSteers.delete(event.id)) RunActivity.touch(run.state.metadata);
+          return;
+        }
+        if (event.type === 'thread.started') activity('Session started — calling model');
+        if ((event.type === 'item.started' || event.type === 'item.completed') && event.item) {
+          const item = event.item;
+          const kind = item.item_type ?? item.type;
+          if (kind === 'agent_message' && event.type === 'item.completed' && typeof item.text === 'string') {
+            streamText += `${ streamText.trim() ? '\n\n' : '' }${ item.text }`;
+            flushStream(true);
+          } else if (event.type === 'item.started') {
+            if (kind === 'command_execution') activity(typeof item.command === 'string' ? `$ ${ item.command.slice(0, 120) }` : 'Running a shell command');
+            else if (kind === 'file_change') activity('Editing files');
+            else if (kind === 'mcp_tool_call') activity(`Using ${ item.tool ?? 'a tool' }`);
+            else if (kind === 'web_search') activity(`Searching web${ item.query ? `: ${ String(item.query).slice(0, 100) }` : '' }`);
+          }
+        }
+        const nested = event.event;
+        if (nested?.type === 'content_block_delta' && nested.delta?.type === 'text_delta' && typeof nested.delta.text === 'string') {
+          streamText += nested.delta.text;
+          flushStream();
+        }
+        if (nested?.type === 'content_block_delta' && nested.delta?.type === 'thinking_delta' && typeof nested.delta.thinking === 'string') {
+          activity(`💭 ${ nested.delta.thinking.replace(/\s+/g, ' ').trim().slice(0, 220) }`);
+        }
+        if (nested?.type === 'content_block_start' && nested.content_block?.type === 'tool_use') {
+          activity(`Using ${ nested.content_block.name ?? 'a tool' }`);
+        }
+      };
+      const onData = (chunk: Buffer, parseProvider = false) => {
         resetIdle();
         RunActivity.touch(run.state.metadata);
-        output += chunk.toString('utf8');
+        const text = chunk.toString('utf8');
+        output += text;
         if (output.length > 400_000) output = output.slice(-200_000);
+        if (parseProvider) {
+          const lines = `${ providerBuffer }${ text }`.split('\n');
+          providerBuffer = lines.pop() ?? '';
+          if (providerBuffer.length > 200_000) providerBuffer = providerBuffer.slice(-200_000);
+          for (const line of lines) if (line.trim()) processProviderLine(line);
+        }
       };
-      proc.stdout.on('data', onData);
-      proc.stderr.on('data', onData);
+      proc.stdout.on('data', chunk => onData(chunk, true));
+      proc.stderr.on('data', chunk => onData(chunk, false));
+      proc.stdin.on('error', error => {
+        if ((error as NodeJS.ErrnoException).code !== 'EPIPE' && !settled) finish(error).catch(reject);
+      });
       proc.once('error', error => { finish(error).catch(reject) });
       proc.once('close', code => { finish(code === 0 ? undefined : new Error(`Agent container exited ${ code }: ${ output.slice(-4_000) }`)).catch(reject) });
       if (run.signal) {
         run.signal.addEventListener('abort', () => {
-          proc.stdin.write(`${ JSON.stringify({ type: 'cancel' }) }\n`);
-          const forceTimer = setTimeout(() => {
+          proc.stdin.write(`${ JSON.stringify({ type: 'cancel' }) }\n`, () => {});
+          abortForceTimer = setTimeout(() => {
             runtime.remove(containerName).catch(error => {
               log.warn(`[AgentContainer] abort cleanup failed for ${ containerName }: ${ (error as Error).message }`);
             });
           }, 6_000);
-          forceTimer.unref();
+          abortForceTimer.unref();
         }, { once: true });
       }
       resetIdle();
-      proc.stdin.write(`${ JSON.stringify({ type: 'start', prompt: run.prompt }) }\n`);
+      proc.stdin.write(`${ JSON.stringify({ type: 'start', prompt: run.prompt }) }\n`, () => {});
     });
   } catch (error) {
+    unregisterRuntime?.();
     session.revoke();
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
     if (containerId) await runtime.remove(containerId).catch(() => {});
