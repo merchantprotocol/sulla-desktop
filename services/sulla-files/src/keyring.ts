@@ -11,7 +11,7 @@ type Queryable = Pick<pg.Pool, 'query'>;
 
 /** Plaintext exists only in this process. Persisted envelopes require the Desktop keychain key. */
 export class FilesKeyring {
-  private master?: Buffer;
+  private master?:  Buffer;
   private epoch = 0;
   private pending?: Promise<void>;
   private readonly cache = new Map<string, CollectionKeys>();
@@ -40,7 +40,7 @@ export class FilesKeyring {
       const state = (await client.query('SELECT verifier FROM files_key_state WHERE id=TRUE')).rows[0];
       if (state) {
         const check = await decrypt(state.verifier, master, CONTEXT);
-        try { if (!Buffer.from(check).equals(CHECK)) throw new Error('Invalid Files master key') } finally { check.fill(0) }
+        try { if (!Buffer.from(check).equals(CHECK)) throw new Error('Invalid Files master key'); } finally { check.fill(0) }
         // Never overwrite damaged wrapped keys or silently derive replacements.
         const rows = (await client.query('SELECT collection_id,data_key,dedup_key FROM files_collection_keys')).rows;
         for (const row of rows) {
@@ -48,6 +48,9 @@ export class FilesKeyring {
           keys.data.fill(0); keys.dedup.fill(0);
         }
       } else {
+        // Only migration-classified native rows are known to have used the
+        // historical signing-derived scheme. Ambiguous/external rows remain
+        // unkeyed until the separate secure import flow proves their origin.
         const rows = (await client.query("SELECT id FROM collections WHERE compatibility_state='native'")).rows;
         for (const row of rows) {
           // The legacy master.key wrapped metadata only; content used these deterministic keys.
@@ -63,7 +66,7 @@ export class FilesKeyring {
       await client.query('COMMIT');
       if (epoch !== this.epoch) throw new Error('Files was locked during unlock');
       this.master = Buffer.from(master);
-    } catch { await client.query('ROLLBACK'); throw new Error('Files key unlock failed; existing data was preserved') } finally { client.release() }
+    } catch (error) { await client.query('ROLLBACK'); throw new Error('Files key unlock failed; existing data was preserved', { cause: error }) } finally { client.release() }
   }
 
   private async unwrap(id:string, data:Envelope, dedup:Envelope, master:Buffer):Promise<CollectionKeys> {
@@ -90,7 +93,7 @@ export class FilesKeyring {
     } finally { master.fill(0) }
   }
 
-  async create(id:string, client:pg.PoolClient):Promise<{ data:Envelope; dedup:Envelope }> {
+  async create(id:string, client:pg.PoolClient):Promise<{ data: Envelope; dedup: Envelope }> {
     if (!this.master) throw new Error('Files is locked');
     const epoch = this.epoch; const master = Buffer.from(this.master);
     const data = randomBytes(32); const dedup = randomBytes(32);
@@ -101,6 +104,62 @@ export class FilesKeyring {
       if (epoch !== this.epoch) throw new Error('Files was locked during key creation');
       return wrapped;
     } finally { master.fill(0); data.fill(0); dedup.fill(0) }
+  }
+
+  /** Short-lived copies for enrollment into the opaque Vault custody bundle. */
+  async copyKeys(id:string):Promise<CollectionKeys> {
+    const keys = await this.keys(id);
+    return { data: Buffer.from(keys.data), dedup: Buffer.from(keys.dedup) };
+  }
+
+  /**
+   * Replace a lost device master only after every random collection key has
+   * been recovered and context-verified by the custody authority.
+   */
+  async installRecoveredMaster(master:Buffer, recovered:ReadonlyMap<string, CollectionKeys>):Promise<void> {
+    if (master.length !== 32) throw new Error('Invalid Files master key');
+    if (this.master || this.pending) throw new Error('Files must be locked before device recovery');
+    const epoch = this.epoch;
+    const copy = Buffer.from(master);
+    this.pending = this.replaceMaster(copy, recovered, epoch).finally(() => copy.fill(0));
+    try { await this.pending } finally { this.pending = undefined }
+  }
+
+  private async replaceMaster(master:Buffer, recovered:ReadonlyMap<string, CollectionKeys>, epoch:number):Promise<void> {
+    const client = await this.db.connect();
+    let committed = false;
+    try {
+      await client.query('BEGIN');
+      await client.query('LOCK TABLE files_key_state, files_collection_keys IN EXCLUSIVE MODE');
+      const rows = (await client.query('SELECT collection_id,key_origin FROM files_collection_keys ORDER BY collection_id')).rows;
+      if (rows.length === 0 || rows.length !== recovered.size) throw new Error('Incomplete Files recovery bundle set');
+      for (const row of rows) {
+        if (row.key_origin !== 'random') throw new Error('Legacy Files keys require the separate secure import flow');
+        const keys = recovered.get(row.collection_id);
+        if (keys?.data.length !== 32 || keys.dedup.length !== 32) throw new Error('Invalid recovered collection keys');
+        await client.query(
+          'UPDATE files_collection_keys SET data_key=$2,dedup_key=$3 WHERE collection_id=$1',
+          [row.collection_id, await encrypt(keys.data, master, `sulla:files:data-key:v1:${ row.collection_id }`),
+            await encrypt(keys.dedup, master, `sulla:files:dedup-key:v1:${ row.collection_id }`)],
+        );
+      }
+      await client.query(
+        'INSERT INTO files_key_state(id,verifier) VALUES(TRUE,$1) ON CONFLICT(id) DO UPDATE SET verifier=EXCLUDED.verifier',
+        [await encrypt(CHECK, master, CONTEXT)],
+      );
+      if (epoch !== this.epoch) throw new Error('Files was locked during device recovery');
+      await client.query('COMMIT');
+      committed = true;
+      if (epoch !== this.epoch) throw new Error('Files device recovery committed while the service was locking');
+      this.master = Buffer.from(master);
+      for (const [id, keys] of recovered) this.cache.set(id, { data: Buffer.from(keys.data), dedup: Buffer.from(keys.dedup) });
+    } catch (error) {
+      if (!committed) await client.query('ROLLBACK');
+      if (committed) throw new Error('Files device recovery committed but remained locked; retry unlock with the replacement master', { cause: error });
+      throw new Error('Files device recovery failed; existing key envelopes were preserved', { cause: error });
+    } finally {
+      client.release();
+    }
   }
 
   async requireLegacySync(id:string):Promise<void> {
@@ -121,11 +180,12 @@ export class FilesKeyring {
 export class LegacyServerKeyring extends FilesKeyring {
   constructor(db:pg.Pool, private readonly signingKey:string | Buffer) { super(db) }
   override get unlocked():boolean { return true }
-  override async keys(id:string, _queryable?:Queryable):Promise<CollectionKeys> {
-    return {
-      data: createHmac('sha256', this.signingKey).update(`sulla:files:data-key:v1:${ id }`).digest(),
+  override keys(id:string, _queryable?:Queryable):Promise<CollectionKeys> {
+    return Promise.resolve({
+      data:  createHmac('sha256', this.signingKey).update(`sulla:files:data-key:v1:${ id }`).digest(),
       dedup: createHmac('sha256', this.signingKey).update(`sulla:files:dedup-key:v1:${ id }`).digest(),
-    };
+    });
   }
-  override async unlock():Promise<void> { throw new Error('Desktop keychain bootstrap is unavailable in server mode') }
+
+  override unlock():Promise<void> { return Promise.reject(new Error('Desktop keychain bootstrap is unavailable in server mode')) }
 }
