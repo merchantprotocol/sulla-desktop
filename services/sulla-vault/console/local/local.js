@@ -24,6 +24,8 @@
   const entries = value => value.split(',').map(entry => entry.trim()).filter(Boolean);
   const sites = value => entries(value).map(entry => entry.toLowerCase());
   const initials = item => (item?.name || item?.integration?.integrationId || '--').split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase();
+  const lockIcon = '<svg class="i sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2.5"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>';
+  const agentIcon = '<svg class="i sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="5" y="7" width="14" height="12" rx="3"></rect><path d="M9 4v3m6-3v3M8 12h.01M12 12h.01M16 12h.01M9 16h6"></path></svg>';
   const typeLabel = type => ({ login: 'Login', apiKey: 'API key', card: 'Card', note: 'Secure note', identity: 'Identity' })[type] || type || 'Item';
   const dateText = value => value ? new Date(value).toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Never';
   const localDateValue = value => {
@@ -112,7 +114,7 @@
       meta.append(name, sub);
       const summary = document.createElement('span'); summary.className = 'policy-summary';
       const level = document.createElement('span'); level.className = `lvl ${itemPolicy.level === 'full' ? 'l3' : itemPolicy.level === 'autofill' ? 'l2' : itemPolicy.mode === 'agents' ? 'l1' : ''}`; level.textContent = itemPolicy.mode === 'agents' ? itemPolicy.level.toUpperCase() : 'NONE';
-      const who = document.createElement('span'); who.className = `who ${itemPolicy.mode === 'agents' ? 'agents' : 'personal'}`; who.textContent = itemPolicy.mode === 'agents' ? '◆ Agents can use' : '⌑ Only me';
+      const who = document.createElement('span'); who.className = `who ${itemPolicy.mode === 'agents' ? 'agents' : 'personal'}`; who.innerHTML = `${itemPolicy.mode === 'agents' ? agentIcon : lockIcon}${itemPolicy.mode === 'agents' ? 'Agents can use' : 'Only me'}`;
       summary.append(level, who); row.append(tile, meta, summary);
       row.onclick = () => { void selectItem(item.id); };
       root.append(row);
@@ -266,7 +268,7 @@
     byId('audit-blocked-count').textContent = String(auditEvents.filter(event => event.blocked).length);
     byId('audit-page').textContent = `Page ${Math.floor(auditOffset / 25) + 1}`;
     byId('audit-prev').disabled = auditOffset === 0; byId('audit-next').disabled = !auditHasMore;
-    byId('audit-rows').innerHTML = auditEvents.length ? auditEvents.map((event, index) => `<tr data-audit-event="${index}"><td>${esc(dateText(event.created_at))}</td><td>${esc(auditIsAgent(event) ? event.metadata?.agentId || 'Agent' : 'You')}</td><td>${esc(auditAction(event))}</td><td>${esc(auditItem(event))}</td><td>${esc(auditWhere(event))}</td><td><span class="audit-result ${event.blocked ? 'blocked' : ''}">${esc(auditResult(event))}</span></td></tr>`).join('') : '<tr><td colspan="6" class="muted">No recorded events match these filters.</td></tr>';
+    byId('audit-rows').innerHTML = auditEvents.length ? auditEvents.map((event, index) => { const agent = auditIsAgent(event); const who = agent ? event.metadata?.agentId || 'Agent' : 'You'; return `<tr data-audit-event="${index}"><td>${esc(dateText(event.created_at))}</td><td><span class="actor-cell"><span class="avatar ${agent ? 'agent' : ''}">${agent ? agentIcon : esc(who)}</span>${esc(who)}</span></td><td>${esc(auditAction(event))}</td><td>${esc(auditItem(event))}</td><td>${esc(auditWhere(event))}</td><td><span class="audit-result ${event.blocked ? 'blocked' : ''}">${esc(auditResult(event))}</span></td></tr>`; }).join('') : '<tr><td colspan="6" class="muted">No recorded events match these filters.</td></tr>';
     document.querySelectorAll('[data-audit-event]').forEach(row => row.onclick = () => renderAuditDetail(Number(row.dataset.auditEvent)));
     renderAuditDetail(auditEvents.length ? 0 : -1);
   };
