@@ -4,7 +4,7 @@ import express from 'express';
 import Redis from 'ioredis';
 import { Pool } from 'pg';
 
-import { executeCatalogTool, initializeCatalog, listTools, resolveTool } from './catalog.js';
+import { executeCatalogTool, initializeCatalog, listTools, resolveTool, scopeToolExecutionContext } from './catalog.js';
 import { config, validateConfig } from './config.js';
 import { RedisRevocationStore, RequestStore } from './stores.js';
 import { CapabilityTokenError, verifyCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
@@ -74,6 +74,15 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
   }
 
   const args = request.body?.params && typeof request.body.params === 'object' ? request.body.params : (request.body ?? {});
+  try {
+    ctx = await scopeToolExecutionContext(ctx, tool, args);
+  } catch (error) {
+    return response.status(403).json({
+      success: false,
+      error:   { code: 'credential_scope', message: error instanceof Error ? error.message : 'Credential scope denied' },
+      request_id: requestId,
+    });
+  }
   const idempotencyKey = request.header('Idempotency-Key');
   if (idempotencyKey && !await requests.reserveIdempotency(`${ ctx.sub }:${ idempotencyKey }`)) {
     return response.status(409).json({ success: false, error: { code: 'duplicate_request', message: 'Idempotency key was already used' }, request_id: requestId });

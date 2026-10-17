@@ -3,10 +3,17 @@
 // Supports multiple accounts per integration via account_id
 
 import { normalizeVaultCredentialValues, type VaultCredentialReadResult } from './vaultCredentialSchema';
+import {
+  requireConfiguredCredentialBroker,
+  usesContainerVaultAuthority,
+  type BrokerIntegrationMetadataResponse,
+} from '../../vault-broker';
 import { IntegrationValueModel } from '../database/models/IntegrationValueModel';
 import { getSelectBoxProvider, type SelectOption } from '../integrations/select_box';
 
 const DEFAULT_ACCOUNT_ID = 'default';
+const INTEGRATION_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
+const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 
 export interface IntegrationValue {
   value_id:       number;
@@ -40,11 +47,27 @@ export interface IntegrationAccount {
   label:          string;
   active:         boolean;
   connected:      boolean;
+  credentialRequired?: boolean;
   connected_at?:  Date;
 }
 
 // Special properties that are not shown in forms
 const SYSTEM_PROPERTIES = ['connection_status', 'connected_at', 'last_sync_at', 'account_label'];
+const LOCAL_METADATA_PROPERTIES = new Set([
+  ...SYSTEM_PROPERTIES,
+  'base_url',
+  'server_url',
+  'gateway_url',
+  'provider',
+  'provider_id',
+  'model',
+  'llm_access',
+  'client_id',
+  'oauth_client_id',
+  'expires_at',
+  'token_type',
+  'scope',
+]);
 
 type IntegrationValueCallback = (value: IntegrationValue, action: 'created' | 'updated' | 'deleted') => void;
 
@@ -111,16 +134,82 @@ export class IntegrationService {
     };
   }
 
+  private isRendererProcess(): boolean {
+    return typeof process !== 'undefined' && process.type === 'renderer';
+  }
+
+  private validateLocalMetadataIds(integrationId: string, accountId?: string): void {
+    if (!INTEGRATION_ID_PATTERN.test(integrationId)) {
+      throw new Error('Invalid integration identifier');
+    }
+    if (accountId !== undefined && !ACCOUNT_ID_PATTERN.test(accountId)) {
+      throw new Error('Invalid integration account identifier');
+    }
+  }
+
+  /**
+   * Renderer code has no vault service identity. It may only use the narrow,
+   * metadata-only main-process IPC surface; main/tools call the broker directly.
+   */
+  private async getLocalMetadata(
+    integrationId: string,
+    accountId?: string,
+  ): Promise<BrokerIntegrationMetadataResponse> {
+    this.validateLocalMetadataIds(integrationId, accountId);
+    if (this.isRendererProcess()) {
+      const { ipcRenderer } = require('electron');
+      return ipcRenderer.invoke('vault:integration-metadata', { integrationId, accountId });
+    }
+    return requireConfiguredCredentialBroker().integrationMetadata(integrationId, accountId);
+  }
+
+  private async setLocalActiveAccount(
+    integrationId: string,
+    accountId: string,
+  ): Promise<BrokerIntegrationMetadataResponse> {
+    this.validateLocalMetadataIds(integrationId, accountId);
+    if (this.isRendererProcess()) {
+      const { ipcRenderer } = require('electron');
+      return ipcRenderer.invoke('vault:integration-active-account', { integrationId, accountId });
+    }
+    return requireConfiguredCredentialBroker().setActiveIntegrationAccount(integrationId, accountId);
+  }
+
+  private async getLocalMetadataForSettings(
+    integrationId: string,
+    accountId?: string,
+  ): Promise<BrokerIntegrationMetadataResponse | null> {
+    try {
+      return await this.getLocalMetadata(integrationId, accountId);
+    } catch {
+      // Settings/catalog discovery must remain usable before the local vault is
+      // configured or unlocked. Never fall back to legacy secret-bearing rows.
+      console.warn(`[IntegrationService] Local vault metadata unavailable for ${ integrationId }`);
+      return null;
+    }
+  }
+
   // ─── Account management ───────────────────────────────────────────
 
   /** Get the active/default account_id for an integration */
   async getActiveAccountId(integrationId: string): Promise<string> {
+    if (usesContainerVaultAuthority()) {
+      const metadata = await this.getLocalMetadata(integrationId);
+      const accountId = metadata.activeAccountId ?? metadata.accounts[0]?.accountId;
+      if (!accountId) throw new Error(`No local vault account is configured for ${ integrationId }`);
+      return accountId;
+    }
     return IntegrationValueModel.getDefaultAccountId(integrationId);
   }
 
   /** Set which account is the default for an integration.
    *  Clears is_default on all other accounts, sets it on the target. */
   async setActiveAccount(integrationId: string, accountId: string): Promise<void> {
+    if (usesContainerVaultAuthority()) {
+      await this.setLocalActiveAccount(integrationId, accountId);
+      console.log(`[IntegrationService] Local vault active account for ${ integrationId } set to: ${ accountId }`);
+      return;
+    }
     await IntegrationValueModel.setDefaultAccount(integrationId, accountId);
     console.log(`[IntegrationService] Default account for ${ integrationId } set to: ${ accountId }`);
   }
@@ -137,12 +226,31 @@ export class IntegrationService {
 
   /** Get the label for an account */
   async getAccountLabel(integrationId: string, accountId: string): Promise<string> {
+    if (usesContainerVaultAuthority()) {
+      const metadata = await this.getLocalMetadataForSettings(integrationId, accountId);
+      return metadata?.accounts.find(account => account.accountId === accountId)?.label || accountId;
+    }
     const model = await IntegrationValueModel.findByKey(integrationId, accountId, 'account_label');
     return model?.attributes.value || accountId;
   }
 
   /** List all accounts for an integration */
   async getAccounts(integrationId: string): Promise<IntegrationAccount[]> {
+    if (usesContainerVaultAuthority()) {
+      const metadata = await this.getLocalMetadataForSettings(integrationId);
+      if (!metadata) return [];
+      return metadata.accounts.map(account => ({
+        integration_id: integrationId,
+        account_id:     account.accountId,
+        label:          account.label,
+        active:         account.active,
+        connected:      account.connected,
+        // Older authorities may omit the routing bit; callers treat an absent
+        // value as credentialed and therefore fail closed through the broker.
+        credentialRequired: (account as typeof account & { credentialRequired?: boolean }).credentialRequired,
+        connected_at:   account.properties.connected_at ? new Date(account.properties.connected_at) : undefined,
+      }));
+    }
     const accountIds = await IntegrationValueModel.getDistinctAccounts(integrationId);
     const accounts: IntegrationAccount[] = [];
 
@@ -151,7 +259,9 @@ export class IntegrationService {
       const status = await this.getConnectionStatus(integrationId, accountId);
 
       // Check is_default from any row for this account
-      const accountRows = await IntegrationValueModel.findByAccount(integrationId, accountId);
+      const accountRows = usesContainerVaultAuthority()
+        ? await IntegrationValueModel.findMetadataByAccount(integrationId, accountId)
+        : await IntegrationValueModel.findByAccount(integrationId, accountId);
       const isDefault = accountRows.some(m => !!m.attributes.is_default);
 
       accounts.push({
@@ -169,6 +279,9 @@ export class IntegrationService {
 
   /** Delete an entire account and all its values */
   async deleteAccount(integrationId: string, accountId: string): Promise<boolean> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: manage local vault accounts in the isolated vault UI');
+    }
     const models = await IntegrationValueModel.findByAccount(integrationId, accountId);
     if (models.length === 0) return false;
 
@@ -202,6 +315,9 @@ export class IntegrationService {
     const value = typeof input.value === 'string' ? input.value : String(input.value ?? '');
     if (!integrationId || !property) {
       throw new Error('Integration values require an integration_id and property.');
+    }
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: edit local vault integration values in the isolated vault UI');
     }
 
     const accountId = typeof input.account_id === 'string' && input.account_id.trim()
@@ -273,6 +389,19 @@ export class IntegrationService {
   }
 
   async getConnectionStatus(integrationId: string, accountId?: string): Promise<IntegrationConnectionStatus> {
+    if (usesContainerVaultAuthority()) {
+      const metadata = await this.getLocalMetadataForSettings(integrationId, accountId);
+      const acctId = accountId || metadata?.activeAccountId || metadata?.accounts[0]?.accountId || DEFAULT_ACCOUNT_ID;
+      const account = metadata?.accounts.find(candidate => candidate.accountId === acctId);
+      return {
+        integration_id: integrationId,
+        account_id:     acctId,
+        connected:      account?.connected === true,
+        connected_at:   account?.properties.connected_at ? new Date(account.properties.connected_at) : undefined,
+        last_sync_at:   account?.properties.last_sync_at ? new Date(account.properties.last_sync_at) : undefined,
+      };
+    }
+
     const acctId = accountId || DEFAULT_ACCOUNT_ID;
 
     const statusModel = await IntegrationValueModel.findByKey(integrationId, acctId, 'connection_status');
@@ -290,12 +419,34 @@ export class IntegrationService {
 
   /** Check if ANY account for this integration is connected */
   async isAnyAccountConnected(integrationId: string): Promise<boolean> {
+    if (usesContainerVaultAuthority()) {
+      return (await this.getAccounts(integrationId)).some(account => account.connected);
+    }
     return IntegrationValueModel.existsWithPropertyValue(integrationId, 'connection_status', 'true');
   }
 
   /** Get all enabled integrations — any integration_id that has at least one account with stored values */
   async getEnabledIntegrations(): Promise<{ integrationId: string; accounts: IntegrationAccount[] }[]> {
-    const allIds = await IntegrationValueModel.getDistinctIntegrations();
+    let allIds: string[];
+    if (usesContainerVaultAuthority()) {
+      // Metadata is queried from the authority, but integration ids are public
+      // catalog data. Legacy ids remain only as migration-era discovery hints;
+      // their values and connection state are never read here.
+      const [{ integrations }, { getIntegrationConfigLoader }] = await Promise.all([
+        import('../integrations/catalog'),
+        import('../integrations/configApi'),
+      ]);
+      const loader = getIntegrationConfigLoader();
+      await loader.loadAll();
+      const hints = await IntegrationValueModel.getDistinctIntegrations().catch(() => []);
+      allIds = [...new Set([
+        ...Object.keys(integrations),
+        ...loader.getAvailableIntegrations(),
+        ...hints,
+      ])];
+    } else {
+      allIds = await IntegrationValueModel.getDistinctIntegrations();
+    }
     const results: { integrationId: string; accounts: IntegrationAccount[] }[] = [];
 
     for (const integrationId of allIds) {
@@ -312,6 +463,12 @@ export class IntegrationService {
 
   /** Get form values for the active account (or a specific account) */
   async getFormValues(integrationId: string, accountId?: string): Promise<IntegrationValue[]> {
+    if (usesContainerVaultAuthority()) {
+      // Compatibility callers may still ask for "form" values while building
+      // provider clients. Return only routing-safe metadata; credential fields
+      // are injected at the final outbound broker hop.
+      return this.getMetadataValues(integrationId, accountId);
+    }
     const acctId = accountId || await this.getActiveAccountId(integrationId);
 
     const models = await IntegrationValueModel.getFormValues(integrationId, acctId, SYSTEM_PROPERTIES);
@@ -320,7 +477,42 @@ export class IntegrationService {
     return models.map(m => this.modelToValue(m));
   }
 
+  /** Read the non-secret configuration needed to select and route an integration. */
+  async getMetadataValues(integrationId: string, accountId?: string): Promise<IntegrationValue[]> {
+    if (usesContainerVaultAuthority()) {
+      const metadata = await this.getLocalMetadataForSettings(integrationId, accountId);
+      if (!metadata) return [];
+      const acctId = accountId || metadata.activeAccountId || metadata.accounts[0]?.accountId;
+      if (!acctId) return [];
+      const account = metadata.accounts.find(candidate => candidate.accountId === acctId);
+      if (!account) return [];
+      const updatedAt = new Date(0);
+      return Object.entries(account.properties).map(([property, value], index) => ({
+        value_id:       -(index + 1),
+        integration_id: integrationId,
+        account_id:     account.accountId,
+        property,
+        value,
+        is_default:     account.active,
+        created_at:     updatedAt,
+        updated_at:     updatedAt,
+      }));
+    }
+    const acctId = accountId || await this.getActiveAccountId(integrationId);
+    const models = await IntegrationValueModel.findMetadataByAccount(integrationId, acctId);
+    return models.map(model => this.modelToValue(model));
+  }
+
   async getSerializableFormValues(integrationId: string, accountId: string): Promise<VaultCredentialReadResult> {
+    if (usesContainerVaultAuthority()) {
+      return {
+        success: false,
+        error:   {
+          code:    'VAULT_DECRYPT_FAILED',
+          message: 'unsupported_secret_egress: form credentials are only available inside the local vault UI',
+        },
+      };
+    }
     try {
       const models = await IntegrationValueModel.getFormValues(integrationId, accountId, SYSTEM_PROPERTIES);
       return normalizeVaultCredentialValues(models.map(m => this.modelToValue(m)));
@@ -344,6 +536,13 @@ export class IntegrationService {
 
   /** Get a value from the active account (backward-compat) */
   async getIntegrationValue(integrationId: string, property: string, accountId?: string): Promise<IntegrationValue | null> {
+    if (usesContainerVaultAuthority()) {
+      if (!LOCAL_METADATA_PROPERTIES.has(property)) {
+        throw new Error('unsupported_secret_egress: use an authenticated outbound vault broker operation');
+      }
+      const metadata = await this.getMetadataValues(integrationId, accountId);
+      return metadata.find(value => value.property === property) ?? null;
+    }
     const acctId = accountId || await this.getActiveAccountId(integrationId);
     // Agent/tool execution runs in main and reads the new encrypted vault first.
     // Renderer forms and a missing migrated item keep the legacy store as a
@@ -357,8 +556,14 @@ export class IntegrationService {
         });
         if (value !== null) {
           return {
-            value_id: -1, integration_id: integrationId, account_id: acctId,
-            property, value, is_default: false, created_at: new Date(0), updated_at: new Date(0),
+            value_id:       -1,
+            integration_id: integrationId,
+            account_id:     acctId,
+            property,
+            value,
+            is_default:     false,
+            created_at:     new Date(0),
+            updated_at:     new Date(0),
           };
         }
       }
@@ -369,12 +574,18 @@ export class IntegrationService {
 
   /** Get all values for the active account (backward-compat) */
   async getIntegrationValues(integrationId: string, accountId?: string): Promise<IntegrationValue[]> {
+    if (usesContainerVaultAuthority()) {
+      return this.getMetadataValues(integrationId, accountId);
+    }
     const acctId = accountId || await this.getActiveAccountId(integrationId);
     const models = await IntegrationValueModel.findByAccount(integrationId, acctId);
     return models.map(m => this.modelToValue(m));
   }
 
   async getAllIntegrationValues(): Promise<IntegrationValue[]> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: bulk integration values are unavailable outside the vault');
+    }
     const models = await IntegrationValueModel.all();
     console.log(`[IntegrationService] Fetched ${ models.length } total values`);
     return models.map(m => this.modelToValue(m));
@@ -383,6 +594,9 @@ export class IntegrationService {
   // ─── Delete (account-aware) ───────────────────────────────────────
 
   async deleteIntegrationValue(integrationId: string, property: string, accountId?: string): Promise<boolean> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: manage local vault integration values in the isolated vault UI');
+    }
     const acctId = accountId || await this.getActiveAccountId(integrationId);
 
     const model = await IntegrationValueModel.findByKey(integrationId, acctId, property);
@@ -459,6 +673,9 @@ export class IntegrationService {
   }
 
   async deleteIntegrationValues(integrationId: string, accountId?: string): Promise<boolean> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: manage local vault integration accounts in the isolated vault UI');
+    }
     if (accountId) {
       return this.deleteAccount(integrationId, accountId);
     }

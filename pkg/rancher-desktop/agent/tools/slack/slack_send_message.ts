@@ -1,7 +1,7 @@
 import { registry } from '../../integrations';
 import { slackClient } from '../../integrations/slack/SlackClient';
-import { BaseTool, ToolResponse } from '../base';
 import { stripProtocolTags } from '../../utils/stripProtocolTags';
+import { BaseTool, ToolResponse } from '../base';
 
 import type { SlackClient } from '../../integrations/slack/SlackClient';
 
@@ -81,7 +81,7 @@ export class SlackSendMessageWorker extends BaseTool {
         channel,
         textPreview: cleanText.slice(0, 80),
       });
-      const res = await slack.sendMessage(channel, cleanText);
+      const res = await slack.sendMessage(channel, cleanText, undefined, undefined, this.executionContext);
       console.log('[slack_send_message] sendMessage response', {
         invocationId,
         ok:         !!res?.ok,

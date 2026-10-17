@@ -1,0 +1,5 @@
+/* Approved vault visual corrections, served from the isolated local-vault root. */
+.i{display:inline-block;width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.i.sm{width:13px;height:13px}.nav button i{display:grid;place-items:center}.secure>span{display:grid;place-items:center}
+.check{color:transparent}.check.on::after{content:'';width:9px;height:5px;border-left:2px solid #fff;border-bottom:2px solid #fff;transform:rotate(-45deg) translate(1px,-1px)}.check.inherited::after{border-color:var(--accent)}
+.actor-cell{display:inline-flex;align-items:center;gap:8px}.actor-cell .avatar{display:inline-grid;place-items:center}.actor-cell .avatar.agent{border-radius:8px;color:#fff}
+.avatar.group{font-size:0}.avatar.group::before{content:'';display:block;width:11px;height:9px;border:1.5px solid currentColor;border-radius:3px;box-shadow:0 -4px 0 -2px currentColor}.avatar.group::after{content:'···';display:block;position:absolute;margin-top:2px;font:700 9px/8px var(--sans);letter-spacing:1px}.avatar.group{position:relative}

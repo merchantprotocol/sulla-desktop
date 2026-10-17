@@ -48,6 +48,5 @@ systemctl enable --now k3s >/dev/null
 
 printf '\nServer ready. Next steps:\n'
 printf '  1. Verify it: sudo kubectl get nodes -o wide\n'
-printf '  2. Read the join token (keep it secret): sudo cat /var/lib/rancher/k3s/server/node-token\n'
-printf '  3. On each additional server, run join-node.sh with https://%s:6443 and that token.\n' "$SERVER_IP"
-printf '  4. Deploy Sulla from this directory: sudo ./deploy-sulla.sh\n'
+printf '  2. To join a node, read the token into a hidden prompt on that node; never print or paste it in a command.\n'
+printf '  3. Deploy Sulla from this directory: sudo ./deploy-sulla.sh\n'

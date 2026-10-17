@@ -18,7 +18,7 @@ export class MobileListCallsWorker extends BaseTool {
     if (status) qs.set('status', status);
 
     try {
-      const result = await getMobileApiClient().request<{ calls?: any[] }>('GET', `/calls?${ qs.toString() }`);
+      const result = await getMobileApiClient().request<{ calls?: any[] }>(this.executionContext, 'GET', `/calls?${ qs.toString() }`);
       const calls = result.calls ?? [];
       if (calls.length === 0) {
         return { successBoolean: true, responseString: 'No calls found matching the filter.' };

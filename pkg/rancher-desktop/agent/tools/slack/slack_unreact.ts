@@ -20,7 +20,7 @@ export class SlackUnreactWorker extends BaseTool {
           responseString: `Slack integration is not initialized for command ${ this.name }`,
         };
       }
-      await slack.removeReaction(channel, ts, reaction);
+      await slack.removeReaction(channel, ts, reaction, this.executionContext);
       return {
         successBoolean: true,
         responseString: `Slack reaction ":${ reaction }:" removed successfully from message ${ ts } in channel ${ channel }`,

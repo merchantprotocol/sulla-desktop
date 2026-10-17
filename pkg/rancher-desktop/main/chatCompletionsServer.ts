@@ -7,7 +7,7 @@ import express, { Request, Response, NextFunction } from 'express';
 
 import { getMCPServerHost } from './MCPServerHost';
 import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
-import { getConfiguredCredentialBroker, type ToolExecutionContext } from '../vault-broker';
+import { getConfiguredCredentialBroker, getLocalVaultPrincipalId, issueLocalBrokerContext, usesContainerVaultAuthority } from '../vault-broker';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
@@ -1139,7 +1139,10 @@ export class ChatCompletionsServer {
               const inbound = req.headers.authorization?.replace(/^Bearer\s+/i, '');
               const capability = inbound && inbound !== this.apiToken
                 ? inbound
-                : issueCapabilityToken({ sub: 'desktop-cli', scopes: [`${ slug }/*`], expiresInSeconds: 60 }, deriveCapabilitySigningKey(this.apiToken!));
+                : issueCapabilityToken({
+                  sub: await getLocalVaultPrincipalId(), agent_id: 'desktop-cli', pod_id: 'desktop-main',
+                  scopes: [`${ slug }/*`], expiresInSeconds: 60,
+                }, deriveCapabilitySigningKey(this.apiToken!));
               const upstream = await fetch(`http://127.0.0.1:30123/v1/tools/internal/${ encodeURIComponent(slug) }/${ encodeURIComponent(endpoint) }/call`, {
                 method:  'POST',
                 headers: {
@@ -1236,6 +1239,18 @@ export class ChatCompletionsServer {
 
       // Route MCP calls to the MCPBridge instead of ConfigApiClient
       if (slug === 'mcp') {
+        const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+        const mcpAccount = usesContainerVaultAuthority()
+          ? (await getIntegrationService().getAccounts('mcp')).find(account => account.account_id === accountId)
+          : undefined;
+        const executionContext = usesContainerVaultAuthority() && mcpAccount?.credentialRequired !== false
+          ? await issueLocalBrokerContext({
+            agentId: 'desktop-integration-api', podId: 'desktop-main',
+            credentialScope: { integration_id: slug, account_id: accountId },
+            requestId: req.header('X-Request-Id') ?? crypto.randomUUID(),
+            signal: AbortSignal.timeout(60_000),
+          })
+          : undefined;
         const { MCPBridge } = await import('@pkg/agent/integrations/mcp/MCPBridge');
         const bridge = MCPBridge.getInstance();
         // Accept both { params: { ... } } and flat { call_id: "..." } formats
@@ -1247,7 +1262,7 @@ export class ChatCompletionsServer {
           await bridge.initializeAccount(accountId);
         }
 
-        const result = await bridge.callTool(accountId, endpoint, params);
+        const result = await bridge.callTool(accountId, endpoint, params, executionContext);
         return res.json({ success: true, result });
       }
 
@@ -1272,6 +1287,14 @@ export class ChatCompletionsServer {
       }
 
       const { params = {}, body, raw } = req.body || {};
+      const executionContext = usesContainerVaultAuthority() && epConfig.endpoint.auth !== 'none'
+        ? await issueLocalBrokerContext({
+          agentId: 'desktop-integration-api', podId: 'desktop-main',
+          credentialScope: { integration_id: slug, account_id: accountId },
+          requestId: req.header('X-Request-Id') ?? crypto.randomUUID(),
+          signal: AbortSignal.timeout(60_000),
+        })
+        : undefined;
 
       // Auto-promote flat params to body for POST/PUT/PATCH when no explicit body provided
       const method = epConfig.endpoint.method;
@@ -1281,6 +1304,7 @@ export class ChatCompletionsServer {
         accountId,
         body: effectiveBody,
         raw:  !!raw,
+        executionContext,
       });
 
       res.json({ success: true, result: JSON.parse(JSON.stringify(result)) });
@@ -1380,43 +1404,52 @@ export class ChatCompletionsServer {
 
       const broker = getConfiguredCredentialBroker();
       if (broker) {
-        const encodedContext = req.header('x-sulla-execution-context');
-        if (!encodedContext) {
-          return res.status(401).json({ success: false, error: 'Credential broker requires x-sulla-execution-context' });
-        }
-        let ctx: ToolExecutionContext;
         try {
-          ctx = JSON.parse(Buffer.from(encodedContext, 'base64url').toString('utf8')) as ToolExecutionContext;
-          if (!ctx?.request_id || !ctx?.sub) throw new Error('missing claims');
-        } catch {
-          return res.status(401).json({ success: false, error: 'Invalid credential broker execution context' });
-        }
-
-        try {
-          const forwarded = await broker.useCredential(ctx, {
-            integrationId: `${ slug }/${ accountId }`, field: '__integration_auth__',
-          }, async(secret) => {
-            const auth = JSON.parse(secret.toString('utf8')) as Record<string, string>;
-            if (!headers.Authorization) {
-              const bearer = auth.bearer_token ?? auth.access_token ?? (slug === 'cloudflare' ? auth.api_token : undefined);
-              if (bearer) headers.Authorization = `Bearer ${ bearer }`;
-              else if (auth.basic_password) headers.Authorization = `Basic ${ Buffer.from(`${ auth.basic_username ?? '' }:${ auth.basic_password }`).toString('base64') }`;
-              else if (auth.api_key) url.searchParams.set('key', auth.api_key);
-            }
-            console.log(`[Proxy] ${ method } ${ url.origin }${ url.pathname }`);
-            const init: RequestInit = { method: method.toUpperCase(), headers };
-            if (body && ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) init.body = JSON.stringify(body);
-            const upstream = await fetch(url.toString(), init);
-            const responseText = await upstream.text();
-            let result: unknown;
-            try { result = JSON.parse(responseText) } catch { result = responseText }
-            return { ok: upstream.ok, status: upstream.status, result };
+          const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
+          const auth = getIntegrationConfigLoader().getClient(slug)?.getIntegration().auth;
+          const injections: import('../vault-broker').BrokerInjection[] = [];
+          if (auth?.auth.type === 'oauth2' || slug === 'grok') {
+            injections.push({ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' });
+          } else if (auth?.auth.type === 'bearer' || slug === 'cloudflare') {
+            injections.push({ field: slug === 'cloudflare' ? 'api_token' : 'bearer_token', target: 'header', name: 'authorization', scheme: 'Bearer' });
+          } else if (auth?.auth.type === 'apiKey' && auth.auth.header) {
+            injections.push({ field: 'api_key', target: 'header', name: auth.auth.header, scheme: 'raw' });
+          } else if (auth?.api_key_fallback?.enabled) {
+            injections.push({ field: 'api_key', target: 'query', name: auth.api_key_fallback.param_name, scheme: 'raw' });
+          }
+          const ctx = await issueLocalBrokerContext({
+            agentId: 'desktop-proxy-api', podId: 'desktop-main',
+            credentialScope: { integration_id: slug, account_id: accountId },
+            requestId: req.header('X-Request-Id') ?? crypto.randomUUID(),
+            signal: AbortSignal.timeout(60_000),
           });
-          return res.status(forwarded.status).json({ success: forwarded.ok, status: forwarded.status, result: forwarded.result });
+          if (!injections.length) {
+            const direct = await fetch(url, {
+              method: method.toUpperCase(), headers,
+              body: body && ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase()) ? JSON.stringify(body) : undefined,
+            });
+            const result = await direct.json().catch(() => null);
+            return res.status(direct.status).json({ success: direct.ok, status: direct.status, result });
+          }
+          const forwarded = await broker.execute(broker.requestFor(ctx, {
+            operation: 'catalog.http',
+            ref:       { integrationId: slug, accountId },
+            url:       url.toString(),
+            method:    method.toUpperCase(),
+            headers,
+            body,
+            injections,
+            responseType: 'json',
+          }));
+          return res.status(forwarded.status).json({ success: forwarded.status < 400, status: forwarded.status, result: forwarded.body });
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Credential broker failed';
           return res.status(403).json({ success: false, error: message });
         }
+      }
+
+      if (usesContainerVaultAuthority()) {
+        return res.status(503).json({ success: false, error: 'Vault broker service identity is not configured' });
       }
 
       // Resolve auth — skip if caller already provided an Authorization header

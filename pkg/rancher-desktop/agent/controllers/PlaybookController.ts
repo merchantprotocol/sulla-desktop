@@ -2506,14 +2506,14 @@ export class PlaybookController<TState = any> {
   }
 
   private async executeSubAgentUntracked(
-    _state: TState,
+    state: TState,
     nodeId: string,
     agentId: string,
     prompt: string,
     config: Record<string, unknown>,
   ): Promise<{ output: unknown; threadId?: string; contractStatus: 'done' | 'blocked' | 'no_contract' }> {
     if (agentId === '__integration_call__') {
-      const result = await this.executeToolCall(config);
+      const result = await this.executeToolCall(state, config);
       return { ...result, contractStatus: 'done' };
     }
 
@@ -2532,7 +2532,7 @@ export class PlaybookController<TState = any> {
     // sub-agent. Without this the parent walker stops at the next step
     // boundary but sub-agent graphs keep running their LLM/tool loops
     // until they return naturally.
-    const parentMeta = (_state as any).metadata;
+    const parentMeta = (state as any).metadata;
     if (parentMeta) {
       const active = (parentMeta.activeSubAgentThreadIds ??= []);
       if (!active.includes(threadId)) active.push(threadId);
@@ -2552,9 +2552,9 @@ export class PlaybookController<TState = any> {
     // Workflow-node agents do real work — primary model chain, not the
     // subconscious observer slot.
     subState.metadata.modelSlot = 'primary';
-    inheritSubAgentToolPolicy(_state, subState, config);
+    inheritSubAgentToolPolicy(state, subState, config);
 
-    const parentChannel = (_state as any).metadata?.wsChannel || 'sulla-desktop';
+    const parentChannel = (state as any).metadata?.wsChannel || 'sulla-desktop';
     subState.metadata.workflowNodeId = nodeId;
     subState.metadata.workflowParentChannel = parentChannel;
     // Work done by this sub-agent counts as activity for the run that owns it.
@@ -2861,7 +2861,7 @@ export class PlaybookController<TState = any> {
 
   // ─── Tool Call Execution ────────────────────────────────────────
 
-  private async executeToolCall(config: Record<string, unknown>): Promise<{ output: unknown }> {
+  private async executeToolCall(state: TState, config: Record<string, unknown>): Promise<{ output: unknown }> {
     const integrationSlug = (config.integrationSlug as string) || '';
     const endpointName = (config.endpointName as string) || '';
     const accountId = (config.accountId as string) || 'default';
@@ -2879,19 +2879,41 @@ export class PlaybookController<TState = any> {
       return { output: { error: `Integration "${ integrationSlug }" not found` } };
     }
 
-    const options: Record<string, any> = {};
-    try {
-      const { getIntegrationService } = await import('../services/IntegrationService');
-      const integrationService = getIntegrationService();
-      const values = await integrationService.getFormValues(integrationSlug, accountId);
-      const apiKeyVal = values.find((v: { property: string; value: string }) =>
-        v.property === 'api_key' || v.property === 'apiKey' || v.property === 'token',
-      );
-      if (apiKeyVal?.value) options.apiKey = apiKeyVal.value;
-      const tokenVal = values.find((v: { property: string; value: string }) => v.property === 'access_token');
-      if (tokenVal?.value) options.token = tokenVal.value;
-    } catch (err) {
-      console.warn('[PlaybookController] Could not load credentials:', err);
+    const options: Record<string, any> = { accountId };
+    const { issueLocalBrokerContext, usesContainerVaultAuthority } = await import('../../vault-broker');
+    const endpoint = client.getEndpoint(endpointName);
+    const requiresVaultScope = endpoint?.endpoint.auth !== 'none';
+    if (usesContainerVaultAuthority()) {
+      if (requiresVaultScope) {
+        const metadata = (state as any).metadata ?? {};
+        const agentIdentity = String(metadata.agentId ?? metadata.wsChannel ?? '').trim();
+        const threadId = String(metadata.threadId ?? '').trim();
+        if (!agentIdentity || !threadId) throw new Error('Integration call requires trusted graph identity');
+        options.executionContext = await issueLocalBrokerContext({
+          agentId: agentIdentity,
+          podId:   String(metadata.podId ?? `desktop:${ threadId }`),
+          credentialScope: { integration_id: integrationSlug, account_id: accountId },
+          threadId,
+          jobId: metadata.jobId,
+          workflowExecutionId: metadata.activeWorkflow?.executionId,
+          orgId: metadata.orgId,
+          signal: metadata.options?.abort?.signal,
+        });
+      }
+    } else {
+      try {
+        const { getIntegrationService } = await import('../services/IntegrationService');
+        const integrationService = getIntegrationService();
+        const values = await integrationService.getFormValues(integrationSlug, accountId);
+        const apiKeyVal = values.find((v: { property: string; value: string }) =>
+          v.property === 'api_key' || v.property === 'apiKey' || v.property === 'token',
+        );
+        if (apiKeyVal?.value) options.apiKey = apiKeyVal.value;
+        const tokenVal = values.find((v: { property: string; value: string }) => v.property === 'access_token');
+        if (tokenVal?.value) options.token = tokenVal.value;
+      } catch (err) {
+        console.warn('[PlaybookController] Could not load credentials:', err);
+      }
     }
 
     const result = await client.call(endpointName, defaults, options);
