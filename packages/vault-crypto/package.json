@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test:security": "npm run build && node --test dist/index.test.js"
+    "test:security": "npm run build && node --test dist/index.test.js dist/filesKeyBundle.test.js"
   },
   "dependencies": {
     "libsodium-wrappers-sumo": "0.8.4"
