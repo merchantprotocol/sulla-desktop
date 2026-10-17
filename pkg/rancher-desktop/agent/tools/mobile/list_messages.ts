@@ -15,7 +15,7 @@ export class MobileListMessagesWorker extends BaseTool {
     if (unreadOnly) qs.set('unread', 'true');
 
     try {
-      const result = await getMobileApiClient().request<{ messages?: any[] }>('GET', `/messages?${ qs.toString() }`);
+      const result = await getMobileApiClient().request<{ messages?: any[] }>(this.executionContext, 'GET', `/messages?${ qs.toString() }`);
       const msgs = result.messages ?? [];
       if (msgs.length === 0) {
         return { successBoolean: true, responseString: 'No messages matched the filter.' };

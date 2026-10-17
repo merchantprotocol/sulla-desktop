@@ -33,7 +33,7 @@ export class MobileListDevicesWorker extends BaseTool {
       ? input.device_type.trim().toLowerCase() : '';
 
     try {
-      const result  = await getMobileApiClient().request<{ devices?: DeviceRow[] }>('GET', '/devices');
+      const result  = await getMobileApiClient().request<{ devices?: DeviceRow[] }>(this.executionContext, 'GET', '/devices');
       let devices   = result.devices ?? [];
       if (typeFilter) devices = devices.filter(d => d.deviceType?.toLowerCase() === typeFilter);
       if (onlineOnly) devices = devices.filter(d => d.online);

@@ -1,6 +1,9 @@
 import { BaseTool, ToolResponse } from '../base';
 
 import { getChromeApi } from '@pkg/main/chromeApi';
+import { getMobileApiClient } from '../mobile/MobileApiClient';
+
+import type { ToolExecutionContext } from '../executionContext';
 
 type NotifyTarget = 'desktop' | 'mobile';
 
@@ -49,7 +52,7 @@ export class NotifyUserWorker extends BaseTool {
 
     if (targets.includes('mobile')) {
       try {
-        await sendMobilePush({ title, message, id });
+        await sendMobilePush({ title, message, id }, this.executionContext);
         deliveryResults.push({ target: 'mobile', ok: true });
       } catch (err) {
         deliveryResults.push({ target: 'mobile', ok: false, error: (err as Error).message });
@@ -106,47 +109,22 @@ function parseTargets(raw: unknown): NotifyTarget[] {
  * The relay is implemented in sulla-workers; this tool expects a
  * `mobile_push` channel message posted from the desktop relay.
  *
- * Resolution:
- * - Mobile user id comes from SullaSettingsModel `mobile.pairedUserId` or
- *   vault `sulla-cloud/paired_user_id`.
- * - Relay URL comes from vault `sulla-cloud/relay_url`
- *   (default: wss://sulla-workers.merchantprotocol.workers.dev).
- * - Auth: JWT in vault `sulla-cloud/api_token` (HS256, sub = user_id).
+ * The paired user id is routing-safe metadata. The Sulla Cloud credential is
+ * injected only by the local vault's exact-host/exact-path broker policy.
  *
- * If any of the above is missing, throws with a clear message so the agent
- * can relay it to the user.
+ * Missing caller scope or pairing metadata fails closed.
  */
-async function sendMobilePush(opts: { title: string; message: string; id: string }): Promise<void> {
+async function sendMobilePush(opts: { title: string; message: string; id: string }, ctx: ToolExecutionContext | undefined): Promise<void> {
   const { getIntegrationService } = await import('../../services/IntegrationService');
   const svc = getIntegrationService();
-
-  const tokenValue      = await svc.getIntegrationValue('sulla-cloud', 'api_token');
-  const pairedUserValue = await svc.getIntegrationValue('sulla-cloud', 'paired_user_id');
-  const relayValue      = await svc.getIntegrationValue('sulla-cloud', 'relay_url');
+  const accountId = await svc.getActiveAccountId('sulla-cloud');
+  const metadata = await svc.getMetadataValues('sulla-cloud', accountId);
+  const pairedUserValue = metadata.find(value => value.property === 'paired_user_id');
 
   if (!pairedUserValue?.value) {
     throw new Error('No paired mobile user_id in vault (sulla-cloud/paired_user_id). Pair your phone first.');
   }
-  if (!tokenValue?.value) {
-    throw new Error('No Sulla Cloud token in vault (sulla-cloud/api_token).');
-  }
-
-  const relayBase = String(relayValue?.value || 'https://sulla-workers.merchantprotocol.workers.dev').replace(/\/+$/, '');
-  const url = `${ relayBase }/push/${ encodeURIComponent(String(pairedUserValue.value)) }`;
-
-  const res = await fetch(url, {
-    method:  'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization:  `Bearer ${ tokenValue.value }`,
-    },
-    body: JSON.stringify({ title: opts.title, message: opts.message, id: opts.id }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Relay push HTTP ${ res.status }: ${ text || res.statusText }`);
-  }
+  await getMobileApiClient().request(ctx, 'POST', `/push/${ encodeURIComponent(String(pairedUserValue.value)) }`, opts);
 }
 
 async function writeHistoryRow(row: {

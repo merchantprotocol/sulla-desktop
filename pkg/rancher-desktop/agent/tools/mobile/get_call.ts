@@ -16,7 +16,7 @@ export class MobileGetCallWorker extends BaseTool {
     }
 
     try {
-      const call = await getMobileApiClient().request<any>('GET', `/calls/${ encodeURIComponent(id) }`);
+      const call = await getMobileApiClient().request<any>(this.executionContext, 'GET', `/calls/${ encodeURIComponent(id) }`);
       const parts: string[] = [];
       parts.push(`Call ${ id } — ${ call.status || 'unknown' }`);
       if (call.caller_name || call.caller_number) {

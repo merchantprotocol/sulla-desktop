@@ -764,6 +764,46 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   ipcMainProxy.handle('vault:status', refreshVaultStatus);
 
+  const vaultMetadataId = (value: unknown, name: 'integrationId' | 'accountId'): string => {
+    const pattern = name === 'integrationId'
+      ? /^[a-z0-9][a-z0-9._:-]{0,127}$/i
+      : /^[a-z0-9][a-z0-9._:@+-]{0,191}$/i;
+    if (typeof value !== 'string' || !pattern.test(value)) {
+      throw new Error(`Invalid ${ name }`);
+    }
+    return value;
+  };
+  const requireTrustedVaultRenderer = (event: Electron.IpcMainInvokeEvent): void => {
+    const mainWindow = window.getWindow('main-agent');
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+      throw new Error('Untrusted vault metadata caller');
+    }
+  };
+
+  // Narrow metadata-only bridge for renderer integration settings. The broker
+  // response is pre-sanitized by the vault and contains no credential fields.
+  ipcMainProxy.handle('vault:integration-metadata', async(
+    event: Electron.IpcMainInvokeEvent,
+    input: { integrationId: string; accountId?: string },
+  ) => {
+    requireTrustedVaultRenderer(event);
+    const integrationId = vaultMetadataId(input?.integrationId, 'integrationId');
+    const accountId = input?.accountId === undefined ? undefined : vaultMetadataId(input.accountId, 'accountId');
+    const { requireConfiguredCredentialBroker } = await import('@pkg/vault-broker');
+    return requireConfiguredCredentialBroker().integrationMetadata(integrationId, accountId);
+  });
+
+  ipcMainProxy.handle('vault:integration-active-account', async(
+    event: Electron.IpcMainInvokeEvent,
+    input: { integrationId: string; accountId: string },
+  ) => {
+    requireTrustedVaultRenderer(event);
+    const integrationId = vaultMetadataId(input?.integrationId, 'integrationId');
+    const accountId = vaultMetadataId(input?.accountId, 'accountId');
+    const { requireConfiguredCredentialBroker } = await import('@pkg/vault-broker');
+    return requireConfiguredCredentialBroker().setActiveIntegrationAccount(integrationId, accountId);
+  });
+
   ipcMainProxy.handle('vault:view-open', async(
     event: Electron.IpcMainInvokeEvent,
     bounds: Electron.Rectangle,
