@@ -70,6 +70,10 @@ class SullaFilesWatcher {
         body.fill(0);
       }
     },
+    [
+      { sourcePath: path.join(this.folder, 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-shared-master-key.enc') },
+      { sourcePath: path.join(paths.sullaHome, 'private-files-quarantine', 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-quarantined-master-key.enc') },
+    ],
   );
 
   private async appUnlocked(): Promise<boolean> {
