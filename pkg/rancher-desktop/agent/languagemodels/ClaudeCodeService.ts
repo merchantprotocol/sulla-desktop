@@ -13,17 +13,18 @@ import {
 } from './claudeBackgroundTasks';
 import { buildClaudeLaunchCommand, buildRemoteKillCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { disallowedToolsFor } from './claudeToolPolicy';
+import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild, waitForKillHelper } from './cliFaultRecovery';
 import { removeFileOnExit, systemPromptFromMessages, writeSystemPromptFile } from './cliSystemPromptFile';
-import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
-import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
-import { markSteerPending, onSteer } from '../utils/steerChannel';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeClaudeLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
-import Logging from '@pkg/utils/logging';
-import paths from '@pkg/utils/paths';
+import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
+import { markSteerPending, onSteer } from '../utils/steerChannel';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
+import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
+import Logging from '@pkg/utils/logging';
+import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
 // Dedicated perf-timing log (~/Library/Logs/rancher-desktop/perf.log). All
@@ -118,16 +119,16 @@ const STEER_FOLLOWUP_GRACE_MS = 30_000;
  * See ClaudeCodeService.prewarm().
  */
 interface PrewarmRecord {
-  proc:          childProcess.ChildProcessWithoutNullStreams;
-  mcpSession:    RegisteredSession | null;
-  mcpConfigPath: string | null;
+  proc:           childProcess.ChildProcessWithoutNullStreams;
+  mcpSession:     RegisteredSession | null;
+  mcpConfigPath:  string | null;
   /** VM-side pidfile of this process (see buildRemoteKillCommand). */
-  pidFile:       string;
-  model:         string;
-  createdAt:     number;
-  closed:        boolean;
-  busy:          boolean;
-  reapTimer:     ReturnType<typeof setTimeout> | null;
+  pidFile:        string;
+  model:          string;
+  createdAt:      number;
+  closed:         boolean;
+  busy:           boolean;
+  reapTimer:      ReturnType<typeof setTimeout> | null;
   /**
    * Output the process wrote while nobody was listening (booting prewarm, or
    * parked between warm turns), drained at claim time. Replayed through the
@@ -344,18 +345,18 @@ export class ClaudeCodeService extends BaseLanguageModel {
    * can boot before the prompt is written to stdin.
    */
   private buildSpawnArgs(p: {
-    oauthToken:      string;
-    apiKey:          string;
-    existingSession?: string;
-    mcpConfigPath:   string | null;
-    toolSessionId?: string;
-    streamJsonInput: boolean;
+    oauthToken:        string;
+    apiKey:            string;
+    existingSession?:  string;
+    mcpConfigPath:     string | null;
+    toolSessionId?:    string;
+    streamJsonInput:   boolean;
     /**
      * Full --disallowedTools value for this spawn's role (disallowedToolsFor):
      * observers lose the native actor toolset (Read/Write/Edit/Bash/…),
      * worker sub-agents lose detached-work tools (Monitor/ScheduleWakeup/…).
      */
-    disallowedTools: string;
+    disallowedTools:   string;
     /**
      * Host path of this spawn's system prompt file (cliSystemPromptFile).
      * Passed as --append-system-prompt-file: ~/.claude/CLAUDE.md is written
@@ -364,7 +365,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
      */
     systemPromptPath?: string | null;
     /** VM-side pidfile the launched claude records its PID in. */
-    pidFile:         string;
+    pidFile:           string;
   }): string[] {
     // POSIX single-quote escape. Single-quoted strings are literal in sh, so
     // no backtick/$VAR/! expansion can fire against untrusted text.
@@ -491,12 +492,12 @@ export class ClaudeCodeService extends BaseLanguageModel {
       // lets Node buffer the early system/init line so the adopting runClaude
       // receives it intact when it switches the stream to flowing mode.
       proc.stdin.on('error', () => { /* EPIPE before adoption — non-fatal */ });
-      proc.once('exit', () => { record.closed = true; });
-      proc.once('error', () => { record.closed = true; });
+      proc.once('exit', () => { record.closed = true });
+      proc.once('error', () => { record.closed = true });
       const armPrewarmReap = () => {
         record.reapTimer = setTimeout(() => {
           if (this.prewarmed.get(convId) !== record) return;
-          if (this.liveIdleCount() <= this.poolMin) { armPrewarmReap(); return; }   // keep the pool at min
+          if (this.liveIdleCount() <= this.poolMin) { armPrewarmReap(); return }   // keep the pool at min
           this.disposePrewarm(convId);
         }, PREWARM_IDLE_REAP_MS);
         record.reapTimer.unref?.();
@@ -517,7 +518,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (!rec) return null;
     this.prewarmed.delete(convId);
     this.idle.delete(rec);
-    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
+    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
     if (rec.closed || rec.model !== model) {
       this.killPrewarmRecord(rec);                       // dead or model mismatch
       return null;
@@ -547,7 +548,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     } catch { /* stream already ended — closed flag handling covers it */ }
     if (drained) {
       const staleResult = drained.split('\n').some((line) => {
-        try { return JSON.parse(line.trim())?.type === 'result'; } catch { return false; }
+        try { return JSON.parse(line.trim())?.type === 'result' } catch { return false }
       });
       if (staleResult) {
         log.warn(`[ClaudeCodeService] claimPrewarm: discarding pooled proc for convId=${ convId } — stale result buffered while unclaimed`);
@@ -676,8 +677,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   private killPrewarmRecord(rec: PrewarmRecord): void {
     this.idle.delete(rec);
-    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
-    try { rec.proc.kill('SIGTERM'); } catch { /* already dead */ }
+    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
+    try { rec.proc.kill('SIGTERM') } catch { /* already dead */ }
     // SIGTERM on the host-side limactl doesn't reliably reach claude in the VM
     // (no TTY) — an evicted/reaped proc kept running its session headless,
     // and the next --resume of that session collided with it. Kill by pidfile.
@@ -690,8 +691,21 @@ export class ClaudeCodeService extends BaseLanguageModel {
       killProc.on('error', () => { /* best effort */ });
       killProc.unref();
     } catch { /* best effort */ }
-    if (rec.mcpSession) { try { rec.mcpSession.revoke(); } catch { /* ignore */ } }
-    if (rec.mcpConfigPath) { try { fs.unlinkSync(rec.mcpConfigPath); } catch { /* ignore */ } }
+    const escalation = setTimeout(() => {
+      try { if (rec.proc.exitCode === null) rec.proc.kill('SIGKILL'); } catch { /* already dead */ }
+      try {
+        const killProc = childProcess.spawn(
+          paths.limactl,
+          ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(rec.pidFile, 'KILL')],
+          { env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' }, stdio: 'ignore', detached: true },
+        );
+        killProc.on('error', () => { /* best effort */ });
+        killProc.unref();
+      } catch { /* best effort */ }
+    }, 5_000);
+    escalation.unref?.();
+    if (rec.mcpSession) { try { rec.mcpSession.revoke() } catch { /* ignore */ } }
+    if (rec.mcpConfigPath) { try { fs.unlinkSync(rec.mcpConfigPath) } catch { /* ignore */ } }
   }
 
   override getContextWindow(): number {
@@ -717,8 +731,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   /** Non-streaming chat — buffers the whole response and returns it. */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    const result = await this.runClaude(messages, {}, options);
-    return result;
+    return runWithCliFaultRecovery('Claude Code', attempt => this.runClaude(attempt === 1 ? messages : recoveryMessages(messages), {}, options), {
+      signal:   options.signal,
+      canRetry: () => true,
+      onRetry:  (_error, attempt) => log.warn(`[ClaudeCodeService] retrying failed CLI process (attempt ${ attempt })`),
+    });
   }
 
   protected normalizeResponse(raw: any): NormalizedResponse {
@@ -751,7 +768,26 @@ export class ClaudeCodeService extends BaseLanguageModel {
     const startTime = performance.now();
 
     try {
-      const result = await this.runClaude(messages, callbacks, options);
+      const guardedCallbacks: StreamCallbacks = {
+        ...callbacks,
+        onToken: (token: string) => {
+          callbacks.onToken?.(token);
+        },
+        onToolEvent: (event) => {
+          callbacks.onToolEvent?.(event);
+        },
+      };
+      let streamedText = '';
+      guardedCallbacks.onToken = (token: string) => {
+        streamedText += token;
+        callbacks.onToken?.(token);
+      };
+      const result = await runWithCliFaultRecovery('Claude Code', attempt => this.runClaude(attempt === 1 ? messages : recoveryMessages(messages), guardedCallbacks, options), {
+        signal:   options.signal,
+        canRetry: () => true,
+        onRetry:  (_error, attempt) => log.warn(`[ClaudeCodeService] retrying failed CLI process (attempt ${ attempt })`),
+      });
+      if (streamedText) result.text = streamedText;
       const response: NormalizedResponse = {
         content:  result.text,
         metadata: {
@@ -900,8 +936,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
     const labelFor = (role: string) => {
       switch (role) {
       case 'assistant': return 'Assistant';
-      case 'user':      return 'User';
-      default:          return role;
+      case 'user': return 'User';
+      default: return role;
       }
     };
 
@@ -1108,13 +1144,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       // Re-point the stable MCP token at THIS turn's live state — required when
       // the process is reused across turns; a no-op on first adoption.
       if (mcpSession && options.state) {
-        try { getMCPServerHost().rebindSession(mcpSession.id, options.state as BaseThreadState, PROC_MCP_SESSION_TTL_MS); } catch { /* ignore */ }
+        try { getMCPServerHost().rebindSession(mcpSession.id, options.state, PROC_MCP_SESSION_TTL_MS) } catch { /* ignore */ }
       }
     } else if (options.state) {
       try {
         const host = getMCPServerHost();
         if (host.running) {
-          mcpSession = host.registerSession(options.state as BaseThreadState, PROC_MCP_SESSION_TTL_MS);
+          mcpSession = host.registerSession(options.state, PROC_MCP_SESSION_TTL_MS);
           mcpConfigPath = this.writeMcpConfig(mcpSession);
           log.log(`[ClaudeCodeService] MCP session minted — config=${ mcpConfigPath } url=${ mcpSession.url }`);
         }
@@ -1156,14 +1192,25 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
     const cleanupMcp = () => {
       if (mcpSession) {
-        try { mcpSession.revoke(); } catch { /* ignore */ }
+        try { mcpSession.revoke() } catch { /* ignore */ }
         mcpSession = null;
       }
       if (mcpConfigPath) {
-        try { fs.unlinkSync(mcpConfigPath); } catch { /* file may already be gone */ }
+        try { fs.unlinkSync(mcpConfigPath) } catch { /* file may already be gone */ }
         mcpConfigPath = null;
       }
     };
+
+    if (options.signal?.aborted) {
+      cleanupMcp();
+      if (adopted) this.disposePrewarmRecord(adopted, convId);
+      if (systemPromptPath) {
+        try { fs.unlinkSync(systemPromptPath) } catch { /* already gone */ }
+      }
+      const error = new Error('Claude Code run aborted');
+      error.name = 'AbortError';
+      throw error;
+    }
 
     // Adopt the pre-warmed process if we claimed one; otherwise spawn fresh.
     let proc: childProcess.ChildProcessWithoutNullStreams;
@@ -1221,7 +1268,6 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
     try {
       return await new Promise((resolve, reject) => {
-
         // Feed the prompt through stdin instead of the command line. limactl's
         // SSH mux caps how large a session-request (command line) can be; a long
         // transcript blows past it. stdin is a plain data channel with no such
@@ -1242,765 +1288,870 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           if (!speculative) proc.stdin.end();
         } catch { /* stdin already closed */ }
 
-      // Heartbeat ticker — keeps the renderer (and routine canvas) informed
-      // during the 60–120s cold-start gap between spawn and the first
-      // Anthropic token. Without this the UI looks dead. Cleared on first
-      // real stream event (token, tool_use, thinking) or close/error/abort.
-      let heartbeatTimer: NodeJS.Timeout | null = null;
-      const heartbeatStart = Date.now();
-      const directActivity = (msg: string) => {
-        if (!msg) return;
-        try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
-      };
-      const stopHeartbeat = () => {
-        if (heartbeatTimer) {
-          clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
-        }
-      };
+        // Heartbeat ticker — keeps the renderer (and routine canvas) informed
+        // during the 60–120s cold-start gap between spawn and the first
+        // Anthropic token. Without this the UI looks dead. Cleared on first
+        // real stream event (token, tool_use, thinking) or close/error/abort.
+        let heartbeatTimer: NodeJS.Timeout | null = null;
+        const heartbeatStart = Date.now();
+        const directActivity = (msg: string) => {
+          if (!msg) return;
+          try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
+        };
+        const stopHeartbeat = () => {
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+          }
+        };
 
-      const onSpawned = () => {
-        directActivity(adoptedSpawned ? 'Isolated environment ready…' : 'Booting isolated environment…');
-        let tick = 0;
-        heartbeatTimer = setInterval(() => {
-          tick += 1;
-          const elapsed = Math.round((Date.now() - heartbeatStart) / 1000);
+        const onSpawned = () => {
+          directActivity(adoptedSpawned ? 'Isolated environment ready…' : 'Booting isolated environment…');
+          let tick = 0;
+          heartbeatTimer = setInterval(() => {
+            tick += 1;
+            const elapsed = Math.round((Date.now() - heartbeatStart) / 1000);
           // Don't emit transient status messages as separate thinking bubbles
           // Tool activities and model thinking will provide feedback
-        }, 3000);
+          }, 3000);
 
-        lastStreamActivityAt = Date.now();
-        stallTimer = setInterval(() => {
-          const silentMs = Date.now() - lastStreamActivityAt;
-          if (silentMs < STALL_TIMEOUT_MS) return;
-          stalled = true;
-          stopStallWatchdog();
-          log.warn(`[ClaudeCodeService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing claude (convId=${ convId })`);
-          killSpawn();
-        }, STALL_CHECK_MS);
-      };
+          lastStreamActivityAt = Date.now();
+          stallTimer = setInterval(() => {
+            const silentMs = Date.now() - lastStreamActivityAt;
+            if (toolStarts.size > 0) {
+              const tools = [...toolStarts.values()];
+              if (tools.some(tool => /ask_user_question|approval|permission/i.test(tool.name) && Date.now() - tool.startedAt < 2 * 60 * 60_000)) return;
+              if (tools.every(tool => Date.now() - tool.startedAt < 30 * 60_000)) return;
+              unresolvedTool = true;
+            }
+            if (silentMs < STALL_TIMEOUT_MS) return;
+            stalled = true;
+            stopStallWatchdog();
+            cleanupMcp();
+            log.warn(`[ClaudeCodeService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing claude (convId=${ convId })`);
+            killSpawn();
+            scheduleForcedSettlement(() => new CliFaultError(
+              'stall',
+              unresolvedTool
+                ? 'Claude Code stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
+                : `Claude Code stalled — no stream activity for ${ Math.round(STALL_TIMEOUT_MS / 60_000) } minutes, so the run was terminated.`,
+              undefined,
+              !unresolvedTool,
+              unresolvedTool,
+            ));
+          }, STALL_CHECK_MS);
+        };
 
-      let stdoutBuffer = '';
-      let stderrBuffer = '';
-      let textCollected = '';
-      let capturedSessionId: string | undefined = existingSession;
-      let lastUsage: any;
-      let errored = false;
-      let errorMessage = '';
-      let sessionInUse = false;
-      let settled = false;   // guards resolve/reject across the result-vs-close paths
-      // stream-json input only: set once the replay echo of THIS turn's prompt
-      // arrives. A `result` before that belongs to a turn the CLI ran on its
-      // own — e.g. on --resume it injects "background command didn't finish
-      // before the previous session ended" for tasks the killed process left
-      // behind and answers it ("No response requested.") BEFORE reading our
-      // prompt. Settling on that result failed the turn as "claude produced
-      // no output" while the CLI went on to answer the real prompt unseen.
-      let promptConsumed = !speculative;
-
-      // ── Perf: per-tool execution timing inside the claude CLI ──────────
-      // The tool-use loop (Grep/Glob/Read/Bash/etc.) runs INSIDE the spawned
-      // CLI, so the only way to measure how long each tool actually takes is
-      // to time the gap between a tool_use block's input completing and its
-      // matching tool_result arriving. Keyed by the tool_use id so parallel
-      // tool calls are timed independently.
-      const toolStarts = new Map<string, { name: string; input?: unknown; startedAt: number }>();
-      const toolTotals = new Map<string, { count: number; ms: number }>();
-      let firstTokenAt = 0;
-      const runStartedAt = Date.now();
-      const noteToolStart = (id?: string, name?: string, input?: unknown) => {
-        if (!id || toolStarts.has(id)) return;
-        toolStarts.set(id, { name: name ?? 'tool', input, startedAt: Date.now() });
-      };
-      const noteToolResult = (id?: string, resultChars = 0, isError = false) => {
-        if (!id) return;
-        const started = toolStarts.get(id);
-        if (!started) return;
-        toolStarts.delete(id);
-        const ms = Date.now() - started.startedAt;
-        const agg = toolTotals.get(started.name) ?? { count: 0, ms: 0 };
-        agg.count += 1;
-        agg.ms += ms;
-        toolTotals.set(started.name, agg);
-        perf.log(`[ToolTiming] tool=${ started.name } ms=${ ms } resultChars=${ resultChars } convId=${ convId }`);
-        try {
-          callbacks.onToolEvent?.({
-            toolUseId: id, toolName: started.name, input: started.input, resultChars, isError,
-          });
-        } catch { /* ignore */ }
-      };
-
-      // Kill THIS run's claude process inside the VM. Without a TTY, SSH
-      // signal propagation isn't guaranteed — fire a follow-up kill so an
-      // orphaned claude doesn't keep burning tokens after the user hits stop.
-      // Targeted by pidfile, never `pkill -f 'claude -p'`: that also killed
-      // every concurrent run (other agents, and the run a steering/queued
-      // message had just started), which died as "returned no output".
-      const killRemoteClaude = (sig: 'TERM' | 'KILL') => {
-        try {
-          const killProc = childProcess.spawn(
-            limactlPath,
-            ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, sig)],
-            {
-              env:      { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
-              stdio:    'ignore',
-              detached: true,
-            },
-          );
-          killProc.unref();
-        } catch (err) {
-          log.log(`[ClaudeCodeService] Remote pkill failed: ${ (err as Error)?.message ?? err }`);
-        }
-      };
-
-      // Kill the spawn on both sides of the SSH boundary:
-      //   1) SIGTERM the host-side limactl process — closes the SSH-style
-      //      session; with `exec` in the inner shell (see above) the remote
-      //      claude usually receives SIGHUP and dies.
-      //   2) targeted kill inside the VM (see killRemoteClaude).
-      //   3) Escalate to SIGKILL after a grace period — a limactl wedged in
-      //      the SSH mux can ignore SIGTERM entirely, which is exactly the
-      //      state that strands a hung run.
-      const killSpawn = () => {
-        try { proc.kill('SIGTERM') } catch { /* already dead */ }
-        killRemoteClaude('TERM');
-        const escalate = setTimeout(() => {
-          if (proc.exitCode === null) {
-            try { proc.kill('SIGKILL') } catch { /* already dead */ }
-            killRemoteClaude('KILL');
+        let stdoutBuffer = '';
+        let stderrBuffer = '';
+        let textCollected = '';
+        let capturedSessionId: string | undefined = existingSession;
+        let lastUsage: any;
+        let errored = false;
+        let errorMessage = '';
+        let sessionInUse = false;
+        let sawTerminalResult = false;
+        let settled = false;   // guards resolve/reject across the result-vs-close paths
+        let terminationPromise: Promise<void> | null = null;
+        const persistSession = async(): Promise<Error | null> => {
+          if (!capturedSessionId) return null;
+          try {
+            await this.setSession(convId, capturedSessionId);
+            return null;
+          } catch (error) {
+            return new CliFaultError('transport', 'Claude Code session state could not be persisted safely.', error, false);
           }
-        }, 5_000);
-        escalate.unref?.();
-      };
+        };
+        const scheduleForcedSettlement = (makeError: () => Error) => {
+          const barrier = terminationPromise;
+          if (!barrier) return;
+          void barrier.then(async() => {
+            if (settled) return;
+            settled = true;
+            stopHeartbeat();
+            stopStallWatchdog();
+            closeSteering();
+            options.signal?.removeEventListener('abort', onAbort);
+            proc.stdout.removeAllListeners('data');
+            proc.stderr.removeAllListeners('data');
+            proc.removeAllListeners('error');
+            proc.on('error', () => { /* late child error after forced teardown */ });
+            proc.removeAllListeners('close');
+            const persistenceError = await persistSession();
+            cleanupMcp();
+            reject(persistenceError ?? makeError());
+          }, async(error) => {
+            if (settled) return;
+            settled = true;
+            stopHeartbeat();
+            stopStallWatchdog();
+            closeSteering();
+            options.signal?.removeEventListener('abort', onAbort);
+            const persistenceError = await persistSession();
+            cleanupMcp();
+            reject(options.signal?.aborted ? makeError() : (persistenceError ?? error));
+          });
+        };
+        // stream-json input only: set once the replay echo of THIS turn's prompt
+        // arrives. A `result` before that belongs to a turn the CLI ran on its
+        // own — e.g. on --resume it injects "background command didn't finish
+        // before the previous session ended" for tasks the killed process left
+        // behind and answers it ("No response requested.") BEFORE reading our
+        // prompt. Settling on that result failed the turn as "claude produced
+        // no output" while the CLI went on to answer the real prompt unseen.
+        let promptConsumed = !speculative;
 
-      // ── Stall watchdog ──────────────────────────────────────────────
-      // A claude process whose upstream connection dies mid-run can sit
-      // silent forever (observed: 7.7h), and wedged spawns block later ones
-      // from even delivering their prompt — the whole backend goes dark.
-      // Watchdog scope is THIS CLI child process only, never agent-level
-      // execution: recall agents and long runs are unbounded by design.
-      // Liveness = any stdout/stderr byte, so extended thinking and long
-      // in-CLI tool runs (10 min Bash default) reset the clock; only a
-      // completely dead stream trips the kill.
-      const STALL_TIMEOUT_MS = 15 * 60 * 1_000;
-      const STALL_CHECK_MS = 30 * 1_000;
-      let lastStreamActivityAt = Date.now();
-      let stalled = false;
-      let stallTimer: NodeJS.Timeout | null = null;
-      const stopStallWatchdog = () => {
-        if (stallTimer) {
-          clearInterval(stallTimer);
-          stallTimer = null;
-        }
-      };
+        // ── Perf: per-tool execution timing inside the claude CLI ──────────
+        // The tool-use loop (Grep/Glob/Read/Bash/etc.) runs INSIDE the spawned
+        // CLI, so the only way to measure how long each tool actually takes is
+        // to time the gap between a tool_use block's input completing and its
+        // matching tool_result arriving. Keyed by the tool_use id so parallel
+        // tool calls are timed independently.
+        const toolStarts = new Map<string, { name: string; input?: unknown; startedAt: number }>();
+        let unresolvedTool = false;
+        const toolTotals = new Map<string, { count: number; ms: number }>();
+        let firstTokenAt = 0;
+        const runStartedAt = Date.now();
+        const noteToolStart = (id?: string, name?: string, input?: unknown) => {
+          if (!id || toolStarts.has(id)) return;
+          toolStarts.set(id, { name: name ?? 'tool', input, startedAt: Date.now() });
+        };
+        const noteToolResult = (id?: string, resultChars = 0, isError = false) => {
+          if (!id) return;
+          const started = toolStarts.get(id);
+          if (!started) return;
+          toolStarts.delete(id);
+          const ms = Date.now() - started.startedAt;
+          const agg = toolTotals.get(started.name) ?? { count: 0, ms: 0 };
+          agg.count += 1;
+          agg.ms += ms;
+          toolTotals.set(started.name, agg);
+          perf.log(`[ToolTiming] tool=${ started.name } ms=${ ms } resultChars=${ resultChars } convId=${ convId }`);
+          try {
+            callbacks.onToolEvent?.({
+              toolUseId: id, toolName: started.name, input: started.input, resultChars, isError,
+            });
+          } catch { /* ignore */ }
+        };
 
-      const onAbort = () => {
-        stopHeartbeat();
-        stopStallWatchdog();
-        closeSteering();
-        killSpawn();
-      };
-      if (options.signal) {
-        if (options.signal.aborted) onAbort();
-        else options.signal.addEventListener('abort', onAbort);
-      }
+        // Kill THIS run's claude process inside the VM. Without a TTY, SSH
+        // signal propagation isn't guaranteed — fire a follow-up kill so an
+        // orphaned claude doesn't keep burning tokens after the user hits stop.
+        // Targeted by pidfile, never `pkill -f 'claude -p'`: that also killed
+        // every concurrent run (other agents, and the run a steering/queued
+        // message had just started), which died as "returned no output".
+        const killRemoteClaude = async(sig: 'TERM' | 'KILL') => {
+          try {
+            const killProc = childProcess.spawn(
+              limactlPath,
+              ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, sig)],
+              {
+                env:      { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
+                stdio:    'ignore',
+                detached: true,
+              },
+            );
+            killProc.unref();
+            await waitForKillHelper(killProc);
+          } catch (err) {
+            log.log(`[ClaudeCodeService] Remote kill failed: ${ (err as Error)?.message ?? err }`);
+            throw err;
+          }
+        };
 
-      // Start the heartbeat + stall watchdog. A fresh spawn fires 'spawn'; an
-      // adopted (pre-warmed) process already spawned during prewarm, so start
-      // immediately — every timer/handler onSpawned references is now declared.
-      if (adoptedSpawned) onSpawned();
-      else proc.once('spawn', onSpawned);
+        // Kill the spawn on both sides of the SSH boundary:
+        //   1) SIGTERM the host-side limactl process — closes the SSH-style
+        //      session; with `exec` in the inner shell (see above) the remote
+        //      claude usually receives SIGHUP and dies.
+        //   2) targeted kill inside the VM (see killRemoteClaude).
+        //   3) Escalate to SIGKILL after a grace period — a limactl wedged in
+        //      the SSH mux can ignore SIGTERM entirely, which is exactly the
+        //      state that strands a hung run.
+        const killSpawn = () => {
+          terminationPromise ??= terminateCliChild(proc, killRemoteClaude);
+          return terminationPromise;
+        };
 
-      /**
+        // ── Stall watchdog ──────────────────────────────────────────────
+        // A claude process whose upstream connection dies mid-run can sit
+        // silent forever (observed: 7.7h), and wedged spawns block later ones
+        // from even delivering their prompt — the whole backend goes dark.
+        // Watchdog scope is THIS CLI child process only, never agent-level
+        // execution: recall agents and long runs are unbounded by design.
+        // Liveness = any stdout/stderr byte, so extended thinking and long
+        // in-CLI tool runs (10 min Bash default) reset the clock; only a
+        // completely dead stream trips the kill.
+        const STALL_TIMEOUT_MS = 15 * 60 * 1_000;
+        const STALL_CHECK_MS = 30 * 1_000;
+        let lastStreamActivityAt = Date.now();
+        let stalled = false;
+        let stallTimer: NodeJS.Timeout | null = null;
+        const stopStallWatchdog = () => {
+          if (stallTimer) {
+            clearInterval(stallTimer);
+            stallTimer = null;
+          }
+        };
+
+        const onAbort = () => {
+          stopHeartbeat();
+          stopStallWatchdog();
+          closeSteering();
+          cleanupMcp();
+          killSpawn();
+          scheduleForcedSettlement(() => {
+            const error = new Error('Claude Code run aborted');
+            error.name = 'AbortError';
+            return error;
+          });
+        };
+
+        // Start the heartbeat + stall watchdog. A fresh spawn fires 'spawn'; an
+        // adopted (pre-warmed) process already spawned during prewarm, so start
+        // immediately — every timer/handler onSpawned references is now declared.
+        if (adoptedSpawned) onSpawned();
+        else proc.once('spawn', onSpawned);
+
+        /**
        * Summarise a tool_use block into a short activity message like
        * "Running Bash: ls /etc" or "Reading /etc/hosts". Keep it tight so
        * the thinking bubble stays readable on mobile.
        */
-      const activityForToolUse = (name: string, input: any): string => {
-        const pretty = (s: string) => s.length > 80 ? `${ s.slice(0, 77) }…` : s;
-        if (!input || typeof input !== 'object') return `Using ${ name }`;
-        switch (name) {
-        case 'Bash':
-          if (typeof input.command === 'string') return `$ ${ pretty(input.command) }`;
-          return 'Running a shell command';
-        case 'Read':
-          if (typeof input.file_path === 'string') return `Reading ${ pretty(input.file_path) }`;
-          return 'Reading a file';
-        case 'Edit':
-        case 'Write':
-          if (typeof input.file_path === 'string') return `${ name === 'Write' ? 'Writing' : 'Editing' } ${ pretty(input.file_path) }`;
-          return `${ name === 'Write' ? 'Writing' : 'Editing' } a file`;
-        case 'Glob':
-          if (typeof input.pattern === 'string') return `Searching for ${ pretty(input.pattern) }`;
-          return 'Searching files';
-        case 'Grep':
-          if (typeof input.pattern === 'string') return `Grepping ${ pretty(input.pattern) }`;
-          return 'Grepping';
-        case 'WebFetch':
-        case 'WebSearch':
-          if (typeof input.url === 'string') return `Fetching ${ pretty(input.url) }`;
-          if (typeof input.query === 'string') return `Searching web: ${ pretty(input.query) }`;
-          return `${ name } request`;
-        case 'Task':
-          if (typeof input.description === 'string') return `Task: ${ pretty(input.description) }`;
-          return 'Spawning sub-task';
-        case 'AskUserQuestion':
-        case 'mcp__sulla-native__ask_user_question':
+        const activityForToolUse = (name: string, input: any): string => {
+          const pretty = (s: string) => s.length > 80 ? `${ s.slice(0, 77) }…` : s;
+          if (!input || typeof input !== 'object') return `Using ${ name }`;
+          switch (name) {
+          case 'Bash':
+            if (typeof input.command === 'string') return `$ ${ pretty(input.command) }`;
+            return 'Running a shell command';
+          case 'Read':
+            if (typeof input.file_path === 'string') return `Reading ${ pretty(input.file_path) }`;
+            return 'Reading a file';
+          case 'Edit':
+          case 'Write':
+            if (typeof input.file_path === 'string') return `${ name === 'Write' ? 'Writing' : 'Editing' } ${ pretty(input.file_path) }`;
+            return `${ name === 'Write' ? 'Writing' : 'Editing' } a file`;
+          case 'Glob':
+            if (typeof input.pattern === 'string') return `Searching for ${ pretty(input.pattern) }`;
+            return 'Searching files';
+          case 'Grep':
+            if (typeof input.pattern === 'string') return `Grepping ${ pretty(input.pattern) }`;
+            return 'Grepping';
+          case 'WebFetch':
+          case 'WebSearch':
+            if (typeof input.url === 'string') return `Fetching ${ pretty(input.url) }`;
+            if (typeof input.query === 'string') return `Searching web: ${ pretty(input.query) }`;
+            return `${ name } request`;
+          case 'Task':
+            if (typeof input.description === 'string') return `Task: ${ pretty(input.description) }`;
+            return 'Spawning sub-task';
+          case 'AskUserQuestion':
+          case 'mcp__sulla-native__ask_user_question':
           // The MCP twin emits its own interactive card via the WS bus; this
           // is just the heartbeat line shown while the user is deciding.
-          return 'Asking you a question…';
-        default:
-          return `Using ${ name }`;
-        }
-      };
+            return 'Asking you a question…';
+          default:
+            return `Using ${ name }`;
+          }
+        };
 
-      // Claude's native AskUserQuestion is disallowed on the CLI so it routes
-      // to the sulla-native MCP tool instead. If a native call ever slips
-      // through (CLI version change, flag ignored), log it loudly — the
-      // question would otherwise vanish into a headless no-op.
-      const noteIfNativeAsk = (name: string) => {
-        if (name === 'AskUserQuestion') {
-          log.warn('[ClaudeCodeService] native AskUserQuestion tool_use detected despite --disallowedTools — it will NOT round-trip. Claude should be using mcp__sulla-native__ask_user_question.');
-        }
-      };
+        // Claude's native AskUserQuestion is disallowed on the CLI so it routes
+        // to the sulla-native MCP tool instead. If a native call ever slips
+        // through (CLI version change, flag ignored), log it loudly — the
+        // question would otherwise vanish into a headless no-op.
+        const noteIfNativeAsk = (name: string) => {
+          if (name === 'AskUserQuestion') {
+            log.warn('[ClaudeCodeService] native AskUserQuestion tool_use detected despite --disallowedTools — it will NOT round-trip. Claude should be using mcp__sulla-native__ask_user_question.');
+          }
+        };
 
-      const emitActivity = (msg: string) => {
-        if (!msg) return;
-        try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
-      };
+        const emitActivity = (msg: string) => {
+          if (!msg) return;
+          try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
+        };
 
-      // Extended-thinking passthrough. thinking_delta events used to be
-      // silently dropped, so the longest "nothing is happening" stretches of
-      // a turn (pure reasoning, no tools) showed zero signal in the thinking
-      // bubble or on the mobile relay. Accumulate deltas and emit throttled
-      // 💭 snippets at sentence/newline boundaries — at most one per
-      // THINKING_EMIT_MS, each capped so the phone's one-line status stays
-      // readable.
-      const THINKING_EMIT_MS = 1200;
-      const THINKING_MAX_SNIPPET = 220;
-      let thinkingBuf = '';
-      let lastThinkingEmitAt = 0;
-      const flushThinking = (force = false) => {
-        const nowMs = Date.now();
-        if (!force && nowMs - lastThinkingEmitAt < THINKING_EMIT_MS) return;
-        let cut = thinkingBuf.length;
-        if (!force) {
+        // Extended-thinking passthrough. thinking_delta events used to be
+        // silently dropped, so the longest "nothing is happening" stretches of
+        // a turn (pure reasoning, no tools) showed zero signal in the thinking
+        // bubble or on the mobile relay. Accumulate deltas and emit throttled
+        // 💭 snippets at sentence/newline boundaries — at most one per
+        // THINKING_EMIT_MS, each capped so the phone's one-line status stays
+        // readable.
+        const THINKING_EMIT_MS = 1200;
+        const THINKING_MAX_SNIPPET = 220;
+        let thinkingBuf = '';
+        let lastThinkingEmitAt = 0;
+        const flushThinking = (force = false) => {
+          const nowMs = Date.now();
+          if (!force && nowMs - lastThinkingEmitAt < THINKING_EMIT_MS) return;
+          let cut = thinkingBuf.length;
+          if (!force) {
           // Emit up to the last sentence/newline boundary; hold the tail for
           // the next tick so snippets read as complete thoughts.
-          const boundary = thinkingBuf.search(/[.!?\n][^.!?\n]*$/);
-          if (boundary < 0) return;
-          cut = boundary + 1;
-        }
-        const snippet = thinkingBuf.slice(0, cut).replace(/\s+/g, ' ').trim();
-        thinkingBuf = thinkingBuf.slice(cut);
-        if (!snippet) return;
-        lastThinkingEmitAt = nowMs;
-        emitActivity(`💭 ${ snippet.length > THINKING_MAX_SNIPPET ? `${ snippet.slice(0, THINKING_MAX_SNIPPET - 1) }…` : snippet }`);
-      };
+            const boundary = thinkingBuf.search(/[.!?\n][^.!?\n]*$/);
+            if (boundary < 0) return;
+            cut = boundary + 1;
+          }
+          const snippet = thinkingBuf.slice(0, cut).replace(/\s+/g, ' ').trim();
+          thinkingBuf = thinkingBuf.slice(cut);
+          if (!snippet) return;
+          lastThinkingEmitAt = nowMs;
+          emitActivity(`💭 ${ snippet.length > THINKING_MAX_SNIPPET ? `${ snippet.slice(0, THINKING_MAX_SNIPPET - 1) }…` : snippet }`);
+        };
 
-      // File patches we've already surfaced this turn. Keyed by
-      // `${name}:${file_path}:${hash}` so the same edit fired via both
-      // content_block_stop and the whole-message assistant event only
-      // produces one PatchBlock in chat.
-      const emittedPatches = new Set<string>();
+        // File patches we've already surfaced this turn. Keyed by
+        // `${name}:${file_path}:${hash}` so the same edit fired via both
+        // content_block_stop and the whole-message assistant event only
+        // produces one PatchBlock in chat.
+        const emittedPatches = new Set<string>();
 
-      /**
+        /**
        * Attempt to surface a FilePatchInfo for an Edit/Write tool_use.
        * Called at content_block_stop (best moment — full input, file not
        * yet mutated for Writes). Safe to call twice; dedup via hash.
        */
-      const emitFilePatch = (name: string, input: any) => {
-        if (!callbacks.onFilePatch) return;
-        if (!input || typeof input !== 'object') return;
-        const filePath = typeof input.file_path === 'string' ? input.file_path : '';
-        if (!filePath) return;
+        const emitFilePatch = (name: string, input: any) => {
+          if (!callbacks.onFilePatch) return;
+          if (!input || typeof input !== 'object') return;
+          const filePath = typeof input.file_path === 'string' ? input.file_path : '';
+          if (!filePath) return;
 
-        let info: FilePatchInfo | null = null;
-        try {
-          if (name === 'Edit') {
-            const oldString = typeof input.old_string === 'string' ? input.old_string : '';
-            const newString = typeof input.new_string === 'string' ? input.new_string : '';
-            if (!oldString && !newString) return;
-            info = buildEditPatch(filePath, oldString, newString);
-          } else if (name === 'Write') {
-            const newContent = typeof input.content === 'string' ? input.content : '';
-            // Best-effort snapshot of pre-write content. Read synchronously
-            // right now — Claude may or may not have hit disk yet; either
-            // outcome is informational.
-            let oldContent = '';
-            try {
-              oldContent = fs.readFileSync(filePath, 'utf-8');
-            } catch {
+          let info: FilePatchInfo | null = null;
+          try {
+            if (name === 'Edit') {
+              const oldString = typeof input.old_string === 'string' ? input.old_string : '';
+              const newString = typeof input.new_string === 'string' ? input.new_string : '';
+              if (!oldString && !newString) return;
+              info = buildEditPatch(filePath, oldString, newString);
+            } else if (name === 'Write') {
+              const newContent = typeof input.content === 'string' ? input.content : '';
+              // Best-effort snapshot of pre-write content. Read synchronously
+              // right now — Claude may or may not have hit disk yet; either
+              // outcome is informational.
+              let oldContent = '';
+              try {
+                oldContent = fs.readFileSync(filePath, 'utf-8');
+              } catch {
               // File didn't exist → pure addition.
-              oldContent = '';
-            }
-            if (oldContent === newContent) return;   // no visible change
-            info = buildWritePatch(filePath, oldContent, newContent);
-          } else {
-            return;
-          }
-        } catch (err) {
-          log.warn(`[ClaudeCodeService] emitFilePatch failed for ${ name } ${ filePath }: ${ (err as Error)?.message ?? err }`);
-          return;
-        }
-
-        if (!info) return;
-        if (info.hunks.length === 0 && info.stat.added === 0 && info.stat.removed === 0) return;
-
-        const signature = info.hunks[0]?.lines.map(l => l.op[0] + l.text).join('|').slice(0, 200) ?? '';
-        const dedupeKey = `${ name }:${ filePath }:${ info.stat.added }+${ info.stat.removed }:${ signature }`;
-        if (emittedPatches.has(dedupeKey)) return;
-        emittedPatches.add(dedupeKey);
-
-        try { callbacks.onFilePatch(info) } catch { /* ignore */ }
-      };
-
-      // ── Live steering ("Send now" while the turn runs) ─────────────
-      // stdin stays open for the whole stream-json turn, so a message the user
-      // sends mid-run is written straight into the running CLI. Claude folds
-      // it into the current turn at its next tool boundary, or — if it lands
-      // while the final answer is being written — runs it as a follow-up turn
-      // right after. The replay echo marks the moment Claude consumed it; a
-      // `result` doesn't end this turn while any steer is still unconsumed.
-      const steersInFlight: { content: string; message: ChatMessage }[] = [];
-      let steeringOpen = speculative;
-      let steerGraceTimer: NodeJS.Timeout | null = null;
-      const unsubscribeSteer = onSteer(speculative ? options.state : null, (message) => {
-        if (!steeringOpen || settled || proc.stdin.writableEnded || proc.stdin.destroyed) return false;
-        const content = this.extractLatestUserMessage([message]);
-        if (!content.trim()) return false;
-        try {
-          proc.stdin.write(`${ JSON.stringify({ type: 'user', message: { role: 'user', content } }) }\n`);
-        } catch {
-          return false;
-        }
-        steersInFlight.push({ content, message });
-        lastStreamActivityAt = Date.now();
-        emitActivity('Steering Claude with your message…');
-        log.log(`[ClaudeCodeService] steer written to running turn convId=${ convId } chars=${ content.length }`);
-        return true;
-      });
-      // Stop taking steers. Any written but never consumed go back to the
-      // graph as pending so the next turn answers them instead of dropping them.
-      const closeSteering = () => {
-        steeringOpen = false;
-        unsubscribeSteer();
-        if (steerGraceTimer) { clearTimeout(steerGraceTimer); steerGraceTimer = null; }
-        for (const s of steersInFlight.splice(0)) markSteerPending(s.message);
-      };
-
-      const processLine = (line: string) => {
-        const trimmed = line.trim();
-        if (!trimmed) return;
-        let parsed: any;
-        try {
-          parsed = JSON.parse(trimmed);
-        } catch {
-          return;
-        }
-
-        const limitSnapshot = normalizeClaudeLimitSnapshot(parsed);
-        if (limitSnapshot) recordCliLimitSnapshot('claude-code', limitSnapshot).catch(() => {});
-
-        if (parsed.session_id) capturedSessionId = parsed.session_id;
-
-        // Background-task bookkeeping. Once this turn has settled (cold mode
-        // kept listening for background completions), nobody owns the
-        // process's output any more, so completions must be delivered.
-        bgTracker.observe(parsed, settled);
-        if (settled) return;
-
-        // Replay echo of a stdin message — a steer Claude just consumed.
-        if (parsed.type === 'user' && parsed.isReplay) {
-          const echoed = typeof parsed.message?.content === 'string' ? parsed.message.content : '';
-          const idx = steersInFlight.findIndex(s => s.content === echoed);
-          if (!promptConsumed && idx < 0 && !echoed.trimStart().startsWith('<task-notification>')) {
-            promptConsumed = true;
-            return;
-          }
-          if (idx >= 0) {
-            steersInFlight.splice(idx, 1);
-            if (steerGraceTimer && !steersInFlight.length) { clearTimeout(steerGraceTimer); steerGraceTimer = null; }
-            emitActivity('Claude picked up your message');
-          }
-          return;
-        }
-
-        // System init — claude has booted, auth done, MCP tools loaded.
-        // Update the heartbeat phase but keep ticking because the model
-        // call itself can still add 20–60s.
-        if (parsed.type === 'system' && parsed.subtype === 'init') {
-          emitActivity('Tools connected — calling model');
-          return;
-        }
-
-        // Stream-level events (wrapped in parsed.event) — text deltas,
-        // tool_use block starts, thinking starts.
-        const ev = parsed?.event;
-        if (ev) {
-          // Text chunks → stream to caller as content
-          if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
-            if (!promptConsumed) return;   // a CLI-initiated turn's text, not ours
-            stopHeartbeat();
-            if (!firstTokenAt) firstTokenAt = Date.now();
-            textCollected += ev.delta.text;
-            try { callbacks.onToken?.(ev.delta.text) } catch { /* ignore */ }
-            return;
-          }
-
-          // Thinking deltas → live reasoning trace (throttled, see flushThinking)
-          if (ev.type === 'content_block_delta' && ev.delta?.type === 'thinking_delta' && typeof ev.delta.thinking === 'string') {
-            stopHeartbeat();
-            thinkingBuf += ev.delta.thinking;
-            flushThinking();
-            return;
-          }
-
-          // Tool use block starting → emit a short activity message. Input
-          // isn't filled in yet here for partial streaming, so the message
-          // starts generic and content_block_stop below refines it.
-          if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
-            stopHeartbeat();
-            const name = ev.content_block.name ?? 'tool';
-            noteIfNativeAsk(name);
-            emitActivity(activityForToolUse(name, ev.content_block.input));
-            return;
-          }
-
-          // Tool use complete — input is fully populated now, emit the
-          // refined "Running Bash: ls" style message.
-          if (ev.type === 'content_block_stop' && ev.content_block?.type === 'tool_use') {
-            stopHeartbeat();
-            const name = ev.content_block.name ?? 'tool';
-            // Input is fully streamed → the CLI is about to RUN the tool. Start
-            // the clock here so input-generation time isn't counted as tool time.
-            noteToolStart(ev.content_block.id, name, ev.content_block.input);
-            emitActivity(activityForToolUse(name, ev.content_block.input));
-            emitFilePatch(name, ev.content_block.input);
-            return;
-          }
-
-          // Thinking block starting → stop the heartbeat
-          if (ev.type === 'content_block_start' && ev.content_block?.type === 'thinking') {
-            stopHeartbeat();
-            return;
-          }
-
-          // Thinking block finished → flush whatever reasoning remains so the
-          // last thought isn't stranded below the boundary/throttle gates.
-          if (ev.type === 'content_block_stop' && ev.content_block?.type === 'thinking') {
-            flushThinking(true);
-            return;
-          }
-        }
-
-        // Whole-message events (type='assistant') — pick up tool_use blocks
-        // in case the streaming path didn't emit them (some CLI versions
-        // batch the assistant message at content_block_stop time).
-        if (parsed.type === 'assistant' && parsed.message?.content) {
-          const blocks: any[] = Array.isArray(parsed.message.content) ? parsed.message.content : [];
-          for (const b of blocks) {
-            if (b?.type === 'tool_use' && b.name) {
-              noteIfNativeAsk(b.name);
-              // Fallback start for CLI versions that batch the whole assistant
-              // message instead of emitting streamed content_block_stop events.
-              // Idempotent — won't override an earlier stream-path start.
-              noteToolStart(b.id, b.name, b.input);
-              emitActivity(activityForToolUse(b.name, b.input));
-              emitFilePatch(b.name, b.input);
-            }
-          }
-        }
-
-        // Tool results arrive as a `user`-type message carrying tool_result
-        // blocks (each references its tool_use_id). This is the moment the
-        // tool finished running inside the CLI — stop its clock.
-        if (parsed.type === 'user' && parsed.message?.content) {
-          const blocks: any[] = Array.isArray(parsed.message.content) ? parsed.message.content : [];
-          for (const b of blocks) {
-            if (b?.type === 'tool_result') {
-              let chars = 0;
-              if (typeof b.content === 'string') {
-                chars = b.content.length;
-              } else if (Array.isArray(b.content)) {
-                chars = b.content.reduce((n: number, c: any) => n + (typeof c?.text === 'string' ? c.text.length : 0), 0);
+                oldContent = '';
               }
-              noteToolResult(b.tool_use_id, chars, b.is_error === true);
+              if (oldContent === newContent) return;   // no visible change
+              info = buildWritePatch(filePath, oldContent, newContent);
+            } else {
+              return;
             }
+          } catch (err) {
+            log.warn(`[ClaudeCodeService] emitFilePatch failed for ${ name } ${ filePath }: ${ (err as Error)?.message ?? err }`);
+            return;
           }
+
+          if (!info) return;
+          if (info.hunks.length === 0 && info.stat.added === 0 && info.stat.removed === 0) return;
+
+          const signature = info.hunks[0]?.lines.map(l => l.op[0] + l.text).join('|').slice(0, 200) ?? '';
+          const dedupeKey = `${ name }:${ filePath }:${ info.stat.added }+${ info.stat.removed }:${ signature }`;
+          if (emittedPatches.has(dedupeKey)) return;
+          emittedPatches.add(dedupeKey);
+
+          try { callbacks.onFilePatch(info) } catch { /* ignore */ }
+        };
+
+        // ── Live steering ("Send now" while the turn runs) ─────────────
+        // stdin stays open for the whole stream-json turn, so a message the user
+        // sends mid-run is written straight into the running CLI. Claude folds
+        // it into the current turn at its next tool boundary, or — if it lands
+        // while the final answer is being written — runs it as a follow-up turn
+        // right after. The replay echo marks the moment Claude consumed it; a
+        // `result` doesn't end this turn while any steer is still unconsumed.
+        const steersInFlight: { content: string; message: ChatMessage }[] = [];
+        let steeringOpen = speculative;
+        let steerGraceTimer: NodeJS.Timeout | null = null;
+        const unsubscribeSteer = onSteer(speculative ? options.state : null, (message) => {
+          if (!steeringOpen || settled || proc.stdin.writableEnded || proc.stdin.destroyed) return false;
+          const content = this.extractLatestUserMessage([message]);
+          if (!content.trim()) return false;
+          try {
+            proc.stdin.write(`${ JSON.stringify({ type: 'user', message: { role: 'user', content } }) }\n`);
+          } catch {
+            return false;
+          }
+          steersInFlight.push({ content, message });
+          lastStreamActivityAt = Date.now();
+          emitActivity('Steering Claude with your message…');
+          log.log(`[ClaudeCodeService] steer written to running turn convId=${ convId } chars=${ content.length }`);
+          return true;
+        });
+        // Stop taking steers. Any written but never consumed go back to the
+        // graph as pending so the next turn answers them instead of dropping them.
+        const closeSteering = () => {
+          steeringOpen = false;
+          unsubscribeSteer();
+          if (steerGraceTimer) { clearTimeout(steerGraceTimer); steerGraceTimer = null }
+          for (const s of steersInFlight.splice(0)) markSteerPending(s.message);
+        };
+        if (options.signal) {
+          if (options.signal.aborted) onAbort();
+          else options.signal.addEventListener('abort', onAbort);
         }
 
-        // Final result event — capture full text and record usage/cost.
-        if (parsed.type === 'result' && !promptConsumed && !parsed.is_error) {
-          log.log(`[ClaudeCodeService] ignoring result of a CLI-initiated turn that ran before this turn's prompt (convId=${ convId })`);
-          textCollected = '';
-          return;
-        }
-
-        if (parsed.type === 'result') {
-          lastUsage = parsed.usage;
-          // Perf summary: split the run into tool-execution time vs the rest
-          // (model generation + CLI overhead). Directly answers "is it the
-          // search/tool layer or the model that's slow?"
-          const totalMs = Date.now() - runStartedAt;
-          let toolMs = 0;
-          let toolCount = 0;
-          const breakdown: string[] = [];
-          toolTotals.forEach((agg, name) => {
-            toolMs += agg.ms;
-            toolCount += agg.count;
-            breakdown.push(`${ name }x${ agg.count }=${ agg.ms }ms`);
-          });
-          const ttft = firstTokenAt ? firstTokenAt - runStartedAt : -1;
-          perf.log(`[RunTiming] convId=${ convId } totalMs=${ totalMs } toolMs=${ toolMs } toolCount=${ toolCount } model+overheadMs=${ totalMs - toolMs } ttftMs=${ ttft } tools=[${ breakdown.join(', ') }]`);
-
-          if (parsed.is_error) {
-            errored = true;
-            if (typeof parsed.result === 'string' && parsed.result) {
-              errorMessage = parsed.result;
-            }
-          } else {
-            if (typeof parsed.result === 'string' && !textCollected) {
-              textCollected = parsed.result;
-              try { callbacks.onToken?.(parsed.result) } catch { /* ignore */ }
-            }
-            // Usage capture is best-effort — never block on failure.
-            recordUsage(parsed).catch(() => { /* ignore */ });
+        const processLine = (line: string) => {
+          if (terminationPromise) return;
+          const trimmed = line.trim();
+          if (!trimmed) return;
+          let parsed: any;
+          try {
+            parsed = JSON.parse(trimmed);
+          } catch {
+            return;
           }
-          // A steer written after Claude's last tool boundary hasn't been
-          // consumed yet — Claude runs it as a follow-up turn right after this
-          // result. Keep the turn open for it. The grace timer covers a CLI
-          // that never picks it up: the steer then goes back to the graph.
-          if (!parsed.is_error && steersInFlight.length > 0) {
-            if (textCollected.trim()) {
-              textCollected += '\n\n';
-              try { callbacks.onToken?.('\n\n') } catch { /* ignore */ }
+
+          const limitSnapshot = normalizeClaudeLimitSnapshot(parsed);
+          if (limitSnapshot) recordCliLimitSnapshot('claude-code', limitSnapshot).catch(() => {});
+
+          if (parsed.session_id) capturedSessionId = parsed.session_id;
+
+          // Background-task bookkeeping. Once this turn has settled (cold mode
+          // kept listening for background completions), nobody owns the
+          // process's output any more, so completions must be delivered.
+          bgTracker.observe(parsed, settled);
+          if (settled) return;
+
+          // Replay echo of a stdin message — a steer Claude just consumed.
+          if (parsed.type === 'user' && parsed.isReplay) {
+            const echoed = typeof parsed.message?.content === 'string' ? parsed.message.content : '';
+            const idx = steersInFlight.findIndex(s => s.content === echoed);
+            if (!promptConsumed && idx < 0 && !echoed.trimStart().startsWith('<task-notification>')) {
+              promptConsumed = true;
+              return;
             }
-            if (!steerGraceTimer) {
-              steerGraceTimer = setTimeout(() => {
-                steerGraceTimer = null;
-                if (settled || !steersInFlight.length) return;
-                log.warn(`[ClaudeCodeService] ${ steersInFlight.length } steer(s) not picked up ${ STEER_FOLLOWUP_GRACE_MS }ms after result — returning them to the graph (convId=${ convId })`);
-                completeTurn(true);
-              }, STEER_FOLLOWUP_GRACE_MS);
+            if (idx >= 0) {
+              steersInFlight.splice(idx, 1);
+              if (steerGraceTimer && !steersInFlight.length) { clearTimeout(steerGraceTimer); steerGraceTimer = null }
+              emitActivity('Claude picked up your message');
             }
             return;
           }
-          completeTurn(!parsed.is_error);
+
+          // System init — claude has booted, auth done, MCP tools loaded.
+          // Update the heartbeat phase but keep ticking because the model
+          // call itself can still add 20–60s.
+          if (parsed.type === 'system' && parsed.subtype === 'init') {
+            emitActivity('Tools connected — calling model');
+            return;
+          }
+
+          // Stream-level events (wrapped in parsed.event) — text deltas,
+          // tool_use block starts, thinking starts.
+          const ev = parsed?.event;
+          if (ev) {
+          // Text chunks → stream to caller as content
+            if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
+              if (!promptConsumed) return;   // a CLI-initiated turn's text, not ours
+              stopHeartbeat();
+              if (!firstTokenAt) firstTokenAt = Date.now();
+              textCollected += ev.delta.text;
+              try { callbacks.onToken?.(ev.delta.text) } catch { /* ignore */ }
+              return;
+            }
+
+            // Thinking deltas → live reasoning trace (throttled, see flushThinking)
+            if (ev.type === 'content_block_delta' && ev.delta?.type === 'thinking_delta' && typeof ev.delta.thinking === 'string') {
+              stopHeartbeat();
+              thinkingBuf += ev.delta.thinking;
+              flushThinking();
+              return;
+            }
+
+            // Tool use block starting → emit a short activity message. Input
+            // isn't filled in yet here for partial streaming, so the message
+            // starts generic and content_block_stop below refines it.
+            if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
+              stopHeartbeat();
+              const name = ev.content_block.name ?? 'tool';
+              noteIfNativeAsk(name);
+              emitActivity(activityForToolUse(name, ev.content_block.input));
+              return;
+            }
+
+            // Tool use complete — input is fully populated now, emit the
+            // refined "Running Bash: ls" style message.
+            if (ev.type === 'content_block_stop' && ev.content_block?.type === 'tool_use') {
+              stopHeartbeat();
+              const name = ev.content_block.name ?? 'tool';
+              // Input is fully streamed → the CLI is about to RUN the tool. Start
+              // the clock here so input-generation time isn't counted as tool time.
+              noteToolStart(ev.content_block.id, name, ev.content_block.input);
+              emitActivity(activityForToolUse(name, ev.content_block.input));
+              emitFilePatch(name, ev.content_block.input);
+              return;
+            }
+
+            // Thinking block starting → stop the heartbeat
+            if (ev.type === 'content_block_start' && ev.content_block?.type === 'thinking') {
+              stopHeartbeat();
+              return;
+            }
+
+            // Thinking block finished → flush whatever reasoning remains so the
+            // last thought isn't stranded below the boundary/throttle gates.
+            if (ev.type === 'content_block_stop' && ev.content_block?.type === 'thinking') {
+              flushThinking(true);
+              return;
+            }
+          }
+
+          // Whole-message events (type='assistant') — pick up tool_use blocks
+          // in case the streaming path didn't emit them (some CLI versions
+          // batch the assistant message at content_block_stop time).
+          if (parsed.type === 'assistant' && parsed.message?.content) {
+            const blocks: any[] = Array.isArray(parsed.message.content) ? parsed.message.content : [];
+            for (const b of blocks) {
+              if (b?.type === 'tool_use' && b.name) {
+                noteIfNativeAsk(b.name);
+                // Fallback start for CLI versions that batch the whole assistant
+                // message instead of emitting streamed content_block_stop events.
+                // Idempotent — won't override an earlier stream-path start.
+                noteToolStart(b.id, b.name, b.input);
+                emitActivity(activityForToolUse(b.name, b.input));
+                emitFilePatch(b.name, b.input);
+              }
+            }
+          }
+
+          // Tool results arrive as a `user`-type message carrying tool_result
+          // blocks (each references its tool_use_id). This is the moment the
+          // tool finished running inside the CLI — stop its clock.
+          if (parsed.type === 'user' && parsed.message?.content) {
+            const blocks: any[] = Array.isArray(parsed.message.content) ? parsed.message.content : [];
+            for (const b of blocks) {
+              if (b?.type === 'tool_result') {
+                let chars = 0;
+                if (typeof b.content === 'string') {
+                  chars = b.content.length;
+                } else if (Array.isArray(b.content)) {
+                  chars = b.content.reduce((n: number, c: any) => n + (typeof c?.text === 'string' ? c.text.length : 0), 0);
+                }
+                noteToolResult(b.tool_use_id, chars, b.is_error === true);
+              }
+            }
+          }
+
+          // Final result event — capture full text and record usage/cost.
+          if (parsed.type === 'result' && !promptConsumed && !parsed.is_error) {
+            log.log(`[ClaudeCodeService] ignoring result of a CLI-initiated turn that ran before this turn's prompt (convId=${ convId })`);
+            textCollected = '';
+            return;
+          }
+
+          if (parsed.type === 'result') {
+            if (options.signal?.aborted) return;
+            sawTerminalResult = true;
+            lastUsage = parsed.usage;
+            // Perf summary: split the run into tool-execution time vs the rest
+            // (model generation + CLI overhead). Directly answers "is it the
+            // search/tool layer or the model that's slow?"
+            const totalMs = Date.now() - runStartedAt;
+            let toolMs = 0;
+            let toolCount = 0;
+            const breakdown: string[] = [];
+            toolTotals.forEach((agg, name) => {
+              toolMs += agg.ms;
+              toolCount += agg.count;
+              breakdown.push(`${ name }x${ agg.count }=${ agg.ms }ms`);
+            });
+            const ttft = firstTokenAt ? firstTokenAt - runStartedAt : -1;
+            perf.log(`[RunTiming] convId=${ convId } totalMs=${ totalMs } toolMs=${ toolMs } toolCount=${ toolCount } model+overheadMs=${ totalMs - toolMs } ttftMs=${ ttft } tools=[${ breakdown.join(', ') }]`);
+
+            if (parsed.is_error) {
+              errored = true;
+              if (typeof parsed.result === 'string' && parsed.result) {
+                errorMessage = parsed.result;
+              }
+            } else {
+              if (typeof parsed.result === 'string' && !textCollected) {
+                textCollected = parsed.result;
+                try { callbacks.onToken?.(parsed.result) } catch { /* ignore */ }
+              }
+              // Usage capture is best-effort — never block on failure.
+              recordUsage(parsed).catch(() => { /* ignore */ });
+            }
+            // A steer written after Claude's last tool boundary hasn't been
+            // consumed yet — Claude runs it as a follow-up turn right after this
+            // result. Keep the turn open for it. The grace timer covers a CLI
+            // that never picks it up: the steer then goes back to the graph.
+            if (!parsed.is_error && steersInFlight.length > 0) {
+              if (textCollected.trim()) {
+                textCollected += '\n\n';
+                try { callbacks.onToken?.('\n\n') } catch { /* ignore */ }
+              }
+              if (!steerGraceTimer) {
+                steerGraceTimer = setTimeout(() => {
+                  steerGraceTimer = null;
+                  if (settled || !steersInFlight.length) return;
+                  log.warn(`[ClaudeCodeService] ${ steersInFlight.length } steer(s) not picked up ${ STEER_FOLLOWUP_GRACE_MS }ms after result — returning them to the graph (convId=${ convId })`);
+                  completeTurn(true);
+                }, STEER_FOLLOWUP_GRACE_MS);
+              }
+              return;
+            }
+            completeTurn(!parsed.is_error);
+          }
+        };
+
+        // The turn is over at `result`. Warm mode settles now and keeps the
+        // process alive for the next turn; cold mode with live background tasks
+        // settles now and keeps listening; otherwise closing stdin lets claude
+        // exit and onProcClose settles. Defined here, invoked only at runtime
+        // (after finishWarmTurn / settleForBackground below exist).
+        const completeTurn = (ok: boolean) => {
+          closeSteering();
+          if (warm) finishWarmTurn();
+          else if (ok && bgTracker.liveTaskCount > 0 && textCollected.trim()) settleForBackground();
+          else if (speculative) {
+            try { proc.stdin.end() } catch { /* already closed */ }
+          }
+        };
+
+        const onStdoutData = (chunk: Buffer) => {
+          if (settled) return;
+          lastStreamActivityAt = Date.now();
+          stdoutBuffer += chunk.toString('utf-8');
+          const lines = stdoutBuffer.split('\n');
+          stdoutBuffer = lines.pop() ?? '';
+          for (const line of lines) processLine(line);
+        };
+        proc.stdout.on('data', onStdoutData);
+
+        const onStderrData = (chunk: Buffer) => {
+          if (settled) return;
+          lastStreamActivityAt = Date.now();
+          const text = chunk.toString('utf-8');
+          stderrBuffer += text;
+          const trimmed = text.trim();
+          // Detect the session-collision signal so we can retry without it.
+          if (/Session ID .* is already in use/i.test(stderrBuffer)) {
+            sessionInUse = true;
+          }
+          if (trimmed && !trimmed.includes('no stdin data received')) {
+            console.log(`[ClaudeCodeService][stderr] ${ trimmed.slice(0, 200) }`);
+          }
+        };
+        proc.stderr.on('data', onStderrData);
+
+        // Replay output drained while the process sat unclaimed (see
+        // claimPrewarm) so a buffered system/init line still delivers its
+        // session id and "tools connected" signal to THIS turn.
+        if (adopted?.pendingStdout) {
+          const pending = adopted.pendingStdout;
+          adopted.pendingStdout = undefined;
+          onStdoutData(Buffer.from(pending, 'utf-8'));
         }
-      };
 
-      // The turn is over at `result`. Warm mode settles now and keeps the
-      // process alive for the next turn; cold mode with live background tasks
-      // settles now and keeps listening; otherwise closing stdin lets claude
-      // exit and onProcClose settles. Defined here, invoked only at runtime
-      // (after finishWarmTurn / settleForBackground below exist).
-      const completeTurn = (ok: boolean) => {
-        closeSteering();
-        if (warm) finishWarmTurn();
-        else if (ok && bgTracker.liveTaskCount > 0 && textCollected.trim()) settleForBackground();
-        else if (speculative) {
-          try { proc.stdin.end() } catch { /* already closed */ }
-        }
-      };
+        // Adopted processes need an explicit resume: finishWarmTurn parks the
+        // proc with stdout/stderr paused, and attaching a 'data' listener does
+        // NOT restart a stream that was explicitly paused. Without this, a
+        // re-adopted warm proc runs the whole turn with its output pipe frozen —
+        // nothing streams to the UI until the process is killed, at which point
+        // every buffered event floods through at once. Harmless on fresh spawns
+        // (resume on an already-flowing stream is a no-op).
+        proc.stdout.resume();
+        proc.stderr.resume();
 
-      const onStdoutData = (chunk: Buffer) => {
-        lastStreamActivityAt = Date.now();
-        stdoutBuffer += chunk.toString('utf-8');
-        const lines = stdoutBuffer.split('\n');
-        stdoutBuffer = lines.pop() ?? '';
-        for (const line of lines) processLine(line);
-      };
-      proc.stdout.on('data', onStdoutData);
-
-      const onStderrData = (chunk: Buffer) => {
-        lastStreamActivityAt = Date.now();
-        const text = chunk.toString('utf-8');
-        stderrBuffer += text;
-        const trimmed = text.trim();
-        // Detect the session-collision signal so we can retry without it.
-        if (/Session ID .* is already in use/i.test(stderrBuffer)) {
-          sessionInUse = true;
-        }
-        if (trimmed && !trimmed.includes('no stdin data received')) {
-          console.log(`[ClaudeCodeService][stderr] ${ trimmed.slice(0, 200) }`);
-        }
-      };
-      proc.stderr.on('data', onStderrData);
-
-      // Replay output drained while the process sat unclaimed (see
-      // claimPrewarm) so a buffered system/init line still delivers its
-      // session id and "tools connected" signal to THIS turn.
-      if (adopted?.pendingStdout) {
-        const pending = adopted.pendingStdout;
-        adopted.pendingStdout = undefined;
-        onStdoutData(Buffer.from(pending, 'utf-8'));
-      }
-
-      // Adopted processes need an explicit resume: finishWarmTurn parks the
-      // proc with stdout/stderr paused, and attaching a 'data' listener does
-      // NOT restart a stream that was explicitly paused. Without this, a
-      // re-adopted warm proc runs the whole turn with its output pipe frozen —
-      // nothing streams to the UI until the process is killed, at which point
-      // every buffered event floods through at once. Harmless on fresh spawns
-      // (resume on an already-flowing stream is a no-op).
-      proc.stdout.resume();
-      proc.stderr.resume();
-
-      const onProcError = (err: Error) => {
-        stopHeartbeat();
-        stopStallWatchdog();
-        closeSteering();
-        options.signal?.removeEventListener('abort', onAbort);
-        if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);
-        if (!settled) { settled = true; reject(err); }
-      };
-      proc.on('error', onProcError);
-
-      // Warm mode: settle the turn on the `result` message and RETURN the
-      // process to the pool without closing it. Detaches this turn's stream
-      // listeners so the next turn's don't double-process; errors / no-output
-      // evict the process (a broken session must not be reused).
-      const finishWarmTurn = () => {
-        if (settled) return;
-        settled = true;
-        stopHeartbeat();
-        stopStallWatchdog();
-        options.signal?.removeEventListener('abort', onAbort);
-        proc.stdout.removeListener('data', onStdoutData);
-        proc.stderr.removeListener('data', onStderrData);
-        proc.removeListener('error', onProcError);
-        proc.removeListener('close', onProcClose);
-        proc.stdout.pause();
-        proc.stderr.pause();
-        if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
-
-        if (errored || !textCollected.trim()) {
+        const onProcError = (err: Error) => {
+          stopHeartbeat();
+          stopStallWatchdog();
+          closeSteering();
+          options.signal?.removeEventListener('abort', onAbort);
           if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);
-          const msg = errorMessage || textCollected || 'claude produced no output';
-          log.warn(`[ClaudeCodeService] warm turn failed, evicting proc: ${ msg.slice(0, 200) }`);
-          reject(new Error(`Claude Code: ${ msg }`));
-          return;
-        }
+          if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
+          if (!settled) {
+            settled = true;
+            const retrySafe = toolStarts.size === 0 && !unresolvedTool;
+            const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
+            reject(new CliFaultError('spawn', `Claude Code process error: ${ err.message }.${ safety }`, err, retrySafe, !retrySafe));
+          }
+        };
+        proc.on('error', onProcError);
 
-        // Park the process for the next turn. Keep a lightweight exit/error
-        // marker so a proc that dies while idle is flagged closed (claimPrewarm
-        // then declines to hand it back). Both are cleared on the next adopt.
-        if (poolEntry) {
-          const entry = poolEntry;
-          entry.busy = false;
-          // A proc that exits while parked can't run a follow-up turn —
-          // still deliver any completion it announced before dying.
-          proc.once('exit', () => {
-            entry.closed = true;
-            entry.bgTracker?.flush();
-          });
-          proc.once('error', () => { entry.closed = true; });
-          // Keep reading while parked so background completions (and the
-          // CLI's autonomous follow-up turn) reach the graph; the idle reap
-          // is deferred while background tasks are still live.
-          this.parkProcess(entry, convId, stdoutBuffer);
-          stdoutBuffer = '';
-          this.armParkedReap(entry, convId);
-          this.prewarmed.set(convId, entry);
-          this.markIdle(entry, convId);
-          parked = true;
-        }
-        const liveBg = poolEntry?.bgTracker?.liveTaskCount ?? 0;
-        log.log(`[ClaudeCodeService] warm turn ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (proc parked${ liveBg ? `, ${ liveBg } background task(s) live` : '' })`);
-        resolve({ text: textCollected, usage: lastUsage });
-      };
+        // Warm mode: settle the turn on the `result` message and RETURN the
+        // process to the pool without closing it. Detaches this turn's stream
+        // listeners so the next turn's don't double-process; errors / no-output
+        // evict the process (a broken session must not be reused).
+        const finishWarmTurn = () => {
+          if (settled) return;
+          settled = true;
+          stopHeartbeat();
+          stopStallWatchdog();
+          options.signal?.removeEventListener('abort', onAbort);
+          proc.stdout.removeListener('data', onStdoutData);
+          proc.stderr.removeListener('data', onStderrData);
+          proc.removeListener('error', onProcError);
+          proc.removeListener('close', onProcClose);
+          proc.stdout.pause();
+          proc.stderr.pause();
+          if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
 
-      // Cold mode (no warm pool): stdin is closed, so the CLI keeps running
-      // only until its background tasks finish, then exits WITHOUT a follow-up
-      // turn. Settle the turn at `result` instead of holding the graph until
-      // exit, and keep listening so each completion is delivered (onProcClose
-      // flushes them). The stall watchdog stops here: a silent wait on a
-      // background task is not a stall, and killing it would lose the task.
-      const settleForBackground = () => {
-        if (settled) return;
-        settled = true;
-        stopHeartbeat();
-        stopStallWatchdog();
-        options.signal?.removeEventListener('abort', onAbort);
-        if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
-        log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (${ bgTracker.liveTaskCount } background task(s) still live — listening for completion)`);
-        resolve({ text: textCollected, usage: lastUsage });
-      };
+          if (errored || !textCollected.trim()) {
+            if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);
+            const msg = errorMessage || textCollected || 'claude produced no output';
+            log.warn(`[ClaudeCodeService] warm turn failed, evicting proc: ${ msg.slice(0, 200) }`);
+            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(msg);
+            const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
+            reject(errored
+              ? new Error(`Claude Code: ${ msg }`)
+              : new CliFaultError('protocol', `Claude Code: ${ msg }${ safety }`, undefined, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
+            return;
+          }
 
-      const onProcClose = (code: number | null) => {
-        stopHeartbeat();
-        stopStallWatchdog();
-        if (!settled && stdoutBuffer.trim()) { processLine(stdoutBuffer); stdoutBuffer = ''; }
-        closeSteering();
-        options.signal?.removeEventListener('abort', onAbort);
-        if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);   // proc gone → drop from pool
-        if (settled) {
+          // Park the process for the next turn. Keep a lightweight exit/error
+          // marker so a proc that dies while idle is flagged closed (claimPrewarm
+          // then declines to hand it back). Both are cleared on the next adopt.
+          if (poolEntry) {
+            const entry = poolEntry;
+            entry.busy = false;
+            // A proc that exits while parked can't run a follow-up turn —
+            // still deliver any completion it announced before dying.
+            proc.once('exit', () => {
+              entry.closed = true;
+              entry.bgTracker?.flush();
+            });
+            proc.once('error', () => { entry.closed = true });
+            // Keep reading while parked so background completions (and the
+            // CLI's autonomous follow-up turn) reach the graph; the idle reap
+            // is deferred while background tasks are still live.
+            this.parkProcess(entry, convId, stdoutBuffer);
+            stdoutBuffer = '';
+            this.armParkedReap(entry, convId);
+            this.prewarmed.set(convId, entry);
+            this.markIdle(entry, convId);
+            parked = true;
+          }
+          const liveBg = poolEntry?.bgTracker?.liveTaskCount ?? 0;
+          log.log(`[ClaudeCodeService] warm turn ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (proc parked${ liveBg ? `, ${ liveBg } background task(s) live` : '' })`);
+          resolve({ text: textCollected, usage: lastUsage });
+        };
+
+        // Cold mode (no warm pool): stdin is closed, so the CLI keeps running
+        // only until its background tasks finish, then exits WITHOUT a follow-up
+        // turn. Settle the turn at `result` instead of holding the graph until
+        // exit, and keep listening so each completion is delivered (onProcClose
+        // flushes them). The stall watchdog stops here: a silent wait on a
+        // background task is not a stall, and killing it would lose the task.
+        const settleForBackground = () => {
+          if (settled) return;
+          settled = true;
+          stopHeartbeat();
+          stopStallWatchdog();
+          options.signal?.removeEventListener('abort', onAbort);
+          if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
+          log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (${ bgTracker.liveTaskCount } background task(s) still live — listening for completion)`);
+          resolve({ text: textCollected, usage: lastUsage });
+        };
+
+        const onProcClose = async(code: number | null) => {
+          const awaitingForcedSettlement = !!terminationPromise && (options.signal?.aborted || stalled);
+          stopHeartbeat();
+          stopStallWatchdog();
+          closeSteering();
+          options.signal?.removeEventListener('abort', onAbort);
+          if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);   // proc gone → drop from pool
+          if (awaitingForcedSettlement && !settled) return;
+          const persistenceError = await persistSession();
+          if (persistenceError && !settled) {
+            settled = true;
+            reject(persistenceError);
+            return;
+          }
+          if (!settled && stdoutBuffer.trim()) { processLine(stdoutBuffer); stdoutBuffer = '' }
+          if (settled) {
           // Already resolved (warm result, or cold settleForBackground). Deliver
           // any background completion the process announced before exiting.
+            if (stdoutBuffer.trim()) processLine(stdoutBuffer);
+            stdoutBuffer = '';
+            bgTracker.flush();
+            return;
+          }
           if (stdoutBuffer.trim()) processLine(stdoutBuffer);
-          stdoutBuffer = '';
-          bgTracker.flush();
-          return;
-        }
-        if (stdoutBuffer.trim()) processLine(stdoutBuffer);
-        if (settled) return;                                           // a buffered `result` may have settled it
-        settled = true;
+          if (settled) return;                                           // a buffered `result` may have settled it
+          settled = true;
 
-        // Aborted by the caller (Stop, or a new/steering message superseding
-        // this run) — the kill caused the empty exit, so report an abort. A
-        // "no output" error here would trigger provider fallback and show the
-        // user a model failure for a run they cancelled.
-        if (options.signal?.aborted && !stalled) {
-          const abortErr = new Error('Claude Code run aborted');
-          abortErr.name = 'AbortError';
-          reject(abortErr);
-          return;
-        }
+          // Aborted by the caller (Stop, or a new/steering message superseding
+          // this run) — the kill caused the empty exit, so report an abort. A
+          // "no output" error here would trigger provider fallback and show the
+          // user a model failure for a run they cancelled.
+          if (options.signal?.aborted) {
+            const abortErr = new Error('Claude Code run aborted');
+            abortErr.name = 'AbortError';
+            reject(abortErr);
+            return;
+          }
 
-        // Stall-watchdog kill — surface a clear, retryable error instead of
-        // falling through to the generic no-output message.
-        if (stalled) {
-          const silentMin = Math.round(STALL_TIMEOUT_MS / 60_000);
-          reject(new Error(`Claude Code stalled — no stream activity for ${ silentMin } minutes, so the run was terminated. Please try again.`));
-          return;
-        }
+          // Stall-watchdog kill — surface a clear, retryable error instead of
+          // falling through to the generic no-output message.
+          if (stalled) {
+            const silentMin = Math.round(STALL_TIMEOUT_MS / 60_000);
+            reject(new CliFaultError(
+              'stall',
+              unresolvedTool
+                ? 'Claude Code stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
+                : `Claude Code stalled — no stream activity for ${ silentMin } minutes, so the run was terminated.`,
+              undefined,
+              !unresolvedTool,
+              unresolvedTool,
+            ));
+            return;
+          }
 
-        // Session lock collision — drop the cached id and retry once with a
-        // fresh session so the user doesn't see a dead-end error.
-        if (sessionInUse && !retryWithoutSession) {
-          log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked; retrying without --resume for conversationId=${ convId }`);
-          this.deleteSession(convId).catch(() => {});
-          this.runClaude(messages, callbacks, options, true).then(
-            r => resolve(r),
-            reject,
-          );
-          return;
-        }
+          // Session lock collision — drop the cached id and retry once with a
+          // fresh session so the user doesn't see a dead-end error.
+          if (sessionInUse && !retryWithoutSession) {
+            log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked; retrying without --resume for conversationId=${ convId }`);
+            void this.deleteSession(convId).then(() => this.runClaude(messages, callbacks, options, true)).then(
+              r => resolve(r),
+              reject,
+            );
+            return;
+          }
 
-        if (capturedSessionId) {
-          this.setSession(convId, capturedSessionId).catch(() => {});
-        }
+          if (capturedSessionId) {
+            this.setSession(convId, capturedSessionId).catch(() => {});
+          }
 
-        if (errored) {
-          const msg = errorMessage || textCollected || `claude exited with code ${ code }`;
-          log.warn(`[ClaudeCodeService] runClaude errored: ${ msg.slice(0, 200) }`);
-          reject(new Error(`Claude Code: ${ msg }`));
-          return;
-        }
+          if (errored) {
+            const msg = errorMessage || textCollected || `claude exited with code ${ code }`;
+            log.warn(`[ClaudeCodeService] runClaude errored: ${ msg.slice(0, 200) }`);
+            reject(new Error(`Claude Code: ${ msg }`));
+            return;
+          }
 
-        if (!textCollected.trim()) {
-          const stderrTail = stderrBuffer.trim().slice(-200);
-          log.warn(`[ClaudeCodeService] runClaude exited with no text (code=${ code }) stderr=${ stderrTail }`);
-          reject(new Error(`Claude Code returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials and VM status.' }`));
-          return;
-        }
+          if (code !== 0) {
+            const msg = errorMessage || stderrBuffer.trim().slice(-200) || `claude exited with code ${ code }`;
+            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(msg);
+            const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
+            reject(new CliFaultError('process_exit', `Claude Code: ${ msg }${ safety }`, undefined, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
+            return;
+          }
 
-        log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
-        resolve({ text: textCollected, usage: lastUsage });
-      };
-      proc.on('close', onProcClose);
-    });
+          if (!sawTerminalResult) {
+            const retrySafe = toolStarts.size === 0 && !unresolvedTool;
+            reject(new CliFaultError('protocol', 'Claude Code exited before emitting a terminal result event.', undefined, retrySafe, !retrySafe));
+            return;
+          }
+
+          if (!textCollected.trim()) {
+            const stderrTail = stderrBuffer.trim().slice(-200);
+            log.warn(`[ClaudeCodeService] runClaude exited with no text (code=${ code }) stderr=${ stderrTail }`);
+            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(stderrTail);
+            const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
+            reject(new CliFaultError('protocol', `Claude Code returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, undefined, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
+            return;
+          }
+
+          log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
+          resolve({ text: textCollected, usage: lastUsage });
+        };
+        proc.on('close', onProcClose);
+      });
     } finally {
       // A parked warm process keeps its MCP session for the next turn; only
       // clean up when we are not reusing it.

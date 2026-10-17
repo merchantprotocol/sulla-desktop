@@ -34,6 +34,24 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
   const message = redactLLMFailureMessage(error);
   const lower = `${ name || '' } ${ message }`.toLowerCase();
 
+  if ((error as any)?.cliRecoveryExhausted) {
+    return {
+      kind:            'unavailable',
+      retryPrimary:    false,
+      fallbackAllowed: false,
+      userMessage:     'The selected CLI model stopped responding and could not be recovered safely.',
+    };
+  }
+
+  if ((error as any)?.unsafeToFallback) {
+    return {
+      kind:            'unavailable',
+      retryPrimary:    false,
+      fallbackAllowed: false,
+      userMessage:     'The CLI stopped while a tool result was still uncertain, so automatic recovery was stopped to avoid repeating an action.',
+    };
+  }
+
   if (name === 'AbortError' || lower.includes('aborted') || lower.includes('aborterror')) {
     return {
       kind:            'interrupted',
@@ -76,7 +94,7 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
     };
   }
 
-  if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('etimedout')) {
+  if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('etimedout') || lower.includes('stalled')) {
     return {
       kind:            'timeout',
       retryPrimary:    true,

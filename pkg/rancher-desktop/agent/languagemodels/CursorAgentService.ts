@@ -23,7 +23,7 @@ function parseCursorEvent(event: any): CliAgentEventResult {
     // model_call_id contain new text. Pre-tool and final flushes repeat it.
     const isNewDelta = typeof event.timestamp_ms === 'number' && !event.model_call_id;
     return {
-      text: isNewDelta && text ? text : undefined,
+      text:     isNewDelta && text ? text : undefined,
       sessionId,
       activity: tool ? `Using ${ tool.name ?? 'tool' }` : undefined,
     };
@@ -31,25 +31,33 @@ function parseCursorEvent(event: any): CliAgentEventResult {
   if (event?.type === 'tool_call' || event?.type === 'tool' || event?.type === 'tool_use') {
     const call = event.tool_call ?? event.toolCall ?? event;
     const [kind, details] = Object.entries(call).find(([, value]) => value && typeof value === 'object') ?? ['tool', call];
-    const detail = details as any;
+    const detail = details;
     const result = detail?.result ?? call.result ?? call.output ?? event.result ?? '';
     const completed = event.subtype === 'completed' || event.status === 'completed' || result !== '';
     return {
       sessionId,
-      activity: `Using ${ kind }`,
-      toolEvent: completed ? {
-        toolUseId:   String(event.call_id ?? call.id ?? call.call_id ?? call.callId ?? ''),
-        toolName:    String(kind),
-        input:       detail?.args ?? call.input ?? call.args,
-        resultChars: typeof result === 'string' ? result.length : JSON.stringify(result).length,
-        isError:     event.status === 'error' || call.is_error === true || !!detail?.result?.error,
-      } : undefined,
+      activity:  `Using ${ kind }`,
+      toolState: {
+        toolUseId: String(event.call_id ?? call.id ?? call.call_id ?? call.callId ?? kind),
+        toolName:  String(kind),
+        status:    completed ? 'completed' : 'started',
+      },
+      toolEvent: completed
+        ? {
+          toolUseId:   String(event.call_id ?? call.id ?? call.call_id ?? call.callId ?? ''),
+          toolName:    String(kind),
+          input:       detail?.args ?? call.input ?? call.args,
+          resultChars: typeof result === 'string' ? result.length : JSON.stringify(result).length,
+          isError:     event.status === 'error' || call.is_error === true || !!detail?.result?.error,
+        }
+        : undefined,
     };
   }
   if (event?.type === 'result') {
     return {
       sessionId,
-      usage: {
+      terminal: true,
+      usage:    {
         ...(event.usage ?? {}),
         duration_ms: event.duration_ms,
         cost_usd:    event.total_cost_usd,
@@ -64,16 +72,16 @@ function parseCursorEvent(event: any): CliAgentEventResult {
 export class CursorAgentService extends CliAgentService {
   constructor() {
     super({
-      id:             'cursor',
-      name:           'Cursor Agent',
-      autoModel:      'cursor',
-      missingMessage: 'Cursor Agent CLI is not installed in the VM. Run: curl https://cursor.com/install -fsS | bash',
-      contextWindow:  200_000,
+      id:                        'cursor',
+      name:                      'Cursor Agent',
+      autoModel:                 'cursor',
+      missingMessage:            'Cursor Agent CLI is not installed in the VM. Run: curl https://cursor.com/install -fsS | bash',
+      contextWindow:             200_000,
       systemPromptInUserMessage: true,
-      buildArgs:      cursorArgs,
-      parseEvent:     parseCursorEvent,
-      writeMcpConfig: session => writeCursorMcpPlugin(session),
-      isResumeFailure: message => /session|chat|resume|not found|invalid/i.test(message),
+      buildArgs:                 cursorArgs,
+      parseEvent:                parseCursorEvent,
+      writeMcpConfig:            session => writeCursorMcpPlugin(session),
+      isResumeFailure:           message => /(?:failed|unable) to (?:load|resume|find).*(?:session|chat)|(?:session|chat).*(?:not found|does not exist|invalid|expired)/i.test(message),
     });
   }
 }
