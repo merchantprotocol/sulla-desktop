@@ -91,7 +91,25 @@ integration('publishes a complete retry-safe legacy snapshot in PostgreSQL', asy
     assert.equal(edges.length, 2); assert.ok(edges.some(edge => edge.src_type === 'user')); assert.ok(edges.some(edge => edge.dst_type === 'agent-run'));
     assert.equal((await db.query('SELECT count(*)::int count FROM journal j JOIN files_legacy_file_map fm ON fm.shadow_file_id=j.file_id')).rows[0].count, 1);
     assert.equal((await db.query('SELECT count(*)::int count FROM files_legacy_audit_map')).rows[0].count, 1);
+    const nativeEdit = '60000000-0000-4000-8000-000000000006';
+    const shadow = (await db.query(`SELECT fm.shadow_file_id,vm.shadow_version_id,m.shadow_collection_id,v.manifest_hash
+      FROM files_legacy_file_map fm JOIN files_legacy_version_map vm ON vm.source_version_id=$1
+      JOIN files_legacy_collection_map m ON m.source_collection_id=$2 JOIN file_versions v ON v.id=vm.shadow_version_id
+      WHERE fm.source_file_id=$3`, [childVersion, legacyCollection, legacyFile])).rows[0];
+    await db.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
+      VALUES($1,$2,$3,$4,$5,$6,'user','owner','post-import native edit','native-device',$4)`,
+    [nativeEdit, shadow.shadow_file_id, shadow.shadow_collection_id, shadow.shadow_version_id, shadow.manifest_hash, legacyPlain.length]);
+    await db.query("UPDATE files SET current_version_id=$2,path='Native/renamed-after-import.txt',search_text='native metadata' WHERE id=$1", [shadow.shadow_file_id, nativeEdit]);
+    await db.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'group','post-import-group','view')", [shadow.shadow_collection_id]);
+    await db.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1', [shadow.shadow_collection_id]);
+    const beforeRetry = (await db.query(`SELECT f.current_version_id,f.path,f.search_text,
+      (SELECT count(*)::int FROM collection_acl WHERE collection_id=$2) acl_count,
+      (SELECT jsonb_object_agg(id,refcount) FROM chunks WHERE collection_id=$2) refcounts FROM files f WHERE f.id=$1`, [shadow.shadow_file_id, shadow.shadow_collection_id])).rows[0];
     assert.equal((await importer.run(nativeMaster, [legacyMaster])).versions, 5);
+    const afterRetry = (await db.query(`SELECT f.current_version_id,f.path,f.search_text,
+      (SELECT count(*)::int FROM collection_acl WHERE collection_id=$2) acl_count,
+      (SELECT jsonb_object_agg(id,refcount) FROM chunks WHERE collection_id=$2) refcounts FROM files f WHERE f.id=$1`, [shadow.shadow_file_id, shadow.shadow_collection_id])).rows[0];
+    assert.deepEqual(afterRetry, beforeRetry); assert.equal(afterRetry.current_version_id, nativeEdit);
   } finally {
     for (const key of [nativeMaster, legacyMaster, legacyData, legacyDedup, nativeData, nativeDedup]) key.fill(0);
     await db.end(); await rm(root, { recursive: true, force: true });

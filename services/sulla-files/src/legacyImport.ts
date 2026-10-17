@@ -171,6 +171,8 @@ export class LegacyFilesImporter {
 
   async run(nativeMaster:Buffer, suppliedLegacyMasters:Buffer[]):Promise<{ collections: number; files: number; versions: number }> {
     if (nativeMaster.length !== 32 || suppliedLegacyMasters.some(key => key.length !== 32) || suppliedLegacyMasters.length === 0) throw new Error('Invalid Files import key material');
+    const completed = await this.completedResult();
+    if (completed) return completed;
     const legacyMasters = suppliedLegacyMasters.map(value => Buffer.from(value));
     try {
       await this.stage(nativeMaster);
@@ -245,6 +247,25 @@ export class LegacyFilesImporter {
         }
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
     } finally { for (const key of legacyMasters) key.fill(0); }
+  }
+
+  private async completedResult():Promise<{ collections: number; files: number; versions: number } | undefined> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      if (!(await client.query("SELECT 1 FROM files_legacy_imports WHERE id=TRUE AND state='completed'")).rowCount) { await client.query('COMMIT'); return undefined }
+      const incomplete = await client.query(`SELECT 1 FROM collections c LEFT JOIN files_legacy_collection_map cm ON cm.source_collection_id=c.id
+        WHERE c.legacy_source=TRUE AND (cm.source_collection_id IS NULL OR cm.published_at IS NULL)
+        UNION ALL SELECT 1 FROM files f JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE LEFT JOIN files_legacy_file_map fm ON fm.source_file_id=f.id WHERE fm.source_file_id IS NULL
+        UNION ALL SELECT 1 FROM file_versions v JOIN files f ON f.id=v.file_id JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=v.id WHERE vm.source_version_id IS NULL
+        UNION ALL SELECT 1 FROM files f JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=f.current_version_id WHERE f.current_version_id IS NOT NULL AND vm.source_version_id IS NULL LIMIT 1`);
+      if (incomplete.rowCount) throw new Error('Completed legacy Files import source changed or mapping is incomplete');
+      const counts = (await client.query(`SELECT
+        (SELECT count(*)::int FROM files_legacy_collection_map cm JOIN collections c ON c.id=cm.source_collection_id AND c.legacy_source=TRUE) collections,
+        (SELECT count(*)::int FROM files_legacy_file_map fm JOIN files f ON f.id=fm.source_file_id JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE) files,
+        (SELECT count(*)::int FROM files_legacy_version_map vm JOIN file_versions v ON v.id=vm.source_version_id JOIN files f ON f.id=v.file_id JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE) versions`)).rows[0];
+      await client.query('COMMIT'); return counts;
+    } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
   private async stage(nativeMaster:Buffer):Promise<{ collections: SourceCollection[]; mappings: any[] }> {
@@ -323,6 +344,7 @@ export class LegacyFilesImporter {
         JOIN file_versions shadow ON shadow.id=vm.shadow_version_id JOIN files_legacy_file_map fm ON fm.source_file_id=source.file_id
         JOIN files_legacy_collection_map cm ON cm.source_collection_id=source.chunk_collection_id
         WHERE shadow.file_id IS DISTINCT FROM fm.shadow_file_id OR shadow.chunk_collection_id IS DISTINCT FROM cm.shadow_collection_id
+          OR shadow.manifest_hash IS DISTINCT FROM vm.shadow_manifest_hash
           OR shadow.parent_version_id IS DISTINCT FROM (SELECT p.shadow_version_id FROM files_legacy_version_map p WHERE p.source_version_id=source.parent_version_id)
           OR shadow.base_server_version_id IS DISTINCT FROM (SELECT b.shadow_version_id FROM files_legacy_version_map b WHERE b.source_version_id=source.base_server_version_id)
           OR shadow.size IS DISTINCT FROM source.size OR shadow.deleted IS DISTINCT FROM source.deleted OR shadow.created_by_type IS DISTINCT FROM source.created_by_type
