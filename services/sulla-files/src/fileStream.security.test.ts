@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { encryptChunk } from './crypto.js';
+import { chunkId, decryptAndVerifyChunk, encryptChunk, maxEncryptedChunkBytes } from './crypto.js';
 import { parseByteRange, RangeNotSatisfiableError, streamFileContent } from './fileStream.js';
 import { Store } from './store.js';
 
@@ -26,10 +26,12 @@ test('byte ranges preserve exact media sizes and reject malformed or unsatisfiab
 
 test('streaming decrypts only intersecting bounded chunks and observes cancellation', async() => {
   const chunkBytes = 4 * 1024 * 1024;
-  const firstId = 'a'.repeat(64); const secondId = 'b'.repeat(64); const key = randomBytes(32);
+  const key = randomBytes(32); const dedup = randomBytes(32);
+  const firstPlain = Buffer.alloc(chunkBytes, 1); const secondPlain = Buffer.from('end');
+  const firstId = chunkId(firstPlain, dedup); const secondId = chunkId(secondPlain, dedup);
   const encrypted = new Map([
-    [firstId, await encryptChunk(Buffer.alloc(chunkBytes, 1), key, firstId)],
-    [secondId, await encryptChunk(Buffer.from('end'), key, secondId)],
+    [firstId, await encryptChunk(firstPlain, key, firstId)],
+    [secondId, await encryptChunk(secondPlain, key, secondId)],
   ]);
   const reads:string[] = [];
   const db = {
@@ -41,7 +43,7 @@ test('streaming decrypts only intersecting bounded chunks and observes cancellat
     },
   } as unknown as pg.Pool;
   const store = { getBounded: (_collection:string, id:string, maxBytes:number, expectedBytes:number) => { reads.push(id); const bytes = encrypted.get(id)!; assert(bytes.length <= maxBytes); assert.equal(bytes.length, expectedBytes); return Promise.resolve(bytes) } } as unknown as Store;
-  const config = { keyring: { keys: () => Promise.resolve({ data: key }) } } as unknown as Config;
+  const config = { keyring: { keys: () => Promise.resolve({ data: key, dedup }) } } as unknown as Config;
   const controller = new AbortController();
   const content = await streamFileContent(db, config, store, 'file', 'version', `bytes=${ chunkBytes }-`, controller.signal);
   assert(content);
@@ -54,14 +56,35 @@ test('streaming decrypts only intersecting bounded chunks and observes cancellat
   await assert.rejects(cancelled!.body.next(), { name: 'AbortError' });
 });
 
-test('chunk storage reads a fixed bound and never replaces immutable content', async(t) => {
+test('random incompressible chunks preserve an immutable winner across randomized encryption retries and ranges', async(t) => {
   const root = await mkdtemp(join(tmpdir(), 'sulla-files-store-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const store = new Store(root); const id = 'c'.repeat(64); const bytes = Buffer.from('sealed');
-  await store.put('collection', id, bytes);
-  assert.deepEqual(await store.getBounded('collection', id, bytes.length, bytes.length), bytes);
-  await store.put('collection', id, bytes);
-  await assert.rejects(store.put('collection', id, Buffer.from('alterd')), /Immutable chunk collision/);
+  const store = new Store(root); const plain = randomBytes(4 * 1024 * 1024); const data = randomBytes(32); const dedup = randomBytes(32);
+  const id = chunkId(plain, dedup); const first = await encryptChunk(plain, data, id); const retry = await encryptChunk(plain, data, id);
+  assert.notDeepEqual(first, retry);
+  assert(first.length > 4 * 1024 * 1024 + 1024);
+  assert(first.length <= maxEncryptedChunkBytes(plain.length));
+  assert.equal(await store.put('collection', id, first), true);
+  assert.equal(await store.put('collection', id, retry), false);
+  const winner = await store.getBounded('collection', id, maxEncryptedChunkBytes(plain.length), first.length);
+  assert.deepEqual(winner, first);
+  assert.deepEqual(await decryptAndVerifyChunk(winner, data, dedup, id, plain.length), plain);
+
+  const db = {
+    query: (sql:string) => {
+      if (sql.includes('FROM files f')) return Promise.resolve({ rows: [{ id: 'file', path: 'safe/random.bin', mime: 'application/octet-stream', version_id: 'version', chunk_collection_id: 'collection', size: plain.length, total_size: plain.length, chunk_ids: [id] }] });
+      if (sql.includes('files_protected_files')) return Promise.resolve({ rows: [], rowCount: 0 });
+      if (sql.includes('FROM chunks')) return Promise.resolve({ rows: [{ id, size: plain.length, stored_size: first.length }] });
+      return Promise.reject(new Error(`Unexpected query: ${ sql }`));
+    },
+  } as unknown as pg.Pool;
+  const config = { keyring: { keys: () => Promise.resolve({ data, dedup }) } } as unknown as Config;
+  const content = await streamFileContent(db, config, store, 'file', 'version', `bytes=${ plain.length - 32 }-`, new AbortController().signal);
+  assert(content);
+  const output:Buffer[] = [];
+  for await (const part of content.body) output.push(part);
+  assert.deepEqual(Buffer.concat(output), plain.subarray(-32));
+
   await appendFile(store.path('collection', id), '!');
-  await assert.rejects(store.getBounded('collection', id, bytes.length, bytes.length), /longer than declared/);
+  await assert.rejects(store.getBounded('collection', id, maxEncryptedChunkBytes(plain.length), first.length), /longer than declared/);
 });

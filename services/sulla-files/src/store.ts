@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { link, mkdir, open, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -37,13 +37,15 @@ export class Store {
       }
       const overflow = Buffer.allocUnsafe(1);
       if ((await handle.read(overflow, 0, 1, expectedBytes)).bytesRead !== 0) throw new Error(`Stored chunk is longer than declared for ${ id }`);
+      const final = await handle.stat();
+      if (!final.isFile() || final.size !== expectedBytes) throw new Error(`Stored chunk metadata changed during read for ${ id }`);
       return bytes;
     } finally {
       await handle.close();
     }
   }
 
-  async put(collectionId:string, id:string, bytes:Uint8Array) {
+  async put(collectionId:string, id:string, bytes:Uint8Array):Promise<boolean> {
     const target = this.path(collectionId, id);
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
     const temp = `${ target }.tmp-${ process.pid }-${ randomUUID() }`;
@@ -54,10 +56,15 @@ export class Store {
       try { await handle.writeFile(bytes); await handle.sync() } finally { await handle.close() }
       try {
         await link(temp, target);
+        return true;
       } catch (error:any) {
         if (error?.code !== 'EEXIST') throw error;
-        const existing = await this.getBounded(collectionId, id, bytes.byteLength, bytes.byteLength);
-        if (!timingSafeEqual(existing, Buffer.from(bytes))) throw new Error(`Immutable chunk collision for ${ id }`);
+        const existing = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const info = await existing.stat();
+          if (!info.isFile() || info.size !== bytes.byteLength) throw new Error(`Immutable chunk collision for ${ id }`);
+        } finally { await existing.close() }
+        return false;
       }
     } finally {
       if (ownsTemp) await rm(temp, { force: true });

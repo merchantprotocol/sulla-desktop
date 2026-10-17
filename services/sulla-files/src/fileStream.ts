@@ -1,4 +1,4 @@
-import { decryptChunk } from './crypto.js';
+import { decryptAndVerifyChunk, maxEncryptedChunkBytes } from './crypto.js';
 import { assertUnprotectedFile } from './protectedFiles.js';
 
 import type { Config } from './config.js';
@@ -8,7 +8,6 @@ import type pg from 'pg';
 
 export interface ByteRange { start:number; end:number }
 const CHUNK_BYTES = 4 * 1024 * 1024;
-const MAX_STORED_CHUNK_BYTES = CHUNK_BYTES + 1024;
 
 export class RangeNotSatisfiableError extends Error {
   readonly status = 416;
@@ -70,7 +69,7 @@ async function descriptor(db:pg.Pool, fileId:string, versionId?:string):Promise<
     const size = metadata?.size;
     const storedSize = metadata?.storedSize;
     const expectedSize = index < ids.length - 1 ? CHUNK_BYTES : declared - CHUNK_BYTES * (ids.length - 1);
-    if (size === undefined || storedSize === undefined || !Number.isSafeInteger(size) || size !== expectedSize || size < 0 || size > CHUNK_BYTES || !Number.isSafeInteger(storedSize) || storedSize < 0 || storedSize > MAX_STORED_CHUNK_BYTES) throw new Error(`Missing or invalid chunk metadata for ${ id }`);
+    if (size === undefined || storedSize === undefined || !Number.isSafeInteger(size) || size !== expectedSize || size < 0 || size > CHUNK_BYTES || !Number.isSafeInteger(storedSize) || storedSize < 0 || storedSize > maxEncryptedChunkBytes(size)) throw new Error(`Missing or invalid chunk metadata for ${ id }`);
     chunks.push({ id, size, storedSize, start: offset, end: offset + size - 1 });
     offset += size;
   }
@@ -84,17 +83,16 @@ export async function streamFileContent(db:pg.Pool, config:Config, store:Store, 
   const range = parseByteRange(rangeHeader, file.size);
   const start = range?.start ?? 0;
   const end = range?.end ?? Math.max(0, file.size - 1);
-  const key = (await config.keyring!.keys(file.chunkCollectionId)).data;
+  const keys = await config.keyring!.keys(file.chunkCollectionId);
   async function * body():AsyncGenerator<Buffer> {
     if (file!.size === 0) return;
     for (const chunk of file!.chunks) {
       if (chunk.end < start || chunk.start > end) continue;
       signal.throwIfAborted();
-      const encrypted = await store.getBounded(file!.chunkCollectionId, chunk.id, MAX_STORED_CHUNK_BYTES, chunk.storedSize);
+      const encrypted = await store.getBounded(file!.chunkCollectionId, chunk.id, maxEncryptedChunkBytes(chunk.size), chunk.storedSize);
       signal.throwIfAborted();
-      const plain = await decryptChunk(encrypted, key, chunk.id);
+      const plain = await decryptAndVerifyChunk(encrypted, keys.data, keys.dedup, chunk.id, chunk.size);
       signal.throwIfAborted();
-      if (plain.length !== chunk.size) throw new Error(`Decrypted chunk size mismatch for ${ chunk.id }`);
       const from = Math.max(0, start - chunk.start);
       const to = Math.min(chunk.size, end - chunk.start + 1);
       yield plain.subarray(from, to);
