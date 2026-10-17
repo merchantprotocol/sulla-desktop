@@ -39,13 +39,13 @@ export async function issueProviderExecutionContext(
 
   return issueLocalBrokerContext({
     agentId,
-    podId:              String(metadata.podId ?? `desktop:${ threadId }`),
-    credentialScope:    { integration_id: providerId, account_id: accountId },
+    podId:               String(metadata.podId ?? `desktop:${ threadId }`),
+    credentialScope:     { integration_id: providerId, account_id: accountId },
     threadId,
-    jobId:              typeof metadata.jobId === 'string' ? metadata.jobId : undefined,
+    jobId:               typeof metadata.jobId === 'string' ? metadata.jobId : undefined,
     workflowExecutionId: typeof metadata.workflowExecutionId === 'string' ? metadata.workflowExecutionId : undefined,
-    orgId:              typeof metadata.orgId === 'string' ? metadata.orgId : undefined,
-    signal:             metadata.options?.abort?.signal,
+    orgId:               typeof metadata.orgId === 'string' ? metadata.orgId : undefined,
+    signal:              metadata.options?.abort?.signal,
   });
 }
 
@@ -58,16 +58,18 @@ export async function issueServiceProviderExecutionContext(
 ): Promise<ToolExecutionContext> {
   if (!serviceId.trim()) throw new Error('provider.inference requires a trusted service identity');
   return issueLocalBrokerContext({
-    agentId: serviceId,
-    podId:   'desktop-main',
+    agentId:         serviceId,
+    podId:           'desktop-main',
     credentialScope: { integration_id: providerId, account_id: accountId },
     signal,
   });
 }
 
 interface ProviderFetchOptions {
-  streaming:   boolean;
-  injections?: BrokerInjection[];
+  streaming:     boolean;
+  injections?:   BrokerInjection[];
+  operation?:    'provider.inference' | 'provider.discovery' | 'provider.audio';
+  responseType?: 'json' | 'stream' | 'binary-stream';
 }
 
 export async function providerFetch(
@@ -97,14 +99,14 @@ export async function providerFetch(
 
   const broker = requireConfiguredCredentialBroker();
   const request = broker.requestFor(ctx, {
-    operation:    'provider.inference',
+    operation:    options.operation ?? 'provider.inference',
     ref:          { integrationId: providerId, accountId: scope.account_id },
     url,
     method:       init.method ?? 'POST',
     headers:      Object.fromEntries(headers.entries()),
     body,
     injections:   options.injections ?? [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
-    responseType: options.streaming ? 'stream' : 'json',
+    responseType: options.responseType ?? (options.streaming ? 'stream' : 'json'),
   });
   if (options.streaming) return broker.executeStream(request, init.signal ?? undefined);
 

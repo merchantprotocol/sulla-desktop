@@ -13,6 +13,12 @@
  */
 
 import { getIntegrationService } from './IntegrationService';
+import { usesContainerVaultAuthority } from '../../vault-broker';
+import {
+  issueServiceProviderExecutionContext,
+  loadProviderRuntimeConfig,
+  providerFetch,
+} from '../languagemodels/providerBroker';
 
 let instance: TextToSpeechService | null = null;
 
@@ -65,9 +71,11 @@ export class TextToSpeechService {
    * ElevenLabs TTS via the streaming endpoint (eleven_flash_v2_5).
    */
   private async speakElevenLabs(text: string, voiceId?: string): Promise<{ audio: Buffer; mimeType: string }> {
-    const apiKey = await this.getApiKey();
+    const containerAuthority = usesContainerVaultAuthority();
+    const runtime = containerAuthority ? await loadProviderRuntimeConfig('elevenlabs') : null;
+    const apiKey = containerAuthority ? '' : await this.getApiKey();
 
-    if (!apiKey) {
+    if (!containerAuthority && !apiKey) {
       throw new Error('ElevenLabs API key is not configured. Add it in Integrations → ElevenLabs.');
     }
 
@@ -78,18 +86,18 @@ export class TextToSpeechService {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       if (attempt > 0) {
         const delay = INITIAL_BACKOFF_MS * Math.pow(2, attempt - 1);
-        await new Promise(r => setTimeout(r, delay));
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
 
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-        const response = await fetch(`${ this.baseUrl }/text-to-speech/${ resolvedVoiceId }/stream`, {
+        const init: RequestInit = {
           method:  'POST',
           signal:  controller.signal,
           headers: {
-            'xi-api-key':   apiKey,
+            ...(!containerAuthority ? { 'xi-api-key': apiKey! } : {}),
             'Content-Type': 'application/json',
             Accept:         'audio/mpeg',
           },
@@ -102,6 +110,15 @@ export class TextToSpeechService {
             },
             optimize_streaming_latency: 3,
           }),
+        };
+        const executionContext = containerAuthority
+          ? await issueServiceProviderExecutionContext('text-to-speech', 'elevenlabs', runtime!.accountId, controller.signal)
+          : undefined;
+        const response = await providerFetch('elevenlabs', `${ this.baseUrl }/text-to-speech/${ resolvedVoiceId }/stream`, init, executionContext, {
+          streaming:    true,
+          operation:    'provider.audio',
+          responseType: 'binary-stream',
+          injections:   [{ field: 'api_key', target: 'header', name: 'xi-api-key', scheme: 'raw' }],
         });
 
         clearTimeout(timeout);
@@ -196,9 +213,11 @@ export class TextToSpeechService {
    * rejected by api.x.ai, so TTS specifically needs the pasted api_key.
    */
   private async speakGrok(text: string, voiceId?: string): Promise<{ audio: Buffer; mimeType: string }> {
-    const apiKey = await this.getGrokApiKey();
+    const containerAuthority = usesContainerVaultAuthority();
+    const runtime = containerAuthority ? await loadProviderRuntimeConfig('grok') : null;
+    const apiKey = containerAuthority ? '' : await this.getGrokApiKey();
 
-    if (!apiKey) {
+    if (!containerAuthority && !apiKey) {
       throw new Error('Grok API key is not configured. Add your xAI API key in Integrations → Grok.');
     }
 
@@ -209,18 +228,18 @@ export class TextToSpeechService {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       if (attempt > 0) {
         const delay = INITIAL_BACKOFF_MS * Math.pow(2, attempt - 1);
-        await new Promise(r => setTimeout(r, delay));
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
 
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-        const response = await fetch(GROK_TTS_URL, {
+        const init: RequestInit = {
           method:  'POST',
           signal:  controller.signal,
           headers: {
-            Authorization:  `Bearer ${ apiKey }`,
+            ...(!containerAuthority ? { Authorization: `Bearer ${ apiKey }` } : {}),
             'Content-Type': 'application/json',
           },
           // Default output is MP3 24kHz/128kbps; `auto` lets Grok detect the language.
@@ -229,6 +248,15 @@ export class TextToSpeechService {
             voice_id: voice,
             language: 'auto',
           }),
+        };
+        const executionContext = containerAuthority
+          ? await issueServiceProviderExecutionContext('text-to-speech', 'grok', runtime!.accountId, controller.signal)
+          : undefined;
+        const response = await providerFetch('grok', GROK_TTS_URL, init, executionContext, {
+          streaming:    true,
+          operation:    'provider.audio',
+          responseType: 'binary-stream',
+          injections:   [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
         });
 
         clearTimeout(timeout);
