@@ -61,6 +61,10 @@ describe('ProviderExecutionTransport security boundary', () => {
       toolConfig: {
         opaqueConfigRef:     'opaque:tools',
         codexConfigOverrides: ['mcp_servers.sulla-native.url="http://sulla_tools:3000/mcp"'],
+        environment: {
+          SULLA_MCP_SESSION_TOKEN: 'synthetic-mcp-capability',
+          SULLA_TOOL_SESSION:      'synthetic-mcp-capability',
+        },
       },
     };
     expect(requireContainerToolConfig(context)?.codexConfigOverrides).toHaveLength(1);

@@ -32,6 +32,7 @@ export interface ProviderCliToolConfig {
   opaqueConfigRef: string;
   claudeConfigPath?: string;
   codexConfigOverrides?: readonly string[];
+  environment?: Readonly<Record<string, string>>;
 }
 
 export interface ProviderTransportContext {
@@ -233,7 +234,7 @@ export function requireBrokeredContainerAuth(context: ProviderTransportContext):
     throw new Error(`Container ${ context.provider } execution requires opaque broker authentication`);
   }
   const config = context.session?.providerConfig;
-  if (!config || config.opaqueConfigRef !== context.auth.opaqueConfigRef ||
+  if (config?.opaqueConfigRef !== context.auth.opaqueConfigRef ||
       context.session?.opaqueProviderConfigRef !== config.opaqueConfigRef) {
     throw new Error(`Container ${ context.provider } execution requires a matching opaque provider config`);
   }
@@ -280,11 +281,13 @@ export function requireContainerToolConfig(context: ProviderTransportContext): P
     throw new Error(`Container ${ context.provider } execution requires a matching opaque tool config`);
   }
   if (context.provider === 'claude-code') {
-    if (!config.claudeConfigPath || config.codexConfigOverrides?.length) {
+    if (!config.claudeConfigPath || config.codexConfigOverrides?.length || Object.keys(config.environment ?? {}).length) {
       throw new Error('Container Claude tool config requires a provider-visible MCP config path');
     }
   } else if (!config.codexConfigOverrides?.length || config.claudeConfigPath ||
-      config.codexConfigOverrides.some(value => !value || /[\r\n\0]/.test(value))) {
+      config.codexConfigOverrides.some(value => !value || /[\r\n\0]/.test(value)) ||
+      Object.keys(config.environment ?? {}).sort().join(',') !== 'SULLA_MCP_SESSION_TOKEN,SULLA_TOOL_SESSION' ||
+      Object.values(config.environment ?? {}).some(value => !value)) {
     throw new Error('Container Codex tool config requires bounded MCP config overrides');
   }
 
