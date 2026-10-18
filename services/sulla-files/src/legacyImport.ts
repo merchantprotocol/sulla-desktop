@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { constants, open, readdir } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 
@@ -234,7 +234,7 @@ async function unwrap(envelope:Envelope, key:Buffer, context:string):Promise<Buf
   return value;
 }
 
-async function sourceKeys(collection:SourceCollection, nativeMaster:Buffer, legacyMasters:Buffer[], nativeRow?:{ data_key: Envelope; dedup_key: Envelope }, legacySigningKey?:string | Buffer):Promise<Keys> {
+async function sourceKeys(collection:SourceCollection, nativeMaster:Buffer, legacyMasters:Buffer[], nativeRow?:{ data_key: Envelope; dedup_key: Envelope }):Promise<Keys> {
   if (collection.compatibility_state === 'native') {
     if (!nativeRow) throw new Error('Native source collection key is unavailable');
     const data = await unwrap(nativeRow.data_key, nativeMaster, `sulla:files:data-key:v1:${ collection.id }`);
@@ -249,16 +249,6 @@ async function sourceKeys(collection:SourceCollection, nativeMaster:Buffer, lega
   }
   const unique = matches.filter((candidate, index) => matches.findIndex(other => timingSafeEqual(candidate.data, other.data) && timingSafeEqual(candidate.dedup, other.dedup)) === index);
   for (const candidate of matches) if (!unique.includes(candidate)) { candidate.data.fill(0); candidate.dedup.fill(0) }
-  if (unique.length === 0 && legacySigningKey) {
-    // The first container runtime derived collection keys from its capability
-    // signing key. This candidate is permitted only for container-native
-    // layouts; convertLegacyManifest still authenticates every chunk, keyed
-    // identity, manifest hash, and exact size before publication.
-    return {
-      data:  createHmac('sha256', legacySigningKey).update(`sulla:files:data-key:v1:${ collection.id }`).digest(),
-      dedup: createHmac('sha256', legacySigningKey).update(`sulla:files:dedup-key:v1:${ collection.id }`).digest(),
-    };
-  }
   if (unique.length !== 1) {
     for (const candidate of unique) { candidate.data.fill(0); candidate.dedup.fill(0) }
     throw new Error(unique.length === 0
@@ -310,7 +300,7 @@ async function optionalLegacyLayoutIds(root:string):Promise<Map<string, string>>
 
 export class LegacyFilesImporter {
   private readonly store: Store;
-  constructor(private readonly db:pg.Pool, private readonly sourceRoot:string, private readonly chunkRoot:string, private readonly legacySigningKey?:string | Buffer) { this.store = new Store(chunkRoot) }
+  constructor(private readonly db:pg.Pool, private readonly sourceRoot:string, private readonly chunkRoot:string) { this.store = new Store(chunkRoot) }
 
   async run(nativeMaster:Buffer, suppliedLegacyMasters:Buffer[]):Promise<{ collections: number; files: number; versions: number }> {
     const trace = new LegacyImportTrace();
@@ -367,9 +357,7 @@ export class LegacyFilesImporter {
               hasExternalChunks: externalLayout.has(collection.id.toLowerCase()),
               hasNativeChunks: nativeLayout.has(collection.id.toLowerCase()),
             });
-            const id = collection.id.toLowerCase();
-            const signingKey = nativeLayout.has(id) && !externalLayout.has(id) ? this.legacySigningKey : undefined;
-            collectionKeys.set(collection.id, await sourceKeys(collection, nativeMaster, legacyMasters, nativeRow, signingKey));
+            collectionKeys.set(collection.id, await sourceKeys(collection, nativeMaster, legacyMasters, nativeRow));
           }
           trace.mark('shadow-key-authentication');
           for (const mapping of mappings) {
@@ -539,7 +527,8 @@ export class LegacyFilesImporter {
       if (!collection || !versionMap.get(version.id) || !fileMap.get(version.file_id)) throw new Error('Legacy Files version identity mapping is incomplete');
       if (version.manifest_hash && !manifest) throw new Error('Legacy Files converted manifest is missing');
       await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id)
-          VALUES($1,$2,$3,NULL,$4,$5,$6,$7,$8,$9,$10,$11,NULL) ON CONFLICT(id) DO NOTHING`, [versionMap.get(version.id), fileMap.get(version.file_id), collection.shadow_collection_id, manifest?.hash ?? null, version.size, version.deleted, version.created_by_type, version.created_by_id, version.created_at, version.message, version.device_id]);
+          SELECT $1,$2,$3,NULL,$4,$5,$6,$7,$8,created_at,$9,$10,NULL FROM file_versions WHERE id=$11
+          ON CONFLICT(id) DO NOTHING`, [versionMap.get(version.id), fileMap.get(version.file_id), collection.shadow_collection_id, manifest?.hash ?? null, version.size, version.deleted, version.created_by_type, version.created_by_id, version.message, version.device_id, version.id]);
       if (manifest) await client.query('UPDATE files_legacy_version_map SET shadow_manifest_hash=$2,plaintext_sha256=$3,verified_at=NOW() WHERE source_version_id=$1', [version.id, manifest.hash, manifest.plaintextHash]);
     }
     trace.mark('version-lineage-publication');

@@ -109,7 +109,7 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
             throw new FilesBootstrapError('FILES_LEGACY_KEY_REQUIRED', 409, 'Legacy Files import requires the existing OS-protected key material');
           }
           const importer = new LegacyFilesImporter(
-            this.db, join(this.config.filesRoot, this.config.legacyPreflight.protectedPrefix), this.config.chunkRoot, this.config.capabilitySigningKey,
+            this.db, join(this.config.filesRoot, this.config.legacyPreflight.protectedPrefix), this.config.chunkRoot,
           );
           await importer.run(material.masterKey, material.legacyMasterKeys);
           reportStage('legacy-import-verification');
@@ -124,7 +124,7 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
           const sourceRoot = this.config.legacyPreflight?.protectedPrefix
             ? join(this.config.filesRoot, this.config.legacyPreflight.protectedPrefix)
             : this.config.filesRoot;
-          const importer = new LegacyFilesImporter(this.db, sourceRoot, this.config.chunkRoot, this.config.capabilitySigningKey);
+          const importer = new LegacyFilesImporter(this.db, sourceRoot, this.config.chunkRoot);
           try {
             imported = Boolean(await importer.completedResult());
           } catch (error) {
