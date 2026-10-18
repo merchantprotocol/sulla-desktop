@@ -1,6 +1,7 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { githubRepositoryFromArgs, scopeToolExecutionContext as scopeCredentialExecutionContext } from '../../../pkg/rancher-desktop/agent/tools/credentialScope.js';
 import type { ToolExecutionContext } from '../../../pkg/rancher-desktop/agent/tools/executionContext.js';
 import type { ToolExecutionTarget } from '../../../pkg/rancher-desktop/agent/tools/executionTargets.js';
 
@@ -49,16 +50,6 @@ const FIXED_INTEGRATION_CATEGORIES: Readonly<Record<string, string>> = {
   mobile:  'sulla-cloud',
 };
 const execFile = promisify(execFileCallback);
-
-function githubRepository(args: unknown): string | undefined {
-  if (!args || typeof args !== 'object') return undefined;
-  const values = args as Record<string, unknown>;
-  const explicit = typeof values.repository === 'string' ? values.repository.trim().replace(/^\/+|\/+$/g, '') : '';
-  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(explicit)) return explicit;
-  const owner = typeof values.owner === 'string' ? values.owner.trim() : '';
-  const repo = typeof values.repo === 'string' ? values.repo.trim() : '';
-  return owner && repo ? `${ owner }/${ repo }` : undefined;
-}
 
 function repositoryFromGitHubRemote(remote: string): string | undefined {
   const ssh = /^git@github\.com:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/.exec(remote);
@@ -115,24 +106,10 @@ export async function scopeToolExecutionContext(
 ): Promise<ToolExecutionContext> {
   const integrationId = credentialIntegrationForTool(tool, args);
   if (!integrationId) return ctx;
-  const { getIntegrationService } = await import('../../../pkg/rancher-desktop/agent/services/IntegrationService.js');
-  const accountId = await getIntegrationService().getActiveAccountId(integrationId);
   const repository = integrationId === 'github'
-    ? githubRepository(args) ?? await githubGitRepository(tool, args)
+    ? githubRepositoryFromArgs(args) ?? await githubGitRepository(tool, args)
     : undefined;
-  const derived = {
-    integration_id: integrationId,
-    account_id:     accountId,
-    ...(repository ? { repository } : {}),
-  };
-  if (ctx.credential_scope && (
-    ctx.credential_scope.integration_id !== derived.integration_id ||
-    ctx.credential_scope.account_id !== derived.account_id ||
-    (ctx.credential_scope.repository && ctx.credential_scope.repository !== derived.repository)
-  )) {
-    throw new Error('Verified credential scope does not match the selected tool target');
-  }
-  return { ...ctx, credential_scope: derived };
+  return scopeCredentialExecutionContext(ctx, integrationId, repository);
 }
 
 export async function executeCatalogTool(ctx: ToolExecutionContext, tool: CatalogTool, args: unknown): Promise<unknown> {

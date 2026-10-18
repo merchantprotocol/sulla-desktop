@@ -10,14 +10,48 @@ import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
 import { getConfiguredCredentialBroker, getLocalVaultPrincipalId, issueLocalBrokerContext, usesContainerVaultAuthority } from '../vault-broker';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
+import { githubRepositoryFromArgs, scopeToolExecutionContext } from '@pkg/agent/tools/credentialScope';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken } from '@pkg/runtime/capabilityToken';
 import paths from '@pkg/utils/paths';
 
+import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
+
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 const API_TOKEN_FILE = 'chat-api-token.json';
 const WS_CHANNEL = 'tasker';
+
+const EXECUTION_IDENTITY_FIELDS = ['sub', 'org_id', 'agent_id', 'pod_id', 'thread_id', 'job_id', 'device_id'] as const;
+const LOCAL_GITHUB_TOOLS = new Set([
+  'add_remote', 'init', 'git_blame', 'git_conflicts', 'git_add', 'git_commit', 'git_worktree',
+  'git_branch', 'git_status', 'git_log', 'git_diff', 'git_stash', 'git_checkout',
+]);
+
+function assertSameExecutionIdentity(left: ToolExecutionContext, right: ToolExecutionContext): void {
+  if (EXECUTION_IDENTITY_FIELDS.some(field => left[field] !== right[field])) {
+    throw new Error('Tool session identity does not match bearer capability');
+  }
+  const leftScope = left.credential_scope;
+  const rightScope = right.credential_scope;
+  if (leftScope && rightScope && (
+    leftScope.integration_id !== rightScope.integration_id ||
+    leftScope.account_id !== rightScope.account_id ||
+    (leftScope.repository !== undefined && rightScope.repository !== undefined && leftScope.repository !== rightScope.repository)
+  )) {
+    throw new Error('Tool session credential scope does not match bearer capability');
+  }
+}
+
+function narrowCredentialScope(
+  left: ToolExecutionContext['credential_scope'],
+  right: ToolExecutionContext['credential_scope'],
+): ToolExecutionContext['credential_scope'] {
+  if (!left) return right;
+  if (!right) return left;
+  return { ...left, repository: left.repository ?? right.repository };
+}
 
 // Shipped proxy defaults for integrations whose upstream API host is fixed.
 // grok: OAuth tokens only work on the grok-cli subscription proxy, never on
@@ -1129,21 +1163,114 @@ export class ChatCompletionsServer {
         // Accept both { params: { ... } } and flat { action: "upsert", ... } formats
         const body = req.body || {};
         const params = body.params && typeof body.params === 'object' ? body.params : body;
+        const toolName = String((tool)?.name || endpoint || '').trim();
+        const canonicalCategory = String(tool.metadata?.category ?? '').trim();
+        const isGitHubTool = canonicalCategory === 'github';
+        const needsGitHubCredential = isGitHubTool && !LOCAL_GITHUB_TOOLS.has(toolName);
+        const sessionToken = req.header('X-Sulla-Tool-Session')?.trim();
+        const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+        const host = getMCPServerHost();
+        const session = sessionToken ? host.getToolSession(sessionToken) : null;
+        if (sessionToken && !session) {
+          return res.status(403).json({ success: false, error: 'Expired tool session' });
+        }
+        if (session) {
+          const allowed = (session.state.metadata as { allowedToolNames?: string[] }).allowedToolNames;
+          if (!sessionAllowsTool(allowed, toolName)) {
+            return res.status(403).json({ success: false, error: 'Tool not allowed for this session' });
+          }
+          if (session.executionContext && session.executionContext.exp <= Math.floor(Date.now() / 1000)) {
+            return res.status(403).json({ success: false, error: 'Expired tool execution context' });
+          }
+          tool.setState?.(session.state);
+        }
+
+        if (isGitHubTool && usesContainerVaultAuthority() && !session) {
+          return res.status(403).json({ success: false, error: 'GitHub tool requires a verified tool session' });
+        }
+
+        let sessionContext = session?.executionContext;
+        let trustedDesktopSessionFallback = false;
+        if (session && needsGitHubCredential && usesContainerVaultAuthority() && !sessionContext) {
+          const metadata = session.state.metadata as Record<string, any>;
+          const agentId = String(metadata.agentId ?? metadata.wsChannel ?? '').trim();
+          const threadId = String(metadata.threadId ?? '').trim();
+          if (!agentId || !threadId) {
+            return res.status(403).json({ success: false, error: 'GitHub tool session is missing trusted graph identity' });
+          }
+          const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+          const accountId = await getIntegrationService().getActiveAccountId('github');
+          const graphPodId = String(metadata.podId ?? '').trim();
+          trustedDesktopSessionFallback = !graphPodId;
+          sessionContext = await issueLocalBrokerContext({
+            agentId,
+            podId:              graphPodId || `desktop:${ threadId }`,
+            credentialScope:    { integration_id: 'github', account_id: accountId },
+            threadId,
+            jobId:              metadata.jobId,
+            workflowExecutionId: metadata.activeWorkflow?.executionId,
+            orgId:              metadata.orgId,
+            requestId:          req.header('X-Request-Id') ?? crypto.randomUUID(),
+            signal:             AbortSignal.timeout(60_000),
+          });
+        }
+
+        let bearerContext: ToolExecutionContext | undefined;
+        if (bearer && bearer !== this.apiToken && bearer !== sessionToken) {
+          try {
+            bearerContext = {
+              ...await verifyCapabilityToken(bearer, deriveCapabilitySigningKey(this.apiToken!), { category: canonicalCategory, tool: toolName }),
+              request_id: req.header('X-Request-Id') ?? crypto.randomUUID(),
+            };
+          } catch {
+            return res.status(403).json({ success: false, error: 'Bearer capability does not match the requested tool' });
+          }
+        }
+        if (sessionContext && bearerContext) {
+          try {
+            assertSameExecutionIdentity(sessionContext, bearerContext);
+          } catch (error) {
+            return res.status(403).json({ success: false, error: (error as Error).message });
+          }
+        }
+        let executionContext = bearerContext && sessionContext
+          ? { ...bearerContext, credential_scope: narrowCredentialScope(sessionContext.credential_scope, bearerContext.credential_scope) }
+          : bearerContext ?? sessionContext;
+
+        // GitHub sessions must retain a verified execution identity; never
+        // substitute request-controlled arguments or a generic Desktop caller.
+        if (session && needsGitHubCredential && usesContainerVaultAuthority() && !executionContext) {
+          return res.status(403).json({ success: false, error: 'Tool session is missing verified execution context' });
+        }
+        if (executionContext && usesContainerVaultAuthority() && needsGitHubCredential) {
+          try {
+            executionContext = await scopeToolExecutionContext(executionContext, 'github', githubRepositoryFromArgs(params));
+          } catch (error) {
+            return res.status(403).json({ success: false, error: (error as Error).message });
+          }
+        }
+        if (executionContext) tool.executionContext = executionContext;
 
         // Prefer the optional stateless service for catalog-target tools. A
         // stopped/unhealthy container falls through to today's in-process path.
-        if (slug !== 'github' && toolRegistry.getExecutionTarget(String(tool.name || prefixed)) === 'catalog') {
+        if (toolRegistry.getExecutionTarget(String(tool.name || prefixed)) === 'catalog') {
           try {
             const health = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(300) });
             if (health.ok) {
-              const inbound = req.headers.authorization?.replace(/^Bearer\s+/i, '');
-              const capability = inbound && inbound !== this.apiToken
-                ? inbound
-                : issueCapabilityToken({
-                  sub: await getLocalVaultPrincipalId(), agent_id: 'desktop-cli', pod_id: 'desktop-main',
-                  scopes: [`${ slug }/*`], expiresInSeconds: 60,
-                }, deriveCapabilitySigningKey(this.apiToken!));
-              const upstream = await fetch(`http://127.0.0.1:30123/v1/tools/internal/${ encodeURIComponent(slug) }/${ encodeURIComponent(endpoint) }/call`, {
+              const now = Math.floor(Date.now() / 1000);
+              const capability = issueCapabilityToken(executionContext ? {
+                sub: executionContext.sub, org_id: executionContext.org_id,
+                group_ids: executionContext.group_ids, agent_id: executionContext.agent_id,
+                pod_id: executionContext.pod_id, thread_id: executionContext.thread_id,
+                job_id: executionContext.job_id, workflow_execution_id: executionContext.workflow_execution_id,
+                device_id: executionContext.device_id, credential_scope: executionContext.credential_scope,
+                scopes: executionContext.scopes.length ? executionContext.scopes : [`${ canonicalCategory }/*`],
+                expiresInSeconds: Math.max(1, Math.min(60, executionContext.exp - now)),
+              } : {
+                sub: await getLocalVaultPrincipalId(), agent_id: 'desktop-cli', pod_id: 'desktop-main',
+                scopes: [`${ canonicalCategory }/*`], expiresInSeconds: 60,
+              }, deriveCapabilitySigningKey(this.apiToken!));
+              const upstream = await fetch(`http://127.0.0.1:30123/v1/tools/internal/${ encodeURIComponent(canonicalCategory) }/${ encodeURIComponent(endpoint) }/call`, {
                 method:  'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -1170,45 +1297,6 @@ export class ChatCompletionsServer {
         // false and the card never appears in the UI. Wire a best-effort
         // emitter that targets the active sulla-desktop chat.
         const interactiveNames = new Set(['ask_user_question']);
-        const toolName = String((tool)?.name || endpoint || '').trim();
-        const sessionToken = req.header('X-Sulla-Tool-Session');
-        if (slug === 'github' && usesContainerVaultAuthority() && !sessionToken) {
-          return res.status(403).json({ success: false, error: 'GitHub tool requires a verified tool session' });
-        }
-        if (sessionToken) {
-          const state = getMCPServerHost().getToolSessionState(sessionToken);
-          if (!state) return res.status(403).json({ success: false, error: 'Expired tool session' });
-          const allowed = (state.metadata as { allowedToolNames?: string[] }).allowedToolNames;
-          if (!sessionAllowsTool(allowed, toolName)) return res.status(403).json({ success: false, error: 'Tool not allowed for this session' });
-          tool.setState?.(state);
-          // The tool-session token is the graph-issued proof binding this CLI
-          // request to a live agent turn. Preserve that verified identity when
-          // the tool needs Desktop vault authority; otherwise GitHub workers
-          // reach the broker as an unbound, context-free caller. Account scope
-          // is selected here from the trusted integration service. Git workers
-          // narrow it further to the repository resolved from their own remote.
-          if (slug === 'github' && usesContainerVaultAuthority()) {
-            const metadata = state.metadata as Record<string, any>;
-            const agentId = String(metadata.agentId ?? metadata.wsChannel ?? '').trim();
-            const threadId = String(metadata.threadId ?? '').trim();
-            if (!agentId || !threadId) {
-              return res.status(403).json({ success: false, error: 'GitHub tool session is missing trusted graph identity' });
-            }
-            const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
-            const accountId = await getIntegrationService().getActiveAccountId('github');
-            tool.executionContext = await issueLocalBrokerContext({
-              agentId,
-              podId:              String(metadata.podId ?? `desktop:${ threadId }`),
-              credentialScope:    { integration_id: 'github', account_id: accountId },
-              threadId,
-              jobId:              metadata.jobId,
-              workflowExecutionId: metadata.activeWorkflow?.executionId,
-              orgId:              metadata.orgId,
-              requestId:          req.header('X-Request-Id') ?? crypto.randomUUID(),
-              signal:             AbortSignal.timeout(60_000),
-            });
-          }
-        }
         if (interactiveNames.has(toolName) && typeof (tool).sendChatMessage !== 'function') {
           try {
             const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
@@ -1262,7 +1350,11 @@ export class ChatCompletionsServer {
         res.once('close', onDisconnect);
         tool.approvalSignal = disconnected.signal;
         try {
-          const result = await tool.call(params);
+          const runtime = executionContext && !trustedDesktopSessionFallback
+            ? containerRuntimeForExecution(executionContext, toolRegistry.getExecutionTarget(toolName))
+            : undefined;
+          const invoke = () => tool.call(params);
+          const result = runtime ? await withAgentContainerRuntime(runtime, invoke) : await invoke();
           return res.json({ success: true, result });
         } finally { res.off('close', onDisconnect) }
       }
