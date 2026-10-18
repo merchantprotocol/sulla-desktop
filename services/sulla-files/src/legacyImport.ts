@@ -57,7 +57,8 @@ const SAFE_LEGACY_IMPORT_MESSAGES = new Set([
   'Legacy Files chunk conflict does not match converted content',
   'Legacy Files chunk has an invalid stored size',
   'Legacy Files chunk identity verification failed',
-  'Legacy Files collection key authentication failed',
+  'Legacy Files collection key authentication found ambiguous protected masters',
+  'Legacy Files collection key authentication found no protected master',
   'Legacy Files collection mapping is incomplete',
   'Legacy Files converted manifest has no collection mapping',
   'Legacy Files converted manifest is missing',
@@ -240,7 +241,12 @@ async function sourceKeys(collection:SourceCollection, nativeMaster:Buffer, lega
   }
   const unique = matches.filter((candidate, index) => matches.findIndex(other => timingSafeEqual(candidate.data, other.data) && timingSafeEqual(candidate.dedup, other.dedup)) === index);
   for (const candidate of matches) if (!unique.includes(candidate)) { candidate.data.fill(0); candidate.dedup.fill(0) }
-  if (unique.length !== 1) { for (const candidate of unique) { candidate.data.fill(0); candidate.dedup.fill(0) } throw new Error('Legacy Files collection key authentication failed') }
+  if (unique.length !== 1) {
+    for (const candidate of unique) { candidate.data.fill(0); candidate.dedup.fill(0) }
+    throw new Error(unique.length === 0
+      ? 'Legacy Files collection key authentication found no protected master'
+      : 'Legacy Files collection key authentication found ambiguous protected masters');
+  }
   return unique[0];
 }
 
