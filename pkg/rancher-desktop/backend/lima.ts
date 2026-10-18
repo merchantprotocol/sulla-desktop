@@ -3568,7 +3568,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         filesTlsBind(true),
       ],
       restart: 'unless-stopped',
-      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/healthz'], interval: '5s', timeout: '3s', retries: 10 },
+      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
     const filesImage = resolveSullaServiceImage(
