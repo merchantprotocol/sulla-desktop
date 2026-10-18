@@ -1,43 +1,9 @@
+import { fileAccessList, fileShare, filesItem, folderShare, type FilesApiCollection, type FilesApiFile } from '../../../../services/sulla-files/web-src/filesApiModels';
+
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { FileAccessList, FilesDataSource, FilesDetail, FileShare, FilesItem, FilesPreview, FilesSnapshot, FilesVersion, FolderShare, ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType } from './types';
 import type { IpcRendererEvent } from 'electron';
-
-interface ContainerCollection {
-  id:                    string;
-  name:                  string;
-  kind:                  string;
-  home:                  string;
-  retention_policy?:     Record<string, unknown>;
-  storage_quota?:        number | string;
-  kept_bytes?:           number | string;
-  desktop_count?:        number | string;
-  member_count?:         number | string;
-  account_display_name?: string;
-  access_role?:          string;
-  owner_user_id?:        string;
-  org_id?:               string;
-  shared_folders?:       { folderPath: string; role: string }[];
-}
-
-interface ContainerFile {
-  id:                       string;
-  path:                     string;
-  mime:                     string;
-  size:                     number | string;
-  updated_at?:              string;
-  deleted_at?:              string;
-  current_version_id:       string;
-  version_count?:           number | string;
-  created_by_type?:         string;
-  created_by_id?:           string;
-  version_created_by_type?: string;
-  version_created_by_id?:   string;
-  owner_display_name?:      string;
-  owner_avatar_url?:        string;
-  sync_state?:              FilesItem['syncState'];
-  conflict_devices?:        number | string;
-}
 
 export class DesktopFilesDataSource implements FilesDataSource {
   readonly capabilities = {
@@ -60,31 +26,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
   private currentVersions = new Map<string, string>();
   private collectionId = '';
 
-  private toItem(file:ContainerFile):FilesItem {
-    const item = {
-      id:               file.id,
-      path:             file.path,
-      mime:             file.mime || 'application/octet-stream',
-      size:             Number(file.size ?? 0),
-      updatedAt:        file.updated_at ?? new Date(0).toISOString(),
-      deletedAt:        file.deleted_at ?? undefined,
-      currentVersionId: file.current_version_id,
-      versionCount:     Number(file.version_count ?? 1),
-      createdByType:    file.created_by_type ?? file.version_created_by_type ?? 'user',
-      createdById:      file.created_by_id ?? file.version_created_by_id ?? '',
-      ownerDisplayName: file.owner_display_name,
-      ownerAvatarUrl:   file.owner_avatar_url,
-      syncState:        file.sync_state,
-      conflictDevices:  file.conflict_devices === undefined ? undefined : Number(file.conflict_devices),
-    };
-
-    this.currentVersions.set(item.id, item.currentVersionId);
-    return item;
-  }
-
   async load():Promise<FilesSnapshot> {
     const [collections, status, capabilities] = await Promise.all([
-      ipcRenderer.invoke('sulla-files:collections') as Promise<ContainerCollection[]>,
+      ipcRenderer.invoke('sulla-files:collections') as Promise<FilesApiCollection[]>,
       ipcRenderer.invoke('files-ui:status'),
       ipcRenderer.invoke('files-ui:capabilities') as Promise<{ orgSharing:boolean; publicLinks:boolean; onlineOnly:boolean; keepOnComputer:boolean; authenticatedRemote:boolean; verifiedRecovery:boolean; onlineOnlyReason?:string }>,
     ]);
@@ -96,11 +40,15 @@ export class DesktopFilesDataSource implements FilesDataSource {
     });
     this.onlineOnlyReason = capabilities.onlineOnlyReason ?? '';
     const [active, trash] = await Promise.all([
-      ipcRenderer.invoke('sulla-files:list', { collectionId: collection.id }) as Promise<ContainerFile[]>,
-      ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<ContainerFile[]>,
+      ipcRenderer.invoke('sulla-files:list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
+      ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
     ]);
 
-    this.files = [...active, ...trash].map(file => this.toItem(file));
+    this.files = [...active, ...trash].map(file => {
+      const item = filesItem(file);
+      this.currentVersions.set(item.id, item.currentVersionId);
+      return item;
+    });
     if (this.files.some(file => /\(conflicted copy [^)]+\)/i.test(file.path))) status.state = 'conflict';
 
     return {
@@ -184,12 +132,12 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
   async listFolderShares(collectionId:string):Promise<FolderShare[]> {
     const shares = await ipcRenderer.invoke('sulla-files:shares', { collectionId });
-    return shares.map(share => ({ id: share.id, collectionId: share.collection_id ?? share.collectionId ?? collectionId, folderPath: share.folder_path ?? share.folderPath, principalType: share.principal_type ?? share.principalType, principalId: share.principal_id ?? share.principalId, role: share.role }));
+    return shares.map(share => folderShare(share, collectionId));
   }
 
   async shareFolder(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FolderShare> {
     const share = await ipcRenderer.invoke('sulla-files:share', { collectionId, folderPath, principalType, principalId, role });
-    return { id: share.id, collectionId: share.collection_id ?? collectionId, folderPath: share.folder_path ?? folderPath, principalType: share.principal_type ?? principalType, principalId: share.principal_id ?? principalId, role: share.role ?? role };
+    return folderShare(share, collectionId, { folderPath, principalType, principalId, role });
   }
 
   unshareFolder(share:FolderShare):Promise<void> {
@@ -198,21 +146,17 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
   async listFileShares(fileId:string):Promise<FileAccessList> {
     const access = await ipcRenderer.invoke('sulla-files:file-shares', { fileId });
-    return {
-      ownerId: access.ownerId ?? access.owner_id,
-      direct: access.direct.map((share:any) => ({ id: share.id, fileId: share.file_id ?? share.fileId ?? fileId, principalType: share.principal_type ?? share.principalType, principalId: share.principal_id ?? share.principalId, role: share.role })),
-      inherited: access.inherited.map((share:any) => ({ id: share.id, collectionId: share.collection_id ?? share.collectionId ?? this.collectionId, source: share.source, folderPath: share.folder_path ?? share.folderPath, principalType: share.principal_type ?? share.principalType, principalId: share.principal_id ?? share.principalId, role: share.role })),
-    };
+    return fileAccessList(access, fileId, this.collectionId);
   }
 
   async shareFile(fileId:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FileShare> {
     const share = await ipcRenderer.invoke('sulla-files:share-file', { fileId, principalType, principalId, role });
-    return { id: share.id, fileId: share.file_id ?? fileId, principalType: share.principal_type ?? principalType, principalId: share.principal_id ?? principalId, role: share.role ?? role };
+    return fileShare(share, fileId, { principalType, principalId, role });
   }
 
   async updateFileShare(fileId:string, shareId:string, role:'view' | 'edit'):Promise<FileShare> {
     const share = await ipcRenderer.invoke('sulla-files:update-file-share', { fileId, shareId, role });
-    return { id: share.id, fileId: share.file_id ?? fileId, principalType: share.principal_type, principalId: share.principal_id, role: share.role };
+    return fileShare(share, fileId);
   }
 
   unshareFile(fileId:string, shareId:string):Promise<void> {
