@@ -1,29 +1,23 @@
 <template>
-  <main
+  <section
     ref="detailRoot"
     class="issue-detail"
     tabindex="-1"
-    aria-labelledby="issue-detail-title"
-    @keydown.esc="$emit('close')"
+    role="dialog"
+    aria-modal="true"
+    :class="{ expanded }"
+    :aria-labelledby="detail && !error ? 'issue-detail-title' : undefined"
+    :aria-label="!detail || error ? 'Issue detail' : undefined"
+    @keydown.esc.stop="$emit('close')"
+    @keydown.tab="trapFocus"
   >
     <header class="issue-topbar">
-      <button
-        type="button"
-        class="back"
-        aria-label="Back to Projects"
-        @click="$emit('close')"
-      >
-        ← Projects
-      </button>
-      <span class="crumbs">{{ projectTitle }} <span class="sep">›</span> {{ epicTitle }}</span>
-      <button
-        type="button"
-        class="refresh"
-        :disabled="loading"
-        @click="onRefresh"
-      >
-        {{ loading ? 'Refreshing…' : '↻ Refresh' }}
-      </button>
+      <span class="crumbs"><button type="button" class="back" @click="$emit('close')">Board</button><span class="sep">›</span>{{ detail ? statusLabel(detail.task.status) : 'Issue' }}<span class="sep">›</span>#{{ shortTaskId }}</span>
+      <div class="header-actions">
+        <button type="button" class="refresh" :disabled="loading" aria-label="Refresh issue" @click="onRefresh">↻</button>
+        <button type="button" :aria-label="expanded ? 'Collapse drawer' : 'Expand drawer'" :aria-pressed="expanded" @click="expanded = !expanded">⤢</button>
+        <button type="button" aria-label="Close issue" @click="$emit('close')">×</button>
+      </div>
     </header>
 
     <div
@@ -54,7 +48,6 @@
     >
       <article class="issue-main">
         <div class="issue-heading">
-          <span class="num mono">#{{ shortTaskId }}</span>
           <h1
             id="issue-detail-title"
             contenteditable="true"
@@ -72,6 +65,7 @@
             {{ fieldError }}
           </div>
 
+          <p class="issue-meta">Created {{ shortDate(detail.task.created_at) }}<template v-if="detail.task.created_by"> by {{ actorLabel(detail.task.created_by) }}</template><template v-if="detail.task.updated_at"> · Updated {{ shortDate(detail.task.updated_at) }}</template></p>
           <dl class="props">
             <dt>Status</dt>
             <dd>
@@ -180,7 +174,6 @@
         >
           <div class="section-title">
             <div>
-              <span class="eyebrow">Primary record</span>
               <h2 id="primary-description-title">
                 Description
               </h2>
@@ -193,9 +186,20 @@
           />
         </section>
 
+        <section class="panel checklist-panel" aria-labelledby="checklist-title">
+          <div class="section-title"><h2 id="checklist-title">Checklist</h2><span class="empty">{{ (checklist || []).filter(item => item.done).length }}/{{ (checklist || []).length }}</span></div>
+          <div v-if="(checklist || []).length" class="checklist">
+            <div class="pbar"><i :style="{ width: `${(checklist || []).filter(item => item.done).length / (checklist || []).length * 100}%` }" /></div>
+            <button v-for="item in checklist" :key="item.id" type="button" class="checklist-row" :class="{ done: item.done }" @click="$emit('open-task', item.id)">
+              <span aria-hidden="true">{{ item.done ? '☑' : '☐' }}</span><span>{{ item.title }}</span><small>{{ item.assignee || 'Unassigned' }}</small>
+            </button>
+          </div>
+          <p v-else class="empty">No subtasks yet.</p>
+        </section>
+
         <section class="panel agent-panel">
           <div class="section-title">
-            <div><span class="eyebrow">Live status</span><h2>Agent</h2></div>
+            <div><h2>Live · Agent</h2></div>
           </div>
 
           <div
@@ -265,18 +269,20 @@
         >
           <div class="section-title">
             <div>
-              <span class="eyebrow">Activity</span>
               <h2 id="comment-thread-title">
                 Activity &amp; comments · {{ feed.length }}
               </h2>
             </div>
           </div>
+          <div class="activity-filters" aria-label="Activity filter">
+            <button v-for="filter in (['all', 'comments', 'events'] as const)" :key="filter" type="button" :aria-pressed="feedFilter === filter" @click="feedFilter = filter">{{ filter }}</button>
+          </div>
           <ol
-            v-if="feed.length"
+            v-if="filteredFeed.length"
             class="feed-list"
           >
             <li
-              v-for="item in feed"
+              v-for="item in filteredFeed"
               :key="item.key"
               class="feed-item"
               :class="{ 'is-comment': item.kind === 'comment' }"
@@ -306,26 +312,7 @@
           >
             No activity yet.
           </p>
-          <form
-            class="comment-form"
-            @submit.prevent="submitComment"
-          >
-            <label for="issue-comment">Add to the thread</label>
-            <textarea
-              id="issue-comment"
-              v-model="commentDraft"
-              rows="4"
-              placeholder="Add context or evidence…"
-            />
-            <div class="form-actions">
-              <button
-                type="submit"
-                :disabled="busy || !commentDraft.trim()"
-              >
-                Append comment
-              </button>
-            </div>
-          </form>
+
         </section>
       </article>
 
@@ -439,7 +426,28 @@
         </section>
       </aside>
     </div>
-  </main>
+    <form
+      v-if="detail && !error"
+      class="comment-form"
+      @submit.prevent="submitComment"
+    >
+      <label for="issue-comment">Comment</label>
+      <textarea
+        id="issue-comment"
+        v-model="commentDraft"
+        rows="2"
+        placeholder="Add context or evidence…"
+      />
+      <div class="form-actions">
+        <button
+          type="submit"
+          :disabled="busy || !commentDraft.trim()"
+        >
+          Comment
+        </button>
+      </div>
+    </form>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -463,10 +471,12 @@ const props = defineProps<{
   busy:         boolean;
   error:        string;
   statusLabel:  (status: string) => string;
+  checklist?: { id: string; title: string; done: boolean; assignee: string | null }[];
 }>();
 
 const emit = defineEmits<{
   close:   [];
+  'open-task': [id: string];
   refresh: [];
   comment: [body: string];
 }>();
@@ -474,7 +484,22 @@ const emit = defineEmits<{
 const AGENT_POLL_MS = 5_000;
 
 const detailRoot = ref<HTMLElement | null>(null);
+const expanded = ref(false);
+const feedFilter = ref<'all' | 'comments' | 'events'>('all');
 const commentDraft = ref('');
+
+function trapFocus(event: KeyboardEvent): void {
+  const focusable = Array.from(detailRoot.value?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [contenteditable="true"], [tabindex="0"]') ?? [])
+    .filter(element => element.getClientRects().length > 0);
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!first) { event.preventDefault(); return; }
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === detailRoot.value)) {
+    event.preventDefault(); last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault(); first.focus();
+  }
+}
 const labelDraft = ref('');
 const fieldBusy = ref<string | null>(null);
 const fieldError = ref('');
@@ -537,6 +562,8 @@ const feed = computed<FeedItem[]>(() => {
 
   return [...comments, ...events].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 });
+
+const filteredFeed = computed(() => feed.value.filter(item => feedFilter.value === 'all' || item.kind === (feedFilter.value === 'comments' ? 'comment' : 'event')));
 
 interface LiveAgentMatch {
   jobId:           string;
@@ -810,53 +837,55 @@ dd code { font-size: 10px; }
 .evidence-row b { color: var(--ptext); font-family: var(--pmono); }
 a { display: inline-block; margin-top: 14px; color: var(--pacc); font-size: 12px; }
 .issue-state { display: grid; place-content: center; min-height: 60vh; gap: 8px; text-align: center; }
-@media (max-width: 960px) { .issue-layout { grid-template-columns: 1fr; padding: 24px; } }
-
-.theme-noir .issue-detail {
-  inset: 0 0 0 auto;
-  width: min(1240px, calc(100% - 70px));
-  border-left: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
-  background: color-mix(in srgb, var(--nx-surface) 96%, transparent);
-  box-shadow: -36px 0 100px rgba(0,0,0,.62),-1px 0 0 color-mix(in srgb, var(--nx-accent-2) 8%, transparent);
-  backdrop-filter: blur(26px) saturate(120%);
-  animation: noir-issue-drawer-in .58s var(--noir-spring) both;
-}
-.theme-noir .issue-topbar { min-height: 64px; border-color: var(--nx-hair); background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .72); }
-.theme-noir .issue-topbar button,
-.theme-noir .issue-detail button { border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent); border-radius: 999px; transition: transform .45s var(--noir-spring),background .16s ease,border-color .16s ease,box-shadow .16s ease; }
-.theme-noir .issue-detail button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--nx-accent-2) 35%, transparent); background: color-mix(in srgb, var(--nx-accent) 10%, transparent); transform: translateY(-1px); }
-.theme-noir .crumbs,
-.theme-noir .eyebrow { color: var(--nx-accent-2); }
-.theme-noir .issue-layout { gap: 24px; padding: 34px; }
-.theme-noir h1 { color: var(--nx-read-1); font-weight: 600; letter-spacing: -.025em; }
-.theme-noir h2 { color: var(--nx-read-2); }
-.theme-noir .immutable,
-.theme-noir .readiness,
-.theme-noir .lb { border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent); background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent); }
-.theme-noir .panel {
-  border-color: var(--nx-hair);
-  border-radius: 18px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 2.5%, transparent);
-}
-.theme-noir .review-brief { background: linear-gradient(160deg,color-mix(in srgb, var(--nx-accent) 7.5%, transparent),color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 2%, transparent)); }
-.theme-noir .feed-item.is-comment {
-  margin-top: 10px;
-  padding: 14px 15px;
-  border: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 7%, transparent);
-  border-radius: 14px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .42);
-}
-.theme-noir textarea,
-.theme-noir select,
-.theme-noir input[type="date"] { border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent); border-radius: 12px; background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .7); }
-.theme-noir .pull-card { padding: 16px; border: 1px solid var(--nx-hair); border-radius: 15px; background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .45); }
-@keyframes noir-issue-drawer-in { from { opacity: 0; transform: translateX(52px); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
-@media (max-width: 960px) { .theme-noir .issue-detail { width: 100%; } }
-@media (prefers-reduced-motion: reduce) { .theme-noir .issue-detail, .theme-noir .issue-detail button { animation: none; transition: none; } }
-
-/* Noir Light softens dark-only elevation shadows for paper surfaces. */
-.theme-noir-light .issue-detail {
-  box-shadow: -36px 0 100px color-mix(in srgb, var(--nx-ink) 14%, transparent),-1px 0 0 color-mix(in srgb, var(--nx-accent-2) 8%, transparent);
-}
+/* Compact drawer; the workspace remains mounted behind its scrim. */
+.issue-detail { inset: 0 0 0 auto; width: 640px; max-width: 100%; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--pborder); background: var(--pdetail-surface, var(--pbg)); box-shadow: -12px 0 40px rgba(26,35,50,.12); font: 13px/1.45 var(--psans); }
+.issue-topbar { position: static; display: flex; justify-content: space-between; gap: 12px; min-height: 48px; flex: none; padding: 10px 16px; background: var(--psurface); }
+.crumbs { display: flex; align-items: center; min-width: 0; overflow: hidden; font: 12px var(--psans); letter-spacing: 0; text-transform: none; white-space: nowrap; }
+.header-actions { display: flex; gap: 4px; flex: none; }
+.header-actions button { padding: 3px; width: 26px; height: 26px; font-size: 16px; border-color: transparent; background: transparent; color: var(--ptext2); }
+.back { border: 0; padding: 0; font-weight: 500; color: var(--ptext2); }
+.issue-layout { display: block; width: 100%; min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; margin: 0; padding: 18px 20px 20px; }
+.issue-heading { margin-bottom: 22px; }
+.issue-meta { margin: -8px 0 18px; color: var(--ptext3); font-size: 12px; }
+h1 { margin: 0 0 14px; padding: 0; font: 650 19px/1.3 var(--psans); overflow-wrap: anywhere; }
+h2 { margin: 0; color: var(--ptext3); font: 600 10.5px/1.45 var(--psans); letter-spacing: .08em; text-transform: uppercase; }
+.panel { padding: 0; margin-bottom: 22px; border: 0; border-radius: 0; background: transparent; }
+.section-title { align-items: center; gap: 8px; margin-bottom: 9px; }
+.immutable { padding: 1px 6px; border-radius: 5px; font-size: 10px; }
+.rich-content { margin-top: 0; font-size: 13px; line-height: 1.55; }
+.rich-content :deep(p:first-child) { margin-top: 0; }
+.rich-content :deep(img) { max-width: 100%; height: auto; }
+.props { grid-template-columns: 110px minmax(0, 1fr); gap: 9px 12px; font-size: 12px; }
+.props dt { font: 500 12px var(--psans); text-transform: none; }
+.props dd { min-height: 23px; }
+.props select, .props input[type="date"] { max-width: 100%; padding: 3px 7px; }
+.props a { margin-top: 0; }
+.lb-add { width: 100px; min-width: 0; }
+.checklist { border: 1px solid var(--pborder); border-radius: 10px; overflow: hidden; background: var(--psurface); }
+.checklist .pbar { height: 4px; margin: 0; border-radius: 0; }
+.checklist-row { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; border-top: 1px solid var(--pborder-soft); border-radius: 0; background: transparent; padding: 8px 12px; text-align: left; font-size: 12px; font-weight: 400; }
+.checklist-row > span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; }
+.checklist-row.done > span:nth-child(2) { text-decoration: line-through; color: var(--ptext3); }
+.checklist-row small { margin-left: auto; color: var(--ptext3); font-size: 11px; }
+.agentbox { padding: 12px; border-radius: 10px; }
+.agentbox .top2 { flex-wrap: wrap; }
+.agentbox .top2 b { font-size: 12px; }
+.agentbox .top2 small { font-size: 11px; }
+.feed-list { margin-top: 10px; }
+.feed-item.is-comment { padding: 10px 0; }
+.activity-filters { display: flex; gap: 4px; }
+.activity-filters button { padding: 3px 8px; border-color: transparent; background: transparent; font-size: 11px; text-transform: capitalize; font-weight: 500; }
+.activity-filters button[aria-pressed="true"] { background: var(--pacc-soft); color: var(--pacc); }
+.review-column { border-top: 1px solid var(--pborder-soft); padding-top: 16px; }
+.review-column .eyebrow { display: none; }
+.comment-form { flex: none; margin: 0; padding: 12px 20px 14px; border-top: 1px solid var(--pborder); background: var(--psurface); gap: 6px; }
+.comment-form label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.comment-form textarea { min-height: 44px; max-height: 140px; border-radius: 10px; background: var(--pbg); padding: 9px 11px; }
+.form-actions { justify-content: flex-end; }
+.form-actions button { padding: 5px 11px; background: var(--pacc); color: white; }
+.issue-state { min-height: 0; flex: 1; overflow: auto; padding: 20px; }
+@media (max-width: 1180px) { .issue-detail { width: 560px; } }
+@media (max-width: 900px) { .issue-detail { width: 100%; } }
+@media (max-width: 700px) { .props { grid-template-columns: 90px minmax(0, 1fr); } }
+.issue-detail.expanded { width: 100%; }
 </style>
