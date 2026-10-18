@@ -277,6 +277,15 @@ export function initSullaWorkflowEvents(): void {
     console.log(`[workflow-delete] → id=${ workflowId }`);
 
     try {
+      const { getWorkflowManagerClient } = await import('@pkg/agent/services/WorkflowManagerClient');
+      const manager = getWorkflowManagerClient();
+      if (await manager.isHealthy(true)) {
+        await manager.request('DELETE', `/v1/workflows/${ encodeURIComponent(workflowId) }`);
+        console.log(`[workflow-delete] ← manager ok id=${ workflowId }`);
+        return true;
+      }
+      manager.logFallback('workflow-delete');
+
       const WorkflowModel = await importWorkflowModel();
       const deleted = await WorkflowModel.deleteById(workflowId);
 
@@ -299,6 +308,14 @@ export function initSullaWorkflowEvents(): void {
     console.log(`[workflow-move] → id=${ workflowId } status=${ targetStatus }`);
 
     try {
+      const { getWorkflowManagerClient } = await import('@pkg/agent/services/WorkflowManagerClient');
+      const manager = getWorkflowManagerClient();
+      if (await manager.isHealthy(true)) {
+        const updated: any = await manager.request('PATCH', `/v1/workflows/${ encodeURIComponent(workflowId) }/status`, { status: targetStatus });
+        return { success: true, newStatus: updated.status };
+      }
+      manager.logFallback('workflow-move');
+
       const WorkflowModel = await importWorkflowModel();
       const updated = await WorkflowModel.updateStatus(workflowId, targetStatus);
 
@@ -333,6 +350,31 @@ export function initSullaWorkflowEvents(): void {
     console.log(`[workflow-duplicate] → id=${ workflowId }`);
 
     try {
+      const newId = `workflow-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
+      const now = new Date().toISOString();
+      const { getWorkflowManagerClient } = await import('@pkg/agent/services/WorkflowManagerClient');
+      const manager = getWorkflowManagerClient();
+      if (await manager.isHealthy(true)) {
+        const original: any = await manager.request('GET', `/v1/workflows/${ encodeURIComponent(workflowId) }`);
+        const originalDef = original.definition as Record<string, unknown>;
+        const duplicate: Record<string, unknown> = {
+          ...originalDef,
+          id: newId,
+          name: `${ String(originalDef.name ?? original.name ?? 'Untitled') } (copy)`,
+          createdAt: now,
+          updatedAt: now,
+          _status: 'draft',
+        };
+        await manager.request('PUT', `/v1/workflows/${ encodeURIComponent(newId) }`, {
+          ...duplicate,
+          definition: duplicate,
+          status: 'draft',
+          location: original.location ?? 'desktop',
+        });
+        return { id: newId, name: duplicate.name as string };
+      }
+      manager.logFallback('workflow-duplicate');
+
       const WorkflowModel = await importWorkflowModel();
       const original = await WorkflowModel.findById(workflowId);
 
@@ -342,8 +384,6 @@ export function initSullaWorkflowEvents(): void {
       }
 
       const originalDef = original.attributes.definition as Record<string, unknown>;
-      const newId = `workflow-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
-      const now = new Date().toISOString();
 
       const duplicate: Record<string, unknown> = {
         ...originalDef,

@@ -547,8 +547,10 @@ export class ExecuteWorkflowWorker extends BaseTool {
       }
       manager.logFallback('execute_workflow');
     } catch (error) {
-      const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
-      getWorkflowManagerClient().logFallback('execute_workflow', error);
+      return {
+        successBoolean: false,
+        responseString: `Workflow manager refused the request: ${ error instanceof Error ? error.message : String(error) }`,
+      };
     }
 
     if (!this.state) {

@@ -169,8 +169,10 @@ export class CatchUpSchedulesWorker extends BaseTool {
       }
       manager.logFallback('schedule catch-up');
     } catch (error) {
-      const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
-      getWorkflowManagerClient().logFallback('schedule catch-up', error);
+      return {
+        successBoolean: false,
+        responseString: `Workflow manager refused schedule catch-up: ${ error instanceof Error ? error.message : String(error) }`,
+      };
     }
 
     let result: CatchUpScanResult;
