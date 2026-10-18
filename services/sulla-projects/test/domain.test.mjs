@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { authenticateProjectsRequest } from '../dist/auth.js';
+
 import { ProjectsApplicationService } from '../dist/domain/ProjectsApplicationService.js';
 import { WorkTaskDependencyModel } from '../dist/domain/models/WorkTaskDependencyModel.js';
 
@@ -45,4 +47,14 @@ test('task creation attributes writes to authenticated context', async () => {
   await service.createTask({ id: 'task', project_id: 'project', title: 'Task', actor: 'forged-agent' },
     { actor: 'authenticated-agent', source: 'tool' });
   assert.equal(stored.actor, 'authenticated-agent');
+});
+
+
+test('local service capabilities cannot impersonate human aliases', () => {
+  for (const actor of ['human', 'Human', ' USER ', 'owner', 'me', 'Jonathon']) {
+    const identity = authenticateProjectsRequest({ authorization: 'Bearer synthetic-service',
+      localToken: 'synthetic-service', mode: 'desktop', localSubject: 'desktop',
+      localTenant: 'desktop', jwtAudience: 'sulla-projects', localActor: actor, localSource: 'tool' });
+    assert.equal(identity.actor, 'sulla');
+  }
 });

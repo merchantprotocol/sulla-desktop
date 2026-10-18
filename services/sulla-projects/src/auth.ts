@@ -11,6 +11,8 @@ export interface ProjectsIdentity {
   role: 'viewer' | 'editor' | 'admin';
 }
 
+const HUMAN_ACTOR_ALIASES = new Set(['human', 'user', 'owner', 'me', 'jonathon']);
+
 const LOCAL_SOURCES = new Set<ProjectsIdentity['source']>(['tool', 'ipc', 'heartbeat', 'routine', 'system']);
 
 function sameSecret(left: string, right: string): boolean {
@@ -42,10 +44,11 @@ export function authenticateProjectsRequest(input: {
     if (!input.localToken || !sameSecret(token, input.localToken)) {
       throw Object.assign(new Error('Invalid local Projects pairing'), { status: 401 });
     }
+    const requestedActor = input.localActor?.trim();
     return {
       subject: input.localSubject,
       tenantId: input.localTenant,
-      actor: input.localActor?.trim() && input.localActor.trim() !== 'human' ? input.localActor.trim() : 'sulla',
+      actor: requestedActor && !HUMAN_ACTOR_ALIASES.has(requestedActor.toLowerCase()) ? requestedActor : 'sulla',
       source: input.localSource === 'ipc' ? 'system' : input.localSource ?? 'system',
       local: true,
       role: 'editor',
