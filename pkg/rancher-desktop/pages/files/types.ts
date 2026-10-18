@@ -76,6 +76,7 @@ export interface FilesCapabilities {
   orgSharing: boolean;
   publicLinks: boolean;
   onlineOnly: boolean;
+  nativeFilesystem: boolean;
 }
 
 export type ShareAccessMode = 'view' | 'download';
@@ -150,13 +151,17 @@ export interface FilesDataSource {
   mediaUrl(fileId:string, versionId?:string):Promise<string>;
   search(query:string): Promise<FilesItem[]>;
   setPaused(paused:boolean): Promise<FilesSnapshot['status']>;
-  chooseUpload(): Promise<number>;
-  uploadPaths(paths:string[]): Promise<number>;
+  chooseUpload(destination?:string): Promise<number>;
+  uploadPaths(paths:string[], destination?:string): Promise<number>;
   createFolder(path:string): Promise<void>;
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
   openFile(fileId:string, versionId?:string): Promise<void>;
   downloadFile(fileId:string, name:string, versionId?:string):Promise<boolean>;
+  downloadFiles(items:{ fileId:string; name:string; versionId?:string }[]):Promise<{ count:number; error?:string }>;
+  listStars(collectionId:string):Promise<{ fileId?:string; folderPath?:string }[]>;
+  setStar(collectionId:string, target:{ fileId?:string; folderPath?:string }, starred:boolean):Promise<void>;
+  operate(action:'move' | 'copy', collectionId:string, items:{ fileId?:string; folderPath?:string; targetPath:string }[]):Promise<void>;
   restoreVersion(fileId:string, versionId:string): Promise<void>;
   restoreTrash(fileId:string): Promise<void>;
   trashFile(fileId:string): Promise<void>;

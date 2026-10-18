@@ -60,6 +60,7 @@ main() {
       [[ -n ${SULLA_FILES_IMAGE:-} && "$SULLA_FILES_IMAGE" != *:latest && "$SULLA_FILES_IMAGE" != *['| ']* ]] || fail "Kubernetes Files image must be pinned and contain no spaces"
       [[ ${SULLA_STORAGE_CLASS:-} =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || fail "storage class name is invalid"
       [[ ${SULLA_STORAGE_SIZE:-} =~ ^[1-9][0-9]*(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$ ]] || fail "PostgreSQL storage size must be a Kubernetes quantity such as 20Gi"
+      [[ ${SULLA_FILES_STORAGE_SIZE:-} =~ ^[1-9][0-9]*(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$ ]] || fail "Files storage size must be a Kubernetes quantity such as 100Gi"
       [[ ${SULLA_INGRESS_MODE:-} == create || ${SULLA_INGRESS_MODE:-} == existing ]] || fail "ingress must be create or existing"
       if [[ "$SULLA_INGRESS_MODE" == create ]]; then
         [[ ${SULLA_HOSTNAME:-} =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || fail "console hostname is invalid"

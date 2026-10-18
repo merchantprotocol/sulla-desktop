@@ -188,4 +188,12 @@ export class LegacyServerKeyring extends FilesKeyring {
   }
 
   override unlock():Promise<void> { return Promise.reject(new Error('Desktop keychain bootstrap is unavailable in server mode')) }
+
+  override async create(id:string, _client:pg.PoolClient):Promise<{ data:Envelope; dedup:Envelope }> {
+    // Server keys stay derived inside this process from signingKey. These
+    // legacy envelope columns contain only non-secret protocol markers.
+    const marker = (purpose:string):Envelope => ({ version: 1, algorithm: 'xchacha20-poly1305', nonce: '', ciphertext: `server-derived:${ purpose }:${ id }` });
+
+    return { data: marker('data'), dedup: marker('dedup') };
+  }
 }
