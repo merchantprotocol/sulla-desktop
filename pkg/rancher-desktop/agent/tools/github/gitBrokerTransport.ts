@@ -4,7 +4,6 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import { requireConfiguredCredentialBroker } from '../../../vault-broker';
-import { currentAgentContainerRuntime } from '../../services/AgentContainerRuntimeRegistry';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 import type { ToolExecutionContext } from '../executionContext';
@@ -97,7 +96,6 @@ export async function withGitHubBrokerRemote<T>(
   // remote first; narrow the already-verified caller context here from that URL.
   const brokerContext = scopeGitHubRepositoryContext(ctx, accountId, repository);
   const broker = requireConfiguredCredentialBroker();
-  const containerRuntime = currentAgentContainerRuntime();
 
   const server = http.createServer(async(request, response) => {
     const abort = new AbortController();
@@ -143,14 +141,14 @@ export async function withGitHubBrokerRemote<T>(
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, containerRuntime ? '0.0.0.0' : '127.0.0.1', resolve);
+    // Git commands always run in Lima (or an agent container inside Lima), so
+    // host loopback is unreachable even when there is no container binding.
+    server.listen(0, '0.0.0.0', resolve);
   });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('github.git broker did not bind a TCP port');
   try {
-    const host = containerRuntime ? 'host.lima.internal' : '127.0.0.1';
-
-    return await run(`http://${ host }:${ address.port }${ scopedPath }`);
+    return await run(`http://host.lima.internal:${ address.port }${ scopedPath }`);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
