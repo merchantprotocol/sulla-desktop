@@ -50,12 +50,13 @@ export class SullaFilesBootstrapFacade {
           SULLA_FILES_LEGACY_QUARANTINE_ARCHIVE_PATH:   path.join(paths.appHome, 'files-legacy-quarantined-master-key.enc'),
         },
       });
-      let output = ''; let settled = false;
+      let output = ''; let settled = false; let timedOut = false;
       const finish = (result:FilesBootstrapResult) => { if (!settled) { settled = true; clearTimeout(timeout); resolve(result) } };
-      const timeout = setTimeout(() => { child.kill('SIGKILL'); finish({ ok: false, code: 'FILES_BOOTSTRAP_TIMEOUT' }) }, 90_000);
+      const timeout = setTimeout(() => { timedOut = true; child.kill('SIGKILL') }, 90_000);
       child.stdout.on('data', (chunk:Buffer) => { if (output.length < 4_096) output += chunk.toString('utf8') });
-      child.once('error', () => finish({ ok: false, code: 'FILES_BOOTSTRAP_HELPER_FAILED' }));
+      child.once('error', () => { if (!timedOut) finish({ ok: false, code: 'FILES_BOOTSTRAP_HELPER_FAILED' }) });
       child.once('close', () => {
+        if (timedOut) return finish({ ok: false, code: 'FILES_BOOTSTRAP_TIMEOUT' });
         try {
           const result = JSON.parse(output.trim()) as FilesBootstrapResult;
           const validSuccess = result.ok === true && result.state === 'unlocked' &&
