@@ -24,7 +24,7 @@ import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
 import paths from '@pkg/utils/paths';
 import * as path from 'path';
-import { app, webContents } from 'electron';
+import { app, shell, webContents } from 'electron';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 
@@ -305,6 +305,18 @@ export async function instantiateSullaStart(): Promise<void> {
       console.log('[Background] MCP server host started');
     },
     async() => { await getMCPServerHost().stop() },
+  );
+
+  lifecycle.register('accounts', [],
+    async() => {
+      const { getSullaAccountsClient } = await import('@pkg/main/sullaAccountsClient');
+      await getSullaAccountsClient().initialize();
+      console.log('[Background] Local Accounts broker session initialized');
+    },
+    async() => {
+      const { getSullaAccountsClient } = await import('@pkg/main/sullaAccountsClient');
+      getSullaAccountsClient().shutdown();
+    },
   );
 
   lifecycle.register('vault', ['database-manager'],
@@ -749,6 +761,41 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   ipcMainProxy.handle('browser-tab-view:exec-js', async(_event: Electron.IpcMainInvokeEvent, tabId: string, code: string) => {
     return tabViewManager.executeJavaScript(tabId, code);
   });
+
+  const requireTrustedAccountsRenderer = (event:Electron.IpcMainInvokeEvent):void => {
+    const mainWindow = window.getWindow('main-agent');
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow?.webContents.mainFrame) {
+      throw new Error('Untrusted Accounts caller');
+    }
+  };
+  const accountsClient = async(event:Electron.IpcMainInvokeEvent) => {
+    requireTrustedAccountsRenderer(event);
+    const { getSullaAccountsClient } = await import('@pkg/main/sullaAccountsClient');
+    return getSullaAccountsClient();
+  };
+
+  ipcMainProxy.handle('accounts:profile', async(event:Electron.IpcMainInvokeEvent) =>
+    (await accountsClient(event)).getProfile());
+  ipcMainProxy.handle('accounts:update-profile', async(event:Electron.IpcMainInvokeEvent, input:{ displayName: string }) =>
+    (await accountsClient(event)).updateProfile(input?.displayName));
+  ipcMainProxy.handle('accounts:connections', async(event:Electron.IpcMainInvokeEvent) =>
+    (await accountsClient(event)).listConnections());
+  ipcMainProxy.handle('accounts:create-connection', async(event:Electron.IpcMainInvokeEvent, input:import('@pkg/main/sullaAccountsClient').AccountsConnectionInput) =>
+    (await accountsClient(event)).createConnection(input));
+  ipcMainProxy.handle('accounts:discover-authority', async(event:Electron.IpcMainInvokeEvent, baseUrl:string) =>
+    (await accountsClient(event)).discoverAuthority(baseUrl));
+  ipcMainProxy.handle('accounts:enroll-authority', async(event:Electron.IpcMainInvokeEvent, baseUrl:string) =>
+    (await accountsClient(event)).enrollAuthority(baseUrl));
+  ipcMainProxy.handle('accounts:remove-connection', async(event:Electron.IpcMainInvokeEvent, id:string) => {
+    await (await accountsClient(event)).removeConnection(id);
+  });
+  ipcMainProxy.handle('accounts:authorize', async(event:Electron.IpcMainInvokeEvent, input:{ id: string; resourceAudience?: string }) => {
+    const launch = await (await accountsClient(event)).beginAuthorization(input?.id, input?.resourceAudience);
+    await shell.openExternal(launch.authorizationUrl);
+    return { opened: true, expiresAt: launch.expiresAt };
+  });
+  ipcMainProxy.handle('accounts:memberships', async(event:Electron.IpcMainInvokeEvent) =>
+    (await accountsClient(event)).listMemberships());
 
   // ── Vault: key management IPC handlers (main-process only — safeStorage) ──
   const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
