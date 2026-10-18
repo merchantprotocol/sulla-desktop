@@ -325,6 +325,7 @@ function buildWorkflowFromTemplate({ slug, manifest, doc }: WrapOptions): Record
     id:          workflowId,
     name:        `${ name } · new routine`,
     ...(doc.preflight !== undefined ? { preflight: doc.preflight } : {}),
+    ...(doc.maxConcurrentRuns !== undefined ? { maxConcurrentRuns: doc.maxConcurrentRuns } : {}),
     ...(doc.concurrencyPolicy !== undefined ? { concurrencyPolicy: doc.concurrencyPolicy } : {}),
     ...(doc.auto_restart !== undefined ? { auto_restart: doc.auto_restart } : {}),
     description,

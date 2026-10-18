@@ -107,22 +107,41 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
    * recovery burned all its attempts and failed the run
    * ("recovery attempt ceiling exceeded").
    */
+  static async admit(
+    params: Parameters<typeof WorkflowExecutionModel.markRunning>[0],
+    options: { maxConcurrentRuns: number; supersedesExecutionId?: string },
+  ): Promise<void> {
+    const maxConcurrentRuns = Math.max(1, Math.floor(options.maxConcurrentRuns));
+    await postgresClient.transaction(async(client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`workflow-admission:${ params.workflowId }`]);
+      if (options.supersedesExecutionId) {
+        await WorkflowExecutionModel.supersede(options.supersedesExecutionId, params.executionId, client);
+      }
+      const active = await client.query<{ execution_id: string }>(`SELECT execution_id FROM workflow_executions
+        WHERE workflow_id = $1 AND status IN ('running', 'suspended')
+        ORDER BY started_at ASC LIMIT $2`, [params.workflowId, maxConcurrentRuns]);
+      if (active.rows.length >= maxConcurrentRuns) {
+        throw new Error(`Workflow has reached its ${ maxConcurrentRuns } concurrent run limit; active executions: ${ active.rows.map(row => row.execution_id).join(', ') }.`);
+      }
+      await WorkflowExecutionModel.markRunning(params, client);
+    });
+  }
+
+  /** Backward-compatible name for callers and tests written for singleton admission. */
   static async admitSingleton(
     params: Parameters<typeof WorkflowExecutionModel.markRunning>[0],
     options: { supersedesExecutionId?: string } = {},
   ): Promise<void> {
-    await postgresClient.transaction(async(client) => {
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`workflow-singleton:${ params.workflowId }`]);
-      if (options.supersedesExecutionId) {
-        await WorkflowExecutionModel.supersede(options.supersedesExecutionId, params.executionId, client);
-      }
-      const active = await client.query(`SELECT execution_id FROM workflow_executions
-        WHERE workflow_id = $1 AND status IN ('running', 'suspended') LIMIT 1`, [params.workflowId]);
-      if (active.rows.length) {
-        throw new Error(`Workflow already has an active execution (${ active.rows[0].execution_id }); wait for it to finish. Force restart is disabled.`);
-      }
-      await WorkflowExecutionModel.markRunning({ ...params, autoRestart: false }, client);
-    });
+    return WorkflowExecutionModel.admit({ ...params, autoRestart: false }, { ...options, maxConcurrentRuns: 1 });
+  }
+
+  static async countActiveByWorkflow(workflowId: string): Promise<number> {
+    const row = await postgresClient.queryOne<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM workflow_executions
+       WHERE workflow_id = $1 AND status IN ('running', 'suspended')`,
+      [workflowId],
+    );
+    return Number(row?.count ?? 0);
   }
 
   /** Graceful shutdown: mark as suspended so boot recovery can find it. */
@@ -277,6 +296,20 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
 
   static async markFailed(executionId: string, error?: string): Promise<void> {
     await WorkflowExecutionModel.settle(executionId, 'failed', error);
+  }
+
+  /** Settle only a run that never established runtime ownership. */
+  static async settleUnlaunched(executionId: string, reason: string): Promise<WorkflowExecutionModel | null> {
+    const row = await postgresClient.queryOne<any>(`
+      UPDATE workflow_executions
+         SET status = 'failed', auto_restart = FALSE,
+             completed_at = COALESCE(completed_at, NOW()), terminal_at = COALESCE(terminal_at, NOW()),
+             terminal_reason = $2, error = COALESCE(error, $2), runner_id = NULL,
+             owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
+       WHERE execution_id = $1 AND status IN ('running', 'suspended')
+         AND owner_id IS NULL AND lease_token IS NULL AND heartbeat_at IS NULL
+       RETURNING *`, [executionId, reason]);
+    return row ? WorkflowExecutionModel.hydrate(row) : null;
   }
 
   /**

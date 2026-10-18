@@ -16,6 +16,8 @@ import { up as createLaneWorkflowBindings } from '../../migrations/0070_create_l
 import { up as scopeLaneWorkflowExecutions } from '../../migrations/0071_scope_lane_workflow_executions';
 import { up as extendDispatchCustody } from '../../migrations/0076_extend_work_task_dispatch_custody';
 import { up as addWorkflowExecutionLeases } from '../../migrations/0081_add_workflow_execution_leases';
+import { up as addWorkflowContainerRuntime } from '../../migrations/0118_add_workflow_container_runtime';
+import { up as settleAbandonedLaunches } from '../../migrations/0126_settle_abandoned_workflow_launches';
 import { WorkflowExecutionModel } from '../WorkflowExecutionModel';
 
 /**
@@ -51,6 +53,7 @@ describeWithPostgres('WorkflowExecutionModel recovery (migrated PostgreSQL)', ()
       createWorkTaskDispatches, addVerificationDispatches,
       createLaneDefinitions, createLaneWorkflowBindings, scopeLaneWorkflowExecutions,
       extendDispatchCustody, addWorkflowExecutionLeases,
+      addWorkflowContainerRuntime,
     ]) await pool.query(migration as any);
     await pool.query(`INSERT INTO workflows (id, name, status, definition) VALUES
       ('singleton', 'Singleton', 'production', '{}'::jsonb),
@@ -170,5 +173,32 @@ describeWithPostgres('WorkflowExecutionModel recovery (migrated PostgreSQL)', ()
     } finally {
       await pool.query(`UPDATE workflows SET status = 'production' WHERE id = 'plain'`);
     }
+  });
+
+  it('migrates only abandoned pre-lease launches and preserves waits, checkpoints, and terminal history', async() => {
+    await pool.query(`INSERT INTO workflow_executions
+      (execution_id, workflow_id, status, runner_id, owner_id, lease_token, lease_expires_at, heartbeat_at, wait_kind)
+      VALUES
+        ('abandoned-launch', 'plain', 'running', 'gone-runner', NULL, NULL, NULL, NULL, NULL),
+        ('checkpointed-run', 'plain', 'running', 'live-runner', NULL, NULL, NULL, NULL, NULL),
+        ('suspended-wait', 'plain', 'suspended', NULL, NULL, NULL, NULL, NOW(), 'user-input'),
+        ('completed-history', 'plain', 'completed', 'old-runner', NULL, NULL, NULL, NULL, NULL)`);
+    await pool.query(`INSERT INTO workflow_checkpoints
+      (execution_id,workflow_id,node_id,sequence,playbook_state)
+      VALUES ('checkpointed-run','plain','node-1',1,'{}'::jsonb)`);
+    await pool.query(`INSERT INTO workflow_execution_events (execution_id,workflow_id,event_type)
+      VALUES
+        ('abandoned-launch','plain','workflow_started'),
+        ('checkpointed-run','plain','node_started')`);
+
+    await pool.query(settleAbandonedLaunches);
+    await pool.query(settleAbandonedLaunches);
+
+    expect(await row('abandoned-launch')).toMatchObject({
+      status: 'failed', terminal_reason: 'abandoned_without_live_lease', runner_id: null,
+    });
+    expect(await row('checkpointed-run')).toMatchObject({ status: 'running', runner_id: 'live-runner' });
+    expect(await row('suspended-wait')).toMatchObject({ status: 'suspended', wait_kind: 'user-input' });
+    expect(await row('completed-history')).toMatchObject({ status: 'completed', runner_id: 'old-runner' });
   });
 });

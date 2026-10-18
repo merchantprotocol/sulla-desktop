@@ -139,9 +139,9 @@ describe('validateWorkflowDefinition', () => {
 describe('workflow concurrency configuration', () => {
   const base = () => makeDefinition({ id: 'node-1', type: 'workflow', position: { x: 0, y: 0 }, data: { category: 'trigger', subtype: 'manual', label: 'Start', config: { triggerType: 'manual', triggerDescription: 'Start' } } });
   it('accepts strict admission and disabled automatic recovery', () => {
-    expect(errors({ ...base(), concurrencyPolicy: 'forbid', auto_restart: false })).toEqual([]);
+    expect(errors({ ...base(), maxConcurrentRuns: 3, concurrencyPolicy: 'forbid', auto_restart: false })).toEqual([]);
   });
-  it.each([{ concurrencyPolicy: 'replace' }, { auto_restart: 'false' }])('rejects unsupported policy values %j', (config) => {
+  it.each([{ maxConcurrentRuns: 0 }, { maxConcurrentRuns: 1.5 }, { concurrencyPolicy: 'replace' }, { auto_restart: 'false' }])('rejects unsupported policy values %j', (config) => {
     expect(errors({ ...base(), ...config })).not.toEqual([]);
   });
 });

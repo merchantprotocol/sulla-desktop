@@ -58,6 +58,7 @@ const ORCHESTRATOR_REENTRY_MAX_MS = parseInt(
 import { throwIfAborted } from '../services/AbortService';
 import { LiveWriterRegistry } from '../services/LiveWriterRegistry';
 import { RunActivity } from '../services/RunActivity';
+import { isSingletonWorkflow } from '../workflow/workflowConcurrency';
 import { WorkflowLeaseHeartbeat, WorkflowLeaseLostError } from '../workflow/WorkflowLeaseHeartbeat';
 import { getConversationLogger } from '../services/ConversationLogger';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
@@ -1248,7 +1249,7 @@ export class PlaybookController<TState = any> {
               const subAgentPrompt = subAgentPromptParts.join('\n\n');
               // A timeout does not prove the underlying worker stopped. A
               // singleton must retain admission instead of launching a retry.
-              const maxRetries = currentPlaybook.definition.concurrencyPolicy === 'forbid' ? 1 : 3;
+              const maxRetries = isSingletonWorkflow(currentPlaybook.definition) ? 1 : 3;
               const nodeId = step.nodeId;
               const agentId = step.agentId;
 
@@ -1818,7 +1819,7 @@ export class PlaybookController<TState = any> {
             if (!subDefinition) {
               throw new Error(`Sub-workflow not found: ${ step.workflowId }`);
             }
-            if (subDefinition.concurrencyPolicy === 'forbid' || currentPlaybook.definition.concurrencyPolicy === 'forbid') {
+            if (isSingletonWorkflow(subDefinition) || isSingletonWorkflow(currentPlaybook.definition)) {
               throw new Error('Singleton workflows must run through normal admission, without nested workflow handoffs.');
             }
 
@@ -1916,7 +1917,7 @@ export class PlaybookController<TState = any> {
             if (!targetDefinition) {
               throw new Error(`Transfer target workflow not found: ${ step.targetWorkflowId }`);
             }
-            if (targetDefinition.concurrencyPolicy === 'forbid' || currentPlaybook.definition.concurrencyPolicy === 'forbid') {
+            if (isSingletonWorkflow(targetDefinition) || isSingletonWorkflow(currentPlaybook.definition)) {
               throw new Error('Singleton workflows must run through normal admission, without workflow transfers.');
             }
 

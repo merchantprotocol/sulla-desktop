@@ -51,7 +51,7 @@ sulla meta/validate_sulla_workflow '{"yaml":"...full yaml string..."}'
 **Category note:** workflow tools are registered under `meta`, not under a `workflow/` category — the backend has no `workflow` category. `sulla meta/validate_sulla_workflow`, `sulla meta/execute_workflow`, and `sulla meta/restart_from_checkpoint` are the canonical forms. (The category segment in the URL is ignored by the backend, so `sulla workflow/...` may also resolve, but `sulla workflow --help` returns "Unknown category." Stick with `meta/`.)
 
 What it checks:
-- Top-level keys (only: `id`, `name`, `description`, `version`, `enabled`, `createdAt`, `updatedAt`, `nodes`, `edges`, `viewport`)
+- Top-level keys, including the optional positive-integer `maxConcurrentRuns`
 - Node structure (`type: "workflow"`, `position`, `data.{subtype,category,label,config}`)
 - Subtype↔category mapping
 - Required config fields per subtype

@@ -604,9 +604,8 @@ async function fetchWorkflowRuns(): Promise<AgentsListResponse['workflowRuns']> 
            WHERE execution_id = e.execution_id
            ORDER BY id DESC LIMIT 1
         ) latest ON true
-       WHERE e.status IN ('running', 'suspended', 'failed')
+       WHERE e.status IN ('running', 'suspended')
          AND (w.id IS NULL OR w.status <> 'archive')
-         AND (e.status <> 'failed' OR e.updated_at >= NOW() - INTERVAL '1 hour')
        ORDER BY e.started_at ASC`);
 
     return rows.map((row: any) => ({

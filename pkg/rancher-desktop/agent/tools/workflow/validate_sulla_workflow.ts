@@ -79,7 +79,7 @@ const OPTIONAL_CONFIG_FIELDS: Partial<Record<WorkflowNodeSubtype, string[]>> = {
 };
 
 const VALID_TOP_LEVEL_KEYS = new Set([
-  'id', 'name', 'description', 'version', 'enabled', 'concurrencyPolicy', 'auto_restart', 'preflight', 'browser',
+  'id', 'name', 'description', 'version', 'enabled', 'maxConcurrentRuns', 'concurrencyPolicy', 'auto_restart', 'preflight', 'browser',
   'createdAt', 'updatedAt', 'laneContract', 'nodes', 'edges', 'viewport',
 ]);
 
@@ -103,8 +103,11 @@ export function validateWorkflowDefinition(def: any, filePath?: string): Validat
     return issues;
   }
 
-  if (def.concurrencyPolicy !== undefined && def.concurrencyPolicy !== 'forbid') {
-    issues.push({ severity: 'error', path: '/concurrencyPolicy', message: 'Only concurrencyPolicy: forbid is supported.' });
+  if (def.maxConcurrentRuns !== undefined && (!Number.isSafeInteger(def.maxConcurrentRuns) || def.maxConcurrentRuns < 1)) {
+    issues.push({ severity: 'error', path: '/maxConcurrentRuns', message: 'maxConcurrentRuns must be a positive integer.' });
+  }
+  if (def.concurrencyPolicy !== undefined && !['forbid', 'allow'].includes(def.concurrencyPolicy)) {
+    issues.push({ severity: 'error', path: '/concurrencyPolicy', message: 'concurrencyPolicy must be forbid or allow.' });
   }
   if (def.preflight !== undefined) {
     const preflight = def.preflight;

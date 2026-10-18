@@ -18,9 +18,11 @@ import { config } from './config.js';
 import { migrate, pool } from './db.js';
 import { emitEvent } from './events.js';
 import { createWorkflowLauncher } from './launcher.js';
+import { settleUnownedRun, waitForRunnerHandshake } from './managerLifecycle.js';
 import { scheduleGrantIssueRequest } from './scheduleGrantRequest.js';
 import { createPlaybookState, resolveDecision } from '../../../pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.js';
 import { issueCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
+import { workflowConcurrencyLimit } from '../../../pkg/rancher-desktop/agent/workflow/workflowConcurrency.js';
 
 import type { WorkflowPlaybookState } from '../../../pkg/rancher-desktop/agent/workflow/types.js';
 
@@ -30,6 +32,7 @@ app.use(express.json({ limit: '10mb' }));
 const launcher = createWorkflowLauncher();
 const jobs = new Map<string, { job: schedule.Job; identity: RequestIdentity }>();
 let schedulerLeader = false;
+const managerStartedAt = new Date();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface ScheduleGrantRow {
@@ -274,7 +277,55 @@ async function issueRunToken(run: any, allowedTools: string[]): Promise<string> 
   return token;
 }
 
-async function launch(executionId: string): Promise<string> {
+async function reconcileAbandonedRuns(workflowId?: string): Promise<string[]> {
+  const params: unknown[] = [managerStartedAt];
+  const workflowFilter = workflowId ? `AND e.workflow_id=$${ params.push(workflowId) }` : '';
+  const rows = (await pool.query(
+    `SELECT e.execution_id,e.runner_id,e.started_at,e.lease_expires_at,e.owner_id,e.lease_token,e.heartbeat_at
+       FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id
+      WHERE e.status IN ('running','suspended') AND w.location=$${ params.push(config.mode) }
+        ${ workflowFilter }
+        AND (
+          (e.runner_id IS NOT NULL AND e.owner_id IS NULL AND e.lease_token IS NULL AND e.heartbeat_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.execution_id=e.execution_id))
+          OR
+          (e.runner_id IS NULL AND e.owner_id IS NULL AND e.lease_token IS NULL AND e.heartbeat_at IS NULL AND e.started_at < $1
+            AND NOT EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.execution_id=e.execution_id))
+          OR
+          (e.runner_id IS NOT NULL AND e.lease_expires_at IS NOT NULL AND e.lease_expires_at <= NOW())
+        )`, params,
+  )).rows;
+  const settled: string[] = [];
+  for (const row of rows) {
+    let reason: string | null = null;
+    if (row.lease_expires_at && new Date(row.lease_expires_at).getTime() <= Date.now()) {
+      reason = 'runner_lease_expired';
+    } else if (!row.runner_id) {
+      reason = 'manager_restarted_before_launch';
+    } else if (new Date(row.started_at).getTime() < managerStartedAt.getTime()) {
+      reason = 'manager_restarted_before_handshake';
+    } else if (!await launcher.runnerExists(row.runner_id)) {
+      reason = 'abandoned_without_live_runner';
+    }
+    if (!reason) continue;
+    const didSettle = await pool.query(
+      `UPDATE workflow_executions
+          SET status='failed',auto_restart=FALSE,completed_at=COALESCE(completed_at,NOW()),
+              terminal_at=COALESCE(terminal_at,NOW()),terminal_reason=$2,error=COALESCE(error,$2),
+              runner_id=NULL,owner_id=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=NOW()
+        WHERE execution_id=$1 AND status IN ('running','suspended')
+          AND (owner_id IS NULL OR lease_expires_at <= NOW())
+        RETURNING workflow_id`, [row.execution_id, reason],
+    );
+    if (!didSettle.rowCount) continue;
+    if (row.runner_id) await launcher.stopRunner(row.runner_id).catch(() => {});
+    await emitEvent(row.execution_id, didSettle.rows[0].workflow_id, 'workflow_failed', { error: reason });
+    settled.push(row.execution_id);
+  }
+  return settled;
+}
+
+async function launchUnchecked(executionId: string): Promise<string> {
   const run = (await pool.query(
     `SELECT e.execution_id,e.playbook_state,e.owner_issuer,e.owner_subject,e.authority_id,e.organization_id
        FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id
@@ -304,7 +355,17 @@ async function launch(executionId: string): Promise<string> {
     await launcher.stopRunner(runnerId).catch(() => {});
     throw new Error(`workflow execution ${ executionId } became inactive before runner assignment`);
   }
+  await waitForRunnerHandshake({ db: pool, launcher, emit: emitEvent, executionId, runnerId });
   return runnerId;
+}
+
+async function launch(executionId: string): Promise<string> {
+  try {
+    return await launchUnchecked(executionId);
+  } catch (error) {
+    await settleUnownedRun(pool, emitEvent, executionId, 'runner_launch_failed');
+    throw error;
+  }
 }
 
 async function startRun(params: {
@@ -355,28 +416,54 @@ async function startRun(params: {
   }
 
   const definition = workflow.definition;
+  const maxConcurrentRuns = workflowConcurrencyLimit(definition);
+  const autoRestart = definition.auto_restart !== false && maxConcurrentRuns > 1;
   const state = params.playbookState ?? createPlaybookState(definition, params.message ?? '');
   const executionId = state.executionId;
-  const inserted = await pool.query(
-    `INSERT INTO workflow_executions
+  await reconcileAbandonedRuns(workflow.id);
+  const client = await pool.connect();
+  let inserted;
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`workflow-admission:${ workflow.id }`]);
+    if (params.triggerKey) {
+      const existing = await client.query(
+        `SELECT execution_id,runner_id FROM workflow_executions WHERE trigger_key=$5 AND ${ identitySql }`,
+        [...identityParams(identity), params.triggerKey],
+      );
+      if (existing.rows[0]) {
+        await client.query('COMMIT');
+        return { executionId: existing.rows[0].execution_id, runnerId: existing.rows[0].runner_id, deduplicated: true };
+      }
+    }
+    const active = await client.query(
+      `SELECT execution_id FROM workflow_executions
+        WHERE workflow_id=$1 AND status IN ('running','suspended')
+        ORDER BY started_at ASC LIMIT $2`, [workflow.id, maxConcurrentRuns],
+    );
+    if (active.rows.length >= maxConcurrentRuns) {
+      throw new Error(`Workflow has reached its ${ maxConcurrentRuns } concurrent run limit; active executions: ${ active.rows.map(row => row.execution_id).join(', ') }.`);
+    }
+    inserted = await client.query(
+      `INSERT INTO workflow_executions
        (execution_id, workflow_id, workflow_name, workflow_slug, status, auto_restart,
         trigger_input, parent_execution_id, trigger_key, playbook_state,
         owner_issuer,owner_subject,authority_id,organization_id,delegated_grant_token,delegated_grant_workflow_id,schedule_node_id,started_at,updated_at)
-     VALUES ($1,$2,$3,$4,'running',TRUE,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW())
+     VALUES ($1,$2,$3,$4,'running',$16,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW())
      ON CONFLICT (trigger_key) WHERE trigger_key IS NOT NULL DO NOTHING
      RETURNING execution_id`,
     [executionId, workflow.id, workflow.name, definition.slug ?? workflow.id, params.message ?? null,
       params.parentExecutionId ?? null, params.triggerKey ?? null, JSON.stringify(state),
-      ...identityParams(identity), delegatedGrantToken ?? null, delegatedGrantWorkflowId ?? null, scheduleNodeId ?? null],
-  );
-  if (inserted.rowCount === 0 && params.triggerKey) {
-    const existing = await pool.query(
-      `SELECT execution_id,runner_id FROM workflow_executions WHERE trigger_key=$5 AND ${ identitySql }`,
-      [...identityParams(identity), params.triggerKey],
+      ...identityParams(identity), delegatedGrantToken ?? null, delegatedGrantWorkflowId ?? null, scheduleNodeId ?? null, autoRestart],
     );
-    if (!existing.rows[0]) throw new Error('trigger key is already owned by another context');
-    return { executionId: existing.rows[0].execution_id, runnerId: existing.rows[0].runner_id, deduplicated: true };
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
+  if (!inserted?.rowCount) throw new Error('trigger key is already owned by another context');
   await emitEvent(executionId, workflow.id, 'workflow_started', { workflowName: workflow.name });
   return { executionId, runnerId: await launch(executionId) };
 }
@@ -787,7 +874,8 @@ async function resumeDueRuns(): Promise<void> {
       await launch(row.execution_id);
     } catch (error) {
       await pool.query(
-        `UPDATE workflow_executions SET resume_at=NOW() + INTERVAL '5 minutes',updated_at=NOW() WHERE execution_id=$1`,
+        `UPDATE workflow_executions SET resume_at=NOW() + INTERVAL '5 minutes',updated_at=NOW()
+          WHERE execution_id=$1 AND status IN ('running','suspended')`,
         [row.execution_id],
       );
       console.error('[workflow-manager] wait resume failed closed; retry delayed:', error);
@@ -844,11 +932,14 @@ async function establishLegacyOwnership(): Promise<void> {
 async function main(): Promise<void> {
   await migrate();
   await establishLegacyOwnership();
+  const reconciled = await reconcileAbandonedRuns();
+  if (reconciled.length) console.warn(`[workflow-manager] Settled ${ reconciled.length } abandoned workflow run(s) at startup`);
   const lockClient = await pool.connect();
   schedulerLeader = (await lockClient.query(`SELECT pg_try_advisory_lock(hashtext('sulla-workflow-manager')) AS acquired`)).rows[0].acquired === true;
   if (!schedulerLeader) console.warn('[workflow-manager] Another manager owns triggers; API remains healthy without scheduling');
   await refreshSchedules();
   setInterval(() => resumeDueRuns().catch(error => console.error('[workflow-manager] wait scan failed:', error)), 1_000).unref();
+  setInterval(() => reconcileAbandonedRuns().catch(error => console.error('[workflow-manager] runner reconciliation failed:', error)), 5_000).unref();
   app.listen(config.port, '0.0.0.0', () => console.log(`[workflow-manager] listening on :${ config.port }; schedulerLeader=${ schedulerLeader }`));
 }
 

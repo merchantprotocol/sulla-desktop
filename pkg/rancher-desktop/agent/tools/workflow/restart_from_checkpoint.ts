@@ -173,16 +173,17 @@ export class RestartFromCheckpointWorker extends BaseTool {
       if (savedState.definition.preflight !== undefined || currentDefinition?.preflight !== undefined) {
         throw new Error('Preflight workflows require a fresh run; checkpoint replay is disabled.');
       }
-      const singleton = savedState.definition.concurrencyPolicy === 'forbid' || currentDefinition?.concurrencyPolicy === 'forbid';
-      if (singleton) rebuiltState.definition = { ...rebuiltState.definition, concurrencyPolicy: 'forbid' };
-      if (!singleton) await WorkflowExecutionModel.markSupersededIfActive(executionId);
-      const persist = singleton ? WorkflowExecutionModel.admitSingleton.bind(WorkflowExecutionModel) : WorkflowExecutionModel.markRunning.bind(WorkflowExecutionModel);
-      await persist({
+      const { workflowConcurrencyLimit } = await import('../../workflow/workflowConcurrency');
+      const admissionDefinition = currentDefinition ?? savedState.definition;
+      const maxConcurrentRuns = workflowConcurrencyLimit(admissionDefinition);
+      rebuiltState.definition = { ...rebuiltState.definition, maxConcurrentRuns };
+      await WorkflowExecutionModel.admit({
         executionId:  rebuiltState.executionId,
         workflowId:   savedState.workflowId,
         workflowName: savedState.definition.name,
         workflowSlug: savedState.workflowId,
-      });
+        autoRestart: admissionDefinition.auto_restart !== false && maxConcurrentRuns > 1,
+      }, { maxConcurrentRuns, supersedesExecutionId: executionId });
     } catch (err) {
       return {
         successBoolean: false,

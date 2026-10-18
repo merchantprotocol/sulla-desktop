@@ -13,6 +13,7 @@ export interface RunLaunch {
 export interface WorkflowLauncher {
   launchRunner(run: RunLaunch): Promise<string>;
   stopRunner(runnerId: string): Promise<void>;
+  runnerExists(runnerId: string): Promise<boolean>;
 }
 
 export class DockerWorkflowLauncher implements WorkflowLauncher {
@@ -67,6 +68,16 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
   async stopRunner(runnerId: string): Promise<void> {
     await this.docker.remove(runnerId, true);
   }
+
+  async runnerExists(runnerId: string): Promise<boolean> {
+    try {
+      const inspected = await this.docker.inspect(runnerId);
+      return inspected?.State?.Running === true;
+    } catch (error) {
+      if (String(error).includes('404')) return false;
+      throw error;
+    }
+  }
 }
 
 export class KubernetesWorkflowLauncher implements WorkflowLauncher {
@@ -77,6 +88,16 @@ export class KubernetesWorkflowLauncher implements WorkflowLauncher {
 
   async stopRunner(runnerId: string): Promise<void> {
     await this.runtime.remove(runnerId, true);
+  }
+
+  async runnerExists(runnerId: string): Promise<boolean> {
+    try {
+      const inspected = await this.runtime.inspect(runnerId);
+      return inspected?.status?.phase === 'Running' || inspected?.State?.Running === true;
+    } catch (error) {
+      if (String(error).includes('404')) return false;
+      throw error;
+    }
   }
 }
 
