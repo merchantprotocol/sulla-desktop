@@ -8,13 +8,16 @@
 
   Layout: pick a project on the left, its epics and issues render on the right.
   Today = epics-as-sections list; Board = the four status columns; Projects =
-  the all-projects overview. Clicking an issue opens its full-screen route.
+  the all-projects overview. Clicking an issue opens a routed drawer over the mounted workspace.
 -->
 <template>
   <div class="projects-home">
+    <div v-if="issueRouteId && taskMode === 'edit'" class="ph-issue-scrim" aria-hidden="true" @click="closeTask" />
     <ProjectIssueDetail
       v-if="issueRouteId && taskMode === 'edit'"
+      :key="issueRouteId"
       :task-id="issueRouteId"
+      :checklist="issueChecklist"
       :detail="issueDetail"
       :project-title="issueProjectTitle"
       :epic-title="issueEpicTitle"
@@ -22,13 +25,15 @@
       :busy="saving"
       :error="issueDetailError"
       :status-label="statusLabel"
+      @open-task="openProjectCard"
       @close="closeTask"
       @refresh="refreshIssueDetail"
       @comment="postDetailComment"
     />
     <div
-      v-else-if="projectWorkspaceOpen && selectedId"
+      v-if="projectWorkspaceOpen && selectedId"
       class="ph-project-workspace"
+      :inert="Boolean(issueRouteId)"
     >
       <ProjectBoardV2
         v-if="projectWorkspaceView === 'board'"
@@ -45,21 +50,19 @@
         @view-change="projectWorkspaceView = $event"
       />
     </div>
-    <div v-else class="ph-body">
+    <div v-else class="ph-body" :inert="Boolean(issueRouteId)">
       <!-- project list -->
       <aside v-if="tab === 'projects'" class="ph-side ph-directory-side">
-        <div class="ph-side-h">
-          <div class="ph-eyebrow">
-            Project index
-          </div>
-          <h1>Projects</h1>
+        <div class="ph-directory-brand">
+          <span class="ph-brand-mark" aria-hidden="true">S</span>
+          <div><b>Sulla</b><small>Projects</small></div>
         </div>
         <nav class="ph-directory-nav" aria-label="Project filters">
           <button
             v-for="item in directoryNavItems"
             :key="item.key"
             type="button"
-            :class="{ on: directoryFilter === item.key }"
+            :class="{ on: directoryFilter === item.key, 'ph-agent-nav': item.key === 'working' }"
             @click="directoryFilter = item.key"
           >
             <span class="ph-directory-nav-icon" aria-hidden="true">
@@ -74,11 +77,11 @@
             <span v-if="item.count" class="ph-directory-count">{{ item.count }}</span>
           </button>
         </nav>
-        <div class="ph-side-f">
-          <button type="button" class="ph-btn primary block" @click="openNewProject">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-            New project
-          </button>
+        <div class="ph-directory-summary">
+          <b>{{ weeklyProgress.done }} cards done this week</b>
+          <div class="ph-project-progress-bar"><i :style="{ width: weeklyProgress.percent + '%' }" /></div>
+          <span>{{ projects.length }} projects · {{ activeAgents.length }} agents working</span>
+          <button type="button" class="ph-directory-sync" :disabled="isLoading" @click="refresh">{{ isLoading ? 'Refreshing…' : error ? 'Retry sync' : 'Refresh projects' }}</button>
         </div>
       </aside>
 
@@ -938,6 +941,9 @@
               </div>
 
               <div v-else-if="projectLayout === 'list'" class="ph-project-list">
+                <div class="ph-project-columns" aria-hidden="true">
+                  <span /><span>Project</span><span>Activity</span><span>Progress</span><span class="ph-team-heading">Team</span><span>Updated</span><span />
+                </div>
                 <template v-for="section in projectSections" :key="section.label">
                   <div v-if="section.items.length" class="ph-project-section">{{ section.label }}</div>
                   <button
@@ -979,7 +985,10 @@
                     </span>
                     <time :datetime="projectUpdatedAt(p)">{{ relativeDate(projectUpdatedAt(p)) }}</time>
                     <span class="ph-project-actions">
-                      <span title="More" aria-hidden="true">
+                      <span role="button" tabindex="0" :aria-label="`Edit ${shortName(p)}`"
+                        @click.stop="openEditProject(p)"
+                        @keydown.enter.stop.prevent="openEditProject(p)"
+                        @keydown.space.stop.prevent="openEditProject(p)">
                         <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/></svg>
                       </span>
                     </span>
@@ -1015,6 +1024,7 @@
                   </span>
                 </button>
               </div>
+              <button type="button" class="ph-project-create" @click="openNewProject">＋ Create a new project</button>
             </div>
 
             <!-- LANE SETTINGS -->
@@ -1504,7 +1514,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import type { ProjectsIssueDetail } from '@pkg/agent/services/ProjectsIssueDetailService';
@@ -1770,7 +1780,7 @@ const projectSections = computed(() => {
   const others = filteredProjects.value.filter(project => !isFavorite(project.id));
   return [
     { label: 'Starred', items: starred },
-    { label: starred.length ? 'All projects' : 'Projects', items: others },
+    { label: 'All projects', items: others },
   ];
 });
 
@@ -1782,6 +1792,13 @@ const directoryNavItems = computed(() => [
   { key: 'recent' as const, label: 'Recent', count: 0 },
   { key: 'working' as const, label: 'Working now', count: new Set(activeAgents.value.map(agent => agent.agent_id)).size },
 ]);
+
+const weeklyProgress = computed(() => {
+  const tasks = projects.value.flatMap(projectTasks);
+  const since = Date.now() - 7 * 24 * 60 * 60 * 1_000;
+  const done = tasks.filter(task => task.completed_at && new Date(task.completed_at).getTime() >= since).length;
+  return { done, percent: tasks.length ? done / tasks.length * 100 : 0 };
+});
 
 const directoryHeading = computed(() => directoryNavItems.value.find(item => item.key === directoryFilter.value)?.label ?? 'All projects');
 const directoryMeta = computed(() => {
@@ -2148,7 +2165,20 @@ const issueDetail = ref<ProjectsIssueDetail | null>(null);
 const issueDetailLoading = ref(false);
 const issueDetailError = ref('');
 let issueRouteWasPushed = false;
+let issueTrigger: HTMLElement | null = null;
 const issueRouteId = computed(() => typeof route.query.issue === 'string' ? route.query.issue : '');
+const issueChecklist = computed(() => allTasks.value
+  .map(row => row.task)
+  .filter(task => task.parent_id === issueRouteId.value)
+  .map(task => {
+    const lane = lanesByProject.value[task.project_id]?.find(item => item.lane_key === task.status);
+    return {
+      id: task.id,
+      title: task.title,
+      done: lane ? lane.semantic_role === 'terminal' : ['done', 'cancelled', 'parked'].includes(task.status),
+      assignee: task.assignee,
+    };
+  }));
 const taskDraft = reactive<TaskDraft>({ title: '' });
 const taskComments = ref<WorkCommentRecord[]>([]);
 const taskDependencies = ref<WorkTaskDependencyRecord[]>([]);
@@ -2191,6 +2221,7 @@ function fillTaskDraft(t: Partial<WorkTaskRecord> & { epic_id?: string | null })
 }
 
 async function openTaskDrawer(t: WorkTaskRecord, syncRoute = true): Promise<void> {
+  if (!issueRouteId.value) issueTrigger = document.activeElement as HTMLElement | null;
   taskMode.value = 'edit';
   openTask.value = t;
   fillTaskDraft(t);
@@ -2199,8 +2230,15 @@ async function openTaskDrawer(t: WorkTaskRecord, syncRoute = true): Promise<void
   taskComments.value = issueDetail.value?.comments ?? [];
   dependencyCandidate.value = '';
   if (syncRoute && route.query.issue !== t.id) {
-    issueRouteWasPushed = true;
-    await router.push({ query: { ...route.query, issue: t.id } });
+    if (issueRouteId.value) {
+      // Moving between a parent issue and one of its checklist items stays in
+      // the same drawer session. Replacing the query keeps Close/Escape tied
+      // to the board location that originally opened the drawer.
+      await router.replace({ query: { ...route.query, issue: t.id } });
+    } else {
+      issueRouteWasPushed = true;
+      await router.push({ query: { ...route.query, issue: t.id } });
+    }
   }
 }
 
@@ -2239,6 +2277,10 @@ watch(() => route.query.issue, (issue) => {
   else if (taskMode.value === 'edit') {
     openTask.value = null;
     issueDetail.value = null;
+    nextTick(() => {
+      if (issueTrigger?.isConnected) issueTrigger.focus();
+      issueTrigger = null;
+    });
   }
 });
 
@@ -2559,6 +2601,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 
   --pbg:          #0b0f17;
   --psurface:     #11161f;
+  --pdetail-surface: #11161f;
   --psurface2:    #161c27;
   --pborder:      #212a38;
   --pborder-soft: #1a212d;
@@ -2571,21 +2614,23 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
   --pgreen:       #5ba37d;
   --pamber:       #c99a54;
   --pred:         #c9736f;
-  --pserif:       var(--serif, 'Playfair Display', Georgia, serif);
+  --pserif:       var(--psans);
   --pmono:        var(--mono, ui-monospace, 'JetBrains Mono', Menlo, monospace);
-  --psans:        var(--sans, 'Inter', system-ui, sans-serif);
+  --psans:        -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 
   height: 100%;
   min-height: 0;
   position: relative;
   background: var(--pbg);
   color: var(--ptext);
-  font-family: var(--psans);
+  font: 13px/1.45 var(--psans);
 }
-:global(html.light) .projects-home, :global(body.light) .projects-home {
+:global(html.light .projects-home), :global(body.light .projects-home),
+:global(.theme-noir-light .projects-home) {
+  --pdetail-surface: #fff;
   --pbg: #f4f7fb; --psurface: rgba(255, 255, 255, 0.82); --psurface2: #eaf0f6;
   --pborder: rgba(26, 35, 50, 0.14); --pborder-soft: rgba(26, 35, 50, 0.09);
-  --ptext: #1a2332; --ptext2: #5b6778; --ptext3: #7a8798;
+  --ptext: #1a2332; --ptext2: #5b6778; --ptext3: #8a94a3;
   --pacc-soft: rgba(58, 127, 160, 0.10); --pacc-line: rgba(58, 127, 160, 0.32); --pacc: #3a7fa0;
   --pgreen: #347558; --pamber: #8b611f; --pred: #a34641;
 }
@@ -2914,343 +2959,61 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-modal { width: 460px; max-width: calc(100% - 40px); max-height: calc(100% - 60px); overflow: auto; background: var(--psurface); border: 1px solid var(--pborder); border-radius: 14px; padding: 22px 24px 24px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); }
 .ph-modal h2 { font-family: var(--pserif); font-weight: 500; font-size: 22px; margin: 0 0 6px; color: var(--ptext); }
 
-/* Noir is additive: every selector below is inert unless the Noir root is active. */
-.ph-nav-glass,
-.ph-card-chrome { display: none; }
-
-.theme-noir .projects-home {
-  --pbg: var(--nx-paper);
-  --psurface: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  --psurface2: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.66);
-  --pborder: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
-  --pborder-soft: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 6.5%, transparent);
-  --ptext: var(--nx-read-1);
-  --ptext2: var(--nx-read-3);
-  --ptext3: var(--nx-read-4);
-  --pacc: var(--nx-accent);
-  --pacc-soft: color-mix(in srgb, var(--nx-accent) 12%, transparent);
-  --pacc-line: color-mix(in srgb, var(--nx-accent-2) 34%, transparent);
-  --pgreen: var(--nx-success);
-  --pamber: var(--nx-warning);
-  --pred: var(--nx-danger);
-  --pserif: 'Playfair Display', Georgia, serif;
-  --pmono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
-  --noir-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
-
-  background:
-    radial-gradient(70% 55% at 84% 110%, color-mix(in srgb, var(--nx-accent) 10%, transparent), transparent 62%),
-    var(--nx-paper);
+/* The directory and issue drawer share the compact Projects visual language. */
+.ph-nav-glass, .ph-card-chrome { display: none; }
+.ph-issue-scrim { position: absolute; inset: 0; z-index: 29; background: rgba(26, 35, 50, .22); backdrop-filter: blur(2px); }
+.ph-directory-side { width: 224px; padding: 18px 14px; }
+.ph-directory-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
+.ph-brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, var(--pacc), var(--ptext)); color: white; font-weight: 700; }
+.ph-directory-brand b { display: block; font-size: 13px; }
+.ph-directory-brand small { display: block; font-size: 11px; color: var(--ptext3); }
+.ph-directory-nav { padding: 0; flex: none; }
+.ph-directory-summary { padding: 16px 10px; color: var(--ptext3); font-size: 11px; }
+.ph-directory-summary b { font-weight: 600; color: var(--ptext2); }
+.ph-directory-summary .ph-project-progress-bar { width: 100%; max-width: none; margin: 6px 0 4px; height: 4px; }
+.ph-directory-summary .ph-project-progress-bar i { background: var(--pacc); }
+.ph-directory-sync { display: block; width: 100%; padding: 8px 10px; margin-top: 16px; border: 1px solid var(--pborder-soft); border-radius: 9px; background: var(--psurface); color: var(--ptext2); font: inherit; text-align: left; cursor: pointer; }
+.ph-directory-nav button { font: 500 13px/1.45 var(--psans); padding: 7px 10px; }
+.ph-directory-nav .ph-agent-nav { margin-top: 42px; position: relative; }
+.ph-agent-nav::before { content: 'Agents'; position: absolute; top: -32px; left: 0; right: 0; border-top: 1px solid var(--pborder-soft); padding: 10px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ptext3); }
+.ph-canvas { padding: 20px 28px 60px; }
+.ph-directory-heading > div { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ph-directory-heading h2 { margin: 0; font: 650 20px/1.45 var(--psans); }
+.ph-directory-heading p { font-size: 12px; color: var(--ptext3); }
+.ph-directory-top { gap: 14px; }
+.ph-directory-search { flex: 1; min-width: 0; max-width: 560px; margin-left: 0; padding: 6px 10px; }
+.ph-directory-top .ph-btn { padding: 6px 11px; }
+.ph-project-row, .ph-project-columns { grid-template-columns: 40px minmax(180px, 1fr) 190px 170px 120px 110px 80px; gap: 0; padding: 0; }
+.ph-project-row { min-height: 52px; }
+.ph-project-row > *, .ph-project-columns > * { margin: 0; padding: 8px 12px; min-width: 0; }
+.ph-project-row > :first-child, .ph-project-columns > :first-child { padding-left: 16px; }
+.ph-project-row > :last-child, .ph-project-columns > :last-child { padding-right: 14px; }
+.ph-project-columns { display: grid; border-bottom: 1px solid var(--pborder-soft); color: var(--ptext3); font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
+.ph-project-section { padding: 10px 16px 4px; font-family: var(--psans); }
+.ph-project-section:not(:first-child) { border-top: 0; padding-top: 10px; }
+.ph-project-star { width: auto; height: auto; }
+.ph-project-activity { margin: 0 12px; padding: 2px 8px; }
+.ph-project-activity.quiet { background: transparent; padding: 0; color: var(--ptext3); font-weight: 400; }
+.ph-project-progress-bar { width: 90px; max-width: 90px; flex: 1; }
+.ph-project-progress { gap: 8px; font-size: 11px; }
+.ph-project-team > span { width: 20px; height: 20px; }
+.ph-project-actions { width: auto; justify-content: end; }
+.ph-project-row:focus-within .ph-project-actions { opacity: 1; }
+.ph-project-create { width: 100%; margin-top: 14px; padding: 12px; border: 1px dashed var(--pborder); border-radius: 10px; background: transparent; color: var(--ptext2); text-align: left; cursor: pointer; font: 12px var(--psans); }
+@media (max-width: 1180px) {
+  .ph-directory-side { width: 64px; padding: 14px 10px; }
+  .ph-directory-brand { justify-content: center; padding: 0 0 12px; }
+  .ph-directory-summary, .ph-directory-brand > div, .ph-directory-nav button > span:not(.ph-directory-nav-icon) { display: none; }
+  .ph-directory-nav button { justify-content: center; padding: 9px 0; }
+  .ph-agent-nav::before { content: ''; }
+  .ph-project-row, .ph-project-columns { grid-template-columns: 40px minmax(180px, 1fr) 160px 150px 80px 90px 40px; }
+  .ph-project-team { display: flex; }
+  .ph-canvas { padding: 16px 18px 50px; }
 }
-
-.theme-noir .ph-side {
-  width: 260px;
-  border-color: var(--nx-hair);
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.60);
-  backdrop-filter: blur(18px) saturate(120%);
-}
-.theme-noir .ph-side-h { padding: 28px 22px 13px; }
-.theme-noir .ph-eyebrow {
-  color: var(--nx-accent-2);
-  font-size: 10.5px;
-  letter-spacing: 0.16em;
-}
-.theme-noir .ph-side-h h1 {
-  font-size: 30px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-.theme-noir .ph-list { position: relative; padding: 5px 13px 14px; }
-.theme-noir .ph-grp { padding: 16px 10px 7px; color: var(--nx-read-5); }
-.theme-noir .ph-p {
-  position: relative;
-  isolation: isolate;
-  min-height: 48px;
-  margin-bottom: 3px;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 16px;
-  overflow: hidden;
-  transition: color 160ms ease, transform 420ms var(--noir-spring);
-}
-.theme-noir .ph-p:hover { background: color-mix(in srgb, var(--nx-accent) 7%, transparent); transform: translateX(2px); }
-.theme-noir .ph-p.on { background: transparent; border-color: transparent; }
-.theme-noir .ph-nav-glass {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  display: none;
-  border-radius: inherit;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 26%, transparent), color-mix(in srgb, var(--nx-accent) 10%, transparent));
-  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--nx-accent-2) 50%, transparent), 0 0 22px color-mix(in srgb, var(--nx-accent) 18%, transparent);
-}
-.theme-noir .ph-p.on .ph-nav-glass {
-  display: block;
-  animation: noir-project-nav-in 580ms var(--noir-spring) both;
-}
-.theme-noir .ph-p.on .ph-nav-glass::before {
-  content: '';
-  position: absolute;
-  top: 13px;
-  left: 0;
-  width: 3px;
-  height: 22px;
-  border-radius: 0 3px 3px 0;
-  background: var(--nx-accent-2);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent-2) 90%, transparent);
-}
-.theme-noir .ph-pn { color: var(--nx-read-2); }
-.theme-noir .ph-p.on .ph-pn { color: var(--nx-read-1); }
-.theme-noir .ph-pc {
-  margin-top: 3px;
-  color: var(--nx-read-4);
-  font-family: var(--pmono);
-  font-size: 10px;
-  letter-spacing: 0.025em;
-}
-.theme-noir .ph-st { box-shadow: 0 0 8px color-mix(in srgb, currentColor 55%, transparent); }
-.theme-noir .ph-side-f { padding: 12px 14px 16px; border-color: var(--nx-hair); }
-
-.theme-noir .ph-top {
-  min-height: 67px;
-  padding: 14px 28px;
-  border-color: var(--nx-hair);
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.45);
-  backdrop-filter: blur(18px);
-}
-.theme-noir .ph-tabs {
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--nx-hair);
-  border-radius: 22px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.62);
-}
-.theme-noir .ph-tab {
-  min-height: 32px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 16px;
-  font: 500 11px var(--pmono);
-  letter-spacing: 0.035em;
-  transition: background 160ms ease, color 160ms ease, transform 420ms var(--noir-spring);
-}
-.theme-noir .ph-tab:hover { color: var(--nx-read-2); background: color-mix(in srgb, var(--nx-accent) 8%, transparent); }
-.theme-noir .ph-tab.on {
-  color: var(--nx-read-1);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 11%, transparent));
-  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--nx-accent-2) 42%, transparent), 0 0 18px color-mix(in srgb, var(--nx-accent) 16%, transparent);
-}
-.theme-noir .ph-canvas { padding: 30px 34px 42px; }
-.theme-noir .ph-lead h2 {
-  max-width: 820px;
-  font-size: clamp(30px, 3vw, 42px);
-  font-weight: 600;
-  letter-spacing: -0.025em;
-}
-.theme-noir .ph-lead p { color: var(--nx-read-3); }
-.theme-noir .ph-pill {
-  border-radius: 999px;
-  border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-}
-.theme-noir .ph-btn {
-  border-radius: 999px;
-  transition: transform 420ms var(--noir-spring), background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
-}
-.theme-noir .ph-btn:hover:not(:disabled) { transform: translateY(-1px); }
-.theme-noir .ph-btn:active:not(:disabled) { transform: scale(0.95); }
-.theme-noir .ph-btn.primary {
-  color: var(--nx-read-1);
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 28%, transparent);
-}
-
-.theme-noir .ph-row,
-.theme-noir .ph-pcard,
-.theme-noir .ph-table-wrap,
-.theme-noir .ph-gantt,
-.theme-noir .ph-calendar {
-  border-color: var(--nx-hair);
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 2.5%, transparent);
-}
-.theme-noir .ph-row,
-.theme-noir .ph-pcard {
-  border-radius: 16px;
-  transition: transform 480ms var(--noir-spring), border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
-}
-.theme-noir .ph-row:hover,
-.theme-noir .ph-pcard:hover {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 26%, transparent);
-  background: color-mix(in srgb, var(--nx-accent) 5.5%, transparent);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22);
-  transform: translateY(-2px);
-}
-
-.theme-noir .ph-cols { grid-auto-columns: minmax(282px, 1fr); gap: 14px; }
-.theme-noir .ph-col {
-  padding: 13px;
-  border: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 7%, transparent);
-  border-radius: 18px;
-  background: linear-gradient(180deg, color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 4.5%, transparent), color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 1.8%, transparent));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 2.5%, transparent);
-  transition: transform 580ms var(--noir-spring), border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
-}
-.theme-noir .ph-col.drop-col {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 45%, transparent);
-  background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 10%, transparent), 0 0 28px color-mix(in srgb, var(--nx-accent) 12%, transparent);
-  transform: scale(1.012);
-}
-.theme-noir .ph-colh {
-  min-height: 30px;
-  margin: 0 2px 10px;
-  color: var(--nx-read-3);
-  font: 600 10px var(--pmono);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-.theme-noir .ph-colh .ph-cd { box-shadow: 0 0 10px currentColor; }
-.theme-noir .ph-n {
-  min-width: 22px;
-  padding: 2px 6px;
-  border-radius: 999px;
-  color: rgb(from var(--nx-accent-2) calc(r + 34) calc(g - 4) calc(b - 3));
-  background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
-  text-align: center;
-}
-.theme-noir .ph-lane-action { opacity: 0; transition: opacity 160ms ease, color 160ms ease; }
-.theme-noir .ph-col:hover .ph-lane-action,
-.theme-noir .ph-lane-action:focus-visible { opacity: 1; }
-.theme-noir .ph-card {
-  position: relative;
-  overflow: hidden;
-  padding: 14px 14px 12px;
-  border-color: var(--nx-hair);
-  border-radius: 15px;
-  background: color-mix(in srgb, var(--nx-surface) 78%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent), 0 7px 20px rgba(0, 0, 0, 0.14);
-  transition: transform 500ms var(--noir-spring), border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
-}
-.theme-noir .ph-card::before {
-  content: '';
-  position: absolute;
-  inset: 10px auto 10px 0;
-  width: 2px;
-  border-radius: 0 2px 2px 0;
-  background: var(--nx-read-4);
-}
-.theme-noir .ph-card.priority-critical::before { background: var(--nx-danger); box-shadow: 0 0 9px color-mix(in srgb, var(--nx-danger) 55%, transparent); }
-.theme-noir .ph-card.priority-high::before { background: var(--nx-warning); box-shadow: 0 0 9px color-mix(in srgb, var(--nx-warning) 42%, transparent); }
-.theme-noir .ph-card.priority-medium::before { background: var(--nx-accent-2); box-shadow: 0 0 9px color-mix(in srgb, var(--nx-accent-2) 42%, transparent); }
-.theme-noir .ph-card:hover {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 27%, transparent);
-  background: rgb(from var(--nx-paper) calc(r + 11) calc(g + 17) calc(b + 24) / 0.92);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 6%, transparent), 0 16px 34px rgba(0, 0, 0, 0.30), 0 0 18px color-mix(in srgb, var(--nx-accent) 7%, transparent);
-  transform: translateY(-3px);
-}
-.theme-noir .ph-card[draggable='true']:active { transform: scale(0.975) rotate(0.2deg); }
-.theme-noir .ph-card.ghost { box-shadow: none; background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.25); }
-.theme-noir .ph-ct { color: var(--nx-read-2); font-size: 13.5px; }
-.theme-noir .ph-cm { color: var(--nx-read-4); font-size: 9px; }
-.theme-noir .ph-card-chrome {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 11px;
-  color: var(--nx-read-4);
-  font: 9px var(--pmono);
-  letter-spacing: 0.055em;
-  text-transform: uppercase;
-}
-.theme-noir .ph-card-state { width: 6px; height: 6px; border-radius: 50%; box-shadow: 0 0 7px currentColor; }
-.theme-noir .ph-card-person {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  margin-left: auto;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 28%, transparent);
-  border-radius: 50%;
-  color: var(--nx-read-1);
-  background: linear-gradient(135deg, color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 28%, transparent), color-mix(in srgb, var(--nx-accent) 42%, transparent));
-  font: 600 9px var(--pmono);
-}
-.theme-noir .ph-card-person-name { text-transform: none; }
-.theme-noir .ph-card select {
-  border-color: var(--nx-hair);
-  border-radius: 9px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.72);
-  font-family: var(--pmono);
-}
-
-.theme-noir .ph-scrim { background: color-mix(in srgb, var(--nx-paper) 68%, transparent); backdrop-filter: blur(5px); }
-.theme-noir .ph-drawer {
-  width: min(430px, calc(100% - 48px));
-  border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
-  background: color-mix(in srgb, var(--nx-surface) 94%, transparent);
-  box-shadow: -28px 0 80px rgba(0, 0, 0, 0.55), -1px 0 0 color-mix(in srgb, var(--nx-accent-2) 10%, transparent);
-  backdrop-filter: blur(24px) saturate(125%);
-  animation: noir-project-drawer-in 580ms var(--noir-spring) both;
-}
-.theme-noir .ph-dh { min-height: 62px; border-color: var(--nx-hair); }
-.theme-noir .ph-dh-id { color: var(--nx-accent-2); }
-.theme-noir .ph-in {
-  min-height: 40px;
-  border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
-  border-radius: 12px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.70);
-}
-.theme-noir .ph-cmt {
-  padding: 11px 12px;
-  border: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 7%, transparent);
-  border-left: 2px solid color-mix(in srgb, var(--nx-accent-2) 48%, transparent);
-  border-radius: 0 13px 13px 0;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 2.8%, transparent);
-}
-.theme-noir .ph-modal {
-  border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
-  border-radius: 20px;
-  background: color-mix(in srgb, var(--nx-surface) 96%, transparent);
-  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.62), inset 0 1px 0 color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 4%, transparent);
-  backdrop-filter: blur(24px);
-}
-
-@keyframes noir-project-nav-in {
-  from { opacity: 0; transform: translateX(-9px) scale(0.96); filter: blur(5px); }
-  to { opacity: 1; transform: none; filter: none; }
-}
-@keyframes noir-project-drawer-in {
-  from { opacity: 0; transform: translateX(36px); filter: blur(5px); }
-  to { opacity: 1; transform: none; filter: none; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .theme-noir .ph-p,
-  .theme-noir .ph-tab,
-  .theme-noir .ph-btn,
-  .theme-noir .ph-row,
-  .theme-noir .ph-pcard,
-  .theme-noir .ph-col,
-  .theme-noir .ph-card,
-  .theme-noir .ph-drawer,
-  .theme-noir .ph-p.on .ph-nav-glass { animation: none; transition: none; }
-}
-
-/* Noir Light softens dark-only elevation shadows for paper surfaces. */
-.theme-noir-light .ph-row:hover,
-.theme-noir-light .ph-pcard:hover {
-  box-shadow: 0 14px 36px color-mix(in srgb, var(--nx-ink) 8%, transparent);
-}
-.theme-noir-light .ph-card {
-  box-shadow: inset 0 1px 0 color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent), 0 7px 20px color-mix(in srgb, var(--nx-ink) 8%, transparent);
-}
-.theme-noir-light .ph-card:hover {
-  box-shadow: inset 0 1px 0 color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 6%, transparent), 0 16px 34px color-mix(in srgb, var(--nx-ink) 14%, transparent), 0 0 18px color-mix(in srgb, var(--nx-accent) 7%, transparent);
-}
-.theme-noir-light .ph-drawer {
-  box-shadow: -28px 0 80px color-mix(in srgb, var(--nx-ink) 14%, transparent), -1px 0 0 color-mix(in srgb, var(--nx-accent-2) 10%, transparent);
-}
-.theme-noir-light .ph-modal {
-  box-shadow: 0 32px 90px color-mix(in srgb, var(--nx-ink) 14%, transparent), inset 0 1px 0 color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 4%, transparent);
+@media (max-width: 900px) {
+  .ph-directory { min-width: 700px; }
+  .ph-project-row, .ph-project-columns { grid-template-columns: 40px minmax(180px, 1fr) 140px 140px 90px 40px; }
+  .ph-project-team, .ph-team-heading { display: none; }
+  .ph-project-progress { display: flex; }
 }
 </style>
