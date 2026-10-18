@@ -18,6 +18,7 @@ import { config } from './config.js';
 import { migrate, pool } from './db.js';
 import { emitEvent } from './events.js';
 import { createWorkflowLauncher } from './launcher.js';
+import { scheduleGrantIssueRequest } from './scheduleGrantRequest.js';
 import { createPlaybookState, resolveDecision } from '../../../pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.js';
 import { issueCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
 
@@ -148,22 +149,18 @@ async function issueScheduleGrant(identity: RequestIdentity, bearerToken: string
   scheduleNodeId: string, replaceGrantId?: string): Promise<{ grantId: string; grantToken: string; expiresAt: string }> {
   if (!bearerToken) throw new Error('user bearer is required to delegate a schedule');
   const expiresAt = new Date(Date.now() + 89 * 86_400_000).toISOString();
-  const result = await accountsJson('/v1/private/schedule-grants/issue', {
-    method:  'POST',
-    headers: serviceHeaders(),
-    body:    JSON.stringify({
-      authorityId:    identity.authorityId,
-      organizationId: identity.organizationId,
-      audience:       config.audience,
-      serviceId:      config.accountsServiceId,
-      workflowId,
-      scheduleNodeId,
-      requiredRoles:  config.requiredRoles,
-      expiresAt,
-      bearerToken,
-      ...(replaceGrantId ? { replaceGrantId } : {}),
-    }),
-  });
+  const request = scheduleGrantIssueRequest({
+    authorityId:    identity.authorityId,
+    organizationId: identity.organizationId,
+    audience:       config.audience,
+    serviceId:      config.accountsServiceId,
+    workflowId,
+    scheduleNodeId,
+    requiredRoles:  config.requiredRoles,
+    expiresAt,
+    ...(replaceGrantId ? { replaceGrantId } : {}),
+  }, bearerToken, serviceHeaders());
+  const result = await accountsJson(request.path, request.init);
   const returnedExpiry = typeof result.expiresAt === 'string' ? Date.parse(result.expiresAt) : Number.NaN;
   if (typeof result.grantId !== 'string' || !UUID.test(result.grantId) ||
       typeof result.grantToken !== 'string' || result.grantToken.length < 32 || result.grantToken.length > 2_048 ||
