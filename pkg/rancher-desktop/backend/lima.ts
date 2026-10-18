@@ -3814,9 +3814,12 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
               console.warn(`[Sulla] Could not refresh ${ refreshImage }; trying the cached image:`, error);
             }
           }
-          // Compose performs the normal pull/build here. --no-deps protects the
-          // already-running core if the image is missing or the user is offline.
-          await this.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', service);
+          // After our refresh attempt, use the cache: Compose otherwise pulls
+          // :latest again even with its default missing-image policy.
+          await this.execCommand(
+            { root: true }, ...composeCommand, 'up', '-d', '--no-deps',
+            ...(refreshImage ? ['--pull', 'never'] : []), service,
+          );
           this.#activeOptionalSullaServices.add(service);
         } catch (error) {
           const fallback = this.#optionalSullaFallbackImages.get(service);
