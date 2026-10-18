@@ -3,7 +3,8 @@
 FROM node:22.22.0-bookworm-slim AS build
 WORKDIR /opt/sulla-accounts
 COPY services/sulla-accounts/package.json ./package.json
-RUN npm install --ignore-scripts --no-audit --no-fund
+COPY services/sulla-accounts/package-lock.json ./package-lock.json
+RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY services/sulla-accounts/tsconfig.json ./tsconfig.json
 COPY services/sulla-accounts/src ./src
 RUN npm run build
@@ -19,7 +20,7 @@ ENV NODE_ENV=production \
 WORKDIR /opt/sulla-accounts
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates curl openjdk-17-jre-headless \
+    && apt-get install --no-install-recommends -y ca-certificates curl openjdk-17-jre-headless util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && curl --fail --silent --show-error --location \
       "https://github.com/keycloak/keycloak/releases/download/${KEYCLOAK_VERSION}/keycloak-${KEYCLOAK_VERSION}.tar.gz" \
@@ -32,7 +33,8 @@ RUN apt-get update \
     && /opt/keycloak/bin/kc.sh build --db=postgres --health-enabled=true
 
 COPY services/sulla-accounts/package.json ./package.json
-RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund
+COPY services/sulla-accounts/package-lock.json ./package-lock.json
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY --from=build /opt/sulla-accounts/dist ./dist
 COPY services/sulla-accounts/migrations ./migrations
 COPY services/sulla-accounts/entrypoint.sh /usr/local/bin/sulla-accounts-entrypoint
@@ -45,6 +47,5 @@ RUN chmod 0755 /usr/local/bin/sulla-accounts-entrypoint \
     && mkdir -p /opt/keycloak/data/import \
     && chown -R sulla:sulla /opt/sulla-accounts /opt/keycloak
 
-USER sulla
 EXPOSE 3020 8080
 ENTRYPOINT ["/usr/local/bin/sulla-accounts-entrypoint"]
