@@ -129,7 +129,7 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
           } else try {
             await importer.run(material.masterKey, material.legacyMasterKeys);
             reportStage('legacy-import-verification');
-            this.config.legacyPreflight = await runLegacyPreflight(this.db, this.config.filesRoot, { caseInsensitive: this.config.caseInsensitiveRoot });
+            this.config.legacyPreflight = await runLegacyPreflight(this.db, this.config.filesRoot!, { caseInsensitive: this.config.caseInsensitiveRoot });
             if (this.config.legacyPreflight.state !== 'clear') await containLegacy(importer);
             else imported = true;
           } catch (error) {
