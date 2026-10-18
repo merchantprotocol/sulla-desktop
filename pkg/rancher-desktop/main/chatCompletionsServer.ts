@@ -1165,7 +1165,8 @@ export class ChatCompletionsServer {
         const params = body.params && typeof body.params === 'object' ? body.params : body;
         const toolName = String((tool)?.name || endpoint || '').trim();
         const canonicalCategory = String(tool.metadata?.category ?? '').trim();
-        const needsGitHubCredential = canonicalCategory === 'github' && !LOCAL_GITHUB_TOOLS.has(toolName);
+        const isGitHubTool = canonicalCategory === 'github';
+        const needsGitHubCredential = isGitHubTool && !LOCAL_GITHUB_TOOLS.has(toolName);
         const sessionToken = req.header('X-Sulla-Tool-Session')?.trim();
         const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
         const host = getMCPServerHost();
@@ -1184,6 +1185,36 @@ export class ChatCompletionsServer {
           tool.setState?.(session.state);
         }
 
+        if (isGitHubTool && usesContainerVaultAuthority() && !session) {
+          return res.status(403).json({ success: false, error: 'GitHub tool requires a verified tool session' });
+        }
+
+        let sessionContext = session?.executionContext;
+        let trustedDesktopSessionFallback = false;
+        if (session && needsGitHubCredential && usesContainerVaultAuthority() && !sessionContext) {
+          const metadata = session.state.metadata as Record<string, any>;
+          const agentId = String(metadata.agentId ?? metadata.wsChannel ?? '').trim();
+          const threadId = String(metadata.threadId ?? '').trim();
+          if (!agentId || !threadId) {
+            return res.status(403).json({ success: false, error: 'GitHub tool session is missing trusted graph identity' });
+          }
+          const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+          const accountId = await getIntegrationService().getActiveAccountId('github');
+          const graphPodId = String(metadata.podId ?? '').trim();
+          trustedDesktopSessionFallback = !graphPodId;
+          sessionContext = await issueLocalBrokerContext({
+            agentId,
+            podId:              graphPodId || `desktop:${ threadId }`,
+            credentialScope:    { integration_id: 'github', account_id: accountId },
+            threadId,
+            jobId:              metadata.jobId,
+            workflowExecutionId: metadata.activeWorkflow?.executionId,
+            orgId:              metadata.orgId,
+            requestId:          req.header('X-Request-Id') ?? crypto.randomUUID(),
+            signal:             AbortSignal.timeout(60_000),
+          });
+        }
+
         let bearerContext: ToolExecutionContext | undefined;
         if (bearer && bearer !== this.apiToken && bearer !== sessionToken) {
           try {
@@ -1195,32 +1226,21 @@ export class ChatCompletionsServer {
             return res.status(403).json({ success: false, error: 'Bearer capability does not match the requested tool' });
           }
         }
-        if (session?.executionContext && bearerContext) {
+        if (sessionContext && bearerContext) {
           try {
-            assertSameExecutionIdentity(session.executionContext, bearerContext);
+            assertSameExecutionIdentity(sessionContext, bearerContext);
           } catch (error) {
             return res.status(403).json({ success: false, error: (error as Error).message });
           }
         }
-        let executionContext = bearerContext && session?.executionContext
-          ? { ...bearerContext, credential_scope: narrowCredentialScope(session.executionContext.credential_scope, bearerContext.credential_scope) }
-          : bearerContext ?? session?.executionContext;
+        let executionContext = bearerContext && sessionContext
+          ? { ...bearerContext, credential_scope: narrowCredentialScope(sessionContext.credential_scope, bearerContext.credential_scope) }
+          : bearerContext ?? sessionContext;
 
-        // Desktop's installation bearer has no caller claims. Give that
-        // trusted local caller a broker identity derived only from Desktop
-        // state; request arguments never participate in identity selection.
-        if (session && needsGitHubCredential && !executionContext) {
+        // GitHub sessions must retain a verified execution identity; never
+        // substitute request-controlled arguments or a generic Desktop caller.
+        if (session && needsGitHubCredential && usesContainerVaultAuthority() && !executionContext) {
           return res.status(403).json({ success: false, error: 'Tool session is missing verified execution context' });
-        }
-        if (!executionContext && bearer === this.apiToken && !session && usesContainerVaultAuthority() && needsGitHubCredential) {
-          const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
-          const activeAccount = await getIntegrationService().getActiveAccountId('github');
-          executionContext = await issueLocalBrokerContext({
-            agentId: 'desktop-cli', podId: 'desktop-main',
-            credentialScope: { integration_id: 'github', account_id: activeAccount },
-            requestId: req.header('X-Request-Id') ?? crypto.randomUUID(),
-            signal: AbortSignal.timeout(60_000),
-          });
         }
         if (executionContext && usesContainerVaultAuthority() && needsGitHubCredential) {
           try {
@@ -1330,8 +1350,7 @@ export class ChatCompletionsServer {
         res.once('close', onDisconnect);
         tool.approvalSignal = disconnected.signal;
         try {
-          const desktopContext = executionContext?.pod_id === 'desktop-main' && executionContext.agent_id === 'desktop-cli';
-          const runtime = executionContext && !desktopContext
+          const runtime = executionContext && !trustedDesktopSessionFallback
             ? containerRuntimeForExecution(executionContext, toolRegistry.getExecutionTarget(toolName))
             : undefined;
           const invoke = () => tool.call(params);

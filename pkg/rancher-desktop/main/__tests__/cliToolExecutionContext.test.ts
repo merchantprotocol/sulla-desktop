@@ -105,6 +105,21 @@ it('dispatches a verified session with its authenticated identity and container 
   expect(withAgentContainerRuntime).toHaveBeenCalled();
 });
 
+it('does not exempt an arbitrary signed Desktop-shaped context from runtime binding', async() => {
+  const desktopContext = { ...sessionContext, agent_id: 'desktop-cli', pod_id: 'desktop-main' };
+  getToolSession.mockReturnValue({ state, executionContext: desktopContext });
+  verifyCapabilityToken.mockResolvedValue(desktopContext);
+  const server = Object.create(ChatCompletionsServer.prototype) as any;
+  server.apiToken = 'desktop-secret';
+
+  await server.handleIntegrationCall(request(), response());
+
+  expect(containerRuntimeForExecution).toHaveBeenCalledWith(expect.objectContaining({
+    agent_id: 'desktop-cli', pod_id: 'desktop-main', sub: 'principal', thread_id: 'thread',
+  }), 'agent-local');
+  expect(withAgentContainerRuntime).toHaveBeenCalled();
+});
+
 it('rejects a mismatched bearer identity before dispatch', async() => {
   verifyCapabilityToken.mockResolvedValueOnce({ ...sessionContext, sub: 'other-principal' });
   const server = Object.create(ChatCompletionsServer.prototype) as any;
@@ -121,7 +136,7 @@ it('rejects a mismatched bearer identity before dispatch', async() => {
 it.each([
   ['expired execution context', { state, executionContext: { ...sessionContext, exp: now - 1 } }, 'signed-capability', 'git_status', 'Expired tool execution context'],
   ['disallowed tool', { state: { metadata: { allowedToolNames: ['read_file'] } }, executionContext: sessionContext }, 'signed-capability', 'git_status', 'Tool not allowed for this session'],
-  ['missing execution context', { state: { metadata: { allowedToolNames: ['github_list_prs'] } } }, 'desktop-secret', 'list_prs', 'Tool session is missing verified execution context'],
+  ['missing graph identity', { state: { metadata: { allowedToolNames: ['github_list_prs'] } } }, 'desktop-secret', 'list_prs', 'GitHub tool session is missing trusted graph identity'],
 ])('fails closed for a %s session', async(_case, resolvedSession, bearer, endpoint, expected) => {
   getToolSession.mockReturnValue(resolvedSession);
   const server = Object.create(ChatCompletionsServer.prototype) as any;
@@ -156,7 +171,7 @@ it.each([
   }), 'signing-key');
 });
 
-it('keeps authenticated Desktop CLI execution off the container runtime', async() => {
+it('rejects GitHub calls without a verified tool session', async() => {
   getToolSession.mockReturnValue(null);
   const server = Object.create(ChatCompletionsServer.prototype) as any;
   server.apiToken = 'desktop-secret';
@@ -164,12 +179,12 @@ it('keeps authenticated Desktop CLI execution off the container runtime', async(
 
   await server.handleIntegrationCall(request(null, 'desktop-secret', 'list_prs'), res);
 
-  expect(res.statusCode).toBe(200);
-  expect(res.body.result.context).toEqual(expect.objectContaining({ agent_id: 'desktop-cli', pod_id: 'desktop-main' }));
+  expect(res.statusCode).toBe(403);
+  expect(res.body.error).toBe('GitHub tool requires a verified tool session');
   expect(containerRuntimeForExecution).not.toHaveBeenCalled();
 });
 
-it('keeps local git inspection independent of vault authority', async() => {
+it('keeps sessionless local git inspection closed under container vault authority', async() => {
   getToolSession.mockReturnValue(null);
   const server = Object.create(ChatCompletionsServer.prototype) as any;
   server.apiToken = 'desktop-secret';
@@ -177,7 +192,7 @@ it('keeps local git inspection independent of vault authority', async() => {
 
   await server.handleIntegrationCall(request(null, 'desktop-secret', 'git_status'), res);
 
-  expect(res.statusCode).toBe(200);
+  expect(res.statusCode).toBe(403);
+  expect(res.body.error).toBe('GitHub tool requires a verified tool session');
   expect(issueLocalBrokerContext).not.toHaveBeenCalled();
-  expect(res.body.result.context).toBeUndefined();
 });

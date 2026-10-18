@@ -256,10 +256,11 @@ Returns list of requests with URL, method, status, timing.
 ```bash
 sulla browser/background_browse '{"action":"open","url":"https://example.com","waitMs":3000}'
 sulla browser/background_browse '{"action":"read","tabId":"...","code":"return document.title"}'
+sulla browser/background_browse '{"action":"screenshot","tabId":"..."}'
 sulla browser/background_browse '{"action":"close","tabId":"..."}'
 sulla browser/background_browse '{"action":"list"}'
 ```
-Hidden tab — full JS / cookies / network, but not visible in the UI. For scraping without disrupting what the user sees.
+Hidden tab — full JS / cookies / network and screenshot capture, but not visible in the UI. Screenshot capture transiently attaches the tab outside the visible viewport, then restores and detaches it before returning.
 
 ### `browser/schedule_alarm` — in-process timers
 ```bash

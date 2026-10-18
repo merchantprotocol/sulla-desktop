@@ -48,6 +48,7 @@ function githubRepositoryPath(remoteUrl: string): string {
   return path.endsWith('.git') ? path : `${ path }.git`;
 }
 
+/** Narrow a verified GitHub caller context to the repository resolved by git. */
 export function scopeGitHubRepositoryContext(
   ctx: ToolExecutionContext,
   accountId: string,
@@ -61,7 +62,10 @@ export function scopeGitHubRepositoryContext(
   )) {
     throw new Error('github.git requires a signed credential scope for the active account and repository');
   }
-  return { ...ctx, credential_scope: { integration_id: 'github', account_id: accountId, repository } };
+  return {
+    ...ctx,
+    credential_scope: { integration_id: 'github', account_id: accountId, repository },
+  };
 }
 
 async function readBody(request: http.IncomingMessage): Promise<string | undefined> {

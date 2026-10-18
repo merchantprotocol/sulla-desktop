@@ -158,6 +158,7 @@
               surface="popup"
               :site-url="pageUrl"
               :tab-id="props.tabId"
+              :active="props.isVisible"
             />
           </div>
         </div>
@@ -204,6 +205,8 @@
         <VaultPage
           :integration-id="editorIntegrationId || undefined"
           :account-id="editorAccountId"
+          :tab-id="props.tabId"
+          :active="props.isVisible"
         />
       </div>
     </template>

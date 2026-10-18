@@ -434,6 +434,9 @@ export interface RuntimeMessage {
 // ---------------------------------------------------------------------------
 
 export interface ChromeApi {
+  /** Capture a hidden tab without exposing it through the visible tab registry. */
+  captureHiddenTabScreenshot(tabId: string): Promise<{ base64: string; mediaType: string } | null>;
+
   tabs: {
     get(tabId: string): Promise<ChromeTab | null>;
     query(queryInfo: TabQueryInfo): Promise<ChromeTab[]>;
