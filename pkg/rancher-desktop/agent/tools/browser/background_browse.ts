@@ -1,13 +1,14 @@
 import { BaseTool, ToolResponse } from '../base';
+import { saveScreenshot } from './screenshot_store';
 
 import { getChromeApi } from '@pkg/main/chromeApi';
 
 /**
- * Background Browse Tool — open a hidden tab, navigate, read content, close.
+ * Background Browse Tool — open a hidden tab, navigate, read or capture content, close.
  *
  * Lets the AI agent do research without stealing the user's visible tab.
  * The hidden WebContentsView is fully functional (cookies, JS, network)
- * but not attached to any window.
+ * and screenshot capture transiently attaches it outside the visible viewport.
  */
 export class BackgroundBrowseWorker extends BaseTool {
   name = '';
@@ -93,6 +94,30 @@ export class BackgroundBrowseWorker extends BaseTool {
         };
       }
 
+      case 'screenshot': {
+        if (!input.tabId) {
+          return { successBoolean: false, responseString: '"tabId" is required for screenshot action.' };
+        }
+
+        const screenshot = await chrome.captureHiddenTabScreenshot(input.tabId);
+
+        if (!screenshot) {
+          return {
+            successBoolean: false,
+            responseString: `[${ input.tabId }] Failed to capture screenshot. The hidden tab may not be ready.`,
+          };
+        }
+
+        const tab = await chrome.tabs.get(input.tabId);
+        const ref = await saveScreenshot(screenshot.base64, screenshot.mediaType);
+
+        return {
+          successBoolean: true,
+          responseString: `[${ input.tabId }] Background screenshot captured: ${ tab?.title || tab?.url || 'Untitled' } — ${ ref.width }×${ ref.height }, ${ ref.bytes } bytes at ${ ref.path }. Use Read on that path to load the image into vision context.`,
+          screenshot:     ref,
+        } as any;
+      }
+
       case 'close': {
         if (!input.tabId) {
           return { successBoolean: false, responseString: '"tabId" is required for close action.' };
@@ -119,7 +144,7 @@ export class BackgroundBrowseWorker extends BaseTool {
       }
 
       default:
-        return { successBoolean: false, responseString: `Unknown action: ${ action }. Use open, read, navigate, close, or list.` };
+        return { successBoolean: false, responseString: `Unknown action: ${ action }. Use open, read, navigate, screenshot, close, or list.` };
       }
     } catch (error) {
       return { successBoolean: false, responseString: `Background browse failed: ${ (error as Error).message }` };

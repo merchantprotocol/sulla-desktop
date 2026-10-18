@@ -250,12 +250,12 @@ export const browserToolManifests: ToolManifest[] = [
   },
   {
     name:        'background_browse',
-    description: 'Browse the web in a hidden tab without disrupting the user\'s visible browser. Open pages, read content, navigate, and close — all in the background. Ideal for research, checking URLs, or scraping data while the user works.',
+    description: 'Browse the web in a hidden tab without disrupting the user\'s visible browser. Open pages, read content, capture screenshots, navigate, and close — all in the background. Ideal for research, checking URLs, or scraping data while the user works.',
     category:    'browser',
     schemaDef:   {
-      action: { type: 'enum', enum: ['open', 'read', 'navigate', 'close', 'list'], description: 'open: create hidden tab and read content. read: read from existing. navigate: load new URL. close: destroy. list: show all hidden tabs.' },
+      action: { type: 'enum', enum: ['open', 'read', 'navigate', 'screenshot', 'close', 'list'], description: 'open: create hidden tab and read content. read: read from existing. navigate: load new URL. screenshot: capture the hidden page. close: destroy. list: show all hidden tabs.' },
       url:    { type: 'string', optional: true, description: 'URL to open or navigate to.' },
-      tabId:  { type: 'string', optional: true, description: 'ID of an existing hidden tab. Required for read, navigate, close.' },
+      tabId:  { type: 'string', optional: true, description: 'ID of an existing hidden tab. Required for read, navigate, screenshot, close.' },
       waitMs: { type: 'number', optional: true, description: 'Milliseconds to wait for page load before reading content. Default 3000.' },
       code:   { type: 'string', optional: true, description: 'Custom JavaScript to execute instead of default content extraction. For read action.' },
     },
