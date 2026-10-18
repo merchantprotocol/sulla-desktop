@@ -60,7 +60,8 @@ export class FilesKeyring {
         try { check = await decrypt(state.verifier, master, CONTEXT) } catch (error) { throw new FilesMasterKeyRejectedError(error) }
         try { if (!Buffer.from(check).equals(CHECK)) throw new FilesMasterKeyRejectedError() } finally { check.fill(0) }
         // Never overwrite damaged wrapped keys or silently derive replacements.
-        const rows = (await client.query('SELECT collection_id,data_key,dedup_key FROM files_collection_keys')).rows;
+        const rows = (await client.query(`SELECT k.collection_id,k.data_key,k.dedup_key FROM files_collection_keys k
+          JOIN collections c ON c.id=k.collection_id WHERE c.published=TRUE AND c.legacy_source=FALSE`)).rows;
         for (const row of rows) {
           const keys = await this.unwrap(row.collection_id, row.data_key, row.dedup_key, master);
           keys.data.fill(0); keys.dedup.fill(0);
@@ -71,7 +72,8 @@ export class FilesKeyring {
         // unkeyed until the separate secure import flow proves their origin.
         const rows = (await client.query(`SELECT c.id,k.data_key,k.dedup_key,k.key_origin
           FROM collections c LEFT JOIN files_collection_keys k ON k.collection_id=c.id
-          WHERE c.compatibility_state='native' ORDER BY c.id FOR UPDATE OF c`)).rows;
+          WHERE c.compatibility_state='native' AND c.published=TRUE AND c.legacy_source=FALSE
+          ORDER BY c.id FOR UPDATE OF c`)).rows;
         for (const row of rows) {
           // The legacy master.key wrapped metadata only; content used these deterministic keys.
           const data = createHmac('sha256', legacySigningKey).update(`sulla:files:data-key:v1:${ row.id }`).digest();
@@ -162,7 +164,9 @@ export class FilesKeyring {
     try {
       await client.query('BEGIN');
       await client.query('LOCK TABLE files_key_state, files_collection_keys IN EXCLUSIVE MODE');
-      const rows = (await client.query('SELECT collection_id,key_origin FROM files_collection_keys ORDER BY collection_id')).rows;
+      const rows = (await client.query(`SELECT k.collection_id,k.key_origin FROM files_collection_keys k
+        JOIN collections c ON c.id=k.collection_id
+        WHERE c.published=TRUE AND c.legacy_source=FALSE ORDER BY k.collection_id`)).rows;
       if (rows.length === 0 || rows.length !== recovered.size) throw new Error('Incomplete Files recovery bundle set');
       for (const row of rows) {
         if (row.key_origin !== 'random') throw new Error('Legacy Files keys require the separate secure import flow');

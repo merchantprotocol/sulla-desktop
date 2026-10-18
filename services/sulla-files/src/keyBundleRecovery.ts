@@ -65,7 +65,8 @@ export class FilesKeyBundleRecovery {
     if (!principalId) throw new Error('Files recovery enrollment requires a principal');
     const rows = (await this.db.query<{ collection_id: string }>(
       `SELECT k.collection_id FROM files_collection_keys k JOIN collections c ON c.id=k.collection_id
-        WHERE c.owner_user_id=$1 AND c.compatibility_state='native' AND k.key_origin='random'
+        WHERE c.owner_user_id=$1 AND c.compatibility_state='native' AND c.published=TRUE AND c.legacy_source=FALSE
+          AND k.key_origin='random'
         ORDER BY k.collection_id`,
       [principalId],
     )).rows;
@@ -153,13 +154,15 @@ export class FilesKeyBundleRecovery {
          FROM files_collection_keys k JOIN collections c ON c.id=k.collection_id
          JOIN files_collection_key_bundles b ON b.collection_id=k.collection_id
           AND b.principal_id=c.owner_user_id AND b.key_version=k.key_version AND b.key_epoch=k.key_epoch
-        WHERE c.owner_user_id=$1 AND c.compatibility_state='native' AND k.key_origin='random'
+        WHERE c.owner_user_id=$1 AND c.compatibility_state='native' AND c.published=TRUE AND c.legacy_source=FALSE
+          AND k.key_origin='random'
         ORDER BY b.collection_id`,
       [principalId],
     )).rows as BundleRow[];
     const collectionRows = (await this.db.query(
       `SELECT k.collection_id,k.key_origin,c.owner_user_id,c.compatibility_state
-         FROM files_collection_keys k JOIN collections c ON c.id=k.collection_id ORDER BY k.collection_id`,
+         FROM files_collection_keys k JOIN collections c ON c.id=k.collection_id
+        WHERE c.published=TRUE AND c.legacy_source=FALSE ORDER BY k.collection_id`,
     )).rows as { collection_id: string; key_origin: string; owner_user_id: string; compatibility_state: string }[];
     if (collectionRows.some(row => row.key_origin !== 'random' || row.compatibility_state !== 'native')) {
       throw new Error('Legacy Files keys require the separate secure import flow');

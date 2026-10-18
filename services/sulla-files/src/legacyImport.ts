@@ -140,6 +140,26 @@ interface ConvertedManifest { hash: string; ids: string[]; totalSize: number; pl
 
 export class LegacyImportContinuationRequiredError extends Error {}
 
+/** A legacy item failed integrity/authentication checks and can be contained without locking healthy Files data. */
+export class LegacyImportDataError extends Error {
+  constructor(cause:unknown) {
+    super('Legacy Files data was quarantined after import validation failed', { cause });
+    this.name = 'LegacyImportDataError';
+  }
+}
+
+function quarantinableLegacyFailure(error:unknown):boolean {
+  const message = safeErrorProperty(error, 'message');
+  if (typeof message !== 'string') return false;
+  if (message === 'Invalid Files import key material' || message === 'Invalid Files master key') return false;
+  return SAFE_LEGACY_IMPORT_MESSAGES.has(message) ||
+    /^Legacy Files (?:collection|bucket|chunk) does not exist$/.test(message) ||
+    /^Legacy Files import found ambiguous (?:collection|bucket|chunk) identities$/.test(message) ||
+    /^Legacy Files import rejected a linked or non-directory (?:collection|bucket)$/.test(message) ||
+    /^Invalid legacy (?:collection|bucket|chunk) identity$/.test(message) ||
+    /^Completed legacy Files import /.test(message);
+}
+
 function validId(value:string, expression:RegExp, label:string):string {
   if (!expression.test(value)) throw new Error(`Invalid legacy ${ label } identity`);
   return value;
@@ -413,7 +433,35 @@ export class LegacyFilesImporter {
       } finally { for (const key of legacyMasters) key.fill(0); }
     } catch (error) {
       trace.failed(error);
+      if (quarantinableLegacyFailure(error)) throw new LegacyImportDataError(error);
       throw error;
+    }
+  }
+
+  /**
+   * Keeps failed legacy sources inaccessible while allowing unrelated native
+   * collections to unlock. Original rows and ciphertext remain untouched for
+   * later repair or export.
+   */
+  async containFailedSources():Promise<void> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['sulla-files-legacy-import']);
+      await client.query(`UPDATE collections SET legacy_source=TRUE,published=FALSE
+        WHERE compatibility_state<>'native' OR legacy_source=TRUE`);
+      await client.query(`INSERT INTO files_protected_files(file_id)
+        SELECT f.id FROM files f JOIN collections c ON c.id=f.collection_id WHERE c.legacy_source=TRUE
+        ON CONFLICT DO NOTHING`);
+      await client.query(`INSERT INTO files_legacy_preflight(id,state,protected_prefix,reason,detected_at,checked_at)
+        VALUES(TRUE,'secure-import-required',NULL,'quarantined-import-validation',NOW(),NOW())
+        ON CONFLICT(id) DO UPDATE SET state='secure-import-required',reason='quarantined-import-validation',checked_at=NOW()`);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
   }
 
