@@ -13,6 +13,7 @@ import { runLegacyPreflight } from './legacyPreflight.js';
 import { loadFileContent, thumbnail } from './preview.js';
 import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 import { registerResidencyRoutes } from './residencyHttp.js';
+import { serverUi } from './serverUi.js';
 import { SharesService } from './shares.js';
 import { Store } from './store.js';
 import { insertStreamingUpload } from './streamingUpload.js';
@@ -72,11 +73,18 @@ export function createApp(
   let lifecycle:Promise<unknown> = Promise.resolve();
   let ready = Boolean(config.keyring?.unlocked);
   const serial = <T>(operation:()=>Promise<T>):Promise<T> => { const result = lifecycle.then(operation); lifecycle = result.catch(() => undefined); return result; };
-  app.disable('x-powered-by'); app.use((request, response, next) => ['/v1/files/upload', '/v1/files/import'].includes(request.path) ? next() : jsonParser(request, response, next));
+  app.disable('x-powered-by');
+  if (config.mode === 'server') app.use('/files', serverUi());
+  app.use((request, response, next) => ['/v1/files/upload', '/v1/files/import'].includes(request.path) ? next() : jsonParser(request, response, next));
   app.use((request:RequestWithIdentity, response, next) => {
     if (request.path === '/healthz') return next();
     if (request.path.startsWith('/v1/local/')) { if (!config.localToken || request.header('x-sulla-files-token') !== config.localToken) return response.status(401).json({ error: 'unauthorized local request' }); return next() }
-    try { request.filesIdentity = verifyFilesIdentity(bearer(request), config.capabilitySigningKey, config.serverJwtSecret); next() } catch { response.status(401).json({ error: 'unauthorized' }) }
+    try { request.filesIdentity = verifyFilesIdentity(bearer(request), config.capabilitySigningKey, config.serverJwtSecret) } catch { response.status(401).json({ error: 'unauthorized' }); return }
+    if (config.mode !== 'server') return next();
+    if (!identityDb) return response.status(503).json({ error: 'organization identity database is not configured' });
+    identityDb.query('SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL', [request.filesIdentity.userId])
+      .then(result => result.rowCount ? next() : response.status(401).json({ error: 'session is no longer active' }))
+      .catch(next);
   });
   app.post('/v1/local/unlock', async(request, response) => {
     if (config.mode !== 'desktop') return response.sendStatus(404);
@@ -332,6 +340,28 @@ export function createApp(
   app.post('/v1/links/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.restore({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.header('x-sulla-cloud-token') ?? '', typeof request.body.password === 'string' ? request.body.password : undefined)) } catch (error) { next(error) } });
 
   app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try { const rows = await db.query("SELECT * FROM collections WHERE kind='knowledge' AND published=TRUE AND legacy_source=FALSE ORDER BY name"); const visible:any[] = []; for (const collection of rows.rows) { const access = await grants(request, collection.id); if (access.role || access.paths.length) visible.push({ ...collection, access_role: access.role ?? null, shared_folders: access.paths }); } response.json(visible) } catch (error) { next(error) } });
+  app.post('/v1/collections/default', async(request:RequestWithIdentity, response, next) => {
+    const client = await db.connect();
+    try {
+      if (config.mode !== 'server' || !identityDb) throw new HttpError(404, 'default collection provisioning is unavailable');
+      const actor = identity(request); const orgId = typeof request.body.orgId === 'string' ? request.body.orgId : '';
+      if (!orgId) throw new HttpError(400, 'orgId is required');
+      const membership = await identityDb.query("SELECT 1 FROM org_members om JOIN users u ON u.id=om.user_id WHERE om.org_id=$1 AND om.user_id=$2 AND om.status='confirmed' AND u.disabled_at IS NULL", [orgId, actor.userId]);
+      if (!membership.rowCount) throw new HttpError(403, 'organization access denied');
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${ orgId }:${ actor.userId }:default-files`]);
+      let collection = (await client.query("SELECT * FROM collections WHERE org_id=$1 AND owner_user_id=$2 AND is_default=TRUE AND published=TRUE AND legacy_source=FALSE", [orgId, actor.userId])).rows[0];
+      if (!collection) {
+        const id = randomUUID(); const wrapped = await config.keyring!.create(id, client);
+        collection = (await client.query(`INSERT INTO collections
+          (id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,is_default)
+          VALUES($1,$2,$3,'Files','knowledge','synced',$4,$5,$6,TRUE) RETURNING *`, [id, orgId, actor.userId, wrapped.data, wrapped.dedup, { trashDays: 90 }])).rows[0];
+        await client.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')", [id, actor.userId]);
+      }
+      await client.query('COMMIT');
+      response.status(201).json({ ...collection, access_role: 'manage', shared_folders: [] });
+    } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
+  });
   app.post('/v1/agent-files/query', async(request:RequestWithIdentity, response, next) => {
     try {
       const runIds = Array.isArray(request.body.runIds) ? [...new Set(request.body.runIds.filter((value:unknown):value is string => typeof value === 'string' && value.length > 0))].slice(0, 100) : [];
