@@ -107,6 +107,10 @@ class LegacyImportTrace {
 
   completed():void { this.write('legacy-import-completed') }
 
+  sourceKey(details:{ kind:'native' | 'legacy'; hasNativeKey:boolean; hasExternalChunks:boolean; hasNativeChunks:boolean }):void {
+    this.write('legacy-import-source-key', details);
+  }
+
   failed(error:unknown):void {
     const name = safeErrorProperty(error, 'name');
     const message = safeErrorProperty(error, 'message');
@@ -118,7 +122,7 @@ class LegacyImportTrace {
     });
   }
 
-  private write(event:'legacy-import-stage' | 'legacy-import-completed' | 'legacy-import-failed', details:Record<string, unknown> = {}):void {
+  private write(event:'legacy-import-stage' | 'legacy-import-source-key' | 'legacy-import-completed' | 'legacy-import-failed', details:Record<string, unknown> = {}):void {
     try {
       const output = JSON.stringify({ source: 'sulla-files', event, correlationId: this.correlationId, sequence: ++this.sequence, phase: this.phase, ...details });
       if (event === 'legacy-import-failed') console.error(output); else console.info(output);
@@ -343,6 +347,12 @@ export class LegacyFilesImporter {
           trace.mark('source-key-authentication');
           for (const collection of collections) {
             const nativeRow = (await client.query('SELECT data_key,dedup_key FROM files_collection_keys WHERE collection_id=$1', [collection.id])).rows[0];
+            trace.sourceKey({
+              kind: collection.compatibility_state === 'native' ? 'native' : 'legacy',
+              hasNativeKey: Boolean(nativeRow),
+              hasExternalChunks: externalLayout.has(collection.id.toLowerCase()),
+              hasNativeChunks: nativeLayout.has(collection.id.toLowerCase()),
+            });
             collectionKeys.set(collection.id, await sourceKeys(collection, nativeMaster, legacyMasters, nativeRow));
           }
           trace.mark('shadow-key-authentication');
