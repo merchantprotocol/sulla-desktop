@@ -1,0 +1,51 @@
+events {}
+
+http {
+  upstream local_accounts { server accounts-local:3020; }
+  upstream authority_a_accounts { server accounts-authority-a:3020; }
+  upstream authority_a_keycloak { server accounts-authority-a:8080; }
+  upstream authority_b_accounts { server accounts-authority-b:3020; }
+  upstream authority_b_keycloak { server accounts-authority-b:8080; }
+
+  map $http_host $forwarded_port {
+    ~:([0-9]+)$ $1;
+    default 443;
+  }
+
+  server {
+    listen 8787${TLS_DIRECTIVES};
+    server_name accounts.localhost;
+    location = /healthz { proxy_pass http://local_accounts/healthz; }
+    location = /readyz { proxy_pass http://local_accounts/readyz; }
+    location ~ ^/v1/(?:bootstrap/session|sessions/refresh|profile|connections(?:/[0-9a-fA-F-]+(?:/authorize)?)?|memberships|oidc/callback)$ { proxy_pass http://local_accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location / { return 404; }
+  }
+
+  server {
+    listen 8787${TLS_DIRECTIVES};
+    server_name authority-a.localhost;
+    location = /healthz { proxy_pass http://authority_a_accounts/healthz; }
+    location = /readyz { proxy_pass http://authority_a_accounts/readyz; }
+    location ^~ /auth/realms/master/ { return 404; }
+    location ^~ /auth/admin/ { return 404; }
+    location ^~ /auth/realms/sulla/ { proxy_pass http://authority_a_keycloak; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location ^~ /auth/resources/ { proxy_pass http://authority_a_keycloak; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location ^~ /auth/ { return 404; }
+    location ~ ^/v1/(?:bootstrap/session|sessions/refresh|profile|connections(?:/[0-9a-fA-F-]+(?:/authorize)?)?|memberships|oidc/callback)$ { proxy_pass http://authority_a_accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location / { return 404; }
+  }
+
+  server {
+    listen 8787${TLS_DIRECTIVES};
+    server_name authority-b.localhost;
+    location = /healthz { proxy_pass http://authority_b_accounts/healthz; }
+    location = /readyz { proxy_pass http://authority_b_accounts/readyz; }
+    location ^~ /auth/realms/master/ { return 404; }
+    location ^~ /auth/admin/ { return 404; }
+    location ^~ /auth/realms/sulla/ { proxy_pass http://authority_b_keycloak; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location ^~ /auth/resources/ { proxy_pass http://authority_b_keycloak; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location ^~ /auth/ { return 404; }
+    location ~ ^/v1/(?:bootstrap/session|sessions/refresh|profile|connections(?:/[0-9a-fA-F-]+(?:/authorize)?)?|memberships|oidc/callback)$ { proxy_pass http://authority_b_accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location / { return 404; }
+  }
+}
