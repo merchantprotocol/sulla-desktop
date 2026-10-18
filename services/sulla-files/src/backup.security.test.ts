@@ -48,6 +48,7 @@ class SyntheticAuthority implements FilesKeyBundleAuthority {
 function config(databaseUrl:string, root:string, backupTarget:string):Config {
   return {
     port:                 0,
+    caseInsensitiveRoot:  false,
     databaseUrl,
     chunkRoot:            join(root, 'chunks'),
     dataRoot:             root,
