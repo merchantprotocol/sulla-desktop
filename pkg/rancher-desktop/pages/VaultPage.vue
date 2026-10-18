@@ -15,7 +15,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, watch, type WatchStopHandle } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -26,10 +26,14 @@ const props = withDefaults(defineProps<{
   surface?: 'page' | 'popup';
   siteUrl?: string;
   tabId?: string;
-}>(), { surface: 'page', siteUrl: '' });
+  active?: boolean;
+}>(), { surface: 'page', siteUrl: '', active: true });
 const loading = ref(true);
 const error = ref('');
+const ownerId = crypto.randomUUID();
 let observer: ResizeObserver | null = null;
+let stopActiveWatch: WatchStopHandle | null = null;
+let lifecycleGeneration = 0;
 
 function bounds(): { x: number; y: number; width: number; height: number } {
   const rect = host.value?.getBoundingClientRect();
@@ -38,9 +42,11 @@ function bounds(): { x: number; y: number; width: number; height: number } {
 }
 
 async function open(): Promise<void> {
+  const generation = ++lifecycleGeneration;
   loading.value = true;
   error.value = '';
   await nextTick();
+  if (!props.active || generation !== lifecycleGeneration) return;
   try {
     await ipcRenderer.invoke('vault:view-open', bounds(), {
       integrationId: props.integrationId,
@@ -48,24 +54,39 @@ async function open(): Promise<void> {
       surface:       props.surface,
       siteUrl:       props.siteUrl,
       tabId:         props.tabId,
+      ownerId,
     });
+    if (!props.active || generation !== lifecycleGeneration) return;
     loading.value = false;
   } catch (cause) {
+    if (!props.active || generation !== lifecycleGeneration) return;
     loading.value = false;
     error.value = cause instanceof Error ? cause.message : 'The local vault service did not answer.';
   }
 }
 
+function hide(): void {
+  lifecycleGeneration += 1;
+  void ipcRenderer.invoke('vault:view-hide', ownerId);
+}
+
 onMounted(() => {
-  observer = new ResizeObserver(() => { void ipcRenderer.invoke('vault:view-bounds', bounds()) });
+  observer = new ResizeObserver(() => {
+    if (props.active) void ipcRenderer.invoke('vault:view-bounds', ownerId, bounds());
+  });
   if (host.value) observer.observe(host.value);
-  void open();
+  stopActiveWatch = watch(() => props.active, (active) => {
+    if (active) void open();
+    else hide();
+  }, { immediate: true });
 });
 
 onBeforeUnmount(() => {
+  stopActiveWatch?.();
+  stopActiveWatch = null;
   observer?.disconnect();
   observer = null;
-  void ipcRenderer.invoke('vault:view-hide');
+  hide();
 });
 </script>
 
