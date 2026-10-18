@@ -58,6 +58,7 @@ const BOOTSTRAP_CODES = new Set([
   'FILES_BOOTSTRAP_CANCELLED',
   'FILES_BOOTSTRAP_STATE_CHANGED',
   'FILES_LEGACY_IMPORT_INCOMPLETE',
+  'FILES_LEGACY_IMPORT_QUARANTINED',
   'FILES_LEGACY_KEY_REQUIRED',
   'FILES_MASTER_BLOB_REQUIRED',
   'FILES_MASTER_KEY_REJECTED',
@@ -191,6 +192,10 @@ export class FilesStartupDiagnostics {
     return failure;
   }
 
+  degraded(stage:FilesStartupStage):void {
+    this.write('degraded', stage, { code: 'FILES_LEGACY_IMPORT_QUARANTINED', class: 'startup' });
+  }
+
   cleanupFailed(error:unknown):void {
     this.write('cleanup-failed', 'cleanup', safeStartupFailure(error));
   }
@@ -199,7 +204,7 @@ export class FilesStartupDiagnostics {
     this.write('completed', stage);
   }
 
-  private write(event:'stage' | 'failed' | 'cleanup-failed' | 'completed', stage:FilesStartupStage, failure?:SafeDiagnosticDetails):void {
+  private write(event:'stage' | 'failed' | 'degraded' | 'cleanup-failed' | 'completed', stage:FilesStartupStage, failure?:SafeDiagnosticDetails):void {
     try {
       const safeStage = STARTUP_STAGES.has(stage) ? stage : 'bootstrap-state';
       const safeFailure = failure ? projectDiagnostic(failure) : undefined;
@@ -211,6 +216,7 @@ export class FilesStartupDiagnostics {
         ...(safeFailure ?? {}),
       });
       if (event === 'failed' || event === 'cleanup-failed') console.error(output);
+      else if (event === 'degraded') console.warn(output);
       else console.info(output);
     } catch {
       // Logging is best-effort and must never mask the original failure.

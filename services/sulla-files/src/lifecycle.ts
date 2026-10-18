@@ -4,7 +4,7 @@ import { FilesBootstrapError, type FilesBootstrapLifecycle } from './bootstrapAu
 import type { FilesBootstrapDisposition, FilesBootstrapUnlockResponse } from './bootstrapProtocol.js';
 import type { Config } from './config.js';
 import { FilesMasterKeyRejectedError, type FilesKeyring } from './keyring.js';
-import { LegacyFilesImporter, LegacyImportContinuationRequiredError } from './legacyImport.js';
+import { LegacyFilesImporter, LegacyImportContinuationRequiredError, LegacyImportDataError } from './legacyImport.js';
 import { runLegacyPreflight } from './legacyPreflight.js';
 import { FilesStartupDiagnostics, type FilesStartupStage } from './startupDiagnostics.js';
 
@@ -70,12 +70,14 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
 
   private async recoveryComplete():Promise<boolean> {
     const unsupported = await this.db.query(`SELECT 1 FROM files_collection_keys k JOIN collections c ON c.id=k.collection_id
-      WHERE k.key_origin<>'random' OR c.compatibility_state<>'native' LIMIT 1`);
+      WHERE c.published=TRUE AND c.legacy_source=FALSE
+        AND (k.key_origin<>'random' OR c.compatibility_state<>'native') LIMIT 1`);
     const incomplete = await this.db.query(`SELECT 1 FROM files_collection_keys k JOIN collections c ON c.id=k.collection_id
       LEFT JOIN files_collection_key_bundles b ON b.collection_id=k.collection_id AND b.principal_id=c.owner_user_id
         AND b.key_version=k.key_version AND b.key_epoch=k.key_epoch
-      WHERE b.collection_id IS NULL LIMIT 1`);
-    const count = Number((await this.db.query('SELECT COUNT(*)::int AS count FROM files_collection_keys')).rows[0]?.count ?? 0);
+      WHERE c.published=TRUE AND c.legacy_source=FALSE AND b.collection_id IS NULL LIMIT 1`);
+    const count = Number((await this.db.query(`SELECT COUNT(*)::int AS count FROM files_collection_keys k
+      JOIN collections c ON c.id=k.collection_id WHERE c.published=TRUE AND c.legacy_source=FALSE`)).rows[0]?.count ?? 0);
     return !unsupported.rowCount && !incomplete.rowCount && count > 0;
   }
 
@@ -103,19 +105,36 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
           this.config.legacyPreflight = await runLegacyPreflight(this.db, this.config.filesRoot, { caseInsensitive: this.config.caseInsensitiveRoot });
         }
         let imported = false;
+        const containLegacy = async(importer:LegacyFilesImporter):Promise<void> => {
+          await importer.containFailedSources();
+          reportStage('legacy-import-verification');
+          this.config.legacyPreflight = await runLegacyPreflight(this.db, this.config.filesRoot!, { caseInsensitive: this.config.caseInsensitiveRoot });
+          this.failure = { code: 'FILES_LEGACY_IMPORT_QUARANTINED', stage: 'legacy-import' };
+          diagnostics.degraded('legacy-import');
+        };
+        const containLegacyFailure = async(error:unknown, importer:LegacyFilesImporter):Promise<void> => {
+          if (!(error instanceof LegacyImportDataError)) throw error;
+          await containLegacy(importer);
+        };
         if (this.config.legacyPreflight?.state === 'secure-import-required') {
           reportStage('legacy-import');
-          if (disposition !== 'existing' || !this.config.filesRoot || !this.config.legacyPreflight.protectedPrefix || !material.legacyMasterKeys.length) {
-            throw new FilesBootstrapError('FILES_LEGACY_KEY_REQUIRED', 409, 'Legacy Files import requires the existing OS-protected key material');
-          }
+          const sourceRoot = this.config.legacyPreflight.protectedPrefix
+            ? join(this.config.filesRoot!, this.config.legacyPreflight.protectedPrefix)
+            : this.config.filesRoot!;
           const importer = new LegacyFilesImporter(
-            this.db, join(this.config.filesRoot, this.config.legacyPreflight.protectedPrefix), this.config.chunkRoot,
+            this.db, sourceRoot, this.config.chunkRoot,
           );
-          await importer.run(material.masterKey, material.legacyMasterKeys);
-          reportStage('legacy-import-verification');
-          this.config.legacyPreflight = await runLegacyPreflight(this.db, this.config.filesRoot, { caseInsensitive: this.config.caseInsensitiveRoot });
-          if (this.config.legacyPreflight.state !== 'clear') throw new FilesBootstrapError('FILES_LEGACY_IMPORT_INCOMPLETE', 409, 'Legacy Files import did not complete');
-          imported = true;
+          if (disposition !== 'existing' || !material.legacyMasterKeys.length) {
+            await containLegacy(importer);
+          } else try {
+            await importer.run(material.masterKey, material.legacyMasterKeys);
+            reportStage('legacy-import-verification');
+            this.config.legacyPreflight = await runLegacyPreflight(this.db, this.config.filesRoot!, { caseInsensitive: this.config.caseInsensitiveRoot });
+            if (this.config.legacyPreflight.state !== 'clear') await containLegacy(importer);
+            else imported = true;
+          } catch (error) {
+            await containLegacyFailure(error, importer);
+          }
         } else if (this.config.filesRoot) {
           // A prior import may have committed before its response reached the
           // helper. Revalidate the durable receipt and every identity mapping
@@ -130,13 +149,18 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
           } catch (error) {
             if (!(error instanceof LegacyImportContinuationRequiredError)) throw error;
             if (disposition !== 'existing' || !material.legacyMasterKeys.length) {
-              throw new FilesBootstrapError('FILES_LEGACY_KEY_REQUIRED', 409, 'Legacy Files continuation requires the existing OS-protected key material');
+              await containLegacy(importer);
+            } else {
+              reportStage('legacy-import');
+              try {
+                await importer.run(material.masterKey, material.legacyMasterKeys);
+                reportStage('legacy-import-verification');
+                imported = Boolean(await importer.completedResult());
+                if (!imported) await containLegacy(importer);
+              } catch (continuationError) {
+                await containLegacyFailure(continuationError, importer);
+              }
             }
-            reportStage('legacy-import');
-            await importer.run(material.masterKey, material.legacyMasterKeys);
-            reportStage('legacy-import-verification');
-            imported = Boolean(await importer.completedResult());
-            if (!imported) throw new FilesBootstrapError('FILES_LEGACY_IMPORT_INCOMPLETE', 409, 'Legacy Files continuation did not complete');
           }
         }
         this.assertGeneration(generation);
