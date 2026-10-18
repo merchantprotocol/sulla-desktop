@@ -2,8 +2,6 @@ import { decisionService } from '@pkg/agent/services/DecisionService';
 import type { DecisionResponse } from '@pkg/shared/decisions';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { ApprovalService, type UserQuestion } from '@pkg/agent/services/ApprovalService';
-import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
-import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { AgentJobMessagingModel } from '@pkg/agent/database/models/AgentJobMessagingModel';
 import { getActiveAgentsRegistry } from '@pkg/agent/services/ActiveAgentsRegistry';
@@ -21,6 +19,7 @@ const DESKTOP_TOGGLES = {
 type DesktopToggle = keyof typeof DESKTOP_TOGGLES;
 
 import { BrowserBookmarkModel } from '@pkg/agent/database/models/BrowserBookmarkModel';
+import { getProjectsApplicationService } from '@pkg/agent/projects/application/ProjectsApplicationService';
 import { listDockerLinks } from '@pkg/main/dockerLinks';
 import { isLoopbackUrl, previewShares } from '@pkg/main/previewShare';
 
@@ -49,7 +48,7 @@ async function companionProvider(providerId: unknown) {
 
 async function companionTask(taskId: unknown) {
   if (typeof taskId !== 'string' || !taskId || taskId.length > 200) throw new Error('Task required');
-  const task = await WorkItemsModel.getTask(taskId);
+  const task = await getProjectsApplicationService().getTask(taskId);
   if (!task || task.archived) throw new Error('Task not found');
   return task;
 }
@@ -137,14 +136,15 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
     return { accepted: true };
   }
   case 'projects.list':
-    return { projects: await WorkItemsModel.listProjects({ includeDone: true, limit: 1000 }) };
+    return { projects: await getProjectsApplicationService().listProjects({ includeDone: true, limit: 1000 }) };
   case 'projects.detail': {
     if (typeof params.projectId !== 'string') throw new Error('Project required');
-    const project = await WorkItemsModel.getProject(params.projectId);
+    const projects = getProjectsApplicationService();
+    const project = await projects.getProject(params.projectId);
     if (!project || project.archived) throw new Error('Project not found');
     const [tasks, lanes] = await Promise.all([
-      WorkItemsModel.listTasks({ projectId: project.id, includeDone: true, limit: 5000 }),
-      WorkLaneDefinitionModel.resolveEffective(project.id),
+      projects.listTasks({ projectId: project.id, includeDone: true, limit: 5000 }),
+      projects.resolveEffectiveLanes(project.id),
     ]);
     return { project, tasks, lanes, truncated: tasks.length >= 5000 };
   }
@@ -152,9 +152,9 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
   case 'projects.task': {
     const task = await companionTask(params.taskId);
     const [project, lanes, comments] = await Promise.all([
-      WorkItemsModel.getProject(task.project_id),
-      WorkLaneDefinitionModel.resolveEffective(task.project_id),
-      WorkItemsModel.listComments(task.id),
+      getProjectsApplicationService().getProject(task.project_id),
+      getProjectsApplicationService().resolveEffectiveLanes(task.project_id),
+      getProjectsApplicationService().listComments(task.id),
     ]);
     return { task, project, lanes, comments };
   }
@@ -344,7 +344,7 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
       instructions: await SullaSettingsModel.get('heartbeatMobileInstructions', ''),
       status: getHeartbeatService().getStatus(),
       history: getHeartbeatService().getHistory(80),
-      activity: await WorkItemsModel.listRecentActivity({ author: 'heartbeat', limit: 50 }),
+      activity: await getProjectsApplicationService().listRecentActivity({ author: 'heartbeat', limit: 50 }),
     };
   case 'heartbeat.update': {
     // This endpoint is only called by an explicit human action in the phone UI.

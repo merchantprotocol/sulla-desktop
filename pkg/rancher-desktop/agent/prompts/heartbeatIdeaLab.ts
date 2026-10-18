@@ -9,7 +9,9 @@
  * signal, injected on every fresh wake so the model knows what it already
  * tried and whether it has gone quiet.
  */
-import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../projects/application/ProjectsApplicationService';
+
+import type { WorkTaskRecord } from '../database/models/WorkItemsModel';
 
 export const IDEA_LAB_PROJECT_SLUG = 'heartbeat-idea-lab';
 
@@ -106,10 +108,11 @@ export function formatIdeaLabDigest(input: IdeaLabDigestInput): string {
 
 /** Load the lab and recent Heartbeat activity, then format the digest. */
 export async function buildIdeaLabDigest(nowMs = Date.now()): Promise<string> {
-  const project = await WorkItemsModel.getProjectBySlug(IDEA_LAB_PROJECT_SLUG);
+  const projects = getProjectsApplicationService();
+  const project = await projects.getProjectBySlug(IDEA_LAB_PROJECT_SLUG);
   const [tasks, activity] = await Promise.all([
-    project ? WorkItemsModel.listTasks({ projectId: project.id, includeDone: true, limit: 200 }) : Promise.resolve([]),
-    WorkItemsModel.listRecentActivity({ author: 'heartbeat', limit: 1 }),
+    project ? projects.listTasks({ projectId: project.id, includeDone: true, limit: 200 }) : Promise.resolve([]),
+    projects.listRecentActivity({ author: 'heartbeat', limit: 1 }),
   ]);
 
   return formatIdeaLabDigest({

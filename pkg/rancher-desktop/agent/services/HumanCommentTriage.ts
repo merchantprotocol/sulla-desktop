@@ -7,11 +7,15 @@
  * decides whether the ticket must change, acts, and replies with an
  * author="heartbeat" comment. That reply clears the ticket from this queue.
  */
-import { WorkItemsModel, type HumanCommentAwaitingReply } from '../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../projects/application/ProjectsApplicationService';
+
+import type { HumanCommentAwaitingReply } from '../database/models/WorkItemsModel';
 
 export const HUMAN_COMMENT_RESPONDER = 'heartbeat';
 export const HUMAN_COMMENT_WINDOW_DAYS = 14;
 
 export function listHumanCommentTriage(limit = 20): Promise<HumanCommentAwaitingReply[]> {
-  return WorkItemsModel.listTasksAwaitingHumanReply({ responder: HUMAN_COMMENT_RESPONDER, sinceDays: HUMAN_COMMENT_WINDOW_DAYS, limit });
+  return getProjectsApplicationService().listTasksAwaitingHumanReply({
+    responder: HUMAN_COMMENT_RESPONDER, sinceDays: HUMAN_COMMENT_WINDOW_DAYS, limit,
+  });
 }

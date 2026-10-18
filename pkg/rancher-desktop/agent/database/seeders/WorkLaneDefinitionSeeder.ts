@@ -1,7 +1,7 @@
-import { WorkLaneDefinitionModel } from '../models/WorkLaneDefinitionModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 
 export async function initialize(): Promise<void> {
-  await WorkLaneDefinitionModel.ensureTable();
-  const result = await WorkLaneDefinitionModel.seedDefaultsAndLegacyStatuses();
-  console.log(`[WorkLaneDefinitionSeeder] Seeded ${ result.defaults } default and ${ result.legacy } legacy lane definition(s)`);
+  // Schema and default/legacy lane reconciliation are owned by the Projects
+  // service. Desktop only waits for that service boundary to be ready.
+  await getProjectsApplicationService().ready();
 }

@@ -3,8 +3,10 @@ import { Octokit } from '@octokit/rest';
 import { extractPullRequestReferences } from './GitHubPullRequestHeadService';
 import { evaluatePullRequestMergeReadiness } from './ProjectsIssueReview';
 import { ArtifactReceiptModel, type ArtifactReceiptRow } from '../database/models/ArtifactReceiptModel';
-import { WorkItemsModel, type WorkCommentRecord, type WorkTaskRecord } from '../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../projects/application/ProjectsApplicationService';
 import { createGitHubServiceOctokit } from '../tools/github/octokit';
+
+import type { WorkCommentRecord, WorkTaskRecord } from '../database/models/WorkItemsModel';
 
 export interface ProjectsPullRequestBrief {
   repository:     string;
@@ -154,10 +156,11 @@ function receiptEvidence(receipts: ArtifactReceiptRow[]): string[] {
 }
 
 export async function loadProjectsIssueDetail(taskId: string): Promise<ProjectsIssueDetail> {
-  const task = await WorkItemsModel.getTask(taskId);
+  const projects = getProjectsApplicationService();
+  const task = await projects.getTask(taskId);
   if (!task || task.archived) throw new Error(`Issue ${ taskId } was not found.`);
   const [comments, receipts] = await Promise.all([
-    WorkItemsModel.listComments(task.id),
+    projects.listComments(task.id),
     ArtifactReceiptModel.listByTask(task.id),
   ]);
   const evidenceLines = [

@@ -1,7 +1,9 @@
 import { KnowledgeGraphModel, type KnowledgeNodeRecord } from '../../database/models/KnowledgeGraphModel';
-import { WorkItemKnowledgeModel, type KnowledgeWorkItemKind } from '../../database/models/WorkItemKnowledgeModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 import { formatJson } from '../knowledgeAssociationAdapter';
+
+import type { KnowledgeWorkItemKind } from '../../database/models/WorkItemKnowledgeModel';
 
 function scope(input: any): { kind: KnowledgeWorkItemKind; id: string } | null {
   const candidates = [
@@ -23,7 +25,9 @@ export class EpisodicRecallWorker extends BaseTool {
       const limit = Math.max(1, Math.min(100, Math.floor(Number(input.limit) || 20)));
       const workScope = scope(input);
       const scoped = workScope
-        ? await WorkItemKnowledgeModel.listForItem(workScope.kind, workScope.id, {
+        ? await getProjectsApplicationService().listKnowledgeForItem({
+          itemKind: workScope.kind,
+          itemId:   workScope.id,
           includeInherited: Boolean(input.include_inherited ?? true),
           limit,
         })

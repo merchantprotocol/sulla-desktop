@@ -1,22 +1,12 @@
+import { ProjectsApiClient } from '../../projects/application/ProjectsApiClient';
 import { postgresClient } from '../PostgresClient';
 
 import type { PoolClient } from 'pg';
 
-/**
- * Task ownership for agent jobs. An agent job launched for a Projects task
- * owns it for the whole run: the task's assignee is that agent, and another
- * session's job for the same task is refused until the first one finishes.
- * Ownership is taken under one advisory lock so two jobs can never both win.
- */
 export interface TaskOwner {
   taskId: string;
   kind:   'agent_job';
   ref:    string;
-}
-
-interface OwnedAssignment {
-  prior: string | null;
-  owner: string;
 }
 
 export interface OwnershipClaimResult {
@@ -24,106 +14,209 @@ export interface OwnershipClaimResult {
   conflicts: TaskOwner[];
 }
 
-const ADMISSION_LOCK = "SELECT pg_advisory_xact_lock(hashtext('projects-agent-admission'))";
+interface ClaimLease {
+  taskId:    string;
+  token:     string;
+  expiresAt: string;
+}
 
+interface ClaimResponse {
+  claimed:   boolean;
+  conflicts: { taskId: string; owner: string }[];
+  leases:    ClaimLease[];
+}
+
+const LEASE_SECONDS = 15 * 60;
+const RENEW_INTERVAL_MS = 5 * 60_000;
+const projectsClient = new ProjectsApiClient();
+const activeLeases = new Map<string, ClaimLease[]>();
+const renewTimers = new Map<string, ReturnType<typeof setInterval>>();
+
+function leaseRecord(leases: ClaimLease[]): Record<string, ClaimLease> {
+  return Object.fromEntries(leases.map(lease => [lease.taskId, lease]));
+}
+
+async function storedLeases(jobId: string): Promise<ClaimLease[]> {
+  const cached = activeLeases.get(jobId);
+  if (cached) return cached;
+  const row = await postgresClient.queryOne<{ project_task_prior_assignees: Record<string, ClaimLease> }>(
+    'SELECT project_task_prior_assignees FROM agent_jobs WHERE job_id = $1', [jobId],
+  );
+  const leases = Object.values(row?.project_task_prior_assignees ?? {})
+    .filter(value => value && typeof value.taskId === 'string' && typeof value.token === 'string');
+  if (leases.length) activeLeases.set(jobId, leases);
+  return leases;
+}
+
+async function inheritedClaimState(jobId: string, taskIds: string[]): Promise<{
+  tokens: Record<string, string>;
+  owners: { jobId: string; taskIds: string[] }[];
+}> {
+  if (!taskIds.length) return { tokens: {}, owners: [] };
+  const rows = await postgresClient.query<{
+    job_id: string; project_task_ids: string[]; project_task_prior_assignees: Record<string, ClaimLease>;
+  }>(`
+    SELECT owner.job_id, owner.project_task_ids, owner.project_task_prior_assignees
+      FROM agent_jobs child
+      JOIN agent_jobs owner ON owner.status = 'running'
+       AND EXISTS (
+         SELECT 1 FROM jsonb_array_elements(COALESCE(owner.tasks, '[]'::jsonb)) AS parent_task
+          WHERE parent_task->>'threadId' = child.parent_thread_id
+       )
+     WHERE child.job_id = $2 AND owner.project_task_ids && $1::text[]
+  `, [taskIds, jobId]);
+  const tokens: Record<string, string> = {};
+  for (const row of rows) {
+    for (const taskId of taskIds) {
+      const lease = row.project_task_prior_assignees?.[taskId];
+      if (lease?.token) tokens[taskId] = lease.token;
+    }
+  }
+  return {
+    tokens,
+    owners: rows.map(row => ({ jobId: row.job_id, taskIds: row.project_task_ids.filter(id => taskIds.includes(id)) })),
+  };
+}
+
+function stopRenewal(jobId: string): void {
+  const timer = renewTimers.get(jobId);
+  if (timer) clearInterval(timer);
+  renewTimers.delete(jobId);
+}
+
+function startRenewal(jobId: string): void {
+  stopRenewal(jobId);
+  const timer = setInterval(() => {
+    (async() => {
+      const leases = await storedLeases(jobId);
+      if (!leases.length) return;
+      const renewed = await projectsClient.request<ClaimLease[]>('/v1/claims/renew', {
+        externalRef: jobId, leases, leaseSeconds: LEASE_SECONDS,
+      });
+      activeLeases.set(jobId, renewed);
+      await postgresClient.query(
+        'UPDATE agent_jobs SET project_task_prior_assignees = $2::jsonb WHERE job_id = $1',
+        [jobId, JSON.stringify(leaseRecord(renewed))],
+      );
+    })().catch(error => console.warn(`[WorkTaskOwnership] Could not renew task claims for ${ jobId }:`, error));
+  }, RENEW_INTERVAL_MS);
+  timer.unref?.();
+  renewTimers.set(jobId, timer);
+}
+
+/**
+ * Desktop owns agent_jobs only. Projects task admission and assignee changes
+ * are atomic inside the Projects service and represented here by renewable,
+ * opaque leases.
+ */
 export class WorkTaskOwnershipModel {
-  /** Every live owner of the given tasks, excluding one agent job if named. */
   static async findOwnersWithClient(client: PoolClient, taskIds: string[], excludeJobId?: string): Promise<TaskOwner[]> {
-    if (taskIds.length === 0) return [];
-    const rows = await client.query<{ task_id: string; kind: TaskOwner['kind']; ref: string }>(`
-      SELECT owned.task_id, 'agent_job' AS kind, job.job_id AS ref FROM agent_jobs job
+    if (!taskIds.length) return [];
+    const rows = await client.query<{ task_id: string; ref: string }>(`
+      SELECT owned.task_id, job.job_id AS ref FROM agent_jobs job
        CROSS JOIN LATERAL unnest(job.project_task_ids) AS owned(task_id)
        WHERE job.status = 'running' AND owned.task_id = ANY($1::text[])
          AND ($2::text IS NULL OR job.job_id <> $2)
     `, [taskIds, excludeJobId ?? null]);
-    return rows.rows.map(row => ({ taskId: row.task_id, kind: row.kind, ref: row.ref }));
+    return rows.rows.map(row => ({ taskId: row.task_id, kind: 'agent_job', ref: row.ref }));
   }
 
-  /**
-   * Take ownership of `assignees` (task id -> agent id) for a running job.
-   * Tasks in `inherited` are already owned by the caller (a worker delegating
-   * its own task), so their existing owner is not a conflict.
-   * On any conflict nothing is written and the conflicts are returned.
-   */
   static async claimForJob(
     jobId: string,
     assignees: Record<string, string>,
     inherited: string[] = [],
   ): Promise<OwnershipClaimResult> {
     const taskIds = Object.keys(assignees);
-    if (taskIds.length === 0) return { claimed: true, conflicts: [] };
-    return postgresClient.transaction(async(client: PoolClient) => {
-      await client.query(ADMISSION_LOCK);
-      const contested = taskIds.filter(taskId => !inherited.includes(taskId));
-      const conflicts = await WorkTaskOwnershipModel.findOwnersWithClient(client, contested, jobId);
-      if (conflicts.length > 0) return { claimed: false, conflicts };
-
-      const prior = await client.query<{ id: string; assignee: string | null }>(
-        'SELECT id, assignee FROM work_tasks WHERE id = ANY($1::text[]) FOR UPDATE',
-        [taskIds],
-      );
-      const missing = taskIds.filter(taskId => !prior.rows.some(row => row.id === taskId));
-      if (missing.length > 0) {
-        throw new Error(`Unknown Projects task id(s): ${ missing.join(', ') }`);
-      }
-      const priorAssignees: Record<string, OwnedAssignment> = Object.fromEntries(prior.rows.map(row => [
-        row.id, { prior: row.assignee, owner: assignees[row.id] },
-      ]));
-      await client.query(`
+    if (!taskIds.length) return { claimed: true, conflicts: [] };
+    const inheritedState = await inheritedClaimState(jobId, inherited.filter(taskId => taskIds.includes(taskId)));
+    const result = await projectsClient.request<ClaimResponse>('/v1/claims/claim', {
+      externalRef:     jobId,
+      assignees,
+      inheritedClaims: inheritedState.tokens,
+      leaseSeconds:    LEASE_SECONDS,
+    });
+    if (!result.claimed) {
+      return {
+        claimed:   false,
+        conflicts: result.conflicts.map(conflict => ({
+          taskId: conflict.taskId, kind: 'agent_job', ref: conflict.owner,
+        })),
+      };
+    }
+    try {
+      activeLeases.set(jobId, result.leases);
+      const persisted = await postgresClient.queryOne<{ job_id: string }>(`
         UPDATE agent_jobs
            SET project_task_ids = $2::text[], project_task_prior_assignees = $3::jsonb
          WHERE job_id = $1
-      `, [jobId, taskIds, JSON.stringify(priorAssignees)]);
-      for (const taskId of taskIds) {
-        await client.query(`
-          UPDATE work_tasks SET assignee = $2, updated_at = now(), last_activity_at = now()
-           WHERE id = $1
-        `, [taskId, assignees[taskId]]);
+         RETURNING job_id
+      `, [jobId, taskIds, JSON.stringify(leaseRecord(result.leases))]);
+      if (!persisted) throw new Error(`Agent job ${ jobId } is not persisted; task claims were rolled back.`);
+      for (const owner of inheritedState.owners) {
+        for (const taskId of owner.taskIds) {
+          await postgresClient.query(`
+            UPDATE agent_jobs
+               SET project_task_ids = array_remove(project_task_ids, $2),
+                   project_task_prior_assignees = project_task_prior_assignees - $2
+             WHERE job_id = $1
+          `, [owner.jobId, taskId]);
+          const ownerLeases = activeLeases.get(owner.jobId)?.filter(lease => lease.taskId !== taskId);
+          if (ownerLeases) {
+            activeLeases.set(owner.jobId, ownerLeases);
+            if (!ownerLeases.length) stopRenewal(owner.jobId);
+          }
+        }
       }
+      startRenewal(jobId);
       return { claimed: true, conflicts: [] };
-    });
+    } catch (error) {
+      await projectsClient.request('/v1/claims/release', { externalRef: jobId, leases: result.leases }).catch(() => undefined);
+      activeLeases.delete(jobId);
+      throw error;
+    }
   }
 
-  /**
-   * Release a finished job's tasks: restore each task's prior assignee unless
-   * someone reassigned it during the run. The job row's status change is what
-   * actually frees the task for other writers.
-   */
   static async releaseForJob(jobId: string): Promise<void> {
-    await postgresClient.transaction(async(client: PoolClient) => {
-      const job = await client.query<{ project_task_ids: string[]; project_task_prior_assignees: Record<string, OwnedAssignment> }>(
-        'SELECT project_task_ids, project_task_prior_assignees FROM agent_jobs WHERE job_id = $1',
-        [jobId],
-      );
-      const row = job.rows[0];
-      if (!row || row.project_task_ids.length === 0) return;
-      await WorkTaskOwnershipModel.restoreAssigneesWithClient(client, row.project_task_ids, row.project_task_prior_assignees);
-    });
+    stopRenewal(jobId);
+    const leases = await storedLeases(jobId);
+    if (leases.length) {
+      await projectsClient.request('/v1/claims/release', { externalRef: jobId, leases });
+    }
+    activeLeases.delete(jobId);
+    await postgresClient.query(
+      `UPDATE agent_jobs SET project_task_ids = '{}'::text[], project_task_prior_assignees = '{}'::jsonb WHERE job_id = $1`,
+      [jobId],
+    );
   }
 
-  /** Restore assignees for jobs the boot sweep found dead. */
   static async releaseSweptJobs(jobIds: string[]): Promise<void> {
     for (const jobId of jobIds) {
-      await WorkTaskOwnershipModel.releaseForJob(jobId).catch(err => console.warn(
-        `[WorkTaskOwnership] Could not release tasks for swept job ${ jobId }:`, err,
+      await this.releaseForJob(jobId).catch(error => console.warn(
+        `[WorkTaskOwnership] Could not release tasks for swept job ${ jobId }:`, error,
       ));
     }
   }
 
-  private static async restoreAssigneesWithClient(
-    client: PoolClient,
-    taskIds: string[],
-    assignments: Record<string, OwnedAssignment>,
-  ): Promise<void> {
-    for (const taskId of taskIds) {
-      const assignment = assignments[taskId];
-      if (!assignment) continue;
-      // Only undo our own assignment; a human or the task's own worker may have
-      // handed it off deliberately before finishing.
-      await client.query(`
-        UPDATE work_tasks SET assignee = $2, updated_at = now()
-         WHERE id = $1 AND assignee IS NOT DISTINCT FROM $3
-      `, [taskId, assignment.prior ?? null, assignment.owner]);
+  /** Resume renewable claims for tab jobs that intentionally survive restart. */
+  static async recoverRunningJobs(): Promise<void> {
+    const rows = await postgresClient.query<{ job_id: string }>(`
+      SELECT job_id FROM agent_jobs
+       WHERE status = 'running' AND cardinality(project_task_ids) > 0
+    `);
+    for (const row of rows) {
+      let leases: ClaimLease[] = [];
+      try {
+        leases = await storedLeases(row.job_id);
+        if (!leases.length) continue;
+        const renewed = await projectsClient.request<ClaimLease[]>('/v1/claims/renew', {
+          externalRef: row.job_id, leases, leaseSeconds: LEASE_SECONDS,
+        });
+        activeLeases.set(row.job_id, renewed);
+        startRenewal(row.job_id);
+      } catch (error) {
+        console.warn(`[WorkTaskOwnership] Could not recover task claims for ${ row.job_id }:`, error);
+        if (leases.length) startRenewal(row.job_id);
+      }
     }
   }
 }

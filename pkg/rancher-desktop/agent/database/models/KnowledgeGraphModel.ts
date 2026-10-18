@@ -1,3 +1,4 @@
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { postgresClient } from '../PostgresClient';
 
 export interface KnowledgeNodeRecord {
@@ -177,6 +178,7 @@ export class KnowledgeGraphModel {
         input.merged_into ?? null],
     );
     if (!row) throw new Error(`Failed to upsert knowledge node: ${ input.id }`);
+    await getProjectsApplicationService().upsertKnowledgeProjection(row);
     return row;
   }
 
@@ -289,48 +291,29 @@ export class KnowledgeGraphModel {
   }
 
   static async archiveNode(id: string): Promise<boolean> {
-    const result = await postgresClient.queryWithResult(
-      `UPDATE ${ this.NODES_TABLE } SET archived = true, updated_at = now() WHERE id = $1`,
+    const row = await postgresClient.queryOne<KnowledgeNodeRecord>(
+      `UPDATE ${ this.NODES_TABLE } SET archived = true, updated_at = now() WHERE id = $1 RETURNING *`,
       [id],
     );
-    return (result.rowCount ?? 0) > 0;
+    if (!row) return false;
+    await getProjectsApplicationService().upsertKnowledgeProjection(row);
+    return true;
   }
 
-  /** Merge graph and work-item references atomically onto one canonical node. */
+  /** Merge the source-owned graph, then reconcile Projects' cached projection. */
   static async mergeNode(sourceId: string, canonicalId: string): Promise<KnowledgeNodeRecord> {
     if (sourceId === canonicalId) throw new Error('Cannot merge a knowledge node into itself.');
 
-    return postgresClient.transaction(async(client) => {
+    const canonical = await postgresClient.transaction(async(client) => {
       const { rows: nodes } = await client.query<KnowledgeNodeRecord>(
         `SELECT * FROM ${ this.NODES_TABLE } WHERE id = ANY($1::text[]) FOR UPDATE`,
         [[sourceId, canonicalId]],
       );
       if (nodes.length !== 2) throw new Error('Both source and canonical knowledge nodes must exist.');
-      const canonical = nodes.find(node => node.id === canonicalId);
-      if (!canonical || canonical.archived || canonical.merged_into) {
+      const target = nodes.find(node => node.id === canonicalId);
+      if (!target || target.archived || target.merged_into) {
         throw new Error('Merge target must be an active canonical knowledge node.');
       }
-
-      await client.query(
-        `UPDATE work_item_knowledge_links l
-         SET knowledge_node_id = $2, updated_at = now()
-         WHERE l.knowledge_node_id = $1
-           AND NOT EXISTS (
-             SELECT 1 FROM work_item_knowledge_links existing
-             WHERE existing.knowledge_node_id = $2
-               AND existing.relation_type = l.relation_type
-               AND existing.archived = l.archived
-               AND existing.project_id IS NOT DISTINCT FROM l.project_id
-               AND existing.epic_id IS NOT DISTINCT FROM l.epic_id
-               AND existing.task_id IS NOT DISTINCT FROM l.task_id
-           )`,
-        [sourceId, canonicalId],
-      );
-      await client.query(
-        `UPDATE work_item_knowledge_links SET archived = true, updated_at = now()
-         WHERE knowledge_node_id = $1`,
-        [sourceId],
-      );
       await client.query(
         `INSERT INTO ${ this.ALIASES_TABLE } (alias, alias_norm, node_id)
          SELECT alias, alias_norm, $2 FROM ${ this.ALIASES_TABLE } WHERE node_id = $1
@@ -344,7 +327,9 @@ export class KnowledgeGraphModel {
         [sourceId, canonicalId],
       );
 
-      return canonical;
+      return target;
     });
+    await getProjectsApplicationService().mergeKnowledgeProjection(sourceId, canonicalId);
+    return canonical;
   }
 }
