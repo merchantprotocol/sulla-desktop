@@ -786,10 +786,10 @@ import CloudConnectionCard from '@pkg/components/account/CloudConnectionCard.vue
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 interface AccountsProfile {
-  id:                string;
-  displayName:       string;
-  createdAt:         string;
-  updatedAt:         string;
+  id:          string;
+  displayName: string;
+  createdAt:   string;
+  updatedAt:   string;
 }
 interface AccountsConnection {
   id:                string;
@@ -802,7 +802,7 @@ interface AccountsAuthority {
   issuer:             string;
   nativeClientId:     string;
   resourceAudiences:  string[];
-  scopes:              string[];
+  scopes:             string[];
   membershipResolver: string;
   membershipAudience: string;
 }
