@@ -322,6 +322,256 @@
           </template>
         </div>
 
+        <!-- Local Accounts profile and remote authorities. This card remains
+             independent from the existing personal and Sulla Cloud paths. -->
+        <div class="account-card">
+          <div class="account-card-header">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="account-card-icon"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="3"
+              />
+              <path d="M19.4 15a1.7 1.7 0 00.34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0015 19.4a1.7 1.7 0 00-1 .6 1.7 1.7 0 00-.4 1.1V21h-4v-.08A1.7 1.7 0 008.6 19.4a1.7 1.7 0 00-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-.6-1 1.7 1.7 0 00-1.1-.4H3v-4h.08A1.7 1.7 0 004.6 8.6a1.7 1.7 0 00-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 009 4.6a1.7 1.7 0 001-.6 1.7 1.7 0 00.4-1.1V3h4v.08A1.7 1.7 0 0015.4 4.6a1.7 1.7 0 001.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0019.4 9c.14.4.35.75.6 1 .28.27.67.4 1.1.4h.08v4h-.08c-.43 0-.82.13-1.1.4-.25.25-.46.6-.6 1z" />
+            </svg>
+            <h2 class="account-card-title">
+              Accounts &amp; Servers
+            </h2>
+            <button
+              v-if="!accountsLoading"
+              type="button"
+              class="account-inline-btn"
+              :disabled="accountsPending"
+              @click="refreshAccounts"
+            >
+              Refresh
+            </button>
+          </div>
+
+          <div
+            v-if="accountsLoading"
+            class="account-section-loading"
+          >
+            Loading local account…
+          </div>
+          <template v-else-if="accountsError">
+            <p class="account-error">
+              {{ accountsError }}
+            </p>
+            <button
+              type="button"
+              class="account-action-btn"
+              :disabled="accountsPending"
+              @click="refreshAccounts"
+            >
+              Retry Accounts service
+            </button>
+          </template>
+          <template v-else>
+            <div class="account-subsection">
+              <h3 class="account-subtitle">
+                Local profile
+              </h3>
+              <p class="account-hint">
+                This name belongs to this computer. Personal use stays available without connecting a server.
+              </p>
+              <div class="account-field">
+                <label class="account-label">Display name</label>
+                <input
+                  v-model="accountsDisplayName"
+                  type="text"
+                  maxlength="120"
+                  placeholder="Your name"
+                  class="account-input"
+                  :disabled="accountsPending"
+                >
+              </div>
+              <div class="account-btn-row">
+                <button
+                  type="button"
+                  class="account-save-btn"
+                  :disabled="accountsPending || !accountsDisplayName.trim() || accountsDisplayName.trim() === accountsProfile?.displayName"
+                  @click="saveAccountsProfile"
+                >
+                  {{ accountsPending === 'profile' ? 'Saving…' : 'Save local profile' }}
+                </button>
+                <span
+                  v-if="accountsNotice"
+                  class="account-success account-inline-status"
+                >
+                  {{ accountsNotice }}
+                </span>
+              </div>
+            </div>
+
+            <div class="account-subsection">
+              <h3 class="account-subtitle">
+                Connect a server
+              </h3>
+              <p class="account-hint">
+                Enter a Sulla server address. Sulla verifies its published authority details before saving anything.
+              </p>
+              <div class="account-field">
+                <label class="account-label">Server address</label>
+                <input
+                  v-model="authorityUrl"
+                  type="url"
+                  placeholder="https://sulla.example.com"
+                  class="account-input"
+                  :disabled="accountsPending || Boolean(discoveredAuthority)"
+                  @keydown.enter.prevent="discoverAuthority"
+                >
+              </div>
+              <p
+                v-if="authorityError"
+                class="account-error"
+              >
+                {{ authorityError }}
+              </p>
+              <template v-if="discoveredAuthority">
+                <div class="account-authority-preview">
+                  <strong>{{ authorityHost(discoveredAuthority.issuer) }}</strong>
+                  <span>{{ discoveredAuthority.resourceAudiences.length }} available service{{ discoveredAuthority.resourceAudiences.length === 1 ? '' : 's' }}</span>
+                </div>
+                <div class="account-btn-row">
+                  <button
+                    type="button"
+                    class="account-save-btn"
+                    :disabled="accountsPending"
+                    @click="enrollAuthority"
+                  >
+                    {{ accountsPending === 'enroll' ? 'Connecting…' : 'Connect server' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="account-action-btn"
+                    :disabled="accountsPending"
+                    @click="cancelAuthority"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </template>
+              <button
+                v-else
+                type="button"
+                class="account-action-btn"
+                :disabled="accountsPending || !authorityUrl.trim()"
+                @click="discoverAuthority"
+              >
+                {{ accountsPending === 'discover' ? 'Checking…' : 'Check server' }}
+              </button>
+            </div>
+
+            <div class="account-subsection">
+              <h3 class="account-subtitle">
+                Server connections
+              </h3>
+              <p
+                v-if="!accountsConnections.length"
+                class="account-hint"
+              >
+                No remote servers connected. Your local profile is still active.
+              </p>
+              <div
+                v-for="connection in accountsConnections"
+                :key="connection.id"
+                class="account-connection"
+              >
+                <div class="account-connection-heading">
+                  <div>
+                    <strong>{{ authorityHost(connection.issuer) }}</strong>
+                    <p class="account-hint account-connection-state">
+                      {{ connection.subject ? 'Authorized' : 'Authorization needed' }}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="account-action-btn account-danger-btn"
+                    :disabled="accountsPending"
+                    @click="disconnectAccount(connection.id)"
+                  >
+                    {{ accountsPending === `disconnect:${connection.id}` ? 'Disconnecting…' : 'Disconnect' }}
+                  </button>
+                </div>
+                <div
+                  v-if="connection.resourceAudiences.length"
+                  class="account-field"
+                >
+                  <label class="account-label">Service access</label>
+                  <select
+                    v-model="selectedAudience[connection.id]"
+                    class="account-input"
+                    :disabled="accountsPending"
+                  >
+                    <option value="">
+                      Account identity only
+                    </option>
+                    <option
+                      v-for="audience in connection.resourceAudiences"
+                      :key="audience"
+                      :value="audience"
+                    >
+                      {{ audience }}
+                    </option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  class="account-save-btn"
+                  :disabled="accountsPending"
+                  @click="authorizeAccount(connection.id)"
+                >
+                  {{ accountsPending === `authorize:${connection.id}` ? 'Opening sign-in…' : (connection.subject ? 'Authorize again' : 'Authorize') }}
+                </button>
+              </div>
+              <p
+                v-if="authorizationNotice"
+                class="account-hint account-auth-notice"
+              >
+                {{ authorizationNotice }} Return here after signing in, then refresh if the status has not updated.
+              </p>
+            </div>
+
+            <div class="account-subsection account-subsection-last">
+              <h3 class="account-subtitle">
+                Memberships
+              </h3>
+              <p class="account-hint">
+                Remote memberships below are cached display hints only. Services always verify current authorization separately.
+              </p>
+              <p
+                v-if="!accountsMemberships.local.length && !accountsMemberships.remoteDisplayHints.length"
+                class="account-hint"
+              >
+                No organization memberships to display.
+              </p>
+              <div
+                v-for="membership in accountsMemberships.local"
+                :key="`local:${membership.authorityId}:${membership.organizationId}`"
+                class="account-membership"
+              >
+                <strong>{{ membership.organizationId }}</strong>
+                <span>Local · {{ membership.roles.join(', ') || 'member' }}</span>
+              </div>
+              <div
+                v-for="membership in accountsMemberships.remoteDisplayHints"
+                :key="`remote:${membership.authorityId}:${membership.organizationId}`"
+                class="account-membership"
+              >
+                <strong>{{ membership.organizationId }}</strong>
+                <span>{{ authorityHost(membership.issuer) }} · cached hint · {{ membership.roles.join(', ') || 'member' }}</span>
+              </div>
+            </div>
+          </template>
+        </div>
+
         <!-- Profile hero -->
         <div class="account-hero">
           <div class="account-avatar">
@@ -535,6 +785,46 @@ import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import CloudConnectionCard from '@pkg/components/account/CloudConnectionCard.vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+interface AccountsProfile {
+  id:                string;
+  displayName:       string;
+  createdAt:         string;
+  updatedAt:         string;
+}
+interface AccountsConnection {
+  id:                string;
+  issuer:            string;
+  resourceAudiences: string[];
+  subject:           string | null;
+}
+interface AccountsAuthority {
+  authorityId:        string;
+  issuer:             string;
+  nativeClientId:     string;
+  resourceAudiences:  string[];
+  scopes:              string[];
+  membershipResolver: string;
+  membershipAudience: string;
+}
+interface AccountsMembership {
+  authorityId:    string;
+  issuer:         string;
+  organizationId: string;
+  roles:          string[];
+}
+interface AccountsMemberships {
+  local:              AccountsMembership[];
+  remoteDisplayHints: AccountsMembership[];
+}
+
+// The IPC implementation and shared declarations land in the sibling Desktop
+// integration branch. Keeping the narrow contract here lets this UI branch
+// compile independently without taking ownership of that worker's typings.
+interface AccountsRenderer {
+  invoke<T>(channel: string, ...args: unknown[]): Promise<T>;
+}
+const accountsRenderer = ipcRenderer as unknown as AccountsRenderer;
+
 const router = useRouter();
 
 const loading = ref(true);
@@ -544,6 +834,22 @@ const saved = ref(false);
 const userName = ref('');
 const email = ref('');
 const subscribeToUpdates = ref(true);
+
+// Local Accounts broker and remote authorities
+const accountsLoading = ref(true);
+const accountsPending = ref('');
+const accountsError = ref('');
+const accountsNotice = ref('');
+const accountsProfile = ref<AccountsProfile | null>(null);
+const accountsDisplayName = ref('');
+const accountsConnections = ref<AccountsConnection[]>([]);
+const accountsMemberships = ref<AccountsMemberships>({ local: [], remoteDisplayHints: [] });
+const authorityUrl = ref('');
+const authorityError = ref('');
+const discoveredAuthority = ref<AccountsAuthority | null>(null);
+const selectedAudience = ref<Record<string, string>>({});
+const authorizationNotice = ref('');
+let authorizationRefreshArmed = false;
 
 // Password change
 const showChangePassword = ref(false);
@@ -558,7 +864,7 @@ const changingPassword = ref(false);
 const vaultStats = ref({ totalAccounts: 0, integrationTypes: 0 });
 
 // Sulla Cloud
-type CloudStatus = {
+interface CloudStatus {
   signedIn:           boolean;
   userId:             string;
   activeContractorId: string;
@@ -566,8 +872,8 @@ type CloudStatus = {
   name:               string;
   contractorCount:    number;
   lastError?:         string;
-};
-type RelayStatus = { pairedUserId: string; connected: boolean; lastError?: string };
+}
+interface RelayStatus { pairedUserId: string; connected: boolean; lastError?: string }
 
 const cloudStatus = ref<CloudStatus>({
   signedIn:           false,
@@ -643,6 +949,165 @@ async function saveProfile() {
   } finally {
     saving.value = false;
   }
+}
+
+function accountsErrorMessage(error: unknown): string {
+  const message = String((error as Error)?.message ?? error);
+  if (message.includes('accounts_unavailable') || message.includes('authority_discovery_unavailable')) {
+    return 'The Accounts service is unavailable. Check that Sulla is running, then retry.';
+  }
+  if (message.includes('invalid_authority_metadata')) {
+    return 'That server did not publish valid Sulla authority details. Check the address or contact its administrator.';
+  }
+  if (message.includes('connection_not_found')) {
+    return 'That connection no longer exists. Refresh the list and try again.';
+  }
+  if (message.includes('resource_audience_not_allowed')) {
+    return 'That service is not offered by this server. Choose another service and try again.';
+  }
+  return 'Accounts could not complete that request. Retry, or check the server address.';
+}
+
+function authorityHost(issuer: string): string {
+  try {
+    return new URL(issuer).host;
+  } catch {
+    return issuer;
+  }
+}
+
+async function refreshAccounts() {
+  accountsLoading.value = accountsProfile.value === null;
+  accountsPending.value = 'refresh';
+  accountsError.value = '';
+  accountsNotice.value = '';
+  try {
+    const [profile, connectionResult, memberships] = await Promise.all([
+      accountsRenderer.invoke<AccountsProfile>('accounts:profile'),
+      accountsRenderer.invoke<{ connections: AccountsConnection[] }>('accounts:connections'),
+      accountsRenderer.invoke<AccountsMemberships>('accounts:memberships'),
+    ]);
+    accountsProfile.value = profile;
+    accountsDisplayName.value = profile.displayName;
+    accountsConnections.value = connectionResult.connections;
+    accountsMemberships.value = memberships;
+    for (const connection of connectionResult.connections) {
+      selectedAudience.value[connection.id] ??= '';
+    }
+  } catch (error) {
+    accountsError.value = accountsErrorMessage(error);
+  } finally {
+    accountsLoading.value = false;
+    accountsPending.value = '';
+  }
+}
+
+async function saveAccountsProfile() {
+  accountsPending.value = 'profile';
+  accountsNotice.value = '';
+  accountsError.value = '';
+  try {
+    const profile = await accountsRenderer.invoke<AccountsProfile>('accounts:update-profile', {
+      displayName: accountsDisplayName.value.trim(),
+    });
+    accountsProfile.value = profile;
+    accountsDisplayName.value = profile.displayName;
+    accountsNotice.value = 'Local profile saved.';
+  } catch (error) {
+    accountsError.value = accountsErrorMessage(error);
+  } finally {
+    accountsPending.value = '';
+  }
+}
+
+async function discoverAuthority() {
+  if (!authorityUrl.value.trim()) return;
+  accountsPending.value = 'discover';
+  authorityError.value = '';
+  try {
+    discoveredAuthority.value = await accountsRenderer.invoke<AccountsAuthority>(
+      'accounts:discover-authority',
+      authorityUrl.value.trim(),
+    );
+  } catch (error) {
+    authorityError.value = accountsErrorMessage(error);
+  } finally {
+    accountsPending.value = '';
+  }
+}
+
+function cancelAuthority() {
+  discoveredAuthority.value = null;
+  authorityError.value = '';
+}
+
+async function enrollAuthority() {
+  const metadata = discoveredAuthority.value;
+  if (!metadata) return;
+  accountsPending.value = 'enroll';
+  authorityError.value = '';
+  try {
+    await accountsRenderer.invoke<AccountsConnection>('accounts:create-connection', {
+      issuer:              metadata.issuer,
+      clientId:            metadata.nativeClientId,
+      resourceAudiences:   metadata.resourceAudiences,
+      scopes:              metadata.scopes,
+      membershipEndpoint: metadata.membershipResolver,
+      membershipAudience: metadata.membershipAudience,
+      remoteAuthorityId:  metadata.authorityId,
+    });
+    authorityUrl.value = '';
+    discoveredAuthority.value = null;
+    await refreshAccounts();
+  } catch (error) {
+    authorityError.value = accountsErrorMessage(error);
+  } finally {
+    accountsPending.value = '';
+  }
+}
+
+async function disconnectAccount(id: string) {
+  accountsPending.value = `disconnect:${ id }`;
+  accountsError.value = '';
+  try {
+    await accountsRenderer.invoke<void>('accounts:remove-connection', id);
+    await refreshAccounts();
+  } catch (error) {
+    accountsError.value = accountsErrorMessage(error);
+  } finally {
+    accountsPending.value = '';
+  }
+}
+
+async function authorizeAccount(id: string) {
+  accountsPending.value = `authorize:${ id }`;
+  accountsError.value = '';
+  authorizationNotice.value = '';
+  try {
+    const resourceAudience = selectedAudience.value[id] || undefined;
+    const result = await accountsRenderer.invoke<{ opened: boolean; expiresAt: string }>(
+      'accounts:authorize',
+      { id, resourceAudience },
+    );
+    if (!result.opened) {
+      accountsError.value = 'Sulla could not open the sign-in page. Retry, or open it after checking your default browser.';
+      return;
+    }
+    authorizationNotice.value = `Sign-in opened and is available until ${ new Date(result.expiresAt).toLocaleTimeString() }.`;
+    authorizationRefreshArmed = true;
+    window.removeEventListener('focus', refreshAccountsAfterAuthorization);
+    window.addEventListener('focus', refreshAccountsAfterAuthorization, { once: true });
+  } catch (error) {
+    accountsError.value = accountsErrorMessage(error);
+  } finally {
+    accountsPending.value = '';
+  }
+}
+
+function refreshAccountsAfterAuthorization() {
+  if (!authorizationRefreshArmed) return;
+  authorizationRefreshArmed = false;
+  refreshAccounts();
 }
 
 // ── Sulla Cloud handlers ──────────────────────────────────────
@@ -845,12 +1310,15 @@ async function changePassword() {
 
 onMounted(async() => {
   await loadProfile();
+  refreshAccounts();
   await refreshCloudStatus();
   ipcRenderer.on('desktop-relay:status-changed', onRelayStatusChanged);
 });
 
 onBeforeUnmount(() => {
   ipcRenderer.removeListener('desktop-relay:status-changed', onRelayStatusChanged);
+  authorizationRefreshArmed = false;
+  window.removeEventListener('focus', refreshAccountsAfterAuthorization);
 });
 </script>
 
@@ -942,6 +1410,96 @@ onBeforeUnmount(() => {
   font-size: 14px;
   font-weight: 600;
   margin: 0;
+}
+
+.account-inline-btn {
+  margin-left: auto;
+  padding: 4px 8px;
+  color: var(--accent-primary, #38bdf8);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.account-inline-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.account-section-loading {
+  padding: 20px 0;
+  color: var(--text-muted, #484f58);
+  font-size: 13px;
+  text-align: center;
+}
+
+.account-subsection {
+  padding-bottom: 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border-default, #21262d);
+}
+
+.account-subsection-last {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+
+.account-subtitle {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.account-inline-status {
+  margin: 0;
+}
+
+.account-authority-preview,
+.account-membership {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  background: var(--bg-surface, #0d1117);
+  border: 1px solid var(--border-default, #21262d);
+  border-radius: 8px;
+}
+
+.account-authority-preview span,
+.account-membership span {
+  color: var(--text-muted, #484f58);
+}
+
+.account-connection {
+  padding: 12px;
+  margin-bottom: 10px;
+  background: var(--bg-surface, #0d1117);
+  border: 1px solid var(--border-default, #21262d);
+  border-radius: 8px;
+}
+
+.account-connection-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.account-connection-state {
+  margin: 3px 0 0;
+}
+
+.account-danger-btn {
+  color: #f85149;
+}
+
+.account-auth-notice {
+  margin-top: 10px;
 }
 
 /* ── Fields ── */
