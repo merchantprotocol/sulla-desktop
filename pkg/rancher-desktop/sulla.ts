@@ -3,6 +3,7 @@
 // avoid a circular-dependency runtime error ("Cannot access 'a' before
 // initialization") in the renderer bundle. Do not let linters reorder these.
 import * as window from '@pkg/window';
+import { vaultViewManager } from '@pkg/window/vaultViewManager';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from './agent/services/IntegrationService';
 import { getSchedulerService } from '@pkg/agent/services/SchedulerService';
@@ -823,18 +824,22 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   ipcMainProxy.handle('vault:view-open', async(
     event: Electron.IpcMainInvokeEvent,
     bounds: Electron.Rectangle,
-    hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string },
+    hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string; ownerId?: string },
   ) => {
     requireTrustedVaultRenderer(event);
+    const safeMetadata = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : undefined;
+    const ownerId = typeof hint?.ownerId === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(hint.ownerId) ? hint.ownerId : undefined;
+    if (!ownerId) throw new Error('Invalid vault view owner');
+    const reservation = vaultViewManager.reserve(ownerId);
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-    const { vaultViewManager } = await import('@pkg/window/vaultViewManager');
+    if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
     const popupTabId = hint?.surface === 'popup' && typeof hint.tabId === 'string' ? hint.tabId : undefined;
     const popupOrigin = popupTabId ? tabViewManager.getTrustedMainFrameOrigin(popupTabId) ?? undefined : undefined;
     const humanSession = await getDesktopVaultClient().createHumanSession(
       popupTabId && popupOrigin ? { tabId: popupTabId, origin: popupOrigin } : undefined,
     );
+    if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
     const target = new URL(humanSession.url);
-    const safeMetadata = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : undefined;
     const integrationId = safeMetadata(hint?.integrationId);
     const accountId = safeMetadata(hint?.accountId);
     if (integrationId) target.searchParams.set('integration', integrationId);
@@ -843,7 +848,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       target.pathname = '/vault/popup.html';
       if (popupOrigin) target.searchParams.set('site', new URL(popupOrigin).hostname);
     }
-    await vaultViewManager.show(target.toString(), bounds);
+    const opened = await vaultViewManager.show(reservation, target.toString(), bounds);
+    if (!opened) return { state: 'cancelled' };
     if (!vaultStatusPoll) vaultStatusPoll = setInterval(() => {
       if (vaultStatusRunning) return;
       vaultStatusRunning = true;
@@ -852,20 +858,20 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return { state: 'opened', expiresAt: humanSession.expiresAt };
   });
 
-  ipcMainProxy.handle('vault:view-bounds', async(event: Electron.IpcMainInvokeEvent, bounds: Electron.Rectangle) => {
+  ipcMainProxy.handle('vault:view-bounds', async(event: Electron.IpcMainInvokeEvent, ownerId: string, bounds: Electron.Rectangle) => {
     const mainWindow = window.getWindow('main-agent');
     if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted vault view caller');
-    const { vaultViewManager } = await import('@pkg/window/vaultViewManager');
-    vaultViewManager.setBounds(bounds);
+    vaultViewManager.setBounds(ownerId, bounds);
   });
 
-  ipcMainProxy.handle('vault:view-hide', async(event: Electron.IpcMainInvokeEvent) => {
+  ipcMainProxy.handle('vault:view-hide', async(event: Electron.IpcMainInvokeEvent, ownerId: string) => {
     const mainWindow = window.getWindow('main-agent');
     if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted vault view caller');
-    const { vaultViewManager } = await import('@pkg/window/vaultViewManager');
-    vaultViewManager.hide();
-    if (vaultStatusPoll) clearInterval(vaultStatusPoll);
-    vaultStatusPoll = undefined;
+    vaultViewManager.hide(ownerId);
+    if (!vaultViewManager.hasActiveOwner()) {
+      if (vaultStatusPoll) clearInterval(vaultStatusPoll);
+      vaultStatusPoll = undefined;
+    }
   });
 
   ipcMainProxy.handle('vault:is-setup', async() => {
