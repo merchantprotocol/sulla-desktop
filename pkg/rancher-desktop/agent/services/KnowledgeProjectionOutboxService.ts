@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import type { PoolClient } from 'pg';
-
 import { postgresClient } from '../database/PostgresClient';
+
 import type { KnowledgeNodeRecord } from '../database/models/KnowledgeGraphModel';
+import type { PoolClient } from 'pg';
 const POLL_INTERVAL_MS = 5_000;
 const MAX_BATCH_SIZE = 50;
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
@@ -56,7 +56,7 @@ export class KnowledgeProjectionOutboxService {
     if (this.initialized) return;
     await this.seedReconciliation();
     this.initialized = true;
-    void this.poll();
+    this.poll().catch(error => console.error('[KnowledgeProjectionOutbox] Unexpected poll failure', error));
   }
 
   destroy(): void {
@@ -123,7 +123,9 @@ export class KnowledgeProjectionOutboxService {
 
   private scheduleNext(): void {
     if (!this.initialized) return;
-    this.pollTimer = setTimeout(() => { void this.poll() }, POLL_INTERVAL_MS);
+    this.pollTimer = setTimeout(() => {
+      this.poll().catch(error => console.error('[KnowledgeProjectionOutbox] Unexpected poll failure', error));
+    }, POLL_INTERVAL_MS);
     this.pollTimer.unref?.();
   }
 
