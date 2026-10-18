@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -204,6 +204,23 @@ test('real handlers provision collections and preserve authenticated content acr
     const refs = await db.query('SELECT refcount FROM chunks WHERE collection_id=$1', [collectionId]);
     assert.deepEqual(refs.rows.map(row => Number(row.refcount)), [1]);
 
+    await db.query('INSERT INTO files_protected_files(file_id) VALUES($1)', [uploaded.id]);
+    const protectedState = async() => (await db!.query(`SELECT f.path,f.mime,f.size,f.current_version_id,
+      (SELECT count(*)::int FROM file_versions WHERE file_id=f.id) version_count,
+      (SELECT count(*)::int FROM chunks WHERE collection_id=f.collection_id) chunk_count,
+      (SELECT coalesce(sum(refcount),0)::int FROM chunks WHERE collection_id=f.collection_id) chunk_refs,
+      (SELECT count(*)::int FROM journal WHERE file_id=f.id) journal_count
+      FROM files f WHERE f.id=$1`, [uploaded.id])).rows[0];
+    const beforeProtectedUpload = await protectedState();
+    const storedChunksBefore = (await readdir(config.chunkRoot, { recursive: true })).sort();
+    const protectedUpload = await fetch(`${ baseUrl }/v1/files/upload?collectionId=${ collectionId }&path=Proof%2Facceptance.txt`, {
+      method: 'PUT', headers: { ...auth, 'content-type': 'text/plain' }, body: Buffer.from('blocked protected replacement'),
+    });
+    assert.equal(protectedUpload.status, 403);
+    assert.deepEqual(await protectedState(), beforeProtectedUpload);
+    assert.deepEqual((await readdir(config.chunkRoot, { recursive: true })).sort(), storedChunksBefore);
+    await db.query('DELETE FROM files_protected_files WHERE file_id=$1', [uploaded.id]);
+
     const secondBytes = Buffer.from('marigold turbine renewal');
     const changed = await fetch(`${ baseUrl }/v1/files/upload?collectionId=${ collectionId }&path=Proof%2Facceptance.txt`, {
       method: 'PUT', headers: { ...auth, 'content-type': 'text/plain' }, body: secondBytes,
@@ -224,6 +241,18 @@ test('real handlers provision collections and preserve authenticated content acr
     searched = await requestJson('/v1/search', { method: 'POST', body: JSON.stringify({ query: secondBytes.toString(), collectionId }) });
     assert.equal(searched.response.status, 200);
     assert.deepEqual(searched.body.map((file:any) => file.id), [uploaded.id]);
+
+    const concurrentUploads = await Promise.all([
+      Buffer.from('parallel first upload one'), Buffer.from('parallel first upload two'),
+    ].map(body => fetch(`${ baseUrl }/v1/files/upload?collectionId=${ collectionId }&path=Proof%2Fconcurrent.txt`, {
+      method: 'PUT', headers: { ...auth, 'content-type': 'text/plain' }, body,
+    })));
+    assert.deepEqual(concurrentUploads.map(response => response.status), [201, 201]);
+    const concurrentBodies = await Promise.all(concurrentUploads.map(response => response.json()));
+    assert.equal(concurrentBodies[0].id, concurrentBodies[1].id);
+    assert.notEqual(concurrentBodies[0].current_version_id, concurrentBodies[1].current_version_id);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM files WHERE collection_id=$1 AND path=$2', [collectionId, 'Proof/concurrent.txt'])).rows[0].count, 1);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM file_versions WHERE file_id=$1', [concurrentBodies[0].id])).rows[0].count, 2);
 
     await new Promise<void>(resolve => server!.close(() => resolve()));
     server = undefined;
