@@ -414,7 +414,15 @@ export class LegacyFilesImporter {
               const sourceRoot = nativeSource ? this.chunkRoot : this.sourceRoot;
               const collectionId = nativeSource ? nativeName ?? version.chunk_collection_id : externalName!;
               trace.mark('chunk-conversion');
-              const item = await convertLegacyManifest({ collectionId, chunkIds: sourceIds, totalSize, sourceRoot, sourceKeys: source, shadowKeys: shadow, store: this.store, shadowCollectionId: mapping.shadow_collection_id });
+              let item:ConvertedManifest;
+              try {
+                item = await convertLegacyManifest({ collectionId, chunkIds: sourceIds, totalSize, sourceRoot, sourceKeys: source, shadowKeys: shadow, store: this.store, shadowCollectionId: mapping.shadow_collection_id });
+              } catch (error) {
+                // Chunk reads, authentication, identity, and size checks are
+                // scoped to this legacy manifest. Their failure must contain
+                // the item, not lock unrelated Files collections.
+                throw new LegacyImportDataError(error);
+              }
               converted.set(key, item);
               trace.mark('version-manifest-verification');
             }
@@ -432,7 +440,8 @@ export class LegacyFilesImporter {
         } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
       } finally { for (const key of legacyMasters) key.fill(0); }
     } catch (error) {
-      trace.failed(error);
+      trace.failed(error instanceof LegacyImportDataError ? error.cause : error);
+      if (error instanceof LegacyImportDataError) throw error;
       if (quarantinableLegacyFailure(error)) throw new LegacyImportDataError(error);
       throw error;
     }
