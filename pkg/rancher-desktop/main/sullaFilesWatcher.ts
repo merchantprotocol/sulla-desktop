@@ -94,7 +94,15 @@ class SullaFilesWatcher {
       const body = Buffer.from(JSON.stringify({ masterKey: master.toString('base64'), legacyMasterKeys: legacyMasters.map(key => key.toString('base64')) }));
       try {
         const response = await this.rawLocalRequest('/v1/local/legacy-import', { method: 'POST', body }, 30 * 60_000);
-        if (!response.ok) throw new Error('Legacy Files import failed');
+        if (!response.ok) {
+          const failure = await response.json().catch(() => ({})) as { code?:unknown; stage?:unknown; reason?:unknown };
+          const stages = ['precheck', 'completion-check', 'staging', 'layout', 'key-authentication', 'conversion', 'publication'];
+          const reasons = ['COLLECTION_KEY_AUTHENTICATION_FAILED', 'SOURCE_LAYOUT_INVALID', 'MANIFEST_VERIFICATION_FAILED', 'CHUNK_VERIFICATION_FAILED', 'VERSION_SIZE_VERIFICATION_FAILED', 'IDENTITY_MAPPING_INCOMPLETE', 'MASTER_KEY_AUTHENTICATION_FAILED', 'DATABASE_CONSTRAINT_FAILED', 'DATABASE_TRANSACTION_RETRY_REQUIRED', 'INTERNAL_ERROR'];
+          const code = 'FILES_LEGACY_IMPORT_FAILED';
+          const stage = typeof failure.stage === 'string' && stages.includes(failure.stage) ? failure.stage : 'unknown';
+          const reason = typeof failure.reason === 'string' && reasons.includes(failure.reason) ? failure.reason : 'INTERNAL_ERROR';
+          throw Object.assign(new Error(`Legacy Files import failed [${ code }:${ stage }:${ reason }]`), { code, stage, reason });
+        }
       } finally { body.fill(0) }
     },
   );

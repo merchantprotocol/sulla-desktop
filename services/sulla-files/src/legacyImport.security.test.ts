@@ -43,7 +43,7 @@ test('corrupt, missing, wrong-key, and linked source chunks fail closed', async(
     const store = new Store(item.targetRoot); const common = { collectionId, chunkIds: item.ids, totalSize: item.parts[0].length, sourceRoot: item.sourceRoot, shadowKeys: item.shadowKeys, store, shadowCollectionId: shadowId };
     const linkedRoot = join(item.root, 'linked-root'); await symlink(item.sourceRoot, linkedRoot, 'dir');
     await assert.rejects(readLegacyChunk(linkedRoot, collectionId, item.ids[0]), /ELOOP|linked|symbolic/i);
-    await assert.rejects(convertLegacyManifest({ ...common, sourceKeys: { data: randomBytes(32), dedup: item.sourceKeys.dedup } }), /decrypt|cipher|import/i);
+    await assert.rejects(convertLegacyManifest({ ...common, sourceKeys: { data: randomBytes(32), dedup: item.sourceKeys.dedup } }), /authentication/);
     const original = await readLegacyChunk(item.sourceRoot, collectionId, item.ids[0]);
     await writeFile(sourcePath, Buffer.concat([original.subarray(0, original.length - 1), Buffer.from([original.at(-1)! ^ 1])]));
     await assert.rejects(convertLegacyManifest({ ...common, sourceKeys: item.sourceKeys }));

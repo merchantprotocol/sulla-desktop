@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { constants, open, readdir } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 
@@ -18,6 +18,36 @@ const MAX_ENCRYPTED_CHUNK = 32 * 1024 * 1024;
 interface Keys { data: Buffer; dedup: Buffer }
 interface SourceCollection { id: string; encrypted_data_key: Envelope; dedup_key_ciphertext: Envelope; compatibility_state: string }
 interface ConvertedManifest { hash: string; ids: string[]; totalSize: number; plaintextHash: string; chunks: Map<string, { size: number; storedSize: number }> }
+
+export type LegacyImportStage = 'precheck' | 'completion-check' | 'staging' | 'layout' | 'key-authentication' | 'conversion' | 'publication';
+
+export class LegacyFilesImportError extends Error {
+  readonly code = 'FILES_LEGACY_IMPORT_FAILED';
+
+  constructor(readonly stage:LegacyImportStage, readonly reason:string, cause:unknown) {
+    super('Legacy Files import failed; source data remains protected', { cause });
+  }
+}
+
+function safeFailureReason(error:unknown):string {
+  const message = error instanceof Error ? error.message : '';
+  const systemCode = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
+  if (message === 'Legacy Files collection key authentication failed') return 'COLLECTION_KEY_AUTHENTICATION_FAILED';
+  if (message.includes('source layout') || message.includes('chunk collection has no authenticated metadata')) return 'SOURCE_LAYOUT_INVALID';
+  if (message.includes('manifest')) return 'MANIFEST_VERIFICATION_FAILED';
+  if (message.includes('chunk identity') || message.includes('chunk authentication') || message.includes('chunk has an invalid stored size')) return 'CHUNK_VERIFICATION_FAILED';
+  if (message.includes('version size')) return 'VERSION_SIZE_VERIFICATION_FAILED';
+  if (message.includes('mapping')) return 'IDENTITY_MAPPING_INCOMPLETE';
+  if (message.includes('master key')) return 'MASTER_KEY_AUTHENTICATION_FAILED';
+  if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(systemCode)) return 'SOURCE_LAYOUT_INVALID';
+  if (['23503', '23505', '23514'].includes(systemCode)) return 'DATABASE_CONSTRAINT_FAILED';
+  if (['40001', '40P01'].includes(systemCode)) return 'DATABASE_TRANSACTION_RETRY_REQUIRED';
+  return 'INTERNAL_ERROR';
+}
+
+export function legacyImportFailure(error:unknown):LegacyFilesImportError {
+  return error instanceof LegacyFilesImportError ? error : new LegacyFilesImportError('precheck', safeFailureReason(error), error);
+}
 
 function validId(value:string, expression:RegExp, label:string):string {
   if (!expression.test(value)) throw new Error(`Invalid legacy ${ label } identity`);
@@ -86,7 +116,11 @@ export async function convertLegacyManifest(input:{
   for (const rawId of input.chunkIds) {
     const sourceId = validId(String(rawId), CHUNK, 'chunk');
     const encrypted = await readLegacyChunk(input.sourceRoot, input.collectionId, sourceId);
-    const plain = Buffer.from(await decryptChunk(encrypted, input.sourceKeys.data, sourceId));
+    let plain:Buffer;
+    try { plain = Buffer.from(await decryptChunk(encrypted, input.sourceKeys.data, sourceId)) } catch {
+      encrypted.fill(0);
+      throw new Error('Legacy Files chunk authentication failed');
+    }
     try {
       const expected = Buffer.from(sourceId, 'hex'); const actual = Buffer.from(chunkId(plain, input.sourceKeys.dedup), 'hex');
       if (!timingSafeEqual(expected, actual)) throw new Error('Legacy Files chunk identity verification failed');
@@ -113,7 +147,7 @@ async function unwrap(envelope:Envelope, key:Buffer, context:string):Promise<Buf
   return value;
 }
 
-async function sourceKeys(collection:SourceCollection, nativeMaster:Buffer, legacyMasters:Buffer[], nativeRow?:{ data_key: Envelope; dedup_key: Envelope }):Promise<Keys> {
+async function sourceKeys(collection:SourceCollection, nativeMaster:Buffer, legacyMasters:Buffer[], nativeRow?:{ data_key: Envelope; dedup_key: Envelope }, legacySigningKey?:string | Buffer):Promise<Keys> {
   if (collection.compatibility_state === 'native') {
     if (!nativeRow) throw new Error('Native source collection key is unavailable');
     const data = await unwrap(nativeRow.data_key, nativeMaster, `sulla:files:data-key:v1:${ collection.id }`);
@@ -128,8 +162,18 @@ async function sourceKeys(collection:SourceCollection, nativeMaster:Buffer, lega
   }
   const unique = matches.filter((candidate, index) => matches.findIndex(other => timingSafeEqual(candidate.data, other.data) && timingSafeEqual(candidate.dedup, other.dedup)) === index);
   for (const candidate of matches) if (!unique.includes(candidate)) { candidate.data.fill(0); candidate.dedup.fill(0) }
-  if (unique.length !== 1) { for (const candidate of unique) { candidate.data.fill(0); candidate.dedup.fill(0) } throw new Error('Legacy Files collection key authentication failed') }
-  return unique[0];
+  if (unique.length === 1) return unique[0];
+  for (const candidate of unique) { candidate.data.fill(0); candidate.dedup.fill(0) }
+  if (unique.length === 0 && legacySigningKey) {
+    // The first container runtime derived content keys from the capability
+    // signing key. Selection is provisional: every referenced chunk still has
+    // to pass AEAD, keyed chunk identity, manifest hash, and exact-size checks.
+    return {
+      data:  createHmac('sha256', legacySigningKey).update(`sulla:files:data-key:v1:${ collection.id }`).digest(),
+      dedup: createHmac('sha256', legacySigningKey).update(`sulla:files:dedup-key:v1:${ collection.id }`).digest(),
+    };
+  }
+  throw new Error('Legacy Files collection key authentication failed');
 }
 
 async function verifyNativeMaster(client:pg.PoolClient, master:Buffer):Promise<void> {
@@ -174,15 +218,20 @@ async function optionalLegacyLayoutIds(root:string):Promise<Map<string, string>>
 
 export class LegacyFilesImporter {
   private readonly store: Store;
-  constructor(private readonly db:pg.Pool, private readonly sourceRoot:string, private readonly chunkRoot:string) { this.store = new Store(chunkRoot) }
+  constructor(private readonly db:pg.Pool, private readonly sourceRoot:string, private readonly chunkRoot:string, private readonly legacySigningKey?:string | Buffer) { this.store = new Store(chunkRoot) }
 
   async run(nativeMaster:Buffer, suppliedLegacyMasters:Buffer[]):Promise<{ collections: number; files: number; versions: number }> {
-    if (nativeMaster.length !== 32 || suppliedLegacyMasters.some(key => key.length !== 32) || suppliedLegacyMasters.length === 0) throw new Error('Invalid Files import key material');
-    const completed = await this.completedResult();
-    if (completed) return completed;
-    const legacyMasters = suppliedLegacyMasters.map(value => Buffer.from(value));
+    let stage:LegacyImportStage = 'precheck';
+    const legacyMasters:Buffer[] = [];
     try {
+      if (nativeMaster.length !== 32 || suppliedLegacyMasters.some(key => key.length !== 32) || suppliedLegacyMasters.length === 0) throw new Error('Invalid Files import key material');
+      stage = 'completion-check';
+      const completed = await this.completedResult();
+      if (completed) return completed;
+      legacyMasters.push(...suppliedLegacyMasters.map(value => Buffer.from(value)));
+      stage = 'staging';
       await this.stage(nativeMaster);
+      stage = 'layout';
       const externalLayout = await optionalLegacyLayoutIds(this.sourceRoot);
       const nativeLayout = await legacyLayoutIds(this.chunkRoot);
       const client = await this.db.connect();
@@ -208,13 +257,40 @@ export class LegacyFilesImporter {
         const missingVersion = await client.query(`SELECT 1 FROM file_versions v JOIN files f ON f.id=v.file_id JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE
           LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=v.id WHERE vm.source_version_id IS NULL LIMIT 1`);
         if (incomplete.rowCount || missingVersion.rowCount) throw new Error('Legacy Files identity mapping is incomplete');
+        const versions = (await client.query(`SELECT v.*,m.chunk_ids,m.total_size FROM file_versions v JOIN files f ON f.id=v.file_id
+          LEFT JOIN manifests m ON m.hash=v.manifest_hash JOIN files_legacy_file_map fm ON fm.source_file_id=f.id ORDER BY v.id`)).rows;
+        // Empty retired collections have no ciphertext to decrypt. Some were
+        // created by older runtimes with keys that are no longer available;
+        // requiring those unused keys blocks preservation of the collections
+        // that do contain authenticated versions.
+        const requiredKeyCollections = new Set(versions.filter(version => version.manifest_hash).map(version => String(version.chunk_collection_id)));
+        const manifestedCollections = new Set([...requiredKeyCollections].map(id => id.toLowerCase()));
+        const sourceCollectionIds = new Set(collections.map(collection => collection.id.toLowerCase()));
+        // A surviving chunk layout is also content-bearing evidence even when
+        // its manifest metadata is incomplete. Never bypass authentication for
+        // orphaned ciphertext.
+        for (const id of externalLayout.keys()) {
+          if (sourceCollectionIds.has(id) && !manifestedCollections.has(id)) throw new Error('Legacy Files chunk collection has no authenticated manifest metadata');
+          requiredKeyCollections.add(id);
+        }
+        for (const id of nativeLayout.keys()) {
+          if (!sourceCollectionIds.has(id)) continue;
+          if (!manifestedCollections.has(id)) throw new Error('Legacy Files chunk collection has no authenticated manifest metadata');
+          requiredKeyCollections.add(id);
+        }
         const converted = new Map<string, ConvertedManifest>(); const collectionKeys = new Map<string, Keys>(); const shadowKeys = new Map<string, Keys>();
         try {
-          for (const collection of collections) {
+          stage = 'key-authentication';
+          for (const collection of collections.filter(collection => requiredKeyCollections.has(collection.id.toLowerCase()))) {
             const nativeRow = (await client.query('SELECT data_key,dedup_key FROM files_collection_keys WHERE collection_id=$1', [collection.id])).rows[0];
-            collectionKeys.set(collection.id, await sourceKeys(collection, nativeMaster, legacyMasters, nativeRow));
+            const id = collection.id.toLowerCase();
+            // Signing-derived content was written only by the historical
+            // container into its native volume. External watched-root layouts
+            // must authenticate through their archived master.key envelopes.
+            const signingKey = nativeLayout.has(id) && !externalLayout.has(id) ? this.legacySigningKey : undefined;
+            collectionKeys.set(collection.id, await sourceKeys(collection, nativeMaster, legacyMasters, nativeRow, signingKey));
           }
-          for (const mapping of mappings) {
+          for (const mapping of mappings.filter(row => requiredKeyCollections.has(row.source_collection_id.toLowerCase()))) {
             const row = (await client.query('SELECT data_key,dedup_key FROM files_collection_keys WHERE collection_id=$1', [mapping.shadow_collection_id])).rows[0];
             if (!row) throw new Error('Legacy Files shadow collection key is unavailable');
             shadowKeys.set(mapping.source_collection_id, {
@@ -222,8 +298,7 @@ export class LegacyFilesImporter {
               dedup: await unwrap(row.dedup_key, nativeMaster, `sulla:files:dedup-key:v1:${ mapping.shadow_collection_id }`),
             });
           }
-          const versions = (await client.query(`SELECT v.*,m.chunk_ids,m.total_size FROM file_versions v JOIN files f ON f.id=v.file_id
-            LEFT JOIN manifests m ON m.hash=v.manifest_hash JOIN files_legacy_file_map fm ON fm.source_file_id=f.id ORDER BY v.id`)).rows;
+          stage = 'conversion';
           for (const version of versions) {
             if (!version.manifest_hash) continue;
             if (!Array.isArray(version.chunk_ids)) throw new Error('Legacy Files version manifest is missing');
@@ -251,6 +326,7 @@ export class LegacyFilesImporter {
             }
             if (converted.get(key)!.totalSize !== totalSize) throw new Error('Legacy Files version size verification failed');
           }
+          stage = 'publication';
           const result = await this.publish(client, nativeMaster, staged, versions, converted);
           await client.query('COMMIT');
           return result;
@@ -259,6 +335,8 @@ export class LegacyFilesImporter {
           for (const keys of collectionKeys.values()) { keys.data.fill(0); keys.dedup.fill(0) }
         }
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+    } catch (error) {
+      throw error instanceof LegacyFilesImportError ? error : new LegacyFilesImportError(stage, safeFailureReason(error), error);
     } finally { for (const key of legacyMasters) key.fill(0); }
   }
 

@@ -8,7 +8,7 @@ import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
 import { applyDatabaseFileOperations, type FileOperationItem } from './fileOperations.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
-import { LegacyFilesImporter } from './legacyImport.js';
+import { legacyImportFailure, LegacyFilesImporter } from './legacyImport.js';
 import { runLegacyPreflight } from './legacyPreflight.js';
 import { loadFileContent, thumbnail } from './preview.js';
 import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
@@ -120,11 +120,15 @@ export function createApp(
       }
       delete request.body.masterKey; delete request.body.legacyMasterKeys;
       if (master.length !== 32 || legacy.length === 0 || legacy.some(key => key.length !== 32)) throw new Error('Invalid import request');
-      const importer = new LegacyFilesImporter(db, join(config.filesRoot, config.legacyPreflight.protectedPrefix), config.chunkRoot);
+      const importer = new LegacyFilesImporter(db, join(config.filesRoot, config.legacyPreflight.protectedPrefix), config.chunkRoot, config.capabilitySigningKey);
       const result = await serial(() => importer.run(master!, legacy));
       config.legacyPreflight = { state: 'clear', protectedPrefix: config.legacyPreflight?.protectedPrefix };
       return response.json({ ok: true, ...result });
-    } catch { return response.status(409).json({ error: 'Legacy Files import failed; source data remains protected' }) } finally {
+    } catch (error) {
+      const failure = legacyImportFailure(error);
+      console.error(`[SullaFiles] legacy import failed: ${ failure.stage }/${ failure.reason }`);
+      return response.status(409).json({ error: failure.message, code: failure.code, stage: failure.stage, reason: failure.reason });
+    } finally {
       master?.fill(0); for (const key of legacy) key.fill(0); if (request.body) { delete request.body.masterKey; delete request.body.legacyMasterKeys }
     }
   });
