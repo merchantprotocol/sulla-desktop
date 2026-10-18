@@ -312,6 +312,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   #activeOptionalSullaServices = new Set<string>();
   #optionalSullaFallbackImages = new Map<string, { env: string; image: string }>();
 
+  #optionalSullaRefreshImages = new Map<string, string>();
+
   get containerEngineClient() {
     if (this.#containerEngineClient) {
       return this.#containerEngineClient;
@@ -3320,6 +3322,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const filesBootstrapIdentity = await this.loadOrCreateFilesBootstrapIdentity();
     const { fingerprint: filesTlsFingerprint } = await this.prepareFilesTlsIdentity();
     this.#optionalSullaFallbackImages.clear();
+    this.#optionalSullaRefreshImages.clear();
     try {
       const accountsSecrets = await this.prepareAccountsSecrets(rawSullaServicePassword);
       const accountsImage = resolveSullaServiceImage(
@@ -3579,10 +3582,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     );
     const resolvedFilesImage = filesImage.build ? filesImage.image : `\${SULLA_FILES_IMAGE:-${ filesImage.image }}`;
 
-    if (!filesImage.build && !process.env.SULLA_FILES_IMAGE && !filesImage.image.endsWith(':latest')) {
-      this.#optionalSullaFallbackImages.set('sulla_files', {
-        env: 'SULLA_FILES_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-files:latest',
-      });
+    if (!filesImage.build && !process.env.SULLA_FILES_IMAGE) {
+      this.#optionalSullaRefreshImages.set('sulla_files', filesImage.image);
     }
     const filesUserRoot = resolveSullaFilesUserRoot();
     compose.services.sulla_files = {
@@ -3804,9 +3805,21 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) optionalServices.push('sulla_vault');
       for (const service of optionalServices) {
         try {
-          // Compose performs the normal pull/build here. --no-deps protects the
-          // already-running core if the image is missing or the user is offline.
-          await this.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', service);
+          const refreshImage = this.#optionalSullaRefreshImages.get(service);
+
+          if (refreshImage) {
+            try {
+              await this.execCommand({ root: true }, 'docker', 'pull', refreshImage);
+            } catch (error) {
+              console.warn(`[Sulla] Could not refresh ${ refreshImage }; trying the cached image:`, error);
+            }
+          }
+          // After our refresh attempt, use the cache: Compose otherwise pulls
+          // :latest again even with its default missing-image policy.
+          await this.execCommand(
+            { root: true }, ...composeCommand, 'up', '-d', '--no-deps',
+            ...(refreshImage ? ['--pull', 'never'] : []), service,
+          );
           this.#activeOptionalSullaServices.add(service);
         } catch (error) {
           const fallback = this.#optionalSullaFallbackImages.get(service);
