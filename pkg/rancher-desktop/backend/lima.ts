@@ -3776,7 +3776,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       this.#activeOptionalSullaServices.clear();
       const optionalServices = ['sulla_projects', 'sulla_relay', 'workflow_manager', 'tools', 'sulla_files'];
 
-      if (compose.services.sulla_accounts) {
+      const configuredServices = await this.execCommand(
+        { capture: true, root: true }, ...composeCommand, 'config', '--services',
+      );
+
+      if (configuredServices.split(/\s+/).includes('sulla_accounts')) {
         try {
           const accountsDatabaseExists = await this.execCommand(
             { capture: true, root: true }, 'docker', 'exec', 'sulla_postgres',
