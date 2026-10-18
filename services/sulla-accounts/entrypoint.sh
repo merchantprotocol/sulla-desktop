@@ -214,11 +214,13 @@ reconcile_keycloak() {
       internal_id="$(find_named_id clients clientId "$client_id")"
     fi
     [ -n "$internal_id" ] || fail "failed to reconcile client ${client_id}"
-    # Updating a client representation does not reconcile defaultClientScopes.
-    # Explicitly retain the OIDC profile scope requested by the broker.
-    profile_scope_id="$(find_named_id client-scopes name profile)"
-    [ -n "$profile_scope_id" ] || fail "required OIDC profile scope is missing"
-    run_unprivileged "$kcadm" update "clients/${internal_id}/default-client-scopes/${profile_scope_id}" --config "$kcadm_config" -r "$realm" >/dev/null
+    # Keycloak basic supplies the subject claim; profile supplies display claims.
+    # Client representation updates do not reconcile scope assignments.
+    for required_scope in basic profile; do
+      required_scope_id="$(find_named_id client-scopes name "$required_scope")"
+      [ -n "$required_scope_id" ] || fail "required OIDC ${required_scope} scope is missing"
+      run_unprivileged "$kcadm" update "clients/${internal_id}/default-client-scopes/${required_scope_id}" --config "$kcadm_config" -r "$realm" >/dev/null
+    done
     if ! run_unprivileged "$kcadm" get "clients/${internal_id}/default-client-scopes" --config "$kcadm_config" -r "$realm" --fields id --format csv --noquotes | grep -Fx "$membership_scope_id" >/dev/null; then
       run_unprivileged "$kcadm" update "clients/${internal_id}/default-client-scopes/${membership_scope_id}" --config "$kcadm_config" -r "$realm" >/dev/null
     fi
