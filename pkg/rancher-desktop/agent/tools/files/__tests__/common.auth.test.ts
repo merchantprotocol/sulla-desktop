@@ -6,10 +6,6 @@ const getServicePassword = jest.fn<() => Promise<string>>();
 jest.unstable_mockModule('../../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { getServicePassword },
 }));
-jest.unstable_mockModule('../../../files/runtime', () => ({
-  getSullaFilesService: jest.fn(),
-}));
-
 const { FilesTool } = await import('../common');
 const { verifyCapabilityToken } = await import('@pkg/runtime/capabilityToken');
 const { sullaFilesCapabilityKey } = await import('@pkg/utils/sullaFilesKey');
@@ -30,10 +26,11 @@ class TestFilesTool extends FilesTool {
 const originalFetch = global.fetch;
 const originalCapabilityKey = process.env.SULLA_FILES_CAPABILITY_SIGNING_KEY;
 const originalInternalToken = process.env.SULLA_FILES_INTERNAL_TOKEN;
+const originalFilesApiUrl = process.env.SULLA_FILES_API_URL;
 const fetchMock = jest.fn<typeof fetch>();
 
 function bearerToken(): string {
-  const [, init] = fetchMock.mock.calls[0];
+  const [, init] = fetchMock.mock.calls.at(-1)!;
   const authorization = new Headers(init?.headers).get('authorization');
 
   expect(authorization).toMatch(/^Bearer /);
@@ -45,8 +42,11 @@ describe('FilesTool container authentication', () => {
   beforeEach(() => {
     delete process.env.SULLA_FILES_CAPABILITY_SIGNING_KEY;
     delete process.env.SULLA_FILES_INTERNAL_TOKEN;
+    delete process.env.SULLA_FILES_API_URL;
     getServicePassword.mockReset();
-    fetchMock.mockReset().mockResolvedValue(new Response('{}', { status: 200 }));
+    fetchMock.mockReset()
+      .mockResolvedValueOnce(new Response('{"principalId":"desktop-owner"}', { status: 200 }))
+      .mockResolvedValue(new Response('{}', { status: 200 }));
     global.fetch = fetchMock;
   });
 
@@ -56,6 +56,8 @@ describe('FilesTool container authentication', () => {
     else process.env.SULLA_FILES_CAPABILITY_SIGNING_KEY = originalCapabilityKey;
     if (originalInternalToken === undefined) delete process.env.SULLA_FILES_INTERNAL_TOKEN;
     else process.env.SULLA_FILES_INTERNAL_TOKEN = originalInternalToken;
+    if (originalFilesApiUrl === undefined) delete process.env.SULLA_FILES_API_URL;
+    else process.env.SULLA_FILES_API_URL = originalFilesApiUrl;
   });
 
   it('uses the canonical key for a 16-character service password and an explicit override', async() => {
@@ -64,7 +66,7 @@ describe('FilesTool container authentication', () => {
     getServicePassword.mockResolvedValue(servicePassword);
     await expect(new TestFilesTool().request()).resolves.toBeInstanceOf(Response);
     await expect(verifyCapabilityToken(bearerToken(), sullaFilesCapabilityKey(servicePassword))).resolves.toMatchObject({
-      sub:    'desktop-cli',
+      sub:    'desktop-owner',
       scopes: ['files/*'],
     });
 
@@ -72,8 +74,18 @@ describe('FilesTool container authentication', () => {
 
     process.env.SULLA_FILES_CAPABILITY_SIGNING_KEY = explicitKey;
     fetchMock.mockClear();
+    fetchMock.mockResolvedValueOnce(new Response('{"principalId":"desktop-owner"}', { status: 200 }))
+      .mockResolvedValue(new Response('{}', { status: 200 }));
     await expect(new TestFilesTool().request()).resolves.toBeInstanceOf(Response);
     expect(sullaFilesCapabilityKey(servicePassword)).toBe(explicitKey);
     await expect(verifyCapabilityToken(bearerToken(), explicitKey)).resolves.toMatchObject({ scopes: ['files/*'] });
+  });
+
+  it('refuses to send Files authority to a configured non-loopback origin', async() => {
+    process.env.SULLA_FILES_API_URL = 'https://files.invalid';
+
+    await expect(new TestFilesTool().request()).rejects.toThrow('trusted local service origin');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(getServicePassword).not.toHaveBeenCalled();
   });
 });

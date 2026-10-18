@@ -27,12 +27,14 @@ import { URL } from 'url';
 import Electron from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { getSullaFilesClient } from '@pkg/main/sullaFilesClient';
 import { getSullaFilesLinkService, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
 
 const console = Logging.background;
+const filesClient = getSullaFilesClient();
 
 const SCHEME = 'sulla:';
 
@@ -227,16 +229,12 @@ async function handleFilesAction(target:Electron.BrowserWindow, action:string, a
       });
       if (decision.response !== 1) return;
     }
-    const response = await watcher.requestFiles(`/v1/files/${ encodeURIComponent(file.id) }/residency`, {
+    await filesClient.json(`/v1/files/${ encodeURIComponent(file.id) }/residency`, {
       method:  'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ desiredState: action === 'online-only' ? 'online-only' : 'local' }),
       signal: AbortSignal.timeout(RESIDENCY_TRANSFER_TIMEOUT_MS),
     });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.error ?? `Residency request failed (${ response.status })`);
-    }
     await Electron.dialog.showMessageBox(target, {
       type: 'info',
       message: action === 'online-only' ? 'Space freed after recovery verification.' : 'File kept on this Mac.',
