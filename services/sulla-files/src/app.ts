@@ -370,7 +370,9 @@ export function createApp(
     const versionId = idempotencyKey ? idempotencyUuid(`${ actor.userId }\n${ creatorId }\n${ collection.id }\n${ idempotencyKey }`) : undefined;
     const mime = String(request.body.mime || 'application/octet-stream');
     const message = String(request.body.message ?? 'Agent write');
-    const derived = Array.isArray(request.body.derivedFrom) ? [...new Set(request.body.derivedFrom.filter((value:unknown):value is string => typeof value === 'string'))].sort() : [];
+    const derived:string[] = Array.isArray(request.body.derivedFrom)
+      ? [...new Set<string>(request.body.derivedFrom.filter((value:unknown):value is string => typeof value === 'string'))].sort()
+      : [];
 
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`agent-file:${ collection.id }:${ path }`]);
@@ -462,18 +464,29 @@ export function createApp(
   app.get('/v1/chunks/:collection/:id', async(request:RequestWithIdentity, response, next) => { try { await requireCollection(request, request.params.collection, 'view', true); response.type('application/octet-stream').send(await store.get(request.params.collection, request.params.id)) } catch (error) { next(error) } });
   app.put('/v1/chunks/:collection/:id', express.raw({ type: 'application/octet-stream', limit: '8mb' }), async(request:RequestWithIdentity, response, next) => { try { await requireCollection(request, request.params.collection, 'edit', true); await store.put(request.params.collection, request.params.id, request.body as Buffer); response.sendStatus(204) } catch (error) { next(error) } });
   async function prepare(request:RequestWithIdentity, bundle:any, queryable:pg.Pool | pg.PoolClient = db, lock = false) {
-    await requirePath(request, bundle.collectionId, cleanPath(bundle.file.path, false), 'edit');
+    const path = cleanPath(bundle.file.path, false);
+
+    await requirePath(request, bundle.collectionId, path, 'edit');
     if (bundle.version.chunk_collection_id !== bundle.collectionId) await requireCollection(request, bundle.version.chunk_collection_id, 'edit', true);
     if (bundle.keyContext) validateKeyContext(bundle.keyContext, bundle.version.chunk_collection_id, identity(request).userId);
-    const existing = (await queryable.query(`SELECT id,collection_id,current_version_id FROM files
-      WHERE id=$1 OR (collection_id=$2 AND path=$3) ORDER BY id=$1 DESC LIMIT 1${ lock ? ' FOR UPDATE' : '' }`, [bundle.file.id, bundle.collectionId, bundle.file.path])).rows[0];
-    if (existing && existing.collection_id !== bundle.collectionId) throw new HttpError(403, 'file belongs to another collection');
+    const candidates = (await queryable.query(`SELECT id,collection_id,path,current_version_id FROM files
+      WHERE id=$1 OR (collection_id=$2 AND path=$3)${ lock ? ' FOR UPDATE' : '' }`, [bundle.file.id, bundle.collectionId, path])).rows;
+    const requested = candidates.find(file => file.id === bundle.file.id);
+    const destination = candidates.find(file => file.collection_id === bundle.collectionId && file.path === path);
+
+    for (const file of candidates) {
+      await assertUnprotectedFile(queryable, file);
+      await requirePath(request, file.collection_id, file.path, 'edit');
+    }
+    if (requested && requested.collection_id !== bundle.collectionId) throw new HttpError(403, 'file belongs to another collection');
+    if (requested && destination && requested.id !== destination.id) throw new HttpError(409, 'another file already exists at the requested path');
+    const existing = requested ?? destination;
     const missing:string[] = [];
     for (const id of bundle.manifest?.chunk_ids ?? []) if (!await store.has(bundle.version.chunk_collection_id, id)) missing.push(id);
     const base = bundle.baseServerVersionId ?? null;
     const conflict = Boolean(existing?.current_version_id && existing.current_version_id !== base);
 
-    return { existing, missing, conflict, currentVersionId: existing?.current_version_id ?? null, canonicalFileId: existing?.id ?? bundle.file.id };
+    return { existing, path, missing, conflict, currentVersionId: existing?.current_version_id ?? null, canonicalFileId: existing?.id ?? bundle.file.id };
   }
   app.post('/v1/versions/prepare', async(request:RequestWithIdentity, response, next) => { try { const result = await prepare(request, request.body); response.json({ missing: result.missing, currentVersionId: result.currentVersionId, canonicalFileId: result.canonicalFileId, conflict: result.conflict }) } catch (error) { next(error) } });
   app.post('/v1/versions/commit', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
@@ -506,7 +519,7 @@ export function createApp(
     if (bundle.manifest) await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [bundle.manifest.hash, JSON.stringify(bundle.manifest.chunk_ids), bundle.manifest.total_size]);
     for (const chunk of bundle.chunks ?? []) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,1) ON CONFLICT(collection_id,id) DO UPDATE SET refcount=chunks.refcount+1', [bundle.version.chunk_collection_id, chunk.id, chunk.size, chunk.stored_size, chunk.location]);
     await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,search_text) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-      ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,search_text=EXCLUDED.search_text,deleted_at=$9,updated_at=NOW()`, [fileId, bundle.collectionId, bundle.file.path, bundle.file.created_by_type, bundle.file.created_by_id, bundle.file.mime, bundle.file.size, bundle.file.search_text, bundle.version.deleted ? new Date() : null]);
+      ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,search_text=EXCLUDED.search_text,deleted_at=$9,updated_at=NOW()`, [fileId, bundle.collectionId, checked.path, bundle.file.created_by_type, bundle.file.created_by_id, bundle.file.mime, bundle.file.size, bundle.file.search_text, bundle.version.deleted ? new Date() : null]);
     await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id,base_server_version_id)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [bundle.version.id, fileId, bundle.version.chunk_collection_id, checked.currentVersionId, bundle.manifest?.hash ?? null, bundle.version.size, bundle.version.deleted, bundle.version.created_by_type, bundle.version.created_by_id, bundle.version.message, actor.deviceId, checked.currentVersionId]);
     if (bundle.keyContext) {
