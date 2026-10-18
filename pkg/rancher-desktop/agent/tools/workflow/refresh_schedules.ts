@@ -19,8 +19,10 @@ export class RefreshSchedulesWorker extends BaseTool {
       }
       manager.logFallback('schedule refresh');
     } catch (error) {
-      const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
-      getWorkflowManagerClient().logFallback('schedule refresh', error);
+      return {
+        successBoolean: false,
+        responseString: `Workflow manager refused schedule refresh: ${ error instanceof Error ? error.message : String(error) }`,
+      };
     }
 
     let scheduler;
