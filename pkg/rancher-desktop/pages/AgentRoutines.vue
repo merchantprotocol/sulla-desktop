@@ -1760,10 +1760,10 @@ const title = ref('Blog Production Pipeline');
 const subtitle = ref('Twenty-one agents, one article, nine minutes.');
 const workflowStatus = ref<'draft' | 'production' | 'archive'>('draft');
 const statusBusy = ref(false);
-const maxConcurrentRunsInput = ref('1');
+const maxConcurrentRunsInput = ref<string | number>('1');
 
 function normalizeMaxConcurrentRuns(): void {
-  if (maxConcurrentRunsInput.value.trim() === '' && (baseDefinition.value as any)?.concurrencyPolicy === 'allow') return;
+  if (String(maxConcurrentRunsInput.value).trim() === '' && (baseDefinition.value as any)?.concurrencyPolicy === 'allow') return;
   maxConcurrentRunsInput.value = String(concurrencyValueForSave(maxConcurrentRunsInput.value, baseDefinition.value ?? {}));
 }
 

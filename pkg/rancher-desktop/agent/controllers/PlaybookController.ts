@@ -58,7 +58,7 @@ const ORCHESTRATOR_REENTRY_MAX_MS = parseInt(
 import { throwIfAborted } from '../services/AbortService';
 import { LiveWriterRegistry } from '../services/LiveWriterRegistry';
 import { RunActivity } from '../services/RunActivity';
-import { isSingletonWorkflow } from '../workflow/workflowConcurrency';
+import { isSingletonWorkflow, workflowConcurrencyLimit } from '../workflow/workflowConcurrency';
 import { WorkflowLeaseHeartbeat, WorkflowLeaseLostError } from '../workflow/WorkflowLeaseHeartbeat';
 import { getConversationLogger } from '../services/ConversationLogger';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
@@ -218,7 +218,7 @@ export class PlaybookController<TState = any> {
     orchestratorAttempted?: boolean;
   }[] = [];
 
-  private workflowLease: { executionId: string; heartbeat: WorkflowLeaseHeartbeat } | null = null;
+  private workflowLeases = new Map<string, WorkflowLeaseHeartbeat>();
 
   private isProcessingPlaybook = false;
   private _continuationQueued = false;
@@ -230,6 +230,79 @@ export class PlaybookController<TState = any> {
 
   constructor(graph: PlaybookGraphInterface<TState>) {
     this.graph = graph;
+  }
+
+  private async ensureWorkflowLease(state: TState, playbook: WorkflowPlaybookState): Promise<void> {
+    if (!playbook.executionId) return;
+    const existing = this.workflowLeases.get(playbook.executionId);
+    if (existing) {
+      await existing.assertOwned();
+      return;
+    }
+    const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
+    const ownerId = `runtime-${ process.pid }`;
+    const token = randomUUID();
+    const lease = await WorkflowExecutionModel.acquireLease(playbook.executionId, ownerId, 60000, token);
+    if (!lease) throw new WorkflowLeaseLostError(`Workflow lease unavailable for ${ playbook.executionId }`);
+    const heartbeat = new WorkflowLeaseHeartbeat(async() => {
+      const renewed = await WorkflowExecutionModel.renewHeartbeat(playbook.executionId, ownerId, token, 60000);
+      return renewed !== null;
+    }, (error) => {
+      const meta = (state as any).metadata;
+      const active = meta?.activeWorkflow;
+      const ownsActiveChain = active?.executionId === playbook.executionId ||
+        meta?.workflowStack?.some((entry: any) => entry.playbook?.executionId === playbook.executionId);
+      if (!ownsActiveChain) return;
+      if (active?.status === 'running') {
+        active.status = 'failed';
+        active.error = error.message;
+      }
+      this.pendingSubAgents.clear();
+      this.pendingCompletions.length = 0;
+      this.pendingFailures.length = 0;
+      this.pendingEscalations.length = 0;
+      this._continuationQueued = false;
+      meta?.options?.abort?.abort?.();
+    });
+    this.workflowLeases.set(playbook.executionId, heartbeat);
+    heartbeat.start();
+  }
+
+  private async assertWorkflowOwned(executionId: string): Promise<void> {
+    const heartbeat = this.workflowLeases.get(executionId);
+    if (!heartbeat) throw new WorkflowLeaseLostError(`Workflow lease unavailable for ${ executionId }`);
+    await heartbeat.assertOwned();
+  }
+
+  private stopWorkflowLease(executionId: string): void {
+    this.workflowLeases.get(executionId)?.stop();
+    this.workflowLeases.delete(executionId);
+  }
+
+  private async admitNestedWorkflow(definition: WorkflowPlaybookState['definition'], payload: unknown): Promise<WorkflowPlaybookState> {
+    const playbook = createPlaybookState(definition, payload);
+    const maxConcurrentRuns = workflowConcurrencyLimit(definition);
+    const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
+    await WorkflowExecutionModel.admit({
+      executionId: playbook.executionId,
+      workflowId: definition.id,
+      workflowName: definition.name,
+      workflowSlug: (definition as any).slug ?? definition.id,
+      autoRestart: maxConcurrentRuns > 1 && (definition as any).auto_restart !== false,
+      triggerInput: typeof payload === 'string' ? payload : JSON.stringify(payload ?? null),
+    }, { maxConcurrentRuns });
+    return playbook;
+  }
+
+  private async settlePlaybookExecution(
+    playbook: WorkflowPlaybookState,
+    outcome: 'completed' | 'failed',
+    error?: string,
+  ): Promise<boolean> {
+    if (this.workflowLeases.has(playbook.executionId)) await this.assertWorkflowOwned(playbook.executionId);
+    this.stopWorkflowLease(playbook.executionId);
+    const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
+    return Boolean(await WorkflowExecutionModel.settle(playbook.executionId, outcome, error));
   }
 
   // ─── Public API ─────────────────────────────────────────────────
@@ -260,9 +333,9 @@ export class PlaybookController<TState = any> {
       console.warn('[PlaybookController] Stopped after losing durable workflow ownership:', error.message);
       return state;
     } finally {
-      if ((state as any).metadata?.activeWorkflow?.status !== 'running') {
-        this.workflowLease?.heartbeat.stop();
-        this.workflowLease = null;
+      const active = (state as any).metadata?.activeWorkflow;
+      if (active && active.status !== 'running') {
+        this.stopWorkflowLease(active.executionId);
       }
       (state as any).metadata.workflowNodeId = prevWorkflowNodeId;
       (state as any).metadata.workflowParentChannel = prevWorkflowParentChannel;
@@ -300,35 +373,7 @@ export class PlaybookController<TState = any> {
 
     // Renew independently of frontier progress: a single node may take minutes.
     // Ownership is local to this controller, never inherited from a checkpoint.
-    if (playbook.executionId) {
-      if (this.workflowLease?.executionId === playbook.executionId) {
-        await this.workflowLease.heartbeat.assertOwned();
-      } else {
-        this.workflowLease?.heartbeat.stop();
-        const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
-        const ownerId = `runtime-${ process.pid }`;
-        const token = randomUUID();
-        const lease = await WorkflowExecutionModel.acquireLease(playbook.executionId, ownerId, 60000, token);
-        if (!lease) throw new WorkflowLeaseLostError(`Workflow lease unavailable for ${ playbook.executionId }`);
-        const heartbeat = new WorkflowLeaseHeartbeat(async() => {
-          const renewed = await WorkflowExecutionModel.renewHeartbeat(playbook.executionId, ownerId, token, 60000);
-          return renewed !== null;
-        }, (error) => {
-          const active = (state as any).metadata?.activeWorkflow;
-          if (active?.executionId !== playbook.executionId) return;
-          active.status = 'failed';
-          active.error = error.message;
-          this.pendingSubAgents.clear();
-          this.pendingCompletions.length = 0;
-          this.pendingFailures.length = 0;
-          this.pendingEscalations.length = 0;
-          this._continuationQueued = false;
-          (state as any).metadata?.options?.abort?.abort?.();
-        });
-        this.workflowLease = { executionId: playbook.executionId, heartbeat };
-        heartbeat.start();
-      }
-    }
+    await this.ensureWorkflowLease(state, playbook);
 
     // External stop/pause request via `sulla meta/stop_workflow` or
     // `sulla meta/pause_workflow`. Cooperative — we read Redis flags
@@ -751,7 +796,7 @@ export class PlaybookController<TState = any> {
           break;
         }
 
-        await this.workflowLease?.heartbeat.assertOwned();
+        await this.ensureWorkflowLease(state, currentPlaybook);
         const step: PlaybookStepResult = processNextStep(currentPlaybook);
         meta.activeWorkflow = step.updatedPlaybook;
 
@@ -1801,6 +1846,7 @@ export class PlaybookController<TState = any> {
 
         case 'spawn_sub_workflow': {
           const subWfLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          let admittedChild: WorkflowPlaybookState | null = null;
           playbookLog('spawn_sub_workflow', {
             nodeId:         step.nodeId,
             label:          subWfLabel,
@@ -1819,9 +1865,7 @@ export class PlaybookController<TState = any> {
             if (!subDefinition) {
               throw new Error(`Sub-workflow not found: ${ step.workflowId }`);
             }
-            if (isSingletonWorkflow(subDefinition) || isSingletonWorkflow(currentPlaybook.definition)) {
-              throw new Error('Singleton workflows must run through normal admission, without nested workflow handoffs.');
-            }
+            admittedChild = await this.admitNestedWorkflow(subDefinition, step.payload);
 
             if (step.agentId) {
               console.log(`[PlaybookController] Delegating sub-workflow "${ subWfLabel }" to agent "${ step.agentId }"`);
@@ -1833,7 +1877,7 @@ export class PlaybookController<TState = any> {
                 state: any;
               };
 
-              const subPlaybook = createPlaybookState(subDefinition, step.payload);
+              const subPlaybook = admittedChild;
               subState.metadata.activeWorkflow = subPlaybook;
               subState.metadata.isSubAgent = true;
               // Workflow-node agents do real work — primary model chain, not
@@ -1866,7 +1910,9 @@ export class PlaybookController<TState = any> {
 
               const subOutputs = Object.values(finalSubState.metadata?.activeWorkflow?.nodeOutputs ?? {}) as Array<{ result?: unknown }>;
               const lastOutput = subOutputs[subOutputs.length - 1];
-              const subResult = lastOutput?.result ?? null;
+              const terminalOutputs = finalSubState.metadata?.lastCompletedWorkflow?.nodeResults ?? [];
+              const terminalOutput = terminalOutputs[terminalOutputs.length - 1];
+              const subResult = lastOutput?.result ?? terminalOutput?.result ?? null;
 
               const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, subResult, threadId);
               meta.activeWorkflow = completed.updatedPlaybook;
@@ -1888,11 +1934,12 @@ export class PlaybookController<TState = any> {
               if (!meta.workflowStack) meta.workflowStack = [];
               meta.workflowStack.push({ playbook: parentPlaybook, nodeId: step.nodeId });
 
-              const subPlaybook = createPlaybookState(subDefinition, step.payload);
+              const subPlaybook = admittedChild;
               meta.activeWorkflow = subPlaybook;
             }
             break;
           } catch (err: any) {
+            if (admittedChild) await this.settlePlaybookExecution(admittedChild, 'failed', err.message || String(err));
             console.error(`[PlaybookController] Sub-workflow failed to load:`, err);
             this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: subWfLabel, error: err.message || String(err) });
             const failedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: err.message || String(err) };
@@ -1904,6 +1951,7 @@ export class PlaybookController<TState = any> {
 
         case 'transfer_workflow': {
           const transferLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          let admittedTarget: WorkflowPlaybookState | null = null;
           console.log(`[PlaybookController] Transfer to workflow "${ step.targetWorkflowId }" from node "${ step.nodeId }"`);
 
           this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
@@ -1917,9 +1965,7 @@ export class PlaybookController<TState = any> {
             if (!targetDefinition) {
               throw new Error(`Transfer target workflow not found: ${ step.targetWorkflowId }`);
             }
-            if (isSingletonWorkflow(targetDefinition) || isSingletonWorkflow(currentPlaybook.definition)) {
-              throw new Error('Singleton workflows must run through normal admission, without workflow transfers.');
-            }
+            admittedTarget = await this.admitNestedWorkflow(targetDefinition, step.payload);
 
             this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: transferLabel, output: { transferred: step.targetWorkflowId } });
             await this.saveCheckpoint(step.updatedPlaybook, step.nodeId, transferLabel, 'transfer', { transferred: step.targetWorkflowId });
@@ -1945,10 +1991,12 @@ export class PlaybookController<TState = any> {
               transferredTo: step.targetWorkflowId,
             };
 
-            meta.workflowStack = [];
             this.emitPlaybookEvent(state, 'workflow_completed', {});
 
-            const targetPlaybook = createPlaybookState(targetDefinition, step.payload);
+            const outgoingSettled = await this.settlePlaybookExecution(outgoingPlaybook, 'completed');
+            if (!outgoingSettled) throw new Error(`Workflow ${ outgoingPlaybook.executionId } lost terminal settlement ownership during transfer.`);
+
+            const targetPlaybook = admittedTarget;
             meta.activeWorkflow = targetPlaybook;
 
             console.log(`[PlaybookController] Transferred to "${ targetDefinition.name }" (${ targetPlaybook.executionId })`);
@@ -1957,6 +2005,9 @@ export class PlaybookController<TState = any> {
 
             break;
           } catch (err: any) {
+            if (admittedTarget && meta.activeWorkflow?.executionId !== admittedTarget.executionId) {
+              await this.settlePlaybookExecution(admittedTarget, 'failed', err.message || String(err));
+            }
             console.error(`[PlaybookController] Transfer failed:`, err);
             this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: transferLabel, error: err.message || String(err) });
             const failedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: err.message || String(err) };
@@ -2031,12 +2082,14 @@ export class PlaybookController<TState = any> {
           }
 
           if (meta.workflowStack?.length > 0) {
-            const parent = meta.workflowStack.pop();
+            const parent = meta.workflowStack.pop()!;
             const subOutputs = Object.values(step.updatedPlaybook.nodeOutputs ?? {});
             const lastOutput = subOutputs[subOutputs.length - 1];
             const subResult = lastOutput?.result ?? null;
 
             this.emitPlaybookEvent(state, 'workflow_completed', {});
+            const childSettled = await this.settlePlaybookExecution(step.updatedPlaybook, 'completed');
+            if (!childSettled) throw new Error(`Nested workflow ${ step.updatedPlaybook.executionId } lost terminal settlement ownership.`);
 
             const completed = completeSubAgent(parent.playbook, parent.nodeId, subResult);
             meta.activeWorkflow = completed.updatedPlaybook;
@@ -2065,9 +2118,10 @@ export class PlaybookController<TState = any> {
             error:      step.error,
           });
           if (meta.workflowStack?.length > 0) {
-            const parent = meta.workflowStack.pop();
+            const parent = meta.workflowStack.pop()!;
             console.error(`[PlaybookController] Sub-workflow failed: ${ step.error }, propagating to parent node "${ parent.nodeId }"`);
             this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
+            await this.settlePlaybookExecution(step.updatedPlaybook, 'failed', step.error);
             this.emitPlaybookEvent(state, 'node_failed', { nodeId: parent.nodeId, error: step.error });
 
             const failedParent = { ...parent.playbook, status: 'failed' as const, error: step.error };
@@ -2095,9 +2149,16 @@ export class PlaybookController<TState = any> {
     } catch (err: any) {
       if (err instanceof WorkflowLeaseLostError) throw err;
       console.error(`[PlaybookController] Walker crashed:`, err);
-      const failedPlaybook = { ...meta.activeWorkflow, status: 'failed' as const, error: err.message || String(err) };
-      this.emitPlaybookEvent(state, 'workflow_failed', { error: err.message || String(err) });
-      state = await this.releaseWorkflow(state, failedPlaybook, 'failed', err.message || String(err));
+      const error = err.message || String(err);
+      let failedPlaybook = { ...meta.activeWorkflow, status: 'failed' as const, error };
+      while (meta.workflowStack?.length > 0) {
+        await this.settlePlaybookExecution(failedPlaybook, 'failed', error);
+        const parent = meta.workflowStack.pop()!;
+        failedPlaybook = { ...parent.playbook, status: 'failed' as const, error };
+        meta.activeWorkflow = failedPlaybook;
+      }
+      this.emitPlaybookEvent(state, 'workflow_failed', { error });
+      state = await this.releaseWorkflow(state, failedPlaybook, 'failed', error);
     }
 
     return state;
@@ -2197,7 +2258,7 @@ export class PlaybookController<TState = any> {
     nodeSubtype: string,
     nodeOutput: unknown,
   ): Promise<void> {
-    await this.workflowLease?.heartbeat.assertOwned();
+    await this.assertWorkflowOwned(playbook.executionId);
     try {
       const { WorkflowCheckpointModel } = await import('../database/models/WorkflowCheckpointModel');
       const sequence = Object.keys(playbook.nodeOutputs ?? {}).length;
@@ -2281,9 +2342,7 @@ export class PlaybookController<TState = any> {
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
     }
-    await this.workflowLease?.heartbeat.assertOwned();
-    this.workflowLease?.heartbeat.stop();
-    this.workflowLease = null;
+    await this.assertWorkflowOwned(playbook.executionId);
 
     const nodeSummaries = Object.values(playbook.nodeOutputs ?? {}).map((output: PlaybookNodeOutput) => ({
       nodeId:    output.nodeId,
@@ -2317,12 +2376,13 @@ export class PlaybookController<TState = any> {
     // Persist final execution status so boot recovery doesn't pick it up again.
     try {
       const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
-      if (outcome === 'completed') {
-        const settled = await WorkflowExecutionModel.settle(playbook.executionId, 'completed', undefined, workflowTerminalResult(meta, playbook.executionId)?.outcome);
-        if (!settled) throw new Error(`Workflow ${ playbook.executionId } lost terminal settlement ownership.`);
-      } else {
-        await WorkflowExecutionModel.settle(playbook.executionId, 'failed', error);
-      }
+      this.stopWorkflowLease(playbook.executionId);
+      const settled = outcome === 'completed'
+        ? await WorkflowExecutionModel.settle(
+          playbook.executionId, 'completed', undefined, workflowTerminalResult(meta, playbook.executionId)?.outcome,
+        )
+        : await WorkflowExecutionModel.settle(playbook.executionId, 'failed', error);
+      if (outcome === 'completed' && !settled) throw new Error(`Workflow ${ playbook.executionId } lost terminal settlement ownership.`);
     } catch (e) {
       console.warn('[PlaybookController] Failed to update workflow execution status:', e);
       meta.lastCompletedWorkflow.outcome = 'failed';

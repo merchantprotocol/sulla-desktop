@@ -11,7 +11,8 @@ export interface RunLaunch {
 }
 
 export interface WorkflowLauncher {
-  launchRunner(run: RunLaunch): Promise<string>;
+  prepareRunner(run: RunLaunch): Promise<string>;
+  startRunner(runnerId: string, run: RunLaunch): Promise<void>;
   stopRunner(runnerId: string): Promise<void>;
   runnerExists(runnerId: string): Promise<boolean>;
 }
@@ -19,7 +20,7 @@ export interface WorkflowLauncher {
 export class DockerWorkflowLauncher implements WorkflowLauncher {
   constructor(private readonly docker = new DockerRuntimeDriver()) {}
 
-  async launchRunner(run: RunLaunch): Promise<string> {
+  async prepareRunner(run: RunLaunch): Promise<string> {
     const safe = run.executionId.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 90);
     const id = await this.docker.create({
       name:       `sulla-workflow-runner-${ safe }`,
@@ -44,8 +45,12 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
       groupAdd:   [String(fs.statSync('/var/run/docker.sock').gid)],
       tmpfs:      { '/run/secrets': 'rw,noexec,nosuid,nodev,mode=0700,uid=1000,gid=1000' },
     });
+    return id;
+  }
+
+  async startRunner(runnerId: string, run: RunLaunch): Promise<void> {
     try {
-      await this.docker.start(id);
+      await this.docker.start(runnerId);
       const pack = tar.pack();
       pack.entry({ name: 'sulla-run-token', mode: 0o400, uid: 1000, gid: 1000 }, run.runToken);
       pack.finalize();
@@ -53,14 +58,13 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
       for await (const chunk of pack) chunks.push(Buffer.from(chunk));
       const archive = Buffer.concat(chunks);
       try {
-        await this.docker.upload(id, '/run/secrets', archive);
+        await this.docker.upload(runnerId, '/run/secrets', archive);
       } finally {
         archive.fill(0);
         chunks.forEach(chunk => chunk.fill(0));
       }
-      return id;
     } catch (error) {
-      await this.docker.remove(id).catch(() => {});
+      await this.docker.remove(runnerId).catch(() => {});
       throw error;
     }
   }
@@ -82,8 +86,12 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
 
 export class KubernetesWorkflowLauncher implements WorkflowLauncher {
   constructor(private readonly runtime = new KubernetesRuntimeDriver()) {}
-  async launchRunner(_run: RunLaunch): Promise<string> {
+  async prepareRunner(_run: RunLaunch): Promise<string> {
     return this.runtime.create({ name: 'workflow-runner', image: config.workflowImage });
+  }
+
+  async startRunner(runnerId: string, _run: RunLaunch): Promise<void> {
+    await this.runtime.start(runnerId);
   }
 
   async stopRunner(runnerId: string): Promise<void> {

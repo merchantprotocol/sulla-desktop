@@ -10,6 +10,23 @@ interface RunnerLauncher {
 
 type Emit = (executionId: string, workflowId: string, eventType: string, payload: Record<string, unknown>) => Promise<void>;
 
+interface RunState {
+  status?:           string;
+  runner_id?:        string | null;
+  owner_id?:         string | null;
+  lease_token?:      string | null;
+  heartbeat_at?:     Date | string | null;
+  lease_expires_at?: Date | string | null;
+  wait_kind?:        string | null;
+}
+
+function hasCompletedHandshake(row: RunState | undefined, runnerId: string): boolean {
+  if (!row) return false;
+  if (row.status === 'completed' || row.status === 'failed') return true;
+  if (row.status === 'suspended' && row.wait_kind && !row.owner_id && !row.lease_token) return true;
+  return Boolean(row.owner_id && row.lease_token && row.heartbeat_at && row.lease_expires_at && row.runner_id === runnerId);
+}
+
 export async function settleUnownedRun(
   db: Queryable,
   emit: Emit,
@@ -44,17 +61,24 @@ export async function waitForRunnerHandshake(options: {
   const { db, launcher, emit, executionId, runnerId } = options;
   const deadline = Date.now() + (options.timeoutMs ?? 15_000);
   while (Date.now() < deadline) {
-    const row = (await db.query(
-      `SELECT status,runner_id,owner_id,lease_token,heartbeat_at,lease_expires_at
+    const row: RunState | undefined = (await db.query(
+      `SELECT status,runner_id,owner_id,lease_token,heartbeat_at,lease_expires_at,wait_kind
          FROM workflow_executions WHERE execution_id=$1`, [executionId],
     )).rows[0];
     if (!row) throw new Error(`workflow execution ${ executionId } disappeared during runner launch`);
-    if (!['running', 'suspended'].includes(row.status)) return;
-    if (row.owner_id && row.lease_token && row.heartbeat_at && row.lease_expires_at && row.runner_id === runnerId) return;
+    if (hasCompletedHandshake(row, runnerId)) return;
     await delay(options.pollMs ?? 100);
   }
 
   const settled = await settleUnownedRun(db, emit, executionId, 'runner_handshake_timeout', runnerId);
-  if (settled) await launcher.stopRunner(runnerId).catch(() => {});
+  if (settled) {
+    await launcher.stopRunner(runnerId).catch(() => {});
+    throw new Error('runner failed to acquire a workflow lease before launch timeout');
+  }
+  const outcome: RunState | undefined = (await db.query(
+    `SELECT status,runner_id,owner_id,lease_token,heartbeat_at,lease_expires_at,wait_kind
+       FROM workflow_executions WHERE execution_id=$1`, [executionId],
+  )).rows[0];
+  if (hasCompletedHandshake(outcome, runnerId)) return;
   throw new Error('runner failed to acquire a workflow lease before launch timeout');
 }
