@@ -14,6 +14,7 @@ import { createDirectoryWithinRoot } from './sullaFilesDirectory';
 import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
 
+import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
@@ -21,6 +22,20 @@ const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
 const RESIDENCY_TRANSFER_TIMEOUT_MS = 30 * 60_000;
 const filesClient = getSullaFilesClient();
+
+async function cloudFilesAvailable():Promise<boolean> {
+  try {
+    const account = await getIntegrationService().getConnectionStatus('sulla-cloud');
+    if (!account.connected) return false;
+
+    const { getCloudConnectionStatus } = await import('@pkg/main/cloud/cloudLifecycle');
+    const cloud = await getCloudConnectionStatus();
+
+    return cloud.signedIn && cloud.device.registered && !cloud.device.revoked && cloud.channel?.state === 'connected';
+  } catch {
+    return false;
+  }
+}
 
 async function json(endpoint:string, init:RequestInit = {}, server = false):Promise<any> {
   return filesClient.json(endpoint, init, { server });
@@ -246,21 +261,20 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('sulla-files:members', (_event, input:{ orgId:string }) => json(`/v1/orgs/${ encodeURIComponent(input.orgId) }/members`, {}, true));
   ipcMain.handle('sulla-files:keep', (_event, input:{ fileId:string; collectionId:string; path?:string }) => json(`/v1/agent-files/${ encodeURIComponent(input.fileId) }/keep`, { method: 'POST', body: JSON.stringify({ collectionId: input.collectionId, path: input.path }) }));
   ipcMain.handle('files-ui:capabilities', async() => {
-    const status = await getSullaFilesWatcher().status();
-    const { getCurrentAccessToken } = await import('@pkg/main/sullaCloudAuth');
-    let residency:Record<string, unknown> | undefined;
-    let onlineOnlyReason = '';
-    try {
-      residency = await json('/v1/residency-capabilities') as Record<string, unknown>;
-    } catch (error) {
-      onlineOnlyReason = error instanceof Error ? error.message : 'Online-only residency is unavailable.';
-    }
+    const [status, cloudAvailable, residencyResult] = await Promise.all([
+      getSullaFilesWatcher().status(),
+      cloudFilesAvailable(),
+      json('/v1/residency-capabilities')
+        .then((residency:Record<string, unknown>) => ({ residency, reason: '' }))
+        .catch((error) => ({ residency: undefined, reason: error instanceof Error ? error.message : 'Online-only residency is unavailable.' })),
+    ]);
+    const { residency, reason: onlineOnlyReason } = residencyResult;
     const onlineOnly = residency?.onlineOnly === true && residency.keepOnComputer === true &&
       residency.authenticatedRemote === true && residency.verifiedRecovery === true;
 
     return {
-      orgSharing:  status.serverConfigured,
-      publicLinks: Boolean(await getCurrentAccessToken()),
+      orgSharing:  status.serverConfigured && status.state !== 'error',
+      publicLinks: cloudAvailable && status.state !== 'error',
       onlineOnly,
       keepOnComputer: onlineOnly,
       authenticatedRemote: onlineOnly,
