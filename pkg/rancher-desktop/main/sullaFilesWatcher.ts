@@ -210,14 +210,14 @@ class SullaFilesWatcher {
     if (base !== API) {
       const token = await this.capabilityToken(undefined, capability);
 
-      return fetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error', signal: AbortSignal.timeout(30_000) });
+      return fetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(30_000) });
     }
     await this.ensureUnlocked();
     let principalId = await this.localPrincipalId();
     const send = async() => {
       const token = await this.capabilityToken(principalId, capability);
 
-      return fetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error' as const, signal: AbortSignal.timeout(30_000) });
+      return fetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error' as const, signal: init.signal ?? AbortSignal.timeout(30_000) });
     };
     const response = await send();
     if (!await this.isLockedResponse(response)) return response;

@@ -27,7 +27,7 @@ export interface ResidencySyncBundle {
 
 export interface HttpResidencyTransportConfig {
   serverUrl:            string;
-  userId:               string;
+  principalId():        string;
   deviceId:             string;
   capabilitySigningKey: string | Buffer;
   bundleFor(version: RemoteVersionDescriptor): Promise<ResidencySyncBundle>;
@@ -45,8 +45,8 @@ export class HttpResidencyTransport implements AuthenticatedResidencyTransport {
     if (this.baseUrl.protocol !== 'https:' && !(loopback && this.baseUrl.protocol === 'http:')) {
       throw new Error('Residency transport requires HTTPS except for loopback');
     }
-    if (!config.userId || !config.deviceId || byteLength(config.capabilitySigningKey) < 32) {
-      throw new Error('Residency transport requires an authenticated user, device, and signing key');
+    if (!config.deviceId || byteLength(config.capabilitySigningKey) < 32) {
+      throw new Error('Residency transport requires an authenticated device and signing key');
     }
   }
 
@@ -88,6 +88,7 @@ export class HttpResidencyTransport implements AuthenticatedResidencyTransport {
   }
 
   async verifyVersion(version: RemoteVersionDescriptor, signal: AbortSignal): Promise<RemoteVersionReceipt> {
+    this.assertPrincipal(version);
     const remote = await this.json(`/v1/versions/${ encodeURIComponent(version.versionId) }`, { signal });
     if (remote.file?.id !== version.fileId || remote.file?.collection_id !== version.collectionId ||
         remote.version?.id !== version.versionId || remote.version?.file_id !== version.fileId ||
@@ -119,6 +120,7 @@ export class HttpResidencyTransport implements AuthenticatedResidencyTransport {
   }
 
   private async bundle(version: RemoteVersionDescriptor): Promise<ResidencySyncBundle> {
+    this.assertPrincipal(version);
     const bundle = await this.config.bundleFor(version);
     if (bundle.collectionId !== version.collectionId || bundle.collection.id !== version.collectionId ||
         bundle.file.id !== version.fileId || bundle.version.id !== version.versionId ||
@@ -138,12 +140,13 @@ export class HttpResidencyTransport implements AuthenticatedResidencyTransport {
   }
 
   private async request(path: string, init: RequestInit): Promise<Response> {
+    const principalId = this.currentPrincipal();
     const response = await fetch(new URL(path, this.baseUrl), {
       ...init,
       redirect: 'error',
       headers:  {
         authorization: `Bearer ${ issueCapabilityToken({
-          sub:       this.config.userId,
+          sub:       principalId,
           device_id: this.config.deviceId,
           scopes:    ['files/*'],
         }, this.config.capabilitySigningKey) }`,
@@ -155,6 +158,20 @@ export class HttpResidencyTransport implements AuthenticatedResidencyTransport {
       throw new Error(`Residency remote request failed (${ response.status }): ${ error.toString('utf8').slice(0, 500) }`);
     }
     return response;
+  }
+
+  private currentPrincipal(): string {
+    const principalId = this.config.principalId();
+    if (typeof principalId !== 'string' || !principalId || principalId !== principalId.trim() || principalId === 'desktop-user') {
+      throw new Error('Residency transport requires the adopted Vault principal');
+    }
+    return principalId;
+  }
+
+  private assertPrincipal(version: RemoteVersionDescriptor): void {
+    if (version.keyContext.principalId !== this.currentPrincipal()) {
+      throw new Error('Residency key context does not match the adopted Vault principal');
+    }
   }
 }
 

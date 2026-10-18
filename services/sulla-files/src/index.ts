@@ -44,7 +44,7 @@ const residency = manager && config.filesRoot && config.serverUrl && vaultAuthor
     new SecureCollectionKeyExchange(db, config.keyring, vaultAuthority, keyRecovery),
     new HttpResidencyTransport({
       serverUrl: config.serverUrl,
-      userId: config.userId,
+      principalId: () => config.userId,
       deviceId: config.deviceId,
       capabilitySigningKey: config.capabilitySigningKey,
       bundleFor: version => loadResidencySyncBundle(db, version),
