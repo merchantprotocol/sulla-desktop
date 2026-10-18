@@ -5,12 +5,21 @@
     <ProjectViewHeaderV2
       :title="project?.title || 'Project'"
       :meta="projectMeta"
+      :search="searchQuery"
       active-view="board"
       :can-add="Boolean(lanes.length)"
       @back-to-list="$emit('back-to-list')"
       @add-card="startAdd(lanes[0]?.lane_key)"
+      @update:search="searchQuery = $event"
       @view-change="$emit('view-change', $event)"
     />
+
+    <div v-if="project" class="filters" aria-label="Board filters">
+      <label class="filter"><span>Assignee</span><select v-model="assigneeFilter"><option value="">Anyone</option><option v-for="assignee in assignees" :key="assignee" :value="assignee">{{ assigneeName(assignee) }}</option></select></label>
+      <label class="filter"><span>Label</span><select v-model="labelFilter"><option value="">Any</option><option v-for="label in labels" :key="label" :value="label">{{ label }}</option></select></label>
+      <button type="button" class="filter toggle" :aria-pressed="showDone" @click="showDone = !showDone"><span>Done cards</span>{{ showDone ? 'Shown' : 'Hidden' }}</button>
+      <button v-if="filtersActive" type="button" class="clear" @click="clearFilters">Clear</button>
+    </div>
 
     <div
       v-if="error || mutationError"
@@ -372,6 +381,10 @@ const {
 } = useProjectViewV2(() => props.projectId);
 
 const composerLane = ref('');
+const searchQuery = ref('');
+const assigneeFilter = ref('');
+const labelFilter = ref('');
+const showDone = ref(true);
 const newTitle = ref('');
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const draggedId = ref('');
@@ -385,8 +398,27 @@ const projectMeta = computed(() => {
   return `${ cards.value.length } cards · ${ open } open`;
 });
 
+const assignees = computed(() => [...new Set(cards.value.map(card => card.task.assignee).filter((value): value is string => Boolean(value)))].sort());
+const labels = computed(() => [...new Set(cards.value.flatMap(card => card.task.labels || []))].sort());
+const filtersActive = computed(() => Boolean(searchQuery.value.trim() || assigneeFilter.value || labelFilter.value || !showDone.value));
+
 function cardsForLane(laneKey: string) {
-  return cards.value.filter(card => card.task.status === laneKey);
+  const query = searchQuery.value.trim().toLowerCase();
+  return cards.value.filter(card => {
+    if (card.task.status !== laneKey) return false;
+    if (!showDone.value && isTerminalTask(card.task)) return false;
+    if (assigneeFilter.value && card.task.assignee !== assigneeFilter.value) return false;
+    if (labelFilter.value && !(card.task.labels || []).includes(labelFilter.value)) return false;
+    if (query && !`${ card.task.title } ${ card.task.description || '' } ${(card.task.labels || []).join(' ')}`.toLowerCase().includes(query)) return false;
+    return true;
+  });
+}
+
+function clearFilters(): void {
+  searchQuery.value = '';
+  assigneeFilter.value = '';
+  labelFilter.value = '';
+  showDone.value = true;
 }
 
 function startAdd(laneKey?: string): void {
@@ -473,6 +505,14 @@ function labelTone(label: string): string {
 <style scoped>
 .pbv2 { --v2-text: var(--text, #1a2332); --v2-muted: var(--text-muted, #5b6778); --v2-dim: var(--text-dim, #8a94a3); --v2-card: var(--surface-1, #fff); --v2-soft: var(--surface-2, #eaf0f6); min-width: 0; padding: 16px 20px 60px; color: var(--v2-text); font-family: var(--font-body, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); }
 .board { display: grid; grid-auto-columns: minmax(220px, 1fr); grid-auto-flow: column; gap: 12px; align-items: start; min-height: 60vh; padding-bottom: 8px; overflow-x: auto; }
+.filters { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; overflow-x: auto; }
+.filter { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 5px 10px; border: 1px solid var(--border, rgba(26,35,50,.14)); border-radius: 8px; background: var(--v2-card); color: var(--v2-text); font-size: 12px; font-weight: 500; }
+.filter span { color: var(--v2-muted); }
+.filter select { border: 0; outline: 0; background: transparent; color: inherit; font: inherit; }
+.filter.toggle { cursor: pointer; }
+.filter.toggle[aria-pressed="false"] { border-color: color-mix(in srgb, var(--accent, #3a7fa0) 35%, transparent); background: color-mix(in srgb, var(--accent, #3a7fa0) 10%, transparent); }
+.clear { padding: 5px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--v2-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.clear:hover { color: var(--v2-text); background: color-mix(in srgb, var(--v2-text) 5%, transparent); }
 .lane { display: flex; min-height: 120px; flex-direction: column; border: 1px solid var(--border, rgba(26,35,50,.09)); border-radius: 12px; background: color-mix(in srgb, var(--v2-text) 3.5%, transparent); transition: background .12s, border-color .12s; }
 .lane.over { border-color: color-mix(in srgb, var(--accent, #3a7fa0) 35%, transparent); background: color-mix(in srgb, var(--accent, #3a7fa0) 11%, transparent); }
 .lane-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
