@@ -623,15 +623,19 @@ app.get('/v1/runs/:id', async(request: AuthenticatedRequest, response, next) => 
 });
 app.post('/v1/runs/:id/resume', requireOwner, async(request: AuthenticatedRequest, response, next) => {
   try {
+    const executionId = request.params.id;
+    if (typeof executionId !== 'string' || !executionId || executionId.length > 300 || executionId.trim() !== executionId) {
+      return response.status(400).json({ error: 'invalid execution id' });
+    }
     const row = (await pool.query(
       `SELECT * FROM workflow_executions WHERE execution_id=$5 AND ${ identitySql }`,
-      [...identityParams(request.identity!), request.params.id],
+      [...identityParams(request.identity!), executionId],
     )).rows[0];
     if (!row) return response.status(404).json({ error: 'run not found' });
     let state = row.playbook_state as WorkflowPlaybookState;
     if (row.wait_kind === 'user-input' && state.pendingDecision) state = resolveDecision(state, String(request.body.input ?? '')).updatedPlaybook;
-    await pool.query(`UPDATE workflow_executions SET playbook_state=$2::jsonb, resume_input=NULL, status='running', updated_at=NOW() WHERE execution_id=$1`, [request.params.id, JSON.stringify(state)]);
-    response.status(202).json({ executionId: request.params.id, runnerId: await launch(request.params.id) });
+    await pool.query(`UPDATE workflow_executions SET playbook_state=$2::jsonb, resume_input=NULL, status='running', updated_at=NOW() WHERE execution_id=$1`, [executionId, JSON.stringify(state)]);
+    response.status(202).json({ executionId, runnerId: await launch(executionId) });
   } catch (error) { next(error) }
 });
 app.post('/v1/runs/:id/restart', requireOwner, async(request: AuthenticatedRequest, response, next) => {
