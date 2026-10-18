@@ -9,7 +9,7 @@
     <div :class="['status', artifact.status === 'done' ? 'done' : '']">
       {{ artifact.status }}
     </div>
-    <span v-if="artifact.filesRegistrationStatus === 'error'" class="files-error" :title="artifact.filesRegistrationError || 'Files registration failed'">Files failed</span>
+    <span v-if="actionError || artifact.filesRegistrationStatus === 'error'" class="files-error" :title="actionError || artifact.filesRegistrationError || 'Files registration failed'">{{ actionError ? 'Files action failed' : 'Files failed' }}</span>
     <button v-if="artifact.filesRegistrationStatus === 'error'" class="act" type="button" :disabled="retrying" @click="retryFiles">{{ retrying ? 'Retrying' : 'Retry Files' }}</button>
     <button v-if="artifact.filesFileId" class="act" type="button" @click="openFile">Open</button>
     <button v-if="artifact.filesFileId" class="act" type="button" @click="shareFile">Share</button>
@@ -31,11 +31,17 @@ defineEmits<{ (e: 'expand'): void }>();
 const controller = useChatController();
 const { createTab, tabs, updateTab } = useBrowserTabs();
 const retrying = ref(false);
+const actionError = ref('');
 const typeLabel = computed(() => ({ workflow: 'Workflow', html: 'HTML Artifact', code: 'Code File', markdown: 'Markdown' })[props.artifact.kind]);
 
 async function openFile(): Promise<void> {
   if (!props.artifact.filesFileId) return;
-  await ipcRenderer.invoke('files-ui:open-file', { fileId: props.artifact.filesFileId, versionId: props.artifact.filesVersionId ?? undefined });
+  actionError.value = '';
+  try {
+    await ipcRenderer.invoke('files-ui:open-file', { fileId: props.artifact.filesFileId, versionId: props.artifact.filesVersionId ?? undefined });
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : String(error);
+  }
 }
 
 function shareFile(): void {
@@ -50,8 +56,11 @@ function shareFile(): void {
 async function retryFiles(): Promise<void> {
   if (!props.artifact.threadId || retrying.value) return;
   retrying.value = true;
+  actionError.value = '';
   try {
     await ipcRenderer.invoke('chat-artifacts:retry-files-registration', { threadId: props.artifact.threadId, idOrName: props.artifact.id });
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : String(error);
   } finally {
     retrying.value = false;
   }
