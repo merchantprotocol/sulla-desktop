@@ -30,7 +30,7 @@ RUN apt-get update \
     && tar -xzf /tmp/keycloak.tar.gz --strip-components=1 -C /opt/keycloak \
     && rm /tmp/keycloak.tar.gz \
     && mkdir -p /licenses/keycloak \
-    && /opt/keycloak/bin/kc.sh build --db=postgres --health-enabled=true
+    && /opt/keycloak/bin/kc.sh build --db=postgres --health-enabled=true --http-relative-path=/auth
 
 COPY services/sulla-accounts/package.json ./package.json
 COPY services/sulla-accounts/package-lock.json ./package-lock.json
