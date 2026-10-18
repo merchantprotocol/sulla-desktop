@@ -27,6 +27,7 @@ export class ServiceLifecycleManager extends EventEmitter {
   private services = new Map<string, ServiceDefinition>();
   private started = new Set<string>();
   private _shuttingDown = false;
+  private _stopMode: StopMode = 'full';
   private _allReady = false;
   private _startOrder: string[] = [];
 
@@ -61,18 +62,32 @@ export class ServiceLifecycleManager extends EventEmitter {
     }
   }
 
+  /** Register a stable definition once across repeated backend generations. */
+  registerOnce(
+    name: string,
+    dependencies: string[],
+    start: () => Promise<void>,
+    stop: () => Promise<void>,
+    opts?: { persistOnRestart?: boolean; alreadyStarted?: boolean },
+  ): void {
+    if (this.services.has(name)) return;
+    this.register(name, dependencies, start, stop, opts);
+  }
+
   /**
    * Start all registered services in dependency order.
    */
-  async startAll(): Promise<void> {
+  async startAll(assertCurrent?: () => void): Promise<void> {
     this._shuttingDown = false;
     this._allReady = false;
+    assertCurrent?.();
     const order = this.topologicalSort();
 
     this._startOrder = order;
     console.log(`[Lifecycle] Starting services: ${ order.join(' → ') }`);
 
     for (const name of order) {
+      assertCurrent?.();
       if (this._shuttingDown) {
         console.log(`[Lifecycle] Shutdown requested, aborting startup at '${ name }'`);
         break;
@@ -98,13 +113,27 @@ export class ServiceLifecycleManager extends EventEmitter {
       try {
         console.log(`[Lifecycle] Starting '${ name }'...`);
         await svc.start();
-        this.started.add(name);
-        console.log(`[Lifecycle] '${ name }' ready (${ Date.now() - t }ms)`);
-        this.emit('service:ready', name);
       } catch (err: any) {
         console.error(`[Lifecycle] '${ name }' failed to start (${ Date.now() - t }ms):`, err.message || err);
         // Don't throw — allow independent services to continue
+        continue;
       }
+      this.started.add(name);
+      if (this._shuttingDown) {
+        if (this._stopMode === 'restart' && svc.persistOnRestart) {
+          console.log(`[Lifecycle] Keeping late-started '${ name }' alive (restart mode)`);
+        } else {
+          await this.stopWithTimeout(name, svc.stop);
+          this.started.delete(name);
+          this.emit('service:stopped', name);
+        }
+        break;
+      }
+      // Record a successful start before checking cancellation so stopAll()
+      // still owns teardown if the generation changed during the await.
+      assertCurrent?.();
+      console.log(`[Lifecycle] '${ name }' ready (${ Date.now() - t }ms)`);
+      this.emit('service:ready', name);
     }
 
     this._allReady = true;
@@ -122,6 +151,7 @@ export class ServiceLifecycleManager extends EventEmitter {
       return;
     }
     this._shuttingDown = true;
+    this._stopMode = mode;
     this._allReady = false;
     this.emit('shutdown:begin', mode);
 

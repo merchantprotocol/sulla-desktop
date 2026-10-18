@@ -310,21 +310,27 @@ firstRunCoordinator.addCondition('aiConnected');
 let firstRunAiSignInReady = false;
 
 firstRunCoordinator.registerStep(
-  'deploy',
+  'credentialsReady',
+  ['credentialsSet'],
+  () => {
+    // The backend owns deployment for every start generation.  The coordinator
+    // only opens the fresh-install gate once the wizard has stored credentials.
+    (k8smanager as any).setSullaCredentialsReady?.();
+  },
+);
+
+firstRunCoordinator.registerStep(
+  'legacyDeploy',
   ['backendBooted', 'credentialsSet'],
   async() => {
-    if (!cfg.kubernetes.enabled) {
-      if ((k8smanager as any).sullaStepDockerEnvironment) {
-        console.log('[FirstRunCoordinator] Running Docker environment step...');
-        await (k8smanager as any).sullaStepDockerEnvironment();
-        console.log('[FirstRunCoordinator] Docker environment step completed');
-      }
-    } else {
-      if (k8smanager.kubeBackend.sullaStepCustomEnvironment) {
-        console.log('[FirstRunCoordinator] Running K8s custom environment step...');
-        await k8smanager.kubeBackend.sullaStepCustomEnvironment();
-        console.log('[FirstRunCoordinator] K8s custom environment step completed');
-      }
+    // WSL has not adopted Lima's per-start managed-service generation yet.
+    // Preserve its existing coordinator-owned deployment until that backend
+    // has an equivalent engine-ready lifecycle hook.
+    if (typeof (k8smanager as any).setSullaCredentialsReady === 'function') return;
+    if (!cfg.kubernetes.enabled && (k8smanager as any).sullaStepDockerEnvironment) {
+      await (k8smanager as any).sullaStepDockerEnvironment();
+    } else if (cfg.kubernetes.enabled && k8smanager.kubeBackend.sullaStepCustomEnvironment) {
+      await k8smanager.kubeBackend.sullaStepCustomEnvironment();
     }
     await firstRunCoordinator.setCondition('deployCompleted');
   },
@@ -377,6 +383,10 @@ mainEvents.on('first-run-backend-booted', async() => {
     await firstRunCoordinator.setCondition('credentialsSet');
   }
   await firstRunCoordinator.setCondition('backendBooted');
+});
+
+mainEvents.on('sulla-managed-services-ready', async() => {
+  await firstRunCoordinator.setCondition('deployCompleted');
 });
 
 /** Resolve the project root without relying on process.cwd() which throws

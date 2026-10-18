@@ -31,7 +31,7 @@ import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaDocsDir } from '../utils/sullaPaths';
 
-import { resolveSullaServiceImage } from '@pkg/backend/sullaServiceImages';
+import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
@@ -143,6 +143,11 @@ class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
 
 let imageReady: Promise<string> | null = null;
 
+/** Re-resolve the lazy transport image after each backend start generation. */
+export function resetAgentContainerImageResolution(): void {
+  imageReady = null;
+}
+
 async function requireTransportImage(image: string): Promise<void> {
   const inspection = JSON.parse((await limactl(['docker', 'image', 'inspect', image])).stdout) as Array<{
     Config?: { Labels?: Record<string, string> };
@@ -163,15 +168,23 @@ async function ensureAgentImage(): Promise<string> {
     const resolved = resolveSullaServiceImage(
       'sulla-agent', process.cwd(), Electron.app.getVersion(), process.env.SULLA_AGENT_IMAGE,
     );
-    try {
-      await requireTransportImage(resolved.image);
-      return resolved.image;
-    } catch { /* lazy build/pull below */ }
+    const shouldRefresh = shouldRefreshSullaServiceImage(resolved, process.env.SULLA_AGENT_IMAGE);
 
     if (resolved.build) {
+      try {
+        await requireTransportImage(resolved.image);
+        return resolved.image;
+      } catch { /* lazy build below */ }
       await limactl(['docker', 'build', '--file', path.join(resolved.build.context, resolved.build.dockerfile), '--tag', resolved.image, resolved.build.context]);
       await requireTransportImage(resolved.image);
       return resolved.image;
+    }
+
+    if (!shouldRefresh) {
+      try {
+        await requireTransportImage(resolved.image);
+        return resolved.image;
+      } catch { /* pull the explicit image below */ }
     }
 
     try {
@@ -179,9 +192,20 @@ async function ensureAgentImage(): Promise<string> {
       await requireTransportImage(resolved.image);
       return resolved.image;
     } catch (error) {
+      if (shouldRefresh) {
+        try {
+          await requireTransportImage(resolved.image);
+          log.warn(`[AgentContainer] Could not refresh ${ resolved.image }; using the compatible cached image`);
+          return resolved.image;
+        } catch { /* try the transport compatibility image below */ }
+      }
       if (process.env.SULLA_AGENT_IMAGE || resolved.image === TRANSPORT_COMPATIBILITY_IMAGE) throw error;
       log.warn(`[AgentContainer] ${ resolved.image } is unavailable or transport-incompatible; using ${ TRANSPORT_COMPATIBILITY_IMAGE }`);
-      await limactl(['docker', 'pull', TRANSPORT_COMPATIBILITY_IMAGE]);
+      try {
+        await requireTransportImage(TRANSPORT_COMPATIBILITY_IMAGE);
+      } catch {
+        await limactl(['docker', 'pull', TRANSPORT_COMPATIBILITY_IMAGE]);
+      }
       await requireTransportImage(TRANSPORT_COMPATIBILITY_IMAGE);
       return TRANSPORT_COMPATIBILITY_IMAGE;
     }

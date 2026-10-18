@@ -172,6 +172,9 @@ interface MainEventNames {
    */
   'first-run-backend-booted'(): void;
 
+  /** Emitted after the current backend generation reconciles managed services. */
+  'sulla-managed-services-ready'(): void;
+
   /**
    * Quit the application.
    */

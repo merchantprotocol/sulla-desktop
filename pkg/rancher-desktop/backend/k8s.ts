@@ -122,7 +122,7 @@ export interface KubernetesBackend extends EventEmitter<KubernetesBackendEvents>
   /**
    * Sulla-specific: Step to customize the environment with user credentials.
    */
-  sullaStepCustomEnvironment?(): Promise<void>;
+  sullaStepCustomEnvironment?(assertCurrent?: () => void): Promise<void>;
 }
 
 export interface KubernetesBackendPortForwarder {

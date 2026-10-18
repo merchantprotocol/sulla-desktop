@@ -25,7 +25,6 @@ import { LockedFieldError } from '@pkg/config/commandLineOptions';
 import { ContainerEngine } from '@pkg/config/settings';
 import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
-import { instantiateSullaStart } from '@pkg/sulla';
 import clone from '@pkg/utils/clone';
 import { SemanticVersionEntry } from '@pkg/utils/kubeVersions';
 import Logging from '@pkg/utils/logging';
@@ -483,6 +482,57 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
       return deployment;
     });
 
+    const managedRuntimes: Record<string, { override?: string }> = {
+      'python-runtime': { override: process.env.SULLA_PYTHON_RUNTIME_IMAGE },
+      'shell-runtime':  { override: process.env.SULLA_SHELL_RUNTIME_IMAGE },
+      'node-runtime':   { override: process.env.SULLA_NODE_RUNTIME_IMAGE },
+    };
+    interface RuntimeDeployment {
+      spec?: {
+        template?: {
+          metadata?: { annotations?: Record<string, string> };
+          spec?:     { containers?: { image?: string; imagePullPolicy?: string }[] };
+        };
+      };
+    }
+
+    for (const deployment of deployments) {
+      if (deployment.kind !== 'Deployment') continue;
+      const name = String((deployment.metadata as Record<string, unknown>)?.name ?? '');
+      const managed = managedRuntimes[name];
+
+      if (!managed) continue;
+      const runtimeDeployment = deployment as RuntimeDeployment;
+      const template = runtimeDeployment.spec?.template;
+      const container = template?.spec?.containers?.[0];
+      const image = managed.override || String(container?.image ?? '');
+
+      if (!image || !container) continue;
+      container.image = image;
+      container.imagePullPolicy = 'IfNotPresent';
+      if (!managed.override) {
+        try {
+          await this.vm.execCommand({ root: true }, 'k3s', 'crictl', 'pull', image);
+        } catch (error) {
+          console.warn(`[Sulla] Could not refresh Kubernetes runtime ${ image }; trying its cached image:`, error);
+        }
+      }
+      try {
+        const inspection = await this.vm.execCommand(
+          { root: true, capture: true }, 'k3s', 'crictl', 'inspecti', '--output', 'json', image,
+        );
+        const imageId = String(JSON.parse(inspection)?.status?.id ?? '');
+
+        if (imageId && template) {
+          template.metadata ??= {};
+          template.metadata.annotations ??= {};
+          template.metadata.annotations['sulla.desktop/runtime-image-id'] = imageId;
+        }
+      } catch (error) {
+        console.warn(`[Sulla] Kubernetes runtime ${ image } is not cached; kubelet will try to pull it:`, error);
+      }
+    }
+
     // Substitute {{sullaFunctionsDir}} with the user's ~/sulla/functions path
     // so the runtime containers (python/shell/node) can bind-mount it read-only.
     // The directory is created if it doesn't exist so the K8s hostPath mount
@@ -522,7 +572,7 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     }
   }
 
-  private async waitForDeployment(name: string, timeoutSec = 600): Promise<void> {
+  private async waitForDeployment(name: string, timeoutSec = 600, assertCurrent?: () => void): Promise<void> {
     return this.waitForCondition(async() => {
       try {
         const status = await this.vm.execCommand({ capture: true, root: true }, 'k3s', 'kubectl', 'get', 'deployment', '-n', 'sulla', name, '-o', 'jsonpath={.status.availableReplicas}');
@@ -530,7 +580,7 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
       } catch {
         return false;
       }
-    }, timeoutSec);
+    }, timeoutSec, 2000, assertCurrent);
   }
 
   private async waitForPodCondition(label: string, conditionType: string, expectedStatus: string, timeoutSec = 180): Promise<void> {
@@ -549,9 +599,15 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     }, timeoutSec);
   }
 
-  private async waitForCondition(check: () => Promise<boolean>, timeoutSec = 120, intervalMs = 2000): Promise<void> {
+  private async waitForCondition(
+    check: () => Promise<boolean>,
+    timeoutSec = 120,
+    intervalMs = 2000,
+    assertCurrent?: () => void,
+  ): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < timeoutSec * 1000) {
+      assertCurrent?.();
       if (await check()) return;
       await new Promise(r => setTimeout(r, intervalMs));
     }
@@ -568,19 +624,22 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     }
   }
 
-  async sullaStepCustomEnvironment(): Promise<void> {
+  async sullaStepCustomEnvironment(assertCurrent?: () => void): Promise<void> {
     // Reset progress counter at the start
+    assertCurrent?.();
     this.progressTracker.numeric('Starting Sulla deployment', 0, 100);
 
     await this.progressTracker.action('Preparing Sulla deployment files', 30, async() => {
       this.progressTracker.numeric('Preparing Sulla deployment files', 5, 100);
       await this.prepareSullaDeploymentFiles();
+      assertCurrent?.();
       this.progressTracker.numeric('Deployment files prepared', 15, 100);
     });
 
     await this.progressTracker.action('Applying Sulla manifests', 50, async() => {
       this.progressTracker.numeric('Applying Sulla manifests', 20, 100);
       await this.applySullaManifests();
+      assertCurrent?.();
       this.progressTracker.numeric('Manifests applied', 35, 100);
     });
 
@@ -590,14 +649,15 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
       // custom functions, so a slow or failed runtime must not block startup.
       for (const container of ['postgres', 'redis']) {
         await this.progressTracker.action(`Downloading and Starting ${ container }`, 100, async() => {
-          await this.waitForDeployment(`${ container }`, 600);
+          await this.waitForDeployment(`${ container }`, 600, assertCurrent);
         });
       }
       for (const container of ['python-runtime', 'shell-runtime', 'node-runtime']) {
         await this.progressTracker.action(`Downloading and Starting ${ container }`, 100, async() => {
           try {
-            await this.waitForDeployment(`${ container }`, 120);
+            await this.waitForDeployment(`${ container }`, 120, assertCurrent);
           } catch (err) {
+            assertCurrent?.();
             console.warn(`[Sulla] ${ container } not ready; continuing startup without it:`, err);
           }
         });
@@ -605,9 +665,8 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
       this.progressTracker.numeric('Container environment booted', 60, 100);
     });
 
+    assertCurrent?.();
     this.progressTracker.numeric('Sulla deployment completed', 100, 100);
-
-    instantiateSullaStart();
   }
 
   // #region Events

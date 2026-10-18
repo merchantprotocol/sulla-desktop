@@ -145,7 +145,7 @@ async function onVaultUnlocked(): Promise<void> {
  *
  * @see sulla-desktop/background.ts
  */
-export async function instantiateSullaStart(): Promise<void> {
+export async function instantiateSullaStart(assertCurrent?: () => void): Promise<void> {
   console.log('[Integrations] Sulla integrations initialized');
 
   // NOTE: initSullaEvents() is now called in background.ts before initUI()
@@ -157,7 +157,7 @@ export async function instantiateSullaStart(): Promise<void> {
 
   // ── Independent services (no DB/Redis dependency) ──────────────────────
 
-  lifecycle.register('backend-ws', [],
+  lifecycle.registerOnce('backend-ws', [],
     async() => {
       getBackendGraphWebSocketService();
       console.log('[Background] BackendGraphWebSocketService initialized');
@@ -165,7 +165,7 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { /* stateless singleton, no teardown */ },
   );
 
-  lifecycle.register('relay-tool-tunnel', [],
+  lifecycle.registerOnce('relay-tool-tunnel', [],
     async() => {
       const { startRelayToolTunnel } = await import('@pkg/main/relayToolTunnel');
 
@@ -180,7 +180,7 @@ export async function instantiateSullaStart(): Promise<void> {
 
   // Register model-provider IPC handlers early so the UI can query state
   // even if Postgres/Redis never come up. State loading still gated on DB below.
-  lifecycle.register('model-provider-ipc', [],
+  lifecycle.registerOnce('model-provider-ipc', [],
     async() => {
       const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
       getModelProviderService().registerIpc();
@@ -191,13 +191,13 @@ export async function instantiateSullaStart(): Promise<void> {
 
   // ── Connection readiness gates ─────────────────────────────────────────
 
-  lifecycle.register('postgres', [],
+  lifecycle.registerOnce('postgres', [],
     async() => { await postgresClient.waitForReady() },
     async() => { await postgresClient.end() },
     { persistOnRestart: true },
   );
 
-  lifecycle.register('redis', [],
+  lifecycle.registerOnce('redis', [],
     async() => { await redisClient.waitForReady() },
     async() => { await redisClient.close() },
     { persistOnRestart: true },
@@ -205,14 +205,14 @@ export async function instantiateSullaStart(): Promise<void> {
 
   // ── Database layer (depends on postgres connection) ────────────────────
 
-  lifecycle.register('database-manager', ['postgres'],
+  lifecycle.registerOnce('database-manager', ['postgres'],
     async() => { await afterBackgroundLoaded() },
     async() => { await getDatabaseManager().stop() },
   );
 
   // ── Application services (depend on database-manager) ──────────────────
 
-  lifecycle.register('scheduler', ['database-manager'],
+  lifecycle.registerOnce('scheduler', ['database-manager'],
     async() => {
       await getSchedulerService().initialize();
       console.log('[Background] SchedulerService initialized');
@@ -223,7 +223,7 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
-  lifecycle.register('heartbeat', ['database-manager', 'redis'],
+  lifecycle.registerOnce('heartbeat', ['database-manager', 'redis'],
     async() => {
       await getHeartbeatService().initialize();
       console.log('[Background] HeartbeatService initialized');
@@ -234,7 +234,7 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
-  lifecycle.register('projects-auto-archive', ['database-manager'],
+  lifecycle.registerOnce('projects-auto-archive', ['database-manager'],
     async() => {
       await getProjectsAutoArchiveService().initialize();
       console.log('[Background] ProjectsAutoArchiveService initialized');
@@ -245,7 +245,7 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
-  lifecycle.register('projects-domain-events', ['heartbeat'],
+  lifecycle.registerOnce('projects-domain-events', ['heartbeat'],
     async() => {
       await getProjectsDomainEventConsumer().initialize();
       console.log('[Background] Projects domain-event consumer initialized');
@@ -257,7 +257,7 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
-  lifecycle.register('knowledge-projection-outbox', ['database-manager'],
+  lifecycle.registerOnce('knowledge-projection-outbox', ['database-manager'],
     async() => {
       await getKnowledgeProjectionOutboxService().initialize();
       console.log('[Background] Knowledge projection outbox initialized');
@@ -269,7 +269,7 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
-  lifecycle.register('sulla-files-maintenance', ['database-manager'],
+  lifecycle.registerOnce('sulla-files-maintenance', ['database-manager'],
     async() => {
       const { getSullaFilesMaintenanceService } = await import('@pkg/agent/services/SullaFilesMaintenanceService');
       getSullaFilesMaintenanceService().initialize();
@@ -281,7 +281,7 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
-  lifecycle.register('workflow-scheduler', ['database-manager'],
+  lifecycle.registerOnce('workflow-scheduler', ['database-manager'],
     async() => {
       await getWorkflowSchedulerService().initialize();
       console.log('[Background] WorkflowSchedulerService initialized');
@@ -289,7 +289,7 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { getWorkflowSchedulerService().shutdown() },
   );
 
-  lifecycle.register('workflow-container-events', ['database-manager', 'redis'],
+  lifecycle.registerOnce('workflow-container-events', ['database-manager', 'redis'],
     async() => {
       await getWorkflowContainerEventBridge().initialize();
       console.log('[Background] Workflow container event bridge initialized');
@@ -297,7 +297,7 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { await getWorkflowContainerEventBridge().shutdown() },
   );
 
-  lifecycle.register('chat-server', ['database-manager'],
+  lifecycle.registerOnce('chat-server', ['database-manager'],
     async() => {
       const chatServer = getChatCompletionsServer();
 
@@ -307,7 +307,7 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { await getChatCompletionsServer().stop() },
   );
 
-  lifecycle.register('local-tool-tunnel', ['chat-server'],
+  lifecycle.registerOnce('local-tool-tunnel', ['chat-server'],
     async() => {
       const { startLocalToolTunnel } = await import('@pkg/main/relayToolTunnel');
 
@@ -325,7 +325,7 @@ export async function instantiateSullaStart(): Promise<void> {
   // back into. No external deps — pure main-process HTTP server. Must start
   // before any graph execution that invokes Claude Code, which in practice
   // means before the chat server accepts requests.
-  lifecycle.register('mcp-server-host', [],
+  lifecycle.registerOnce('mcp-server-host', [],
     async() => {
       await getMCPServerHost().start();
       console.log('[Background] MCP server host started');
@@ -333,7 +333,7 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { await getMCPServerHost().stop() },
   );
 
-  lifecycle.register('accounts', [],
+  lifecycle.registerOnce('accounts', [],
     async() => {
       const { getSullaAccountsClient } = await import('@pkg/main/sullaAccountsClient');
       await getSullaAccountsClient().initialize();
@@ -345,7 +345,7 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
-  lifecycle.register('vault', ['database-manager'],
+  lifecycle.registerOnce('vault', ['database-manager'],
     async() => {
       const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
       const { IntegrationValueModel } = await import('@pkg/agent/database/models/IntegrationValueModel');
@@ -369,7 +369,7 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
-  lifecycle.register('model-provider', ['database-manager', 'redis'],
+  lifecycle.registerOnce('model-provider', ['database-manager', 'redis'],
     async() => {
       const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
       const svc = getModelProviderService();
@@ -389,7 +389,7 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { /* no teardown needed */ },
   );
 
-  lifecycle.register('integrations', ['vault'],
+  lifecycle.registerOnce('integrations', ['vault'],
     async() => {
       SullaIntegrations();
       const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
@@ -401,7 +401,7 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { /* no teardown */ },
   );
 
-  lifecycle.register('oauth', ['database-manager', 'vault'],
+  lifecycle.registerOnce('oauth', ['database-manager', 'vault'],
     async() => {
       const { getOAuthService } = await import('@pkg/agent/services/OAuthService');
 
@@ -415,7 +415,7 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
-  lifecycle.register('file-search', [],
+  lifecycle.registerOnce('file-search', [],
     async() => {
       const { startFileSearchMaintenance } = await import('@pkg/main/fileSearchService');
 
@@ -434,7 +434,7 @@ export async function instantiateSullaStart(): Promise<void> {
   // exechost/AppleScript gate reads the SullaSettingsModel dual store — push
   // the on-disk value across once the stores are reachable, so a toggle made
   // while the DB was down (or before this sync existed) still takes effect.
-  lifecycle.register('host-access-sync', ['database-manager', 'redis'],
+  lifecycle.registerOnce('host-access-sync', ['database-manager', 'redis'],
     async() => {
       const { reconcileHostAccessFromDisk } = await import('@pkg/agent/tools/util/hostAccess');
 
@@ -447,9 +447,10 @@ export async function instantiateSullaStart(): Promise<void> {
   console.log('[Background] MCP servers will initialize on first use (lazy init)');
 
   try {
-    await lifecycle.startAll();
+    await lifecycle.startAll(assertCurrent);
   } catch (ex: any) {
     console.error('[Background] Failed to initialize Sulla:', ex);
+    if (assertCurrent) throw ex;
   }
 }
 

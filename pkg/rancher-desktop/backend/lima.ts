@@ -34,7 +34,7 @@ import BackendHelper from './backendHelper';
 import { ContainerEngineClient, MobyClient, NerdctlClient } from './containerClient';
 import * as K8s from './k8s';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
-import { resolveSullaServiceImage } from './sullaServiceImages';
+import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
 import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
 import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 
@@ -84,6 +84,12 @@ export enum Action {
   NONE = 'idle',
   STARTING = 'starting',
   STOPPING = 'stopping',
+}
+
+class ManagedServicesReconciliationCancelled extends Error {
+  constructor() {
+    super('Managed-service reconciliation was superseded by a backend stop or restart');
+  }
 }
 
 /**
@@ -311,8 +317,46 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   #containerEngineClient: ContainerEngineClient | undefined;
   #activeOptionalSullaServices = new Set<string>();
   #optionalSullaFallbackImages = new Map<string, { env: string; image: string }>();
+  #managedSullaRefreshImages = new Map<string, string>();
+  #managedServicesReconciliation?: Promise<void>;
+  #backendStartSettled?: Promise<void>;
+  #managedServicesGeneration = 0;
+  #sullaCredentialsReady = false;
+  #sullaCredentialsWaiters = new Set<() => void>();
 
-  #optionalSullaRefreshImages = new Map<string, string>();
+  /** Opened by the first-run coordinator after credential setup is complete. */
+  setSullaCredentialsReady(): void {
+    this.#sullaCredentialsReady = true;
+    for (const wake of this.#sullaCredentialsWaiters) wake();
+    this.#sullaCredentialsWaiters.clear();
+  }
+
+  private beginManagedServicesGeneration(): number {
+    this.#managedServicesGeneration += 1;
+    for (const wake of this.#sullaCredentialsWaiters) wake();
+    this.#sullaCredentialsWaiters.clear();
+
+    return this.#managedServicesGeneration;
+  }
+
+  private invalidateManagedServicesGeneration(): void {
+    this.#managedServicesGeneration += 1;
+    for (const wake of this.#sullaCredentialsWaiters) wake();
+    this.#sullaCredentialsWaiters.clear();
+  }
+
+  private assertManagedServicesGeneration(generation: number): void {
+    if (generation !== this.#managedServicesGeneration) {
+      throw new ManagedServicesReconciliationCancelled();
+    }
+  }
+
+  private async waitForSullaCredentials(generation: number): Promise<void> {
+    while (!this.#sullaCredentialsReady) {
+      await new Promise<void>((resolve) => this.#sullaCredentialsWaiters.add(resolve));
+      this.assertManagedServicesGeneration(generation);
+    }
+  }
 
   get containerEngineClient() {
     if (this.#containerEngineClient) {
@@ -2620,11 +2664,30 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     this.cfg = config_;
 
     const config = this.cfg = clone(config_);
+    const managedServicesGeneration = this.beginManagedServicesGeneration();
     let kubernetesVersion: semver.SemVer | undefined;
     let isDowngrade = false;
-
-    await this.setState(State.STARTING);
+    let managedServicesReady = false;
     this.currentAction = Action.STARTING;
+    let settleBackendStart!: () => void;
+    const backendStartSettled = new Promise<void>((resolve) => { settleBackendStart = resolve });
+    const finishBackendStart = () => {
+      settleBackendStart();
+      if (this.#backendStartSettled === backendStartSettled) {
+        this.#backendStartSettled = undefined;
+      }
+    };
+
+    this.#backendStartSettled = backendStartSettled;
+    try {
+      await this.setState(State.STARTING);
+      this.assertManagedServicesGeneration(managedServicesGeneration);
+    } catch (error) {
+      finishBackendStart();
+      if (error instanceof ManagedServicesReconciliationCancelled) return;
+      if (managedServicesGeneration === this.#managedServicesGeneration) this.currentAction = Action.NONE;
+      throw error;
+    }
     this.#adminAccess = config_.application.adminAccess ?? false;
     this.#containerEngineClient = undefined;
 
@@ -2864,9 +2927,22 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           });
         }
 
+        // Publish backend readiness before waiting for first-install credentials;
+        // the wizard needs the running VM in order to complete that prerequisite.
+        console.log('[FirstRunCoordinator] Backend engine ready — emitting first-run-backend-booted');
+        mainEvents.emit('first-run-backend-booted');
+
+        await this.reconcileManagedServices(managedServicesGeneration, config);
+        this.assertManagedServicesGeneration(managedServicesGeneration);
+        managedServicesReady = true;
         await this.setState(config.kubernetes.enabled ? State.STARTED : State.DISABLED);
         console.log(`[startup-perf] backend start() total: ${ Date.now() - backendStartTotal }ms`);
       } catch (err) {
+        if (err instanceof ManagedServicesReconciliationCancelled) {
+          console.log('[Sulla] Managed-service reconciliation cancelled by backend lifecycle change');
+
+          return;
+        }
         console.error('Error starting lima:', err);
         await this.setState(State.ERROR);
         if (err instanceof BackendError) {
@@ -2876,54 +2952,66 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         }
         throw err;
       } finally {
-        this.currentAction = Action.NONE;
+        if (managedServicesGeneration === this.#managedServicesGeneration) {
+          this.currentAction = Action.NONE;
+        }
+        finishBackendStart();
       }
     });
 
+    if (!managedServicesReady) return;
     await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
-    console.log('[FirstRunCoordinator] Backend boot complete — emitting first-run-backend-booted');
+  }
 
-    // Notify the FirstRunCoordinator that the backend has booted.
-    // The coordinator will fire the deploy step when credentials are also set.
-    mainEvents.emit('first-run-backend-booted');
+  private async reconcileManagedServices(generation: number, config: BackendSettings): Promise<void> {
+    const previous = this.#managedServicesReconciliation;
+    const reconciliation = (async() => {
+      if (previous) await previous.catch(() => undefined);
+      this.assertManagedServicesGeneration(generation);
+      await this.waitForSullaCredentials(generation);
+      this.assertManagedServicesGeneration(generation);
+
+      const { resetAgentContainerImageResolution } = await import('@pkg/agent/services/AgentContainerLauncher');
+
+      resetAgentContainerImageResolution();
+      if (config.kubernetes.enabled) {
+        await this.kubeBackend.sullaStepCustomEnvironment?.(
+          () => this.assertManagedServicesGeneration(generation),
+        );
+      } else {
+        await this.reconcileSullaDockerEnvironment(generation);
+        markSullaDockerServicesStarted();
+      }
+      this.assertManagedServicesGeneration(generation);
+      await instantiateSullaStart(() => this.assertManagedServicesGeneration(generation));
+      this.assertManagedServicesGeneration(generation);
+      mainEvents.emit('sulla-managed-services-ready');
+    })();
+
+    this.#managedServicesReconciliation = reconciliation;
+    try {
+      await reconciliation;
+    } finally {
+      if (this.#managedServicesReconciliation === reconciliation) {
+        this.#managedServicesReconciliation = undefined;
+      }
+    }
   }
 
   /**
    * Deploys Sulla services using Docker Compose when Kubernetes is disabled.
    * Handles preparation of compose file, deployment, health checks, and model pulling.
    */
-  async sullaStepDockerEnvironment(): Promise<void> {
+  private async reconcileSullaDockerEnvironment(generation: number): Promise<void> {
     const dockerEnvTotal = Date.now();
-
-    // Check if Sulla services are already running — skip redeploy on restart
     let t = Date.now();
-    // Restore the public host pin even when containers survive a Desktop restart.
-    // Rotation also requires recreating TLS servers and single-file CA mounts:
-    // their in-memory certificate / mounted inode may still reference the old pair.
-    let vaultTlsIdentityChanged = false;
-    if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
-      const previousFingerprint = await fs.promises.readFile(path.join(paths.appHome, 'vault-tls-fingerprint'), 'utf8').catch(() => '');
-      const { fingerprint } = await this.prepareVaultTlsIdentity();
-      vaultTlsIdentityChanged = previousFingerprint.trim() !== fingerprint;
-    }
-    const alreadyRunning = !vaultTlsIdentityChanged && await this.areSullaServicesRunning();
 
-    console.log(`[startup-perf] areSullaServicesRunning: ${ Date.now() - t }ms (result=${ alreadyRunning })`);
-
-    if (alreadyRunning) {
-      console.log('[Sulla] Services already running — skipping Docker Compose redeploy');
-      this.progressTracker.numeric('Sulla services already running', 100, 100);
-      markSullaDockerServicesStarted();
-      instantiateSullaStart();
-      this.progressTracker.numeric('Sulla deployment completed', 100, 100);
-
-      return;
-    }
-
+    this.assertManagedServicesGeneration(generation);
     await this.progressTracker.action('Preparing Sulla Docker Compose file', 30, async() => {
       this.progressTracker.numeric('Preparing Sulla Docker Compose file', 5, 100);
       t = Date.now();
       await this.prepareSullaComposeFile();
+      this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] prepareSullaComposeFile: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
@@ -2931,130 +3019,19 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // One-time migration: copy data from old VM paths to new host-mounted paths
     await this.progressTracker.action('Migrating Sulla data to host storage', 40, async() => {
       await this.migrateSullaDataToHost();
+      this.assertManagedServicesGeneration(generation);
     });
 
     await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async() => {
       this.progressTracker.numeric('Deploying Sulla services with Docker Compose', 20, 100);
       t = Date.now();
-      await this.applySullaCompose();
+      await this.applySullaCompose(generation);
       console.log(`[startup-perf] applySullaCompose: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Sulla services deployed', 35, 100);
     });
 
-    await this.progressTracker.action('Waiting for Sulla services to be ready', 180, async() => {
-      this.progressTracker.numeric('Waiting for Sulla services to be ready', 40, 100);
-      t = Date.now();
-      await this.waitForSullaDockerServices();
-      console.log(`[startup-perf] waitForSullaDockerServices: ${ Date.now() - t }ms`);
-      this.progressTracker.numeric('Sulla services ready', 64, 100);
-    });
-
-    t = Date.now();
-    markSullaDockerServicesStarted();
-    instantiateSullaStart();
-    console.log(`[startup-perf] instantiateSullaStart: ${ Date.now() - t }ms`);
-
     this.progressTracker.numeric('Sulla deployment completed', 100, 100);
     console.log(`[startup-perf] sullaStepDockerEnvironment total: ${ Date.now() - dockerEnvTotal }ms`);
-  }
-
-  /**
-   * Check if all core Sulla Docker services are already running.
-   * Returns true if all required containers exist and are in "running" state.
-   */
-  private async areSullaServicesRunning(): Promise<boolean> {
-    const requiredServices = [
-      'sulla_postgres',
-      'sulla_redis',
-      'sulla_python_runtime',
-      'sulla_shell_runtime',
-      'sulla_node_runtime',
-    ];
-    requiredServices.push('sulla_accounts', 'sulla_relay', 'sulla_workflow_manager', 'sulla_tools', 'sulla_projects');
-    if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) requiredServices.push('sulla_vault');
-    try {
-      if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
-        // A public deployment label survives failed redeploys and prevents
-        // accepting a server still holding the previous TLS identity in memory.
-        const deployedFingerprint = await this.execCommand(
-          { capture: true, root: true }, 'docker', 'inspect', '--format',
-          '{{index .Config.Labels "sulla.vault-tls-fingerprint"}}', 'sulla_vault',
-        );
-        const expectedFingerprint = await fs.promises.readFile(path.join(paths.appHome, 'vault-tls-fingerprint'), 'utf8');
-        if (deployedFingerprint.trim() !== expectedFingerprint.trim()) return false;
-        // Upgrade existing containers whose bind sources still live on tmpfs.
-        for (const [service, destination, source] of [
-          ['sulla_vault', '/run/sulla-vault-tls', VAULT_TLS_DIRECTORY],
-          ['sulla_tools', '/run/sulla-vault-ca/tls.crt', `${ VAULT_TLS_DIRECTORY }/tls.crt`],
-          ['sulla_files', '/run/sulla-vault-ca/tls.crt', `${ VAULT_TLS_DIRECTORY }/tls.crt`],
-        ]) {
-          // Files is optional: migrate it when installed without requiring it.
-          if (service === 'sulla_files') {
-            const installed = await this.execCommand(
-              { capture: true, root: true }, 'docker', 'ps', '-a', '--filter', 'name=^/sulla_files$', '--format', '{{.Names}}',
-            );
-            if (!installed.trim()) continue;
-          }
-          const mountedSource = await this.execCommand(
-            { capture: true, root: true }, 'docker', 'inspect', '--format',
-            `{{range .Mounts}}{{if eq .Destination "${ destination }"}}{{.Source}}{{end}}{{end}}`, service,
-          );
-          if (mountedSource.trim() !== source) return false;
-        }
-      }
-      const filesInstalled = await this.execCommand(
-        { capture: true, root: true }, 'docker', 'ps', '-a', '--filter', 'name=^/sulla_files$', '--format', '{{.Names}}',
-      );
-      if (filesInstalled.trim()) {
-        for (const requiredIdentity of [
-          path.join(paths.appHome, 'files-bootstrap-identity.enc'),
-          path.join(paths.appHome, 'files-tls-certificate.pem'),
-          path.join(paths.appHome, 'files-tls-fingerprint'),
-        ]) {
-          const stat = await fs.promises.stat(requiredIdentity);
-          if (!stat.isFile() || stat.size === 0) return false;
-        }
-        const deployedFingerprint = await this.execCommand(
-          { capture: true, root: true }, 'docker', 'inspect', '--format',
-          '{{index .Config.Labels "sulla.files-tls-fingerprint"}}', 'sulla_files',
-        );
-        const expectedFingerprint = await fs.promises.readFile(path.join(paths.appHome, 'files-tls-fingerprint'), 'utf8');
-        if (deployedFingerprint.trim() !== expectedFingerprint.trim()) return false;
-        const mountedSource = await this.execCommand(
-          { capture: true, root: true }, 'docker', 'inspect', '--format',
-          '{{range .Mounts}}{{if eq .Destination "/run/sulla-files-tls"}}{{.Source}}{{end}}{{end}}', 'sulla_files',
-        );
-        if (mountedSource.trim() !== FILES_TLS_DIRECTORY) return false;
-        const toolsCaSource = await this.execCommand(
-          { capture: true, root: true }, 'docker', 'inspect', '--format',
-          '{{range .Mounts}}{{if eq .Destination "/run/sulla-files-ca/tls.crt"}}{{.Source}}{{end}}{{end}}', 'sulla_tools',
-        );
-        if (toolsCaSource.trim() !== `${ FILES_TLS_DIRECTORY }/tls.crt`) return false;
-        await this.execCommand(
-          { capture: true, root: true }, 'sh', '-c',
-          'test -s "$1/tls.crt" && test -s "$1/tls.key"', '--', FILES_TLS_DIRECTORY,
-        );
-      }
-      for (const service of requiredServices) {
-        const status = await this.execCommand(
-          { capture: true, root: true },
-          'docker', 'ps', '--filter', `name=${ service }`, '--filter', 'status=running', '--format', '{{.Names}}',
-        );
-
-        if (!status.trim().includes(service)) {
-          console.log(`[Sulla] Service ${ service } not running — will redeploy`);
-
-          return false;
-        }
-      }
-      console.log('[Sulla] All core services already running');
-
-      return true;
-    } catch (err) {
-      console.log('[Sulla] Failed to check service status, will redeploy:', err);
-
-      return false;
-    }
   }
 
   private async loadOrCreateProjectsServiceSecret(name: 'projects-local-token' | 'projects-human-token' | 'projects-database-password'): Promise<string> {
@@ -3306,6 +3283,14 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    */
   private async prepareSullaComposeFile(): Promise<void> {
     const compose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
+
+    this.#optionalSullaFallbackImages.clear();
+    this.#managedSullaRefreshImages.clear();
+    for (const service of ['python_runtime', 'shell_runtime', 'node_runtime']) {
+      const image = compose.services[service]?.image;
+
+      if (typeof image === 'string') this.#managedSullaRefreshImages.set(service, image);
+    }
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     const rawSullaServicePassword = await SullaSettingsModel.getServicePassword();
@@ -3321,8 +3306,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     sullaApiToken = escapeForCompose(sullaApiToken);
     const filesBootstrapIdentity = await this.loadOrCreateFilesBootstrapIdentity();
     const { fingerprint: filesTlsFingerprint } = await this.prepareFilesTlsIdentity();
-    this.#optionalSullaFallbackImages.clear();
-    this.#optionalSullaRefreshImages.clear();
     try {
       const accountsSecrets = await this.prepareAccountsSecrets(rawSullaServicePassword);
       const accountsImage = resolveSullaServiceImage(
@@ -3330,6 +3313,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       );
       const resolvedAccountsImage = accountsImage.build ? accountsImage.image : `\${SULLA_ACCOUNTS_IMAGE:-${ accountsImage.image }}`;
 
+      if (shouldRefreshSullaServiceImage(accountsImage, process.env.SULLA_ACCOUNTS_IMAGE)) {
+        this.#managedSullaRefreshImages.set('sulla_accounts', accountsImage.image);
+      }
       if (!accountsImage.build && !process.env.SULLA_ACCOUNTS_IMAGE && !accountsImage.image.endsWith(':latest')) {
         this.#optionalSullaFallbackImages.set('sulla_accounts', {
           env: 'SULLA_ACCOUNTS_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-accounts:latest',
@@ -3373,20 +3359,25 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     } catch (error) {
       delete compose.services.sulla_accounts;
       this.#optionalSullaFallbackImages.delete('sulla_accounts');
+      this.#managedSullaRefreshImages.delete('sulla_accounts');
       console.warn('[Sulla] Accounts provisioning unavailable; continuing without the optional service:', error);
     }
     let vaultIdentities: {
       bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string; filesToken: string;
     } | undefined;
+    let vaultTlsFingerprint: string | undefined;
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
       vaultIdentities = await this.loadOrCreateVaultServiceIdentities();
-      const { fingerprint: vaultTlsFingerprint } = await this.prepareVaultTlsIdentity();
+      ({ fingerprint: vaultTlsFingerprint } = await this.prepareVaultTlsIdentity());
       const vaultImage = resolveSullaServiceImage(
         'sulla-vault', process.cwd(), Electron.app.getVersion(), process.env.SULLA_VAULT_IMAGE,
       );
 
       const image = vaultImage.build ? vaultImage.image : `\${SULLA_VAULT_IMAGE:-${ vaultImage.image }}`;
 
+      if (shouldRefreshSullaServiceImage(vaultImage, process.env.SULLA_VAULT_IMAGE)) {
+        this.#managedSullaRefreshImages.set('sulla_vault', vaultImage.image);
+      }
       if (!vaultImage.build && !process.env.SULLA_VAULT_IMAGE && !vaultImage.image.endsWith(':latest')) {
         this.#optionalSullaFallbackImages.set('sulla_vault', {
           env: 'SULLA_VAULT_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-vault:latest',
@@ -3429,6 +3420,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla-projects', process.cwd(), Electron.app.getVersion(), process.env.SULLA_PROJECTS_IMAGE,
     );
     const resolvedProjectsImage = projectsImage.build ? projectsImage.image : `\${SULLA_PROJECTS_IMAGE:-${ projectsImage.image }}`;
+    if (shouldRefreshSullaServiceImage(projectsImage, process.env.SULLA_PROJECTS_IMAGE)) {
+      this.#managedSullaRefreshImages.set('sulla_projects', projectsImage.image);
+    }
     if (!projectsImage.build && !process.env.SULLA_PROJECTS_IMAGE && !projectsImage.image.endsWith(':latest')) {
       this.#optionalSullaFallbackImages.set('sulla_projects', {
         env: 'SULLA_PROJECTS_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-projects:latest',
@@ -3464,6 +3458,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     );
     const image = workflowImage.build ? workflowImage.image : `\${SULLA_WORKFLOW_IMAGE:-${ workflowImage.image }}`;
 
+    if (shouldRefreshSullaServiceImage(workflowImage, process.env.SULLA_WORKFLOW_IMAGE)) {
+      this.#managedSullaRefreshImages.set('workflow_manager', workflowImage.image);
+    }
     if (!workflowImage.build && !process.env.SULLA_WORKFLOW_IMAGE && !workflowImage.image.endsWith(':latest')) {
       this.#optionalSullaFallbackImages.set('workflow_manager', {
         env: 'SULLA_WORKFLOW_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-workflows:latest',
@@ -3472,9 +3469,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     compose.services.workflow_manager = {
       ...workflowImage,
       image,
-      // Rebuild source images and refresh published tags, including the latest
-      // fallback, so cached pre-authentication managers cannot survive an upgrade.
-      pull_policy: workflowImage.build ? 'build' : 'always',
+      // Source checkouts retain their Dockerfile build; published images are
+      // refreshed by the common managed-image reconciliation path.
+      ...(workflowImage.build ? { pull_policy: 'build' } : {}),
       container_name: 'sulla_workflow_manager',
       // The manager alone needs Docker socket access to launch short-lived
       // runners. Runners retain the image's unprivileged `node` user and are
@@ -3511,6 +3508,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla-relay', process.cwd(), Electron.app.getVersion(), process.env.SULLA_RELAY_IMAGE,
     );
     const resolvedRelayImage = relayImage.build ? relayImage.image : `\${SULLA_RELAY_IMAGE:-${ relayImage.image }}`;
+    if (shouldRefreshSullaServiceImage(relayImage, process.env.SULLA_RELAY_IMAGE)) {
+      this.#managedSullaRefreshImages.set('sulla_relay', relayImage.image);
+    }
     if (!relayImage.build && !process.env.SULLA_RELAY_IMAGE && !relayImage.image.endsWith(':latest')) {
       this.#optionalSullaFallbackImages.set('sulla_relay', {
         env: 'SULLA_RELAY_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-relay:latest',
@@ -3536,6 +3536,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla-tools', process.cwd(), Electron.app.getVersion(), process.env.SULLA_TOOLS_IMAGE,
     );
     const resolvedToolsImage = toolsImage.build ? toolsImage.image : `\${SULLA_TOOLS_IMAGE:-${ toolsImage.image }}`;
+    if (shouldRefreshSullaServiceImage(toolsImage, process.env.SULLA_TOOLS_IMAGE)) {
+      this.#managedSullaRefreshImages.set('tools', toolsImage.image);
+    }
     if (!toolsImage.build && !process.env.SULLA_TOOLS_IMAGE && !toolsImage.image.endsWith(':latest')) {
       this.#optionalSullaFallbackImages.set('tools', {
         env: 'SULLA_TOOLS_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-tools:latest',
@@ -3545,6 +3548,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       ...toolsImage,
       image: resolvedToolsImage,
       container_name: 'sulla_tools',
+      labels: {
+        'sulla.files-tls-fingerprint': filesTlsFingerprint,
+        ...(vaultTlsFingerprint ? { 'sulla.vault-tls-fingerprint': vaultTlsFingerprint } : {}),
+      },
       depends_on: {
         postgres: { condition: 'service_healthy' },
         redis: { condition: 'service_healthy' },
@@ -3582,15 +3589,18 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     );
     const resolvedFilesImage = filesImage.build ? filesImage.image : `\${SULLA_FILES_IMAGE:-${ filesImage.image }}`;
 
-    if (!filesImage.build && !process.env.SULLA_FILES_IMAGE) {
-      this.#optionalSullaRefreshImages.set('sulla_files', filesImage.image);
+    if (shouldRefreshSullaServiceImage(filesImage, process.env.SULLA_FILES_IMAGE)) {
+      this.#managedSullaRefreshImages.set('sulla_files', filesImage.image);
     }
     const filesUserRoot = resolveSullaFilesUserRoot();
     compose.services.sulla_files = {
       ...filesImage,
       image: resolvedFilesImage,
       container_name: 'sulla_files',
-      labels: { 'sulla.files-tls-fingerprint': filesTlsFingerprint },
+      labels: {
+        'sulla.files-tls-fingerprint': filesTlsFingerprint,
+        ...(vaultTlsFingerprint ? { 'sulla.vault-tls-fingerprint': vaultTlsFingerprint } : {}),
+      },
       depends_on: {
         postgres: { condition: 'service_healthy' },
         ...(vaultIdentities ? { sulla_vault: { condition: 'service_healthy' } } : {}),
@@ -3714,25 +3724,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   /**
    * Runs docker-compose up -d to start all Sulla services in detached mode.
    */
-  private async applySullaCompose(): Promise<void> {
-    // Clean up any existing sulla containers to prevent name conflicts
-    try {
-      await this.progressTracker.action('Checking for existing containers', 60, async() => {
-        const existingContainers = await this.execCommand({ capture: true, root: true }, 'docker', 'ps', '-aq', '--filter', 'name=sulla_');
-        const containerIds = existingContainers.trim().split('\n').map(id => id.trim()).filter(id => id && /^[a-f0-9]{12,64}$/i.test(id));
-        if (containerIds.length > 0) {
-          await this.progressTracker.action('Stopping existing containers', 61, async() => {
-            await this.execCommand({ root: true }, 'docker', 'stop', ...containerIds);
-          });
-          await this.progressTracker.action('Cleaning containers', 62, async() => {
-            await this.execCommand({ root: true }, 'docker', 'rm', ...containerIds);
-          });
-        }
-      });
-    } catch (error) {
-      console.warn('[Sulla] Failed to clean up existing containers:', error);
-    }
-
+  private async applySullaCompose(generation: number): Promise<void> {
+    this.assertManagedServicesGeneration(generation);
     await this.progressTracker.action('Verifying compose file', 62.5, async() => {
       try {
         await this.execCommand({ root: true }, 'test', '-f', '/tmp/sulla-docker-compose.yml');
@@ -3769,16 +3762,43 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     await this.progressTracker.action('Deploying new containers', 63, async() => {
       const composeCommand = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'];
+      const reconcileOptionalService = async(service: string): Promise<void> => {
+        this.assertManagedServicesGeneration(generation);
+        const refreshImage = this.#managedSullaRefreshImages.get(service);
 
-      // Start the core independently so an unavailable optional published image
-      // can never prevent Postgres, Redis, or the function runtimes from starting.
+        if (refreshImage) {
+          try {
+            await this.execCommand({ root: true }, 'docker', 'pull', refreshImage);
+          } catch (error) {
+            console.warn(`[Sulla] Could not refresh ${ refreshImage }; trying the cached image:`, error);
+          }
+        }
+        this.assertManagedServicesGeneration(generation);
+        // Compose owns the desired-state diff. It leaves unchanged containers
+        // running and recreates only services whose image or configuration changed.
+        await this.execCommand(
+          { root: true }, ...composeCommand, 'up', '-d', '--no-deps',
+          ...(refreshImage ? ['--pull', 'never'] : []), service,
+        );
+        this.assertManagedServicesGeneration(generation);
+      };
+
+      // Postgres and Redis are stable data services. Compose pulls them only when
+      // missing; Desktop does not force-refresh their upstream image tags.
       await this.execCommand(
         { root: true }, ...composeCommand, 'up', '-d',
-        'postgres', 'redis', 'python_runtime', 'shell_runtime', 'node_runtime',
+        'postgres', 'redis',
       );
+      this.assertManagedServicesGeneration(generation);
+      await this.waitForDockerServiceHealthy('sulla_postgres', 300, generation);
+      await this.waitForDockerServiceHealthy('sulla_redis', 300, generation);
 
       this.#activeOptionalSullaServices.clear();
-      const optionalServices = ['sulla_projects', 'sulla_relay', 'workflow_manager', 'tools', 'sulla_files'];
+      const optionalServices: Array<{ service: string; container: string }> = [
+        { service: 'python_runtime', container: 'sulla_python_runtime' },
+        { service: 'shell_runtime', container: 'sulla_shell_runtime' },
+        { service: 'node_runtime', container: 'sulla_node_runtime' },
+      ];
 
       const configuredServices = await this.execCommand(
         { capture: true, root: true }, ...composeCommand, 'config', '--services',
@@ -3796,79 +3816,73 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
               'createdb', '-U', 'sulla', '--encoding=UTF8', '--template=template0', 'sulla_accounts',
             );
           }
-          optionalServices.unshift('sulla_accounts');
+          optionalServices.push({ service: 'sulla_accounts', container: 'sulla_accounts' });
         } catch (error) {
           console.warn('[Sulla] Accounts database provisioning failed; continuing without the optional service:', error);
         }
       }
 
-      if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) optionalServices.push('sulla_vault');
-      for (const service of optionalServices) {
+      // Attempt dependencies before their consumers. Optional failure remains
+      // isolated; a failed Vault explicitly suppresses Files for this generation.
+      if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
+        optionalServices.push({ service: 'sulla_vault', container: 'sulla_vault' });
+      }
+      optionalServices.push(
+        { service: 'sulla_projects', container: 'sulla_projects' },
+        { service: 'sulla_relay', container: 'sulla_relay' },
+        { service: 'workflow_manager', container: 'sulla_workflow_manager' },
+        { service: 'sulla_files', container: 'sulla_files' },
+        { service: 'tools', container: 'sulla_tools' },
+      );
+      for (const { service, container } of optionalServices) {
+        if (service === 'sulla_files' && settingsImpl.getSettings().experimental.sullaVaultV2Enabled &&
+          !this.#activeOptionalSullaServices.has('sulla_vault')) {
+          console.warn('[Sulla] Files unavailable because its configured Vault dependency is not ready');
+          continue;
+        }
+        let serviceStarted = false;
         try {
-          const refreshImage = this.#optionalSullaRefreshImages.get(service);
-
-          if (refreshImage) {
-            try {
-              await this.execCommand({ root: true }, 'docker', 'pull', refreshImage);
-            } catch (error) {
-              console.warn(`[Sulla] Could not refresh ${ refreshImage }; trying the cached image:`, error);
-            }
-          }
-          // After our refresh attempt, use the cache: Compose otherwise pulls
-          // :latest again even with its default missing-image policy.
-          await this.execCommand(
-            { root: true }, ...composeCommand, 'up', '-d', '--no-deps',
-            ...(refreshImage ? ['--pull', 'never'] : []), service,
-          );
-          this.#activeOptionalSullaServices.add(service);
+          await reconcileOptionalService(service);
+          serviceStarted = true;
         } catch (error) {
+          if (error instanceof ManagedServicesReconciliationCancelled) throw error;
           const fallback = this.#optionalSullaFallbackImages.get(service);
           let unavailableError = error;
 
           if (fallback) {
             try {
-              console.warn(`[Sulla] Pinned image for ${ service } unavailable; trying ${ fallback.image }`);
+              console.warn(`[Sulla] Selected image for ${ service } unavailable; trying ${ fallback.image }`);
+              try {
+                await this.execCommand({ root: true }, 'docker', 'pull', fallback.image);
+              } catch (pullError) {
+                console.warn(`[Sulla] Could not refresh ${ fallback.image }; trying the cached fallback:`, pullError);
+              }
+              this.assertManagedServicesGeneration(generation);
               await this.execCommand(
                 { root: true }, 'env', `${ fallback.env }=${ fallback.image }`,
-                ...composeCommand, 'up', '-d', '--no-deps', service,
+                ...composeCommand, 'up', '-d', '--no-deps', '--pull', 'never', service,
               );
-              this.#activeOptionalSullaServices.add(service);
-              continue;
+              this.assertManagedServicesGeneration(generation);
+              serviceStarted = true;
             } catch (fallbackError) {
+              if (fallbackError instanceof ManagedServicesReconciliationCancelled) throw fallbackError;
               unavailableError = fallbackError;
             }
           }
-          console.warn(`[Sulla] Service ${ service } unavailable; continuing startup without it:`, unavailableError);
+          if (!serviceStarted) {
+            console.warn(`[Sulla] Service ${ service } image unavailable; continuing startup without it:`, unavailableError);
+          }
+        }
+        if (!serviceStarted) continue;
+        try {
+          await this.waitForDockerServiceHealthy(container, 60, generation);
+          this.#activeOptionalSullaServices.add(service);
+        } catch (healthError) {
+          if (healthError instanceof ManagedServicesReconciliationCancelled) throw healthError;
+          console.warn(`[Sulla] Service ${ service } did not become ready; leaving its selected image in place:`, healthError);
         }
       }
     });
-  }
-
-  /**
-   * Waits for all Sulla Docker services to be healthy by checking their container status.
-   */
-  private async waitForSullaDockerServices(): Promise<void> {
-    // Postgres and Redis are required to boot. The function runtimes only back
-    // custom functions, so a slow or failed runtime must not block startup.
-    for (const service of ['sulla_postgres', 'sulla_redis']) {
-      await this.waitForDockerServiceHealthy(service);
-    }
-    const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime'];
-
-    if (this.#activeOptionalSullaServices.has('sulla_projects')) optionalServices.push('sulla_projects');
-    if (this.#activeOptionalSullaServices.has('workflow_manager')) optionalServices.push('sulla_workflow_manager');
-    if (this.#activeOptionalSullaServices.has('sulla_relay')) optionalServices.push('sulla_relay');
-    if (this.#activeOptionalSullaServices.has('tools')) optionalServices.push('sulla_tools');
-    if (this.#activeOptionalSullaServices.has('sulla_files')) optionalServices.push('sulla_files');
-    if (this.#activeOptionalSullaServices.has('sulla_vault')) optionalServices.push('sulla_vault');
-    if (this.#activeOptionalSullaServices.has('sulla_accounts')) optionalServices.push('sulla_accounts');
-    for (const service of optionalServices) {
-      try {
-        await this.waitForDockerServiceHealthy(service, 60);
-      } catch (err) {
-        console.warn(`[Sulla] ${ service } not ready; continuing startup without it:`, err);
-      }
-    }
   }
 
   /**
@@ -3876,9 +3890,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * @param serviceName The name of the Docker container to check.
    * @param timeoutSec Maximum time to wait in seconds (default 300).
    */
-  private async waitForDockerServiceHealthy(serviceName: string, timeoutSec = 300): Promise<void> {
+  private async waitForDockerServiceHealthy(serviceName: string, timeoutSec = 300, generation?: number): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < timeoutSec * 1000) {
+      if (generation !== undefined) this.assertManagedServicesGeneration(generation);
       try {
         const status = await this.execCommand(
           { capture: true, root: true }, 'docker', 'inspect', '--format',
@@ -4077,6 +4092,11 @@ CREDFWD_URL='http://${ SLIRP.HOST_GATEWAY }:${ stateInfo.port }'
     // the process terminating), as we do not want to shut down the VM in that
     // case.
 
+    this.invalidateManagedServicesGeneration();
+    if (this.currentAction === Action.STARTING && this.#backendStartSettled) {
+      await this.#backendStartSettled;
+      if (this.currentAction === Action.STARTING) this.currentAction = Action.NONE;
+    }
     if (this.currentAction !== Action.NONE) {
       return;
     }
