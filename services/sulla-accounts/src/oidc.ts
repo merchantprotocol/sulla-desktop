@@ -20,6 +20,7 @@ export interface Discovery {
 
 export interface Authority {
   id: string;
+  remote_authority_id?: string;
   issuer: string;
   client_id: string;
   resource_audiences: string[];
@@ -74,12 +75,15 @@ export async function createAuthority(db: Database, input: Record<string, unknow
   const scopes = stringArray(input.scopes ?? ['openid', 'profile'], 'scopes', 20);
   if (!scopes.includes('openid')) throw new Error('scopes must include openid');
   const membershipEndpoint = input.membershipEndpoint === undefined ? undefined : assertTrustedUrl(string(input.membershipEndpoint, 'membershipEndpoint'), metadata.issuer);
+  const remoteAuthorityId = input.remoteAuthorityId === undefined ? undefined : string(input.remoteAuthorityId, 'remoteAuthorityId', 36);
+  if (remoteAuthorityId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(remoteAuthorityId)) throw new Error('remoteAuthorityId is invalid');
+  if (membershipEndpoint && !remoteAuthorityId) throw new Error('remoteAuthorityId is required with membershipEndpoint');
   const id = randomUUID();
   const result = await db.query<Authority>(
     `INSERT INTO accounts.authorities
-       (id, issuer, client_id, resource_audiences, scopes, authorization_endpoint, token_endpoint, jwks_uri, revocation_endpoint, membership_endpoint)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [id, metadata.issuer, clientId, resourceAudiences, scopes, metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint, membershipEndpoint],
+       (id, remote_authority_id, issuer, client_id, resource_audiences, scopes, authorization_endpoint, token_endpoint, jwks_uri, revocation_endpoint, membership_endpoint)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+    [id, remoteAuthorityId, metadata.issuer, clientId, resourceAudiences, scopes, metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint, membershipEndpoint],
   );
   return result.rows[0];
 }
@@ -293,13 +297,16 @@ export async function revokeAuthoritySession(db: Database, config: AccountsConfi
 }
 
 export async function ensureHostedAuthority(db: Database, config: AccountsConfig): Promise<void> {
-  if (config.mode !== 'server' || !config.keycloakIssuer || !config.keycloakNativeClientId || !config.keycloakResourceAudiences.size) return;
-  const existing = await db.query('SELECT 1 FROM accounts.authorities WHERE issuer=$1', [config.keycloakIssuer]);
-  if (existing.rowCount) return;
+  if (config.mode !== 'server' || !config.keycloakIssuer || !config.keycloakAuthorityId || !config.keycloakNativeClientId || !config.keycloakResourceAudiences.size) return;
   const metadata = await discover(config.keycloakIssuer);
   await db.query(
-    `INSERT INTO accounts.authorities(id,issuer,client_id,resource_audiences,scopes,authorization_endpoint,token_endpoint,jwks_uri,revocation_endpoint,membership_endpoint)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (issuer) DO NOTHING`,
-    [randomUUID(), metadata.issuer, config.keycloakNativeClientId, [...config.keycloakResourceAudiences], ['openid', 'profile'], metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint, new URL('/v1/authority/membership/resolve', config.publicUrl).href],
+    `INSERT INTO accounts.authorities(id,remote_authority_id,issuer,client_id,resource_audiences,scopes,authorization_endpoint,token_endpoint,jwks_uri,revocation_endpoint,membership_endpoint)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (issuer) DO UPDATE SET
+       remote_authority_id=EXCLUDED.remote_authority_id,client_id=EXCLUDED.client_id,
+       resource_audiences=EXCLUDED.resource_audiences,scopes=EXCLUDED.scopes,
+       authorization_endpoint=EXCLUDED.authorization_endpoint,token_endpoint=EXCLUDED.token_endpoint,
+       jwks_uri=EXCLUDED.jwks_uri,revocation_endpoint=EXCLUDED.revocation_endpoint,
+       membership_endpoint=EXCLUDED.membership_endpoint,updated_at=now()`,
+    [randomUUID(), config.keycloakAuthorityId, metadata.issuer, config.keycloakNativeClientId, [...config.keycloakResourceAudiences], ['openid', 'profile'], metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint, new URL('/v1/authority/membership/resolve', config.publicUrl).href],
   );
 }
