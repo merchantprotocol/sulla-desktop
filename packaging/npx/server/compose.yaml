@@ -72,12 +72,39 @@ services:
         if [ "$(psql -h postgres -U sulla -d postgres -tAc
         "SELECT 1 FROM pg_database WHERE datname='sulla_files'")" != 1 ]; then
         createdb -h postgres -U sulla -O sulla sulla_files; fi
+  projects:
+    image: sulla-projects:${SULLA_IMAGE_TAG}
+    build:
+      context: ${SULLA_SOURCE_DIR}
+      dockerfile: services/sulla-projects/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      SULLA_PROJECTS_MODE: server
+      SULLA_PROJECTS_PORT: "8793"
+      SULLA_PROJECTS_DATABASE_NAME: sulla_projects
+      SULLA_PROJECTS_DATABASE_OWNER: sulla
+      SULLA_PROJECTS_DATABASE_ROLE: sulla_projects_service
+      SULLA_PROJECTS_ADMIN_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/postgres
+      SULLA_PROJECTS_MIGRATION_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_projects
+      SULLA_PROJECTS_DATABASE_URL: postgresql://sulla_projects_service:${SULLA_PROJECTS_DATABASE_PASSWORD}@postgres:5432/sulla_projects
+      SULLA_PROJECTS_DATABASE_PASSWORD: ${SULLA_PROJECTS_DATABASE_PASSWORD}
+      SULLA_PROJECTS_JWT_SECRET: ${SULLA_PROJECTS_JWT_SECRET}
+      SULLA_PROJECTS_JWT_ISSUER: ${SULLA_PROJECTS_JWT_ISSUER}
+      SULLA_PROJECTS_JWT_AUDIENCE: ${SULLA_PROJECTS_JWT_AUDIENCE}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8793/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
   gateway:
     image: nginx:1.29-alpine
     restart: unless-stopped
     depends_on:
       vault: { condition: service_healthy }
       files: { condition: service_healthy }
+      projects: { condition: service_healthy }
     environment:
       SULLA_TLS_CERT_CONTAINER_PATH: ${SULLA_TLS_CERT_CONTAINER_PATH:-}
       SULLA_TLS_KEY_CONTAINER_PATH: ${SULLA_TLS_KEY_CONTAINER_PATH:-}

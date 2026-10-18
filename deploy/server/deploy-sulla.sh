@@ -21,8 +21,13 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 : "${SULLA_VAULT_JWT_SECRET:?missing JWT secret}"
 : "${SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN:?missing bootstrap token}"
 : "${SULLA_FILES_CAPABILITY_SIGNING_KEY:?missing Files capability signing key}"
+: "${SULLA_PROJECTS_DATABASE_PASSWORD:?missing Projects database password}"
+: "${SULLA_PROJECTS_JWT_SECRET:?missing Projects JWT secret}"
+: "${SULLA_PROJECTS_JWT_ISSUER:?missing Projects JWT issuer}"
+: "${SULLA_PROJECTS_JWT_AUDIENCE:?missing Projects JWT audience}"
 : "${SULLA_VAULT_IMAGE:?missing pinned vault image}"
 : "${SULLA_FILES_IMAGE:?missing pinned Files image}"
+: "${SULLA_PROJECTS_IMAGE:?missing pinned Projects image}"
 : "${SULLA_STORAGE_CLASS:?missing storage class}"
 : "${SULLA_STORAGE_SIZE:?missing storage size}"
 : "${SULLA_FILES_STORAGE_SIZE:?missing Files storage size}"
@@ -53,6 +58,13 @@ done
   --from-literal=postgres-database=sulla \
   --from-literal=database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla" \
   --from-literal=files-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_files" \
+  --from-literal=postgres-admin-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/postgres" \
+  --from-literal=projects-migration-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_projects" \
+  --from-literal=projects-database-url="postgresql://sulla_projects_service:${SULLA_PROJECTS_DATABASE_PASSWORD}@postgres:5432/sulla_projects" \
+  --from-literal=projects-database-password="$SULLA_PROJECTS_DATABASE_PASSWORD" \
+  --from-literal=projects-jwt-secret="$SULLA_PROJECTS_JWT_SECRET" \
+  --from-literal=projects-jwt-issuer="$SULLA_PROJECTS_JWT_ISSUER" \
+  --from-literal=projects-jwt-audience="$SULLA_PROJECTS_JWT_AUDIENCE" \
   --from-literal=jwt-secret="$SULLA_VAULT_JWT_SECRET" \
   --from-literal=files-capability-signing-key="$SULLA_FILES_CAPABILITY_SIGNING_KEY" \
   --from-literal=bootstrap-token="$SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN" \
@@ -66,14 +78,16 @@ done
   sed '/^metadata:$/a\  labels:\n    app.kubernetes.io/managed-by: sulla-server-installer' | \
   "${KUBECTL[@]}" apply -f - >/dev/null
 
-rendered="$(mktemp)"; rendered_files="$(mktemp)"; rendered_storage="$(mktemp)"; trap 'rm -f "$rendered" "$rendered_files" "$rendered_storage"' EXIT
+rendered="$(mktemp)"; rendered_files="$(mktemp)"; rendered_projects="$(mktemp)"; rendered_storage="$(mktemp)"; trap 'rm -f "$rendered" "$rendered_files" "$rendered_projects" "$rendered_storage"' EXIT
 sed "s|__SULLA_VAULT_IMAGE__|${SULLA_VAULT_IMAGE}|g" "$K8S_DIR/sulla-vault.yaml" >"$rendered"
 sed "s|__SULLA_FILES_IMAGE__|${SULLA_FILES_IMAGE}|g" "$K8S_DIR/sulla-files.yaml" >"$rendered_files"
+sed "s|__SULLA_PROJECTS_IMAGE__|${SULLA_PROJECTS_IMAGE}|g" "$K8S_DIR/sulla-projects.yaml" >"$rendered_projects"
 sed -e "s|__SULLA_STORAGE_CLASS__|${SULLA_STORAGE_CLASS}|g" -e "s|__SULLA_STORAGE_SIZE__|${SULLA_STORAGE_SIZE}|g" -e "s|__SULLA_FILES_STORAGE_SIZE__|${SULLA_FILES_STORAGE_SIZE}|g" "$K8S_DIR/storage.yaml" >"$rendered_storage"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_storage"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$K8S_DIR/postgres.yaml"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_files"
+"${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_projects"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$K8S_DIR/sulla-gateway.yaml"
 if [[ ${SULLA_INGRESS_MODE:-create} == create ]]; then
   ingress="$(mktemp)"
@@ -99,6 +113,7 @@ fi
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/postgres --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-vault --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-files --timeout=5m
+"${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-projects --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-gateway --timeout=5m
 
 printf '\nSulla services are ready:\n'

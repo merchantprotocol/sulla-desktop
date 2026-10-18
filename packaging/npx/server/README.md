@@ -24,7 +24,7 @@ The direct `curl | sudo bash` entry point remains available for source checkouts
 curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo bash
 ```
 
-Compose builds the vault image from the exact resolved source commit. Kubernetes defaults to the CI-published `sha-<12 characters>` image for that commit and proves the manifest is available before changing the cluster. The image workflow runs for every main-branch commit, so the installer never silently substitutes an older runtime. A custom pinned image tag or digest is also accepted and its pull is verified by the rollout. Agent and workflow runtime wiring is outside this initial server-console kit.
+Compose builds the Vault, Files, and Projects images from the exact resolved source commit. Kubernetes defaults to CI-published `sha-<12 characters>` images for that commit and proves their manifests are available before changing the cluster. A custom pinned image tag or digest is also accepted and its pull is verified by the rollout. Agent and workflow runtime wiring remains outside this server-console kit.
 
 Sulla Desktop's built-in k3s runs **inside a Lima virtual machine**. Other physical machines cannot join that private cluster as nodes. A multi-server cluster therefore needs k3s installed natively on Ubuntu, which is what these scripts do.
 
@@ -134,7 +134,9 @@ On the first server:
 sudo ./deploy-sulla.sh
 ```
 
-The installer generates PostgreSQL, JWT, and bootstrap secrets once and saves them in `server.env` with mode `0600`. The deploy script applies those values through a Kubernetes Secret, renders the selected storage and pinned image settings, waits for both Deployments, and prints the final Pods, PVC, and Services. For an existing cluster, the selected context is flattened into a root-readable task kubeconfig and used explicitly on every call. Rerunning it preserves the same cluster target, secrets, and database volume. If an unrelated `sulla` namespace already exists, deployment stops before changing its Secrets or PVCs.
+The installer generates PostgreSQL, JWT, bootstrap, and Projects runtime-role secrets once and saves them in `server.env` with mode `0600`. Projects creates its isolated `sulla_projects` database and runs migrations as the `sulla` owner, while requests use the non-superuser, non-`BYPASSRLS` `sulla_projects_service` role. The deploy script applies those values through a Kubernetes Secret, renders the selected storage and pinned image settings, waits for every Deployment, and prints the final Pods, PVCs, and Services. For an existing cluster, the selected context is flattened into a root-readable task kubeconfig and used explicitly on every call. Rerunning it preserves the same cluster target, secrets, and database volume. If an unrelated `sulla` namespace already exists, deployment stops before changing its Secrets or PVCs.
+
+Projects is routed at `/projects-api/v1/`; other `/projects-api/` paths, including the container health endpoint, are not exposed. Server requests require a bearer JWT signed with `SULLA_PROJECTS_JWT_SECRET`, issuer `sulla-server`, audience `sulla-projects`, a subject and expiry, an `org_id` or `tenant_id`, and an optional `projects_role` of `viewer`, `editor`, or `admin` (default `viewer`). The install kit configures verification but does not mint user tokens; the server identity layer must issue those claims before external clients can use the API. Keep the signing secret in `server.env` or the Kubernetes Secret, never in client configuration.
 
 PostgreSQL stays `ClusterIP`. The wizard can create an Ingress or leave routing to an existing ingress. It prints the real console login URL only after rollout and first-owner bootstrap succeed.
 
@@ -147,6 +149,7 @@ sudo kubectl -n sulla get pods,pvc,services -o wide
 sudo kubectl -n sulla get events --sort-by=.lastTimestamp
 sudo kubectl -n sulla logs deployment/postgres --tail=100
 sudo kubectl -n sulla logs deployment/sulla-vault --tail=100
+sudo kubectl -n sulla logs deployment/sulla-projects --tail=100
 ```
 
 ## Troubleshooting

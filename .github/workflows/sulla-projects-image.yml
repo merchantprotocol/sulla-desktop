@@ -8,10 +8,6 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-    paths:
-      - 'services/sulla-projects/**'
-      - 'packages/projects/**'
-      - '.github/workflows/sulla-projects-image.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -31,6 +27,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
         uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 12
         with:
           images: ghcr.io/merchantprotocol/sulla-projects
           tags: |

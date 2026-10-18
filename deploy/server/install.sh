@@ -58,6 +58,7 @@ main() {
       [[ -n ${SULLA_KUBECONTEXT:-} ]] || fail "Kubernetes context is required"
       [[ -n ${SULLA_VAULT_IMAGE:-} && "$SULLA_VAULT_IMAGE" != *:latest && "$SULLA_VAULT_IMAGE" != *['| ']* ]] || fail "Kubernetes vault image must be pinned and contain no spaces"
       [[ -n ${SULLA_FILES_IMAGE:-} && "$SULLA_FILES_IMAGE" != *:latest && "$SULLA_FILES_IMAGE" != *['| ']* ]] || fail "Kubernetes Files image must be pinned and contain no spaces"
+      [[ -z ${SULLA_PROJECTS_IMAGE:-} || "$SULLA_PROJECTS_IMAGE" != *:latest && "$SULLA_PROJECTS_IMAGE" != *['| ']* ]] || fail "Kubernetes Projects image must be pinned and contain no spaces"
       [[ ${SULLA_STORAGE_CLASS:-} =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || fail "storage class name is invalid"
       [[ ${SULLA_STORAGE_SIZE:-} =~ ^[1-9][0-9]*(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$ ]] || fail "PostgreSQL storage size must be a Kubernetes quantity such as 20Gi"
       [[ ${SULLA_FILES_STORAGE_SIZE:-} =~ ^[1-9][0-9]*(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$ ]] || fail "Files storage size must be a Kubernetes quantity such as 100Gi"
@@ -142,6 +143,7 @@ main() {
       fi
       ask SULLA_VAULT_IMAGE "Pinned vault image (tag or digest; never latest)" "ghcr.io/merchantprotocol/sulla-vault:sha-${SULLA_SOURCE_SHA:0:12}"
       ask SULLA_FILES_IMAGE "Pinned Files image (tag or digest; never latest)" "ghcr.io/merchantprotocol/sulla-files:sha-${SULLA_SOURCE_SHA:0:12}"
+      ask SULLA_PROJECTS_IMAGE "Pinned Projects image (tag or digest; never latest)" "ghcr.io/merchantprotocol/sulla-projects:sha-${SULLA_SOURCE_SHA:0:12}"
       ask SULLA_STORAGE_CLASS "Storage class" local-path
       ask SULLA_STORAGE_SIZE "PostgreSQL storage size" 20Gi
       ask SULLA_FILES_STORAGE_SIZE "Files storage size" 100Gi
@@ -158,7 +160,7 @@ main() {
     install-server.sh join-node.sh deploy-sulla.sh compose.yaml
     gateway/nginx.conf.template gateway/nginx.kubernetes.conf.template gateway/entrypoint.sh
     k8s/kustomization.yaml k8s/namespace.yaml k8s/storage.yaml
-    k8s/postgres.yaml k8s/sulla-vault.yaml k8s/sulla-files.yaml k8s/sulla-gateway.yaml
+    k8s/postgres.yaml k8s/sulla-vault.yaml k8s/sulla-files.yaml k8s/sulla-projects.yaml k8s/sulla-gateway.yaml
   )
 
   if [[ -n ${SULLA_BUNDLE_DIR:-} ]]; then
@@ -205,8 +207,9 @@ main() {
   [[ -f "$env_file" ]] || {
     env_tmp="$env_file.tmp"
     postgres_password="$(openssl rand -hex 32)"; jwt_secret="$(openssl rand -base64 48 | tr -d '\n')"; bootstrap_token="$(openssl rand -hex 32)"; files_capability_key="$(openssl rand -base64 48 | tr -d '\n')"
-    printf 'SULLA_RUNTIME=%q\nSULLA_SOURCE_SHA=%q\nSULLA_PUBLIC_URL=%q\nSULLA_ORGANIZATION=%q\nSULLA_ADMIN_EMAIL=%q\nSULLA_ADMIN_NAME=%q\nSULLA_POSTGRES_PASSWORD=%q\nSULLA_VAULT_JWT_SECRET=%q\nSULLA_VAULT_SERVER_BOOTSTRAP_TOKEN=%q\nSULLA_FILES_CAPABILITY_SIGNING_KEY=%q\n' \
-      "$SULLA_RUNTIME" "$SULLA_SOURCE_SHA" "$SULLA_PUBLIC_URL" "$SULLA_ORGANIZATION" "$SULLA_ADMIN_EMAIL" "$SULLA_ADMIN_NAME" "$postgres_password" "$jwt_secret" "$bootstrap_token" "$files_capability_key" >"$env_tmp"
+    projects_database_password="$(openssl rand -hex 32)"; projects_jwt_secret="$(openssl rand -base64 48 | tr -d '\n')"
+    printf 'SULLA_RUNTIME=%q\nSULLA_SOURCE_SHA=%q\nSULLA_PUBLIC_URL=%q\nSULLA_ORGANIZATION=%q\nSULLA_ADMIN_EMAIL=%q\nSULLA_ADMIN_NAME=%q\nSULLA_POSTGRES_PASSWORD=%q\nSULLA_VAULT_JWT_SECRET=%q\nSULLA_VAULT_SERVER_BOOTSTRAP_TOKEN=%q\nSULLA_FILES_CAPABILITY_SIGNING_KEY=%q\nSULLA_PROJECTS_DATABASE_PASSWORD=%q\nSULLA_PROJECTS_JWT_SECRET=%q\nSULLA_PROJECTS_JWT_ISSUER=%q\nSULLA_PROJECTS_JWT_AUDIENCE=%q\n' \
+      "$SULLA_RUNTIME" "$SULLA_SOURCE_SHA" "$SULLA_PUBLIC_URL" "$SULLA_ORGANIZATION" "$SULLA_ADMIN_EMAIL" "$SULLA_ADMIN_NAME" "$postgres_password" "$jwt_secret" "$bootstrap_token" "$files_capability_key" "$projects_database_password" "$projects_jwt_secret" sulla-server sulla-projects >"$env_tmp"
     if [[ "$SULLA_RUNTIME" == compose ]]; then
       tls_dir="$SULLA_DIR/tls"; mkdir -p "$tls_dir"
       [[ -z "$SULLA_TLS_CERT" ]] || cp "$SULLA_TLS_CERT" "$tls_dir/tls.crt"
@@ -215,7 +218,7 @@ main() {
       source_dir="$SULLA_DIR/sources/$SULLA_SOURCE_SHA"
       printf 'SULLA_PORT=%q\nSULLA_BIND_ADDRESS=%q\nSULLA_DATA_DIR=%q\nSULLA_TLS_DIR=%q\nSULLA_TLS_CERT_CONTAINER_PATH=%q\nSULLA_TLS_KEY_CONTAINER_PATH=%q\nSULLA_IMAGE_TAG=%q\nSULLA_SOURCE_DIR=%q\n' "$SULLA_PORT" "$SULLA_BIND_ADDRESS" "$SULLA_DATA_DIR" "$tls_dir" "$([[ -n "$SULLA_TLS_CERT" ]] && echo /run/sulla-tls/tls.crt)" "$([[ -n "$SULLA_TLS_KEY" ]] && echo /run/sulla-tls/tls.key)" "${SULLA_SOURCE_SHA:0:12}" "$source_dir" >>"$env_tmp"
     else
-      printf 'SULLA_KUBERNETES_MODE=%q\nSULLA_KUBECONFIG=%q\nSULLA_KUBECONTEXT=%q\nSULLA_VAULT_IMAGE=%q\nSULLA_FILES_IMAGE=%q\nSULLA_STORAGE_CLASS=%q\nSULLA_STORAGE_SIZE=%q\nSULLA_FILES_STORAGE_SIZE=%q\nSULLA_INGRESS_MODE=%q\nSULLA_HOSTNAME=%q\nSULLA_TLS_SECRET=%q\n' "$SULLA_KUBERNETES_MODE" "$SULLA_KUBECONFIG" "$SULLA_KUBECONTEXT" "$SULLA_VAULT_IMAGE" "$SULLA_FILES_IMAGE" "$SULLA_STORAGE_CLASS" "$SULLA_STORAGE_SIZE" "$SULLA_FILES_STORAGE_SIZE" "$SULLA_INGRESS_MODE" "$SULLA_HOSTNAME" "$SULLA_TLS_SECRET" >>"$env_tmp"
+      printf 'SULLA_KUBERNETES_MODE=%q\nSULLA_KUBECONFIG=%q\nSULLA_KUBECONTEXT=%q\nSULLA_VAULT_IMAGE=%q\nSULLA_FILES_IMAGE=%q\nSULLA_PROJECTS_IMAGE=%q\nSULLA_STORAGE_CLASS=%q\nSULLA_STORAGE_SIZE=%q\nSULLA_FILES_STORAGE_SIZE=%q\nSULLA_INGRESS_MODE=%q\nSULLA_HOSTNAME=%q\nSULLA_TLS_SECRET=%q\n' "$SULLA_KUBERNETES_MODE" "$SULLA_KUBECONFIG" "$SULLA_KUBECONTEXT" "$SULLA_VAULT_IMAGE" "$SULLA_FILES_IMAGE" "$SULLA_PROJECTS_IMAGE" "$SULLA_STORAGE_CLASS" "$SULLA_STORAGE_SIZE" "$SULLA_FILES_STORAGE_SIZE" "$SULLA_INGRESS_MODE" "$SULLA_HOSTNAME" "$SULLA_TLS_SECRET" >>"$env_tmp"
     fi
     mv "$env_tmp" "$env_file"
   }
@@ -226,8 +229,13 @@ main() {
     SULLA_FILES_CAPABILITY_SIGNING_KEY="$(openssl rand -base64 48 | tr -d '\n')"
     printf 'SULLA_FILES_CAPABILITY_SIGNING_KEY=%q\n' "$SULLA_FILES_CAPABILITY_SIGNING_KEY" >>"$env_file"
   fi
+  if [[ -z ${SULLA_PROJECTS_DATABASE_PASSWORD:-} ]]; then SULLA_PROJECTS_DATABASE_PASSWORD="$(openssl rand -hex 32)"; printf 'SULLA_PROJECTS_DATABASE_PASSWORD=%q\n' "$SULLA_PROJECTS_DATABASE_PASSWORD" >>"$env_file"; fi
+  if [[ -z ${SULLA_PROJECTS_JWT_SECRET:-} ]]; then SULLA_PROJECTS_JWT_SECRET="$(openssl rand -base64 48 | tr -d '\n')"; printf 'SULLA_PROJECTS_JWT_SECRET=%q\n' "$SULLA_PROJECTS_JWT_SECRET" >>"$env_file"; fi
+  if [[ -z ${SULLA_PROJECTS_JWT_ISSUER:-} ]]; then SULLA_PROJECTS_JWT_ISSUER=sulla-server; printf 'SULLA_PROJECTS_JWT_ISSUER=%q\n' "$SULLA_PROJECTS_JWT_ISSUER" >>"$env_file"; fi
+  if [[ -z ${SULLA_PROJECTS_JWT_AUDIENCE:-} ]]; then SULLA_PROJECTS_JWT_AUDIENCE=sulla-projects; printf 'SULLA_PROJECTS_JWT_AUDIENCE=%q\n' "$SULLA_PROJECTS_JWT_AUDIENCE" >>"$env_file"; fi
   if [[ ${SULLA_RUNTIME:-} == kubernetes ]]; then
     if [[ -z ${SULLA_FILES_IMAGE:-} ]]; then SULLA_FILES_IMAGE="ghcr.io/merchantprotocol/sulla-files:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_FILES_IMAGE=%q\n' "$SULLA_FILES_IMAGE" >>"$env_file"; fi
+    if [[ -z ${SULLA_PROJECTS_IMAGE:-} ]]; then SULLA_PROJECTS_IMAGE="ghcr.io/merchantprotocol/sulla-projects:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_PROJECTS_IMAGE=%q\n' "$SULLA_PROJECTS_IMAGE" >>"$env_file"; fi
     if [[ -z ${SULLA_FILES_STORAGE_SIZE:-} ]]; then SULLA_FILES_STORAGE_SIZE=100Gi; printf 'SULLA_FILES_STORAGE_SIZE=%q\n' "$SULLA_FILES_STORAGE_SIZE" >>"$env_file"; fi
   fi
   validate_configuration
@@ -239,16 +247,16 @@ main() {
     if [[ ! -f "$archive" ]]; then curl -fsSL "https://github.com/merchantprotocol/sulla-desktop/archive/${SULLA_SOURCE_SHA}.tar.gz" -o "$archive.tmp"; mv "$archive.tmp" "$archive"; fi
     tar -xzf "$archive" --strip-components=1 -C "$source_dir"
     compose=(docker compose --env-file /dev/null -f "$SULLA_DIR/compose.yaml")
-    "${compose[@]}" build --pull vault files
+    "${compose[@]}" build --pull vault files projects
     if ! "${compose[@]}" up -d; then
       "${compose[@]}" ps >&2 || true
-      "${compose[@]}" logs --tail=100 vault files gateway >&2 || true
+      "${compose[@]}" logs --tail=100 vault files projects gateway >&2 || true
       fail "Sulla services failed to start"
     fi
     healthy=false; deadline=$((SECONDS + 300))
     while (( SECONDS < deadline )); do
-      gateway_id="$("${compose[@]}" ps -q gateway 2>/dev/null || true)"; files_id="$("${compose[@]}" ps -q files 2>/dev/null || true)"
-      if [[ -n "$gateway_id" && -n "$files_id" && "$(docker inspect --format '{{.State.Health.Status}}' "$gateway_id" 2>/dev/null || true)" == healthy && "$(docker inspect --format '{{.State.Health.Status}}' "$files_id" 2>/dev/null || true)" == healthy ]]; then
+      gateway_id="$("${compose[@]}" ps -q gateway 2>/dev/null || true)"; files_id="$("${compose[@]}" ps -q files 2>/dev/null || true)"; projects_id="$("${compose[@]}" ps -q projects 2>/dev/null || true)"
+      if [[ -n "$gateway_id" && -n "$files_id" && -n "$projects_id" && "$(docker inspect --format '{{.State.Health.Status}}' "$gateway_id" 2>/dev/null || true)" == healthy && "$(docker inspect --format '{{.State.Health.Status}}' "$files_id" 2>/dev/null || true)" == healthy && "$(docker inspect --format '{{.State.Health.Status}}' "$projects_id" 2>/dev/null || true)" == healthy ]]; then
         healthy=true
         break
       fi
@@ -256,13 +264,14 @@ main() {
     done
     if [[ "$healthy" != true ]]; then
       "${compose[@]}" ps >&2 || true
-      "${compose[@]}" logs --tail=100 vault files gateway >&2 || true
+      "${compose[@]}" logs --tail=100 vault files projects gateway >&2 || true
       fail "Sulla services did not become healthy within 5 minutes"
     fi
     "${compose[@]}" exec vault node dist/serverBootstrapCli.js --url http://127.0.0.1:8787 --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" <&3
   else
     verify_default_image "$SULLA_VAULT_IMAGE" merchantprotocol/sulla-vault
     verify_default_image "$SULLA_FILES_IMAGE" merchantprotocol/sulla-files
+    verify_default_image "$SULLA_PROJECTS_IMAGE" merchantprotocol/sulla-projects
     if [[ "$SULLA_KUBERNETES_MODE" == install ]]; then
       ./install-server.sh </dev/null
     fi
