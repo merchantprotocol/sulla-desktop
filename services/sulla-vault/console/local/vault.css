@@ -1,6 +1,8 @@
+@font-face{font-family:'Inter';font-style:normal;font-weight:100 900;font-display:swap;src:url('fonts/inter.ttf') format('truetype')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:100 900;font-display:swap;src:url('fonts/jetbrainsmono.ttf') format('truetype')}
+@font-face{font-family:'Playfair Display';font-style:normal;font-weight:100 900;font-display:swap;src:url('fonts/playfairdisplay.ttf') format('truetype')}
 /* Sulla Vault mockups: Noir Light (#1a2332 ink, #f4f7fb paper, #3a7fa0 accent).
    Static design reference only. All data is fake. */
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=block');
 
 :root {
   --paper: #f4f7fb;

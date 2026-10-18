@@ -127,8 +127,8 @@
     const output = document.createElement('span'); output.className = 'v'; output.textContent = secret ? '••••••••••••' : (value || '—');
     row.append(key, output);
     if (secret && value) {
-      const reveal = document.createElement('button'); reveal.type = 'button'; reveal.textContent = 'Reveal'; let shown = false;
-      reveal.onclick = () => { shown = !shown; output.textContent = shown ? value : '••••••••••••'; reveal.textContent = shown ? 'Hide' : 'Reveal'; if (shown) setTimeout(() => { shown = false; output.textContent = '••••••••••••'; reveal.textContent = 'Reveal'; }, 30_000); };
+      const reveal = document.createElement('button'); reveal.type = 'button'; reveal.innerHTML = '<svg class="i sm" aria-hidden="true" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>'; reveal.setAttribute('aria-label', 'Reveal'); reveal.title = 'Reveal'; let shown = false;
+      reveal.onclick = () => { shown = !shown; output.textContent = shown ? value : '••••••••••••'; reveal.setAttribute('aria-label', shown ? 'Hide' : 'Reveal'); reveal.title = shown ? 'Hide' : 'Reveal'; if (shown) setTimeout(() => { shown = false; output.textContent = '••••••••••••'; reveal.setAttribute('aria-label', 'Reveal'); reveal.title = 'Reveal'; }, 30_000); };
       row.append(reveal);
     }
     return row;
