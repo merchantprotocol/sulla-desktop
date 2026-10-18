@@ -138,7 +138,10 @@ export async function runWithCliFaultRecovery<T>(
       if (!isCliFault(error)) throw error;
       lastFault = error;
       if (attempt >= maxAttempts) break;
-      if (!error.retrySafe || !options.canRetry()) break;
+      if (!error.retrySafe || !options.canRetry()) {
+        if (error.unsafeToFallback) break;
+        throw error;
+      }
       options.onRetry?.(error, attempt + 1);
       await abortableDelay(options.backoffMs ?? CLI_RECOVERY_BACKOFF_MS, options.signal);
     }
