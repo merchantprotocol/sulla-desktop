@@ -5,7 +5,7 @@ import express from 'express';
 
 import { resolveCollectionGrants, ROLE_LEVEL, searchableScopes } from './acl.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
-import { chunkId, encryptChunk } from './crypto.js';
+import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
 import { applyDatabaseFileOperations, type FileOperationItem } from './fileOperations.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
 import { LegacyFilesImporter } from './legacyImport.js';
@@ -159,6 +159,10 @@ export function createApp(
     next();
   });
   const identity = (request:RequestWithIdentity):FilesIdentity => { if (!request.filesIdentity) throw new HttpError(401, 'identity required'); return request.filesIdentity };
+  const effectiveRight = (request:RequestWithIdentity, right:Right):Right => right === 'view' && (identity(request).agentId || identity(request).jobId) ? 'use-by-agents' : right;
+  const actorScope = (actor:FilesIdentity):string => actor.jobId
+    ? `job:${ actor.jobId }:agent:${ actor.agentId ?? '' }:thread:${ actor.threadId ?? '' }:device:${ actor.deviceId }`
+    : `device:${ actor.deviceId || 'server-session' }`;
   async function collectionRow(collectionId:string):Promise<any> { const result = await db.query('SELECT * FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE', [collectionId]); if (!result.rows[0]) throw new HttpError(404, 'collection not found'); return result.rows[0] }
   async function grants(request:RequestWithIdentity, collectionId:string):Promise<{ role?: string; paths: { folderPath: string; role: string }[]; files: { fileId: string; role: string }[]; collection: any }> {
     return resolveCollectionGrants(db, identityDb, identity(request), collectionId);
@@ -170,7 +174,7 @@ export function createApp(
   }
   async function requireCollection(request:RequestWithIdentity, collectionId:string, right:Right, allowShared = false, allowExactFiles = false) {
     const actor = identity(request);
-    if (right === 'view' && (actor.agentId || actor.jobId)) right = 'use-by-agents';
+    right = effectiveRight(request, right);
     const access = await grants(request, collectionId);
     requireScratchRun(actor, access.collection);
     const folderShared = allowShared && access.paths.some(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[right]);
@@ -181,7 +185,7 @@ export function createApp(
   async function requirePath(request:RequestWithIdentity, collectionId:string, path:string, right:Right) {
     if (isProtectedPath(path)) throw protectedPathError();
     const actor = identity(request);
-    if (right === 'view' && (actor.agentId || actor.jobId)) right = 'use-by-agents';
+    right = effectiveRight(request, right);
     const access = await grants(request, collectionId);
     requireScratchRun(actor, access.collection);
     if (access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[right]) return access;
@@ -191,7 +195,7 @@ export function createApp(
   async function fileRow(fileId:string):Promise<any> { const result = await db.query('SELECT * FROM files WHERE id=$1', [fileId]); if (!result.rows[0]) throw new HttpError(404, 'file not found'); await assertUnprotectedFile(db, result.rows[0]); return result.rows[0] }
   async function requireFile(request:RequestWithIdentity, fileId:string, right:Right):Promise<any> {
     const file = await fileRow(fileId); const actor = identity(request);
-    if (right === 'view' && (actor.agentId || actor.jobId)) right = 'use-by-agents';
+    right = effectiveRight(request, right);
     const access = await grants(request, file.collection_id);
     requireScratchRun(actor, access.collection);
     if (access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[right]) return file;
@@ -372,7 +376,7 @@ export function createApp(
   app.patch('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.update({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.body, request.header('x-sulla-cloud-token') ?? '')) } catch (error) { next(error) } });
   app.post('/v1/links/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.restore({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.header('x-sulla-cloud-token') ?? '', typeof request.body.password === 'string' ? request.body.password : undefined)) } catch (error) { next(error) } });
 
-  app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try { const rows = await db.query("SELECT * FROM collections WHERE kind='knowledge' AND published=TRUE AND legacy_source=FALSE ORDER BY name"); const visible:any[] = []; for (const collection of rows.rows) { const access = await grants(request, collection.id); if (access.role || access.paths.length || access.files.length) visible.push({ ...collection, access_role: access.role ?? null, shared_folders: access.paths, shared_files: access.files }); } response.json(visible) } catch (error) { next(error) } });
+  app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try { const required = effectiveRight(request, 'view'); const rows = await db.query("SELECT * FROM collections WHERE kind='knowledge' AND published=TRUE AND legacy_source=FALSE ORDER BY name"); const visible:any[] = []; for (const collection of rows.rows) { const access = await grants(request, collection.id); const paths = access.paths.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[required]); const files = access.files.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[required]); if ((access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[required]) || paths.length || files.length) visible.push({ ...collection, access_role: access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[required] ? access.role : null, shared_folders: paths, shared_files: files }); } response.json(visible) } catch (error) { next(error) } });
   app.post('/v1/collections/default', async(request:RequestWithIdentity, response, next) => {
     const client = await db.connect();
     try {
@@ -507,7 +511,7 @@ export function createApp(
       response.json({ ok: true });
     } catch (error) { next(error) }
   });
-  app.get('/v1/collections/:id/journal', async(request:RequestWithIdentity, response, next) => { try { const access = await requireCollection(request, request.params.id, 'view', true, true); const after = Number(request.query.after ?? 0); const params:any[] = [request.params.id, Number.isSafeInteger(after) ? after : 0]; let filter = ''; if (!access.role || ROLE_LEVEL[access.role] < ROLE_LEVEL.view) { params.push(access.paths.filter(path => ROLE_LEVEL[path.role] >= ROLE_LEVEL.view).map(path => path.folderPath)); params.push(access.files.filter(file => ROLE_LEVEL[file.role] >= ROLE_LEVEL.view).map(file => file.fileId)); filter = ` AND (f.id::text=ANY($4::text[]) OR EXISTS (SELECT 1 FROM unnest($3::text[]) p WHERE f.path=p OR starts_with(f.path, p||'/')))` } const query = await db.query(`SELECT j.*,row_to_json(f.*) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND j.collection_id=$1 AND j.seq>$2${ filter } ORDER BY j.seq LIMIT 1000`, params); response.json(query.rows.filter(row => !isProtectedPath(row.file.path))) } catch (error) { next(error) } });
+  app.get('/v1/collections/:id/journal', async(request:RequestWithIdentity, response, next) => { try { const required = effectiveRight(request, 'view'); const access = await requireCollection(request, request.params.id, 'view', true, true); const after = Number(request.query.after ?? 0); const params:any[] = [request.params.id, Number.isSafeInteger(after) ? after : 0]; let filter = ''; if (!access.role || ROLE_LEVEL[access.role] < ROLE_LEVEL[required]) { params.push(access.paths.filter(path => ROLE_LEVEL[path.role] >= ROLE_LEVEL[required]).map(path => path.folderPath)); params.push(access.files.filter(file => ROLE_LEVEL[file.role] >= ROLE_LEVEL[required]).map(file => file.fileId)); filter = ` AND (f.id::text=ANY($4::text[]) OR EXISTS (SELECT 1 FROM unnest($3::text[]) p WHERE f.path=p OR starts_with(f.path, p||'/')))` } const query = await db.query(`SELECT j.*,row_to_json(f.*) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND j.collection_id=$1 AND j.seq>$2${ filter } ORDER BY j.seq LIMIT 1000`, params); response.json(query.rows.filter(row => !isProtectedPath(row.file.path))) } catch (error) { next(error) } });
   app.get('/v1/versions/:id', async(request:RequestWithIdentity, response, next) => { try { const query = await db.query(`SELECT row_to_json(v.*) version,row_to_json(m.*) manifest,row_to_json(f.*) file,
       CASE WHEN k.version_id IS NULL THEN NULL ELSE json_build_object('collectionId',k.collection_id,'principalId',k.principal_id,'keyVersion',k.key_version,'epoch',k.key_epoch) END AS "keyContext"
       FROM file_versions v JOIN files f ON f.id=v.file_id LEFT JOIN manifests m ON m.hash=v.manifest_hash LEFT JOIN file_version_key_contexts k ON k.version_id=v.id WHERE v.id=$1`, [request.params.id]); if (!query.rows[0]) return response.sendStatus(404); await assertUnprotectedFile(db, query.rows[0].file); await requireFile(request, query.rows[0].file.id, 'view'); response.json(query.rows[0]) } catch (error) { next(error) } });
@@ -527,7 +531,7 @@ export function createApp(
     } catch (error) { next(error) }
   });
   async function requireChunkRead(request:RequestWithIdentity, collectionId:string, chunkId:string):Promise<void> {
-    try { await requireCollection(request, collectionId, 'view', true); return } catch (error:any) { if (error.status !== 403) throw error }
+    try { await requireCollection(request, collectionId, 'view'); return } catch (error:any) { if (error.status !== 403) throw error }
     const files = await db.query(`SELECT DISTINCT f.id::text FROM file_versions v JOIN files f ON f.id=v.file_id JOIN manifests m ON m.hash=v.manifest_hash
       WHERE v.chunk_collection_id=$1 AND m.chunk_ids ? $2`, [collectionId, chunkId]);
     for (const file of files.rows) {
@@ -535,18 +539,56 @@ export function createApp(
     }
     throw new HttpError(403, 'access denied');
   }
-  async function requireChunkWrite(request:RequestWithIdentity, collectionId:string, chunkId:string):Promise<void> {
-    try { await requireCollection(request, collectionId, 'edit', true); return } catch (error:any) { if (error.status !== 403) throw error }
+  async function requireChunkWrite(request:RequestWithIdentity, collectionId:string, chunkId:string):Promise<{ scoped: boolean; plainSize?: number; versionIds?: string[] }> {
+    try { await requireCollection(request, collectionId, 'edit'); return { scoped: false } } catch (error:any) { if (error.status !== 403) throw error }
     const actor = identity(request);
-    const upload = await db.query(`SELECT file_id::text FROM file_share_chunk_uploads
-      WHERE chunk_collection_id=$1 AND chunk_id=$2 AND principal_id=$3 AND expires_at>NOW() ORDER BY expires_at DESC LIMIT 1`, [collectionId, chunkId, actor.userId]);
-    if (!upload.rows[0]) throw new HttpError(403, 'access denied');
-    await requireFile(request, upload.rows[0].file_id, 'edit');
+    const scope = actorScope(actor);
+    const upload = await db.query(`SELECT file_id::text,target_collection_id::text,file_path,plain_size,version_id::text FROM file_share_chunk_uploads
+      WHERE chunk_collection_id=$1 AND chunk_id=$2 AND principal_id=$3 AND actor_scope=$4 AND expires_at>NOW() ORDER BY expires_at DESC`, [collectionId, chunkId, actor.userId, scope]);
+    const authorized:{ plainSize: number; versionId: string }[] = [];
+    for (const intent of upload.rows) {
+      try {
+        const file = await requireFile(request, intent.file_id, 'edit');
+        if (file.collection_id !== intent.target_collection_id || file.path !== intent.file_path) throw new HttpError(409, 'upload intent no longer matches its file');
+      } catch (error:any) {
+        if (error.status !== 404) { if (error.status === 403) continue; throw error }
+        try { await requirePath(request, intent.target_collection_id, intent.file_path, 'edit') } catch (pathError:any) { if (pathError.status === 403) continue; throw pathError }
+      }
+      authorized.push({ plainSize: Number(intent.plain_size), versionId: intent.version_id });
+    }
+    if (!authorized.length) throw new HttpError(403, 'access denied');
+    if (authorized.some(intent => intent.plainSize !== authorized[0].plainSize)) throw new HttpError(409, 'concurrent upload intents disagree on chunk geometry');
+    return { scoped: true, plainSize: authorized[0].plainSize, versionIds: authorized.map(intent => intent.versionId) };
   }
   app.head('/v1/chunks/:collection/:id', async(request:RequestWithIdentity, response, next) => { try { await requireChunkRead(request, request.params.collection, request.params.id); response.sendStatus(await store.has(request.params.collection, request.params.id) ? 204 : 404) } catch (error) { next(error) } });
   app.get('/v1/chunks/:collection/:id', async(request:RequestWithIdentity, response, next) => { try { await requireChunkRead(request, request.params.collection, request.params.id); response.type('application/octet-stream').send(await store.get(request.params.collection, request.params.id)) } catch (error) { next(error) } });
-  app.put('/v1/chunks/:collection/:id', express.raw({ type: 'application/octet-stream', limit: '8mb' }), async(request:RequestWithIdentity, response, next) => { try { await requireChunkWrite(request, request.params.collection, request.params.id); await store.put(request.params.collection, request.params.id, request.body as Buffer); response.sendStatus(204) } catch (error) { next(error) } });
+  app.put('/v1/chunks/:collection/:id', express.raw({ type: 'application/octet-stream', limit: '8mb' }), async(request:RequestWithIdentity, response, next) => { try { const authorization = await requireChunkWrite(request, request.params.collection, request.params.id); if (authorization.scoped) { const keys = await config.keyring!.keys(request.params.collection); await decryptAndVerifyChunk(request.body as Buffer, keys.data, keys.dedup, request.params.id, authorization.plainSize!); } await store.put(request.params.collection, request.params.id, request.body as Buffer); if (authorization.scoped) { const actor = identity(request); await db.query('UPDATE file_share_chunk_uploads SET uploaded_at=NOW() WHERE version_id=ANY($1::uuid[]) AND chunk_id=$2 AND principal_id=$3 AND actor_scope=$4', [authorization.versionIds, request.params.id, actor.userId, actorScope(actor)]); } response.sendStatus(204) } catch (error) { next(error) } });
+  function validateRemoteBundle(bundle:any):Map<string, { size: number; storedSize: number; location: string }> {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuid.test(String(bundle?.file?.id ?? '')) || !uuid.test(String(bundle?.version?.id ?? ''))) throw new HttpError(400, 'valid file and version ids are required');
+    if (!bundle?.manifest) {
+      if (!bundle?.version?.deleted || Number(bundle.version.size) !== 0) throw new HttpError(400, 'non-deleted versions require a manifest');
+      return new Map();
+    }
+    if (bundle.version.deleted) throw new HttpError(400, 'deleted versions cannot carry a manifest');
+    const ids = bundle.manifest.chunk_ids;
+    const totalSize = Number(bundle.manifest.total_size);
+    if (!Array.isArray(ids) || !ids.length || ids.some((id:unknown) => typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) || !Number.isSafeInteger(totalSize) || totalSize < 0) throw new HttpError(400, 'invalid manifest metadata');
+    if (Number(bundle.version.size) !== totalSize || Number(bundle.file?.size) !== totalSize) throw new HttpError(400, 'manifest and version sizes do not match');
+    const expectedHash = createHash('sha256').update(JSON.stringify({ ids, size: totalSize })).digest('hex');
+    if (bundle.manifest.hash !== expectedHash) throw new HttpError(400, 'manifest hash does not authenticate its chunk list');
+    if (!Array.isArray(bundle.chunks)) throw new HttpError(400, 'chunk metadata is required');
+    const chunks = new Map<string, { size: number; storedSize: number; location: string }>();
+    for (const chunk of bundle.chunks) {
+      const size = Number(chunk?.size); const storedSize = Number(chunk?.stored_size);
+      if (typeof chunk?.id !== 'string' || !/^[a-f0-9]{64}$/.test(chunk.id) || !Number.isSafeInteger(size) || size < 0 || !Number.isSafeInteger(storedSize) || storedSize < 0 || typeof chunk.location !== 'string') throw new HttpError(400, 'invalid chunk metadata');
+      chunks.set(chunk.id, { size, storedSize, location: chunk.location });
+    }
+    if (ids.some((id:string) => !chunks.has(id))) throw new HttpError(400, 'manifest chunk metadata is incomplete');
+    return chunks;
+  }
   async function prepare(request:RequestWithIdentity, bundle:any, queryable:pg.Pool | pg.PoolClient = db, lock = false, authorizeChunks = false) {
+    const chunkMetadata = validateRemoteBundle(bundle);
     const path = cleanPath(bundle.file.path, false);
     const candidates = (await queryable.query(`SELECT id,collection_id,path,current_version_id FROM files
       WHERE id=$1 OR (collection_id=$2 AND path=$3)${ lock ? ' FOR UPDATE' : '' }`, [bundle.file.id, bundle.collectionId, path])).rows;
@@ -558,23 +600,38 @@ export function createApp(
     for (const file of candidates) await assertUnprotectedFile(queryable, file);
     let exactFileEdit = false;
     try { await requirePath(request, bundle.collectionId, path, 'edit') } catch (error:any) {
-      if (error.status !== 403 || !requested || requested.path !== path) throw error;
+      if (error.status !== 403 || requested?.path !== path) throw error;
       await requireFile(request, requested.id, 'edit'); exactFileEdit = true;
     }
     for (const file of candidates) {
       if (exactFileEdit && file.id === requested.id) continue;
       await requirePath(request, file.collection_id, file.path, 'edit');
     }
-    if (bundle.version.chunk_collection_id !== bundle.collectionId) await requireCollection(request, bundle.version.chunk_collection_id, 'edit', true);
+    if (bundle.version.chunk_collection_id !== bundle.collectionId) await requireCollection(request, bundle.version.chunk_collection_id, 'edit');
     if (bundle.keyContext) validateKeyContext(bundle.keyContext, bundle.version.chunk_collection_id, identity(request).userId);
     const existing = requested ?? destination;
+    const access = await grants(request, bundle.collectionId);
+    const scopedEdit = !access.role || ROLE_LEVEL[access.role] < ROLE_LEVEL.edit;
+    const manifestChunkIds = [...new Set<string>(bundle.manifest?.chunk_ids ?? [])];
     const missing:string[] = [];
-    for (const id of bundle.manifest?.chunk_ids ?? []) if (!await store.has(bundle.version.chunk_collection_id, id)) missing.push(id);
-    if (authorizeChunks && exactFileEdit && missing.length) {
-      const actor = identity(request);
-      await queryable.query('DELETE FROM file_share_chunk_uploads WHERE expires_at<=NOW() OR (version_id=$1 AND principal_id=$2)', [bundle.version.id, actor.userId]);
-      for (const chunkId of missing) await queryable.query(`INSERT INTO file_share_chunk_uploads(file_id,version_id,chunk_collection_id,chunk_id,principal_id)
-        VALUES($1,$2,$3,$4,$5) ON CONFLICT(version_id,chunk_id,principal_id) DO UPDATE SET expires_at=NOW()+INTERVAL '30 minutes'`, [requested.id, bundle.version.id, bundle.version.chunk_collection_id, chunkId, actor.userId]);
+    for (const id of manifestChunkIds) if ((scopedEdit && authorizeChunks) || !await store.has(bundle.version.chunk_collection_id, id)) missing.push(id);
+    if (scopedEdit && manifestChunkIds.length) {
+      const actor = identity(request); const scope = actorScope(actor);
+      if (authorizeChunks) {
+        await queryable.query('DELETE FROM file_share_chunk_uploads WHERE expires_at<=NOW() OR (version_id=$1 AND principal_id=$2 AND actor_scope=$3)', [bundle.version.id, actor.userId, scope]);
+        for (const chunkId of manifestChunkIds) {
+          const chunk = chunkMetadata.get(chunkId)!;
+          await queryable.query(`INSERT INTO file_share_chunk_uploads(file_id,target_collection_id,file_path,version_id,chunk_collection_id,chunk_id,principal_id,actor_scope,plain_size)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(version_id,chunk_id,principal_id,actor_scope) DO UPDATE SET file_id=EXCLUDED.file_id,target_collection_id=EXCLUDED.target_collection_id,file_path=EXCLUDED.file_path,chunk_collection_id=EXCLUDED.chunk_collection_id,plain_size=EXCLUDED.plain_size,uploaded_at=NULL,expires_at=NOW()+INTERVAL '30 minutes'`, [bundle.file.id, bundle.collectionId, path, bundle.version.id, bundle.version.chunk_collection_id, chunkId, actor.userId, scope, chunk.size]);
+        }
+      } else {
+        const priorVersion = await queryable.query('SELECT 1 FROM file_versions WHERE id=$1', [bundle.version.id]);
+        if (!priorVersion.rowCount) {
+          const uploaded = await queryable.query(`SELECT chunk_id FROM file_share_chunk_uploads WHERE version_id=$1 AND principal_id=$2 AND actor_scope=$3 AND expires_at>NOW() AND uploaded_at IS NOT NULL`, [bundle.version.id, actor.userId, scope]);
+          const uploadedIds = new Set(uploaded.rows.map(row => row.chunk_id));
+          if (manifestChunkIds.some(id => !uploadedIds.has(id))) throw new HttpError(403, 'scoped upload intent is missing or incomplete');
+        }
+      }
     }
     const base = bundle.baseServerVersionId ?? null;
     const conflict = Boolean(existing?.current_version_id && existing.current_version_id !== base);
@@ -600,7 +657,7 @@ export function createApp(
       if (Boolean(storedContext) !== Boolean(bundle.keyContext)) throw new HttpError(409, 'immutable version key context does not match the committed version');
       if (bundle.keyContext) {
         const context = validateKeyContext(bundle.keyContext, bundle.version.chunk_collection_id, actor.userId);
-        if (!storedContext || storedContext.collection_id !== context.collectionId || storedContext.principal_id !== context.principalId ||
+        if (storedContext?.collection_id !== context.collectionId || storedContext.principal_id !== context.principalId ||
             Number(storedContext.key_version) !== context.keyVersion || Number(storedContext.key_epoch) !== context.epoch) {
           throw new HttpError(409, 'immutable version key context does not match the committed version');
         }
@@ -609,7 +666,11 @@ export function createApp(
       return response.json({ ok: true, versionId: bundle.version.id, fileId });
     }
     if (checked.conflict) { await client.query('ROLLBACK'); return response.status(409).json({ conflict: true, currentVersionId: checked.currentVersionId }) }
-    if (bundle.manifest) await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [bundle.manifest.hash, JSON.stringify(bundle.manifest.chunk_ids), bundle.manifest.total_size]);
+    if (bundle.manifest) {
+      await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [bundle.manifest.hash, JSON.stringify(bundle.manifest.chunk_ids), bundle.manifest.total_size]);
+      const storedManifest = (await client.query('SELECT chunk_ids,total_size FROM manifests WHERE hash=$1', [bundle.manifest.hash])).rows[0];
+      if (!storedManifest || JSON.stringify(storedManifest.chunk_ids) !== JSON.stringify(bundle.manifest.chunk_ids) || Number(storedManifest.total_size) !== Number(bundle.manifest.total_size)) throw new HttpError(409, 'immutable manifest metadata does not match the requested version');
+    }
     for (const chunk of bundle.chunks ?? []) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,1) ON CONFLICT(collection_id,id) DO UPDATE SET refcount=chunks.refcount+1', [bundle.version.chunk_collection_id, chunk.id, chunk.size, chunk.stored_size, chunk.location]);
     await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,search_text) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
       ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,search_text=EXCLUDED.search_text,deleted_at=$9,updated_at=NOW()`, [fileId, bundle.collectionId, checked.path, bundle.file.created_by_type, bundle.file.created_by_id, bundle.file.mime, bundle.file.size, bundle.file.search_text, bundle.version.deleted ? new Date() : null]);
@@ -622,11 +683,11 @@ export function createApp(
     const advanced = await client.query('UPDATE files SET current_version_id=$2,deleted_at=$3 WHERE id=$1 AND current_version_id IS NOT DISTINCT FROM $4', [fileId, bundle.version.id, bundle.version.deleted ? new Date() : null, checked.currentVersionId]);
     if (advanced.rowCount !== 1) throw new HttpError(409, 'file changed while committing the remote version');
     await client.query('INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,$4)', [bundle.collectionId, fileId, bundle.version.id, bundle.version.deleted ? 'delete' : 'put']);
-    await client.query('DELETE FROM file_share_chunk_uploads WHERE version_id=$1 AND principal_id=$2', [bundle.version.id, actor.userId]);
+    await client.query('DELETE FROM file_share_chunk_uploads WHERE version_id=$1 AND principal_id=$2 AND actor_scope=$3', [bundle.version.id, actor.userId, actorScope(actor)]);
     await client.query('COMMIT'); response.json({ ok: true, versionId: bundle.version.id, fileId });
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
 
-  app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try { const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required'); const path = cleanPath(String(request.query.path ?? '')); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true'; const params:any[] = [collectionId, path ? `${ path }/` : '']; let filter = ''; if (!access.role || ROLE_LEVEL[access.role] < ROLE_LEVEL.view) { params.push(access.paths.filter(value => ROLE_LEVEL[value.role] >= ROLE_LEVEL.view).map(value => value.folderPath)); params.push(access.files.filter(value => ROLE_LEVEL[value.role] >= ROLE_LEVEL.view).map(value => value.fileId)); filter = ` AND (f.id::text=ANY($4::text[]) OR EXISTS (SELECT 1 FROM unnest($3::text[]) p WHERE f.path=p OR starts_with(f.path, p||'/')))` } const rows = await db.query(`SELECT f.*,v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,CASE WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id LEFT JOIN file_residency r ON r.file_id=f.id WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND ($2 = '' OR starts_with(f.path, $2))${ trash ? ' AND f.deleted_at IS NOT NULL' : ' AND f.deleted_at IS NULL' }${ filter } ORDER BY f.path`, params); response.json(rows.rows.filter(row => !row.path || !isProtectedPath(row.path))) } catch (error) { next(error) } });
+  app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try { const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required'); const path = cleanPath(String(request.query.path ?? '')); const required = effectiveRight(request, 'view'); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true'; const params:any[] = [collectionId, path ? `${ path }/` : '']; let filter = ''; if (!access.role || ROLE_LEVEL[access.role] < ROLE_LEVEL[required]) { params.push(access.paths.filter(value => ROLE_LEVEL[value.role] >= ROLE_LEVEL[required]).map(value => value.folderPath)); params.push(access.files.filter(value => ROLE_LEVEL[value.role] >= ROLE_LEVEL[required]).map(value => value.fileId)); filter = ` AND (f.id::text=ANY($4::text[]) OR EXISTS (SELECT 1 FROM unnest($3::text[]) p WHERE f.path=p OR starts_with(f.path, p||'/')))` } const rows = await db.query(`SELECT f.*,v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,CASE WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id LEFT JOIN file_residency r ON r.file_id=f.id WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND ($2 = '' OR starts_with(f.path, $2))${ trash ? ' AND f.deleted_at IS NOT NULL' : ' AND f.deleted_at IS NULL' }${ filter } ORDER BY f.path`, params); response.json(rows.rows.filter(row => !row.path || !isProtectedPath(row.path))) } catch (error) { next(error) } });
   app.get('/v1/files/:id', async(request:RequestWithIdentity, response, next) => { try {
     const file = await requireFile(request, request.params.id, 'view');
     const [version, recording, edgeRows, activity] = await Promise.all([
