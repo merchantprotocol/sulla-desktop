@@ -31,6 +31,7 @@ spec:
             - {name: SULLA_FILES_DATABASE_URL, valueFrom: {secretKeyRef: {name: sulla-server, key: files-database-url}}}
             - {name: SULLA_FILES_VAULT_DATABASE_URL, valueFrom: {secretKeyRef: {name: sulla-server, key: database-url}}}
             - {name: SULLA_FILES_CAPABILITY_SIGNING_KEY, valueFrom: {secretKeyRef: {name: sulla-server, key: files-capability-signing-key}}}
+            - {name: SULLA_FILES_MASTER_KEY, valueFrom: {secretKeyRef: {name: sulla-server, key: files-master-key}}}
             - {name: SULLA_FILES_JWT_SECRET, valueFrom: {secretKeyRef: {name: sulla-server, key: jwt-secret}}}
           volumeMounts:
             - {name: files-data, mountPath: /var/lib/sulla-files}
