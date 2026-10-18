@@ -1,6 +1,6 @@
 import express from 'express';
 
-import { adminRoutes, errorHandler, ownerRoutes, privateRoutes } from './routes.js';
+import { adminRoutes, bootstrapRoutes, errorHandler, ownerRoutes, privateRoutes, publicAuthorityRoutes } from './routes.js';
 
 import type { AccountsConfig } from './config.js';
 import type { Database } from './db.js';
@@ -21,6 +21,8 @@ export function createApp(db: Database, config: AccountsConfig) {
     }
   });
 
+  app.use(publicAuthorityRoutes(db, config));
+  if (config.mode === 'desktop') app.use('/v1/private', bootstrapRoutes(db, config));
   app.use('/v1/private', privateRoutes(db, config));
   if (config.mode === 'server') app.use('/v1/admin', adminRoutes(db, config));
   app.use('/v1', ownerRoutes(db, config));
