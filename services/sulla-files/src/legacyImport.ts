@@ -165,6 +165,13 @@ async function legacyLayoutIds(root:string):Promise<Map<string, string>> {
   } finally { await rootHandle.close() }
 }
 
+async function optionalLegacyLayoutIds(root:string):Promise<Map<string, string>> {
+  try { return await legacyLayoutIds(root) } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Map();
+    throw error;
+  }
+}
+
 export class LegacyFilesImporter {
   private readonly store: Store;
   constructor(private readonly db:pg.Pool, private readonly sourceRoot:string, private readonly chunkRoot:string) { this.store = new Store(chunkRoot) }
@@ -176,7 +183,8 @@ export class LegacyFilesImporter {
     const legacyMasters = suppliedLegacyMasters.map(value => Buffer.from(value));
     try {
       await this.stage(nativeMaster);
-      const layout = await legacyLayoutIds(this.sourceRoot);
+      const externalLayout = await optionalLegacyLayoutIds(this.sourceRoot);
+      const nativeLayout = await legacyLayoutIds(this.chunkRoot);
       const client = await this.db.connect();
       try {
         await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
@@ -188,7 +196,7 @@ export class LegacyFilesImporter {
         if (collections.length !== mappings.length) throw new Error('Legacy Files collection mapping is incomplete');
         const staged = { collections, mappings };
         const externalIds = new Set(collections.filter(row => row.compatibility_state !== 'native').map(row => row.id.toLowerCase()));
-        for (const id of layout.keys()) if (!externalIds.has(id)) throw new Error('Legacy Files chunk collection has no authenticated metadata');
+        for (const id of externalLayout.keys()) if (!externalIds.has(id)) throw new Error('Legacy Files chunk collection has no authenticated metadata');
         await client.query(`INSERT INTO files_legacy_file_map(source_file_id,shadow_file_id,source_collection_id,shadow_collection_id)
           SELECT f.id,gen_random_uuid(),f.collection_id,m.shadow_collection_id FROM files f JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE
           JOIN files_legacy_collection_map m ON m.source_collection_id=f.collection_id ON CONFLICT(source_file_id) DO NOTHING`);
@@ -231,9 +239,14 @@ export class LegacyFilesImporter {
               if (!source || !shadow || !mapping) throw new Error('Legacy Files version references an unmapped chunk collection');
               const sourceCollection = staged.collections.find(row => row.id === version.chunk_collection_id);
               if (!sourceCollection) throw new Error('Legacy Files version references a missing source collection');
-              const externalName = layout.get(version.chunk_collection_id.toLowerCase());
-              if (sourceCollection.compatibility_state !== 'native' && !externalName) throw new Error('Legacy Files manifested collection has no exact source layout');
-              const item = await convertLegacyManifest({ collectionId: externalName ?? version.chunk_collection_id, chunkIds: sourceIds, totalSize, sourceRoot: sourceCollection.compatibility_state === 'native' ? this.chunkRoot : this.sourceRoot, sourceKeys: source, shadowKeys: shadow, store: this.store, shadowCollectionId: mapping.shadow_collection_id });
+              const externalName = externalLayout.get(version.chunk_collection_id.toLowerCase());
+              const nativeName = nativeLayout.get(version.chunk_collection_id.toLowerCase());
+              if (sourceCollection.compatibility_state !== 'native' && externalName && nativeName) throw new Error('Legacy Files manifested collection has ambiguous source layouts');
+              if (sourceCollection.compatibility_state !== 'native' && !externalName && !nativeName) throw new Error('Legacy Files manifested collection has no exact source layout');
+              const nativeSource = sourceCollection.compatibility_state === 'native' || !externalName;
+              const sourceRoot = nativeSource ? this.chunkRoot : this.sourceRoot;
+              const collectionId = nativeSource ? nativeName ?? version.chunk_collection_id : externalName!;
+              const item = await convertLegacyManifest({ collectionId, chunkIds: sourceIds, totalSize, sourceRoot, sourceKeys: source, shadowKeys: shadow, store: this.store, shadowCollectionId: mapping.shadow_collection_id });
               converted.set(key, item);
             }
             if (converted.get(key)!.totalSize !== totalSize) throw new Error('Legacy Files version size verification failed');
