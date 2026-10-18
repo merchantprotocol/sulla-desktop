@@ -8,6 +8,7 @@ import Electron from 'electron';
 
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
 import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
+import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
 import { getIntegrationService } from './IntegrationService';
 import { RunActivity } from './RunActivity';
 import { getWebSocketClientService } from './WebSocketClientService';
@@ -22,8 +23,6 @@ import { redisClient } from '../database/RedisClient';
 import {
   withProviderExecutionTransport,
   type ProviderExecutionTransport,
-  type ProviderFileRef,
-  type ProviderFileRequest,
   type ProviderName,
   type ProviderTransportContext,
 } from '../languagemodels/ProviderExecutionTransport';
@@ -213,10 +212,16 @@ async function cleanupContainerResources(
   runtime: ContainerRuntimeDriver,
   containerId: string | undefined,
   secretDir: string | undefined,
+  providerFiles?: ContainerProviderFileTransport,
 ): Promise<void> {
   const failures: unknown[] = [];
   if (containerId) {
-    await cleanupOwner.run(`container:${ containerId }`, () => runtime.remove(containerId)).catch(error => failures.push(error));
+    await cleanupOwner.run(`container:${ containerId }`, async() => {
+      await runtime.remove(containerId);
+      providerFiles?.dispose();
+    }).catch(error => failures.push(error));
+  } else if (providerFiles) {
+    try { providerFiles.dispose() } catch (error) { failures.push(error) }
   }
   if (secretDir) {
     await cleanupOwner.run(`secrets:${ secretDir }`, () => removeContainerSecrets(secretDir)).catch(error => failures.push(error));
@@ -251,53 +256,11 @@ async function prepareCheckout(source: string | undefined, workspacePath: string
   return checkout;
 }
 
-function assertWorkspacePath(root: string, candidate: string): string {
-  const resolvedRoot = path.resolve(root);
-  const resolved = path.resolve(candidate);
-  const relative = path.relative(resolvedRoot, resolved);
-
-  if (path.isAbsolute(relative) || relative.split(path.sep).includes('..')) {
-    throw new Error(`Container provider path escaped its job workspace: ${ candidate }`);
-  }
-  return resolved;
-}
-
-class ContainerProviderFileTransport {
-  constructor(private readonly workspacePath: string) {}
-
-  write(request: ProviderFileRequest): ProviderFileRef {
-    const root = path.join(this.workspacePath, '.sulla-provider-files');
-    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-    fs.chmodSync(root, 0o700);
-    const safeName = request.suggestedName.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 120) || 'provider-file';
-    const target = assertWorkspacePath(root, path.join(root, `${ crypto.randomUUID() }-${ safeName }`));
-    const fd = fs.openSync(
-      target,
-      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0),
-      request.mode ?? 0o600,
-    );
-    try {
-      fs.writeFileSync(fd, request.data);
-    } finally {
-      fs.closeSync(fd);
-    }
-    let disposed = false;
-
-    return {
-      path: target,
-      dispose() {
-        if (disposed) return;
-        disposed = true;
-        try { fs.unlinkSync(target) } catch { /* already removed */ }
-      },
-    };
-  }
-}
-
 interface ContainerProviderTransportOptions {
   containerName: string;
   workspacePath: string;
   secretDir:     string;
+  files:         ContainerProviderFileTransport;
   bridgeFor(provider: ProviderName): Promise<ProviderCliBridgeLease>;
   ownsBridge(ref: string): boolean;
 }
@@ -309,7 +272,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
   private readonly toolConfigs = new Map<string, Promise<{ ref: string; claudePath: string; codexOverrides: readonly string[] }>>();
 
   constructor(private readonly options: ContainerProviderTransportOptions) {
-    this.files = new ContainerProviderFileTransport(options.workspacePath);
+    this.files = options.files;
   }
 
   async context(input: Parameters<ProviderExecutionTransport['context']>[0]): Promise<ProviderTransportContext> {
@@ -476,6 +439,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
   let livenessTimer: ReturnType<typeof setInterval> | undefined;
   let checkingLiveness = false;
   let closePromise: Promise<void> | undefined;
+  let providerFiles: ContainerProviderFileTransport | undefined;
 
   try {
     const installationSecret = getChatCompletionsServer().getApiToken();
@@ -512,6 +476,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     await fs.promises.chmod(workspacePath, 0o700);
     const checkout = await prepareCheckout(run.workspacePath, workspacePath);
     const providerWorkspace = checkout ?? workspacePath;
+    providerFiles = new ContainerProviderFileTransport(path.join(paths.sullaHome, 'workspaces', 'provider-transport'));
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, {
       SULLA_API_TOKEN: issueLease(), SULLA_TOOL_SESSION: toolSession.id,
     });
@@ -534,7 +499,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         SULLA_AGENT_PROVIDER: run.provider,
         SULLA_AGENT_MODEL:    run.model ?? '',
       },
-      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`, `${ workspacePath }:${ workspacePath }:rw`, `${ resolveSullaDocsDir() }:/opt/sulla-docs:ro`],
+      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`, `${ workspacePath }:${ workspacePath }:rw`, providerFiles.bindMount, `${ resolveSullaDocsDir() }:/opt/sulla-docs:ro`],
       network:     'sulla_default',
       workingDir:  providerWorkspace,
       user:        `${ CONTAINER_UID }:${ CONTAINER_GID }`,
@@ -642,6 +607,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       containerName,
       workspacePath: providerWorkspace,
       secretDir,
+      files:         providerFiles,
       bridgeFor,
       ownsBridge:    ref => providerBridgeRefs.has(ref),
     });
@@ -689,7 +655,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         }
         providerBridgeRefs.clear();
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
-        await cleanupContainerResources(runtime, containerId, secretDir);
+        await cleanupContainerResources(runtime, containerId, secretDir, providerFiles);
       });
       return closePromise;
     };
@@ -722,7 +688,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       await bridge.value.close().catch(() => {});
     }
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
-    await cleanupContainerResources(runtime, containerId, secretDir).catch(cleanupError => {
+    await cleanupContainerResources(runtime, containerId, secretDir, providerFiles).catch(cleanupError => {
       throw new AggregateError([error, cleanupError], 'Agent container startup and cleanup both failed');
     });
     throw error;
