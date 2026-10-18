@@ -280,3 +280,8 @@ it does not migrate or reinterpret any existing Vault, Files, wallet, or user-da
 Stop the Accounts process, restore the previous container image, and leave the `accounts`
 schema in place. No existing service schema or personal ownership record is modified. Removing
 the new schema is a separate destructive database operation and is not part of runtime rollback.
+
+Authorization callbacks verify the access-token issuer, selected resource audience, expiry,
+and subject equality with the verified ID token before persisting the session. The selected
+audience is pinned in the authorization transaction; pre-upgrade in-flight transactions
+without this pin must restart sign-in.
