@@ -494,7 +494,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     });
     app.get(/^\/vault$/, (_request, response) => response.redirect(308, '/vault/'));
     app.use('/vault', (_request, response, next) => {
-      response.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors app: rancher-desktop:");
+      response.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors app: rancher-desktop:");
       response.setHeader('Referrer-Policy', 'no-referrer');
       response.setHeader('Cache-Control', 'no-store');
       next();
