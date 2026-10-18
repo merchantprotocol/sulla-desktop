@@ -1170,6 +1170,11 @@ export class PersonaAdapter {
       persistent: true,
       threadId:   record.threadId,
       version:    record.version,
+      filesFileId: record.filesFileId,
+      filesVersionId: record.filesVersionId,
+      filesPath: record.filesPath,
+      filesRegistrationStatus: record.filesRegistrationStatus,
+      filesRegistrationError: record.filesRegistrationError,
       payload,
     };
   }

@@ -243,6 +243,7 @@ export interface IpcMainInvokeEvents {
   }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
   'chat-artifacts:close': (input: { threadId: string; idOrName: string; expectedVersion?: number }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
   'chat-artifacts:focus': (input: { threadId: string; idOrName: string }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
+  'chat-artifacts:retry-files-registration': (input: { threadId: string; idOrName: string }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
   'get-locked-fields':         () => import('@pkg/config/settings').LockedSettingsType;
   'settings-write':            (arg: RecursivePartial<import('@pkg/config/settings').Settings>) => void;
   'transient-settings-fetch':  () => import('@pkg/config/transientSettings').TransientSettings;
