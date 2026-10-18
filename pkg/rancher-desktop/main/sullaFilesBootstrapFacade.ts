@@ -17,13 +17,36 @@ export interface FilesBootstrapResult {
 
 /** Normal Desktop receives status only; key bytes exist solely in the child. */
 export class SullaFilesBootstrapFacade {
+  private static readonly INITIAL_RETRY_DELAY_MS = 5_000;
+  private static readonly MAX_RETRY_DELAY_MS = 60_000;
+
   private run?:Promise<FilesBootstrapResult>;
+  private lastFailure?:FilesBootstrapResult;
+  private retryAfter = 0;
+  private consecutiveFailures = 0;
   private readonly identityPath = path.join(paths.appHome, 'files-bootstrap-identity.enc');
   private readonly fingerprintPath = path.join(paths.appHome, 'files-tls-fingerprint');
   private readonly masterPath = path.join(paths.appHome, 'files-master-key.enc');
 
   initialize():Promise<FilesBootstrapResult> {
-    this.run ??= this.spawn().finally(() => { this.run = undefined });
+    if (this.lastFailure && Date.now() < this.retryAfter) return Promise.resolve(this.lastFailure);
+    this.run ??= this.spawn().then((result) => {
+      if (result.ok) {
+        this.lastFailure = undefined;
+        this.retryAfter = 0;
+        this.consecutiveFailures = 0;
+      } else {
+        this.consecutiveFailures++;
+        const delay = Math.min(
+          SullaFilesBootstrapFacade.INITIAL_RETRY_DELAY_MS * (2 ** (this.consecutiveFailures - 1)),
+          SullaFilesBootstrapFacade.MAX_RETRY_DELAY_MS,
+        );
+
+        this.lastFailure = result;
+        this.retryAfter = Date.now() + delay;
+      }
+      return result;
+    }).finally(() => { this.run = undefined });
     return this.run;
   }
 
