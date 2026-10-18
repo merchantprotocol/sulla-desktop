@@ -11,7 +11,8 @@ jest.unstable_mockModule('../../tools/workflow/stop_workflow', () => ({ stopKey:
 jest.unstable_mockModule('../../tools/workflow/pause_workflow', () => ({ pauseKey: () => 'pause' }));
 jest.unstable_mockModule('../../database/models/WorkflowPendingCompletionModel', () => ({ WorkflowPendingCompletionModel: { findPending: jest.fn(async() => []) } }));
 jest.unstable_mockModule('../../database/models/WorkflowExecutionModel', () => ({ WorkflowExecutionModel: {
-  acquireLease: jest.fn(async() => ({})), renewHeartbeat: jest.fn(async() => ({})), settle: jest.fn(async() => ({})), markSuspended: jest.fn(async() => undefined),
+  acquireLease: jest.fn(async() => ({})), renewHeartbeat: jest.fn(async() => ({})), settle: jest.fn(async() => ({})),
+  admit: jest.fn(async() => undefined), markSuspended: jest.fn(async() => undefined),
 } }));
 jest.unstable_mockModule('../../database/models/WorkflowCheckpointModel', () => ({ WorkflowCheckpointModel: { saveCheckpoint: jest.fn() } }));
 const invokeTool = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue({ success: true, result: 'browser verified' });
@@ -101,6 +102,7 @@ describe('singleton worker lifecycle', () => {
     controller.executeSubAgentWithRetry = jest.fn();
     controller.executeSubAgent = jest.fn();
     (WorkflowExecutionModel.renewHeartbeat as any).mockResolvedValue({});
+    controller.workflowLeases.set('singleton-run', { assertOwned: jest.fn(async() => undefined), stop: jest.fn() });
     return { state, controller, execute };
   }
 
@@ -116,7 +118,7 @@ describe('singleton worker lifecycle', () => {
       controller.executeSubAgentUntracked = jest.fn(() => new Promise<void>(resolve => { finish = resolve; }));
       const child = controller.executeSubAgent(state, 'worker', 'agent', 'prompt', {});
       const heartbeat = { assertOwned: jest.fn(async() => undefined), stop: jest.fn() };
-      controller.workflowLease = { executionId: playbook.executionId, heartbeat };
+      controller.workflowLeases.set(playbook.executionId, heartbeat);
       const terminal = jest.fn(async() => undefined);
       state.metadata.onRoutineTerminal = terminal;
       const release = controller.releaseWorkflow(state, playbook, 'failed', 'Parent aborted');
@@ -232,22 +234,31 @@ describe('singleton worker lifecycle', () => {
     expect(controller.executeSubAgentWithRetry.mock.calls[0][3]).toContain(content.includes('tagged') ? 'One tagged task' : 'One plain task');
     expect(controller.pendingSubAgents.size).toBe(1);
     expect(controller.executeSubAgent).not.toHaveBeenCalled();
-    controller.workflowLease.heartbeat.stop();
+    controller.workflowLeases.get('singleton-run').stop();
   });
 
   it.each([
     ['spawn_sub_workflow', true], ['spawn_sub_workflow', false],
     ['transfer_workflow', true], ['transfer_workflow', false],
-  ])('rejects unguarded %s with source singleton=%s', async(action, sourceSingleton) => {
+  ])('admits %s through the target limit with source singleton=%s', async(action, sourceSingleton) => {
     const { state, controller } = setup();
     if (!sourceSingleton) delete state.metadata.activeWorkflow.definition.concurrencyPolicy;
-    loadWorkflow.mockResolvedValue({ id: 'target', name: 'Target', concurrencyPolicy: sourceSingleton ? undefined : 'forbid', nodes: [], edges: [] });
+    const targetDefinition = { id: 'target', name: 'Target', maxConcurrentRuns: sourceSingleton ? undefined : 3, nodes: [], edges: [] };
+    const child = { status: 'running', executionId: 'child-run', workflowId: 'target', completedNodeIds: [], currentNodeIds: [], nodeOutputs: {}, definition: targetDefinition };
+    loadWorkflow.mockResolvedValue(targetDefinition);
+    (createPlaybookState as any).mockReturnValue(child);
     (processNextStep as any).mockImplementationOnce((playbook: any) => ({ action, nodeId: 'worker', workflowId: 'target', targetWorkflowId: 'target', updatedPlaybook: playbook }));
+    (processNextStep as any).mockImplementationOnce((playbook: any) => ({ action: 'waiting_for_sub_agents', blockedNodeIds: [], missingUpstream: [], updatedPlaybook: playbook }));
     await controller.processWorkflowPlaybook(state);
-    expect(createPlaybookState).not.toHaveBeenCalled();
+    expect(WorkflowExecutionModel.admit).toHaveBeenCalledWith(expect.objectContaining({
+      executionId: 'child-run', workflowId: 'target',
+    }), expect.objectContaining({ maxConcurrentRuns: sourceSingleton ? 1 : 3 }));
     expect(controller.executeSubAgent).not.toHaveBeenCalled();
-    expect(state.metadata.lastCompletedWorkflow.outcome).toBe('failed');
-    expect(state.metadata.lastCompletedWorkflow.error).toContain('normal admission');
+    expect(state.metadata.activeWorkflow).toBe(child);
+    if (action === 'transfer_workflow') {
+      expect(WorkflowExecutionModel.settle).toHaveBeenCalledWith('singleton-run', 'completed', undefined);
+    }
+    controller.workflowLeases.forEach((heartbeat: any) => heartbeat.stop());
   });
 });
 

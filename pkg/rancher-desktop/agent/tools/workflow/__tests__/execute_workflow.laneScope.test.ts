@@ -6,11 +6,20 @@ const findByExecution = jest.fn<(...args: any[]) => Promise<any>>();
 const recentExecutions = jest.fn<(...args: any[]) => Promise<any>>();
 jest.unstable_mockModule('../../../database/models/WorkflowCheckpointModel', () => ({ WorkflowCheckpointModel: { findByExecution, recentExecutions } }));
 const admit = jest.fn<(...args: any[]) => Promise<void>>();
+const countActiveByWorkflow = jest.fn<(...args: any[]) => Promise<number>>();
+const findWorkflowById = jest.fn<(...args: any[]) => Promise<any>>().mockResolvedValue(null);
+const listWorkflowsByStatus = jest.fn<(...args: any[]) => Promise<any[]>>().mockResolvedValue([]);
 
 jest.unstable_mockModule('../../../database/models/WorkflowExecutionModel', () => ({
   WorkflowExecutionModel: {
-    countActiveByWorkflow: jest.fn().mockResolvedValue(0),
+    countActiveByWorkflow,
     admit,
+  },
+}));
+jest.unstable_mockModule('../../../database/models/WorkflowModel', () => ({
+  WorkflowModel: {
+    findById:    findWorkflowById,
+    listByStatus: listWorkflowsByStatus,
   },
 }));
 
@@ -38,6 +47,7 @@ const snapshot: WorkflowDefinition = {
 describe('activateWorkflowOnState lane scope', () => {
   afterEach(() => {
     jest.clearAllMocks();
+    countActiveByWorkflow.mockResolvedValue(0);
   });
 
   it('activates the supplied immutable snapshot without loading mutable workflow state', async() => {
@@ -76,7 +86,6 @@ describe('activateWorkflowOnState lane scope', () => {
   });
 });
 
-
 describe('singleton admission', () => {
   afterEach(() => { jest.clearAllMocks(); });
   it.each([{}, { force: true }, { allowConcurrent: true }, { startNodeId: 'trigger' }])('fails closed before state mutation for %j', async(flags) => {
@@ -100,7 +109,10 @@ describe('singleton admission', () => {
   });
   it('publishes state only after durable admission and records a single execution', async() => {
     const state: any = { metadata: {}, messages: [] };
-    admit.mockImplementation(async() => { expect(state.metadata.activeWorkflow).toBeUndefined(); });
+    admit.mockImplementation(() => {
+      expect(state.metadata.activeWorkflow).toBeUndefined();
+      return Promise.resolve();
+    });
     const result = await activate({ workflowId: snapshot.id, definitionSnapshot: { ...snapshot, concurrencyPolicy: 'forbid' } }, state);
     expect(result.ok).toBe(true);
     expect(admit).toHaveBeenCalledTimes(1);

@@ -134,9 +134,11 @@ tool policy separately if recursive delegation must be prohibited.
 
 Workflows limited to one run do not retry worker launches automatically, since a timed-out
 launch does not prove that the prior process stopped. Nested workflow calls and
-workflow transfers involving a one-run source or target are refused; launch
-that workflow through its normal activation entry point instead. Keep the
-concurrency definition stable while a run is active.
+workflow transfers use the same atomic per-workflow admission as top-level
+starts. Each child receives its own durable execution and lease, while the
+parent retains ownership until the child settles; a transfer settles the
+outgoing execution before the target continues. Keep the concurrency definition
+stable while a run is active.
 
 ## Deterministic preflight admission (zero-AI empty cycles)
 

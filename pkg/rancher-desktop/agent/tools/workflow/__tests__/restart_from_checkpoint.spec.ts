@@ -2,7 +2,17 @@ import { jest } from '@jest/globals';
 
 const mockLoadWorkflow = jest.fn<() => Promise<any>>();
 const mockAdmit = jest.fn<() => Promise<void>>();
+const mockManagerHealthy = jest.fn<() => Promise<boolean>>();
+const mockManagerRequest = jest.fn<() => Promise<any>>();
+const mockManagerLogFallback = jest.fn<() => void>();
 jest.unstable_mockModule('../../../workflow/WorkflowRegistry', () => ({ getWorkflowRegistry: () => ({ loadWorkflow: mockLoadWorkflow }) }));
+jest.unstable_mockModule('../../../services/WorkflowManagerClient', () => ({
+  getWorkflowManagerClient: () => ({
+    isHealthy:   mockManagerHealthy,
+    request:     mockManagerRequest,
+    logFallback: mockManagerLogFallback,
+  }),
+}));
 
 const mockFindCheckpointBefore = jest.fn<() => Promise<any>>();
 const mockFindByNode = jest.fn<() => Promise<any>>();
@@ -53,6 +63,7 @@ describe('RestartFromCheckpointWorker', () => {
     mockFindByNode.mockResolvedValue(null);
     mockFindByExecution.mockResolvedValue([checkpoint()]);
     mockAdmit.mockResolvedValue(undefined);
+    mockManagerHealthy.mockResolvedValue(false);
   });
 
   test('fails closed when a mutating restart has no graph state', async() => {
