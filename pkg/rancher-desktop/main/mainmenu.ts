@@ -16,7 +16,6 @@ const console = Logging.mainmenu;
 
 // State for dynamic menu updates
 let kubernetesState: State = State.STOPPED;
-let userLoggedIn = false;
 
 /**
  * Current routine-surface context, pushed from the renderer via
@@ -44,11 +43,8 @@ ipcMain.on('app-state:set-routine-context', (_event, ctx: RoutineContext) => {
   setRoutineContext(ctx && typeof ctx === 'object' ? ctx : null);
 });
 
-/** Called by vault IPC handlers when lock state changes */
+/** Broadcast vault state changes to renderer windows. */
 export function setUserLoggedIn(unlocked: boolean): void {
-  userLoggedIn = unlocked;
-  rebuildMenu();
-
   // Broadcast to ALL renderer windows so every login/lock screen reacts
   const channel = unlocked ? 'vault:logged-in' : 'vault:logged-out';
 
@@ -298,54 +294,46 @@ function getFileMenu(): MenuItem {
       {
         label:       'New Chat Tab',
         accelerator: 'CmdOrCtrl+N',
-        enabled:     userLoggedIn,
         click:       () => sendAgentCommand('new-chat-tab'),
       },
       {
         label:       'New Browser Tab',
         accelerator: 'CmdOrCtrl+T',
-        enabled:     userLoggedIn,
         click:       () => sendAgentCommand('new-browser-tab'),
       },
       { type: 'separator' },
       {
         label:       'Open Sulla Agent',
         accelerator: 'CmdOrCtrl+1',
-        enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'chat' }),
       },
       {
         label:       'Open Integrations',
         accelerator: 'CmdOrCtrl+2',
-        enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'integrations' }),
       },
       {
         label:       'Open Password Manager',
         accelerator: 'CmdOrCtrl+3',
-        enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'vault' }),
       },
       {
         label:       'Open Use Cases',
         accelerator: 'CmdOrCtrl+4',
-        enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'marketplace' }),
       },
       {
         label:   'Workflow File',
-        enabled: userLoggedIn,
         submenu: [
           {
             label:       'Import Workflow…',
             accelerator: 'CmdOrCtrl+Shift+I',
-            enabled:     userLoggedIn,
             click:       () => sendAgentCommand('routines:import'),
           },
           {
             label:       'Export Current Workflow…',
             accelerator: 'CmdOrCtrl+Shift+E',
-            enabled:     userLoggedIn && currentRoutineContext?.mode === 'routine',
+            enabled:     currentRoutineContext?.mode === 'routine',
             click:       () => {
               if (currentRoutineContext?.mode === 'routine') {
                 sendAgentCommand('routines:export', { id: currentRoutineContext.id });
@@ -357,30 +345,26 @@ function getFileMenu(): MenuItem {
       { type: 'separator' },
       {
         label:   'Open Docker Dashboard',
-        enabled: userLoggedIn,
         click:   openDockerDashboard,
       },
       {
         label:   'Open Cluster Dashboard',
         click:   openDashboard,
-        enabled: kubernetesState === State.STARTED && userLoggedIn,
+        enabled: kubernetesState === State.STARTED,
       },
       { type: 'separator' },
       {
         label:   'Diagnostics',
-        enabled: userLoggedIn,
         click:   () => navigateDockerDashboard('/Diagnostics'),
       },
       {
         label:   'Troubleshooting',
-        enabled: userLoggedIn,
         click:   () => navigateDockerDashboard('/Troubleshooting'),
       },
       { type: 'separator' },
       {
         id:      'extensions-list',
         label:   'Installed Extensions',
-        enabled: userLoggedIn,
         submenu: getExtensionsSubmenu(),
       },
       { type: 'separator' },
@@ -548,7 +532,6 @@ function getHistoryMenu(): MenuItem {
     {
       label:       'Show All History',
       accelerator: 'CmdOrCtrl+Y',
-      enabled:     userLoggedIn,
       click:       () => {
         const existing = getWindow('main-agent');
 
@@ -563,7 +546,6 @@ function getHistoryMenu(): MenuItem {
     {
       label:       'Reopen Last Closed Tab',
       accelerator: 'CmdOrCtrl+Shift+T',
-      enabled:     userLoggedIn,
       click:       () => {
         const existing = getWindow('main-agent');
 
@@ -581,7 +563,6 @@ function getHistoryMenu(): MenuItem {
     for (const entry of todayEntries.slice(0, 10)) {
       submenu.push({
         label:   historyEntryLabel(entry),
-        enabled: userLoggedIn,
         click:   historyEntryClick(entry),
       });
     }
@@ -594,7 +575,6 @@ function getHistoryMenu(): MenuItem {
     for (const entry of yesterdayEntries.slice(0, 10)) {
       submenu.push({
         label:   historyEntryLabel(entry),
-        enabled: userLoggedIn,
         click:   historyEntryClick(entry),
       });
     }
@@ -605,10 +585,8 @@ function getHistoryMenu(): MenuItem {
   if (last7DaysEntries.length > 0) {
     submenu.push({
       label:   'Last 7 Days',
-      enabled: userLoggedIn,
       submenu: last7DaysEntries.slice(0, 20).map(entry => ({
         label:   historyEntryLabel(entry),
-        enabled: userLoggedIn,
         click:   historyEntryClick(entry),
       })),
     });
@@ -618,11 +596,9 @@ function getHistoryMenu(): MenuItem {
   // Clear History submenu
   submenu.push({
     label:   'Clear History...',
-    enabled: userLoggedIn,
     submenu: [
       {
         label:   'Clear Last Hour',
-        enabled: userLoggedIn,
         click:   () => {
           const cutoff = new Date(Date.now() - 3_600_000).toISOString();
           const existing = getWindow('main-agent');
@@ -637,7 +613,6 @@ function getHistoryMenu(): MenuItem {
       },
       {
         label:   'Clear Today',
-        enabled: userLoggedIn,
         click:   () => {
           const cutoff = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
           const existing = getWindow('main-agent');
@@ -650,7 +625,6 @@ function getHistoryMenu(): MenuItem {
       },
       {
         label:   'Clear All History',
-        enabled: userLoggedIn,
         click:   () => {
           const existing = getWindow('main-agent');
 
@@ -697,19 +671,16 @@ function getMacApplicationMenu(): MenuItem[] {
         {
           label:       'Language Model Settings…',
           accelerator: 'CmdOrCtrl+L',
-          enabled:     userLoggedIn,
           click:       openLanguageModelSettings,
         },
         {
           label:       'Audio Settings…',
           accelerator: 'CmdOrCtrl+Alt+U',
-          enabled:     userLoggedIn,
           click:       openAudioSettings,
         },
         {
           label:       'Computer Use Settings\u2026',
           accelerator: 'CmdOrCtrl+Shift+C',
-          enabled:     userLoggedIn,
           click:       openComputerUseSettings,
         },
         { type: 'separator' },
@@ -791,22 +762,7 @@ function getMacApplicationMenu(): MenuItem[] {
       submenu: [
         {
           label:   'My Account',
-          enabled: userLoggedIn,
           click:   () => sendAgentCommand('open-tab', { mode: 'account' }),
-        },
-        { type: 'separator' },
-        {
-          label:       'Log Out',
-          accelerator: 'CmdOrCtrl+Shift+Q',
-          click:       async() => {
-            try {
-              // UI logout — lock menus and show lock screen, but keep VMK for agent
-              // setUserLoggedIn broadcasts vault:logged-out to all windows
-              setUserLoggedIn(false);
-            } catch (err) {
-              console.error('[MainMenu] Logout failed:', err);
-            }
-          },
         },
       ],
     }),
