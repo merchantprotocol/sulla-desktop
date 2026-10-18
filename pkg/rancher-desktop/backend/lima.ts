@@ -3469,6 +3469,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     compose.services.workflow_manager = {
       ...workflowImage,
       image,
+      // Rebuild source images and refresh published tags, including the latest
+      // fallback, so cached pre-authentication managers cannot survive an upgrade.
+      pull_policy: workflowImage.build ? 'build' : 'always',
       container_name: 'sulla_workflow_manager',
       // The manager alone needs Docker socket access to launch short-lived
       // runners. Runners retain the image's unprivileged `node` user and are
@@ -3495,7 +3498,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       ports: ['127.0.0.1:30122:8788'],
       volumes: ['/var/run/docker.sock:/var/run/docker.sock'],
       restart: 'unless-stopped',
-      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
+      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
     // Desktop owns controller and desktop-local tools. Containers reach that
@@ -3864,8 +3867,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const start = Date.now();
     while (Date.now() - start < timeoutSec * 1000) {
       try {
-        const status = await this.execCommand({ capture: true, root: true }, 'docker', 'ps', '--filter', `name=${ serviceName }`, '--format', '{{.Status}}');
-        if (status.includes('healthy') || status.includes('Up')) {
+        const status = await this.execCommand(
+          { capture: true, root: true }, 'docker', 'inspect', '--format',
+          '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}', serviceName,
+        );
+        if (status.trim() === 'running healthy' || status.trim() === 'running none') {
           console.log(`Docker service ${ serviceName } is ready`);
           return;
         }
