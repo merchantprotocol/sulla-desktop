@@ -49,6 +49,9 @@ const LEASE_MS = 15 * 60_000;
 const RENEW_MS = 5 * 60_000;
 const CONTAINER_UID = typeof process.getuid === 'function' ? process.getuid() : 10_001;
 const CONTAINER_GID = typeof process.getgid === 'function' ? process.getgid() : 10_001;
+const TRANSPORT_IMAGE_LABEL = 'com.sulla.agent.transport-version';
+const TRANSPORT_IMAGE_VERSION = '1';
+const TRANSPORT_COMPATIBILITY_IMAGE = `ghcr.io/merchantprotocol/sulla-agent:transport-v${ TRANSPORT_IMAGE_VERSION }`;
 const cleanupOwner = new AgentContainerCleanupOwner(message => log.error(`[AgentContainer] ${ message }`));
 
 export interface AgentContainerRun {
@@ -139,6 +142,20 @@ class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
 
 let imageReady: Promise<string> | null = null;
 
+async function requireTransportImage(image: string): Promise<void> {
+  const inspection = JSON.parse((await limactl(['docker', 'image', 'inspect', image])).stdout) as Array<{
+    Config?: { Labels?: Record<string, string> };
+  }>;
+  const version = inspection[0]?.Config?.Labels?.[TRANSPORT_IMAGE_LABEL];
+
+  if (version !== TRANSPORT_IMAGE_VERSION) {
+    throw new Error(
+      `Agent image ${ image } does not support transport protocol v${ TRANSPORT_IMAGE_VERSION } ` +
+      `(expected label ${ TRANSPORT_IMAGE_LABEL }=${ TRANSPORT_IMAGE_VERSION })`,
+    );
+  }
+}
+
 async function ensureAgentImage(): Promise<string> {
   if (imageReady) return imageReady;
   imageReady = (async() => {
@@ -146,23 +163,26 @@ async function ensureAgentImage(): Promise<string> {
       'sulla-agent', process.cwd(), Electron.app.getVersion(), process.env.SULLA_AGENT_IMAGE,
     );
     try {
-      await limactl(['docker', 'image', 'inspect', resolved.image]);
+      await requireTransportImage(resolved.image);
       return resolved.image;
     } catch { /* lazy build/pull below */ }
 
     if (resolved.build) {
       await limactl(['docker', 'build', '--file', path.join(resolved.build.context, resolved.build.dockerfile), '--tag', resolved.image, resolved.build.context]);
+      await requireTransportImage(resolved.image);
       return resolved.image;
     }
 
     try {
       await limactl(['docker', 'pull', resolved.image]);
+      await requireTransportImage(resolved.image);
       return resolved.image;
     } catch (error) {
-      if (resolved.image.endsWith(':latest')) throw error;
-      const latest = 'ghcr.io/merchantprotocol/sulla-agent:latest';
-      await limactl(['docker', 'pull', latest]);
-      return latest;
+      if (process.env.SULLA_AGENT_IMAGE || resolved.image === TRANSPORT_COMPATIBILITY_IMAGE) throw error;
+      log.warn(`[AgentContainer] ${ resolved.image } is unavailable or transport-incompatible; using ${ TRANSPORT_COMPATIBILITY_IMAGE }`);
+      await limactl(['docker', 'pull', TRANSPORT_COMPATIBILITY_IMAGE]);
+      await requireTransportImage(TRANSPORT_COMPATIBILITY_IMAGE);
+      return TRANSPORT_COMPATIBILITY_IMAGE;
     }
   })().catch(error => {
     imageReady = null;
@@ -240,16 +260,21 @@ async function replaceContainerSecret(secretDir: string, name: string, value: st
 }
 
 /** Seed an isolated persistent clone; never mount shared Git metadata writable. */
-async function prepareCheckout(source: string | undefined, workspacePath: string): Promise<string | undefined> {
+async function prepareCheckout(source: string | undefined, jobKey: string): Promise<string | undefined> {
   if (!source) return undefined;
-  const worktreeRoot = path.join(os.homedir(), 'Sites', 'worktrees') + path.sep;
+  const worktreeRoot = path.join(os.homedir(), 'Sites', 'worktrees');
   const resolved = fs.realpathSync(source);
-  if (!resolved.startsWith(worktreeRoot) || !fs.statSync(resolved).isDirectory()) {
+  if (!resolved.startsWith(`${ worktreeRoot }${ path.sep }`) || !fs.statSync(resolved).isDirectory()) {
     throw new Error('Container workspacePath must be an existing worktree under ~/Sites/worktrees');
   }
   const top = (await limactl(['git', '-C', resolved, 'rev-parse', '--show-toplevel'])).stdout.trim();
   if (fs.realpathSync(top) !== resolved) throw new Error('container workspacePath must be a Git worktree root');
-  const checkout = path.join(workspacePath, 'checkout');
+  const commonGitDir = (await limactl(['git', '-C', resolved, 'rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();
+  const repository = safeName(path.basename(path.dirname(commonGitDir)));
+  const branch = await limactl(['git', '-C', resolved, 'symbolic-ref', '--short', 'HEAD'])
+    .then(result => result.stdout.trim())
+    .catch(async() => `detached-${ (await limactl(['git', '-C', resolved, 'rev-parse', '--short', 'HEAD'])).stdout.trim() }`);
+  const checkout = path.join(worktreeRoot, `${ repository }-${ safeName(`${ branch }-agent-${ jobKey }`) }`);
   if (!fs.existsSync(path.join(checkout, '.git'))) {
     await limactl(['git', 'clone', '--local', '--no-hardlinks', resolved, checkout]);
   }
@@ -471,11 +496,12 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
 
     toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
-    const workspacePath = path.join(os.homedir(), 'sulla', 'workspaces', 'agents', `${ safeName(run.jobId) }-${ run.taskIndex }`);
+    const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
+    const checkout = await prepareCheckout(run.workspacePath, jobKey);
+    const workspacePath = checkout ?? path.join(os.homedir(), 'sulla', 'workspaces', 'agents', jobKey);
     await fs.promises.mkdir(workspacePath, { recursive: true, mode: 0o700 });
     await fs.promises.chmod(workspacePath, 0o700);
-    const checkout = await prepareCheckout(run.workspacePath, workspacePath);
-    const providerWorkspace = checkout ?? workspacePath;
+    const providerWorkspace = workspacePath;
     providerFiles = new ContainerProviderFileTransport(path.join(paths.sullaHome, 'workspaces', 'provider-transport'));
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, {
       SULLA_API_TOKEN: issueLease(), SULLA_TOOL_SESSION: toolSession.id,
@@ -734,10 +760,11 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const configuration = containerEnvironment(
       run, issueLease(), session.id, 'http://sulla_tools:3000',
     );
-    const workspacePath = path.join(os.homedir(), 'sulla', 'workspaces', 'agents', `${ safeName(run.jobId) }-${ run.taskIndex }`);
+    const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
+    const checkout = await prepareCheckout(run.workspacePath, jobKey);
+    const workspacePath = checkout ?? path.join(os.homedir(), 'sulla', 'workspaces', 'agents', jobKey);
     await fs.promises.mkdir(workspacePath, { recursive: true, mode: 0o700 });
     await fs.promises.chmod(workspacePath, 0o700);
-    const checkout = await prepareCheckout(run.workspacePath, workspacePath);
     const docsPath = resolveSullaDocsDir();
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, configuration.secrets);
     containerId = await runtime.create({
@@ -755,7 +782,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       env:         configuration.env,
       binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`, `${ workspacePath }:${ workspacePath }:rw`, `${ docsPath }:/opt/sulla-docs:ro`],
       network:     'sulla_default',
-      workingDir:  checkout ?? workspacePath,
+      workingDir:  workspacePath,
       user:        `${ CONTAINER_UID }:${ CONTAINER_GID }`,
       tmpfs:       { '/home/sulla': `rw,uid=${ CONTAINER_UID },gid=${ CONTAINER_GID },mode=0700` },
       memoryLimit: MEMORY,
@@ -769,7 +796,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       jobId:         run.jobId,
       threadId:      metadata.threadId,
       deviceId,
-      workspacePath: checkout ?? workspacePath,
+      workspacePath,
     });
     const startedContainerId = containerId;
 
