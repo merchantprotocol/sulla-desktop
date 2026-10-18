@@ -48,12 +48,6 @@ ipcMain.on('app-state:set-routine-context', (_event, ctx: RoutineContext) => {
 export function setUserLoggedIn(unlocked: boolean): void {
   userLoggedIn = unlocked;
   rebuildMenu();
-  // Also update the tray menu
-  try {
-    const { Tray } = require('./tray');
-    const tray = Tray.getInstanceIfExists();
-    if (tray) tray.setUserLoggedIn(unlocked);
-  } catch { /* tray not initialized yet */ }
 
   // Broadcast to ALL renderer windows so every login/lock screen reacts
   const channel = unlocked ? 'vault:logged-in' : 'vault:logged-out';
