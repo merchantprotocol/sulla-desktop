@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -31,6 +31,17 @@ test('descriptor-pinned mutations preserve replacements and reread copies from b
     assert.ok(reads >= 3, 'source and publication checks all reread from offset zero');
     assert.equal(await readFile(join(root, 'docs/copy.txt'), 'utf8'), 'original-content');
     await coordinator.finalizePublication(copied);
+
+    const outside = await mkdtemp(join(tmpdir(), 'sulla-files-outside-'));
+    try {
+      await symlink(outside, join(root, 'linked'));
+      await assert.rejects(coordinator.copyVerified({
+        source: 'docs/source.txt',
+        target: 'linked/escaped.txt',
+        verify: async pinned => assert.equal(await contents(pinned), 'original-content'),
+      }));
+      await assert.rejects(readFile(join(outside, 'escaped.txt')));
+    } finally { await rm(outside, { recursive: true, force: true }) }
 
     let raced = false;
     await assert.rejects(

@@ -96,13 +96,16 @@ export class FilesMutationCoordinator {
       const source = await this.pinVerified(input.source, input.verify);
       const staged = `.sulla-trash/.residency/${ randomUUID() }.copy`;
       try {
-        await this.ensurePrivateParent(staged);
-        const output = await open(this.absolute(staged), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+        const output = await this.openPrivateExclusive(staged);
         try {
           for await (const value of source.createReadStream()) {
             const bytes = Buffer.from(value);
             let offset = 0;
-            while (offset < bytes.byteLength) offset += (await output.write(bytes, offset)).bytesWritten;
+            while (offset < bytes.byteLength) {
+              const { bytesWritten } = await output.write(bytes, offset);
+              if (bytesWritten === 0) throw new Error('Pinned copy made no write progress');
+              offset += bytesWritten;
+            }
           }
           await output.sync();
         } finally { await output.close() }
@@ -231,12 +234,22 @@ export class FilesMutationCoordinator {
     const root = await this.rootReady;
     const rel = relative(root, parent);
     if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('Files mutation parent escapes root');
-    let current = root;
-    for (const part of rel.split(sep).filter(Boolean)) {
-      current = resolve(current, part);
-      await mkdir(current, { mode: 0o700 }).catch((error:any) => { if (error?.code !== 'EEXIST') throw error; });
-      const actual = await realpath(current);
-      if (actual !== current) throw new Error('Files mutation parent contains a symlink');
+    let current = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    let expected = root;
+    try {
+      for (const part of rel.split(sep).filter(Boolean)) {
+        const child = `/proc/self/fd/${ current.fd }/${ part }`;
+        await mkdir(child, { mode: 0o700 }).catch((error:any) => { if (error?.code !== 'EEXIST') throw error; });
+        const next = await open(child, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+        expected = resolve(expected, part);
+        try {
+          if (await realpath(`/proc/self/fd/${ next.fd }`) !== expected) throw new Error('Files mutation parent changed during traversal');
+        } catch (error) { await next.close(); throw error }
+        await current.close();
+        current = next;
+      }
+    } finally {
+      await current.close();
     }
   }
 
