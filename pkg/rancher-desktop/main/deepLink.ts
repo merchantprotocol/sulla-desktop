@@ -40,6 +40,7 @@ const SCHEME = 'sulla:';
 // retry dispatch for up to DISPATCH_TIMEOUT_MS before giving up.
 const DISPATCH_TIMEOUT_MS = 20_000;
 const DISPATCH_POLL_MS = 100;
+const RESIDENCY_TRANSFER_TIMEOUT_MS = 30 * 60_000;
 
 export function isDeepLink(url: string | undefined | null): boolean {
   if (!url) return false;
@@ -230,6 +231,7 @@ async function handleFilesAction(target:Electron.BrowserWindow, action:string, a
       method:  'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ desiredState: action === 'online-only' ? 'online-only' : 'local' }),
+      signal: AbortSignal.timeout(RESIDENCY_TRANSFER_TIMEOUT_MS),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));

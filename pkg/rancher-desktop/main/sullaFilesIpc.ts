@@ -17,6 +17,7 @@ import paths from '@pkg/utils/paths';
 
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
+const RESIDENCY_TRANSFER_TIMEOUT_MS = 30 * 60_000;
 
 async function json(endpoint:string, init:RequestInit = {}, server = false):Promise<any> {
   const response = await getSullaFilesWatcher().requestFiles(endpoint, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any) } }, server);
@@ -264,7 +265,7 @@ export function initSullaFilesIpc():void {
     };
   });
   ipcMain.handle('files-ui:residency-status', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/residency`));
-  ipcMain.handle('files-ui:set-residency', (_event, input:{ fileId:string; desiredState:'local' | 'online-only' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/residency`, { method: 'POST', body: JSON.stringify({ desiredState: input.desiredState }) }));
+  ipcMain.handle('files-ui:set-residency', (_event, input:{ fileId:string; desiredState:'local' | 'online-only' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/residency`, { method: 'POST', body: JSON.stringify({ desiredState: input.desiredState }), signal: AbortSignal.timeout(RESIDENCY_TRANSFER_TIMEOUT_MS) }));
   ipcMain.handle('files-ui:recent-references', async(_event, limit = 5) => {
     const groups = await collectionsWithFiles();
     return groups.flatMap(item => item.files.map(file => reference(file, item.collection)))
