@@ -24,6 +24,15 @@ interface ChatArtifactRow {
   version:    number;
   language:   string | null;
   path:       string | null;
+  files_file_id:                     string | null;
+  files_version_id:                  string | null;
+  files_collection_id:               string | null;
+  files_path:                        string | null;
+  files_artifact_version:            number | null;
+  files_registration_status:         'pending' | 'synced' | 'error';
+  files_registration_error:          string | null;
+  files_registration_attempts:       number;
+  files_registration_updated_at:     string | Date | null;
   created_at: string | Date;
   updated_at: string | Date;
 }
@@ -62,6 +71,13 @@ function mapArtifact(row: ChatArtifactRow): ChatArtifactRecord {
     content: row.content, status: row.status, isOpen: row.is_open,
     isDeleted: row.is_deleted, version: row.version, language: row.language,
     path: row.path, createdAt: timestamp(row.created_at), updatedAt: timestamp(row.updated_at),
+    filesFileId: row.files_file_id, filesVersionId: row.files_version_id,
+    filesCollectionId: row.files_collection_id, filesPath: row.files_path,
+    filesArtifactVersion: row.files_artifact_version,
+    filesRegistrationStatus: row.files_registration_status,
+    filesRegistrationError: row.files_registration_error,
+    filesRegistrationAttempts: row.files_registration_attempts,
+    filesRegistrationUpdatedAt: row.files_registration_updated_at ? timestamp(row.files_registration_updated_at) : null,
   };
 }
 
@@ -158,19 +174,27 @@ export class ChatArtifactModel {
 
       const current = mapArtifact(row);
       const patch = input.mutate(current);
+      const nextName = patch.name ?? current.name;
+      const nextKind = patch.kind ?? current.kind;
+      const nextContent = patch.content ?? current.content;
+      const nextLanguage = patch.language === undefined ? current.language : patch.language;
+      const nextPath = patch.path === undefined ? current.path : patch.path;
+      const filesContentChanged = nextName !== current.name || nextKind !== current.kind ||
+        nextContent !== current.content || nextLanguage !== current.language || nextPath !== current.path;
       const result = await client.query<ChatArtifactRow>(
         `UPDATE chat_artifacts SET
            name = $3, kind = $4, content = $5, status = $6,
            is_open = $7, is_deleted = $8, language = $9, path = $10,
-           version = version + 1, updated_at = NOW()
+           version = version + 1, updated_at = NOW(),
+           files_registration_status = CASE WHEN $11 THEN 'pending' ELSE files_registration_status END,
+           files_registration_error = CASE WHEN $11 THEN NULL ELSE files_registration_error END
          WHERE thread_id = $1 AND id = $2
          RETURNING *`,
         [
-          input.threadId, row.id, patch.name ?? current.name, patch.kind ?? current.kind,
-          patch.content ?? current.content, patch.status ?? current.status,
+          input.threadId, row.id, nextName, nextKind,
+          nextContent, patch.status ?? current.status,
           patch.isOpen ?? current.isOpen, patch.isDeleted ?? current.isDeleted,
-          patch.language === undefined ? current.language : patch.language,
-          patch.path === undefined ? current.path : patch.path,
+          nextLanguage, nextPath, filesContentChanged,
         ],
       );
       const updated = result.rows[0];
@@ -183,6 +207,38 @@ export class ChatArtifactModel {
 
       return mapArtifact(updated);
     });
+  }
+
+  static async recordFilesRegistration(
+    artifactId: string,
+    artifactVersion: number,
+    result: { fileId: string; versionId: string; collectionId: string; path: string } | { error: string; path?: string },
+  ): Promise<ChatArtifactRecord | null> {
+    const success = 'fileId' in result;
+    const fileId = success ? result.fileId : null;
+    const versionId = success ? result.versionId : null;
+    const collectionId = success ? result.collectionId : null;
+    const filesPath = success ? result.path : result.path ?? null;
+    const error = success ? null : result.error.slice(0, 500);
+    const row = await postgresClient.queryOne<ChatArtifactRow>(
+      `UPDATE chat_artifacts SET
+         files_file_id = CASE WHEN $3 THEN $4 ELSE files_file_id END,
+         files_version_id = CASE WHEN $3 THEN $5 ELSE files_version_id END,
+         files_collection_id = CASE WHEN $3 THEN $6 ELSE files_collection_id END,
+         files_path = CASE WHEN $3 THEN $7 WHEN $9::text IS NOT NULL THEN $9 ELSE files_path END,
+         files_artifact_version = CASE WHEN $3 THEN $2 ELSE files_artifact_version END,
+         files_registration_status = CASE WHEN $3 THEN 'synced' ELSE 'error' END,
+         files_registration_error = CASE WHEN $3 THEN NULL ELSE $8 END,
+         files_registration_attempts = files_registration_attempts + 1,
+         files_registration_updated_at = NOW()
+       WHERE id = $1 AND version = $2 AND is_deleted = false
+       RETURNING *`,
+      [artifactId, artifactVersion, success,
+        fileId, versionId, collectionId, success ? filesPath : null,
+        error, success ? null : filesPath],
+    );
+
+    return row ? mapArtifact(row) : null;
   }
 
   static async history(threadId: string, idOrName: string): Promise<ChatArtifactRevision[]> {

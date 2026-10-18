@@ -1,6 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 
-import { localAuthorityTestHooks } from './localAuthority';
+import { localAuthorityTestHooks } from './localAuthority.js';
 
 function syntheticItem(integrationId: string): any {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');

@@ -31,6 +31,7 @@
       class="chat-body"
       v-html="rendered"
     />
+    <ChatFileCard v-for="file in fileReferences" :key="`${file.fileId}:${file.versionId}`" :reference="file" />
     <TurnActions
       role="sulla"
       :pinned="msg.pinned"
@@ -54,8 +55,10 @@ import { computed, ref } from 'vue';
 import IsolatedHtml from './IsolatedHtml.vue';
 import TurnActions from './TurnActions.vue';
 import ChatContextMenu from '../../ChatContextMenu.vue';
+import ChatFileCard from '../files/ChatFileCard.vue';
 import { useChatController } from '../../controller/useChatController';
 import { renderMarkdown } from '../../messages/markdown';
+import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { SullaMessage } from '../../models/Message';
 
@@ -84,6 +87,11 @@ const timeLabel = computed(() => {
 const isHtmlDocument = computed(() => HTML_DOC_RE.test(props.msg.text || ''));
 
 const rendered = computed(() => renderMarkdown(props.msg.text));
+const fileReferences = computed(() => {
+  const refs = [...(props.msg.fileReferences ?? [])].map(item => ({ ...item.fileRef!, name: item.name })).filter(item => item.fileId);
+  refs.push(...parseDurableFileReferences(props.msg.text));
+  return refs.filter((item, index) => refs.findIndex(other => other.fileId === item.fileId && other.versionId === item.versionId) === index);
+});
 
 function copy(): void {
   navigator.clipboard?.writeText(props.msg.text).catch(() => undefined);

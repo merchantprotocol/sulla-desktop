@@ -14,6 +14,8 @@ import {
   verifyLoginHash,
 } from './auth.js';
 import { LocalVaultAuthority, LocalVaultError } from './localAuthority.js';
+import { VaultFilesKeyBundleAuthority } from './filesKeyBundleAuthority.js';
+import { createFilesKeyBundleRouter } from './filesKeyBundleRoutes.js';
 import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } from './rbac.js';
 import { bootstrapFirstOwner } from './serverBootstrap.js';
 
@@ -182,6 +184,7 @@ async function authorizeItemFolder(
 export function createApp(db: Database, config: VaultConfig, options: { localAuthority?: LocalVaultAuthority } = {}) {
   const app = express();
   const localAuthority = config.mode === 'desktop' ? options.localAuthority ?? new LocalVaultAuthority(db, config) : null;
+  const filesKeyBundleAuthority = localAuthority ? new VaultFilesKeyBundleAuthority(db, localAuthority) : null;
   app.disable('x-powered-by');
   app.use((request, response, next) => {
     const origin = request.header('origin');
@@ -216,6 +219,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   };
 
   if (localAuthority) {
+    app.use('/v1/desktop/files', createFilesKeyBundleRouter(filesKeyBundleAuthority!, {
+      serviceId: config.filesServiceId!,
+      token: config.filesServiceToken!,
+    }));
     app.post('/v1/desktop/bootstrap/challenge', (request, response) => {
       response.json(localAuthority.createChallenge(
         requiredString(request.body.callerId, 'callerId'),

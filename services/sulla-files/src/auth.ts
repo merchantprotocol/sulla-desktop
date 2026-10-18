@@ -2,11 +2,11 @@ import crypto from 'node:crypto';
 
 import jwt from 'jsonwebtoken';
 
-export interface CapabilityClaims { sub: string; org_id?: string; group_ids?: string[]; agent_id?: string; job_id?: string; device_id?: string; scopes: string[]; exp: number; aud: string; v: number }
-export interface FilesIdentity { userId: string; deviceId: string; kind: 'capability' | 'server-session'; agentId?: string; jobId?: string }
+export interface CapabilityClaims { sub: string; org_id?: string; group_ids?: string[]; agent_id?: string; job_id?: string; thread_id?: string; device_id?: string; scopes: string[]; exp: number; aud: string; v: number }
+export interface FilesIdentity { userId: string; deviceId: string; kind: 'capability' | 'server-session'; orgId?: string; groupIds?: string[]; agentId?: string; jobId?: string; threadId?: string }
 const encode = (value:Buffer | string) => Buffer.from(value).toString('base64url');
 export function deriveCapabilitySigningKey(secret:string | Buffer):Buffer { return crypto.createHmac('sha256', secret).update('sulla-tools-capability-v1').digest() }
-export function issueCapabilityToken(input:{ sub: string; org_id?: string; group_ids?: string[]; agent_id?: string; job_id?: string; device_id?: string; scopes: string[] }, key:string | Buffer):string {
+export function issueCapabilityToken(input:{ sub: string; org_id?: string; group_ids?: string[]; agent_id?: string; job_id?: string; thread_id?: string; device_id?: string; scopes: string[] }, key:string | Buffer):string {
   const now = Math.floor(Date.now() / 1_000);
   const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const payload = encode(JSON.stringify({ ...input, v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 300, jti: crypto.randomUUID() }));
@@ -30,7 +30,7 @@ export function verifyCapabilityToken(token:string | undefined, key:string | Buf
 export function verifyFilesIdentity(token:string | undefined, capabilityKey:string | Buffer, serverJwtSecret?:string):FilesIdentity {
   try {
     const claims = verifyCapabilityToken(token, capabilityKey);
-    return { userId: claims.sub, deviceId: claims.device_id ?? '', kind: 'capability', agentId: claims.agent_id, jobId: claims.job_id };
+    return { userId: claims.sub, deviceId: claims.device_id ?? '', kind: 'capability', orgId: claims.org_id, groupIds: claims.group_ids, agentId: claims.agent_id, jobId: claims.job_id, threadId: claims.thread_id };
   } catch (capabilityError) {
     if (!token || !serverJwtSecret) throw capabilityError;
     const payload = jwt.verify(token, serverJwtSecret, { algorithms: ['HS256'], audience: 'sulla-vault' });

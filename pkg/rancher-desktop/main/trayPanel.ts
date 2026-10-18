@@ -27,6 +27,35 @@ let preferencesWindow: BrowserWindow | null = null;
 let afterCaptureWindow: BrowserWindow | null = null;
 const CAPTURE_SHORTCUTS = ['CommandOrControl+Shift+5', 'CommandOrControl+Shift+U', 'CommandOrControl+Shift+S'];
 
+function isTrustedTrayRenderer(event:Electron.IpcMainEvent | Electron.IpcMainInvokeEvent):boolean {
+  return [panelWindow, preferencesWindow, afterCaptureWindow]
+    .some(window => window && !window.isDestroyed() && window.webContents.id === event.sender.id);
+}
+
+function requireTrayRenderer(event:Electron.IpcMainEvent | Electron.IpcMainInvokeEvent):void {
+  if (!isTrustedTrayRenderer(event)) throw new Error('Files tray actions are only available to Sulla tray windows');
+}
+
+async function resolveFilesItem(candidate:string, relative:boolean):Promise<{ absolute: string; relativePath: string; size: number }> {
+  if (typeof candidate !== 'string' || !candidate) throw new Error('A Files path is required');
+  const root = await fs.promises.realpath(getSullaFilesWatcher().folder);
+  const requested = relative ? path.resolve(root, candidate) : path.resolve(candidate);
+  if (requested === root || !requested.startsWith(`${ root }${ path.sep }`)) throw new Error('The requested item is outside Sulla Files');
+  const absolute = await fs.promises.realpath(requested);
+  if (!absolute.startsWith(`${ root }${ path.sep }`)) throw new Error('The requested item resolves outside Sulla Files');
+  const info = await fs.promises.stat(absolute);
+
+  return { absolute, relativePath: path.relative(root, absolute).split(path.sep).join('/'), size: info.size };
+}
+
+async function trustedCapture(input:CaptureResult):Promise<CaptureResult> {
+  const item = await resolveFilesItem(input.relativePath, true);
+  const indexed = await getSullaFilesWatcher().findFile(item.relativePath);
+  const kind = ['screenshot', 'recording', 'upload'].includes(input.kind) ? input.kind : 'upload';
+
+  return { path: item.absolute, relativePath: item.relativePath, name: path.basename(item.absolute), size: item.size, kind, fileId: indexed?.id };
+}
+
 const preferenceDefaults = {
   defaultAction:             'share',
   keepCapturesAvailable:     true,
@@ -365,29 +394,36 @@ function registerPanelIpc(): void {
     openCaptureStudio();
   });
 
-  ipcMain.handle('tray-panel:files-status', () => getSullaFilesWatcher().status());
-  ipcMain.handle('tray-panel:files-pause', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
-  ipcMain.handle('tray-panel:files-pause-hour', () => getSullaFilesWatcher().pauseFor(60 * 60_000));
+  ipcMain.handle('tray-panel:files-status', (event) => { requireTrayRenderer(event); return getSullaFilesWatcher().status() });
+  ipcMain.handle('tray-panel:files-pause', (event, paused:boolean) => { requireTrayRenderer(event); return getSullaFilesWatcher().setPaused(paused === true) });
+  ipcMain.handle('tray-panel:files-pause-hour', (event) => { requireTrayRenderer(event); return getSullaFilesWatcher().pauseFor(60 * 60_000) });
   ipcMain.on('tray-panel:view-change', (_event, view:string, size?:{ width:number; height:number }) => resizePanelForView(view, size));
-  ipcMain.on('tray-panel:files-open', () => { getSullaFilesWatcher().openFolder().catch(error => console.warn('[SullaFiles] open folder failed:', error)); panelWindow?.hide() });
+  ipcMain.handle('tray-panel:files-open', async(event) => {
+    requireTrayRenderer(event);
+    await getSullaFilesWatcher().openFolder();
+    panelWindow?.hide();
+  });
 
-  ipcMain.handle('tray-panel:files-dashboard', async() => {
+  ipcMain.handle('tray-panel:files-dashboard', async(event) => {
+    requireTrayRenderer(event);
     const [status, files, preferences] = await Promise.all([
       getSullaFilesWatcher().status(),
-      getSullaFilesWatcher().recentFiles(4).catch(() => []),
+      getSullaFilesWatcher().recentFiles(4),
       capturePreferences(),
     ]);
     let shares:any[] = []; let sharingUnavailable = false;
 
     try { shares = await getSullaFilesLinkService().list() } catch (error) {
       if (error instanceof SharingUnavailableError) sharingUnavailable = true;
-      else console.debug('[SullaFiles] recent shares unavailable:', error);
+      else throw error;
     }
 
     return { status, files, preferences, shares, sharingUnavailable };
   });
 
-  ipcMain.handle('tray-panel:capture-screenshot', async(_event, mode:ScreenshotMode) => {
+  ipcMain.handle('tray-panel:capture-screenshot', async(event, mode:ScreenshotMode) => {
+    requireTrayRenderer(event);
+    if (!['area', 'window', 'full'].includes(mode)) throw new Error('Unknown screenshot mode');
     panelWindow?.hide();
     try {
       const capture = await getSullaFilesCaptureService().screenshot(mode);
@@ -399,7 +435,8 @@ function registerPanelIpc(): void {
       throw error;
     }
   });
-  ipcMain.handle('tray-panel:capture-record', async(_event, input:{ mic:boolean; camera:boolean }) => {
+  ipcMain.handle('tray-panel:capture-record', async(event, input:{ mic:boolean; camera:boolean }) => {
+    requireTrayRenderer(event);
     panelWindow?.hide();
     const result = await getSullaFilesCaptureService().toggleRecording(input);
 
@@ -408,44 +445,58 @@ function registerPanelIpc(): void {
 
     return result;
   });
-  ipcMain.handle('tray-panel:capture-upload', async() => {
+  ipcMain.handle('tray-panel:capture-upload', async(event) => {
+    requireTrayRenderer(event);
     panelWindow?.hide();
     try { return await getSullaFilesCaptureService().upload() } finally { panelWindow?.show() }
   });
-  ipcMain.handle('tray-panel:share-capture', (_event, capture:CaptureResult, options:{ mode:ShareMode; keepAvailable:boolean }) => getSullaFilesCaptureService().share(capture, options));
-  ipcMain.on('files-after-capture:close', () => afterCaptureWindow?.close());
-  ipcMain.on('files-after-capture:resize', (_event, height:number) => {
+  ipcMain.handle('tray-panel:share-capture', async(event, capture:CaptureResult, options:{ mode:ShareMode; keepAvailable:boolean }) => {
+    requireTrayRenderer(event);
+    if (!options || !['view', 'download'].includes(options.mode)) throw new Error('Unknown share mode');
+    return getSullaFilesCaptureService().share(await trustedCapture(capture), { mode: options.mode, keepAvailable: options.keepAvailable === true });
+  });
+  ipcMain.on('files-after-capture:close', (event) => { if (!isTrustedTrayRenderer(event)) return; afterCaptureWindow?.close() });
+  ipcMain.on('files-after-capture:resize', (event, height:number) => {
+    if (!isTrustedTrayRenderer(event)) return;
     if (afterCaptureWindow && !afterCaptureWindow.isDestroyed() && height > 0) afterCaptureWindow.setContentSize(384, Math.min(Math.round(height), 600));
   });
-  ipcMain.handle('tray-panel:copy-share', (_event, url:string) => { clipboard.writeText(url) });
-  ipcMain.on('tray-panel:set-capture-toggle', (_event, id:string, value:boolean) => {
+  ipcMain.handle('tray-panel:copy-share', (event, url:string) => {
+    requireTrayRenderer(event);
+    const parsed = new URL(url);
+    if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('Only web share links can be copied');
+    clipboard.writeText(parsed.toString());
+  });
+  ipcMain.on('tray-panel:set-capture-toggle', (event, id:string, value:boolean) => {
+    if (!isTrustedTrayRenderer(event)) return;
     const property = id === 'record-cam' ? preferenceKeys.recordCamera : preferenceKeys.recordMic;
 
     SullaSettingsModel.set(property.property, value, property.cast).catch(error => console.warn('[SullaFiles] capture preference failed:', error));
   });
-  ipcMain.on('tray-panel:files-preferences', (_event, tab?:string) => openFilesPreferences(tab));
-  ipcMain.on('tray-panel:open-files-screen', (_event, section?:string) => openFilesScreen(section));
-  ipcMain.on('tray-panel:resolve-file', (_event, relativePath:string) => {
+  ipcMain.on('tray-panel:files-preferences', (event, tab?:string) => { if (!isTrustedTrayRenderer(event)) return; openFilesPreferences(tab) });
+  ipcMain.on('tray-panel:open-files-screen', (event, section?:string) => { if (!isTrustedTrayRenderer(event)) return; openFilesScreen(section) });
+  ipcMain.handle('tray-panel:resolve-file', async(event, relativePath:string) => {
+    requireTrayRenderer(event);
+    const item = await resolveFilesItem(relativePath, true);
     openFilesScreen(undefined, relativePath);
-    const absolute = path.resolve(getSullaFilesWatcher().folder, relativePath);
-
-    if (absolute.startsWith(`${ getSullaFilesWatcher().folder }${ path.sep }`) && fs.existsSync(absolute)) shell.showItemInFolder(absolute);
+    shell.showItemInFolder(item.absolute);
   });
-  ipcMain.on('tray-panel:open-file', (_event, relativePath:string) => {
-    const absolute = path.resolve(getSullaFilesWatcher().folder, relativePath);
-
-    if (!absolute.startsWith(`${ getSullaFilesWatcher().folder }${ path.sep }`)) return;
-    shell.openPath(absolute).catch(error => console.warn('[SullaFiles] open file failed:', error));
+  ipcMain.handle('tray-panel:open-file', async(event, relativePath:string) => {
+    requireTrayRenderer(event);
+    const item = await resolveFilesItem(relativePath, true);
+    const error = await shell.openPath(item.absolute);
+    if (error) throw new Error(error);
     panelWindow?.hide();
   });
-  ipcMain.on('tray-panel:markup', (_event, filePath:string) => {
-    const absolute = path.resolve(filePath);
-
-    if (absolute.startsWith(`${ getSullaFilesWatcher().folder }${ path.sep }`) && absolute.toLowerCase().endsWith('.png')) openScreenshotMarkup(absolute);
+  ipcMain.handle('tray-panel:markup', async(event, filePath:string) => {
+    requireTrayRenderer(event);
+    const item = await resolveFilesItem(filePath, false);
+    if (!item.absolute.toLowerCase().endsWith('.png')) throw new Error('Only PNG captures can be marked up');
+    openScreenshotMarkup(item.absolute);
   });
 
-  ipcMain.handle('tray-panel:files-preferences-get', () => capturePreferences());
-  ipcMain.handle('tray-panel:files-preferences-set', async(_event, key:keyof typeof preferenceKeys, value:unknown) => {
+  ipcMain.handle('tray-panel:files-preferences-get', (event) => { requireTrayRenderer(event); return capturePreferences() });
+  ipcMain.handle('tray-panel:files-preferences-set', async(event, key:keyof typeof preferenceKeys, value:unknown) => {
+    requireTrayRenderer(event);
     const setting = preferenceKeys[key];
 
     if (!setting) throw new Error(`Unknown Sulla Files preference: ${ key }`);
@@ -454,8 +505,12 @@ function registerPanelIpc(): void {
     return capturePreferences();
   });
 
-  ipcMain.on('tray-panel:open-url', (_event: Electron.IpcMainEvent, url: string) => {
-    openUrlInApp(url);
+  ipcMain.on('tray-panel:open-url', (event: Electron.IpcMainEvent, url: string) => {
+    if (!isTrustedTrayRenderer(event)) return;
+    let parsed:URL;
+    try { parsed = new URL(url) } catch { return }
+    if (!['https:', 'http:'].includes(parsed.protocol)) return;
+    openUrlInApp(parsed.toString());
     panelWindow?.hide();
   });
 

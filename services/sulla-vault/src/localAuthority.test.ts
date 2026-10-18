@@ -29,6 +29,7 @@ const TOKEN = {
   control:   'control_' + 'b'.repeat(64),
   approval:  'approval_' + 'c'.repeat(64),
   broker:    'broker_' + 'd'.repeat(64),
+  files:     'files_' + 'e'.repeat(64),
 };
 
 function config(databaseUrl: string): VaultConfig {
@@ -38,6 +39,7 @@ function config(databaseUrl: string): VaultConfig {
     controlServiceId: 'sulla-desktop-control', controlServiceToken: TOKEN.control,
     approvalServiceId: 'sulla-desktop-approval', approvalServiceToken: TOKEN.approval,
     brokerServiceId: 'sulla-tools', brokerServiceToken: TOKEN.broker,
+    filesServiceId: 'sulla-files', filesServiceToken: TOKEN.files,
     humanUiOrigin: 'https://127.0.0.1:30135', legacyDatabaseUrl: databaseUrl,
   };
 }
@@ -59,6 +61,37 @@ test('bootstrap challenge rejects forgery, replay, expiry, and consumes unlock c
     (error: any) => error.code === 'invalid_bootstrap_challenge');
   await authority.lock();
   assert.equal(authority.status().unlocked, false);
+});
+
+test('Files authority lease is erased and rejects an in-flight result after lock', async() => {
+  const authority = new LocalVaultAuthority({ query: async() => ({ rowCount: 0, rows: [] }) } as any, config('postgresql://synthetic/unused'));
+  const originalPrivateKey = randomBytes(32);
+  (authority as any).keys = {
+    userId: '11111111-1111-4111-8111-111111111111',
+    publicKey: randomBytes(32).toString('base64url'),
+    userKey: randomBytes(32),
+    privateKey: Buffer.from(originalPrivateKey),
+  };
+  (authority as any).migrationState = 'unlocked';
+  let release!:() => void;
+  let started!:() => void;
+  let leasedPrivateKey:Uint8Array | undefined;
+  const gate = new Promise<void>(resolve => { release = resolve });
+  const entered = new Promise<void>(resolve => { started = resolve });
+  const operation = authority.withUnlockedIdentity(async identity => {
+    leasedPrivateKey = identity.privateKey;
+    assert.notEqual(identity.privateKey, (authority as any).keys.privateKey);
+    assert.deepEqual(Buffer.from(identity.privateKey), originalPrivateKey);
+    started();
+    await gate;
+    return identity.principalId;
+  });
+  await entered;
+  await authority.lock();
+  release();
+  await assert.rejects(operation, (error:any) => error.code === 'vault_locked');
+  assert.ok(leasedPrivateKey?.every(byte => byte === 0));
+  originalPrivateKey.fill(0);
 });
 
 test('browser popup sessions preserve an origin-bound target', () => {

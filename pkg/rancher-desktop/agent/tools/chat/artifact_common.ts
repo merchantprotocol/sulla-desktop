@@ -36,6 +36,13 @@ export abstract class ChatArtifactTool extends BaseTool {
       `version: ${ artifact.version }`,
     ];
     if (includeContent) lines.push('content:', artifact.content);
-    return { successBoolean: true, responseString: lines.join('\n') };
+    if (artifact.filesRegistrationStatus === 'synced') {
+      lines.push(`Files: ${ artifact.filesPath }`, `fileId: ${ artifact.filesFileId }`, `fileVersionId: ${ artifact.filesVersionId }`);
+    } else if (artifact.filesRegistrationStatus === 'error') {
+      lines.push(`Files registration failed: ${ artifact.filesRegistrationError ?? 'Unknown error' }`, 'The artifact is still saved in this chat. Retry after Files is available.');
+    } else {
+      lines.push('Files registration: pending');
+    }
+    return { successBoolean: artifact.filesRegistrationStatus !== 'error', responseString: lines.join('\n') };
   }
 }

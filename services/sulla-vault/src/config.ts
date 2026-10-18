@@ -16,6 +16,8 @@ export interface VaultConfig {
   extensionOrigins:            string[];
   brokerServiceId?:            string;
   brokerServiceToken?:         string;
+  filesServiceId?:             string;
+  filesServiceToken?:          string;
   bootstrapServiceId?:         string;
   bootstrapServiceToken?:      string;
   approvalServiceId?:          string;
@@ -61,6 +63,8 @@ export function loadConfig(): VaultConfig {
     extensionOrigins:           (process.env.SULLA_VAULT_EXTENSION_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean),
     brokerServiceId:            process.env.SULLA_VAULT_BROKER_SERVICE_ID ?? 'sulla-tools',
     brokerServiceToken:         process.env.SULLA_VAULT_BROKER_TOKEN,
+    filesServiceId:             process.env.SULLA_VAULT_FILES_SERVICE_ID ?? 'sulla-files',
+    filesServiceToken:          process.env.SULLA_VAULT_FILES_TOKEN,
     bootstrapServiceId:         process.env.SULLA_VAULT_BOOTSTRAP_SERVICE_ID ?? 'sulla-desktop-bootstrap',
     bootstrapServiceToken:      process.env.SULLA_VAULT_BOOTSTRAP_TOKEN,
     approvalServiceId:          process.env.SULLA_VAULT_APPROVAL_SERVICE_ID ?? 'sulla-desktop-approval',

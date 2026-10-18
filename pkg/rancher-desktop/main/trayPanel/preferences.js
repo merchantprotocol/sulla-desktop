@@ -37,7 +37,9 @@ document.querySelectorAll('.seg[data-setting]').forEach(group => group.addEventL
 }));
 document.querySelectorAll('.sw[data-setting]').forEach(toggle => toggle.addEventListener('click', () => save(toggle.dataset.setting, !toggle.classList.contains('on'))));
 document.querySelectorAll('select[data-setting]').forEach(select => select.addEventListener('change', () => save(select.dataset.setting, Number(select.value))));
-document.getElementById('open-folder').addEventListener('click', () => ipcRenderer.send('tray-panel:files-open'));
+document.getElementById('open-folder').addEventListener('click', async() => {
+  try { await ipcRenderer.invoke('tray-panel:files-open') } catch (error) { window.alert(error.message || 'Could not open the Files folder') }
+});
 ipcRenderer.on('files-preferences:select-tab', (_event, tab) => selectTab(tab));
 
 selectTab(new URLSearchParams(window.location.search).get('tab') || 'capture');

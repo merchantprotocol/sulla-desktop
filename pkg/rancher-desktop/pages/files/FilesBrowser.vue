@@ -60,6 +60,7 @@
         </div><span>{{ activeFiles.length.toLocaleString() }} file{{ activeFiles.length === 1 ? '' : 's' }}<template v-if="snapshot?.collection.keptBytes !== undefined"> · {{ formatBytes(snapshot.collection.keptBytes) }} kept on this Mac</template></span>
       </div>
       <button
+        v-if="dataSource.capabilities.nativeFilesystem"
         class="syncline"
         type="button"
         :title="syncTooltip"
@@ -70,6 +71,9 @@
           :class="syncState"
         />{{ syncLine }}
       </button>
+      <div v-else class="syncline" :title="syncTooltip">
+        <span class="dot" :class="syncState" />{{ syncLine }}
+      </div>
       <div class="foot">
         <div class="avatar">
           {{ initials(accountName) }}
@@ -77,7 +81,7 @@
       </div>
     </nav>
 
-    <main class="main">
+    <main v-if="!selected" class="main">
       <div class="top">
         <div class="crumbs">
           <template v-if="crumbs.length">
@@ -100,7 +104,7 @@
           </template>
           <b v-else>{{ rootLabel }}</b>
         </div>
-        <label class="search"><span
+        <label v-if="section !== 'sharedByMe'" class="search"><span
           class="si"
           v-html="icons.search"
         /><input
@@ -108,8 +112,9 @@
           v-model="query"
           placeholder="Search files, folders, transcripts and screenshot text"
         ><kbd>⌘K</kbd></label>
-        <div class="acts">
+        <div v-if="section !== 'sharedByMe'" class="acts">
           <button
+            v-if="dataSource.capabilities.nativeFilesystem"
             class="btn"
             type="button"
             @click="newFolder"
@@ -133,7 +138,10 @@
         </div>
       </div>
 
-      <div class="content">
+      <div v-if="section === 'sharedByMe'" class="content">
+        <SharedByMe :data-source="dataSource" />
+      </div>
+      <div v-else class="content">
         <div class="toolbar">
           <h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
           <div class="right">
@@ -141,8 +149,9 @@
               v-if="snapshot?.collection.memberCount !== undefined"
               class="btn sm ghost"
               type="button"
-              :aria-disabled="!dataSource.capabilities.orgSharing"
-              title="Coming soon · folder sharing arrives with organization sharing"
+              :disabled="!dataSource.capabilities.orgSharing"
+              title="Share this folder with an organization member"
+              @click="shareCurrentFolder"
             >
               <span
                 class="bi"
@@ -152,8 +161,9 @@
             <button
               class="btn sm"
               type="button"
-              :aria-disabled="!dataSource.capabilities.publicLinks"
-              title="Coming soon · one share link through Sulla Cloud"
+              :disabled="!dataSource.capabilities.publicLinks || !selectedFileForShare"
+              title="Copy a public Sulla Cloud link for the selected file"
+              @click="shareSelectedFile"
             >
               <span
                 class="bi"
@@ -221,6 +231,18 @@
           </div>
         </div>
 
+        <div v-if="selectedEntries.length" class="selection-bar">
+          <b>{{ selectedEntries.length }} selected</b>
+          <button class="btn sm" type="button" :disabled="busy || selectedEntries.length !== 1" @click="renameSelected">Rename</button>
+          <button class="btn sm" type="button" :disabled="busy" @click="moveSelected">Move</button>
+          <button class="btn sm" type="button" :disabled="busy" @click="copySelected">Copy</button>
+          <button class="btn sm" type="button" :disabled="busy || selectedEntries.every(entry => entry.folder)" @click="downloadSelected">Download</button>
+          <button class="btn sm danger" type="button" :disabled="busy" @click="trashSelected">Move to Trash</button>
+        </div>
+        <div v-if="operationError" class="operation-error" role="alert">
+          {{ operationError }} <button class="btn sm ghost" type="button" @click="operationError = ''">Dismiss</button>
+        </div>
+
         <div
           v-if="loading"
           class="state-panel"
@@ -243,11 +265,12 @@
             >
               Try again
             </button><button
+              v-if="dataSource.capabilities.nativeFilesystem"
               class="btn"
               type="button"
               @click="dataSource.openFolder()"
             >
-              Open ~/sulla/Files
+              Open ~/sulla/files
             </button>
           </div>
         </div>
@@ -314,6 +337,7 @@
                   :class="{ 'is-sel': selectedKeys.has(entry.key), agent: entry.agent }"
                   @click="focusEntry(entry, $event)"
                   @dblclick="activate(entry)"
+                  @contextmenu.prevent="openActions(entry)"
                 >
                   <td>
                     <button
@@ -380,7 +404,7 @@
                         class="btn ico"
                         type="button"
                         title="More"
-                        @click.stop="activate(entry)"
+                        @click.stop="openActions(entry)"
                         v-html="icons.more"
                       />
                     </div>
@@ -391,9 +415,9 @@
                       <button
                         class="btn ico"
                         type="button"
-                        :aria-disabled="!dataSource.capabilities.publicLinks"
-                        title="Share · coming soon"
-                        @click.stop
+                        :disabled="!dataSource.capabilities.publicLinks || entry.folder"
+                        title="Copy public link"
+                        @click.stop="shareEntry(entry)"
                         v-html="icons.share"
                       /><button
                         class="btn ico"
@@ -405,7 +429,7 @@
                         class="btn ico"
                         type="button"
                         title="More"
-                        @click.stop="activate(entry)"
+                        @click.stop="openActions(entry)"
                         v-html="icons.more"
                       />
                     </div>
@@ -427,6 +451,7 @@
             :class="{ 'is-sel': selectedKeys.has(entry.key) }"
             @click="focusEntry(entry, $event)"
             @dblclick="activate(entry)"
+            @contextmenu.prevent="openActions(entry)"
           >
             <div
               class="th"
@@ -446,6 +471,16 @@
               <b>{{ entry.name }}</b><small>{{ entry.folder ? `${entry.childCount} file${entry.childCount === 1 ? '' : 's'}` : formatBytes(entry.size) }} · {{ formatShort(entry.updatedAt) }}</small>
             </div>
           </div>
+        </div>
+        <div v-if="actionTarget" class="action-menu" role="menu">
+          <b>{{ actionTarget.name }}</b>
+          <button type="button" @click="runTargetAction('rename')">Rename</button>
+          <button type="button" @click="runTargetAction('move')">Move</button>
+          <button type="button" @click="runTargetAction('copy')">Copy</button>
+          <button v-if="!actionTarget.folder" type="button" @click="runTargetAction('download')">Download</button>
+          <button v-if="!actionTarget.folder && dataSource.capabilities.onlineOnly" type="button" @click="runTargetAction(entrySync(actionTarget) === 'online-only' ? 'keep-local' : 'online-only')">{{ entrySync(actionTarget) === 'online-only' ? 'Keep on this computer' : 'Make online only' }}</button>
+          <button type="button" class="danger" @click="runTargetAction('trash')">Move to Trash</button>
+          <button type="button" @click="actionTarget = null">Cancel</button>
         </div>
 
         <div
@@ -467,180 +502,18 @@
       </div>
     </main>
 
-    <transition name="detail">
-      <aside
-        v-if="selected && !selected.folder"
-        class="detail-panel"
-      >
-        <header>
-          <div class="file-name">
-            <span
-              class="fi"
-              :class="selected.kindClass"
-              v-html="selected.icon"
-            /><span><strong>{{ selected.name }}</strong><small>{{ selected.mime }}</small></span>
-          </div><button
-            type="button"
-            aria-label="Close details"
-            @click="selected = null"
-          >
-            ×
-          </button>
-        </header>
-        <div class="preview-box">
-          <span
-            v-if="previewLoading"
-            class="loader"
-          />
-          <img
-            v-else-if="previewUrl && selected.mime.startsWith('image/')"
-            :src="previewUrl"
-            :alt="selected.name"
-          >
-          <video
-            v-else-if="previewUrl && selected.mime.startsWith('video/')"
-            :src="previewUrl"
-            controls
-          />
-          <audio
-            v-else-if="previewUrl && selected.mime.startsWith('audio/')"
-            :src="previewUrl"
-            controls
-          />
-          <iframe
-            v-else-if="previewUrl && selected.mime === 'application/pdf'"
-            :src="previewUrl"
-            :title="selected.name"
-          />
-          <pre v-else-if="previewText !== null">{{ previewText }}</pre>
-          <div
-            v-else
-            class="preview-placeholder"
-          >
-            <span
-              class="large-glyph"
-              v-html="selected.icon"
-            /><p>{{ previewError || 'Preview isn’t available for this file type.' }}</p><button
-              v-if="section !== 'trash'"
-              class="btn"
-              type="button"
-              @click="dataSource.openFile(selected.path)"
-            >
-              Open file
-            </button>
-          </div>
-        </div>
-        <div class="detail-actions">
-          <button
-            v-if="section !== 'trash'"
-            class="btn pri"
-            type="button"
-            @click="dataSource.openFile(selected.path)"
-          >
-            Open
-          </button>
-          <button
-            v-if="section === 'trash'"
-            class="btn"
-            type="button"
-            :disabled="busy"
-            @click="restoreTrashed"
-          >
-            Restore
-          </button>
-          <button
-            v-else
-            class="btn"
-            type="button"
-            :disabled="busy"
-            @click="trashSelected"
-          >
-            Move to Trash
-          </button>
-          <button
-            class="btn"
-            type="button"
-            disabled
-            title="Coming soon · public links use Sulla Cloud pass-through"
-          >
-            Share
-          </button>
-          <button
-            class="btn"
-            type="button"
-            :disabled="!dataSource.capabilities.onlineOnly"
-            title="Coming soon · online-only arrives in phase 3"
-          >
-            Online only
-          </button>
-        </div>
-        <div class="detail-tabs">
-          <button
-            type="button"
-            :class="{ active: detailTab === 'details' }"
-            @click="detailTab = 'details'"
-          >
-            Details
-          </button><button
-            type="button"
-            :class="{ active: detailTab === 'versions' }"
-            @click="detailTab = 'versions'"
-          >
-            Versions <span>{{ versions.length || selected.versionCount }}</span>
-          </button>
-        </div>
-        <div
-          v-if="detailTab === 'details'"
-          class="detail-body"
-        >
-          <dl>
-            <dt>Type</dt><dd>{{ selected.mime }}</dd><dt>Size</dt><dd>{{ formatBytes(selected.size) }}</dd><dt>Location</dt><dd>~/sulla/Files/{{ selected.path }}</dd><dt>Modified</dt><dd>{{ formatDate(selected.updatedAt, true) }}</dd><dt>Sync</dt><dd>
-              <span class="status-inline"><span
-                class="sync-dot tiny"
-                :class="syncState"
-              />{{ syncLine }}</span>
-            </dd><dt>Version</dt><dd>v{{ selected.versionCount }}</dd>
-          </dl>
-          <section class="coming-card">
-            <strong>Share link</strong><p>One Jumpshare-style link through Sulla Cloud, with “Keep available when my computer is off.”</p><span>Coming soon</span>
-          </section>
-        </div>
-        <div
-          v-else
-          class="versions-list"
-        >
-          <div
-            v-if="versionsLoading"
-            class="mini-state"
-          >
-            <span class="loader" /> Loading history…
-          </div>
-          <div
-            v-for="(version, index) in versions"
-            :key="version.id"
-            class="version-row"
-          >
-            <span class="version-number">v{{ versions.length - index }}</span><span><strong>{{ version.message || 'File updated' }}</strong><small>{{ formatDate(version.created_at, true) }} · {{ formatBytes(version.size) }}<template v-if="version.device_id"> · {{ version.device_id }}</template></small></span>
-            <span
-              v-if="version.current && !version.deleted"
-              class="current-pill"
-            >Current</span><button
-              v-else-if="!version.deleted"
-              class="btn sm"
-              type="button"
-              :disabled="busy"
-              title="Restore this version as a new version"
-              @click="restoreVersion(version.id)"
-            >
-              Restore
-            </button>
-          </div>
-          <p class="version-note">
-            Restoring creates a new version. Existing versions are never overwritten.
-          </p>
-        </div>
-      </aside>
-    </transition>
+    <FileDetail
+      v-else-if="snapshot"
+      :key="`${selected.id}:${selected.currentVersionId}`"
+      :item="selected"
+      :collection="snapshot.collection"
+      :data-source="dataSource"
+      :initial-tab="detailTab === 'versions' ? 'Versions' : 'Details'"
+      @close="selected = null"
+      @share="shareEntry(selected)"
+      @restored="selected = null; refresh(true)"
+      @open-linked="openLinked"
+    />
 
     <div
       v-if="dragging"
@@ -684,16 +557,24 @@
         />
       </div>
     </div>
+    <ShareSheet v-if="shareTarget" :data-source="dataSource" :target="shareTarget" @close="shareTarget = null" @updated="refresh(true)" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-import type { FilesDataSource, FilesItem, FilesSnapshot, FilesVersion } from './types';
+import FileDetail from './FileDetail.vue';
+import ShareSheet from './ShareSheet.vue';
+import SharedByMe from './SharedByMe.vue';
 
-const props = defineProps<{ dataSource: FilesDataSource }>();
-type Section = 'files' | 'shared' | 'recent' | 'starred' | 'agent' | 'trash';
+import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
+
+import type { FilesDataSource, FilesItem, FilesSnapshot } from './types';
+
+const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
+const emit = defineEmits<{ 'navigation-consumed': [] }>();
+type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
 interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
 
@@ -734,12 +615,14 @@ const section = ref<Section>('files'); const currentPath = ref(''); const query 
 const activeFilters = ref<Record<'type' | 'person' | 'date' | 'folder', string>>({ type: '', person: '', date: '', folder: '' });
 const searchResults = ref<FilesItem[] | null>(null); const searchInput = ref<HTMLInputElement | null>(null);
 const selectedKeys = ref(new Set<string>()); const uploadProgress = ref<{ current: number; total: number; name: string; percent: number; done: boolean } | null>(null);
+const operationError = ref(''); const actionTarget = ref<DisplayEntry | null>(null);
 const uploadLog = ref<{ name: string; percent: number; done: boolean }[]>([]);
 // In-progress upload first, then the ones already finished in this batch (the stream only reports the current file).
 const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done), ...uploadLog.value.filter(item => item.done).reverse()]);
-const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details'); const versions = ref<FilesVersion[]>([]); const versionsLoading = ref(false);
-const previewUrl = ref(''); const previewText = ref<string | null>(null); const previewError = ref(''); const previewLoading = ref(false); const dragging = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
-const starred = ref(new Set<string>(JSON.parse(localStorage.getItem('sulla:files-starred') || '[]')));
+const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details');
+const dragging = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
+const starred = ref(new Set<string>());
+const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string; assetKind?:'file' | 'capture' | 'artifact' } | null>(null);
 
 const activeFiles = computed(() => snapshot.value?.files.filter(file => !file.deletedAt) ?? []);
 const trashFiles = computed(() => snapshot.value?.files.filter(file => file.deletedAt) ?? []);
@@ -755,6 +638,7 @@ const brandLine = computed(() => `${ snapshot.value?.collection.accountName || '
 const syncLine = computed(() => {
   const status = snapshot.value?.status;
   if (!status) return 'Checking sync…';
+  if (status.legacyImport?.state === 'secure-import-required') return status.legacyImport.action || 'Legacy Files data is contained pending secure import';
   if (status.state === 'syncing') return `Syncing ${ status.pendingFiles || '' } file${ status.pendingFiles === 1 ? '' : 's' }`.replace('  ', ' ');
   if (status.state === 'paused') return 'Sync paused · click to resume';
   if (status.state === 'conflict') return 'A file needs a decision';
@@ -763,7 +647,7 @@ const syncLine = computed(() => {
   return `All files synced${ status.lastSyncAt ? ` · ${ timeAgo(status.lastSyncAt) }` : '' }`;
 });
 const syncTooltip = computed(() => syncState.value === 'paused' ? 'Resume Files sync' : 'Pause Files sync');
-const rootLabel = computed(() => ({ files: 'My Files', shared: 'Shared with me', recent: 'Recent', starred: 'Starred', agent: 'Agent files', trash: 'Trash' }[section.value]));
+const rootLabel = computed(() => ({ files: 'My Files', shared: 'Shared with me', sharedByMe: 'Shared by me', recent: 'Recent', starred: 'Starred', agent: 'Agent files', trash: 'Trash' }[section.value]));
 const pageTitle = computed(() => section.value === 'files' && currentPath.value ? currentPath.value.split('/').at(-1) : rootLabel.value);
 const crumbs = computed(() => section.value === 'files' ? currentPath.value.split('/').filter(Boolean).map((label, index, parts) => ({ label, path: parts.slice(0, index + 1).join('/') })) : []);
 const summaryText = computed(() => `${ visibleEntries.value.length } item${ visibleEntries.value.length === 1 ? '' : 's' } · ${ formatBytes(visibleEntries.value.reduce((sum, entry) => sum + entry.size, 0)) }`);
@@ -780,13 +664,14 @@ const agentCount = computed(() => new Set(activeFiles.value.filter(file => file.
 const sections = computed(() => [
   { id: 'files' as Section, label: 'My Files', icon: icons.folderLine, count: 0, warn: false },
   { id: 'shared' as Section, label: 'Shared with me', icon: icons.users, count: sharedFolders.value.length, warn: false },
+  { id: 'sharedByMe' as Section, label: 'Shared by me', icon: icons.share, count: 0, warn: false },
   { id: 'recent' as Section, label: 'Recent', icon: icons.clock, count: 0, warn: false },
   { id: 'starred' as Section, label: 'Starred', icon: icons.star, count: 0, warn: false },
   { id: 'agent' as Section, label: 'Agent files', icon: icons.agent, count: agentCount.value, warn: true },
   { id: 'trash' as Section, label: 'Trash', icon: icons.trash, count: 0, warn: false },
 ]);
-const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
-const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. They stay in ~/sulla/Files.', shared: 'Folders teammates share with you appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: `Deleted files stay recoverable for ${ retentionDays.value } days.` }[section.value]));
+const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', sharedByMe: 'No public links yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
+const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. They stay in ~/sulla/files.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: `Deleted files stay recoverable for ${ retentionDays.value } days.` }[section.value]));
 const dropCopy = computed(() => snapshot.value?.status.serverConfigured ? 'Or paste a screenshot. Files sync to the server and are versioned on every change.' : 'Or paste a screenshot. Files stay on this Mac and are versioned on every change.');
 const filters = computed(() => [
   { key: 'type' as const, label: 'Type', any: 'Any', options: [...new Set(activeFiles.value.map(file => kindLabel(file.mime, file.path)))].sort() },
@@ -852,6 +737,13 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
     if (!flat && parts.length > 1) folders.add(parts[0]); else if (file.mime !== 'inode/directory') entries.push(toDisplay(file));
   }
   for (const name of folders) entries.push(folderEntry(prefix, name, files.filter(file => file.path.startsWith(`${ prefix }${ name }/`))));
+  if (section.value === 'starred') {
+    for (const key of starred.value) {
+      if (!key.startsWith('folder:')) continue;
+      const path = key.slice('folder:'.length); const children = activeFiles.value.filter(file => file.path.startsWith(`${ path }/`));
+      if (children.length) entries.push(folderEntry(`${ path.split('/').slice(0, -1).join('/') }${ path.includes('/') ? '/' : '' }`, path.split('/').at(-1)!, children));
+    }
+  }
   const filtered = entries.filter(entry => (!activeFilters.value.type || kindLabel(entry.mime, entry.path) === activeFilters.value.type) && (!activeFilters.value.person || ownerName(entry) === activeFilters.value.person) && (!activeFilters.value.folder || entry.path.split('/')[0] === activeFilters.value.folder) && (!activeFilters.value.date || dateBucket(entry.updatedAt) === activeFilters.value.date));
   return filtered.sort((a, b) => { if (a.folder !== b.folder) return a.folder ? -1 : 1; if (a.agent !== b.agent) return a.agent ? 1 : -1; if (sort.value === 'modified') return Date.parse(b.updatedAt || '0') - Date.parse(a.updatedAt || '0'); if (sort.value === 'size') return b.size - a.size; if (sort.value === 'type') return a.mime.localeCompare(b.mime); return a.name.localeCompare(b.name, undefined, { numeric: true }) });
 });
@@ -860,10 +752,22 @@ const groups = computed(() => [
   { label: 'Files', entries: visibleEntries.value.filter(entry => !entry.folder) },
 ].filter(group => group.entries.length));
 const allVisibleSelected = computed(() => Boolean(visibleEntries.value.length) && visibleEntries.value.every(entry => selectedKeys.value.has(entry.key)));
+const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !entry.folder && selectedKeys.value.has(entry.key)) ?? selected.value);
+const selectedEntries = computed(() => visibleEntries.value.filter(entry => selectedKeys.value.has(entry.key)));
 
-async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); error.value = '' } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
-async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
+async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); const stars = await props.dataSource.listStars(snapshot.value.collection.id); starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = ''; selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key))) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
+async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(currentPath.value); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
 async function newFolder() { const name = window.prompt('Name this folder'); if (!name?.trim()) return; await props.dataSource.createFolder([currentPath.value, name.trim()].filter(Boolean).join('/')); await refresh(true) }
+function shareEntry(entry:DisplayEntry | null) {
+  if (!entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
+  const capture = /(^|\/)(screenshots?|recordings?|captures?)(\/|$)/i.test(entry.path);
+  shareTarget.value = { id: entry.id, name: entry.name, folder: false, path: entry.path, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId, assetKind: entry.agent ? 'artifact' : capture ? 'capture' : 'file' };
+}
+function shareSelectedFile() { shareEntry(selectedFileForShare.value ?? null) }
+function shareCurrentFolder() {
+  if (!snapshot.value?.collection.orgId || !props.dataSource.shareFolder || !props.dataSource.listMembers || !currentPath.value || !props.dataSource.capabilities.orgSharing) return;
+  shareTarget.value = { id: `folder:${ currentPath.value }`, name: currentPath.value.split('/').at(-1) || 'My Files', folder: true, path: currentPath.value, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
+}
 async function togglePause() { if (!snapshot.value) return; snapshot.value.status = await props.dataSource.setPaused(syncState.value !== 'paused') }
 function selectSection(next:Section) { section.value = next; currentPath.value = ''; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set() }
 function openRoot() { section.value = 'files'; currentPath.value = ''; selected.value = null; selectedKeys.value = new Set() }
@@ -871,14 +775,10 @@ function openPath(next:string) { section.value = 'files'; currentPath.value = ne
 function focusEntry(entry:DisplayEntry, event:MouseEvent) { if (event.metaKey || event.ctrlKey) { toggleSelected(entry.key); return } selectedKeys.value = new Set([entry.key]) }
 function activate(entry:DisplayEntry) { if (entry.folder) openPath(entry.path); else selectEntry(entry); }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
-async function selectEntry(entry:DisplayEntry) { if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details'; versions.value = []; await loadVersions(entry); const previewVersion = entry.deletedAt ? versions.value.find(version => !version.deleted)?.id : undefined; await loadPreview(entry, previewVersion) }
-async function loadVersions(entry:DisplayEntry) { versionsLoading.value = true; try { versions.value = await props.dataSource.history(entry.id) } catch { versions.value = [] } finally { versionsLoading.value = false } }
-async function loadPreview(entry:DisplayEntry, versionId?:string) { if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); previewUrl.value = ''; previewText.value = null; previewError.value = ''; if (entry.size > 64 * 1024 * 1024) { previewError.value = 'This file is too large for an inline preview. Open it in its default app.'; return } previewLoading.value = true; try { const result = await props.dataSource.preview(entry.id, versionId); const binary = new Uint8Array(result.data); if (result.mime.startsWith('text/') || /json|yaml|javascript|typescript/.test(result.mime)) previewText.value = new TextDecoder().decode(binary); else previewUrl.value = URL.createObjectURL(new Blob([binary], { type: result.mime })); } catch (cause) { previewError.value = cause instanceof Error ? cause.message : String(cause) } finally { previewLoading.value = false } }
-async function restoreVersion(versionId:string) { if (!selected.value) return; busy.value = true; try { await props.dataSource.restoreVersion(selected.value.id, versionId); selected.value = null; await refresh(true) } finally { busy.value = false } }
-async function restoreTrashed() { if (!selected.value) return; busy.value = true; try { await props.dataSource.restoreTrash(selected.value.id); selected.value = null; await refresh(true) } finally { busy.value = false } }
-async function trashSelected() { if (!selected.value) return; busy.value = true; try { await props.dataSource.trashFile(selected.value.id); selected.value = null; await refresh(true) } finally { busy.value = false } }
+function selectEntry(entry:DisplayEntry) { if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
+async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await props.dataSource.openFile(fileId); }
 function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }
-async function onDrop(event:DragEvent) { dragging.value = false; const paths = [...(event.dataTransfer?.files ?? [])].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value)); if (!paths.length) { error.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return } busy.value = true; try { await props.dataSource.uploadPaths(paths); setTimeout(() => refresh(true), 700) } finally { busy.value = false } }
+async function onDrop(event:DragEvent) { dragging.value = false; const paths = [...(event.dataTransfer?.files ?? [])].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value)); if (!paths.length) { error.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return } busy.value = true; try { await props.dataSource.uploadPaths(paths, currentPath.value); setTimeout(() => refresh(true), 700) } finally { busy.value = false } }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
 function dayLabel(date:Date) { const now = new Date(); if (date.toDateString() === now.toDateString()) return 'Today'; const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'; return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date) }
@@ -897,56 +797,96 @@ function syncText(entry:FilesItem) { return ({ synced: 'On this computer', synci
 function clearFilters() { activeFilters.value = { type: '', person: '', date: '', folder: '' } }
 function toggleSelected(key:string) { const next = new Set(selectedKeys.value); next.has(key) ? next.delete(key) : next.add(key); selectedKeys.value = next }
 function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set() : new Set(visibleEntries.value.map(entry => entry.key)) }
-function toggleStar(id:string) { const next = new Set(starred.value); next.has(id) ? next.delete(id) : next.add(id); starred.value = next; localStorage.setItem('sulla:files-starred', JSON.stringify([...next])) }
+async function toggleStar(id:string) { if (!snapshot.value) return; const entry = visibleEntries.value.find(item => item.id === id); if (!entry) return; const next = !starred.value.has(id); try { await props.dataSource.setStar(snapshot.value.collection.id, entry.folder ? { folderPath: entry.path } : { fileId: entry.id }, next); const changed = new Set(starred.value); next ? changed.add(id) : changed.delete(id); starred.value = changed } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } }
+function openActions(entry:DisplayEntry) { if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]); actionTarget.value = entry }
+function joinPath(folder:string, name:string) { return [folder.replace(/^\/+|\/+$/g, ''), name].filter(Boolean).join('/') }
+function operationItems(entries:DisplayEntry[], destination:string) { return entries.map(entry => ({ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id }), targetPath: joinPath(destination, entry.name) })) }
+async function perform(action:'move' | 'copy', items:{ fileId?:string; folderPath?:string; targetPath:string }[]) { if (!snapshot.value) return; busy.value = true; operationError.value = ''; try { await props.dataSource.operate(action, snapshot.value.collection.id, items); selectedKeys.value = new Set(); actionTarget.value = null; await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause); await refresh(true) } finally { busy.value = false } }
+async function renameSelected() { const entry = selectedEntries.value[0]; if (!entry || selectedEntries.value.length !== 1) return; const name = window.prompt('New name', entry.name)?.trim(); if (!name || name.includes('/')) { if (name) operationError.value = 'Names cannot contain “/”.'; return } const parent = entry.path.split('/').slice(0, -1).join('/'); await perform('move', [{ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id }), targetPath: joinPath(parent, name) }]) }
+async function moveSelected() { const entries = selectedEntries.value; if (!entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
+async function copySelected() { const entries = selectedEntries.value; if (!entries.length) return; const destination = window.prompt('Copy to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('copy', operationItems(entries, destination)) }
+async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; busy.value = true; operationError.value = ''; try { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) { operationError.value = result.error; } } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function trashSelected() { const entries = selectedEntries.value; const files = new Map<string, FilesItem>(); for (const entry of entries) { if (!entry.folder) files.set(entry.id, entry); else for (const file of activeFiles.value.filter(file => file.path.startsWith(`${ entry.path }/`))) files.set(file.id, file) } busy.value = true; operationError.value = ''; try { for (const file of files.values()) await props.dataSource.trashFile(file.id); selectedKeys.value = new Set(); actionTarget.value = null; } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { await refresh(true); busy.value = false } }
+async function runTargetAction(action:'rename' | 'move' | 'copy' | 'download' | 'online-only' | 'keep-local' | 'trash') { if (!actionTarget.value) return; selectedKeys.value = new Set([actionTarget.value.key]); if (action === 'rename') await renameSelected(); else if (action === 'move') await moveSelected(); else if (action === 'copy') await copySelected(); else if (action === 'download') await downloadSelected(); else if (action === 'online-only' || action === 'keep-local') { const target = actionTarget.value; const operation = action === 'online-only' ? props.dataSource.makeOnlineOnly : props.dataSource.keepOnMac; if (!operation) return; busy.value = true; operationError.value = ''; try { await operation.call(props.dataSource, target.id); actionTarget.value = null; await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } } else await trashSelected(); }
 function trackUpload(progress:{ current: number; name: string; percent: number; done: boolean }) { const log = progress.current <= 1 && !uploadLog.value.some(item => item.name === progress.name) ? [] : uploadLog.value.map(item => item.name === progress.name ? item : { ...item, done: true, percent: 100 }); const rest = log.filter(item => item.name !== progress.name); uploadLog.value = [...rest, { name: progress.name, percent: progress.percent, done: progress.done || progress.percent >= 100 }] }
 function onKeydown(event:KeyboardEvent) { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchInput.value?.focus() } }
+function navigateTo(detail:FilesNavigationPayload) {
+  if (detail.section === 'shared-by-me') { selectSection('sharedByMe'); return }
+  const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
+  if (!file && detail.path) {
+    openPath(detail.path);
+    if (detail.section === 'share-review') shareCurrentFolder();
+    return;
+  }
+  if (!file) { error.value = 'That file is no longer available in this collection.'; return }
+  selectEntry(toDisplay(file));
+  if (detail.section === 'versions') detailTab.value = 'versions';
+  if (detail.section === 'share-review') shareEntry(toDisplay(file));
+}
 
 watch(view, value => localStorage.setItem('sulla:files-view', value));
 let searchTimer:ReturnType<typeof setTimeout> | undefined;
-watch(query, (value) => { if (searchTimer) clearTimeout(searchTimer); if (!value.trim() || section.value === 'trash') { searchResults.value = null; return } searchTimer = setTimeout(async() => { try { searchResults.value = await props.dataSource.search(value.trim()) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } }, 220) });
-watch(detailTab, value => { if (value === 'versions' && selected.value && !versions.value.length) loadVersions(selected.value); });
+let searchGeneration = 0;
+let mounted = false;
+watch([query, section], ([value, requestedSection]) => {
+  const generation = ++searchGeneration;
+  if (searchTimer) clearTimeout(searchTimer);
+  searchResults.value = null;
+  if (!value.trim() || requestedSection === 'trash') return;
+  const isCurrent = () => mounted && generation === searchGeneration && query.value === value && section.value === requestedSection;
+  searchTimer = setTimeout(async() => {
+    try {
+      const results = await props.dataSource.search(value.trim());
+      if (isCurrent()) searchResults.value = results;
+    } catch (cause) {
+      if (isCurrent()) error.value = cause instanceof Error ? cause.message : String(cause);
+    }
+  }, 220);
+});
+function consumeNavigation() { if (!mounted || !props.navigation || !snapshot.value) return; navigateTo(props.navigation); emit('navigation-consumed') }
+watch(() => props.navigation, () => consumeNavigation());
 let stopUploadProgress:(() => void) | undefined;
-onMounted(() => { refresh(); window.addEventListener('keydown', onKeydown); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); refreshTimer = setInterval(() => refresh(true), 12_000) });
-onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); });
+onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); consumeNavigation() }, 12_000) });
+onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) clearTimeout(searchTimer); window.removeEventListener('keydown', onKeydown); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
 </script>
 
 <style scoped>
-/* Ported from the approved Files mockup (mockups/files/01-files.html). Sizes, spacing and
-   type are copied as-is; colors map to Noir tokens, with Noir Light pinned to the mockup values. */
+/* The approved Files palette is local to this surface, independent of the app theme. */
 .files-browser {
-  --text: var(--nx-read-1, #f3f5f8);
-  --muted: var(--nx-read-3, #a9b3c1);
-  --dim: var(--nx-read-4, #7a8291);
-  --paper: var(--nx-paper, #01030a);
-  --paper-2: color-mix(in srgb, var(--nx-read-1, #f3f5f8) 7%, var(--nx-paper, #01030a));
-  --card: color-mix(in srgb, var(--nx-surface, #070d1a) 82%, transparent);
-  --card-solid: var(--nx-surface, #070d1a);
-  --line: var(--nx-hair, rgba(168, 192, 220, .08));
-  --line-2: var(--nx-hair-strong, rgba(168, 192, 220, .16));
-  --accent: var(--nx-accent, #5096b3);
-  --accent-2: var(--nx-accent-2, #6ab0cc);
-  --accent-soft: color-mix(in srgb, var(--nx-accent, #5096b3) 14%, transparent);
-  --accent-line: color-mix(in srgb, var(--nx-accent, #5096b3) 40%, transparent);
-  --ok: var(--nx-success, #3fb950);
-  --ok-soft: color-mix(in srgb, var(--nx-success, #3fb950) 14%, transparent);
-  --warn: var(--nx-warning, #e3b341);
-  --warn-soft: color-mix(in srgb, var(--nx-warning, #e3b341) 15%, transparent);
-  --bad: var(--nx-danger, #f85149);
-  --bad-soft: color-mix(in srgb, var(--nx-danger, #f85149) 13%, transparent);
-  --idle-soft: color-mix(in srgb, var(--nx-read-4, #7a8291) 18%, transparent);
-  --ink-05: color-mix(in srgb, var(--nx-ink, #f3f5f8) 5%, transparent);
-  --ink-08: color-mix(in srgb, var(--nx-ink, #f3f5f8) 8%, transparent);
-  --nav-bg: color-mix(in srgb, var(--nx-surface, #070d1a) 55%, transparent);
-  --top-bg: color-mix(in srgb, var(--nx-surface, #070d1a) 40%, transparent);
-  --glow-1: color-mix(in srgb, var(--nx-accent, #5096b3) 10%, transparent);
-  --glow-2: color-mix(in srgb, var(--nx-accent, #5096b3) 6%, transparent);
-  --fi-img: #a993e6; --fi-img-bg: rgba(147, 120, 220, .16);
-  --fi-vid: var(--bad); --fi-vid-bg: color-mix(in srgb, var(--nx-danger, #f85149) 14%, transparent);
-  --fi-pdf: var(--warn); --fi-pdf-bg: color-mix(in srgb, var(--nx-warning, #e3b341) 15%, transparent);
-  --fi-aud: var(--ok); --fi-aud-bg: color-mix(in srgb, var(--nx-success, #3fb950) 14%, transparent);
-  --shadow: 0 1px 2px rgba(0, 0, 0, .2), 0 10px 30px -12px rgba(0, 0, 0, .5);
-  --shadow-sm: 0 1px 1px rgba(0, 0, 0, .2), 0 2px 8px -2px rgba(0, 0, 0, .4);
-  --shadow-lg: 0 2px 4px rgba(0, 0, 0, .3), 0 30px 60px -20px rgba(0, 0, 0, .7);
+  --text: #1a2332;
+  --muted: #5b6778;
+  --dim: #8a94a3;
+  --paper: #f4f7fb;
+  --paper-2: #eaf0f6;
+  --card: rgba(255,255,255,.82);
+  --card-solid: #ffffff;
+  --line: rgba(26,35,50,.09);
+  --line-2: rgba(26,35,50,.14);
+  --accent: #3a7fa0;
+  --accent-2: #2f6a86;
+  --accent-soft: rgba(58,127,160,.10);
+  --accent-line: rgba(58,127,160,.32);
+  --ok: #1f9d55;
+  --ok-soft: rgba(31,157,85,.12);
+  --warn: #d98a0a;
+  --warn-soft: rgba(217,138,10,.13);
+  --bad: #d9403a;
+  --bad-soft: rgba(217,64,58,.11);
+  --idle: #8a94a3;
+  --idle-soft: rgba(138,148,163,.16);
+  --ink-05: rgba(26, 35, 50, .05);
+  --ink-08: rgba(26, 35, 50, .08);
+  --nav-bg: rgba(255, 255, 255, .55);
+  --top-bg: rgba(255, 255, 255, .4);
+  --glow-1: rgba(58, 127, 160, .10);
+  --glow-2: rgba(58, 127, 160, .06);
+  --fi-img: #6b4fbf; --fi-img-bg: rgba(107, 79, 191, .12);
+  --fi-vid: #c0392b; --fi-vid-bg: rgba(217, 64, 58, .10);
+  --fi-pdf: #b26f05; --fi-pdf-bg: rgba(217, 138, 10, .13);
+  --fi-aud: #167a42; --fi-aud-bg: rgba(31, 157, 85, .12);
+  --shadow: 0 1px 2px rgba(26, 35, 50, .04), 0 10px 30px -12px rgba(26, 35, 50, .12);
+  --shadow-sm: 0 1px 1px rgba(26, 35, 50, .04), 0 2px 8px -2px rgba(26, 35, 50, .08);
+  --shadow-lg: 0 2px 4px rgba(26, 35, 50, .06), 0 30px 60px -20px rgba(26, 35, 50, .28);
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   --r: 12px;
@@ -967,29 +907,15 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); stopUp
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "tnum" 1, "cv11" 1;
 }
-
-/* Noir Light reproduces the approved mockup palette exactly. */
-:global(.theme-noir-light) .files-browser {
-  --muted: #5b6778;
-  --dim: #8a94a3;
-  --paper-2: #eaf0f6;
-  --line: rgba(26, 35, 50, .09);
-  --line-2: rgba(26, 35, 50, .14);
-  --accent-2: #2f6a86;
-  --accent-soft: rgba(58, 127, 160, .10);
-  --accent-line: rgba(58, 127, 160, .32);
-  --ok: #1f9d55; --ok-soft: rgba(31, 157, 85, .12);
-  --warn: #d98a0a; --warn-soft: rgba(217, 138, 10, .13);
-  --bad: #d9403a; --bad-soft: rgba(217, 64, 58, .11);
-  --idle-soft: rgba(138, 148, 163, .16);
-  --fi-img: #6b4fbf; --fi-img-bg: rgba(107, 79, 191, .12);
-  --fi-vid: #c0392b; --fi-vid-bg: rgba(217, 64, 58, .10);
-  --fi-pdf: #b26f05; --fi-pdf-bg: rgba(217, 138, 10, .13);
-  --fi-aud: #167a42; --fi-aud-bg: rgba(31, 157, 85, .12);
-  --shadow: 0 1px 2px rgba(26, 35, 50, .04), 0 10px 30px -12px rgba(26, 35, 50, .12);
-  --shadow-sm: 0 1px 1px rgba(26, 35, 50, .04), 0 2px 8px -2px rgba(26, 35, 50, .08);
-  --shadow-lg: 0 2px 4px rgba(26, 35, 50, .06), 0 30px 60px -20px rgba(26, 35, 50, .28);
-}
+.selection-bar { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:8px 10px; border:1px solid var(--accent-line); border-radius:8px; background:var(--accent-soft); }
+.selection-bar b { margin-right:auto; font-size:12px; }
+.operation-error { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:9px 11px; border:1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius:8px; background:var(--bad-soft); color:var(--bad); }
+.operation-error .btn { margin-left:auto; }
+.action-menu { position:absolute; z-index:20; top:122px; right:32px; width:190px; padding:6px; border:1px solid var(--line-2); border-radius:10px; background:var(--card-solid); box-shadow:var(--shadow-lg); }
+.action-menu b { display:block; padding:7px 9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.action-menu button { display:block; width:100%; padding:7px 9px; border:0; border-radius:6px; background:transparent; color:var(--text); text-align:left; }
+.action-menu button:hover { background:var(--ink-05); }
+.action-menu button.danger { color:var(--bad); }
 
 .files-browser *, .files-browser *::before, .files-browser *::after { box-sizing: border-box; }
 .files-browser a { color: inherit; text-decoration: none; }
@@ -1018,7 +944,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); stopUp
 .nav .quota b { color: var(--text); font-weight: 600; }
 .nav .quota > span { display: block; }
 .nav .quota.nobar > span { margin-top: 4px; }
-.syncline { display: flex; align-items: center; gap: 7px; padding: 8px 10px; font-size: 11.5px; color: var(--muted); border-radius: 9px; background: color-mix(in srgb, var(--nx-surface, #070d1a) 60%, transparent); border: 1px solid var(--line); margin-top: 8px; text-align: left; }
+.syncline { display: flex; align-items: center; gap: 7px; padding: 8px 10px; font-size: 11.5px; color: var(--muted); border-radius: 9px; background: rgba(255, 255, 255, .6); border: 1px solid var(--line); margin-top: 8px; text-align: left; }
 .syncline .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); flex: none; }
 .syncline .dot.syncing { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .syncline .dot.paused { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
@@ -1103,7 +1029,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); stopUp
 .files tr.row { cursor: default; }
 .files tr.row:hover td { background: color-mix(in srgb, var(--accent) 4.5%, transparent); }
 .files tr.row.is-sel td { background: var(--accent-soft); }
-tr.row.agent td { background: color-mix(in srgb, var(--nx-ink, #f3f5f8) 2.5%, transparent); }
+tr.row.agent td { background: rgba(26, 35, 50, .025); }
 .tbl tr.sechead td { padding: 10px 16px 4px; border-bottom: 0; font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); font-weight: 600; }
 .tbl tr.sechead:not(:first-child) td { padding-top: 14px; }
 .files .name { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -1114,7 +1040,7 @@ tr.row.agent td { background: color-mix(in srgb, var(--nx-ink, #f3f5f8) 2.5%, tr
 .files .actions { display: flex; gap: 4px; justify-content: flex-end; opacity: 0; transition: opacity .12s; }
 .files tr.row:hover .actions, .files tr.row.is-sel .actions, .files .actions.keep { opacity: 1; }
 .files .actions .btn.ico { width: 26px; height: 26px; padding: 4px; border-color: transparent; box-shadow: none; background: transparent; color: var(--muted); }
-.files .actions .btn.ico:hover { background: var(--ink-08); color: var(--text); }
+.files .actions .btn.ico:hover { background: rgba(26, 35, 50, .06); color: var(--text); }
 .files .actions .btn.ico :deep(svg) { width: 14px; height: 14px; }
 .files .actions .btn.ico :deep(.star) { display: grid; width: 14px; height: 14px; }
 .chk { width: 14px; height: 14px; padding: 0; border: 1.5px solid var(--line-2); border-radius: 4px; background: var(--card-solid); display: inline-block; vertical-align: middle; position: relative; }
@@ -1151,9 +1077,9 @@ tr.row.agent td { background: color-mix(in srgb, var(--nx-ink, #f3f5f8) 2.5%, tr
 .tile .th { height: 116px; background: var(--paper-2); display: grid; place-items: center; position: relative; overflow: hidden; }
 .tile .th .fi { width: 44px; height: 44px; border-radius: 10px; }
 .tile .th .fi :deep(svg) { width: 24px; height: 24px; }
-.tile .th .sync { position: absolute; right: 8px; bottom: 8px; background: color-mix(in srgb, var(--nx-surface, #070d1a) 90%, transparent); box-shadow: var(--shadow-sm); width: 22px; height: 22px; }
+.tile .th .sync { position: absolute; right: 8px; bottom: 8px; background: rgba(255, 255, 255, .9); box-shadow: var(--shadow-sm); width: 22px; height: 22px; }
 .tile .folderth { background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent), color-mix(in srgb, var(--accent) 14%, transparent)); }
-.tile .agentth { background: color-mix(in srgb, var(--nx-ink, #f3f5f8) 6%, transparent); }
+.tile .agentth { background: rgba(26, 35, 50, .06); }
 .tile .bd { padding: 10px 12px 11px; }
 .tile .bd b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
 .tile .bd small { display: block; color: var(--dim); font-size: 11px; margin-top: 2px; }

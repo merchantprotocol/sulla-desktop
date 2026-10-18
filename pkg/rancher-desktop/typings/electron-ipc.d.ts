@@ -243,6 +243,7 @@ export interface IpcMainInvokeEvents {
   }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
   'chat-artifacts:close': (input: { threadId: string; idOrName: string; expectedVersion?: number }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
   'chat-artifacts:focus': (input: { threadId: string; idOrName: string }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
+  'chat-artifacts:retry-files-registration': (input: { threadId: string; idOrName: string }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
   'get-locked-fields':         () => import('@pkg/config/settings').LockedSettingsType;
   'settings-write':            (arg: RecursivePartial<import('@pkg/config/settings').Settings>) => void;
   'transient-settings-fetch':  () => import('@pkg/config/transientSettings').TransientSettings;
@@ -450,10 +451,14 @@ export interface IpcMainInvokeEvents {
   'files-ui:status':       () => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
   'files-ui:set-paused':   (paused: boolean) => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
   'files-ui:open-folder':  () => void;
-  'files-ui:open-file':    (relativePath: string) => void;
+  'files-ui:open-file':    (input: { fileId: string; versionId?: string }) => void;
+  'files-ui:download-file': (input: { fileId: string; versionId?: string; name: string }) => boolean;
+  'files-ui:media-url':     (input: { fileId: string; versionId?: string }) => string;
   'files-ui:pick-upload':  () => number;
+  'files-ui:pick-upload-references': () => import('@pkg/main/sullaFilesChatImport').ChatFilesReference[] | import('@pkg/main/sullaFilesChatImport').PartialChatFilesImport;
   'files-ui:upload-paths': (paths: string[]) => number;
   'files-ui:create-folder': (relativePath: string) => void;
+  'files-ui:chat-inventory': (input: { runIds: string[]; threadId: string }) => any[];
   'sulla-files:collections':     () => any[];
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
   'sulla-files:metadata':        (input: { fileId: string }) => any;

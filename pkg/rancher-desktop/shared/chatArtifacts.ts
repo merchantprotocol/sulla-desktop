@@ -1,6 +1,7 @@
 export type ChatArtifactKind = 'markdown' | 'html' | 'code';
 export type ChatArtifactStatus = 'working' | 'done' | 'error' | 'viewing' | 'editing';
 export type ChatArtifactAuthor = 'agent' | 'human';
+export type ChatArtifactFilesStatus = 'pending' | 'synced' | 'error';
 
 export interface ChatArtifactRecord {
   id:        string;
@@ -14,6 +15,15 @@ export interface ChatArtifactRecord {
   version:   number;
   language?: string | null;
   path?:     string | null;
+  filesFileId?:            string | null;
+  filesVersionId?:         string | null;
+  filesCollectionId?:      string | null;
+  filesPath?:              string | null;
+  filesArtifactVersion?:   number | null;
+  filesRegistrationStatus: ChatArtifactFilesStatus;
+  filesRegistrationError?: string | null;
+  filesRegistrationAttempts: number;
+  filesRegistrationUpdatedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }

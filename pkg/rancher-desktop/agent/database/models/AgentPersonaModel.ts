@@ -211,6 +211,7 @@ export class AgentPersonaService {
       role:      'user',
       content:   content || (firstImage ? '(image attached)' : ''),
     };
+    if (Array.isArray(extraMetadata?.fileReferences)) localMessage.fileReferences = extraMetadata.fileReferences;
     if (firstImage) {
       localMessage.image = {
         dataUrl:     `data:${ firstImage.source.media_type };base64,${ firstImage.source.data }`,
@@ -283,6 +284,7 @@ export class AgentPersonaService {
         contentType: firstImage.source.media_type,
       };
     }
+    if (Array.isArray(extraMetadata?.fileReferences)) localMessage.fileReferences = extraMetadata.fileReferences;
     this.messages.push(localMessage);
     this.markMessagesChanged();
 

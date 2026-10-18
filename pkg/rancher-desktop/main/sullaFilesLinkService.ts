@@ -1,5 +1,5 @@
-import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 
 export type ShareMode = 'view' | 'download';
@@ -13,14 +13,28 @@ export interface ShareLink {
   expiresAt?:     string;
   viewCount:      number;
   keepAvailable:  boolean;
+  keepUntil?:     string;
+  displaySharerName: boolean;
+  servedFrom:     'desktop' | 'server' | 'cloud';
+  assetKind:      'file' | 'capture' | 'artifact';
+  source?:        string;
+  targetId?:      string;
+  targetType?:    'file' | 'capture' | 'artifact';
+  collectionId?:  string;
+  revokedAt?:     string;
+  lastViewedAt?:  string;
+  createdAt?:     string;
 }
 
 export interface CreateShareInput {
   fileId:         string;
   mode:           ShareMode;
   password?:      string;
-  expiresAt?:     string;
+  expiresAt?:     string | null;
   keepAvailable:  boolean;
+  keepUntil?:     string | null;
+  displaySharerName?: boolean;
+  assetKind?:     'file' | 'capture' | 'artifact';
   capture?:       boolean;
   captureMetadata?: Record<string, unknown>;
 }
@@ -28,6 +42,10 @@ export interface CreateShareInput {
 export interface LinkService {
   create(input:CreateShareInput):Promise<ShareLink>;
   list():Promise<ShareLink[]>;
+  revoke(id:string):Promise<void>;
+  update(id:string, input:Partial<CreateShareInput>):Promise<ShareLink>;
+  restore(id:string, password?:string):Promise<ShareLink>;
+  activity(id?:string):Promise<{ id:string; action:'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked'; occurredAt:string; detail?:string }[]>;
 }
 
 export class SharingUnavailableError extends Error {}
@@ -42,6 +60,17 @@ function normalize(value:any):ShareLink {
     expiresAt:     value.expiresAt ?? value.expires_at ?? undefined,
     viewCount:     Number(value.viewCount ?? value.view_count ?? 0),
     keepAvailable: Boolean(value.keepAvailable ?? value.keep_available),
+    keepUntil:     value.keepUntil ?? value.keep_until ?? undefined,
+    displaySharerName: value.displaySharerName ?? value.display_sharer_name ?? true,
+    servedFrom:    value.servedFrom ?? value.served_from ?? 'desktop',
+    assetKind:     value.assetKind ?? value.asset_kind ?? 'file',
+    source:        value.source_label ?? value.source ?? undefined,
+    targetId:      value.fileId ?? value.file_id ?? undefined,
+    targetType:    value.targetType ?? value.target_type ?? undefined,
+    collectionId:  value.collectionId ?? value.collection_id ?? undefined,
+    revokedAt:     value.revokedAt ?? value.revoked_at ?? undefined,
+    lastViewedAt:  value.lastViewedAt ?? value.last_viewed_at ?? undefined,
+    createdAt:     value.createdAt ?? value.created_at ?? undefined,
   };
 }
 
@@ -66,9 +95,16 @@ export class SullaFilesLinkService implements LinkService {
     if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before sharing');
     const deviceId = await getDesktopDeviceId();
     const body = JSON.stringify({
-      fileId: input.fileId, permission: input.mode, accessMode: input.mode, password: input.password,
-      expiresAt: input.expiresAt, keepAvailable: input.keepAvailable,
-      assetKind: input.capture ? 'capture' : 'file', captureMetadata: input.captureMetadata,
+      fileId:     input.fileId,
+      permission: input.mode,
+      accessMode: input.mode,
+      password:   input.password,
+      expiresAt:  input.expiresAt,
+      keepAvailable: input.keepAvailable,
+      keepUntil:  input.keepUntil,
+      displaySharerName: input.displaySharerName ?? true,
+      assetKind:  input.assetKind ?? (input.capture ? 'capture' : 'file'),
+      captureMetadata: input.captureMetadata,
       deviceId,
     });
     const response = await requestWithContractFallback(['/v1/links', '/v1/shares'], {
@@ -89,6 +125,46 @@ export class SullaFilesLinkService implements LinkService {
     const body = await response.json(); const values = Array.isArray(body) ? body : body.links ?? body.shares ?? [];
 
     return values.map(normalize);
+  }
+
+  async revoke(id:string):Promise<void> {
+    const cloudToken = await getCurrentAccessToken();
+    if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before revoking a public link');
+    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }`], {
+      method:  'DELETE',
+      headers: { 'x-sulla-cloud-token': cloudToken },
+    });
+    if (!response.ok) throw new Error(`Revoke share failed (${ response.status })`);
+  }
+
+  async update(id:string, input:Partial<CreateShareInput>):Promise<ShareLink> {
+    const cloudToken = await getCurrentAccessToken();
+    if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before changing link availability');
+    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }`], {
+      method:  'PATCH',
+      headers: { 'content-type': 'application/json', 'x-sulla-cloud-token': cloudToken },
+      body:    JSON.stringify(input),
+    });
+    if (!response.ok) throw new Error(`Update share failed (${ response.status })`);
+
+    return normalize(await response.json());
+  }
+
+  async restore(id:string, password?:string):Promise<ShareLink> {
+    const cloudToken = await getCurrentAccessToken();
+    if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before restoring a public link');
+    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }/restore`], { method: 'POST', headers: { 'content-type': 'application/json', 'x-sulla-cloud-token': cloudToken }, body: JSON.stringify({ password }) });
+    if (!response.ok) throw new Error(`Restore share failed (${ response.status })`);
+    return normalize(await response.json());
+  }
+
+  async activity(id?:string):Promise<{ id:string; action:'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked'; occurredAt:string; detail?:string }[]> {
+    const cloudToken = await getCurrentAccessToken(); const headers:Record<string, string> = {};
+    if (cloudToken) headers['x-sulla-cloud-token'] = cloudToken;
+    const response = await requestWithContractFallback([id ? `/v1/links/${ encodeURIComponent(id) }/activity` : '/v1/links/activity'], { headers });
+    if (!response.ok) throw new Error(`Share activity failed (${ response.status })`);
+    const body = await response.json(); const events = Array.isArray(body) ? body : body.events ?? [];
+    return events.map((event:any) => ({ id: String(event.id), action: event.action, occurredAt: event.occurredAt ?? event.occurred_at, detail: event.detail }));
   }
 }
 

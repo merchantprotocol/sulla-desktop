@@ -16,6 +16,11 @@ export interface Artifact {
   persistent?: boolean;
   threadId?:   string;
   version?:    number;
+  filesFileId?:              string | null;
+  filesVersionId?:           string | null;
+  filesPath?:                string | null;
+  filesRegistrationStatus?:  'pending' | 'synced' | 'error';
+  filesRegistrationError?:   string | null;
   /** Free-form payload; each pane interprets its own. See below for typed variants. */
   payload?:  unknown;
 }

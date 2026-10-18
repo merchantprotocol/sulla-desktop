@@ -11,6 +11,11 @@ export interface Attachment {
   source?: string;
   /** Original File object if the attachment came from drag-drop */
   file?:   File;
+  /** Durable Files identity. Unlike a File/blob URL this survives chat reloads. */
+  fileRef?: {
+    fileId: string; versionId: string; path: string; mime: string; size: number;
+    createdByType?: string; createdById?: string; collectionId?: string; collectionKind?: string; agentRunId?: string;
+  };
 }
 
 export function kindFromName(name: string): AttachmentKind {

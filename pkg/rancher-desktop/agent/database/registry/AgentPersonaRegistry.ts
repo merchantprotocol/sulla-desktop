@@ -10,6 +10,7 @@ export interface ChatMessage {
   threadId?: string;
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
+  fileReferences?: Array<Record<string, unknown>>;
   kind?:     'text' | 'tool' | 'tool_approval' | 'tool_question' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'sub_agent_exchange' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive';
   image?: {
     dataUrl:      string;
