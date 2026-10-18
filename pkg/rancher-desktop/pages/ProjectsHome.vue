@@ -35,7 +35,7 @@
       <aside v-if="tab === 'projects'" class="ph-side ph-directory-side">
         <div class="ph-directory-brand">
           <span class="ph-brand-mark" aria-hidden="true">S</span>
-          <div><b>Sulla</b><small>Projects</small></div>
+          <div><b>Sulla</b><small>Merchant Protocol</small></div>
         </div>
         <nav class="ph-directory-nav" aria-label="Project filters">
           <button
@@ -51,6 +51,7 @@
               <svg v-else-if="item.key === 'waiting'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4.5M12 16v.01"/></svg>
               <svg v-else-if="item.key === 'starred'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></svg>
               <svg v-else-if="item.key === 'recent'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+              <svg v-else-if="item.key === 'archived'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="4" rx="1"/><path d="M5 8.5V18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5M10 12.5h4"/></svg>
               <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="13.5" r="1.2" fill="currentColor" stroke="none"/></svg>
             </span>
             <span>{{ item.label }}</span>
@@ -61,7 +62,11 @@
           <b>{{ weeklyProgress.done }} cards done this week</b>
           <div class="ph-project-progress-bar"><i :style="{ width: weeklyProgress.percent + '%' }" /></div>
           <span>{{ projects.length }} projects · {{ activeAgents.length }} agents working</span>
-          <button type="button" class="ph-directory-sync" :disabled="isLoading" @click="refresh">{{ isLoading ? 'Refreshing…' : error ? 'Retry sync' : 'Refresh projects' }}</button>
+          <button type="button" class="ph-directory-sync" :disabled="isLoading" @click="refresh"><i aria-hidden="true" />{{ isLoading ? 'Syncing board…' : error ? 'Board sync failed · retry' : 'Board synced · just now' }}</button>
+        </div>
+        <div class="ph-directory-user">
+          <span class="ph-directory-avatar">JB</span>
+          <span><b>Jonathon</b><small>Owner · {{ projects.length }} projects · {{ activeAgents.length }} agents</small></span>
         </div>
       </aside>
 
@@ -1551,7 +1556,7 @@ const PROJECT_VIEWS: { key: ProjectViewType; label: string; icon: string }[] = [
   { key: 'list', label: 'List', icon: '☷' },
 ];
 type ProjectsTab = ProjectViewType | 'activity' | 'projects' | 'lanes' | 'dependencies';
-type DirectoryFilter = 'all' | 'mine' | 'waiting' | 'starred' | 'recent' | 'working';
+type DirectoryFilter = 'all' | 'mine' | 'waiting' | 'starred' | 'recent' | 'archived' | 'working';
 const tab = ref<ProjectsTab>('projects');
 const projectWorkspaceOpen = ref(false);
 const projectWorkspaceView = ref<'board' | 'table'>('board');
@@ -1763,6 +1768,7 @@ const filteredProjects = computed(() => {
     if (directoryFilter.value === 'waiting' && !waitingOnHuman(project)) return false;
     if (directoryFilter.value === 'starred' && !isFavorite(project.id)) return false;
     if (directoryFilter.value === 'recent' && new Date(projectUpdatedAt(project)).getTime() < sevenDaysAgo) return false;
+    if (directoryFilter.value === 'archived' && !isProjectClosed(project)) return false;
     if (directoryFilter.value === 'working' && projectAgents(project).length === 0) return false;
     return true;
   });
@@ -1788,6 +1794,7 @@ const directoryNavItems = computed(() => [
   { key: 'waiting' as const, label: 'Waiting on you', count: projects.value.filter(waitingOnHuman).length },
   { key: 'starred' as const, label: 'Starred', count: projects.value.filter(project => isFavorite(project.id)).length },
   { key: 'recent' as const, label: 'Recent', count: 0 },
+  { key: 'archived' as const, label: 'Archived', count: projects.value.filter(isProjectClosed).length },
   { key: 'working' as const, label: 'Working now', count: new Set(activeAgents.value.map(agent => agent.agent_id)).size },
 ]);
 
@@ -1815,6 +1822,7 @@ function clearDirectoryFilters(): void {
 
 function openDirectoryFilter(filter: DirectoryFilter): void {
   directoryFilter.value = filter;
+  statusFilter.value = filter === 'archived' ? 'all' : 'active';
   projectWorkspaceOpen.value = false;
   tab.value = 'projects';
 }
@@ -2603,40 +2611,51 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .projects-home {
   @include routines-theme-vars;
 
-  --pbg:          #0b0f17;
-  --psurface:     #11161f;
-  --pdetail-surface: #11161f;
-  --psurface2:    #161c27;
-  --pborder:      #212a38;
-  --pborder-soft: #1a212d;
-  --ptext:        var(--text, #eef2f8);
-  --ptext2:       #9aa7b8;
-  --ptext3:       #7f8da0;
-  --pacc:         var(--steel-400, #5096b3);
-  --pacc-soft:    rgba(80, 150, 179, 0.14);
-  --pacc-line:    rgba(80, 150, 179, 0.40);
-  --pgreen:       #5ba37d;
-  --pamber:       #c99a54;
-  --pred:         #c9736f;
+  /* Projects owns its canvas palette. The approved design is a light
+     workspace even when the surrounding Sulla shell uses Noir Dark. */
+  --pbg:          #f4f7fb;
+  --psurface:     rgba(255, 255, 255, 0.82);
+  --pdetail-surface: #fff;
+  --psurface2:    #eaf0f6;
+  --pborder:      rgba(26, 35, 50, 0.14);
+  --pborder-soft: rgba(26, 35, 50, 0.09);
+  --ptext:        #1a2332;
+  --ptext2:       #5b6778;
+  --ptext3:       #8a94a3;
+  --pacc:         #3a7fa0;
+  --pacc-soft:    rgba(58, 127, 160, 0.10);
+  --pacc-line:    rgba(58, 127, 160, 0.32);
+  --pgreen:       #347558;
+  --pamber:       #8b611f;
+  --pred:         #a34641;
   --pserif:       var(--psans);
   --pmono:        var(--mono, ui-monospace, 'JetBrains Mono', Menlo, monospace);
   --psans:        -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  /* The v2 board/table/header components consume the shared surface tokens. */
+  --bg:            var(--pbg);
+  --surface-1:     #fff;
+  --surface-2:     var(--psurface2);
+  --surface-3:     #dde5ee;
+  --text:          var(--ptext);
+  --text-muted:    var(--ptext2);
+  --text-dim:      var(--ptext3);
+  --accent:        var(--pacc);
+  --accent-hover:  #2f6a86;
+  --accent-dim:    var(--pacc-soft);
+  --accent-border: var(--pacc-line);
+  --border:        var(--pborder);
+  --border-muted:  var(--pborder-soft);
 
   height: 100%;
   min-height: 0;
   position: relative;
   background: var(--pbg);
+  background-image:
+    radial-gradient(900px 500px at 15% -10%, rgba(58, 127, 160, .10), transparent 60%),
+    radial-gradient(700px 400px at 100% 0%, rgba(58, 127, 160, .06), transparent 55%);
   color: var(--ptext);
   font: 13px/1.45 var(--psans);
-}
-:global(html.light .projects-home), :global(body.light .projects-home),
-:global(.theme-noir-light .projects-home) {
-  --pdetail-surface: #fff;
-  --pbg: #f4f7fb; --psurface: rgba(255, 255, 255, 0.82); --psurface2: #eaf0f6;
-  --pborder: rgba(26, 35, 50, 0.14); --pborder-soft: rgba(26, 35, 50, 0.09);
-  --ptext: #1a2332; --ptext2: #5b6778; --ptext3: #8a94a3;
-  --pacc-soft: rgba(58, 127, 160, 0.10); --pacc-line: rgba(58, 127, 160, 0.32); --pacc: #3a7fa0;
-  --pgreen: #347558; --pamber: #8b611f; --pred: #a34641;
 }
 .projects-home * { box-sizing: border-box; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
@@ -2976,7 +2995,16 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-directory-summary b { font-weight: 600; color: var(--ptext2); }
 .ph-directory-summary .ph-project-progress-bar { width: 100%; max-width: none; margin: 6px 0 4px; height: 4px; }
 .ph-directory-summary .ph-project-progress-bar i { background: var(--pacc); }
-.ph-directory-sync { display: block; width: 100%; padding: 8px 10px; margin-top: 16px; border: 1px solid var(--pborder-soft); border-radius: 9px; background: var(--psurface); color: var(--ptext2); font: inherit; text-align: left; cursor: pointer; }
+.ph-directory-sync { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 10px; margin-top: 16px; border: 1px solid var(--pborder-soft); border-radius: 9px; background: var(--psurface); color: var(--ptext2); font: inherit; text-align: left; cursor: pointer; }
+.ph-directory-sync > i { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--pgreen); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pgreen) 12%, transparent); }
+.ph-directory-sync:disabled > i { background: var(--pacc); animation: ph-sync-pulse 1s ease-in-out infinite; }
+.ph-directory-user { display: flex; align-items: center; gap: 9px; margin-top: auto; padding: 12px 8px 2px; border-top: 1px solid var(--pborder-soft); }
+.ph-directory-user > span:last-child { min-width: 0; }
+.ph-directory-user b, .ph-directory-user small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-directory-user b { color: var(--ptext); font-size: 12px; }
+.ph-directory-user small { color: var(--ptext3); font-size: 11px; }
+.ph-directory-avatar { display: grid; width: 26px; height: 26px; flex: 0 0 26px; place-items: center; border-radius: 50%; background: linear-gradient(135deg, #9ec1d3, var(--pacc)); color: #fff; font-size: 9px; font-weight: 700; }
+@keyframes ph-sync-pulse { 50% { opacity: .35; } }
 .ph-directory-nav button { font: 500 13px/1.45 var(--psans); padding: 7px 10px; }
 .ph-directory-nav .ph-agent-nav { margin-top: 42px; position: relative; }
 .ph-agent-nav::before { content: 'Agents'; position: absolute; top: -32px; left: 0; right: 0; border-top: 1px solid var(--pborder-soft); padding: 10px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ptext3); }
@@ -3007,7 +3035,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 @media (max-width: 1180px) {
   .ph-directory-side { width: 64px; padding: 14px 10px; }
   .ph-directory-brand { justify-content: center; padding: 0 0 12px; }
-  .ph-directory-summary, .ph-directory-brand > div, .ph-directory-nav button > span:not(.ph-directory-nav-icon) { display: none; }
+  .ph-directory-summary, .ph-directory-user > span:last-child, .ph-directory-brand > div, .ph-directory-nav button > span:not(.ph-directory-nav-icon) { display: none; }
+  .ph-directory-user { justify-content: center; padding-inline: 0; }
   .ph-directory-nav button { justify-content: center; padding: 9px 0; }
   .ph-agent-nav::before { content: ''; }
   .ph-project-row, .ph-project-columns { grid-template-columns: 40px minmax(180px, 1fr) 160px 150px 80px 90px 40px; }
