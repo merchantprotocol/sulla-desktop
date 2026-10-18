@@ -66,14 +66,11 @@
 import * as os from 'os';
 
 import { net, app } from 'electron';
+import WebSocket from 'ws';
 
 import { GATEWAY_URL as DEFAULT_GATEWAY_URL, IS_LOCAL } from '../config';
 import * as auth from '../model/auth';
 import { log } from '../model/logger';
-
-// Use __non_webpack_require__ to bypass webpack bundling for the ws package.
-declare const __non_webpack_require__: typeof require;
-const WebSocket = __non_webpack_require__('ws');
 
 const TAG = 'Gateway';
 
@@ -231,7 +228,7 @@ export function disconnectLobby(): void {
 }
 
 function _lobbySend(obj: Record<string, any>): void {
-  if (lobbyWs && lobbyWs.readyState === WebSocket.OPEN) {
+  if (lobbyWs?.readyState === WebSocket.OPEN) {
     lobbyWs.send(JSON.stringify(obj));
   }
 }
@@ -452,7 +449,7 @@ let speakerBuffer: Buffer[] = [];        // Buffer speaker chunks until first mi
 const MAX_SPEAKER_BUFFER = 100; // Don't buffer more than ~2.5s of speaker audio
 
 export function sendAudio(audioData: any, channel: number): void {
-  if (!audioWs || audioWs.readyState !== WebSocket.OPEN) return;
+  if (audioWs?.readyState !== WebSocket.OPEN) return;
 
   // Backpressure check
   if (audioWs.bufferedAmount > BACKPRESSURE_LIMIT) return;
@@ -528,7 +525,7 @@ function _connectListenerWs(): void {
       const msg = JSON.parse(data.toString());
 
       // ACK reliable delivery
-      if (msg._msg_id && listenerWs && listenerWs.readyState === WebSocket.OPEN) {
+      if (msg._msg_id && listenerWs?.readyState === WebSocket.OPEN) {
         listenerWs.send(JSON.stringify({ event_type: 'ack', _msg_id: msg._msg_id }));
       }
 
