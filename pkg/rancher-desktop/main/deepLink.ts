@@ -155,16 +155,25 @@ function dispatch(target: Electron.BrowserWindow, rawUrl: string): void {
 
 async function handleFilesAction(target:Electron.BrowserWindow, action:string, absolutePath:string):Promise<void> {
   const watcher = getSullaFilesWatcher();
-  let root:string; let resolved:string;
-  try { [root, resolved] = await Promise.all([fs.promises.realpath(watcher.folder), fs.promises.realpath(absolutePath)]) } catch {
-    await Electron.dialog.showMessageBox(target, { type: 'error', message: 'That Sulla Files item is unavailable.' }); return;
-  }
-  if (resolved !== root && !resolved.startsWith(`${ root }${ path.sep }`)) {
+  let root:string;
+  try { root = await fs.promises.realpath(watcher.folder) } catch { await Electron.dialog.showMessageBox(target, { type: 'error', message: 'Sulla Files is unavailable.' }); return }
+  const candidate = path.resolve(absolutePath);
+  if (candidate !== root && !candidate.startsWith(`${ root }${ path.sep }`)) {
     await Electron.dialog.showMessageBox(target, { type: 'error', message: 'That item is outside Sulla Files.' }); return;
   }
+  let resolved = candidate;
+  let info:fs.Stats | undefined;
+  try {
+    resolved = await fs.promises.realpath(candidate);
+    if (resolved !== root && !resolved.startsWith(`${ root }${ path.sep }`)) {
+      await Electron.dialog.showMessageBox(target, { type: 'error', message: 'That item resolves outside Sulla Files.' }); return;
+    }
+    info = await fs.promises.stat(resolved);
+  } catch {
+    if (action !== 'keep') { await Electron.dialog.showMessageBox(target, { type: 'error', message: 'That Sulla Files item is unavailable.' }); return }
+  }
   const relativePath = path.relative(root, resolved).split(path.sep).join('/');
-  const info = await fs.promises.stat(resolved);
-  if (info.isDirectory()) {
+  if (info?.isDirectory()) {
     if (action === 'history' || action === 'copy-link') {
       await Electron.dialog.showMessageBox(target, { type: 'info', message: action === 'history' ? 'Version history is available for files, not folders.' : 'Copy link is available for files. Use Share with people… to review folder sharing.' }); return;
     }
@@ -205,11 +214,33 @@ async function handleFilesAction(target:Electron.BrowserWindow, action:string, a
     await Electron.dialog.showMessageBox(target, { type: 'info', message: 'Sulla link copied.', detail: link.name });
     return;
   }
-  if (action === 'online-only') {
-    await Electron.dialog.showMessageBox(target, { type: 'warning', message: 'This file was not removed from your Mac.', detail: 'Online-only needs secure collection-key exchange before Sulla can guarantee recovery. The local copy remains intact.' }); return;
-  }
-  if (action === 'keep') {
-    await Electron.dialog.showMessageBox(target, { type: 'warning', message: 'Keep on this Mac is unavailable.', detail: 'Sulla will not claim this succeeded until it can verify a durable remote copy and rehydration key.' }); return;
+  if (action === 'online-only' || action === 'keep') {
+    if (action === 'online-only') {
+      const decision = await Electron.dialog.showMessageBox(target, {
+        type:    'warning',
+        message: 'Free up space on this Mac?',
+        detail: `${ relativePath }\n\nSulla will remove the local copy only after verifying authenticated remote recovery.`,
+        buttons: ['Cancel', 'Free up space'],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (decision.response !== 1) return;
+    }
+    const response = await watcher.requestFiles(`/v1/files/${ encodeURIComponent(file.id) }/residency`, {
+      method:  'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ desiredState: action === 'online-only' ? 'online-only' : 'local' }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error ?? `Residency request failed (${ response.status })`);
+    }
+    await Electron.dialog.showMessageBox(target, {
+      type: 'info',
+      message: action === 'online-only' ? 'Space freed after recovery verification.' : 'File kept on this Mac.',
+      detail: relativePath,
+    });
+    return;
   }
   target.focus();
   target.webContents.send('agent-command', { command: 'open-tab', mode: 'files', fileId: file.id, path: relativePath, section: action === 'history' ? 'versions' : action === 'share' ? 'share-review' : 'files' });

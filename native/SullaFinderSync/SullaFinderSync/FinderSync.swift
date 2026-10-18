@@ -75,8 +75,8 @@ final class FinderSync: FIFinderSync {
         add(menu, title: targets.count > 1 ? "Share selected items with people…" : "Share with people…", action: #selector(share(_:)), targets: targets)
         add(menu, title: targets.count > 1 ? "Version history for selected items" : "Version history", action: #selector(history(_:)), targets: targets)
         menu.addItem(.separator())
-        unavailable(menu, title: "Keep on this Mac — unavailable")
-        unavailable(menu, title: "Free up space — unavailable")
+        add(menu, title: "Keep on this Mac", action: #selector(keep(_:)), targets: targets)
+        add(menu, title: "Free up space", action: #selector(freeSpace(_:)), targets: targets)
         return menu
     }
 
@@ -84,11 +84,11 @@ final class FinderSync: FIFinderSync {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self; item.representedObject = targets; menu.addItem(item)
     }
-    private func unavailable(_ menu: NSMenu, title: String) { let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); item.isEnabled = false; menu.addItem(item) }
-
     @objc private func copyLink(_ sender: NSMenuItem) { open(action: "copy-link", sender: sender) }
     @objc private func share(_ sender: NSMenuItem) { open(action: "share", sender: sender) }
     @objc private func history(_ sender: NSMenuItem) { open(action: "history", sender: sender) }
+    @objc private func keep(_ sender: NSMenuItem) { open(action: "keep", sender: sender) }
+    @objc private func freeSpace(_ sender: NSMenuItem) { open(action: "online-only", sender: sender) }
     private func open(action: String, sender: NSMenuItem) {
         guard let files = sender.representedObject as? [URL] else { return }
         for file in files.map(\.standardizedFileURL).filter(isInsideWatchedRoot) {

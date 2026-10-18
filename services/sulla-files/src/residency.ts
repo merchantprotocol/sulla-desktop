@@ -572,7 +572,7 @@ export class FileResidencyManager {
   }
 
   private quarantine(operationId:string, suffix:string):string {
-    return `.sulla-trash/.residency/${ operationId }.${ suffix }`;
+    return `.sulla-trash/.residency/residency/${ operationId }.${ suffix }`;
   }
 }
 

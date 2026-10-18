@@ -16,11 +16,13 @@ const MAX_JSON_BYTES = 1024 * 1024;
 
 export interface ResidencySyncBundle {
   collectionId:        string;
+  collection:          Record<string, unknown>;
   file:                Record<string, unknown>;
   version:             Record<string, unknown>;
   manifest:            Record<string, unknown>;
   chunks:              Record<string, unknown>[];
   baseServerVersionId: string | null;
+  keyContext:          RemoteVersionDescriptor['keyContext'];
 }
 
 export interface HttpResidencyTransportConfig {
@@ -49,7 +51,9 @@ export class HttpResidencyTransport implements AuthenticatedResidencyTransport {
   }
 
   async prepareVersion(version: RemoteVersionDescriptor, signal: AbortSignal): Promise<{ missingChunkIds: string[] }> {
-    const response = await this.json('/v1/versions/prepare', { method: 'POST', body: JSON.stringify(await this.bundle(version)), signal });
+    const bundle = await this.bundle(version);
+    await this.json('/v1/collections', { method: 'POST', body: JSON.stringify({ collection: bundle.collection }), signal });
+    const response = await this.json('/v1/versions/prepare', { method: 'POST', body: JSON.stringify(bundle), signal });
     if (response.conflict && response.currentVersionId === version.versionId) this.alreadyCommitted.add(version.versionId);
     else if (response.conflict) throw new Error('Remote version conflict prevents eviction');
     if (response.canonicalFileId !== version.fileId) throw new Error('Remote canonical file identity does not match');
@@ -90,6 +94,7 @@ export class HttpResidencyTransport implements AuthenticatedResidencyTransport {
         remote.version?.chunk_collection_id !== version.chunkCollectionId ||
         remote.version?.manifest_hash !== version.manifestHash || Number(remote.version?.size) !== version.size ||
         remote.manifest?.hash !== version.manifestHash || Number(remote.manifest?.total_size) !== version.size ||
+        !sameContext(remote.keyContext, version.keyContext) ||
         JSON.stringify(remote.manifest?.chunk_ids) !== JSON.stringify(version.chunks.map(chunk => chunk.id))) {
       throw new Error('Authenticated remote returned different version geometry');
     }
@@ -115,8 +120,9 @@ export class HttpResidencyTransport implements AuthenticatedResidencyTransport {
 
   private async bundle(version: RemoteVersionDescriptor): Promise<ResidencySyncBundle> {
     const bundle = await this.config.bundleFor(version);
-    if (bundle.collectionId !== version.collectionId || bundle.file.id !== version.fileId ||
-        bundle.version.id !== version.versionId || bundle.manifest.hash !== version.manifestHash) {
+    if (bundle.collectionId !== version.collectionId || bundle.collection.id !== version.collectionId ||
+        bundle.file.id !== version.fileId || bundle.version.id !== version.versionId ||
+        bundle.manifest.hash !== version.manifestHash || !sameContext(bundle.keyContext, version.keyContext)) {
       throw new Error('Residency sync bundle does not match the requested immutable version');
     }
     return bundle;
@@ -155,8 +161,9 @@ export class HttpResidencyTransport implements AuthenticatedResidencyTransport {
 /** Loads the exact existing Files sync bundle; no key material is included. */
 export async function loadResidencySyncBundle(db: pg.Pool, expected: RemoteVersionDescriptor): Promise<ResidencySyncBundle> {
   const row = (await db.query(
-    `SELECT row_to_json(f.*) AS file,row_to_json(v.*) AS version,row_to_json(m.*) AS manifest
+    `SELECT row_to_json(c.*) AS collection,row_to_json(f.*) AS file,row_to_json(v.*) AS version,row_to_json(m.*) AS manifest
        FROM files f JOIN file_versions v ON v.id=$1 AND v.file_id=f.id
+       JOIN collections c ON c.id=f.collection_id
        JOIN manifests m ON m.hash=v.manifest_hash
       WHERE f.id=$2 AND f.collection_id=$3 AND f.current_version_id=v.id AND NOT v.deleted`,
     [expected.versionId, expected.fileId, expected.collectionId],
@@ -180,26 +187,30 @@ export async function loadResidencySyncBundle(db: pg.Pool, expected: RemoteVersi
   });
   return {
     collectionId:        expected.collectionId,
+    collection:          row.collection,
     file:                row.file,
     version:             row.version,
     manifest:            row.manifest,
     chunks:              ordered,
     baseServerVersionId: row.version.base_server_version_id ?? row.version.parent_version_id ?? null,
+    keyContext:          expected.keyContext,
   };
 }
 
-/** Mount after the standard Files local-token and unlocked middleware. */
-export function registerResidencyRoutes(app: express.Application, manager: FileResidencyManager): void {
-  app.get('/v1/local/files/:id/residency', async(request, response) => {
-    try { response.json({ ...await manager.status(request.params.id), capabilities: manager.capabilities() }) } catch (error) { response.status(409).json({ error: errorMessage(error) }) }
+/** Mount after the standard Files authentication and unlocked middleware. */
+export function registerResidencyRoutes(app: express.Application, manager: FileResidencyManager, authorize:(request:express.Request, fileId:string)=>Promise<void>): void {
+  app.get('/v1/residency-capabilities', (_request, response) => response.json(manager.capabilities()));
+  app.get('/v1/files/:id/residency', async(request, response) => {
+    try { await authorize(request, request.params.id); response.json({ ...await manager.status(request.params.id), capabilities: manager.capabilities() }) } catch (error) { response.status(errorStatus(error)).json({ error: errorMessage(error) }) }
   });
-  app.post('/v1/local/files/:id/residency', async(request, response) => {
+  app.post('/v1/files/:id/residency', async(request, response) => {
     try {
+      await authorize(request, request.params.id);
       if (request.body?.desiredState === 'online-only') await manager.makeOnlineOnly(request.params.id);
       else if (request.body?.desiredState === 'local') await manager.keepOnComputer(request.params.id);
       else { response.status(400).json({ error: 'desiredState must be local or online-only' }); return }
       response.json(await manager.status(request.params.id));
-    } catch (error) { response.status(409).json({ error: errorMessage(error) }) }
+    } catch (error) { response.status(errorStatus(error)).json({ error: errorMessage(error) }) }
   });
 }
 
@@ -225,3 +236,10 @@ function stringArray(value: unknown): string[] {
   return value;
 }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : 'Residency operation failed' }
+function errorStatus(error: unknown): number { const status = Number((error as { status?:unknown } | null)?.status); return Number.isInteger(status) && status >= 400 && status <= 599 ? status : 409 }
+function sameContext(left:unknown, right:RemoteVersionDescriptor['keyContext']):boolean {
+  if (!left || typeof left !== 'object') return false;
+  const value = left as Record<string, unknown>;
+  return value.collectionId === right.collectionId && value.principalId === right.principalId &&
+    Number(value.keyVersion) === right.keyVersion && Number(value.epoch) === right.epoch;
+}

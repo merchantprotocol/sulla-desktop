@@ -91,10 +91,10 @@ export class FilesMutationCoordinator {
     });
   }
 
-  copyVerified(input:{ source: string; target: string; verify: Verify }):Promise<PublicationReceipt> {
+  copyVerified(input:{ source: string; target: string; verify: Verify; staged?: string }):Promise<PublicationReceipt> {
     return this.runExclusive([input.source, input.target], async() => {
       const source = await this.pinVerified(input.source, input.verify);
-      const staged = `.sulla-trash/.residency/${ randomUUID() }.copy`;
+      const staged = input.staged ?? `.sulla-trash/.residency/${ randomUUID() }.copy`;
       try {
         const output = await this.openPrivateExclusive(staged);
         try {
@@ -210,10 +210,13 @@ export class FilesMutationCoordinator {
     } catch (error) { await handle.close(); throw error }
   }
 
-  exists(path:string):Promise<boolean> {
-    return this.pinParent(path).then(async parent => {
-      try { await lstat(parent.child); return true } catch (error:any) { if (error?.code === 'ENOENT') return false; throw error } finally { await parent.handle.close() }
-    });
+  async exists(path:string):Promise<boolean> {
+    let parent:{ handle: FileHandle; child: string };
+    try { parent = await this.pinParent(path) } catch (error:any) {
+      if (error?.code === 'ENOENT') return false;
+      throw error;
+    }
+    try { await lstat(parent.child); return true } catch (error:any) { if (error?.code === 'ENOENT') return false; throw error } finally { await parent.handle.close() }
   }
 
   private async restoreNoClobber(quarantine:string, source:string):Promise<void> {
@@ -225,7 +228,9 @@ export class FilesMutationCoordinator {
 
   private async ensurePrivateParent(path:string):Promise<void> {
     const clean = this.clean(path);
-    if (!clean.startsWith('.sulla-trash/.residency/')) throw new Error('Private staging must stay under .sulla-trash/.residency');
+    if (!clean.startsWith('.sulla-trash/.residency/') && !clean.startsWith('.sulla-trash/.operations/')) {
+      throw new Error('Private staging must stay under an owned Files recovery namespace');
+    }
     await this.ensureParent(clean);
   }
 
