@@ -34,6 +34,23 @@ function codexContext(overrides: Partial<ProviderTransportContext> = {}): Provid
   };
 }
 
+function claudeContext(environment: Readonly<Record<string, string>>): ProviderTransportContext {
+  return {
+    runtime:        'container',
+    provider:       'claude-code',
+    conversationId: 'synthetic-thread',
+    auth:           { kind: 'broker', opaqueConfigRef: 'opaque:claude' },
+    session:        {
+      opaqueProviderConfigRef: 'opaque:claude',
+      providerConfig:          {
+        opaqueConfigRef: 'opaque:claude',
+        baseUrl:         'http://provider_broker:8080/claude/lease',
+        environment,
+      },
+    },
+  };
+}
+
 describe('ProviderExecutionTransport security boundary', () => {
   test('fails closed unless broker identity, capability environment, and config match', () => {
     expect(() => requireBrokeredContainerAuth(codexContext())).not.toThrow();
@@ -51,6 +68,28 @@ describe('ProviderExecutionTransport security boundary', () => {
           codexConfigOverrides: ['model_provider="sulla_broker"'],
         },
       },
+    }))).toThrow(/environment violates/);
+  });
+
+  test('accepts exactly one Claude bridge authentication mode', () => {
+    const baseUrl = 'http://provider_broker:8080/claude/lease';
+    expect(() => requireBrokeredContainerAuth(claudeContext({
+      CLAUDE_CODE_OAUTH_TOKEN: 'synthetic-oauth-capability',
+      ANTHROPIC_BASE_URL:       baseUrl,
+    }))).not.toThrow();
+    expect(() => requireBrokeredContainerAuth(claudeContext({
+      ANTHROPIC_API_KEY:  'synthetic-api-capability',
+      ANTHROPIC_BASE_URL: baseUrl,
+    }))).not.toThrow();
+    expect(() => requireBrokeredContainerAuth(claudeContext({
+      CLAUDE_CODE_OAUTH_TOKEN: 'synthetic-oauth-capability',
+      ANTHROPIC_API_KEY:        'synthetic-api-capability',
+      ANTHROPIC_BASE_URL:       baseUrl,
+    }))).toThrow(/environment violates/);
+    expect(() => requireBrokeredContainerAuth(claudeContext({
+      CLAUDE_CODE_OAUTH_TOKEN: 'synthetic-oauth-capability',
+      ANTHROPIC_BASE_URL:       baseUrl,
+      HOME:                     '/host-must-not-cross',
     }))).toThrow(/environment violates/);
   });
 
