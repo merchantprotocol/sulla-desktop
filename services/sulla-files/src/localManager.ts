@@ -107,6 +107,7 @@ export class LocalFilesManager {
     if (this.syncTimer) clearInterval(this.syncTimer);
     await this.mutations.runExclusive(['.'], () => Promise.resolve()).catch(() => undefined);
   }
+
   status():RuntimeState {
     const elapsed = Math.max(0.001, (Date.now() - this.progressStartedAt) / 1_000); const rate = this.processedBytes / elapsed;
     return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, pendingBytes: this.pendingBytes, processedBytes: this.processedBytes, totalBytes: this.totalBytes, estimatedSeconds: this.running && rate > 0 ? Math.max(1, Math.ceil(this.pendingBytes / rate)) : undefined, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl) };
