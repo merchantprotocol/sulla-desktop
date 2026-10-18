@@ -1,0 +1,228 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-runtime
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-runtime
+  template:
+    metadata:
+      labels:
+        app: python-runtime
+    spec:
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: python-runtime
+          # TODO: Replace :latest when the runtime publishing pipeline provides versioned tags.
+          image: ghcr.io/merchantprotocol/sulla-python-runtime:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SULLA_HTTP_HOST
+              value: 0.0.0.0
+            - name: SULLA_HTTP_PORT
+              value: "8080"
+            - name: SULLA_FUNCTIONS_DIR
+              value: /var/functions
+          volumeMounts:
+            - name: sulla-functions
+              mountPath: /var/functions
+              readOnly: true
+            - name: runtime-cache
+              mountPath: /opt/sulla/cache/deps
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+      volumes:
+        - name: sulla-functions
+          persistentVolumeClaim:
+            claimName: sulla-functions
+        - name: runtime-cache
+          persistentVolumeClaim:
+            claimName: python-runtime-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: python-runtime
+spec:
+  type: ClusterIP
+  selector:
+    app: python-runtime
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shell-runtime
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shell-runtime
+  template:
+    metadata:
+      labels:
+        app: shell-runtime
+    spec:
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: shell-runtime
+          # TODO: Replace :latest when the runtime publishing pipeline provides versioned tags.
+          image: ghcr.io/merchantprotocol/sulla-shell-runtime:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SULLA_HTTP_HOST
+              value: 0.0.0.0
+            - name: SULLA_HTTP_PORT
+              value: "8080"
+            - name: SULLA_FUNCTIONS_DIR
+              value: /var/functions
+          volumeMounts:
+            - name: sulla-functions
+              mountPath: /var/functions
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+      volumes:
+        - name: sulla-functions
+          persistentVolumeClaim:
+            claimName: sulla-functions
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shell-runtime
+spec:
+  type: ClusterIP
+  selector:
+    app: shell-runtime
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-runtime
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-runtime
+  template:
+    metadata:
+      labels:
+        app: node-runtime
+    spec:
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: node-runtime
+          # TODO: Replace :latest when the runtime publishing pipeline provides versioned tags.
+          image: ghcr.io/merchantprotocol/sulla-node-runtime:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SULLA_HTTP_HOST
+              value: 0.0.0.0
+            - name: SULLA_HTTP_PORT
+              value: "8080"
+            - name: SULLA_FUNCTIONS_DIR
+              value: /var/functions
+          volumeMounts:
+            - name: sulla-functions
+              mountPath: /var/functions
+              readOnly: true
+            - name: runtime-cache
+              mountPath: /opt/sulla/cache/node_modules
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+      volumes:
+        - name: sulla-functions
+          persistentVolumeClaim:
+            claimName: sulla-functions
+        - name: runtime-cache
+          persistentVolumeClaim:
+            claimName: node-runtime-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-runtime
+spec:
+  type: ClusterIP
+  selector:
+    app: node-runtime
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

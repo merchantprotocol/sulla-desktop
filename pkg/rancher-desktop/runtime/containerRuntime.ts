@@ -14,6 +14,7 @@ export interface ContainerSpec {
   memoryBytes?: number;
   nanoCpus?:    number;
   workingDir?:  string;
+  user?:        string;
   stdinOpen?:   boolean;
   envFile?:     string;
   extraHosts?:  string[];
@@ -78,6 +79,7 @@ export class DockerRuntimeDriver implements ContainerRuntimeDriver {
       Env:        Object.entries(spec.env ?? {}).map(([key, value]) => `${ key }=${ value }`),
       Labels:     spec.labels,
       WorkingDir: spec.workingDir,
+      User:       spec.user,
       OpenStdin:  spec.stdinOpen ?? false,
       StdinOnce:  spec.stdinOpen ?? false,
       HostConfig: {

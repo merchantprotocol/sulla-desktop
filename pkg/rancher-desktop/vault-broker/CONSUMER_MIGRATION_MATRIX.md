@@ -24,7 +24,7 @@ credential plaintext, wrapped key, or decrypt callback crosses into the caller.
 | Slack Socket Mode | Routed | Desktop opens the vault-owned relay, parses bounded NDJSON, ACKs typed events, forwards sanitized messages, and closes/aborts without instantiating Bolt with vault credentials. |
 | Discord legacy SDK | Baseline dormant/unregistered; blocked in Desktop mode | No Discord factory is registered. The dormant token-SDK initializer explicitly refuses container-authority mode so it cannot read or decrypt a vault credential. Active config-driven Discord REST calls remain subject to the `discord.rest` broker policy. |
 | Model/provider HTTP streaming | Routed | Provider SDK-compatible fetch adapters use execute-stream with exact provider/account scope, preserve non-2xx provider responses and propagate abort without a local key fallback. |
-| Codex/Claude CLI providers and agent containers | Vault-backed lane unsupported unless opaque proxy configuration is accepted | Independent user-managed CLI login files are outside this migration and must not be read or copied. Credentials sourced from Sulla vault may never be materialized into CLI files or environment; use the existing broker base-URL path where supported and otherwise fail closed. |
+| Codex/Claude CLI providers and agent containers | API-key mode and vault-owned Codex ChatGPT OAuth routed through a process-scoped opaque HTTP bridge; Claude subscription OAuth remains unsupported | Codex 0.163.0 accepts a custom `base_url`/`env_key` Responses provider with OpenAI auth disabled. The bridge maps the same container-side Responses protocol to either `api.openai.com` with an authority-owned API key or `chatgpt.com/backend-api/codex` with authority-owned OAuth bearer and account routing; the latter requires the vault's `codex` account to contain a valid `chatgpt_account_id` claim derived during token exchange. Claude Code 2.1.150 exposes `ANTHROPIC_BASE_URL` plus API-key configuration, but no supported opaque local Claude OAuth transport was found. The bridge gives the CLI only a random process capability, revalidates live job/thread/device/provider/account identity, and uses `provider.cli` execute-stream for exact provider routes. Independent user-managed login files are never read or copied. |
 | Provider model discovery | Routed | Desktop ignores caller API-key values and uses scoped `provider.discovery` with provider-specific GET host/path/header policy and bounded JSON output. |
 | Text-to-speech providers | Routed | ElevenLabs/Grok use scoped `provider.audio` with provider-bound destinations/injections and binary stream output without local keys. |
 | Agent browser autofill | Intentionally unsupported | The generic agent-readable browser is not an isolated human target. Fail with `unsupported_secret_egress`; container-hosted human reveal remains supported. |
@@ -32,7 +32,9 @@ credential plaintext, wrapped key, or decrypt callback crosses into the caller.
 ## Intentional compatibility boundaries
 
 MCP stdio secret environment injection, generic agent-browser autofill,
-vault-backed external CLI login files, and raw-token adoption remain explicitly
-unsupported because each would materialize a credential outside final outbound
-authority custody. There is deliberately no local raw-key, plaintext database,
-environment-variable, or SDK-token fallback.
+vault-backed external CLI login files, Claude CLI-managed OAuth/subscription
+sessions, and raw-token adoption remain explicitly unsupported because each
+would materialize or inspect a credential outside final outbound authority
+custody. Provider CLI API-key mode uses only a random process capability in its
+environment; the real key remains in vault custody. There is deliberately no
+local raw-key, plaintext database, credential-file, or SDK-token fallback.

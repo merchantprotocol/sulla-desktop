@@ -1,6 +1,8 @@
 import { spawn } from 'child_process';
 import os from 'os';
 
+import { currentAgentContainerRuntime } from '../../services/AgentContainerRuntimeRegistry';
+
 import paths from '@pkg/utils/paths';
 
 export interface CommandRunnerOptions {
@@ -99,6 +101,7 @@ function executeSpawn(
         });
       }
     });
+    child.stdin?.on('error', () => {});
 
     child.stdout?.on('data', chunk => {
       stdout += chunk.toString();
@@ -123,7 +126,7 @@ function executeSpawn(
     });
 
     if (options.stdin) {
-      child.stdin?.write(options.stdin);
+      child.stdin?.write(options.stdin, () => {});
       child.stdin?.end();
     } else {
       child.stdin?.end();
@@ -136,6 +139,25 @@ export async function runCommand(
   args: string[],
   options: CommandRunnerOptions = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const runtime = currentAgentContainerRuntime();
+
+  if (runtime) {
+    const rawScript = args.length === 0
+      ? command
+      : [command, ...args.map(arg => quoteShellArg(arg))].join(' ');
+    const limaHome = resolveLimaHome(options);
+    const limactlPath = resolveLimactlPath(options);
+    const dockerArgs = ['shell', options.limaInstance || '0', '--', 'docker', 'exec', '-i', runtime.podId, '/bin/bash', '-lc', rawScript];
+
+    let result = await executeSpawn('env', [`LIMA_HOME=${ limaHome }`, limactlPath, ...dockerArgs], options);
+
+    if (result.exitCode === 127) {
+      result = await executeSpawn('env', [`LIMA_HOME=${ limaHome }`, 'limactl', ...dockerArgs], options);
+    }
+
+    return result;
+  }
+
   if (options.runInLimaShell) {
     // Lima only exists on macOS/Linux; paths.limactl is a throwing getter on
     // Windows. Fail with a clear message instead of crashing the caller.

@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sulla Server · Console</title><link rel="stylesheet" href="/console/vault.css"></head>
+<title>Sulla Console</title><link rel="stylesheet" href="/console/vault.css"></head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="icon-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></symbol>
@@ -48,7 +48,7 @@
   <symbol id="icon-fingerprint" viewBox="0 0 24 24"><path d="M6.5 7.5A7 7 0 0 1 19 12v1.5M5 12a7 7 0 0 1 .4-2.3M8.5 20c1-2 1.5-4 1.5-7a2 2 0 0 1 4 0c0 3.5-.6 6-1.6 8M16.5 19.5c.6-1.6 1-3.4 1-5.5M5 15.5c.5-1 .9-2.2 1-3.5"/></symbol>
 </svg>
 <section id="auth" class="auth-wrap"><div class="auth-card card">
-  <div class="brand"><span class="brand-mark">S</span><div>Sulla <em>Vault</em><small>Server console</small></div></div>
+  <div class="brand"><span class="brand-mark">S</span><div>Sulla <em>Console</em><small>Server console</small></div></div>
   <p class="eyebrow">Encrypted in this browser</p><h1 id="auth-title">Welcome back</h1><p class="lead" id="auth-lead">Unlock your organization without sending a master password or encryption key to the server.</p>
   <div class="auth-tabs"><button data-auth="signin" class="active">Sign in</button><button data-auth="join">Join organization</button></div>
   <form id="auth-form"><label>Email<input id="auth-email" type="email" autocomplete="username" required placeholder="you@company.com"></label><label>Master password<input id="auth-password" type="password" autocomplete="current-password" required minlength="10" placeholder="••••••••••••"></label><label class="join-field" hidden>Organization ID<input id="auth-org-id" autocomplete="off" placeholder="Paste the organization ID"></label><label class="join-field" hidden>Join password<input id="auth-join-password" type="password" autocomplete="off" placeholder="Password from your admin"></label><button id="auth-submit" class="btn primary wide" type="submit">Unlock console</button><p id="auth-error" class="error" role="alert"></p></form>

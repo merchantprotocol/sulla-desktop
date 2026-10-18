@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { BaseTool, ToolResponse } from '../base';
+import { hasContainerFileRuntime, writeContainerPath } from '../util/containerFileRuntime';
 
 /**
  * WriteFile Tool — write or overwrite file contents.
@@ -23,6 +24,16 @@ export class WriteFileWorker extends BaseTool {
 
     if (content === undefined || content === null) {
       return { successBoolean: false, responseString: 'Missing required field: content' };
+    }
+
+    if (hasContainerFileRuntime()) {
+      try {
+        const result = await writeContainerPath(filePath, String(content));
+
+        return { successBoolean: true, responseString: `Wrote ${ result.lines } lines to ${ result.path }` };
+      } catch (error) {
+        return { successBoolean: false, responseString: `Failed to write file: ${ error instanceof Error ? error.message : String(error) }` };
+      }
     }
 
     // Expand ~ to home directory

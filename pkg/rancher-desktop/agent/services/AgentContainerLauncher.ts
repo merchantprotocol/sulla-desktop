@@ -1,18 +1,40 @@
 import * as childProcess from 'node:child_process';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs';
+import os from 'node:os';
 import * as path from 'node:path';
 
 import Electron from 'electron';
 
+import { createIsolatedCheckout, isolatedCheckoutPrefix } from './AgentContainerCheckout';
+import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
+import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
+import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
+import { getIntegrationService } from './IntegrationService';
+import { RunActivity } from './RunActivity';
+import { getWebSocketClientService } from './WebSocketClientService';
+import {
+  createProviderCliBridge,
+  getLocalVaultPrincipalId,
+  usesContainerVaultAuthority,
+  type ProviderCliAuthMode,
+  type ProviderCliBridgeLease,
+} from '../../vault-broker';
 import { redisClient } from '../database/RedisClient';
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { ensureCodexAuthFile, codexAuthPath } from '../util/codexAuthFile';
-import { getLocalVaultPrincipalId, usesContainerVaultAuthority } from '../../vault-broker';
+import {
+  withProviderExecutionTransport,
+  type ProviderExecutionTransport,
+  type ProviderName,
+  type ProviderTransportContext,
+} from '../languagemodels/ProviderExecutionTransport';
+import { onSteer, steerText } from '../utils/steerChannel';
+import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
+import { resolveSullaDocsDir } from '../utils/sullaPaths';
 
 import { resolveSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
+import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/containerRuntime';
 import Logging from '@pkg/utils/logging';
@@ -24,22 +46,41 @@ const log = Logging.background;
 const IDLE_MS = 30 * 60_000;
 const MEMORY = process.env.SULLA_AGENT_MEMORY ?? '4g';
 const CPUS = process.env.SULLA_AGENT_CPUS ?? '2';
+const LEASE_MS = 15 * 60_000;
+const RENEW_MS = 5 * 60_000;
+const CONTAINER_UID = typeof process.getuid === 'function' ? process.getuid() : 10_001;
+const CONTAINER_GID = typeof process.getgid === 'function' ? process.getgid() : 10_001;
+const TRANSPORT_IMAGE_LABEL = 'com.sulla.agent.transport-version';
+const TRANSPORT_IMAGE_VERSION = '1';
+const TRANSPORT_COMPATIBILITY_IMAGE = `ghcr.io/merchantprotocol/sulla-agent:transport-v${ TRANSPORT_IMAGE_VERSION }`;
+const cleanupOwner = new AgentContainerCleanupOwner(message => log.error(`[AgentContainer] ${ message }`));
 
 export interface AgentContainerRun {
-  jobId:        string;
-  taskIndex:    number;
-  provider:     string;
-  model?:       string | null;
-  prompt:       string;
-  instructions: string;
-  state:        BaseThreadState;
-  signal?:      AbortSignal;
+  jobId:          string;
+  taskIndex:      number;
+  provider:       string;
+  model?:         string | null;
+  prompt:         string;
+  instructions:   string;
+  /** Explicit existing worktree used only to seed this job's isolated clone. */
+  workspacePath?: string;
+  state:          BaseThreadState;
+  signal?:        AbortSignal;
 }
 
 export interface AgentContainerResult {
   output:        string;
   containerName: string;
 }
+
+export interface AgentContainerLifecycle {
+  readonly containerName: string;
+  readonly workspacePath: string;
+  execute<T>(action: () => T): T;
+  close(): Promise<void>;
+}
+
+export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'>;
 
 function safeName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 80);
@@ -76,8 +117,10 @@ class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
     if (spec.envFile) args.push('--env-file', spec.envFile);
     for (const [key, value] of Object.entries(spec.env ?? {})) args.push('--env', `${ key }=${ value }`);
     for (const bind of spec.binds ?? []) args.push('--volume', bind);
+    for (const [target, options] of Object.entries(spec.tmpfs ?? {})) args.push('--tmpfs', `${ target }:${ options }`);
     if (spec.network) args.push('--network', spec.network);
     if (spec.workingDir) args.push('--workdir', spec.workingDir);
+    if (spec.user) args.push('--user', spec.user);
     args.push(spec.image, ...(spec.command ?? []));
     return (await limactl(args)).stdout.trim();
   }
@@ -100,6 +143,20 @@ class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
 
 let imageReady: Promise<string> | null = null;
 
+async function requireTransportImage(image: string): Promise<void> {
+  const inspection = JSON.parse((await limactl(['docker', 'image', 'inspect', image])).stdout) as Array<{
+    Config?: { Labels?: Record<string, string> };
+  }>;
+  const version = inspection[0]?.Config?.Labels?.[TRANSPORT_IMAGE_LABEL];
+
+  if (version !== TRANSPORT_IMAGE_VERSION) {
+    throw new Error(
+      `Agent image ${ image } does not support transport protocol v${ TRANSPORT_IMAGE_VERSION } ` +
+      `(expected label ${ TRANSPORT_IMAGE_LABEL }=${ TRANSPORT_IMAGE_VERSION })`,
+    );
+  }
+}
+
 async function ensureAgentImage(): Promise<string> {
   if (imageReady) return imageReady;
   imageReady = (async() => {
@@ -107,23 +164,26 @@ async function ensureAgentImage(): Promise<string> {
       'sulla-agent', process.cwd(), Electron.app.getVersion(), process.env.SULLA_AGENT_IMAGE,
     );
     try {
-      await limactl(['docker', 'image', 'inspect', resolved.image]);
+      await requireTransportImage(resolved.image);
       return resolved.image;
     } catch { /* lazy build/pull below */ }
 
     if (resolved.build) {
       await limactl(['docker', 'build', '--file', path.join(resolved.build.context, resolved.build.dockerfile), '--tag', resolved.image, resolved.build.context]);
+      await requireTransportImage(resolved.image);
       return resolved.image;
     }
 
     try {
       await limactl(['docker', 'pull', resolved.image]);
+      await requireTransportImage(resolved.image);
       return resolved.image;
     } catch (error) {
-      if (resolved.image.endsWith(':latest')) throw error;
-      const latest = 'ghcr.io/merchantprotocol/sulla-agent:latest';
-      await limactl(['docker', 'pull', latest]);
-      return latest;
+      if (process.env.SULLA_AGENT_IMAGE || resolved.image === TRANSPORT_COMPATIBILITY_IMAGE) throw error;
+      log.warn(`[AgentContainer] ${ resolved.image } is unavailable or transport-incompatible; using ${ TRANSPORT_COMPATIBILITY_IMAGE }`);
+      await limactl(['docker', 'pull', TRANSPORT_COMPATIBILITY_IMAGE]);
+      await requireTransportImage(TRANSPORT_COMPATIBILITY_IMAGE);
+      return TRANSPORT_COMPATIBILITY_IMAGE;
     }
   })().catch(error => {
     imageReady = null;
@@ -132,29 +192,12 @@ async function ensureAgentImage(): Promise<string> {
   return imageReady;
 }
 
-async function claudeCredentials(): Promise<{ oauthToken: string; apiKey: string }> {
-  let oauthToken = '';
-  let apiKey = '';
-  try {
-    const { getIntegrationService } = await import('../services/IntegrationService');
-    for (const value of await getIntegrationService().getFormValues('claude-code')) {
-      if (value.property === 'oauth_token' && value.value) oauthToken = value.value;
-      if (value.property === 'api_key' && value.value) apiKey = value.value;
-    }
-  } catch { /* settings fallback below */ }
-  if (!oauthToken && !apiKey) {
-    oauthToken = (await SullaSettingsModel.get('claudeOAuthToken', '')) ?? '';
-    apiKey = (await SullaSettingsModel.get('claudeApiKey', '')) ?? '';
-  }
-  return { oauthToken, apiKey };
-}
-
-async function containerEnvironment(run: AgentContainerRun, token: string, sessionId: string, toolApiUrl: string): Promise<{
+function containerEnvironment(run: AgentContainerRun, token: string, sessionId: string, toolApiUrl: string): {
   env:     Record<string, string>;
   secrets: Record<string, string>;
-}> {
+} {
   const env: Record<string, string> = {
-    SULLA_HOST:                   'host.lima.internal',
+    SULLA_HOST:                   'sulla_tools',
     SULLA_TOOL_API_URL:           toolApiUrl,
     SULLA_AGENT_PROVIDER:         run.provider,
     SULLA_AGENT_MODEL:            run.model ?? '',
@@ -164,26 +207,17 @@ async function containerEnvironment(run: AgentContainerRun, token: string, sessi
     SULLA_TOOL_SESSION:           sessionId,
     SULLA_AGENT_INSTRUCTIONS_B64: Buffer.from(run.instructions).toString('base64'),
   };
-  if (run.provider === 'codex') {
-    if (!await ensureCodexAuthFile()) throw new Error('No Codex credentials configured');
-    secrets.CODEX_AUTH_JSON_B64 = fs.readFileSync(codexAuthPath()).toString('base64');
-  } else if (run.provider === 'claude-code') {
-    const creds = await claudeCredentials();
-    if (!creds.oauthToken && !creds.apiKey) throw new Error('No Claude Code credentials configured');
-    if (creds.oauthToken) secrets.CLAUDE_CODE_OAUTH_TOKEN = creds.oauthToken;
-    if (creds.apiKey) secrets.ANTHROPIC_API_KEY = creds.apiKey;
-  }
   return { env, secrets };
 }
 
 async function provisionContainerSecrets(containerName: string, secrets: Record<string, string>): Promise<string> {
   const secretDir = `/dev/shm/sulla-agent-secrets/${ containerName }`;
-  await limactl(['sh', '-c', 'sudo install -d -m 0700 -o 10001 -g 10001 "$1"', 'sh', secretDir]);
+  await limactl(['sh', '-c', 'sudo install -d -m 0700 -o "$2" -g "$3" "$1"', 'sh', secretDir, String(CONTAINER_UID), String(CONTAINER_GID)]);
   for (const [key, value] of Object.entries(secrets)) {
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`Invalid container secret name ${ key }`);
     const target = `${ secretDir }/${ key }`;
     await limactl(
-      ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown 10001:10001 "$1"; sudo chmod 0400 "$1"', 'sh', target],
+      ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown "$2:$3" "$1"; sudo chmod 0400 "$1"', 'sh', target, String(CONTAINER_UID), String(CONTAINER_GID)],
       Buffer.from(value).toString('base64'),
     );
   }
@@ -192,7 +226,500 @@ async function provisionContainerSecrets(containerName: string, secrets: Record<
 
 async function removeContainerSecrets(secretDir: string): Promise<void> {
   if (!secretDir.startsWith('/dev/shm/sulla-agent-secrets/')) throw new Error('Refusing to remove an unexpected secret path');
-  await limactl(['sh', '-c', 'sudo find "$1" -maxdepth 1 -type f -delete; sudo rmdir "$1" 2>/dev/null || true', 'sh', secretDir]).catch(() => {});
+  await limactl(['sh', '-c', 'if [ -d "$1" ]; then sudo find "$1" -maxdepth 1 -type f -delete; sudo rmdir "$1"; fi', 'sh', secretDir]);
+}
+
+async function cleanupContainerResources(
+  runtime: ContainerRuntimeDriver,
+  containerId: string | undefined,
+  secretDir: string | undefined,
+  providerFiles?: ContainerProviderFileTransport,
+): Promise<void> {
+  const failures: unknown[] = [];
+  if (containerId) {
+    await cleanupOwner.run(`container:${ containerId }`, async() => {
+      await runtime.remove(containerId);
+      providerFiles?.dispose();
+    }).catch(error => failures.push(error));
+  } else if (providerFiles) {
+    try { providerFiles.dispose() } catch (error) { failures.push(error) }
+  }
+  if (secretDir) {
+    await cleanupOwner.run(`secrets:${ secretDir }`, () => removeContainerSecrets(secretDir)).catch(error => failures.push(error));
+  }
+  if (failures.length) throw new AggregateError(failures, 'Agent container cleanup remains pending');
+}
+
+async function replaceContainerSecret(secretDir: string, name: string, value: string): Promise<void> {
+  if (!secretDir.startsWith('/dev/shm/sulla-agent-secrets/')) throw new Error('Refusing to update an unexpected secret path');
+  if (!/^[A-Z][A-Z0-9_]*$/.test(name)) throw new Error(`Invalid container secret name ${ name }`);
+  const target = `${ secretDir }/${ name }`;
+  await limactl(
+    ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1.next" >/dev/null; sudo chown "$2:$3" "$1.next"; sudo chmod 0400 "$1.next"; sudo mv "$1.next" "$1"', 'sh', target, String(CONTAINER_UID), String(CONTAINER_GID)],
+    Buffer.from(value).toString('base64'),
+  );
+}
+
+/** Seed an isolated persistent clone; never mount shared Git metadata writable. */
+async function prepareCheckout(source: string | undefined, jobKey: string): Promise<string | undefined> {
+  if (!source) return undefined;
+  const worktreeRoot = path.join(os.homedir(), 'Sites', 'worktrees');
+  const resolved = fs.realpathSync(source);
+  if (!resolved.startsWith(`${ worktreeRoot }${ path.sep }`) || !fs.statSync(resolved).isDirectory()) {
+    throw new Error('Container workspacePath must be an existing worktree under ~/Sites/worktrees');
+  }
+  const top = (await limactl(['git', '-C', resolved, 'rev-parse', '--show-toplevel'])).stdout.trim();
+  if (fs.realpathSync(top) !== resolved) throw new Error('container workspacePath must be a Git worktree root');
+  const commonGitDir = (await limactl(['git', '-C', resolved, 'rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();
+  const repository = path.basename(path.dirname(commonGitDir));
+  const branch = await limactl(['git', '-C', resolved, 'symbolic-ref', '--short', 'HEAD'])
+    .then(result => result.stdout.trim())
+    .catch(async() => `detached-${ (await limactl(['git', '-C', resolved, 'rev-parse', '--short', 'HEAD'])).stdout.trim() }`);
+  return await createIsolatedCheckout(
+    worktreeRoot,
+    isolatedCheckoutPrefix(repository, branch, jobKey),
+    checkout => limactl(['git', 'clone', '--local', '--no-hardlinks', resolved, checkout]).then(() => undefined),
+  );
+}
+
+interface ContainerProviderTransportOptions {
+  containerName: string;
+  workspacePath: string;
+  secretDir:     string;
+  files:         ContainerProviderFileTransport;
+  bridgeFor(provider: ProviderName): Promise<ProviderCliBridgeLease>;
+  ownsBridge(ref: string): boolean;
+}
+
+class ContainerProviderExecutionTransport implements ProviderExecutionTransport {
+  readonly runtime = 'container' as const;
+  readonly files: ContainerProviderFileTransport;
+  private readonly processPids = new WeakMap<childProcess.ChildProcessWithoutNullStreams, string>();
+  private readonly toolConfigs = new Map<string, Promise<{ ref: string; claudePath: string; codexOverrides: readonly string[] }>>();
+
+  constructor(private readonly options: ContainerProviderTransportOptions) {
+    this.files = options.files;
+  }
+
+  async context(input: Parameters<ProviderExecutionTransport['context']>[0]): Promise<ProviderTransportContext> {
+    const bridge = await this.options.bridgeFor(input.provider);
+    let toolConfig: { ref: string; claudePath: string; codexOverrides: readonly string[] } | undefined;
+    if (input.toolSessionId) toolConfig = await this.ensureToolConfig(input.toolSessionId);
+
+    return {
+      runtime:        'container',
+      provider:       input.provider,
+      conversationId: input.conversationId,
+      workspaceRoot:  this.options.workspacePath,
+      auth:           { kind: 'broker', opaqueConfigRef: bridge.config.opaqueConfigRef },
+      session:        {
+        providerSessionId:       input.providerSessionId,
+        toolSessionId:           input.toolSessionId,
+        opaqueProviderConfigRef: bridge.config.opaqueConfigRef,
+        providerConfig:          bridge.config,
+        ...(toolConfig
+          ? {
+            opaqueToolConfigRef: toolConfig.ref,
+            toolConfig:          {
+              opaqueConfigRef: toolConfig.ref,
+              ...(input.provider === 'codex'
+                ? {
+                  codexConfigOverrides: toolConfig.codexOverrides,
+                  environment:          { SULLA_MCP_SESSION_TOKEN: input.toolSessionId!, SULLA_TOOL_SESSION: input.toolSessionId! },
+                }
+                : {
+                  claudeConfigPath: toolConfig.claudePath,
+                  environment:      {
+                    SULLA_MCP_SESSION_TOKEN: input.toolSessionId!,
+                    SULLA_TOOL_SESSION:      input.toolSessionId!,
+                  },
+                }),
+            },
+          }
+          : {}),
+      },
+    };
+  }
+
+  spawn(request: Parameters<ProviderExecutionTransport['spawn']>[0]): childProcess.ChildProcessWithoutNullStreams {
+    if (request.context.runtime !== 'container' || request.context.workspaceRoot !== this.options.workspacePath ||
+        request.context.auth.kind !== 'broker' || !this.options.ownsBridge(request.context.auth.opaqueConfigRef)) {
+      throw new Error('Provider process is outside this container lifecycle');
+    }
+    const command = request.providerCommand;
+    if (!/^[a-zA-Z0-9._/-]+$/.test(command.executable)) throw new Error('Container provider executable is invalid');
+    const cwd = assertWorkspacePath(this.options.workspacePath, command.cwd ?? this.options.workspacePath);
+    const pidFile = `/tmp/sulla-provider-${ crypto.randomUUID() }.pid`;
+    const args = ['shell', '0', '--', 'docker', 'exec', '--interactive', '--workdir', cwd];
+    const environment: Record<string, string> = {};
+    for (const [key, value] of Object.entries(command.env ?? {})) {
+      if (!/^[A-Z][A-Z0-9_]*$/.test(key) || typeof value !== 'string' || /[\0\r\n]/.test(value)) {
+        throw new Error(`Container provider environment contains invalid ${ key }`);
+      }
+      environment[key] = value;
+    }
+    args.push(
+      this.options.containerName,
+      '/bin/sh', '-c', [
+        'set -eu',
+        'IFS= read -r encoded_env',
+        'env_json=$(printf "%s" "$encoded_env" | base64 -d)',
+        'for key in $(printf "%s" "$env_json" | jq -r "keys[]"); do value=$(printf "%s" "$env_json" | jq -r --arg key "$key" \'.[$key]\'); export "$key=$value"; done',
+        'unset encoded_env env_json key value',
+        'umask 077',
+        'printf "%s %s\\n" "$$" "$(cut -d " " -f 22 /proc/$$/stat)" > "$1"',
+        'shift',
+        'exec "$@"',
+      ].join('; '),
+      'sulla-provider', pidFile, command.executable, ...command.args,
+    );
+    const proc = childProcess.spawn(paths.limactl, args, {
+      env:   { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
+      stdio: request.stdio ?? ['pipe', 'pipe', 'pipe'],
+    }) as childProcess.ChildProcessWithoutNullStreams;
+    proc.stdin.on('error', () => { /* provider may exit during bootstrap */ });
+    proc.stdin.write(`${ Buffer.from(JSON.stringify(environment)).toString('base64') }\n`);
+    this.processPids.set(proc, pidFile);
+    return proc;
+  }
+
+  async terminate(request: Parameters<ProviderExecutionTransport['terminate']>[0]): Promise<void> {
+    const pidFile = this.processPids.get(request.process);
+    try { request.process.kill(`SIG${ request.signal }`) } catch { /* already exited */ }
+    if (!pidFile) return;
+    const signal = request.signal === 'INT' ? 'TERM' : request.signal;
+    const script = [
+      'set -eu',
+      'record=$(cat "$1" 2>/dev/null || true)',
+      // eslint-disable-next-line no-template-curly-in-string
+      'pid=${record%% *}',
+      // eslint-disable-next-line no-template-curly-in-string
+      'born=${record#* }',
+      '[ -n "$pid" ] && [ "$pid" != "$record" ] || exit 0',
+      '[ -r "/proc/$pid/stat" ] || exit 0',
+      'current=$(cut -d " " -f 22 "/proc/$pid/stat")',
+      '[ "$current" = "$born" ] || exit 0',
+      'descend() { for status in /proc/[0-9]*/status; do child=$(sed -n "s/^Pid:[[:space:]]*//p" "$status" 2>/dev/null || true); parent=$(sed -n "s/^PPid:[[:space:]]*//p" "$status" 2>/dev/null || true); if [ "$parent" = "$1" ]; then descend "$child" "$2"; kill -"$2" "$child" 2>/dev/null || true; fi; done; }',
+      'descend "$pid" "$2"',
+      'kill -"$2" "$pid" 2>/dev/null || true',
+      '[ "$2" != KILL ] || rm -f "$1"',
+    ].join('; ');
+    await limactl(['docker', 'exec', this.options.containerName, '/bin/sh', '-c', script, 'sulla-kill', pidFile, signal]).catch(() => {});
+  }
+
+  private ensureToolConfig(sessionId: string): Promise<{ ref: string; claudePath: string; codexOverrides: readonly string[] }> {
+    const existing = this.toolConfigs.get(sessionId);
+    if (existing) return existing;
+    const created = (async() => {
+      if (!/^[a-zA-Z0-9._-]+$/.test(sessionId)) throw new Error('Container tool session id is invalid');
+      const mcpUrl = getMCPServerHost().getVmReachableUrl();
+      const target = `/run/secrets/sulla-agent/mcp-${ sessionId }.json`;
+      const payload = JSON.stringify({
+        mcpServers: {
+          // Claude expands ${VAR} references in MCP headers at process start.
+          // Keep the graph session capability in memory-only process env; the
+          // provider-visible config contains a placeholder, never the token.
+          // eslint-disable-next-line no-template-curly-in-string
+          'sulla-native': { type: 'http', url: mcpUrl, headers: { Authorization: 'Bearer ${SULLA_MCP_SESSION_TOKEN}' } },
+        },
+      });
+      await limactl(
+        ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown "$2:$3" "$1"; sudo chmod 0400 "$1"', 'sh', `${ this.options.secretDir }/mcp-${ sessionId }.json`, String(CONTAINER_UID), String(CONTAINER_GID)],
+        Buffer.from(payload).toString('base64'),
+      );
+      const ref = crypto.randomUUID();
+      return {
+        ref,
+        claudePath:     target,
+        codexOverrides: [
+          `mcp_servers.sulla-native.url=${ JSON.stringify(mcpUrl) }`,
+          'mcp_servers.sulla-native.bearer_token_env_var="SULLA_MCP_SESSION_TOKEN"',
+          'mcp_servers.sulla-native.default_tools_approval_mode="approve"',
+        ],
+      };
+    })();
+    this.toolConfigs.set(sessionId, created);
+    return created;
+  }
+}
+
+/**
+ * Start one job-scoped container while the canonical Desktop graph remains
+ * the control plane. Agent-local tools and CLI provider processes are scoped
+ * into this lifecycle; non-CLI providers retain their canonical transport.
+ */
+export async function createAgentContainerLifecycle(run: AgentContainerLifecycleRun): Promise<AgentContainerLifecycle> {
+  const image = await ensureAgentImage();
+  const runtime = new LimaDockerRuntimeDriver();
+  const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
+  const capabilityJti = crypto.randomUUID();
+  const lifecycleAbort = new AbortController();
+  let capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
+  let secretDir: string | undefined;
+  let containerId: string | undefined;
+  let unregisterRuntime: (() => void) | undefined;
+  const providerBridges = new Map<ProviderName, Promise<ProviderCliBridgeLease>>();
+  const providerBridgeRefs = new Set<string>();
+  let toolSession: ReturnType<ReturnType<typeof getMCPServerHost>['registerSession']> | undefined;
+  let renewTimer: ReturnType<typeof setInterval> | undefined;
+  let livenessTimer: ReturnType<typeof setInterval> | undefined;
+  let checkingLiveness = false;
+  let closePromise: Promise<void> | undefined;
+  let providerFiles: ContainerProviderFileTransport | undefined;
+
+  try {
+    const installationSecret = getChatCompletionsServer().getApiToken();
+    if (!installationSecret) throw new Error('Desktop tool API is not initialized');
+    const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
+    const deviceId = metadata.deviceId ?? await getDesktopDeviceId();
+    const subject = usesContainerVaultAuthority()
+      ? await getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
+      : metadata.userId;
+    if (!subject) throw new Error('Agent capability requires an authenticated user identity');
+    const agentId = metadata.agentId ?? run.state.metadata.wsChannel;
+    if (!agentId) throw new Error('Agent container requires an agent identity');
+    const allowed = metadata.allowedToolNames ?? [];
+    const scopes = allowed.length === 0 || allowed.includes('exec') ? ['*'] : allowed;
+    const issueLease = () => issueCapabilityToken({
+      sub:              subject,
+      org_id:           metadata.orgId,
+      agent_id:         agentId,
+      pod_id:           containerName,
+      thread_id:        metadata.threadId,
+      job_id:           run.jobId,
+      device_id:        deviceId,
+      scopes,
+      jti:              capabilityJti,
+      expiresInSeconds: Math.ceil(LEASE_MS / 1000),
+    }, deriveCapabilitySigningKey(installationSecret));
+    const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
+      .then(response => response.ok).catch(() => false);
+    if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
+
+    toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
+    const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
+    const checkout = await prepareCheckout(run.workspacePath, jobKey);
+    const workspacePath = checkout ?? path.join(os.homedir(), 'sulla', 'workspaces', 'agents', jobKey);
+    await fs.promises.mkdir(workspacePath, { recursive: true, mode: 0o700 });
+    await fs.promises.chmod(workspacePath, 0o700);
+    const providerWorkspace = workspacePath;
+    providerFiles = new ContainerProviderFileTransport(path.join(paths.sullaHome, 'workspaces', 'provider-transport'));
+    secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, {
+      SULLA_API_TOKEN: issueLease(), SULLA_TOOL_SESSION: toolSession.id,
+    });
+    containerId = await runtime.create({
+      name:   containerName,
+      image,
+      labels: {
+        'com.sulla.workload':       'agent',
+        'com.sulla.job-id':         run.jobId,
+        'com.sulla.task-index':     String(run.taskIndex),
+        'com.sulla.capability-jti': capabilityJti,
+        'com.sulla.capability-exp': String(capabilityExpiresAt),
+      },
+      autoRemove: true,
+      stdinOpen:  true,
+      env:        {
+        SULLA_AGENT_MODE:     'transport',
+        SULLA_HOST:           'sulla_tools',
+        SULLA_TOOL_API_URL:   'http://sulla_tools:3000',
+        SULLA_AGENT_PROVIDER: run.provider,
+        SULLA_AGENT_MODEL:    run.model ?? '',
+      },
+      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`, `${ workspacePath }:${ workspacePath }:rw`, providerFiles.bindMount, `${ resolveSullaDocsDir() }:/opt/sulla-docs:ro`],
+      network:     'sulla_default',
+      workingDir:  providerWorkspace,
+      user:        `${ CONTAINER_UID }:${ CONTAINER_GID }`,
+      tmpfs:       { '/home/sulla': `rw,uid=${ CONTAINER_UID },gid=${ CONTAINER_GID },mode=0700` },
+      memoryLimit: MEMORY,
+      cpuLimit:    CPUS,
+    });
+    await runtime.start(containerId);
+    const mcpUrl = new URL(getMCPServerHost().getVmReachableUrl());
+    await limactl([
+      'docker', 'exec', containerName, 'curl', '--fail', '--silent', '--show-error', '--max-time', '3',
+      `${ mcpUrl.origin }/healthz`,
+    ]).catch(error => {
+      throw new Error(`Container cannot reach the graph MCP host ${ mcpUrl.hostname }: ${ (error as Error).message }`);
+    });
+    const binding = {
+      podId:         containerName,
+      subject,
+      orgId:         metadata.orgId,
+      agentId,
+      jobId:         run.jobId,
+      threadId:      metadata.threadId,
+      deviceId,
+      workspacePath: providerWorkspace,
+    };
+    unregisterRuntime = registerAgentContainerRuntime(binding);
+    const abortGraph = (reason: string) => {
+      log.warn(`[AgentContainer] ${ containerName } failed: ${ reason }`);
+      const graphAbort = run.state.metadata.options?.abort as { abort?: () => void } | undefined;
+      try { graphAbort?.abort?.() } catch { /* graph is already unwinding */ }
+      lifecycleAbort.abort();
+    };
+    const bridgeFor = (provider: ProviderName): Promise<ProviderCliBridgeLease> => {
+      const existing = providerBridges.get(provider);
+      if (existing) return existing;
+      const created = (async() => {
+        let integrationId: 'anthropic' | 'claude-code' | 'codex' | 'openai';
+        let accountId: string;
+        let authMode: ProviderCliAuthMode | undefined;
+        if (provider === 'codex') {
+          try {
+            accountId = await getIntegrationService().getActiveAccountId('codex');
+            integrationId = 'codex';
+          } catch (error) {
+            if ((error as Error).message !== 'No local vault account is configured for codex') throw error;
+            accountId = await getIntegrationService().getActiveAccountId('openai');
+            integrationId = 'openai';
+          }
+        } else {
+          try {
+            accountId = await getIntegrationService().getActiveAccountId('claude-code');
+            integrationId = 'claude-code';
+            authMode = accountId === 'oauth' ? 'oauth' : 'api-key';
+          } catch (error) {
+            if ((error as Error).message !== 'No local vault account is configured for claude-code') throw error;
+            integrationId = 'anthropic';
+            accountId = await getIntegrationService().getActiveAccountId(integrationId);
+            authMode = 'api-key';
+          }
+        }
+        const bridgeContext = () => {
+          const now = Math.floor(Date.now() / 1000);
+          return {
+            v:                1 as const,
+            iss:              'sulla-desktop',
+            aud:              'sulla-tools' as const,
+            sub:              subject,
+            org_id:           metadata.orgId,
+            agent_id:         agentId,
+            pod_id:           containerName,
+            thread_id:        metadata.threadId,
+            job_id:           run.jobId,
+            device_id:        deviceId,
+            credential_scope: { integration_id: integrationId, account_id: accountId },
+            scopes:           [],
+            iat:              now,
+            exp:              now + Math.ceil(LEASE_MS / 1000),
+            jti:              capabilityJti,
+            request_id:       crypto.randomUUID(),
+          };
+        };
+        const bridge = await createProviderCliBridge({
+          context:        bridgeContext(),
+          provider,
+          accountId,
+          authMode,
+          models:         run.provider === provider && run.model && run.model !== provider ? [run.model] : undefined,
+          advertisedHost: mcpUrl.hostname,
+          signal:         lifecycleAbort.signal,
+          authorize:      async() => {
+            const context = bridgeContext();
+            requireAgentContainerRuntime(context);
+            if (await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`)) return false;
+            return context;
+          },
+        });
+        providerBridgeRefs.add(bridge.config.opaqueConfigRef);
+        return bridge;
+      })();
+      providerBridges.set(provider, created);
+      created.catch(() => providerBridges.delete(provider));
+      return created;
+    };
+    const providerTransport = new ContainerProviderExecutionTransport({
+      containerName,
+      workspacePath: providerWorkspace,
+      secretDir,
+      files:         providerFiles,
+      bridgeFor,
+      ownsBridge:    ref => providerBridgeRefs.has(ref),
+    });
+    renewTimer = setInterval(() => {
+      capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
+      getMCPServerHost().rebindSession(toolSession!.id, run.state, LEASE_MS);
+      if (secretDir) {
+        replaceContainerSecret(secretDir, 'SULLA_API_TOKEN', issueLease()).catch(error => {
+          log.warn(`[AgentContainer] capability renewal failed for ${ containerName }: ${ (error as Error).message }`);
+          abortGraph('capability renewal failed');
+        });
+      }
+    }, RENEW_MS);
+    renewTimer.unref();
+    livenessTimer = setInterval(() => {
+      if (checkingLiveness || closePromise) return;
+      checkingLiveness = true;
+      runtime.inspect(containerName).then(details => {
+        if (!closePromise && details?.State?.Running !== true) abortGraph('persistent runtime exited');
+      }).catch(() => {
+        if (!closePromise) abortGraph('persistent runtime disappeared');
+      }).finally(() => {
+        checkingLiveness = false;
+      });
+    }, 15_000);
+    livenessTimer.unref();
+    run.signal?.addEventListener('abort', () => lifecycleAbort.abort(), { once: true });
+
+    const close = (): Promise<void> => {
+      if (closePromise) return closePromise;
+      // Defer the abort until after the sentinel is assigned: abort dispatch is
+      // synchronous and otherwise re-enters close() before closePromise exists.
+      closePromise = Promise.resolve().then(async() => {
+        lifecycleAbort.abort();
+        if (renewTimer) clearInterval(renewTimer);
+        if (livenessTimer) clearInterval(livenessTimer);
+        unregisterRuntime?.();
+        unregisterRuntime = undefined;
+        toolSession?.revoke();
+        const bridges = await Promise.allSettled([...providerBridges.values()]);
+        for (const bridge of bridges) {
+          if (bridge.status !== 'fulfilled') continue;
+          bridge.value.revoke();
+          await bridge.value.close().catch(() => {});
+        }
+        providerBridgeRefs.clear();
+        await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
+        await cleanupContainerResources(runtime, containerId, secretDir, providerFiles);
+      });
+      return closePromise;
+    };
+
+    lifecycleAbort.signal.addEventListener('abort', () => { close().catch(() => {}) }, { once: true });
+    if (run.signal?.aborted) {
+      await close();
+      const error = new Error('Agent container lifecycle was aborted before graph execution');
+      error.name = 'AbortError';
+      throw error;
+    }
+    return {
+      containerName,
+      workspacePath: providerWorkspace,
+      execute<T>(action: () => T): T {
+        return withAgentContainerRuntime(binding, () => withProviderExecutionTransport(providerTransport, action));
+      },
+      close,
+    };
+  } catch (error) {
+    lifecycleAbort.abort();
+    if (renewTimer) clearInterval(renewTimer);
+    if (livenessTimer) clearInterval(livenessTimer);
+    unregisterRuntime?.();
+    toolSession?.revoke();
+    const bridges = await Promise.allSettled([...providerBridges.values()]);
+    for (const bridge of bridges) {
+      if (bridge.status !== 'fulfilled') continue;
+      bridge.value.revoke();
+      await bridge.value.close().catch(() => {});
+    }
+    await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
+    await cleanupContainerResources(runtime, containerId, secretDir, providerFiles).catch(cleanupError => {
+      throw new AggregateError([error, cleanupError], 'Agent container startup and cleanup both failed');
+    });
+    throw error;
+  }
 }
 
 export async function runAgentContainer(run: AgentContainerRun): Promise<AgentContainerResult> {
@@ -202,55 +729,75 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   let secretDir: string | undefined;
   const capabilityJti = crypto.randomUUID();
-  const capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil((IDLE_MS + 5 * 60_000) / 1000);
+  let capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
   let containerId: string | undefined;
+  let unregisterRuntime: (() => void) | undefined;
   try {
     const installationSecret = getChatCompletionsServer().getApiToken();
     if (!installationSecret) throw new Error('Desktop tool API is not initialized');
     const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
+    const deviceId = metadata.deviceId ?? await getDesktopDeviceId();
     const subject = usesContainerVaultAuthority()
       ? await getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
       : metadata.userId;
     if (!subject) throw new Error('Agent capability requires an authenticated user identity');
     const allowed = metadata.allowedToolNames ?? [];
     const scopes = allowed.length === 0 || allowed.includes('exec') ? ['*'] : allowed;
-    const capability = issueCapabilityToken({
+    const issueLease = () => issueCapabilityToken({
       sub:              subject,
       org_id:           metadata.orgId,
       agent_id:         metadata.agentId ?? run.state.metadata.wsChannel,
       pod_id:           containerName,
       thread_id:        metadata.threadId,
       job_id:           run.jobId,
-      device_id:        metadata.deviceId,
+      device_id:        deviceId,
       scopes,
       jti:              capabilityJti,
-      expiresInSeconds: Math.ceil((IDLE_MS + 5 * 60_000) / 1000),
+      expiresInSeconds: Math.ceil(LEASE_MS / 1000),
     }, deriveCapabilitySigningKey(installationSecret));
-    const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(300) })
+    const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
       .then(response => response.ok).catch(() => false);
-    const configuration = await containerEnvironment(
-      run, capability, session.id,
-      toolsServiceHealthy ? 'http://sulla_tools:3000' : 'http://host.lima.internal:3000',
+    if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
+    const configuration = containerEnvironment(
+      run, issueLease(), session.id, 'http://sulla_tools:3000',
     );
-    const desktopHostIp = (await limactl(['sh', '-c', "getent hosts host.lima.internal | awk 'NR==1 {print $1}'"])).stdout.trim();
-    if (!desktopHostIp) throw new Error('Could not resolve Desktop host from the Lima VM');
-    secretDir = await provisionContainerSecrets(containerName, configuration.secrets);
+    const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
+    const checkout = await prepareCheckout(run.workspacePath, jobKey);
+    const workspacePath = checkout ?? path.join(os.homedir(), 'sulla', 'workspaces', 'agents', jobKey);
+    await fs.promises.mkdir(workspacePath, { recursive: true, mode: 0o700 });
+    await fs.promises.chmod(workspacePath, 0o700);
+    const docsPath = resolveSullaDocsDir();
+    secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, configuration.secrets);
     containerId = await runtime.create({
       name:   containerName,
       image,
       labels: {
-        'com.sulla.workload':   'agent',
-        'com.sulla.job-id':     run.jobId,
-        'com.sulla.task-index': String(run.taskIndex),
+        'com.sulla.workload':       'agent',
+        'com.sulla.job-id':         run.jobId,
+        'com.sulla.task-index':     String(run.taskIndex),
+        'com.sulla.capability-jti': capabilityJti,
+        'com.sulla.capability-exp': String(capabilityExpiresAt),
       },
       autoRemove:  true,
       stdinOpen:   true,
       env:         configuration.env,
-      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`],
+      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`, `${ workspacePath }:${ workspacePath }:rw`, `${ docsPath }:/opt/sulla-docs:ro`],
       network:     'sulla_default',
-      extraHosts:  [`host.lima.internal:${ desktopHostIp }`],
+      workingDir:  workspacePath,
+      user:        `${ CONTAINER_UID }:${ CONTAINER_GID }`,
+      tmpfs:       { '/home/sulla': `rw,uid=${ CONTAINER_UID },gid=${ CONTAINER_GID },mode=0700` },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
+    });
+    unregisterRuntime = registerAgentContainerRuntime({
+      podId:         containerName,
+      subject,
+      orgId:         metadata.orgId,
+      agentId:       metadata.agentId ?? run.state.metadata.wsChannel,
+      jobId:         run.jobId,
+      threadId:      metadata.threadId,
+      deviceId,
+      workspacePath,
     });
     const startedContainerId = containerId;
 
@@ -263,13 +810,43 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       let output = '';
+      let providerBuffer = '';
+      let streamText = '';
+      let lastStreamFlush = 0;
       let settled = false;
+      let abortForceTimer: ReturnType<typeof setTimeout> | undefined;
+      const pendingSteers = new Set<string>();
       let idleTimer: ReturnType<typeof setTimeout>;
+      const unsubscribeSteer = onSteer(run.state, message => {
+        const text = steerText(message).trim();
+        if (!text || settled || proc.stdin.destroyed || proc.stdin.writableEnded) return false;
+        try {
+          const id = crypto.randomUUID();
+          pendingSteers.add(id);
+          proc.stdin.write(`${ JSON.stringify({ type: 'steer', id, message: text }) }\n`, error => {
+            if (error) pendingSteers.delete(id);
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      const renewTimer = setInterval(() => {
+        capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
+        getMCPServerHost().rebindSession(session.id, run.state, LEASE_MS);
+        if (secretDir) {
+          replaceContainerSecret(secretDir, 'SULLA_API_TOKEN', issueLease()).catch(error => {
+            log.warn(`[AgentContainer] capability renewal failed for ${ containerName }: ${ (error as Error).message }`);
+          });
+        }
+      }, RENEW_MS);
       const resetIdle = () => {
         clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
           log.warn(`[AgentContainer] ${ containerName } idle for 30 minutes; reaping`);
-          runtime.remove(containerName).catch(() => {});
+          cleanupOwner.run(`container:${ startedContainerId }`, () => runtime.remove(startedContainerId)).catch(cleanupError => {
+            log.error(`[AgentContainer] idle cleanup remains pending for ${ startedContainerId }: ${ (cleanupError as Error).message }`);
+          });
           proc.kill('SIGTERM');
         }, IDLE_MS);
       };
@@ -277,47 +854,154 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         if (settled) return;
         settled = true;
         clearTimeout(idleTimer);
+        clearInterval(renewTimer);
+        if (abortForceTimer) clearTimeout(abortForceTimer);
+        unsubscribeSteer();
+        unregisterRuntime?.();
+        unregisterRuntime = undefined;
         session.revoke();
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
-        if (secretDir) await removeContainerSecrets(secretDir);
+        if (secretDir) {
+          try {
+            await cleanupOwner.run(`secrets:${ secretDir }`, () => removeContainerSecrets(secretDir!));
+          } catch (cleanupError) {
+            reject(new AggregateError(error ? [error, cleanupError] : [cleanupError], 'Agent container cleanup remains pending'));
+            return;
+          }
+        }
+        emitProvider('', 'streaming_complete').catch(() => {});
+        emitProvider('', 'thinking_complete').catch(() => {});
         if (error) reject(error);
         else resolve({ output: output.slice(-200_000), containerName });
       };
-      const onData = (chunk: Buffer) => {
-        resetIdle();
-        output += chunk.toString('utf8');
-        if (output.length > 400_000) output = output.slice(-200_000);
+      const emitProvider = async(content: string, kind: string) => {
+        const metadata = run.state.metadata as any;
+        const channel = metadata.parentWsChannel || metadata.wsChannel;
+        const threadId = metadata.parentConversationId || metadata.threadId;
+        if (!channel || !threadId) return;
+        await getWebSocketClientService().send(channel, {
+          type: 'assistant_message',
+          data: { content, role: 'assistant', kind, thread_id: threadId, timestamp: Date.now() },
+        }).catch(() => {});
       };
-      proc.stdout.on('data', onData);
-      proc.stderr.on('data', onData);
+      const flushStream = (force = false) => {
+        const now = Date.now();
+        if (!force && now - lastStreamFlush < 50) return;
+        lastStreamFlush = now;
+        const content = stripProtocolTagsStreaming(streamText);
+        if (content.trim()) emitProvider(content, 'streaming').catch(() => {});
+      };
+      const activity = (message: string) => {
+        if (!message) return;
+        flushStream(true);
+        if (streamText.trim()) emitProvider('', 'streaming_complete').catch(() => {});
+        streamText = '';
+        emitProvider(message, 'thinking').catch(() => {});
+      };
+      const processProviderLine = (line: string) => {
+        let event: any;
+        try { event = JSON.parse(line) } catch { return }
+        if (event.type === 'sulla.steer.ack' && typeof event.id === 'string') {
+          if (pendingSteers.delete(event.id)) RunActivity.touch(run.state.metadata);
+          return;
+        }
+        if (event.type === 'thread.started') activity('Session started — calling model');
+        if ((event.type === 'item.started' || event.type === 'item.completed') && event.item) {
+          const item = event.item;
+          const kind = item.item_type ?? item.type;
+          if (kind === 'agent_message' && event.type === 'item.completed' && typeof item.text === 'string') {
+            streamText += `${ streamText.trim() ? '\n\n' : '' }${ item.text }`;
+            flushStream(true);
+          } else if (event.type === 'item.started') {
+            if (kind === 'command_execution') activity(typeof item.command === 'string' ? `$ ${ item.command.slice(0, 120) }` : 'Running a shell command');
+            else if (kind === 'file_change') activity('Editing files');
+            else if (kind === 'mcp_tool_call') activity(`Using ${ item.tool ?? 'a tool' }`);
+            else if (kind === 'web_search') activity(`Searching web${ item.query ? `: ${ String(item.query).slice(0, 100) }` : '' }`);
+          }
+        }
+        const nested = event.event;
+        if (nested?.type === 'content_block_delta' && nested.delta?.type === 'text_delta' && typeof nested.delta.text === 'string') {
+          streamText += nested.delta.text;
+          flushStream();
+        }
+        if (nested?.type === 'content_block_delta' && nested.delta?.type === 'thinking_delta' && typeof nested.delta.thinking === 'string') {
+          activity(`💭 ${ nested.delta.thinking.replace(/\s+/g, ' ').trim().slice(0, 220) }`);
+        }
+        if (nested?.type === 'content_block_start' && nested.content_block?.type === 'tool_use') {
+          activity(`Using ${ nested.content_block.name ?? 'a tool' }`);
+        }
+      };
+      const onData = (chunk: Buffer, parseProvider = false) => {
+        resetIdle();
+        RunActivity.touch(run.state.metadata);
+        const text = chunk.toString('utf8');
+        output += text;
+        if (output.length > 400_000) output = output.slice(-200_000);
+        if (parseProvider) {
+          const lines = `${ providerBuffer }${ text }`.split('\n');
+          providerBuffer = lines.pop() ?? '';
+          if (providerBuffer.length > 200_000) providerBuffer = providerBuffer.slice(-200_000);
+          for (const line of lines) if (line.trim()) processProviderLine(line);
+        }
+      };
+      proc.stdout.on('data', chunk => onData(chunk, true));
+      proc.stderr.on('data', chunk => onData(chunk, false));
+      proc.stdin.on('error', error => {
+        if ((error as NodeJS.ErrnoException).code !== 'EPIPE' && !settled) finish(error).catch(reject);
+      });
       proc.once('error', error => { finish(error).catch(reject) });
       proc.once('close', code => { finish(code === 0 ? undefined : new Error(`Agent container exited ${ code }: ${ output.slice(-4_000) }`)).catch(reject) });
       if (run.signal) {
         run.signal.addEventListener('abort', () => {
-          runtime.remove(containerName).catch(() => {});
+          proc.stdin.write(`${ JSON.stringify({ type: 'cancel' }) }\n`, () => {});
+          abortForceTimer = setTimeout(() => {
+            cleanupOwner.run(`container:${ startedContainerId }`, () => runtime.remove(startedContainerId)).catch(error => {
+              log.error(`[AgentContainer] abort cleanup remains pending for ${ startedContainerId }: ${ (error as Error).message }`);
+            });
+          }, 6_000);
+          abortForceTimer.unref();
         }, { once: true });
       }
       resetIdle();
-      const prompt = run.provider === 'claude-code'
-        ? `${ JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: run.prompt }] } }) }\n`
-        : run.prompt;
-      proc.stdin.end(prompt);
+      proc.stdin.write(`${ JSON.stringify({ type: 'start', prompt: run.prompt }) }\n`, () => {});
     });
   } catch (error) {
+    unregisterRuntime?.();
     session.revoke();
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
-    if (containerId) await runtime.remove(containerId).catch(() => {});
-    if (secretDir) await removeContainerSecrets(secretDir);
+    await cleanupContainerResources(runtime, containerId, secretDir).catch(cleanupError => {
+      throw new AggregateError([error, cleanupError], 'Agent container startup and cleanup both failed');
+    });
     throw error;
   }
 }
 
 /** Remove agent containers left behind by a Desktop crash/restart. */
 export async function reapOrphanAgentContainers(): Promise<void> {
+  const runtime = new LimaDockerRuntimeDriver();
+  let containers: any[];
   try {
-    await limactl(['sh', '-c', 'docker ps -aq --filter label=com.sulla.workload=agent | xargs -r docker rm -f']);
+    containers = await runtime.list('com.sulla.workload=agent');
   } catch (error) {
-    // Agent containers are optional and must never prevent Desktop startup.
-    log.warn(`[AgentContainer] startup orphan reap skipped: ${ (error as Error).message }`);
+    log.warn(`[AgentContainer] startup orphan inventory failed: ${ (error as Error).message }`);
+    return;
+  }
+  for (const container of containers) {
+    try {
+      const details = await runtime.inspect(container.ID ?? container.Id ?? container.Names);
+      const labels = details?.Config?.Labels ?? {};
+      const jti = labels['com.sulla.capability-jti'];
+      const exp = Number(labels['com.sulla.capability-exp'] ?? 0);
+      if (jti) await redisClient.set(`sulla:capability:revoked:${ jti }`, '1', Math.max(Math.ceil(LEASE_MS / 1000), exp - Math.floor(Date.now() / 1000))).catch(() => {});
+      const id = details.Id ?? container.ID ?? container.Names;
+      await cleanupOwner.run(`container:${ id }`, () => runtime.remove(id));
+    } catch (error) {
+      log.error(`[AgentContainer] startup orphan cleanup remains pending: ${ (error as Error).message }`);
+    }
+  }
+  try {
+    await limactl(['sh', '-c', 'sudo find /dev/shm/sulla-agent-secrets -mindepth 2 -maxdepth 2 -type f -delete 2>/dev/null || true; sudo find /dev/shm/sulla-agent-secrets -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null || true']);
+  } catch (error) {
+    log.error(`[AgentContainer] startup orphan secret cleanup failed: ${ (error as Error).message }`);
   }
 }

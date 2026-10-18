@@ -4,10 +4,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
-import { buildRemoteKillCommand, buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCommand';
+import {
+  getProviderExecutionTransport,
+  requireBrokeredContainerAuth,
+  requireContainerToolConfig,
+  type ProviderExecutionTransport,
+  type ProviderFileRef,
+  type ProviderTransportContext,
+} from './ProviderExecutionTransport';
+import { buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { isObserverSpawn } from './claudeToolPolicy';
-import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild, waitForKillHelper } from './cliFaultRecovery';
-import { removeFileOnExit, systemPromptFromMessages, writeSystemPromptFile } from './cliSystemPromptFile';
+import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
+import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_SESSION_TTL_MS, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
@@ -15,7 +23,7 @@ import { emitCodexToolEvent } from './codexToolEvents';
 import { redisClient } from '../database/RedisClient';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeCodexLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
-import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
+import { ensureCodexAuthFile, codexHomeDir } from '../util/codexAuthFile';
 import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 import { markSteerPending, onSteer } from '../utils/steerChannel';
 
@@ -44,17 +52,19 @@ const STEER_RESUME_NOTE = '[Steering message] The user sent the message below wh
  * conversation. See CodexService.prewarm().
  */
 interface CodexPrewarmRecord {
-  proc:            childProcess.ChildProcessWithoutNullStreams;
-  mcpSession:      RegisteredSession | null;
+  proc:             childProcess.ChildProcessWithoutNullStreams;
+  transport:        ProviderExecutionTransport;
+  transportContext: ProviderTransportContext;
+  mcpSession:       RegisteredSession | null;
   /** VM-side pidfile of this process (see buildRemoteKillCommand). */
-  pidFile:         string;
-  model:           string;
-  existingSession: string | undefined;
-  readOnly:        boolean;
-  createdAt:       number;
-  closed:          boolean;
-  busy:            boolean;
-  reapTimer:       ReturnType<typeof setTimeout> | null;
+  pidFile:          string;
+  model:            string;
+  existingSession:  string | undefined;
+  readOnly:         boolean;
+  createdAt:        number;
+  closed:           boolean;
+  busy:             boolean;
+  reapTimer:        ReturnType<typeof setTimeout> | null;
 }
 
 /**
@@ -246,6 +256,26 @@ export class CodexService extends BaseLanguageModel {
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
+  /** Canonical argv used by non-Lima transports; JSONL parsing stays here. */
+  private buildProviderCommand(p: {
+    existingSession?:  string;
+    readOnly?:         boolean;
+    instructionsPath?: string | null;
+    environment?:      Readonly<Record<string, string>>;
+    configOverrides?:  readonly string[];
+  }): { executable: string; args: string[]; env?: NodeJS.ProcessEnv } {
+    const args = ['exec', '-c', 'shell_environment_policy.inherit=all'];
+    if (p.existingSession) args.push('resume', p.existingSession);
+    args.push('--json', ...codexSandboxArgs(!!p.readOnly), '--skip-git-repo-check');
+    for (const pin of CODEX_NATIVE_SPAWN_FEATURE_PINS) args.push('-c', pin);
+    for (const override of p.configOverrides ?? []) args.push('-c', override);
+    if (p.instructionsPath) args.push('-c', `model_instructions_file=${ JSON.stringify(p.instructionsPath) }`);
+    if (this.model && this.model !== 'codex') args.push('--model', this.model);
+    args.push('-');
+
+    return { executable: 'codex', args, env: p.environment ? { ...p.environment } : undefined };
+  }
+
   /**
    * Speculatively boot a `codex exec` process for this conversation while
    * the caller does pre-turn work (recall / observations). The process pays
@@ -257,7 +287,12 @@ export class CodexService extends BaseLanguageModel {
    */
   async prewarm(state: BaseThreadState): Promise<void> {
     try {
-      if (process.platform === 'win32') return;         // no Lima on Windows
+      const transport = getProviderExecutionTransport();
+      if (transport.runtime === 'lima' && process.platform === 'win32') return;
+      // A Codex prewarm starts before the turn's caller-built instructions
+      // exist. Lima can read its stable host AGENTS.md; a bounded container
+      // cannot, so cold-start it with an explicit staged instructions file.
+      if (transport.runtime === 'container') return;
       if (!await this.speculativeBootEnabled()) return;
 
       const convId = typeof (state.metadata as any)?.threadId === 'string'
@@ -268,9 +303,6 @@ export class CodexService extends BaseLanguageModel {
       if (existing && !existing.closed) return;          // already warming
       if (existing) this.disposePrewarm(convId);          // stale/dead — replace
 
-      const hasAuth = await ensureCodexAuthFile();
-      if (!hasAuth) return;                               // no creds → nothing to warm
-
       const existingSession = await this.getSession(convId);
 
       let mcpSession: RegisteredSession | null = null;
@@ -279,17 +311,49 @@ export class CodexService extends BaseLanguageModel {
         if (host.running) mcpSession = host.registerSession(state, CODEX_MCP_SESSION_TTL_MS);
       } catch { /* continue without sulla-native tools */ }
 
+      const transportContext = await transport.context({
+        provider:          'codex',
+        conversationId:    convId,
+        state,
+        providerSessionId: existingSession,
+        toolSessionId:     mcpSession?.id,
+      });
+      const providerConfig = requireBrokeredContainerAuth(transportContext);
+      const toolConfig = transportContext.runtime === 'container' && mcpSession
+        ? requireContainerToolConfig(transportContext)
+        : undefined;
+      if (transportContext.runtime === 'lima' && !await ensureCodexAuthFile()) return;
+
       const limactlPath = paths.limactl;
       const limaHome = paths.lima;
       const readOnly = !!(state.metadata as any)?.verifierReadOnly;
       const pidFile = newRemotePidFile('sulla-codex');
-      const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly, pidFile });
-      const proc = childProcess.spawn(limactlPath, args, {
-        env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
+      const args = this.buildSpawnArgs({
+        existingSession,
+        mcpSession: transportContext.runtime === 'lima' ? mcpSession : null,
+        readOnly,
+        pidFile,
+      });
+      const providerCommand = this.buildProviderCommand({
+        existingSession,
+        readOnly,
+        environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
+        configOverrides: [...(providerConfig?.codexConfigOverrides ?? []), ...(toolConfig?.codexConfigOverrides ?? [])],
+      });
+      const proc = transport.spawn({
+        context: transportContext,
+        providerCommand,
+        ...(transportContext.runtime === 'lima'
+          ? {
+            limaCommand: { executable: limactlPath, args, env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' } },
+          }
+          : {}),
       });
 
       const record: CodexPrewarmRecord = {
         proc,
+        transport,
+        transportContext,
         mcpSession,
         pidFile,
         model:     this.model || 'codex',
@@ -332,13 +396,14 @@ export class CodexService extends BaseLanguageModel {
     model: string,
     existingSession: string | undefined,
     readOnly: boolean,
+    transport: ProviderExecutionTransport,
   ): CodexPrewarmRecord | null {
     const rec = this.prewarmed.get(convId);
     if (!rec) return null;
     this.prewarmed.delete(convId);
     if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
-    if (rec.closed || rec.model !== model || rec.existingSession !== existingSession || rec.readOnly !== readOnly) {
-      this.killPrewarmRecord(rec);                       // dead, model, or session mismatch
+    if (rec.closed || rec.model !== model || rec.existingSession !== existingSession || rec.readOnly !== readOnly || rec.transport !== transport) {
+      this.killPrewarmRecord(rec);                       // dead, model, session, or runtime mismatch
       return null;
     }
     return rec;
@@ -356,15 +421,9 @@ export class CodexService extends BaseLanguageModel {
     if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
     try { rec.proc.kill('SIGTERM') } catch { /* already dead */ }
     const signalRemote = (signal: 'TERM' | 'KILL') => {
-      try {
-        const killer = childProcess.spawn(
-          paths.limactl,
-          ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(rec.pidFile, signal)],
-          { env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' }, stdio: 'ignore', detached: true },
-        );
-        killer.on('error', () => { /* best effort */ });
-        killer.unref();
-      } catch { /* best effort */ }
+      Promise.resolve(rec.transport.terminate({
+        context: rec.transportContext, process: rec.proc, signal, remotePidFile: rec.pidFile,
+      })).catch(() => {});
     };
     signalRemote('TERM');
     const escalation = setTimeout(() => {
@@ -387,9 +446,9 @@ export class CodexService extends BaseLanguageModel {
     return 'OpenAI Codex';
   }
 
-  protected async healthCheck(): Promise<boolean> {
+  protected healthCheck(): Promise<boolean> {
     // Credentials presence is deferred until spawn time (see runCodex).
-    return true;
+    return Promise.resolve(true);
   }
 
   constructor() {
@@ -481,19 +540,26 @@ export class CodexService extends BaseLanguageModel {
    * Save a base64 image block to ~/sulla/workspaces/attachments/ so the
    * Lima VM agent can read it from disk. Returns the saved path.
    */
-  private saveImageAttachment(b: any): string | null {
+  private saveImageAttachment(b: any, context?: ProviderTransportContext, refs?: ProviderFileRef[]): string | null {
     try {
       const data: string | undefined = b?.source?.data;
       const mediaType: string = b?.source?.media_type || 'image/png';
       if (!data) return null;
 
       const ext = mediaType.split('/')[1]?.split('+')[0] || 'png';
+      const filename = `attachment-${ Date.now() }-${ crypto.randomBytes(4).toString('hex') }.${ ext }`;
+      if (context) {
+        const ref = getProviderExecutionTransport().files.write({
+          context, purpose: 'attachment', suggestedName: filename, data: Buffer.from(data, 'base64'), mode: 0o600,
+        });
+        refs?.push(ref);
+        return ref.path;
+      }
       const dir = path.join(paths.sullaHome, 'workspaces', 'attachments');
       fs.mkdirSync(dir, { recursive: true });
 
       // Random suffix: two image blocks in one message save within the same
       // millisecond, and Date.now() alone would overwrite the first.
-      const filename = `attachment-${ Date.now() }-${ crypto.randomBytes(4).toString('hex') }.${ ext }`;
       const filepath = path.join(dir, filename);
       fs.writeFileSync(filepath, Buffer.from(data, 'base64'));
 
@@ -511,13 +577,13 @@ export class CodexService extends BaseLanguageModel {
    * must be replayed because Codex's stored session does not contain this
    * turn's newly generated subconscious context.
    */
-  private extractLatestUserMessage(messages: ChatMessage[]): string {
+  private extractLatestUserMessage(messages: ChatMessage[], context?: ProviderTransportContext, refs?: ProviderFileRef[]): string {
     const blockToText = (b: any): string => {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
       if (b.type === 'text' && typeof b.text === 'string') return b.text;
       if (b.type === 'image' && b?.source?.type === 'base64') {
-        const savedPath = this.saveImageAttachment(b);
+        const savedPath = this.saveImageAttachment(b, context, refs);
         return savedPath ? `[Image attached — read it at: ${ savedPath }]` : '';
       }
       if (b.type === 'tool_result') {
@@ -574,13 +640,13 @@ export class CodexService extends BaseLanguageModel {
    * ~/.codex/AGENTS.md (see generateCodexMemoryFile), so including them
    * here would deliver it twice.
    */
-  private serializeFullTranscript(messages: ChatMessage[]): string {
+  private serializeFullTranscript(messages: ChatMessage[], context?: ProviderTransportContext, refs?: ProviderFileRef[]): string {
     const blockToText = (b: any): string => {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
       if (b.type === 'text' && typeof b.text === 'string') return b.text;
       if (b.type === 'image' && b?.source?.type === 'base64') {
-        const savedPath = this.saveImageAttachment(b);
+        const savedPath = this.saveImageAttachment(b, context, refs);
         return savedPath ? `[Image attached — read it at: ${ savedPath }]` : '';
       }
       if (b.type === 'tool_use') {
@@ -719,23 +785,28 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
   ): Promise<{ text: string; usage?: any }> {
-    // Auth lives in ~/.codex/auth.json (written by CodexOAuth, self-refreshed
-    // by the CLI). Rebuild it from the stored OAuth tokens if missing.
-    const hasAuth = await ensureCodexAuthFile();
-    if (!hasAuth) {
-      throw new Error('No Codex credentials configured. Sign in with ChatGPT via Integrations → OpenAI Codex.');
-    }
-
     const convId = options.conversationId ?? '__default__';
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
+    const transport = getProviderExecutionTransport();
+    const initialTransportContext = await transport.context({
+      provider:          'codex',
+      conversationId:    convId,
+      state:             options.state,
+      providerSessionId: existingSession,
+    });
+    requireBrokeredContainerAuth(initialTransportContext);
+    if (initialTransportContext.runtime === 'lima' && !await ensureCodexAuthFile()) {
+      throw new Error('No Codex credentials configured. Sign in with ChatGPT via Integrations → OpenAI Codex.');
+    }
+    const attachmentRefs: ProviderFileRef[] = [];
 
     // Prompt strategy:
     //   - existingSession → send only the latest user message (codex has the
     //     rest via `exec resume`)
     //   - no session    → seed codex with the full curated transcript
     const extractedPrompt = existingSession
-      ? this.extractLatestUserMessage(messages)
-      : this.serializeFullTranscript(messages);
+      ? this.extractLatestUserMessage(messages, initialTransportContext, attachmentRefs)
+      : this.serializeFullTranscript(messages, initialTransportContext, attachmentRefs);
 
     if (!extractedPrompt.trim()) {
       const roles = messages.map(m => m.role).join(',');
@@ -749,11 +820,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     });
     const prompt = contextPrefix ? `${ contextPrefix }\n\n${ basePrompt }` : basePrompt;
 
-    log.log(`[CodexService] runCodex: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } authFile=${ codexAuthPath() }`);
+    log.log(`[CodexService] runCodex: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } runtime=${ initialTransportContext.runtime }`);
 
     // Lima only exists on macOS/Linux; paths.limactl is a throwing getter on
     // Windows. Surface a clear, user-readable error instead of an opaque crash.
-    if (process.platform === 'win32') {
+    if (transport.runtime === 'lima' && process.platform === 'win32') {
       throw new Error('Codex execution requires the Lima VM, which is not available on Windows yet. This feature currently supports macOS and Linux only.');
     }
 
@@ -766,10 +837,12 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // startup, and a seed turn launched without it runs unconfigured for the
     // lifetime of the thread (resume only sends the latest user message).
     // Resume turns tolerate a stale file, so they don't pay the build latency.
-    const memoryFileWrite = import('../prompts/generateCodexMemoryFile')
-      .then(({ generateCodexMemoryFile }) => generateCodexMemoryFile())
-      .catch(() => {});
-    if (!existingSession) {
+    const memoryFileWrite = transport.runtime === 'lima'
+      ? import('../prompts/generateCodexMemoryFile')
+        .then(({ generateCodexMemoryFile }) => generateCodexMemoryFile())
+        .catch(() => {})
+      : Promise.resolve();
+    if (!existingSession && transport.runtime === 'lima') {
       await memoryFileWrite;
     }
 
@@ -787,7 +860,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const speculative = await this.speculativeBootEnabled();
     const readOnly = !!(options.state?.metadata as any)?.verifierReadOnly;
     const adopted = speculative
-      ? this.claimPrewarm(convId, this.model || 'codex', existingSession, readOnly)
+      ? this.claimPrewarm(convId, this.model || 'codex', existingSession, readOnly, transport)
       : null;
 
     let mcpSession: RegisteredSession | null = adopted?.mcpSession ?? null;
@@ -803,26 +876,60 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         log.log(`[CodexService] MCP session setup failed, continuing without sulla-native tools: ${ (err as Error)?.message ?? err }`);
       }
     }
+    const transportContext = adopted?.transportContext ?? (mcpSession
+      ? await transport.context({
+        provider:          'codex',
+        conversationId:    convId,
+        state:             options.state,
+        providerSessionId: existingSession,
+        toolSessionId:     mcpSession.id,
+      })
+      : initialTransportContext);
+    const providerConfig = requireBrokeredContainerAuth(transportContext);
+    const toolConfig = transportContext.runtime === 'container' && mcpSession
+      ? requireContainerToolConfig(transportContext)
+      : undefined;
     // Subconscious agents get their own caller-built prompt as codex's model
     // instructions; primaries keep codex's base prompt plus AGENTS.md.
-    const instructionsPath = !adopted && isObserverSpawn(options.state?.metadata as any)
-      ? writeSystemPromptFile(systemPromptFromMessages(messages))
+    const needsInstructionsFile = !adopted && (transportContext.runtime === 'container' || isObserverSpawn(options.state?.metadata as any));
+    const instructionsFile = needsInstructionsFile
+      ? transport.files.write({
+        context:       transportContext,
+        purpose:       'system-prompt',
+        suggestedName: `codex-instructions-${ crypto.randomUUID() }.md`,
+        data:          systemPromptFromMessages(messages),
+      })
       : null;
+    const instructionsPath = instructionsFile?.path ?? null;
     const pidFile = adopted ? adopted.pidFile : newRemotePidFile('sulla-codex');
-    const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly, instructionsPath, pidFile });
+    const args = this.buildSpawnArgs({
+      existingSession,
+      mcpSession: transportContext.runtime === 'lima' ? mcpSession : null,
+      readOnly,
+      instructionsPath,
+      pidFile,
+    });
+    const providerCommand = this.buildProviderCommand({
+      existingSession,
+      readOnly,
+      instructionsPath,
+      environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
+      configOverrides: [...(providerConfig?.codexConfigOverrides ?? []), ...(toolConfig?.codexConfigOverrides ?? [])],
+    });
 
     return await new Promise((resolve, reject) => {
       let mcpCleaned = false;
       const cleanupMcp = () => {
         if (mcpCleaned) return;
         mcpCleaned = true;
+        for (const ref of attachmentRefs.splice(0)) ref.dispose();
         try { mcpSession?.revoke() } catch { /* already revoked */ }
       };
       if (options.signal?.aborted) {
         cleanupMcp();
         if (adopted) this.killPrewarmRecord(adopted);
         if (instructionsPath) {
-          try { fs.unlinkSync(instructionsPath) } catch { /* already gone */ }
+          instructionsFile?.dispose();
         }
         const error = new Error('Codex run aborted');
         error.name = 'AbortError';
@@ -839,10 +946,16 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         proc.removeAllListeners('error');
         proc.stdin.removeAllListeners('error');
       } else {
-        proc = childProcess.spawn(limactlPath, args, {
-          env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
+        proc = transport.spawn({
+          context: transportContext,
+          providerCommand,
+          ...(transportContext.runtime === 'lima'
+            ? {
+              limaCommand: { executable: limactlPath, args, env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' } },
+            }
+            : {}),
         });
-        removeFileOnExit(proc, instructionsPath);
+        proc.once('exit', () => instructionsFile?.dispose());
       }
 
       // Feed the prompt through stdin instead of the command line. Guard
@@ -893,7 +1006,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       const scheduleForcedSettlement = (makeError: () => Error) => {
         const barrier = terminationPromise;
         if (!barrier) return;
-        void barrier.then(async() => {
+        barrier.then(async() => {
           if (settled) return;
           settled = true;
           stopStallWatchdog();
@@ -916,7 +1029,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           const persistenceError = await persistSession();
           cleanupMcp();
           reject(options.signal?.aborted ? makeError() : (persistenceError ?? error));
-        });
+        }).catch(() => {});
       };
 
       // Kill the spawn on both sides of the SSH boundary — mirrors
@@ -927,17 +1040,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         if (killStarted) return terminationPromise!;
         killStarted = true;
         const remoteKill = async(signal: 'TERM' | 'KILL') => {
-          const killProc = childProcess.spawn(
-            limactlPath,
-            ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, signal)],
-            {
-              env:      { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
-              stdio:    'ignore',
-              detached: true,
-            },
-          );
-          killProc.unref();
-          await waitForKillHelper(killProc);
+          await transport.terminate({
+            context: transportContext, process: proc, signal, remotePidFile: pidFile,
+          });
         };
         terminationPromise = terminateCliChild(proc, remoteKill);
         return terminationPromise;
@@ -1006,12 +1111,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       const signalCodex = (sig: 'INT' | 'TERM') => {
         if (!codexPid) return;
         try {
-          const killProc = childProcess.spawn(
-            limactlPath,
-            ['shell', '0', '--', 'kill', `-${ sig }`, String(codexPid)],
-            { env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' }, stdio: 'ignore', detached: true },
-          );
-          killProc.unref();
+          Promise.resolve(transport.terminate({
+            context: transportContext, process: proc, signal: sig, remotePid: codexPid,
+          })).catch(error => log.log(`[CodexService] steer signal failed: ${ (error as Error)?.message ?? error }`));
         } catch (err) {
           log.log(`[CodexService] steer signal failed: ${ (err as Error)?.message ?? err }`);
         }
@@ -1357,10 +1459,10 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           /(?:failed|unable) to (?:load|resume|find).*(?:thread|rollout|conversation)|(?:thread|rollout|conversation).*(?:not found|does not exist|invalid|expired)/i.test(`${ errorMessage } ${ stderrBuffer.slice(-500) }`);
         if (resumeFailed) {
           log.warn(`[CodexService] Resume of "${ existingSession }" failed; retrying with a fresh session for conversationId=${ convId }`);
-          void this.deleteSession(convId).then(() => this.runCodex(messages, callbacks, options, true)).then(
+          this.deleteSession(convId).then(() => this.runCodex(messages, callbacks, options, true)).then(
             r => resolve(r),
             reject,
-          );
+          ).catch(reject);
           return;
         }
 

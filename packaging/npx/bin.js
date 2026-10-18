@@ -22,6 +22,7 @@ const REPO = 'merchantprotocol/sulla-desktop';
 const APP_NAME = 'Sulla Desktop';
 const PKG = require('./package.json');
 const CMD = PKG.name; // `sulla-desktop` today; `sulla` if we get that name.
+const SERVER_COMMAND = 'server';
 
 // ─── Output ─────────────────────────────────────────────────
 
@@ -77,6 +78,7 @@ function printHelp() {
 
 Usage:
   npx ${ CMD }                   Install (first run) or open ${ APP_NAME }
+  npx ${ CMD } server            Install Sulla Server on Linux
   npx ${ CMD } --update          Update to the latest release, then open it
   npx ${ CMD } --version v1.6.1  Install a specific release
   npx ${ CMD } --no-launch       Install or update without opening the app
@@ -600,8 +602,16 @@ function launch(plat, lay) {
 
 // ─── Main ───────────────────────────────────────────────────
 
-async function main() {
-  const opts = parseArgs(process.argv.slice(2));
+async function main(argv = process.argv.slice(2)) {
+  if (argv[0] === SERVER_COMMAND) {
+    const { runServer } = require('./server');
+
+    runServer(argv.slice(1), `npx ${ CMD }`);
+
+    return;
+  }
+
+  const opts = parseArgs(argv);
 
   if (opts.help) {
     printHelp();
@@ -707,7 +717,9 @@ async function main() {
 }
 
 main().catch((err) => {
-  if (err instanceof UserError) {
+  const { ServerUserError } = require('./server');
+
+  if (err instanceof UserError || err instanceof ServerUserError) {
     console.error(`\n${ paint('31', '✖') } ${ err.message }`);
   } else {
     console.error(`\n${ paint('31', '✖') } Something went wrong: ${ err && err.stack ? err.stack : err }`);

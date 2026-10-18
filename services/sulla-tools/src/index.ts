@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { lookup } from 'node:dns/promises';
 
 import express from 'express';
 import Redis from 'ioredis';
@@ -27,8 +28,20 @@ const desktop: DesktopExecutor = config.relayUrl && config.relayToken
   ? new RelayDesktopExecutor({ relayUrl: config.relayUrl, serviceToken: config.relayToken, deviceId: config.relayDeviceId || undefined })
   : new HttpDesktopExecutor(config.desktopExecutorUrl, config.desktopExecutorToken);
 
+function normalizedAddress(value: string | undefined): string {
+  return String(value ?? '').replace(/^::ffff:/, '');
+}
+
+async function assertAgentContainerCaller(request: express.Request, ctx: ToolExecutionContext): Promise<void> {
+  const pod = String(ctx.pod_id ?? '');
+  if (!/^sulla-agent-[a-zA-Z0-9_.-]+$/.test(pod)) throw new Error('Agent-local capability is not bound to a valid container');
+  const callers = new Set((await lookup(pod, { all: true })).map(result => normalizedAddress(result.address)));
+  const source = normalizedAddress(request.socket.remoteAddress);
+  if (!source || !callers.has(source)) throw new Error('Agent-local capability does not belong to the calling container');
+}
+
 app.disable('x-powered-by');
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '1mb' }));
 app.get('/healthz', async(_request, response) => {
   try {
     await Promise.all([redis.ping(), pool.query('SELECT 1')]);
@@ -67,6 +80,7 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
   try {
     const claims = await verifyCapabilityToken(bearer, config.signingKey, { category, tool: tool.name, revocations });
     ctx = { ...claims, request_id: requestId };
+    if (tool.executionTarget === 'agent-local') await assertAgentContainerCaller(request, ctx);
   } catch (error) {
     const auth = error instanceof CapabilityTokenError ? error : new CapabilityTokenError('invalid', 'Capability verification failed');
     const status = auth.code === 'scope' ? 403 : 401;

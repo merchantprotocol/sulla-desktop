@@ -7,6 +7,8 @@ export type AgentSourceKind = 'local' | 'filesystem-import' | 'marketplace';
 export type AgentCostTier = 'low' | 'medium' | 'high';
 export type AgentRunLocation = 'vm' | 'container';
 
+export const DEFAULT_AGENT_RUN_LOCATION: AgentRunLocation = 'container';
+
 export const AGENT_COST_TIERS: readonly AgentCostTier[] = ['low', 'medium', 'high'];
 
 export interface ModelPriorityEntry {
@@ -209,7 +211,7 @@ function rowToDefinition(row: any): AgentDefinition {
     front_door:              typeof row.front_door === 'boolean' ? row.front_door : null,
     is_builtin:              row.is_builtin === true,
     builtin_hash:            row.builtin_hash == null ? null : String(row.builtin_hash),
-    run_location:            row.run_location === 'container' ? 'container' : 'vm',
+    run_location:            row.run_location === 'vm' ? 'vm' : DEFAULT_AGENT_RUN_LOCATION,
     created_at:              toIso(row.created_at),
     updated_at:              toIso(row.updated_at),
   };
@@ -273,7 +275,7 @@ export class AgentDefinitionModel {
       input.whenToCall ?? '', input.whenNotToCall ?? '', input.send ?? '', input.returns ?? '',
       toCostTier(input.costTier), toStringArray(input.canCall), input.isBuiltin === true, input.builtinHash ?? null,
       typeof input.frontDoor === 'boolean' ? input.frontDoor : null,
-      input.runLocation ?? 'vm',
+      input.runLocation ?? DEFAULT_AGENT_RUN_LOCATION,
     ]);
     if (!row) throw new Error(`Failed to create agent definition ${ slug }.`);
     return rowToDefinition(row);

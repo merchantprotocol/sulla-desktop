@@ -107,7 +107,8 @@ import { up as up_0095, down as down_0095 } from './0095_add_lane_human_approval
 import { up as up_0096, down as down_0096 } from './0096_unique_github_pr_mirrors';
 import { up as up_0097, down as down_0097 } from './0097_add_trigram_index_to_identity_observations';
 import { up as up_0120, down as down_0120 } from './0120_create_sulla_files';
-import { up as up_0121, down as down_0121 } from './0121_register_chat_artifacts_in_files';
+import { up as up_0121, down as down_0121 } from './0121_default_agent_run_location_container';
+import { up as up_0122, down as down_0122 } from './0122_register_chat_artifacts_in_files';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -216,5 +217,6 @@ export const migrationsRegistry = [
   { name: '0118_add_workflow_container_runtime', up: up_0118, down: down_0118 },
   { name: '0119_add_agent_run_location', up: up_0119, down: down_0119 },
   { name: '0120_create_sulla_files', up: up_0120, down: down_0120 },
-  { name: '0121_register_chat_artifacts_in_files', up: up_0121, down: down_0121 },
+  { name: '0121_default_agent_run_location_container', up: up_0121, down: down_0121 },
+  { name: '0122_register_chat_artifacts_in_files', up: up_0122, down: down_0122 },
 ] as const;

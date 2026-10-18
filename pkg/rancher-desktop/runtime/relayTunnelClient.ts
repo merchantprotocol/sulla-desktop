@@ -9,7 +9,7 @@ const MAX_RECONNECT_MS = 60_000;
 
 export interface RelayToolTunnelOptions {
   relayUrl:      string;
-  deviceToken:   string;
+  deviceToken:   string | (() => string | Promise<string>);
   deviceId:      () => Promise<string>;
   currentUserId: () => Promise<string>;
   execute:       (ctx: RelayToolExecutionContext, category: string, tool: string, args: unknown, signal: AbortSignal) => Promise<RelayToolResult>;
@@ -54,10 +54,13 @@ export class RelayToolTunnel {
     if (!this.running) return;
     try {
       const deviceId = await this.options.deviceId();
+      const deviceToken = typeof this.options.deviceToken === 'function'
+        ? await this.options.deviceToken()
+        : this.options.deviceToken;
       const base = this.options.relayUrl.replace(/^http/, 'ws').replace(/\/$/, '');
       const url = `${ base }/v1/tunnel?deviceId=${ encodeURIComponent(deviceId) }`;
-      const socket = this.options.createSocket?.(url, this.options.deviceToken) ?? new WebSocket(url, {
-        headers: { Authorization: `Bearer ${ this.options.deviceToken }` },
+      const socket = this.options.createSocket?.(url, deviceToken) ?? new WebSocket(url, {
+        headers: { Authorization: `Bearer ${ deviceToken }` },
       });
       this.socket = socket;
       socket.on('open', () => {
@@ -135,6 +138,9 @@ export class RelayToolTunnel {
       return { code: 'BAD_REQUEST', message: 'Incomplete tool-call envelope' };
     }
     if (call.deadlineAt <= Date.now()) return { code: 'DEADLINE_EXCEEDED', message: 'Desktop tool call deadline exceeded', retryable: true };
+    if (call.ctx.device_id && call.ctx.device_id !== call.deviceId) {
+      return { code: 'FORBIDDEN', message: 'Tool capability is bound to a different Desktop device' };
+    }
     return validateRelayToolCallUser(call.ctx, await this.options.currentUserId());
   }
 

@@ -16,10 +16,17 @@ export const agentToolManifests: ToolManifest[] = [
             agentName: { type: 'string', description: 'Alias for agentId. Same resolution rules.', optional: true },
             prompt:    { type: 'string', description: 'The task/instruction to give the sub-agent.' },
             projectTaskId: { type: 'string', optional: true, description: 'REQUIRED whenever the sub-agent works a Projects task: the task id (e.g. "AwBS"). The job owns that task for its whole run (assignee = this agent; other sessions stay off it) and hands it back when the job ends. Launch is refused if another agent already owns the task.' },
+            workspacePath: {
+              type:        'string',
+              optional:    true,
+              description: 'Container agents only: explicit existing worktree under ~/Sites/worktrees used to seed the job retained isolated clone. Shared Git metadata is never mounted.',
+            },
             label:     { type: 'string', description: 'Optional human-readable label for this task (the tab title for visibility "tab").', optional: true },
             visibility: { type: 'enum', enum: ['hidden', 'tab'], optional: true, description: '"hidden" (default): background worker. "tab": a live chat tab that stays open across turns until the child returns its contract or you stop it. Max 5 open tabs per chat.' },
             contract:  {
-              type: 'object', optional: true, description: 'What the child must return. Omit for the default {status: completed|blocked|failed, summary, output}. Use {name:"ui-test-issues"} for the built-in UI test schema. With a schema, a hidden child that ends without returning gets one reminder, then fails as no_contract.',
+              type:        'object',
+              optional:    true,
+              description: 'What the child must return. Omit for the default {status: completed|blocked|failed, summary, output}. Use {name:"ui-test-issues"} for the built-in UI test schema. With a schema, a hidden child that ends without returning gets one reminder, then fails as no_contract.',
               properties: {
                 name:        { type: 'string', description: 'Contract name or built-in preset name.' },
                 description: { type: 'string', optional: true, description: 'What the returned result represents.' },
@@ -51,7 +58,7 @@ export const agentToolManifests: ToolManifest[] = [
     schemaDef:   {
       status:  { type: 'enum', enum: ['completed', 'blocked', 'failed'], optional: true, description: 'Default contract: how it went. Defaults to completed.' },
       summary: { type: 'string', optional: true, description: 'Default contract: one-paragraph summary (required there). With a custom schema: optional human-readable note.' },
-      output:  { type: 'string', optional: true, description: 'Default contract: the deliverable (text, links, findings). May also be sent inside result.' },
+      output:  { type: 'any', optional: true, description: 'Default contract: the deliverable in any JSON shape (text, links, findings, or structured data). May also be sent inside result.' },
       result:  { type: 'object', optional: true, description: 'Custom-schema contracts: the structured value matching the schema exactly.' },
       jobId:   { type: 'string', optional: true, description: 'Job/contract id from your brief. Optional; your thread identifies the job.' },
     },

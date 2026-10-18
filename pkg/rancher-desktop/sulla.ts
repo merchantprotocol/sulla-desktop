@@ -280,6 +280,20 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { await getChatCompletionsServer().stop() },
   );
 
+  lifecycle.register('local-tool-tunnel', ['chat-server'],
+    async() => {
+      const { startLocalToolTunnel } = await import('@pkg/main/relayToolTunnel');
+
+      await startLocalToolTunnel();
+      console.log('[Background] Local container tool relay connected');
+    },
+    async() => {
+      const { stopLocalToolTunnel } = await import('@pkg/main/relayToolTunnel');
+
+      stopLocalToolTunnel();
+    },
+  );
+
   // In-process MCP server that Claude Code (running in the Lima VM) can call
   // back into. No external deps — pure main-process HTTP server. Must start
   // before any graph execution that invokes Claude Code, which in practice

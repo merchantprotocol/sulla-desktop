@@ -1,12 +1,14 @@
 {
   "name": "sulla-desktop",
-  "version": "1.6.1",
-  "description": "Download and launch Sulla Desktop with one command: npx sulla-desktop",
+  "version": "1.6.2",
+  "description": "Install Sulla Desktop or Sulla Server with one npx command",
   "bin": {
     "sulla-desktop": "bin.js"
   },
   "files": [
     "bin.js",
+    "server.js",
+    "server",
     "README.md",
     "LICENSE"
   ],

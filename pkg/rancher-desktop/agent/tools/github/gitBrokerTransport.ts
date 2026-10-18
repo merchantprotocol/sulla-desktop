@@ -4,6 +4,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import { requireConfiguredCredentialBroker } from '../../../vault-broker';
+import { currentAgentContainerRuntime } from '../../services/AgentContainerRuntimeRegistry';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 import type { ToolExecutionContext } from '../executionContext';
@@ -72,10 +73,20 @@ export async function withGitHubBrokerRemote<T>(
   const scopedPath = `/${ transportToken }${ repositoryPath }`;
   const accountId = await getIntegrationService().getActiveAccountId('github');
   const scope = ctx.credential_scope;
-  if (scope?.integration_id !== 'github' || scope.account_id !== accountId || scope.repository !== repository) {
+  if (scope && (scope.integration_id !== 'github' || scope.account_id !== accountId || scope.repository !== repository)) {
     throw new Error('github.git requires a signed credential scope for the active account and repository');
   }
+  // For agent-local Git the tools service cannot inspect absolutePath because
+  // that path exists only in the worker. The canonical Git worker resolves the
+  // remote first; narrow the already-verified caller context here from that URL.
+  const brokerContext: ToolExecutionContext = scope
+    ? ctx
+    : {
+      ...ctx,
+      credential_scope: { integration_id: 'github', account_id: accountId, repository },
+    };
   const broker = requireConfiguredCredentialBroker();
+  const containerRuntime = currentAgentContainerRuntime();
 
   const server = http.createServer(async(request, response) => {
     const abort = new AbortController();
@@ -94,7 +105,7 @@ export async function withGitHubBrokerRemote<T>(
       }
       const headers = brokerHeaders(request.headers);
       const body = await readBody(request);
-      const brokerRequest = broker.requestFor(ctx, {
+      const brokerRequest = broker.requestFor(brokerContext, {
         operation:    'github.git',
         ref:          { integrationId: 'github', accountId },
         url:          `https://github.com${ incoming.pathname.slice(transportToken.length + 1) }${ incoming.search }`,
@@ -121,12 +132,14 @@ export async function withGitHubBrokerRemote<T>(
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
+    server.listen(0, containerRuntime ? '0.0.0.0' : '127.0.0.1', resolve);
   });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('github.git broker did not bind a TCP port');
   try {
-    return await run(`http://127.0.0.1:${ address.port }${ scopedPath }`);
+    const host = containerRuntime ? 'host.lima.internal' : '127.0.0.1';
+
+    return await run(`http://${ host }:${ address.port }${ scopedPath }`);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }

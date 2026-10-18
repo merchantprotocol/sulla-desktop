@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: sulla
+  labels:
+    app.kubernetes.io/managed-by: sulla-server-installer
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: __SULLA_STORAGE_CLASS__
+  resources:
+    requests:
+      storage: __SULLA_STORAGE_SIZE__
