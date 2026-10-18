@@ -16,6 +16,7 @@
       <div class="header-actions">
         <button type="button" class="refresh" :disabled="loading" aria-label="Refresh issue" @click="onRefresh">↻</button>
         <button type="button" :aria-label="expanded ? 'Collapse drawer' : 'Expand drawer'" :aria-pressed="expanded" @click="expanded = !expanded">⤢</button>
+        <button type="button" :aria-label="linkCopied ? 'Issue link copied' : 'Copy issue link'" @click="copyIssueLink">⌁</button>
         <button type="button" aria-label="Close issue" @click="$emit('close')">×</button>
       </div>
     </header>
@@ -178,12 +179,16 @@
                 Description
               </h2>
             </div>
-            <span class="immutable">Immutable</span>
+            <button v-if="!editingDescription" type="button" class="section-edit" @click="startDescriptionEdit">✎ Edit</button>
           </div>
-          <div
-            class="rich-content"
-            v-html="rich(detail.task.description)"
-          />
+          <template v-if="editingDescription">
+            <textarea v-model="descriptionDraft" class="description-editor" rows="7" aria-label="Issue description" />
+            <div class="description-actions">
+              <button type="button" class="btn sm" @click="cancelDescriptionEdit">Cancel</button>
+              <button type="button" class="btn sm save-description" :disabled="fieldBusy === 'description'" @click="saveDescription">Save</button>
+            </div>
+          </template>
+          <div v-else class="rich-content" v-html="rich(detail.task.description)" />
         </section>
 
         <section class="panel checklist-panel" aria-labelledby="checklist-title">
@@ -436,7 +441,7 @@
         id="issue-comment"
         v-model="commentDraft"
         rows="2"
-        placeholder="Add context or evidence…"
+        placeholder="Write a comment… @ to mention a person or an agent"
       />
       <div class="form-actions">
         <button
@@ -487,6 +492,9 @@ const detailRoot = ref<HTMLElement | null>(null);
 const expanded = ref(false);
 const feedFilter = ref<'all' | 'comments' | 'events'>('all');
 const commentDraft = ref('');
+const editingDescription = ref(false);
+const descriptionDraft = ref('');
+const linkCopied = ref(false);
 
 function trapFocus(event: KeyboardEvent): void {
   const focusable = Array.from(detailRoot.value?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [contenteditable="true"], [tabindex="0"]') ?? [])
@@ -637,15 +645,43 @@ function onRefresh(): void {
   loadActivity().then(rows => { activity.value = rows });
 }
 
-async function saveField(changes: Record<string, unknown>, fieldKey: string): Promise<void> {
-  if (!props.detail) return;
+async function copyIssueLink(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(window.location.href);
+    linkCopied.value = true;
+    window.setTimeout(() => { linkCopied.value = false }, 1_500);
+  } catch {
+    fieldError.value = 'Could not copy the issue link.';
+  }
+}
+
+function startDescriptionEdit(): void {
+  descriptionDraft.value = props.detail?.task.description || '';
+  editingDescription.value = true;
+}
+
+function cancelDescriptionEdit(): void {
+  editingDescription.value = false;
+  descriptionDraft.value = '';
+}
+
+async function saveDescription(): Promise<void> {
+  if (await saveField({ description: descriptionDraft.value }, 'description')) {
+    editingDescription.value = false;
+  }
+}
+
+async function saveField(changes: Record<string, unknown>, fieldKey: string): Promise<boolean> {
+  if (!props.detail) return false;
   fieldBusy.value = fieldKey;
   fieldError.value = '';
   try {
     await ipcRenderer.invoke('work-items:task-update', props.detail.task.id, { ...changes, actor: 'human' });
     emit('refresh');
+    return true;
   } catch (err: any) {
     fieldError.value = err?.message ?? String(err);
+    return false;
   } finally {
     fieldBusy.value = null;
   }
@@ -838,7 +874,7 @@ dd code { font-size: 10px; }
 a { display: inline-block; margin-top: 14px; color: var(--pacc); font-size: 12px; }
 .issue-state { display: grid; place-content: center; min-height: 60vh; gap: 8px; text-align: center; }
 /* Compact drawer; the workspace remains mounted behind its scrim. */
-.issue-detail { inset: 0 0 0 auto; width: 640px; max-width: 100%; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--pborder); background: var(--pdetail-surface, var(--pbg)); box-shadow: -12px 0 40px rgba(26,35,50,.12); font: 13px/1.45 var(--psans); }
+.issue-detail { position: fixed; inset: 0 0 0 auto; width: 640px; max-width: 100%; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--pborder); background: var(--pdetail-surface, var(--pbg)); box-shadow: -12px 0 40px rgba(26,35,50,.12); font: 13px/1.45 var(--psans); }
 .issue-topbar { position: static; display: flex; justify-content: space-between; gap: 12px; min-height: 48px; flex: none; padding: 10px 16px; background: var(--psurface); }
 .crumbs { display: flex; align-items: center; min-width: 0; overflow: hidden; font: 12px var(--psans); letter-spacing: 0; text-transform: none; white-space: nowrap; }
 .header-actions { display: flex; gap: 4px; flex: none; }
@@ -851,7 +887,10 @@ h1 { margin: 0 0 14px; padding: 0; font: 650 19px/1.3 var(--psans); overflow-wra
 h2 { margin: 0; color: var(--ptext3); font: 600 10.5px/1.45 var(--psans); letter-spacing: .08em; text-transform: uppercase; }
 .panel { padding: 0; margin-bottom: 22px; border: 0; border-radius: 0; background: transparent; }
 .section-title { align-items: center; gap: 8px; margin-bottom: 9px; }
-.immutable { padding: 1px 6px; border-radius: 5px; font-size: 10px; }
+.section-edit { margin-left: auto; padding: 2px 5px; border: 0; background: transparent; color: var(--ptext2); font-size: 11.5px; font-weight: 500; }
+.description-editor { min-height: 132px; resize: vertical; }
+.description-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.save-description { border-color: var(--pacc); background: var(--pacc); color: white; }
 .rich-content { margin-top: 0; font-size: 13px; line-height: 1.55; }
 .rich-content :deep(p:first-child) { margin-top: 0; }
 .rich-content :deep(img) { max-width: 100%; height: auto; }

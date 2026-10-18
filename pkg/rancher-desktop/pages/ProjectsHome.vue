@@ -30,27 +30,7 @@
       @refresh="refreshIssueDetail"
       @comment="postDetailComment"
     />
-    <div
-      v-if="projectWorkspaceOpen && selectedId"
-      class="ph-project-workspace"
-      :inert="Boolean(issueRouteId)"
-    >
-      <ProjectBoardV2
-        v-if="projectWorkspaceView === 'board'"
-        :project-id="selectedId"
-        @open-card="openProjectCard"
-        @back-to-list="closeProjectWorkspace"
-        @view-change="projectWorkspaceView = $event"
-      />
-      <ProjectTableV2
-        v-else
-        :project-id="selectedId"
-        @open-card="openProjectCard"
-        @back-to-list="closeProjectWorkspace"
-        @view-change="projectWorkspaceView = $event"
-      />
-    </div>
-    <div v-else class="ph-body" :inert="Boolean(issueRouteId)">
+    <div class="ph-body" :inert="Boolean(issueRouteId)">
       <!-- project list -->
       <aside v-if="tab === 'projects'" class="ph-side ph-directory-side">
         <div class="ph-directory-brand">
@@ -63,7 +43,7 @@
             :key="item.key"
             type="button"
             :class="{ on: directoryFilter === item.key, 'ph-agent-nav': item.key === 'working' }"
-            @click="directoryFilter = item.key"
+            @click="openDirectoryFilter(item.key)"
           >
             <span class="ph-directory-nav-icon" aria-hidden="true">
               <svg v-if="item.key === 'all'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9 4v16M15 4v16"/></svg>
@@ -136,6 +116,23 @@
 
       <!-- main -->
       <section class="ph-main">
+        <template v-if="projectWorkspaceOpen && selectedId">
+          <ProjectBoardV2
+            v-if="projectWorkspaceView === 'board'"
+            :project-id="selectedId"
+            @open-card="openProjectCard"
+            @back-to-list="closeProjectWorkspace"
+            @view-change="projectWorkspaceView = $event"
+          />
+          <ProjectTableV2
+            v-else
+            :project-id="selectedId"
+            @open-card="openProjectCard"
+            @back-to-list="closeProjectWorkspace"
+            @view-change="projectWorkspaceView = $event"
+          />
+        </template>
+        <template v-else>
         <div v-if="tab === 'projects'" class="ph-directory-top">
           <div class="ph-directory-crumb">Projects</div>
           <label class="ph-directory-search">
@@ -1039,6 +1036,7 @@
             />
           </template>
         </div>
+        </template>
       </section>
     </div>
 
@@ -1515,7 +1513,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router';
 
 import type { ProjectsIssueDetail } from '@pkg/agent/services/ProjectsIssueDetailService';
 import { formatDateOnly } from '@pkg/agent/utils/formatDateOnly';
@@ -1815,6 +1813,12 @@ function clearDirectoryFilters(): void {
   directoryFilter.value = 'all';
 }
 
+function openDirectoryFilter(filter: DirectoryFilter): void {
+  directoryFilter.value = filter;
+  projectWorkspaceOpen.value = false;
+  tab.value = 'projects';
+}
+
 function isFavorite(projectId: string): boolean {
   return favoriteProjectIds.value.has(projectId);
 }
@@ -1898,7 +1902,7 @@ function projectTeam(project: ProjectView): { id: string; label: string; initial
 
 function projectTint(project: ProjectView): string {
   const tints = ['blue', 'green', 'amber', 'violet', 'slate'];
-  const hash = [...project.slug].reduce((total, char) => total + char.charCodeAt(0), 0);
+  const hash = Array.from(project.slug).reduce((total, char) => total + char.charCodeAt(0), 0);
   return tints[hash % tints.length];
 }
 
@@ -2164,7 +2168,7 @@ const taskMode = ref<'edit' | 'create'>('edit');
 const issueDetail = ref<ProjectsIssueDetail | null>(null);
 const issueDetailLoading = ref(false);
 const issueDetailError = ref('');
-let issueRouteWasPushed = false;
+let issueReturnQuery: LocationQueryRaw | null = null;
 let issueTrigger: HTMLElement | null = null;
 const issueRouteId = computed(() => typeof route.query.issue === 'string' ? route.query.issue : '');
 const issueChecklist = computed(() => allTasks.value
@@ -2236,7 +2240,8 @@ async function openTaskDrawer(t: WorkTaskRecord, syncRoute = true): Promise<void
       // to the board location that originally opened the drawer.
       await router.replace({ query: { ...route.query, issue: t.id } });
     } else {
-      issueRouteWasPushed = true;
+      issueReturnQuery = { ...route.query };
+      delete issueReturnQuery.issue;
       await router.push({ query: { ...route.query, issue: t.id } });
     }
   }
@@ -2253,6 +2258,8 @@ async function refreshIssueDetail(taskId = issueRouteId.value || openTask.value?
     issueDetail.value = await ipcRenderer.invoke('work-items:issue-detail', taskId);
     openTask.value = issueDetail.value.task;
     if (selectedId.value !== issueDetail.value.task.project_id) select(issueDetail.value.task.project_id);
+    projectWorkspaceOpen.value = true;
+    projectWorkspaceView.value = 'board';
     fillTaskDraft(issueDetail.value.task);
     taskComments.value = issueDetail.value.comments;
   } catch (error: any) {
@@ -2265,7 +2272,8 @@ async function refreshIssueDetail(taskId = issueRouteId.value || openTask.value?
 async function openIssueFromRoute(): Promise<void> {
   const taskId = issueRouteId.value;
   if (!taskId || (openTask.value?.id === taskId && taskMode.value === 'edit')) return;
-  issueRouteWasPushed = false;
+  issueReturnQuery = { ...route.query };
+  delete issueReturnQuery.issue;
   taskMode.value = 'edit';
   openTask.value = null;
   issueDetail.value = null;
@@ -2385,16 +2393,12 @@ function openNewTask(epicId: string): void {
   dependencyCandidate.value = '';
 }
 
-function closeTask(): void {
+async function closeTask(): Promise<void> {
   if (taskMode.value === 'edit' && issueRouteId.value) {
-    if (issueRouteWasPushed) {
-      issueRouteWasPushed = false;
-      router.back();
-    } else {
-      const query = { ...route.query };
-      delete query.issue;
-      router.replace({ query }).catch(() => undefined);
-    }
+    const query = issueReturnQuery ?? { ...route.query };
+    delete query.issue;
+    issueReturnQuery = null;
+    await router.replace({ path: route.path, query }).catch(() => undefined);
   }
   openTask.value = null;
   issueDetail.value = null;
@@ -2680,7 +2684,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-pc { display: block; font-size: 11.5px; color: var(--ptext3); margin: 4px 0 0 15px; }
 
 /* main */
-.ph-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.ph-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: auto; }
 .ph-top { display: flex; align-items: center; gap: 16px; padding: 18px 26px; border-bottom: 1px solid var(--pborder); }
 .ph-tabs { display: flex; gap: 18px; overflow-x: auto; }
 .ph-tab { font-family: var(--psans); font-size: 14px; color: var(--ptext3); padding: 0 0 4px; cursor: pointer; border: none; background: transparent; border-bottom: 2px solid transparent; }
@@ -2961,7 +2965,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 
 /* The directory and issue drawer share the compact Projects visual language. */
 .ph-nav-glass, .ph-card-chrome { display: none; }
-.ph-issue-scrim { position: absolute; inset: 0; z-index: 29; background: rgba(26, 35, 50, .22); backdrop-filter: blur(2px); }
+.ph-issue-scrim { position: fixed; inset: 0; z-index: 29; background: rgba(26, 35, 50, .22); backdrop-filter: blur(2px); }
 .ph-directory-side { width: 224px; padding: 18px 14px; }
 .ph-directory-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
 .ph-brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, var(--pacc), var(--ptext)); color: white; font-weight: 700; }
