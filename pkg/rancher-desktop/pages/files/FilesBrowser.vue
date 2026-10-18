@@ -851,42 +851,42 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
 </script>
 
 <style scoped>
-/* Ported from the approved Files mockup (mockups/files/01-files.html). Sizes, spacing and
-   type are copied as-is; colors map to Noir tokens, with Noir Light pinned to the mockup values. */
+/* The approved Files palette is local to this surface, independent of the app theme. */
 .files-browser {
-  --text: var(--nx-read-1, #f3f5f8);
-  --muted: var(--nx-read-3, #a9b3c1);
-  --dim: var(--nx-read-4, #7a8291);
-  --paper: var(--nx-paper, #01030a);
-  --paper-2: color-mix(in srgb, var(--nx-read-1, #f3f5f8) 7%, var(--nx-paper, #01030a));
-  --card: color-mix(in srgb, var(--nx-surface, #070d1a) 82%, transparent);
-  --card-solid: var(--nx-surface, #070d1a);
-  --line: var(--nx-hair, rgba(168, 192, 220, .08));
-  --line-2: var(--nx-hair-strong, rgba(168, 192, 220, .16));
-  --accent: var(--nx-accent, #5096b3);
-  --accent-2: var(--nx-accent-2, #6ab0cc);
-  --accent-soft: color-mix(in srgb, var(--nx-accent, #5096b3) 14%, transparent);
-  --accent-line: color-mix(in srgb, var(--nx-accent, #5096b3) 40%, transparent);
-  --ok: var(--nx-success, #3fb950);
-  --ok-soft: color-mix(in srgb, var(--nx-success, #3fb950) 14%, transparent);
-  --warn: var(--nx-warning, #e3b341);
-  --warn-soft: color-mix(in srgb, var(--nx-warning, #e3b341) 15%, transparent);
-  --bad: var(--nx-danger, #f85149);
-  --bad-soft: color-mix(in srgb, var(--nx-danger, #f85149) 13%, transparent);
-  --idle-soft: color-mix(in srgb, var(--nx-read-4, #7a8291) 18%, transparent);
-  --ink-05: color-mix(in srgb, var(--nx-ink, #f3f5f8) 5%, transparent);
-  --ink-08: color-mix(in srgb, var(--nx-ink, #f3f5f8) 8%, transparent);
-  --nav-bg: color-mix(in srgb, var(--nx-surface, #070d1a) 55%, transparent);
-  --top-bg: color-mix(in srgb, var(--nx-surface, #070d1a) 40%, transparent);
-  --glow-1: color-mix(in srgb, var(--nx-accent, #5096b3) 10%, transparent);
-  --glow-2: color-mix(in srgb, var(--nx-accent, #5096b3) 6%, transparent);
-  --fi-img: #a993e6; --fi-img-bg: rgba(147, 120, 220, .16);
-  --fi-vid: var(--bad); --fi-vid-bg: color-mix(in srgb, var(--nx-danger, #f85149) 14%, transparent);
-  --fi-pdf: var(--warn); --fi-pdf-bg: color-mix(in srgb, var(--nx-warning, #e3b341) 15%, transparent);
-  --fi-aud: var(--ok); --fi-aud-bg: color-mix(in srgb, var(--nx-success, #3fb950) 14%, transparent);
-  --shadow: 0 1px 2px rgba(0, 0, 0, .2), 0 10px 30px -12px rgba(0, 0, 0, .5);
-  --shadow-sm: 0 1px 1px rgba(0, 0, 0, .2), 0 2px 8px -2px rgba(0, 0, 0, .4);
-  --shadow-lg: 0 2px 4px rgba(0, 0, 0, .3), 0 30px 60px -20px rgba(0, 0, 0, .7);
+  --text: #1a2332;
+  --muted: #5b6778;
+  --dim: #8a94a3;
+  --paper: #f4f7fb;
+  --paper-2: #eaf0f6;
+  --card: rgba(255,255,255,.82);
+  --card-solid: #ffffff;
+  --line: rgba(26,35,50,.09);
+  --line-2: rgba(26,35,50,.14);
+  --accent: #3a7fa0;
+  --accent-2: #2f6a86;
+  --accent-soft: rgba(58,127,160,.10);
+  --accent-line: rgba(58,127,160,.32);
+  --ok: #1f9d55;
+  --ok-soft: rgba(31,157,85,.12);
+  --warn: #d98a0a;
+  --warn-soft: rgba(217,138,10,.13);
+  --bad: #d9403a;
+  --bad-soft: rgba(217,64,58,.11);
+  --idle: #8a94a3;
+  --idle-soft: rgba(138,148,163,.16);
+  --ink-05: rgba(26, 35, 50, .05);
+  --ink-08: rgba(26, 35, 50, .08);
+  --nav-bg: rgba(255, 255, 255, .55);
+  --top-bg: rgba(255, 255, 255, .4);
+  --glow-1: rgba(58, 127, 160, .10);
+  --glow-2: rgba(58, 127, 160, .06);
+  --fi-img: #6b4fbf; --fi-img-bg: rgba(107, 79, 191, .12);
+  --fi-vid: #c0392b; --fi-vid-bg: rgba(217, 64, 58, .10);
+  --fi-pdf: #b26f05; --fi-pdf-bg: rgba(217, 138, 10, .13);
+  --fi-aud: #167a42; --fi-aud-bg: rgba(31, 157, 85, .12);
+  --shadow: 0 1px 2px rgba(26, 35, 50, .04), 0 10px 30px -12px rgba(26, 35, 50, .12);
+  --shadow-sm: 0 1px 1px rgba(26, 35, 50, .04), 0 2px 8px -2px rgba(26, 35, 50, .08);
+  --shadow-lg: 0 2px 4px rgba(26, 35, 50, .06), 0 30px 60px -20px rgba(26, 35, 50, .28);
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   --r: 12px;
@@ -916,28 +916,6 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
 .action-menu button { display:block; width:100%; padding:7px 9px; border:0; border-radius:6px; background:transparent; color:var(--text); text-align:left; }
 .action-menu button:hover { background:var(--ink-05); }
 .action-menu button.danger { color:var(--bad); }
-/* Noir Light reproduces the approved mockup palette exactly. */
-:global(.theme-noir-light) .files-browser {
-  --muted: #5b6778;
-  --dim: #8a94a3;
-  --paper-2: #eaf0f6;
-  --line: rgba(26, 35, 50, .09);
-  --line-2: rgba(26, 35, 50, .14);
-  --accent-2: #2f6a86;
-  --accent-soft: rgba(58, 127, 160, .10);
-  --accent-line: rgba(58, 127, 160, .32);
-  --ok: #1f9d55; --ok-soft: rgba(31, 157, 85, .12);
-  --warn: #d98a0a; --warn-soft: rgba(217, 138, 10, .13);
-  --bad: #d9403a; --bad-soft: rgba(217, 64, 58, .11);
-  --idle-soft: rgba(138, 148, 163, .16);
-  --fi-img: #6b4fbf; --fi-img-bg: rgba(107, 79, 191, .12);
-  --fi-vid: #c0392b; --fi-vid-bg: rgba(217, 64, 58, .10);
-  --fi-pdf: #b26f05; --fi-pdf-bg: rgba(217, 138, 10, .13);
-  --fi-aud: #167a42; --fi-aud-bg: rgba(31, 157, 85, .12);
-  --shadow: 0 1px 2px rgba(26, 35, 50, .04), 0 10px 30px -12px rgba(26, 35, 50, .12);
-  --shadow-sm: 0 1px 1px rgba(26, 35, 50, .04), 0 2px 8px -2px rgba(26, 35, 50, .08);
-  --shadow-lg: 0 2px 4px rgba(26, 35, 50, .06), 0 30px 60px -20px rgba(26, 35, 50, .28);
-}
 
 .files-browser *, .files-browser *::before, .files-browser *::after { box-sizing: border-box; }
 .files-browser a { color: inherit; text-decoration: none; }
@@ -966,7 +944,7 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
 .nav .quota b { color: var(--text); font-weight: 600; }
 .nav .quota > span { display: block; }
 .nav .quota.nobar > span { margin-top: 4px; }
-.syncline { display: flex; align-items: center; gap: 7px; padding: 8px 10px; font-size: 11.5px; color: var(--muted); border-radius: 9px; background: color-mix(in srgb, var(--nx-surface, #070d1a) 60%, transparent); border: 1px solid var(--line); margin-top: 8px; text-align: left; }
+.syncline { display: flex; align-items: center; gap: 7px; padding: 8px 10px; font-size: 11.5px; color: var(--muted); border-radius: 9px; background: rgba(255, 255, 255, .6); border: 1px solid var(--line); margin-top: 8px; text-align: left; }
 .syncline .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); flex: none; }
 .syncline .dot.syncing { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .syncline .dot.paused { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
@@ -1051,7 +1029,7 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
 .files tr.row { cursor: default; }
 .files tr.row:hover td { background: color-mix(in srgb, var(--accent) 4.5%, transparent); }
 .files tr.row.is-sel td { background: var(--accent-soft); }
-tr.row.agent td { background: color-mix(in srgb, var(--nx-ink, #f3f5f8) 2.5%, transparent); }
+tr.row.agent td { background: rgba(26, 35, 50, .025); }
 .tbl tr.sechead td { padding: 10px 16px 4px; border-bottom: 0; font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); font-weight: 600; }
 .tbl tr.sechead:not(:first-child) td { padding-top: 14px; }
 .files .name { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -1062,7 +1040,7 @@ tr.row.agent td { background: color-mix(in srgb, var(--nx-ink, #f3f5f8) 2.5%, tr
 .files .actions { display: flex; gap: 4px; justify-content: flex-end; opacity: 0; transition: opacity .12s; }
 .files tr.row:hover .actions, .files tr.row.is-sel .actions, .files .actions.keep { opacity: 1; }
 .files .actions .btn.ico { width: 26px; height: 26px; padding: 4px; border-color: transparent; box-shadow: none; background: transparent; color: var(--muted); }
-.files .actions .btn.ico:hover { background: var(--ink-08); color: var(--text); }
+.files .actions .btn.ico:hover { background: rgba(26, 35, 50, .06); color: var(--text); }
 .files .actions .btn.ico :deep(svg) { width: 14px; height: 14px; }
 .files .actions .btn.ico :deep(.star) { display: grid; width: 14px; height: 14px; }
 .chk { width: 14px; height: 14px; padding: 0; border: 1.5px solid var(--line-2); border-radius: 4px; background: var(--card-solid); display: inline-block; vertical-align: middle; position: relative; }
@@ -1099,9 +1077,9 @@ tr.row.agent td { background: color-mix(in srgb, var(--nx-ink, #f3f5f8) 2.5%, tr
 .tile .th { height: 116px; background: var(--paper-2); display: grid; place-items: center; position: relative; overflow: hidden; }
 .tile .th .fi { width: 44px; height: 44px; border-radius: 10px; }
 .tile .th .fi :deep(svg) { width: 24px; height: 24px; }
-.tile .th .sync { position: absolute; right: 8px; bottom: 8px; background: color-mix(in srgb, var(--nx-surface, #070d1a) 90%, transparent); box-shadow: var(--shadow-sm); width: 22px; height: 22px; }
+.tile .th .sync { position: absolute; right: 8px; bottom: 8px; background: rgba(255, 255, 255, .9); box-shadow: var(--shadow-sm); width: 22px; height: 22px; }
 .tile .folderth { background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent), color-mix(in srgb, var(--accent) 14%, transparent)); }
-.tile .agentth { background: color-mix(in srgb, var(--nx-ink, #f3f5f8) 6%, transparent); }
+.tile .agentth { background: rgba(26, 35, 50, .06); }
 .tile .bd { padding: 10px 12px 11px; }
 .tile .bd b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
 .tile .bd small { display: block; color: var(--dim); font-size: 11px; margin-top: 2px; }
