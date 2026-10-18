@@ -54,7 +54,7 @@ export function buildKeycloakConfig(environment) {
 
   const membershipScope = audienceScope(`sulla-audience-${membershipAudience}`, membershipAudience);
   const resourceScopes = resourceAudiences.map(audience => audienceScope(`sulla-audience-${audience}`, audience));
-  const defaultClientScopes = ['profile', membershipScope.name];
+  const defaultClientScopes = ['basic', 'profile', membershipScope.name];
   const optionalClientScopes = resourceScopes.map(scope => scope.name);
   const clientAttributes = { 'sulla.reconciliation.version': '1' };
 
