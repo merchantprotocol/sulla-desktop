@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildKeycloakConfig, exactKeycloakId } from './keycloak-config.mjs';
+import { buildKeycloakConfig, exactKeycloakId, staleKeycloakIds } from './keycloak-config.mjs';
 
 const config = buildKeycloakConfig({
   realm: 'sulla',
@@ -16,6 +16,11 @@ const config = buildKeycloakConfig({
 });
 
 function mappedAudience(scope) {
+  assert.deepEqual(scope.attributes, {
+    'display.on.consent.screen': 'false',
+    'include.in.token.scope': 'true',
+    'sulla.reconciliation.version': '1',
+  });
   assert.equal(scope.protocolMappers.length, 1);
   const mapper = scope.protocolMappers[0];
   assert.equal(mapper.protocolMapper, 'oidc-audience-mapper');
@@ -56,5 +61,18 @@ test('Keycloak reconciliation filters ignored query results by exact JSON name',
   assert.throws(
     () => exactKeycloakId([...scopes, { id: 'duplicate', name: 'sulla-audience-sulla-files' }], 'name', 'sulla-audience-sulla-files'),
     /duplicate name values/,
+  );
+});
+
+test('mapper cleanup is bounded to unexpected mappers in the selected scope', () => {
+  const mappers = [
+    { id: 'intended', name: 'audience-sulla-workflows' },
+    { id: 'stale-origin', name: 'allowed-web-origins' },
+    { id: 'stale-audience', name: 'audience-sulla-membership' },
+  ];
+  assert.deepEqual(staleKeycloakIds(mappers, 'name', 'audience-sulla-workflows'), ['stale-origin', 'stale-audience']);
+  assert.throws(
+    () => staleKeycloakIds([...mappers, { name: 'missing-id' }], 'name', 'audience-sulla-workflows'),
+    /invalid id/,
   );
 });
