@@ -34,6 +34,7 @@ import { createRelayId, DefaultVaultRelayManager } from './relays.js';
 import { buildTranscriptionProviderRequest } from './transcriptionPolicy.js';
 
 import type { VaultConfig } from './config.js';
+import type { FilesAuthorityIdentityLease, UnlockedFilesAuthorityIdentity } from './filesKeyBundleAuthority.js';
 import type {
   BrokerExecuteRequest,
   BrokerExecuteResponse,
@@ -413,7 +414,7 @@ function applyJsonPath(root: unknown, path: string, value: string): unknown {
   return output;
 }
 
-export class LocalVaultAuthority {
+export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private keys: UnlockedKeys | null = null;
   private generation = 0;
   private readonly inFlight = new Set<ReturnType<typeof https.request>>();
@@ -440,6 +441,7 @@ export class LocalVaultAuthority {
         ['control', config.controlServiceToken],
         ['approval', config.approvalServiceToken],
         ['broker', config.brokerServiceToken],
+        ['files', config.filesServiceToken],
       ] as const;
       for (const [name, value] of credentials) {
         if (!value || Buffer.byteLength(value) < 32) throw new Error(`Desktop vault ${ name } credential is not configured`);
@@ -458,6 +460,33 @@ export class LocalVaultAuthority {
       principalId: this.keys?.userId,
       cacheUpdateRequired: Boolean(this.stagedCacheUpdate),
     };
+  }
+
+  /**
+   * Lend a bounded copy of the unlocked user X25519 identity to another
+   * Vault-owned component. Lock remains responsive while the operation is in
+   * flight; generation checks prevent any result from escaping after a lock or
+   * re-unlock, and the private-key copy is always erased.
+   */
+  async withUnlockedIdentity<T>(
+    operation:(identity:UnlockedFilesAuthorityIdentity) => Promise<T>,
+  ):Promise<T> {
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const privateKey = Uint8Array.from(keys.privateKey);
+    try {
+      const result = await operation({
+        principalId: keys.userId,
+        publicKey: keys.publicKey,
+        privateKey,
+        generation,
+        assertCurrent: () => this.requireGeneration(generation),
+      });
+      this.requireGeneration(generation);
+      return result;
+    } finally {
+      privateKey.fill(0);
+    }
   }
 
   createCacheUpdateChallenge(callerId: string, clientNonce: string, clientProof: string): {

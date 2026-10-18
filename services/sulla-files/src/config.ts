@@ -1,7 +1,8 @@
-import type { FilesKeyring } from './keyring.js';
 import { resolve } from 'node:path';
 
 import { deriveCapabilitySigningKey } from './auth.js';
+
+import type { FilesKeyring } from './keyring.js';
 
 export interface Config {
   keyring?: FilesKeyring;

@@ -2967,7 +2967,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   }
 
   private async loadOrCreateVaultServiceIdentities(): Promise<{
-    bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string;
+    bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string; filesToken: string;
   }> {
     if (!Electron.safeStorage.isEncryptionAvailable()) {
       throw new Error('OS-protected storage is required for the local vault service identities');
@@ -2977,6 +2977,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       controlToken:   'vault-control-token.enc',
       approvalToken:  'vault-approval-token.enc',
       brokerToken:    'vault-broker-token.enc',
+      filesToken:     'vault-files-token.enc',
     } as const;
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     const readProtected = async(file: string): Promise<string | undefined> => {
@@ -2992,13 +2993,15 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       controlToken:   await readProtected(files.controlToken),
       approvalToken:  await readProtected(files.approvalToken),
       brokerToken:    await readProtected(files.brokerToken),
+      filesToken:     await readProtected(files.filesToken),
     };
-    if (Object.values(identities).some(value => !value) || new Set(Object.values(identities)).size !== 4) {
+    if (Object.values(identities).some(value => !value) || new Set(Object.values(identities)).size !== 5) {
       identities = {
         bootstrapToken: crypto.randomBytes(48).toString('base64url'),
         controlToken:   crypto.randomBytes(48).toString('base64url'),
         approvalToken:  crypto.randomBytes(48).toString('base64url'),
         brokerToken:    crypto.randomBytes(48).toString('base64url'),
+        filesToken:     crypto.randomBytes(48).toString('base64url'),
       };
     }
     const writeProtected = async(file: string, value: string): Promise<void> => {
@@ -3013,8 +3016,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     await writeProtected(files.controlToken, identities.controlToken!);
     await writeProtected(files.approvalToken, identities.approvalToken!);
     await writeProtected(files.brokerToken, identities.brokerToken!);
+    await writeProtected(files.filesToken, identities.filesToken!);
 
-    return identities as { bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string };
+    return identities as {
+      bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string; filesToken: string;
+    };
   }
 
   private async prepareVaultTlsIdentity(): Promise<{ fingerprint: string }> {
@@ -3038,7 +3044,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     const sullaServicePassword = escapeForCompose(await SullaSettingsModel.getServicePassword());
-    let vaultIdentities: { bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string } | undefined;
+    let vaultIdentities: {
+      bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string; filesToken: string;
+    } | undefined;
     this.#optionalSullaFallbackImages.clear();
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
       vaultIdentities = await this.loadOrCreateVaultServiceIdentities();
@@ -3068,6 +3076,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           SULLA_VAULT_DESKTOP_CONTROL_TOKEN: vaultIdentities.controlToken,
           SULLA_VAULT_APPROVAL_TOKEN: vaultIdentities.approvalToken,
           SULLA_VAULT_BROKER_TOKEN: vaultIdentities.brokerToken,
+          SULLA_VAULT_FILES_TOKEN: vaultIdentities.filesToken,
           SULLA_VAULT_HUMAN_UI_ORIGIN: 'https://127.0.0.1:30135',
           SULLA_VAULT_TLS_CERTIFICATE_PATH: '/run/sulla-vault-tls/tls.crt',
           SULLA_VAULT_TLS_PRIVATE_KEY_PATH: '/run/sulla-vault-tls/tls.key',
@@ -3174,7 +3183,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       ...filesImage,
       image: resolvedFilesImage,
       container_name: 'sulla_files',
-      depends_on: { postgres: { condition: 'service_healthy' } },
+      depends_on: {
+        postgres: { condition: 'service_healthy' },
+        ...(vaultIdentities ? { sulla_vault: { condition: 'service_healthy' } } : {}),
+      },
       environment: {
         SULLA_FILES_DATABASE_URL:          `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_FILES_CHUNK_ROOT:            '/var/lib/sulla-files/chunks',
@@ -3186,6 +3198,12 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_GID:                   String(os.userInfo().gid),
         SULLA_FILES_CAPABILITY_SIGNING_KEY: sullaFilesCapabilityKey(sullaServicePassword),
         SULLA_FILES_LOCAL_TOKEN:           sullaServicePassword,
+        ...(vaultIdentities ? {
+          SULLA_FILES_VAULT_AUTHORITY_URL:        'https://sulla_vault:8787',
+          SULLA_FILES_VAULT_AUTHORITY_SERVICE_ID: 'sulla-files',
+          SULLA_FILES_VAULT_AUTHORITY_TOKEN:      vaultIdentities.filesToken,
+          SULLA_FILES_VAULT_AUTHORITY_CA_PATH:    '/run/sulla-vault-ca/tls.crt',
+        } : {}),
         ...(process.env.SULLA_CLOUD_API_URL ? { SULLA_CLOUD_API_URL: process.env.SULLA_CLOUD_API_URL } : {}),
         ...(process.env.SULLA_FILES_SERVER_URL ? { SULLA_FILES_SERVER_URL: process.env.SULLA_FILES_SERVER_URL } : {}),
         ...(process.env.SULLA_FILES_USER_ID ? { SULLA_FILES_USER_ID: process.env.SULLA_FILES_USER_ID } : {}),
@@ -3195,6 +3213,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
         `${ path.join(os.homedir(), 'sulla', 'Files') }:/data/files`,
+        ...(vaultIdentities ? ['/var/lib/sulla/vault-tls/tls.crt:/run/sulla-vault-ca/tls.crt:ro'] : []),
       ],
       restart: 'unless-stopped',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8792/healthz'], interval: '5s', timeout: '3s', retries: 10 },

@@ -1,15 +1,14 @@
+import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import https from 'node:https';
-import { readFile } from 'node:fs/promises';
 
+import type { Config } from './config.js';
+import type { FilesKeyBundleAuthority, StoredFilesKeyBundle } from './keyBundleRecovery.js';
 import type {
   Base64,
   FilesKeyBundleContext,
   FilesKeyBundleEnvelope,
 } from '@sulla/vault-crypto';
-
-import type { FilesKeyBundleAuthority, StoredFilesKeyBundle } from './keyBundleRecovery.js';
-import type { Config } from './config.js';
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
@@ -21,8 +20,8 @@ export interface VaultFilesAuthorityClientConfig {
 }
 
 export class VaultFilesKeyBundleAuthority implements FilesKeyBundleAuthority {
-  private readonly origin:URL;
-  private ca?:Promise<Buffer>;
+  private readonly origin: URL;
+  private ca?:             Promise<Buffer>;
 
   constructor(private readonly config:VaultFilesAuthorityClientConfig) {
     this.origin = new URL(config.baseUrl);
@@ -41,6 +40,10 @@ export class VaultFilesKeyBundleAuthority implements FilesKeyBundleAuthority {
     }
   }
 
+  unlockedPrincipal():Promise<{ principalId: string; generation: number }> {
+    return this.request('/v1/desktop/files/principal');
+  }
+
   custodyRecipient(context:FilesKeyBundleContext):Promise<{ keyId: string; publicKey: Base64 }> {
     return this.request('/v1/desktop/files/custody-recipient', { context });
   }
@@ -53,20 +56,24 @@ export class VaultFilesKeyBundleAuthority implements FilesKeyBundleAuthority {
     return this.request('/v1/desktop/files/device-recovery', request);
   }
 
-  private async request<T>(pathname:string, body:unknown):Promise<T> {
-    const payload = Buffer.from(JSON.stringify(body));
+  private async request<T>(pathname:string, body?:unknown):Promise<T> {
+    const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
     const ca = this.origin.protocol === 'https:' ? await (this.ca ??= readFile(this.config.caPath!)) : undefined;
     const transport = this.origin.protocol === 'https:' ? https : http;
     return new Promise<T>((resolve, reject) => {
       const request = transport.request(new URL(pathname, this.origin), {
-        method: 'POST',
+        method:  payload ? 'POST' : 'GET',
         ca,
         headers: {
           accept:                 'application/json',
           authorization:          `Bearer ${ this.config.serviceToken }`,
-          'content-length':        String(payload.byteLength),
-          'content-type':          'application/json',
-          'x-sulla-service-id':    this.config.serviceId,
+          ...(payload
+            ? {
+              'content-length': String(payload.byteLength),
+              'content-type':   'application/json',
+            }
+            : {}),
+          'x-sulla-service-id': this.config.serviceId,
         },
         signal: AbortSignal.timeout(15_000),
       }, response => {
@@ -109,9 +116,9 @@ export function configuredVaultFilesKeyBundleAuthority(
   if (config.mode !== 'desktop' || values.every(value => !value)) return undefined;
   if (values.some(value => !value)) throw new Error('Files Vault authority configuration is incomplete');
   return new VaultFilesKeyBundleAuthority({
-    baseUrl: config.vaultAuthorityUrl!,
-    serviceId: config.vaultAuthorityId!,
+    baseUrl:      config.vaultAuthorityUrl!,
+    serviceId:    config.vaultAuthorityId!,
     serviceToken: config.vaultAuthorityToken!,
-    caPath: config.vaultAuthorityCaPath,
+    caPath:       config.vaultAuthorityCaPath,
   });
 }

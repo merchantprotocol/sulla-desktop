@@ -121,6 +121,43 @@ test('bootstrap requires local authentication; startup and explicit lock deny fi
   } finally { keyring.close(); await new Promise<void>(resolve => server.close(() => resolve())) }
 });
 
+test('locked recovery handler authenticates, persists the replacement master, and scrubs its request copy', async() => {
+  const db = database([]); const keyring = new FilesKeyring(db);
+  const oldMaster = randomBytes(32); const replacementMaster = randomBytes(32);
+  await keyring.unlock(oldMaster, signing); await keyring.create('new', await db.connect());
+  const original = await keyring.copyKeys('new'); keyring.close();
+  const config:any = { keyring, chunkRoot: '/tmp/sulla-synthetic-keyring', capabilitySigningKey: signing, localToken: 'synthetic-local-token', mode: 'desktop' };
+  let initialized = false; let recoveryRequest!:Buffer;
+  const recover = async(master:Buffer) => {
+    recoveryRequest = master;
+    await keyring.installRecoveredMaster(master, new Map([['new', original]]));
+    return 1;
+  };
+  const server = createApp(db, config, undefined, undefined, undefined, async() => {
+    await Promise.resolve(); initialized = true; config.userId = 'vault-principal';
+  }, undefined, recover).listen(0);
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${ (server.address() as any).port }`;
+  const body = JSON.stringify({ masterKey: replacementMaster.toString('base64') });
+  try {
+    assert.equal((await fetch(`${ base }/v1/local/recovery/device`, { method: 'POST', headers: { 'content-type': 'application/json' }, body })).status, 401);
+    const recovered = await fetch(`${ base }/v1/local/recovery/device`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-sulla-files-token': config.localToken }, body,
+    });
+    assert.equal(recovered.status, 200); assert.deepEqual(await recovered.json(), { recovered: 1 });
+    assert.equal(initialized, true); assert.equal(keyring.unlocked, true);
+    assert.deepEqual(await (await fetch(`${ base }/v1/local/identity`, { headers: { 'x-sulla-files-token': config.localToken } })).json(), { principalId: 'vault-principal' });
+    assert.ok(recoveryRequest.every(byte => byte === 0));
+    keyring.close();
+    await assert.rejects(keyring.unlock(oldMaster, signing));
+    await keyring.unlock(replacementMaster, signing);
+    assert.deepEqual(Buffer.from((await keyring.keys('new')).data), Buffer.from(original.data));
+  } finally {
+    original.data.fill(0); original.dedup.fill(0); keyring.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
 test('malformed bootstrap never reflects secrets and failed shutdown still scrubs key memory', async() => {
   const db = database([]); const keyring = new FilesKeyring(db);
   const config:any = { keyring, chunkRoot: '/tmp/sulla-synthetic-keyring', capabilitySigningKey: signing, localToken: 'synthetic-local-token', mode: 'desktop' };

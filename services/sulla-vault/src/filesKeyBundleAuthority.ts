@@ -19,15 +19,15 @@ export interface RegisteredFilesKeyBundle {
 
 /**
  * A lease is issued by LocalVaultAuthority while it is unlocked. Its
- * implementation serializes lock/unlock against the operation and verifies the
- * generation again before returning, so key references never outlive a Vault
- * generation.
+ * implementation lends an erasable private-key copy and verifies the generation
+ * again before returning, so lock stays responsive and no stale response or key
+ * reference survives a Vault generation.
  */
 export interface UnlockedFilesAuthorityIdentity {
-  principalId:  string;
-  publicKey:    Base64;
-  privateKey:   Uint8Array;
-  generation:   number;
+  principalId: string;
+  publicKey:   Base64;
+  privateKey:  Uint8Array;
+  generation:  number;
   assertCurrent(): void;
 }
 
@@ -43,10 +43,10 @@ export class VaultFilesKeyBundleError extends Error {
 }
 
 interface CurrentRow {
-  principal_id: string;
+  principal_id:  string;
   collection_id: string;
-  key_version: number | string;
-  key_epoch: number | string;
+  key_version:   number | string;
+  key_epoch:     number | string;
 }
 
 interface EnvelopeRow extends CurrentRow {
@@ -103,10 +103,17 @@ export class VaultFilesKeyBundleAuthority {
     private readonly identityLease:FilesAuthorityIdentityLease,
   ) {}
 
+  async unlockedPrincipal():Promise<{ principalId: string; generation: number }> {
+    return this.identityLease.withUnlockedIdentity(identity => {
+      identity.assertCurrent();
+      return Promise.resolve({ principalId: identity.principalId, generation: identity.generation });
+    });
+  }
+
   async custodyRecipient(context:FilesKeyBundleContext):Promise<{ keyId: string; publicKey: Base64 }> {
-    return this.identityLease.withUnlockedIdentity(async identity => {
+    return this.identityLease.withUnlockedIdentity(identity => {
       assertUnlockedPrincipal(identity, context);
-      return { keyId: authorityKeyId(identity), publicKey: identity.publicKey };
+      return Promise.resolve({ keyId: authorityKeyId(identity), publicKey: identity.publicKey });
     });
   }
 
@@ -137,7 +144,7 @@ export class VaultFilesKeyBundleAuthority {
       try {
         await client.query('BEGIN');
         await client.query(
-          "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+          'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
           [`sulla:files:key-bundle:${ bundle.context.principalId }:${ bundle.context.collectionId }`],
         );
         const existing = (await client.query<EnvelopeRow>(
@@ -196,7 +203,7 @@ export class VaultFilesKeyBundleAuthority {
   }
 
   async authorizeDeviceRecovery(request:{
-    context: FilesKeyBundleContext;
+    context:         FilesKeyBundleContext;
     devicePublicKey: Base64;
   }):Promise<FilesKeyBundleEnvelope> {
     return this.identityLease.withUnlockedIdentity(async identity => {
@@ -212,7 +219,7 @@ export class VaultFilesKeyBundleAuthority {
         [request.context.principalId, request.context.collectionId,
           request.context.keyVersion, request.context.epoch],
       )).rows[0];
-      if (!row || row.authority_key_id !== authorityKeyId(identity) ||
+      if (row?.authority_key_id !== authorityKeyId(identity) ||
           !sameContext(rowContext(row), request.context)) {
         throw new VaultFilesKeyBundleError('context_denied', 403, 'Files recovery bundle is not authorized for this exact context');
       }

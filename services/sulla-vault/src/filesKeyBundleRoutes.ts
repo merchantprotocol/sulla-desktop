@@ -33,10 +33,10 @@ function context(value:unknown):FilesKeyBundleContext {
     throw new VaultFilesKeyBundleError('invalid_context', 400, 'Files key bundle context is invalid');
   }
   return {
-    principalId: input.principalId,
+    principalId:  input.principalId,
     collectionId: input.collectionId,
-    keyVersion: Number(input.keyVersion),
-    epoch: Number(input.epoch),
+    keyVersion:   Number(input.keyVersion),
+    epoch:        Number(input.epoch),
   };
 }
 
@@ -64,6 +64,11 @@ export function createFilesKeyBundleRouter(
     }
     next();
   });
+  router.get('/principal', async(_request, response, next) => {
+    try {
+      response.json(await authority.unlockedPrincipal());
+    } catch (error) { next(error) }
+  });
   router.post('/custody-recipient', async(request, response, next) => {
     try {
       response.json(await authority.custodyRecipient(context(request.body?.context)));
@@ -73,9 +78,9 @@ export function createFilesKeyBundleRouter(
     try {
       const input = object(request.body, 'bundle');
       const bundle:RegisteredFilesKeyBundle = {
-        context: context(input.context),
+        context:        context(input.context),
         authorityKeyId: string(input.authorityKeyId, 'authorityKeyId', 1024),
-        envelope: object(input.envelope, 'envelope') as unknown as FilesKeyBundleEnvelope,
+        envelope:       object(input.envelope, 'envelope') as unknown as FilesKeyBundleEnvelope,
       };
       await authority.registerBundle(bundle);
       response.status(204).end();
@@ -84,7 +89,7 @@ export function createFilesKeyBundleRouter(
   router.post('/device-recovery', async(request, response, next) => {
     try {
       response.json(await authority.authorizeDeviceRecovery({
-        context: context(request.body?.context),
+        context:         context(request.body?.context),
         devicePublicKey: string(request.body?.devicePublicKey, 'devicePublicKey', 1024),
       }));
     } catch (error) { next(error) }
