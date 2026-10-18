@@ -4,7 +4,7 @@ import { FilesBootstrapError, type FilesBootstrapLifecycle } from './bootstrapAu
 import type { FilesBootstrapDisposition, FilesBootstrapUnlockResponse } from './bootstrapProtocol.js';
 import type { Config } from './config.js';
 import { FilesMasterKeyRejectedError, type FilesKeyring } from './keyring.js';
-import { LegacyFilesImporter } from './legacyImport.js';
+import { LegacyFilesImporter, LegacyImportContinuationRequiredError } from './legacyImport.js';
 import { runLegacyPreflight } from './legacyPreflight.js';
 import { FilesStartupDiagnostics, type FilesStartupStage } from './startupDiagnostics.js';
 
@@ -121,8 +121,23 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
           // helper. Revalidate the durable receipt and every identity mapping
           // before authorizing retirement of the raw legacy master.
           reportStage('legacy-import-verification');
-          const importer = new LegacyFilesImporter(this.db, this.config.filesRoot, this.config.chunkRoot);
-          imported = Boolean(await importer.completedResult());
+          const sourceRoot = this.config.legacyPreflight?.protectedPrefix
+            ? join(this.config.filesRoot, this.config.legacyPreflight.protectedPrefix)
+            : this.config.filesRoot;
+          const importer = new LegacyFilesImporter(this.db, sourceRoot, this.config.chunkRoot);
+          try {
+            imported = Boolean(await importer.completedResult());
+          } catch (error) {
+            if (!(error instanceof LegacyImportContinuationRequiredError)) throw error;
+            if (disposition !== 'existing' || !material.legacyMasterKeys.length) {
+              throw new FilesBootstrapError('FILES_LEGACY_KEY_REQUIRED', 409, 'Legacy Files continuation requires the existing OS-protected key material');
+            }
+            reportStage('legacy-import');
+            await importer.run(material.masterKey, material.legacyMasterKeys);
+            reportStage('legacy-import-verification');
+            imported = Boolean(await importer.completedResult());
+            if (!imported) throw new FilesBootstrapError('FILES_LEGACY_IMPORT_INCOMPLETE', 409, 'Legacy Files continuation did not complete');
+          }
         }
         this.assertGeneration(generation);
         let recovered = disposition === 'recover';

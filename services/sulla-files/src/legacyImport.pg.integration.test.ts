@@ -94,6 +94,7 @@ integration('publishes a complete retry-safe legacy snapshot in PostgreSQL', asy
     assert.equal((await db.query('SELECT count(*)::int count FROM journal j JOIN files_legacy_file_map fm ON fm.shadow_file_id=j.file_id')).rows[0].count, 1);
     assert.equal((await db.query('SELECT count(*)::int count FROM files_legacy_audit_map')).rows[0].count, 1);
     const nativeEdit = '60000000-0000-4000-8000-000000000006';
+    const lateLegacyVersion = '70000000-0000-4000-8000-000000000007';
     const shadow = (await db.query(`SELECT fm.shadow_file_id,vm.shadow_version_id,m.shadow_collection_id,v.manifest_hash
       FROM files_legacy_file_map fm JOIN files_legacy_version_map vm ON vm.source_version_id=$1
       JOIN files_legacy_collection_map m ON m.source_collection_id=$2 JOIN file_versions v ON v.id=vm.shadow_version_id
@@ -112,6 +113,22 @@ integration('publishes a complete retry-safe legacy snapshot in PostgreSQL', asy
       (SELECT count(*)::int FROM collection_acl WHERE collection_id=$2) acl_count,
       (SELECT jsonb_object_agg(id,refcount) FROM chunks WHERE collection_id=$2) refcounts FROM files f WHERE f.id=$1`, [shadow.shadow_file_id, shadow.shadow_collection_id])).rows[0];
     assert.deepEqual(afterRetry, beforeRetry); assert.equal(afterRetry.current_version_id, nativeEdit);
+
+    // A retired writer may append one final version after the import receipt
+    // commits. Never overwrite divergent native work, but resume the
+    // authenticated importer when the shadow is still at the mapped parent.
+    await db.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id)
+      VALUES($1,$2,$3,$4,NULL,0,TRUE,'user','owner',$5,'late legacy tombstone','legacy-device',$4)`,
+    [lateLegacyVersion, legacyFile, legacyCollection, tombstoneVersion, new Date('2026-01-02T00:00:00Z')]);
+    await db.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [legacyFile, lateLegacyVersion]);
+    await assert.rejects(importer.run(nativeMaster, [legacyMaster]), /version history changed or diverged/);
+    const mappedTombstone = (await db.query('SELECT shadow_version_id FROM files_legacy_version_map WHERE source_version_id=$1', [tombstoneVersion])).rows[0].shadow_version_id;
+    await db.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [shadow.shadow_file_id, mappedTombstone]);
+    assert.equal((await importer.run(nativeMaster, [legacyMaster])).versions, 6);
+    const continued = (await db.query(`SELECT shadow.current_version_id,vm.shadow_version_id
+      FROM files shadow JOIN files_legacy_file_map fm ON fm.shadow_file_id=shadow.id
+      JOIN files_legacy_version_map vm ON vm.source_version_id=$1 WHERE fm.source_file_id=$2`, [lateLegacyVersion, legacyFile])).rows[0];
+    assert.equal(continued.current_version_id, continued.shadow_version_id);
   } finally {
     for (const key of [nativeMaster, legacyMaster, legacyData, legacyDedup, nativeData, nativeDedup]) key.fill(0);
     await db.end(); await rm(root, { recursive: true, force: true });
