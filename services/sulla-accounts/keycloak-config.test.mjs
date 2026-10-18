@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildKeycloakConfig } from './keycloak-config.mjs';
+import { buildKeycloakConfig, exactKeycloakId } from './keycloak-config.mjs';
 
 const config = buildKeycloakConfig({
   realm: 'sulla',
@@ -25,22 +25,36 @@ function mappedAudience(scope) {
 }
 
 test('membership is a distinct default audience scope', () => {
-  assert.equal(config.membershipScope.name, 'sulla-membership');
+  assert.equal(config.membershipScope.name, 'sulla-audience-sulla-membership');
   assert.equal(mappedAudience(config.membershipScope), 'sulla-membership');
-  assert.deepEqual(config.nativeClient.defaultClientScopes, ['profile', 'sulla-membership']);
-  assert.deepEqual(config.webClient.defaultClientScopes, ['profile', 'sulla-membership']);
+  assert.deepEqual(config.nativeClient.defaultClientScopes, ['profile', 'sulla-audience-sulla-membership']);
+  assert.deepEqual(config.webClient.defaultClientScopes, ['profile', 'sulla-audience-sulla-membership']);
   assert.ok(!config.nativeClient.optionalClientScopes.includes(config.membershipScope.name));
   assert.ok(!config.webClient.optionalClientScopes.includes(config.membershipScope.name));
 });
 
-test('resource audiences use the Accounts colon-named optional scope contract', () => {
+test('resource audiences use the Accounts hyphenated optional scope contract', () => {
   const expected = new Map([
-    ['sulla-audience:sulla-projects', 'sulla-projects'],
-    ['sulla-audience:sulla-files', 'sulla-files'],
-    ['sulla-audience:sulla-vault', 'sulla-vault'],
-    ['sulla-audience:sulla-workflows', 'sulla-workflows'],
+    ['sulla-audience-sulla-projects', 'sulla-projects'],
+    ['sulla-audience-sulla-files', 'sulla-files'],
+    ['sulla-audience-sulla-vault', 'sulla-vault'],
+    ['sulla-audience-sulla-workflows', 'sulla-workflows'],
   ]);
   assert.deepEqual(new Map(config.resourceScopes.map(scope => [scope.name, mappedAudience(scope)])), expected);
   assert.deepEqual(config.nativeClient.optionalClientScopes, [...expected.keys()]);
   assert.deepEqual(config.webClient.optionalClientScopes, [...expected.keys()]);
+});
+
+test('Keycloak reconciliation filters ignored query results by exact JSON name', () => {
+  const scopes = [
+    { id: 'builtin-profile', name: 'profile' },
+    { id: 'resource-files', name: 'sulla-audience-sulla-files' },
+    { id: 'resource-workflows', name: 'sulla-audience-sulla-workflows' },
+  ];
+  assert.equal(exactKeycloakId(scopes, 'name', 'sulla-audience-sulla-workflows'), 'resource-workflows');
+  assert.equal(exactKeycloakId(scopes, 'name', 'sulla-audience-sulla-membership'), '');
+  assert.throws(
+    () => exactKeycloakId([...scopes, { id: 'duplicate', name: 'sulla-audience-sulla-files' }], 'name', 'sulla-audience-sulla-files'),
+    /duplicate name values/,
+  );
 });
