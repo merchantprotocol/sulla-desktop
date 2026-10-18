@@ -76,6 +76,10 @@ function repositoryFromGitHubRemote(remote: string): string | undefined {
 
 async function githubGitRepository(tool: CatalogTool, args: unknown): Promise<string | undefined> {
   if (!['git_fetch', 'git_pull', 'git_push'].includes(tool.name) || !args || typeof args !== 'object') return undefined;
+  // Agent-local paths only exist in the worker container. The canonical Git
+  // worker resolves its configured remote there, then the Desktop broker
+  // derives and enforces the repository scope from that authoritative URL.
+  if (tool.executionTarget === 'agent-local') return undefined;
   const values = args as Record<string, unknown>;
   const absolutePath = typeof values.absolutePath === 'string' ? values.absolutePath.trim() : '';
   const remote = typeof values.remote === 'string' && values.remote.trim() ? values.remote.trim() : 'origin';

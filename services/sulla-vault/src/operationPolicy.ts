@@ -16,12 +16,15 @@ export interface BrokerOperationPolicy {
   credentialOptional?: boolean;
   pathPattern?:    RegExp;
   /** Provider-specific authority that must remain coupled as one trust decision. */
-  bindings?:       ReadonlyArray<{
+  bindings?:       readonly {
     integration: string;
     hosts?:      string[];
     injections:  BrokerInjection[];
+    requiredInjections?: BrokerInjection[];
+    /** Optional exact one-of sets for integrations with mutually exclusive credential modes. */
+    injectionSets?: readonly (readonly BrokerInjection[])[];
     pathPattern?: RegExp;
-  }>;
+  }[];
 }
 
 const authHeaders = (fields: string[], names = ['authorization']): BrokerInjection[] => fields.flatMap(field =>
@@ -102,6 +105,52 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
       { field: 'api_key', target: 'header', name: 'api-key', scheme: 'raw' },
       { field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' },
+    ],
+  },
+  'provider.cli': {
+    integrations: ['openai', 'codex', 'anthropic', 'claude-code'],
+    methods: ['POST'],
+    allowStreaming: true,
+    injections: [],
+    bindings: [
+      {
+        integration: 'openai',
+        hosts: ['api.openai.com'],
+        injections: authHeaders(['api_key']),
+        pathPattern: /^\/v1\/responses(?:\/compact)?$/,
+      },
+      {
+        integration: 'codex',
+        hosts: ['chatgpt.com'],
+        injections: [
+          { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+          { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+        ],
+        requiredInjections: [
+          { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+          { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+        ],
+        pathPattern: /^\/backend-api\/codex\/responses(?:\/compact)?$/,
+      },
+      {
+        integration: 'anthropic',
+        hosts: ['api.anthropic.com'],
+        injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+        pathPattern: /^\/v1\/messages(?:\/count_tokens)?$/,
+      },
+      {
+        integration: 'claude-code',
+        hosts: ['api.anthropic.com'],
+        injections: [
+          { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
+          { field: 'oauth_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+        ],
+        injectionSets: [
+          [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+          [{ field: 'oauth_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        ],
+        pathPattern: /^\/v1\/messages(?:\/count_tokens)?$/,
+      },
     ],
   },
   'provider.discovery': {
@@ -251,6 +300,13 @@ export function validateOperation(
   for (const injection of input.injections) {
     if (!allowedInjections.some(candidate => exactInjection(candidate, injection))) throw new Error('injection_denied');
   }
+  if (binding?.requiredInjections?.some(required => !input.injections.some(candidate => exactInjection(candidate, required)))) {
+    throw new Error('injection_denied');
+  }
+  if (binding?.injectionSets && !binding.injectionSets.some(set => set.length === input.injections.length &&
+    set.every(required => input.injections.some(candidate => exactInjection(candidate, required))))) {
+    throw new Error('injection_denied');
+  }
   if (!input.injections.length && !policy.credentialOptional) throw new Error('credential_injection_required');
   return policy;
 }
@@ -260,7 +316,9 @@ export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
   slack:     ['slack.com'],
   discord:   ['discord.com', 'discordapp.com'],
   openai:    ['api.openai.com'],
+  codex:     ['chatgpt.com'],
   anthropic: ['api.anthropic.com'],
+  'claude-code': ['api.anthropic.com'],
   google:    ['generativelanguage.googleapis.com'],
   grok:      ['api.x.ai'],
   elevenlabs: ['api.elevenlabs.io'],

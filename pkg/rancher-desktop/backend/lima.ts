@@ -2941,7 +2941,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla_shell_runtime',
       'sulla_node_runtime',
     ];
-    requiredServices.push('sulla_workflow_manager', 'sulla_tools');
+    requiredServices.push('sulla_relay', 'sulla_workflow_manager', 'sulla_tools');
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) requiredServices.push('sulla_vault');
     try {
       for (const service of requiredServices) {
@@ -3038,6 +3038,15 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     const sullaServicePassword = escapeForCompose(await SullaSettingsModel.getServicePassword());
+    const tokenFile = path.join(paths.appHome, 'chat-api-token.json');
+    let sullaApiToken = '';
+    try {
+      sullaApiToken = JSON.parse(await fs.promises.readFile(tokenFile, 'utf-8')).token || '';
+    } catch {
+      sullaApiToken = await SullaSettingsModel.get('sullaApiToken') || '';
+    }
+    if (!sullaApiToken) throw new Error('Sulla API token is unavailable while preparing container services');
+    sullaApiToken = escapeForCompose(sullaApiToken);
     let vaultIdentities: { bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string } | undefined;
     this.#optionalSullaFallbackImages.clear();
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
@@ -3123,6 +3132,34 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
+    // Desktop owns controller and desktop-local tools. Containers reach that
+    // real owner through the existing authenticated outbound relay; they never
+    // map a made-up controller hostname or a VM gateway to the macOS process.
+    const relayImage = resolveSullaServiceImage(
+      'sulla-relay', process.cwd(), Electron.app.getVersion(), process.env.SULLA_RELAY_IMAGE,
+    );
+    const resolvedRelayImage = relayImage.build ? relayImage.image : `\${SULLA_RELAY_IMAGE:-${ relayImage.image }}`;
+    if (!relayImage.build && !process.env.SULLA_RELAY_IMAGE && !relayImage.image.endsWith(':latest')) {
+      this.#optionalSullaFallbackImages.set('sulla_relay', {
+        env: 'SULLA_RELAY_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-relay:latest',
+      });
+    }
+    compose.services.sulla_relay = {
+      ...relayImage,
+      image: resolvedRelayImage,
+      container_name: 'sulla_relay',
+      depends_on: { redis: { condition: 'service_healthy' } },
+      environment: {
+        SULLA_REDIS_URL: 'redis://redis:6379',
+        SULLA_RELAY_DEVICE_TOKEN_SECRET: sullaApiToken,
+        SULLA_RELAY_INTERNAL_TOKEN: sullaApiToken,
+        SULLA_RELAY_REPLICA_ID: 'desktop-local',
+      },
+      ports: ['127.0.0.1:30126:8790'],
+      restart: 'unless-stopped',
+      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/healthz'], interval: '5s', timeout: '3s', retries: 10 },
+    };
+
     const toolsImage = resolveSullaServiceImage(
       'sulla-tools', process.cwd(), Electron.app.getVersion(), process.env.SULLA_TOOLS_IMAGE,
     );
@@ -3139,12 +3176,14 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       depends_on: {
         postgres: { condition: 'service_healthy' },
         redis: { condition: 'service_healthy' },
+        sulla_relay: { condition: 'service_healthy' },
       },
       env_file: ['/etc/sulla-env'],
       environment: {
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
-        SULLA_DESKTOP_EXECUTOR_URL: 'http://host.docker.internal:3000',
+        SULLA_RELAY_URL: 'http://sulla_relay:8790',
+        SULLA_RELAY_TOKEN: sullaApiToken,
         ...(vaultIdentities ? {
           SULLA_VAULT_BROKER_URL:        'https://sulla_vault:8787',
           SULLA_VAULT_BROKER_SERVICE_ID: 'sulla-tools',
@@ -3153,7 +3192,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           NODE_EXTRA_CA_CERTS:           '/run/sulla-vault-ca/tls.crt',
         } : {}),
       },
-      extra_hosts: ['host.docker.internal:host-gateway'],
       ports: ['127.0.0.1:30123:3000'],
       volumes: vaultIdentities ? ['/var/lib/sulla/vault-tls/tls.crt:/run/sulla-vault-ca/tls.crt:ro'] : [],
       restart: 'unless-stopped',
@@ -3337,7 +3375,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       );
 
       this.#activeOptionalSullaServices.clear();
-      const optionalServices = ['workflow_manager', 'tools', 'sulla_files'];
+      const optionalServices = ['sulla_relay', 'workflow_manager', 'tools', 'sulla_files'];
 
       if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) optionalServices.push('sulla_vault');
       for (const service of optionalServices) {
@@ -3381,6 +3419,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime'];
 
     if (this.#activeOptionalSullaServices.has('workflow_manager')) optionalServices.push('sulla_workflow_manager');
+    if (this.#activeOptionalSullaServices.has('sulla_relay')) optionalServices.push('sulla_relay');
     if (this.#activeOptionalSullaServices.has('tools')) optionalServices.push('sulla_tools');
     if (this.#activeOptionalSullaServices.has('sulla_files')) optionalServices.push('sulla_files');
     if (this.#activeOptionalSullaServices.has('sulla_vault')) optionalServices.push('sulla_vault');

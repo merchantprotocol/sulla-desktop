@@ -5,16 +5,24 @@ import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
 import {
+  getProviderExecutionTransport,
+  requireBrokeredContainerAuth,
+  requireContainerToolConfig,
+  type ProviderExecutionTransport,
+  type ProviderFileRef,
+  type ProviderTransportContext,
+} from './ProviderExecutionTransport';
+import {
   BackgroundCompletionDelivery,
   ClaudeBackgroundTaskTracker,
   formatBackgroundNotices,
   wakeTargetFromState,
   type WakeTarget,
 } from './claudeBackgroundTasks';
-import { buildClaudeLaunchCommand, buildRemoteKillCommand, newRemotePidFile } from './claudeLaunchCommand';
+import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { disallowedToolsFor } from './claudeToolPolicy';
-import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild, waitForKillHelper } from './cliFaultRecovery';
-import { removeFileOnExit, systemPromptFromMessages, writeSystemPromptFile } from './cliSystemPromptFile';
+import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
+import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { redisClient } from '../database/RedisClient';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeClaudeLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
@@ -119,40 +127,43 @@ const STEER_FOLLOWUP_GRACE_MS = 30_000;
  * See ClaudeCodeService.prewarm().
  */
 interface PrewarmRecord {
-  proc:           childProcess.ChildProcessWithoutNullStreams;
-  mcpSession:     RegisteredSession | null;
-  mcpConfigPath:  string | null;
+  proc:              childProcess.ChildProcessWithoutNullStreams;
+  transport:         ProviderExecutionTransport;
+  transportContext:  ProviderTransportContext;
+  systemPromptFile?: ProviderFileRef;
+  mcpSession:        RegisteredSession | null;
+  mcpConfigPath:     string | null;
   /** VM-side pidfile of this process (see buildRemoteKillCommand). */
-  pidFile:        string;
-  model:          string;
-  createdAt:      number;
-  closed:         boolean;
-  busy:           boolean;
-  reapTimer:      ReturnType<typeof setTimeout> | null;
+  pidFile:           string;
+  model:             string;
+  createdAt:         number;
+  closed:            boolean;
+  busy:              boolean;
+  reapTimer:         ReturnType<typeof setTimeout> | null;
   /**
    * Output the process wrote while nobody was listening (booting prewarm, or
    * parked between warm turns), drained at claim time. Replayed through the
    * adopting turn's line processor so a buffered system/init line still
    * delivers its session id. See claimPrewarm.
    */
-  pendingStdout?: string;
+  pendingStdout?:    string;
   /**
    * Background-task state for this process (see claudeBackgroundTasks.ts).
    * Created on the first turn that runs on the process.
    */
-  bgTracker?:     ClaudeBackgroundTaskTracker;
+  bgTracker?:        ClaudeBackgroundTaskTracker;
   /** Graph thread to wake when a background task finishes while parked. */
-  wakeTarget?:    WakeTarget | null;
+  wakeTarget?:       WakeTarget | null;
   /** stdout/stderr listeners that keep reading while the process is parked. */
-  parkedStdout?:  (chunk: Buffer) => void;
-  parkedStderr?:  (chunk: Buffer) => void;
+  parkedStdout?:     (chunk: Buffer) => void;
+  parkedStderr?:     (chunk: Buffer) => void;
   /** Partial NDJSON line the parked reader was holding when claimed. */
-  parkedBuffer?:  string;
+  parkedBuffer?:     string;
   /** When the idle reap was first deferred for live background work. */
-  bgHoldSince?:   number;
+  bgHoldSince?:      number;
   /** Conversation this process is pooled under, and when it went idle. */
-  convId?:        string;
-  idleSince?:     number;
+  convId?:           string;
+  idleSince?:        number;
 }
 
 /**
@@ -426,6 +437,32 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
+  /** Canonical argv used by non-Lima transports; parsing stays in this service. */
+  private buildProviderCommand(p: {
+    existingSession?:  string;
+    mcpConfigPath:     string | null;
+    streamJsonInput:   boolean;
+    disallowedTools:   string;
+    systemPromptPath?: string | null;
+    environment?:      Readonly<Record<string, string>>;
+  }): { executable: string; args: string[]; env?: NodeJS.ProcessEnv } {
+    const args = [
+      '-p',
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--include-partial-messages',
+      '--dangerously-skip-permissions',
+      '--disallowedTools', p.disallowedTools,
+    ];
+    if (p.streamJsonInput) args.push('--input-format', 'stream-json', '--replay-user-messages');
+    if (this.model && this.model !== 'claude-code') args.push('--model', this.model);
+    if (p.existingSession) args.push('--resume', p.existingSession);
+    if (p.mcpConfigPath) args.push('--mcp-config', p.mcpConfigPath);
+    if (p.systemPromptPath) args.push('--append-system-prompt-file', p.systemPromptPath);
+
+    return { executable: 'claude', args, env: p.environment ? { ...p.environment } : undefined };
+  }
+
   /**
    * Speculatively boot a `claude` process for this conversation while the
    * caller does pre-turn work (recall / observations). The process reaches
@@ -436,7 +473,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
    */
   async prewarm(state: BaseThreadState): Promise<void> {
     try {
-      if (process.platform === 'win32') return;         // no Lima on Windows
+      const transport = getProviderExecutionTransport();
+      if (transport.runtime === 'lima' && process.platform === 'win32') return;
       if (!await this.speculativeBootEnabled()) return;
       await this.refreshPoolLimits();
 
@@ -447,9 +485,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
       const existing = this.prewarmed.get(convId);
       if (existing && !existing.closed) return;          // already warming
       if (existing) this.disposePrewarm(convId);         // stale/dead — replace
-
-      const { oauthToken, apiKey } = await this.resolveClaudeCreds();
-      if (!oauthToken && !apiKey) return;                // no creds → nothing to warm
 
       const existingSession = await this.getSession(convId);
 
@@ -462,23 +497,69 @@ export class ClaudeCodeService extends BaseLanguageModel {
         const host = getMCPServerHost();
         if (host.running) {
           mcpSession = host.registerSession(state, PROC_MCP_SESSION_TTL_MS);
-          mcpConfigPath = this.writeMcpConfig(mcpSession);
         }
       } catch { /* continue without sulla-native tools */ }
 
+      const transportContext = await transport.context({
+        provider:          'claude-code',
+        conversationId:    convId,
+        state,
+        providerSessionId: existingSession,
+        toolSessionId:     mcpSession?.id,
+      });
+      const providerConfig = requireBrokeredContainerAuth(transportContext);
+      const { oauthToken, apiKey } = transportContext.runtime === 'lima'
+        ? await this.resolveClaudeCreds()
+        : { oauthToken: '', apiKey: '' };
+      if (transportContext.runtime === 'lima' && !oauthToken && !apiKey) return;
+      const toolConfig = mcpSession && transportContext.runtime === 'container'
+        ? requireContainerToolConfig(transportContext)
+        : undefined;
+      if (mcpSession) {
+        mcpConfigPath = transportContext.runtime === 'container'
+          ? toolConfig?.claudeConfigPath ?? null
+          : this.writeMcpConfig(mcpSession);
+        if (transportContext.runtime === 'container' && !mcpConfigPath) {
+          throw new Error('Container Claude execution requires an opaque broker MCP config');
+        }
+      }
+
       // The turn's own system message doesn't exist yet at prewarm time, so a
       // pre-booted primary gets the full Sulla prompt (byte-stable by design).
-      const systemPromptPath = writeSystemPromptFile(await this.fallbackSystemPrompt());
+      const systemPromptFile = transport.files.write({
+        context:       transportContext,
+        purpose:       'system-prompt',
+        suggestedName: `claude-system-${ crypto.randomUUID() }.md`,
+        data:          await this.fallbackSystemPrompt(),
+      });
+      const systemPromptPath = systemPromptFile.path;
       const disallowedTools = disallowedToolsFor(state.metadata as any);
       const pidFile = newRemotePidFile();
       const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: true, disallowedTools, systemPromptPath, pidFile });
-      const proc = childProcess.spawn(paths.limactl, args, {
-        env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
+      const providerCommand = this.buildProviderCommand({
+        existingSession,
+        mcpConfigPath,
+        streamJsonInput: true,
+        disallowedTools,
+        systemPromptPath,
+        environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
       });
-      removeFileOnExit(proc, systemPromptPath);
+      const proc = transport.spawn({
+        context: transportContext,
+        providerCommand,
+        ...(transportContext.runtime === 'lima'
+          ? {
+            limaCommand: { executable: paths.limactl, args, env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' } },
+          }
+          : {}),
+      });
+      proc.once('exit', () => systemPromptFile.dispose());
 
       const record: PrewarmRecord = {
         proc,
+        transport,
+        transportContext,
+        systemPromptFile,
         mcpSession,
         mcpConfigPath,
         pidFile,
@@ -513,14 +594,14 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   /** Claim a live pre-warmed process for this conversation, or null. */
-  private claimPrewarm(convId: string, model: string): PrewarmRecord | null {
+  private claimPrewarm(convId: string, model: string, transport: ProviderExecutionTransport): PrewarmRecord | null {
     const rec = this.prewarmed.get(convId);
     if (!rec) return null;
     this.prewarmed.delete(convId);
     this.idle.delete(rec);
     if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
-    if (rec.closed || rec.model !== model) {
-      this.killPrewarmRecord(rec);                       // dead or model mismatch
+    if (rec.closed || rec.model !== model || rec.transport !== transport) {
+      this.killPrewarmRecord(rec);                       // dead, model, or runtime mismatch
       return null;
     }
 
@@ -679,33 +760,21 @@ export class ClaudeCodeService extends BaseLanguageModel {
     this.idle.delete(rec);
     if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
     try { rec.proc.kill('SIGTERM') } catch { /* already dead */ }
-    // SIGTERM on the host-side limactl doesn't reliably reach claude in the VM
-    // (no TTY) — an evicted/reaped proc kept running its session headless,
-    // and the next --resume of that session collided with it. Kill by pidfile.
-    try {
-      const killProc = childProcess.spawn(
-        paths.limactl,
-        ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(rec.pidFile, 'TERM')],
-        { env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' }, stdio: 'ignore', detached: true },
-      );
-      killProc.on('error', () => { /* best effort */ });
-      killProc.unref();
-    } catch { /* best effort */ }
+    Promise.resolve(rec.transport.terminate({
+      context: rec.transportContext, process: rec.proc, signal: 'TERM', remotePidFile: rec.pidFile,
+    })).catch(() => {});
     const escalation = setTimeout(() => {
       try { if (rec.proc.exitCode === null) rec.proc.kill('SIGKILL'); } catch { /* already dead */ }
-      try {
-        const killProc = childProcess.spawn(
-          paths.limactl,
-          ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(rec.pidFile, 'KILL')],
-          { env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' }, stdio: 'ignore', detached: true },
-        );
-        killProc.on('error', () => { /* best effort */ });
-        killProc.unref();
-      } catch { /* best effort */ }
+      Promise.resolve(rec.transport.terminate({
+        context: rec.transportContext, process: rec.proc, signal: 'KILL', remotePidFile: rec.pidFile,
+      })).catch(() => {});
     }, 5_000);
     escalation.unref?.();
     if (rec.mcpSession) { try { rec.mcpSession.revoke() } catch { /* ignore */ } }
-    if (rec.mcpConfigPath) { try { fs.unlinkSync(rec.mcpConfigPath) } catch { /* ignore */ } }
+    if (rec.mcpConfigPath && rec.transportContext.runtime === 'lima') {
+      try { fs.unlinkSync(rec.mcpConfigPath) } catch { /* ignore */ }
+    }
+    rec.systemPromptFile?.dispose();
   }
 
   override getContextWindow(): number {
@@ -720,9 +789,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return 'Claude Code';
   }
 
-  protected async healthCheck(): Promise<boolean> {
+  protected healthCheck(): Promise<boolean> {
     // Credentials presence is deferred until spawn time (see runClaude).
-    return true;
+    return Promise.resolve(true);
   }
 
   constructor() {
@@ -814,17 +883,24 @@ export class ClaudeCodeService extends BaseLanguageModel {
    * Save a base64 image block to ~/sulla/workspaces/attachments/ so the
    * Lima VM agent can read it via the Read tool. Returns the saved path.
    */
-  private saveImageAttachment(b: any): string | null {
+  private saveImageAttachment(b: any, context?: ProviderTransportContext, refs?: ProviderFileRef[]): string | null {
     try {
       const data: string | undefined = b?.source?.data;
       const mediaType: string = b?.source?.media_type || 'image/png';
       if (!data) return null;
 
       const ext = mediaType.split('/')[1]?.split('+')[0] || 'png';
+      const filename = `attachment-${ Date.now() }-${ crypto.randomBytes(4).toString('hex') }.${ ext }`;
+      if (context) {
+        const ref = getProviderExecutionTransport().files.write({
+          context, purpose: 'attachment', suggestedName: filename, data: Buffer.from(data, 'base64'), mode: 0o600,
+        });
+        refs?.push(ref);
+        return ref.path;
+      }
       const dir = path.join(paths.sullaHome, 'workspaces', 'attachments');
       fs.mkdirSync(dir, { recursive: true });
 
-      const filename = `attachment-${ Date.now() }.${ ext }`;
       const filepath = path.join(dir, filename);
       fs.writeFileSync(filepath, Buffer.from(data, 'base64'));
 
@@ -845,13 +921,13 @@ export class ClaudeCodeService extends BaseLanguageModel {
    * Image blocks are saved to disk and their paths injected into the text
    * so the Claude Code agent can read them with the Read tool.
    */
-  private extractLatestUserMessage(messages: ChatMessage[]): string {
+  private extractLatestUserMessage(messages: ChatMessage[], context?: ProviderTransportContext, refs?: ProviderFileRef[]): string {
     const blockToText = (b: any): string => {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
       if (b.type === 'text' && typeof b.text === 'string') return b.text;
       if (b.type === 'image' && b?.source?.type === 'base64') {
-        const savedPath = this.saveImageAttachment(b);
+        const savedPath = this.saveImageAttachment(b, context, refs);
         return savedPath ? `[Image attached — read it at: ${ savedPath }]` : '';
       }
       if (b.type === 'tool_result') {
@@ -1073,22 +1149,24 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
   ): Promise<{ text: string; usage?: any }> {
-    // Credentials: integration vault first, settings fallback (shared with prewarm()).
-    const { oauthToken, apiKey } = await this.resolveClaudeCreds();
-
-    if (!oauthToken && !apiKey) {
-      throw new Error('No Claude credentials configured. Sign in via Integrations → Claude Code.');
-    }
-
     const convId = options.conversationId ?? '__default__';
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
+    const transport = getProviderExecutionTransport();
+    const initialTransportContext = await transport.context({
+      provider:          'claude-code',
+      conversationId:    convId,
+      state:             options.state,
+      providerSessionId: existingSession,
+    });
+    requireBrokeredContainerAuth(initialTransportContext);
+    const attachmentRefs: ProviderFileRef[] = [];
 
     // Prompt strategy:
     //   - existingSession → send only the latest user message (Claude has the
     //     rest via --resume + prompt cache)
     //   - no session    → seed Claude with the full curated transcript
     const extractedPrompt = existingSession
-      ? this.extractLatestUserMessage(messages)
+      ? this.extractLatestUserMessage(messages, initialTransportContext, attachmentRefs)
       : this.serializeFullTranscript(messages);
 
     if (!extractedPrompt.trim()) {
@@ -1112,11 +1190,8 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const bgPreamble = heldNotices.length ? formatBackgroundNotices(heldNotices) : '';
     const prompt = [contextPrefix, bgPreamble, basePrompt].filter(Boolean).join('\n\n');
 
-    log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
-
-    // Lima only exists on macOS/Linux; paths.limactl is a throwing getter on
-    // Windows. Surface a clear, user-readable error instead of an opaque crash.
-    if (process.platform === 'win32') {
+    // Lima only exists on macOS/Linux; container transports do not depend on it.
+    if (transport.runtime === 'lima' && process.platform === 'win32') {
       throw new Error('Claude Code execution requires the Lima VM, which is not available on Windows yet. This feature currently supports macOS and Linux only.');
     }
 
@@ -1130,7 +1205,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const speculative = warm || await this.speculativeBootEnabled();
     if (warm) await this.refreshPoolLimits();
     if (speculative) await this.waitForAutonomousTurn(convId);
-    const adopted = speculative ? this.claimPrewarm(convId, this.model || 'claude-code') : null;
+    const adopted = speculative ? this.claimPrewarm(convId, this.model || 'claude-code', transport) : null;
 
     // Mint an MCP session bound to the calling graph state, if we have one AND
     // the in-process MCP server is listening. An adopted process already
@@ -1151,12 +1226,37 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         const host = getMCPServerHost();
         if (host.running) {
           mcpSession = host.registerSession(options.state, PROC_MCP_SESSION_TTL_MS);
-          mcpConfigPath = this.writeMcpConfig(mcpSession);
-          log.log(`[ClaudeCodeService] MCP session minted — config=${ mcpConfigPath } url=${ mcpSession.url }`);
+          mcpConfigPath = transport.runtime === 'lima' ? this.writeMcpConfig(mcpSession) : null;
+          log.log(`[ClaudeCodeService] MCP session minted — config=${ mcpConfigPath ?? '(transport-owned)' } url=${ mcpSession.url }`);
         }
       } catch (err) {
         log.log(`[ClaudeCodeService] MCP session setup failed, continuing without sulla-native tools: ${ (err as Error)?.message ?? err }`);
       }
+    }
+
+    const transportContext = adopted?.transportContext ?? (mcpSession
+      ? await transport.context({
+        provider:          'claude-code',
+        conversationId:    convId,
+        state:             options.state,
+        providerSessionId: existingSession,
+        toolSessionId:     mcpSession.id,
+      })
+      : initialTransportContext);
+    const providerConfig = requireBrokeredContainerAuth(transportContext);
+    const { oauthToken, apiKey } = transportContext.runtime === 'lima'
+      ? await this.resolveClaudeCreds()
+      : { oauthToken: '', apiKey: '' };
+    log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
+    if (transportContext.runtime === 'lima' && !oauthToken && !apiKey) {
+      throw new Error('No Claude credentials configured. Sign in via Integrations → Claude Code.');
+    }
+    const toolConfig = mcpSession && transportContext.runtime === 'container'
+      ? requireContainerToolConfig(transportContext)
+      : undefined;
+    if (!adopted && mcpSession && transportContext.runtime === 'container') {
+      mcpConfigPath = toolConfig?.claudeConfigPath ?? null;
+      if (!mcpConfigPath) throw new Error('Container Claude execution requires an opaque broker MCP config');
     }
 
     // Refresh ~/.claude/CLAUDE.md on the host (kept for host-side Claude Code
@@ -1184,18 +1284,33 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // An adopted process already booted with its prompt file; a fresh spawn
     // gets the caller-built system prompt (primary chat, observer, trainer…),
     // falling back to the full Sulla prompt for callers that bypass BaseNode.
-    const systemPromptPath = adopted
+    const systemPromptFile: ProviderFileRef | null = adopted
       ? null
-      : writeSystemPromptFile(systemPromptFromMessages(messages) || await this.fallbackSystemPrompt());
+      : transport.files.write({
+        context:       transportContext,
+        purpose:       'system-prompt',
+        suggestedName: `claude-system-${ crypto.randomUUID() }.md`,
+        data:          systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(),
+      });
+    const systemPromptPath = systemPromptFile?.path ?? null;
     const pidFile = adopted ? adopted.pidFile : newRemotePidFile();
     const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: speculative, disallowedTools, systemPromptPath, pidFile });
+    const providerCommand = this.buildProviderCommand({
+      existingSession,
+      mcpConfigPath,
+      streamJsonInput: speculative,
+      disallowedTools,
+      systemPromptPath,
+      environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
+    });
 
     const cleanupMcp = () => {
+      for (const ref of attachmentRefs.splice(0)) ref.dispose();
       if (mcpSession) {
         try { mcpSession.revoke() } catch { /* ignore */ }
         mcpSession = null;
       }
-      if (mcpConfigPath) {
+      if (mcpConfigPath && transportContext.runtime === 'lima') {
         try { fs.unlinkSync(mcpConfigPath) } catch { /* file may already be gone */ }
         mcpConfigPath = null;
       }
@@ -1205,7 +1320,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       cleanupMcp();
       if (adopted) this.disposePrewarmRecord(adopted, convId);
       if (systemPromptPath) {
-        try { fs.unlinkSync(systemPromptPath) } catch { /* already gone */ }
+        systemPromptFile?.dispose();
       }
       const error = new Error('Claude Code run aborted');
       error.name = 'AbortError';
@@ -1224,23 +1339,32 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       proc.removeAllListeners('error');
       proc.stdin.removeAllListeners('error');
     } else {
-      proc = childProcess.spawn(limactlPath, args, {
-        env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
+      proc = transport.spawn({
+        context: transportContext,
+        providerCommand,
+        ...(transportContext.runtime === 'lima'
+          ? {
+            limaCommand: { executable: limactlPath, args, env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' } },
+          }
+          : {}),
       });
-      removeFileOnExit(proc, systemPromptPath);
+      proc.once('exit', () => systemPromptFile?.dispose());
       // Warm mode with no prewarm available: still track this fresh process so
       // it can be parked for reuse after the turn.
       if (warm) {
         poolEntry = {
           proc,
+          transport,
+          transportContext,
+          systemPromptFile: systemPromptFile ?? undefined,
           mcpSession,
           mcpConfigPath,
           pidFile,
-          model:     this.model || 'claude-code',
-          createdAt: Date.now(),
-          closed:    false,
-          busy:      false,
-          reapTimer: null,
+          model:            this.model || 'claude-code',
+          createdAt:        Date.now(),
+          closed:           false,
+          busy:             false,
+          reapTimer:        null,
         };
       }
     }
@@ -1365,7 +1489,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         const scheduleForcedSettlement = (makeError: () => Error) => {
           const barrier = terminationPromise;
           if (!barrier) return;
-          void barrier.then(async() => {
+          barrier.then(async() => {
             if (settled) return;
             settled = true;
             stopHeartbeat();
@@ -1390,7 +1514,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
             const persistenceError = await persistSession();
             cleanupMcp();
             reject(options.signal?.aborted ? makeError() : (persistenceError ?? error));
-          });
+          }).catch(() => {});
         };
         // stream-json input only: set once the replay echo of THIS turn's prompt
         // arrives. A `result` before that belongs to a turn the CLI ran on its
@@ -1442,17 +1566,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         // message had just started), which died as "returned no output".
         const killRemoteClaude = async(sig: 'TERM' | 'KILL') => {
           try {
-            const killProc = childProcess.spawn(
-              limactlPath,
-              ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, sig)],
-              {
-                env:      { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
-                stdio:    'ignore',
-                detached: true,
-              },
-            );
-            killProc.unref();
-            await waitForKillHelper(killProc);
+            await transport.terminate({
+              context: transportContext, process: proc, signal: sig, remotePidFile: pidFile,
+            });
           } catch (err) {
             log.log(`[ClaudeCodeService] Remote kill failed: ${ (err as Error)?.message ?? err }`);
             throw err;
@@ -2106,10 +2222,10 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           // fresh session so the user doesn't see a dead-end error.
           if (sessionInUse && !retryWithoutSession) {
             log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked; retrying without --resume for conversationId=${ convId }`);
-            void this.deleteSession(convId).then(() => this.runClaude(messages, callbacks, options, true)).then(
+            this.deleteSession(convId).then(() => this.runClaude(messages, callbacks, options, true)).then(
               r => resolve(r),
               reject,
-            );
+            ).catch(reject);
             return;
           }
 

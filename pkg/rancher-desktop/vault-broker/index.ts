@@ -28,6 +28,16 @@ export type {
   LocalVaultErrorResponse,
 } from '../../../services/sulla-vault/src/contracts';
 export type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
+export {
+  createProviderCliBridge,
+  type ProviderCliAuthMode,
+  type ProviderCliBridgeIdentity,
+  type ProviderCliBridgeLease,
+  type ProviderCliBridgeOptions,
+  type ProviderCliIntegration,
+  type ProviderCliName,
+  type ProviderCliOpaqueConfig,
+} from './providerCliBridge';
 
 const TOOLS_VAULT_ENDPOINT = 'https://sulla_vault:8787';
 const DESKTOP_VAULT_ENDPOINT = 'https://127.0.0.1:30135';

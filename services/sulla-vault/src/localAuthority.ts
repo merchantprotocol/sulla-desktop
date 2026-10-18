@@ -271,6 +271,7 @@ export const localAuthorityTestHooks = {
   operationDigest,
   privateAddress,
   streamResponseIsBodyless,
+  deriveChatgptAccountRoutingForRequest,
   StreamingRedactor,
 };
 
@@ -364,6 +365,17 @@ function credentialField(item: VaultItemPlaintext, field: string): string | unde
       ? item.password
       : undefined) ??
     item.fields?.find(candidate => candidate.name === field)?.value;
+}
+
+function deriveChatgptAccountRoutingForRequest(
+  input: Pick<BrokerExecuteRequest, 'operation' | 'ref'>,
+  plaintext: VaultItemPlaintext,
+): void {
+  if (input.operation !== 'provider.cli' || input.ref.integrationId !== 'codex') return;
+  const properties = plaintext.integration?.properties;
+  if (!properties || properties.chatgpt_account_id) return;
+  const accountId = extractBoundedChatgptAccountId(properties.id_token, properties.access_token);
+  if (accountId) properties.chatgpt_account_id = accountId;
 }
 
 function redact(value: string, secrets: string[]): string {
@@ -1753,7 +1765,7 @@ export class LocalVaultAuthority {
       this.approvals.delete(input.approvalId!);
     }
 
-    await this.backfillChatgptAccountRouting(item, plaintext, keys, generation);
+    deriveChatgptAccountRoutingForRequest(input, plaintext);
 
     const secrets: string[] = [];
     const headers: Record<string, string> = { ...(input.headers ?? {}) };
@@ -2201,20 +2213,6 @@ export class LocalVaultAuthority {
       delete prepared.plaintext.integration.properties[field];
     }
     prepared.item.revision = await this.persistOAuthItem(prepared, keys, db);
-  }
-
-  private async backfillChatgptAccountRouting(
-    item: ItemRow, plaintext: VaultItemPlaintext, keys: UnlockedKeys, generation: number,
-  ): Promise<void> {
-    const properties = plaintext.integration?.properties;
-    if (!properties || properties.chatgpt_account_id) return;
-    const accountId = extractBoundedChatgptAccountId(properties.id_token, properties.access_token);
-    if (!accountId) return;
-    properties.chatgpt_account_id = accountId;
-    item.revision = await this.runSecurityOperation(async() => {
-      this.requireGeneration(generation);
-      return await this.persistOAuthItem({ item, plaintext, generation }, keys, this.db);
-    });
   }
 
   private async persistOAuthItem(

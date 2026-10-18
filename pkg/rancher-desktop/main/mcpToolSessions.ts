@@ -9,6 +9,7 @@
 import { randomBytes } from 'crypto';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
+import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
 // Default session lifetime. Claude Code calls are short (usually <60s), but
 // workflow orchestration can take longer — 10 min leaves room.
@@ -21,22 +22,24 @@ export const DEFAULT_SESSION_TTL_MS = 10 * 60 * 1000;
  * point of the in-process bridge.
  */
 export interface ToolSession {
-  id:         string;
-  state:      BaseThreadState;
-  createdAt:  number;
-  lastUsedAt: number;
-  expiresAt:  number;
+  id:                string;
+  state:             BaseThreadState;
+  createdAt:         number;
+  lastUsedAt:        number;
+  expiresAt:         number;
   /** Idle lifetime: every use slides `expiresAt` to `now + ttlMs`. */
-  ttlMs:      number;
+  ttlMs:             number;
+  /** Verified container identity projected into in-process tool dispatch. */
+  executionContext?: ToolExecutionContext;
 }
 
 export class ToolSessionRegistry {
   private readonly sessions = new Map<string, ToolSession>();
 
-  register(state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS): string {
+  register(state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS, executionContext?: ToolExecutionContext): string {
     const id = randomBytes(24).toString('base64url');
 
-    this.put(id, state, ttlMs);
+    this.put(id, state, ttlMs, executionContext);
     return id;
   }
 
@@ -51,16 +54,17 @@ export class ToolSessionRegistry {
    * every CLI/MCP call in the turn on "Expired tool session". Keeps the
    * session's own TTL unless one is passed.
    */
-  rebind(id: string, state: BaseThreadState, ttlMs?: number): boolean {
+  rebind(id: string, state: BaseThreadState, ttlMs?: number, executionContext?: ToolExecutionContext): boolean {
     if (!id) return false;
     const session = this.sessions.get(id);
     if (!session) {
-      this.put(id, state, ttlMs ?? DEFAULT_SESSION_TTL_MS);
+      this.put(id, state, ttlMs ?? DEFAULT_SESSION_TTL_MS, executionContext);
       return true;
     }
     const now = Date.now();
     if (ttlMs !== undefined) session.ttlMs = ttlMs;
     session.state = state;
+    session.executionContext = executionContext;
     session.lastUsedAt = now;
     session.expiresAt = now + session.ttlMs;
     return true;
@@ -92,9 +96,9 @@ export class ToolSessionRegistry {
     this.sessions.clear();
   }
 
-  private put(id: string, state: BaseThreadState, ttlMs: number): void {
+  private put(id: string, state: BaseThreadState, ttlMs: number, executionContext?: ToolExecutionContext): void {
     const now = Date.now();
 
-    this.sessions.set(id, { id, state, createdAt: now, lastUsedAt: now, expiresAt: now + ttlMs, ttlMs });
+    this.sessions.set(id, { id, state, createdAt: now, lastUsedAt: now, expiresAt: now + ttlMs, ttlMs, executionContext });
   }
 }

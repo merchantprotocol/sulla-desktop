@@ -266,6 +266,17 @@ describe('one return: return_result validates the contract', () => {
     expect((await getJob(tab.jobId))?.tasks[0].result).toEqual({ lanes: ['todo'] });
   });
 
+  it('preserves structured output in the default result contract', async() => {
+    const tab = await launchTab('structured-default-output');
+    const output = { pullRequest: 42, checks: ['routing', 'cleanup'] };
+    const result = await (asChild(new ReturnResultWorker(), tab.childThreadId) as any)._validatedCall({
+      status: 'completed', summary: 'Container parity verified.', output,
+    });
+
+    expect(result.successBoolean).toBe(true);
+    expect((await getJob(tab.jobId))?.tasks[0].result).toMatchObject({ output });
+  });
+
   it('refuses a return from a thread that does not own the contract', async() => {
     const tab = await launchTab('owner-parent');
     const other = await launchTab('owner-parent-2');
