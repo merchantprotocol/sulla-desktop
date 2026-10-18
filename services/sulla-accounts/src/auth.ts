@@ -14,7 +14,7 @@ export interface OwnerRequest extends Request {
 }
 
 export interface ServiceRequest extends Request {
-  service?: { id: string; issuers: Set<string>; pathPrefixes: string[]; methods: Set<string> };
+  service?: { id: string; issuers: Set<string>; allowedAudiences: Set<string>; pathPrefixes: string[]; methods: Set<string> };
 }
 
 function bearer(request: Request): string | undefined {
@@ -69,7 +69,13 @@ export function authenticateService(config: AccountsConfig) {
     const serviceId = request.header('x-sulla-service-id');
     const grant = serviceId ? config.serviceTokens.get(serviceId) : undefined;
     if (!equalSecret(request.header('x-sulla-service-token'), grant?.token)) { response.status(401).json({ error: 'service_authentication_required' }); return; }
-    request.service = { id: serviceId!, issuers: grant!.issuers, pathPrefixes: grant!.pathPrefixes, methods: grant!.methods };
+    request.service = {
+      id: serviceId!,
+      issuers: grant!.issuers,
+      allowedAudiences: grant!.allowedAudiences,
+      pathPrefixes: grant!.pathPrefixes,
+      methods: grant!.methods,
+    };
     next();
   };
 }
@@ -96,7 +102,7 @@ export async function verifyOidcToken(
   });
   if (matches.length !== 1) throw new Error(matches.length ? 'ambiguous signing key' : 'signing key not found');
   const key = matches[0];
-  const publicKey = createPublicKey({ key: key as JsonWebKey, format: 'jwk' });
+  const publicKey = createPublicKey({ key: key as import('node:crypto').JsonWebKey, format: 'jwk' });
   const payload = jwt.verify(token, publicKey, { algorithms: [...allowedAlgorithms], issuer, audience });
   if (typeof payload === 'string') throw new Error('invalid token');
   if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp) || payload.exp <= Date.now() / 1000) throw new Error('token expiry is invalid');
