@@ -77,6 +77,7 @@ describe('Files keychain bootstrap', () => {
     const keychain = new SullaFilesKeychain(keyPath, () => Promise.resolve(storage()), (key) => { calls++; retained = key; return Promise.reject(new Error('synthetic request failure')) });
     const results = await Promise.allSettled([keychain.unlock(), keychain.unlock()]);
     expect(results.every(result => result.status === 'rejected')).toBe(true);
+    expect(results.every(result => result.status === 'rejected' && result.reason.message === 'Files service could not finish secure startup')).toBe(true);
     expect(calls).toBe(1);
     expect(retained?.every(byte => byte === 0)).toBe(true);
   });

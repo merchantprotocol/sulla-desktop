@@ -1,37 +1,57 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { adoptVaultPrincipal } from './vaultPrincipal.js';
 
-test('Vault principal adoption survives restart and rejects foreign or explicitly configured identities', async() => {
-  let owner = 'desktop-user';
-  let pendingOwner = owner;
-  let mutations = 0;
-  const db:any = { connect: async() => ({
+function database(initial:{ id:string; owner_user_id:string }[], foreignBundle = false) {
+  let rows = structuredClone(initial); let pending = structuredClone(rows); let mutations = 0;
+  const db:any = { connect: () => Promise.resolve({
     release() {},
-    async query(sql:string, args:unknown[] = []) {
-      if (sql === 'BEGIN') pendingOwner = owner;
-      else if (sql === 'COMMIT') owner = pendingOwner;
-      else if (sql === 'ROLLBACK') pendingOwner = owner;
-      else if (sql.startsWith('SELECT owner_user_id')) return { rows: [{ owner_user_id: owner }] };
-      else if (sql.startsWith('SELECT 1 FROM files_collection_key_bundles')) return { rowCount: 0 };
-      else {
+    query(sql:string, args:any[] = []) {
+      if (sql === 'BEGIN') pending = structuredClone(rows);
+      else if (sql === 'COMMIT') rows = structuredClone(pending);
+      else if (sql === 'ROLLBACK') pending = structuredClone(rows);
+      else if (sql.startsWith('SELECT id::text')) return Promise.resolve({ rows: structuredClone(pending) });
+      else if (sql.startsWith('SELECT 1 FROM files_collection_key_bundles')) return Promise.resolve({ rowCount: foreignBundle ? 1 : 0, rows: [] });
+      else if (sql.startsWith('UPDATE collections SET')) {
         mutations++;
-        if (sql.startsWith('UPDATE collections SET')) pendingOwner = String(args[1]);
-      }
-      return { rows: [], rowCount: 0 };
+        const ids = args[0] as string[];
+        pending = pending.map(row => ids.includes(row.id) ? { ...row, owner_user_id: String(args[1]) } : row);
+      } else if (!sql.startsWith('UPDATE file_share_links')) mutations++;
+      return Promise.resolve({ rows: [], rowCount: 0 });
     },
   }) };
-  const first = { userId: 'desktop-user' };
-  await adoptVaultPrincipal(db, first, 'synthetic-vault-owner');
-  assert.equal(first.userId, 'synthetic-vault-owner');
-  assert.equal(owner, 'synthetic-vault-owner');
-  const firstMutations = mutations;
-  const restarted = { userId: 'desktop-user' };
-  await adoptVaultPrincipal(db, restarted, 'synthetic-vault-owner');
-  assert.equal(restarted.userId, 'synthetic-vault-owner');
-  assert.equal(mutations, firstMutations, 'restart must not reassign ACLs or ownership');
-  await assert.rejects(adoptVaultPrincipal(db, { userId: 'desktop-user' }, 'different-vault-owner'), /another principal/);
-  await assert.rejects(adoptVaultPrincipal(db, { userId: 'explicit-other-owner' }, 'synthetic-vault-owner'), /another principal/);
-  assert.equal(owner, 'synthetic-vault-owner');
-  assert.equal(mutations, firstMutations);
+  return { db, rows: () => rows, mutations: () => mutations };
+}
+
+test('adopts only sentinel collections and leaves unrelated owners and ACL scope untouched', async() => {
+  const state = database([
+    { id: 'sentinel', owner_user_id: 'desktop-user' },
+    { id: 'historical-scratch', owner_user_id: 'agent-channel' },
+  ]);
+  const config = { userId: 'desktop-user' };
+  await adoptVaultPrincipal(state.db, config, 'synthetic-vault-owner');
+  assert.equal(config.userId, 'synthetic-vault-owner');
+  assert.deepEqual(state.rows(), [
+    { id: 'sentinel', owner_user_id: 'synthetic-vault-owner' },
+    { id: 'historical-scratch', owner_user_id: 'agent-channel' },
+  ]);
+
+  const mutations = state.mutations();
+  await adoptVaultPrincipal(state.db, { userId: 'desktop-user' }, 'synthetic-vault-owner');
+  assert.equal(state.mutations(), mutations, 'restart must not rewrite already adopted ownership or ACLs');
+});
+
+test('allows an empty database but rejects account switches and foreign sentinel bundles', async() => {
+  const empty = database([]); const emptyConfig = { userId: 'desktop-user' };
+  await adoptVaultPrincipal(empty.db, emptyConfig, 'synthetic-vault-owner');
+  assert.equal(emptyConfig.userId, 'synthetic-vault-owner');
+
+  const foreign = database([{ id: 'foreign', owner_user_id: 'another-user' }]);
+  await assert.rejects(adoptVaultPrincipal(foreign.db, { userId: 'desktop-user' }, 'synthetic-vault-owner'), /another principal/);
+  assert.equal(foreign.mutations(), 0);
+
+  const bundled = database([{ id: 'sentinel', owner_user_id: 'desktop-user' }], true);
+  await assert.rejects(adoptVaultPrincipal(bundled.db, { userId: 'desktop-user' }, 'synthetic-vault-owner'), /another principal/);
+  assert.equal(bundled.mutations(), 0);
 });

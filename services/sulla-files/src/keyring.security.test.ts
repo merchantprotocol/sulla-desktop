@@ -196,3 +196,21 @@ test('watched folder cannot overlap private storage through paths or symlinks', 
     await assert.rejects(assertSeparateStorageRoots(join(root, 'alias'), data, chunks), /must not overlap/);
   } finally { await rm(root, { recursive: true }) }
 });
+
+test('startup failures never masquerade as rejected master keys or expose internal errors', async() => {
+  const db = database([]); const keyring = new FilesKeyring(db); const master = randomBytes(32);
+  await keyring.unlock(master, signing); keyring.close();
+  const config:any = { keyring, chunkRoot: '/tmp/sulla-synthetic-keyring', capabilitySigningKey: signing, localToken: 'synthetic-local-token', mode: 'desktop' };
+  const server = createApp(db, config, undefined, undefined, undefined, async() => { throw new Error('synthetic-private-detail') }).listen(0);
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${ (server.address() as any).port }`;
+  const headers = { 'content-type': 'application/json', 'x-sulla-files-token': config.localToken };
+  try {
+    const startup = await fetch(`${ base }/v1/local/unlock`, { method: 'POST', headers, body: JSON.stringify({ masterKey: master.toString('base64') }) });
+    const failure = await startup.json();
+    assert.equal(startup.status, 503); assert.equal(failure.code, 'FILES_STARTUP_FAILED'); assert.equal(failure.stage, 'initialization');
+    assert.ok(!JSON.stringify(failure).includes('synthetic-private-detail')); assert.equal(keyring.unlocked, false);
+    const rejected = await fetch(`${ base }/v1/local/unlock`, { method: 'POST', headers, body: JSON.stringify({ masterKey: randomBytes(32).toString('base64') }) });
+    assert.equal(rejected.status, 409); assert.equal((await rejected.json()).code, 'FILES_MASTER_KEY_REJECTED');
+  } finally { master.fill(0); keyring.close(); await new Promise<void>(resolve => server.close(() => resolve())) }
+});
