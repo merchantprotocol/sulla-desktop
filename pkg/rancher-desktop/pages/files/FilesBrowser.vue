@@ -231,13 +231,14 @@
           </div>
         </div>
 
-        <div v-if="selectedEntries.length" class="selection-bar">
+        <div class="selection-slot" :aria-hidden="!selectedEntries.length"><div v-show="selectedEntries.length" class="selection-bar">
           <b>{{ selectedEntries.length }} selected</b>
           <button class="btn sm" type="button" :disabled="busy || selectedEntries.length !== 1" @click="renameSelected">Rename</button>
           <button class="btn sm" type="button" :disabled="busy" @click="moveSelected">Move</button>
           <button class="btn sm" type="button" :disabled="busy" @click="copySelected">Copy</button>
           <button class="btn sm" type="button" :disabled="busy || selectedEntries.every(entry => entry.folder)" @click="downloadSelected">Download</button>
           <button class="btn sm danger" type="button" :disabled="busy" @click="trashSelected">Move to Trash</button>
+        </div>
         </div>
         <div v-if="operationError" class="operation-error" role="alert">
           {{ operationError }} <button class="btn sm ghost" type="button" @click="operationError = ''">Dismiss</button>
@@ -337,7 +338,10 @@
                   :class="{ 'is-sel': selectedKeys.has(entry.key), agent: entry.agent }"
                   @click="focusEntry(entry, $event)"
                   @dblclick="activate(entry)"
-                  @contextmenu.prevent="openActions(entry)"
+                  @contextmenu.prevent.stop="openActions(entry, $event)"
+                  tabindex="0"
+                  :aria-selected="selectedKeys.has(entry.key)"
+                  @keydown="onEntryKeydown(entry, $event)"
                 >
                   <td>
                     <button
@@ -348,6 +352,7 @@
                       :aria-checked="selectedKeys.has(entry.key)"
                       :aria-label="`Select ${entry.name}`"
                       @click.stop="toggleSelected(entry.key)"
+                      @dblclick.stop
                     />
                   </td>
                   <td>
@@ -389,7 +394,8 @@
                       v-html="syncIcon(entry)"
                     />
                   </td>
-                  <td>
+                  <td @dblclick.stop>
+                    <button class="btn sm details-action" type="button" @click.stop="showDetails(entry)">Details</button>
                     <div
                       v-if="entrySync(entry) === 'conflict' && !entry.folder"
                       class="actions keep"
@@ -404,7 +410,7 @@
                         class="btn ico"
                         type="button"
                         title="More"
-                        @click.stop="openActions(entry)"
+                        @click.stop="openActions(entry, $event)"
                         v-html="icons.more"
                       />
                     </div>
@@ -429,7 +435,7 @@
                         class="btn ico"
                         type="button"
                         title="More"
-                        @click.stop="openActions(entry)"
+                        @click.stop="openActions(entry, $event)"
                         v-html="icons.more"
                       />
                     </div>
@@ -451,7 +457,10 @@
             :class="{ 'is-sel': selectedKeys.has(entry.key) }"
             @click="focusEntry(entry, $event)"
             @dblclick="activate(entry)"
-            @contextmenu.prevent="openActions(entry)"
+            @contextmenu.prevent.stop="openActions(entry, $event)"
+                  tabindex="0"
+                  :aria-selected="selectedKeys.has(entry.key)"
+                  @keydown="onEntryKeydown(entry, $event)"
           >
             <div
               class="th"
@@ -467,21 +476,28 @@
                 v-html="syncIcon(entry)"
               />
             </div>
+            <button class="btn sm details-action" type="button" @click.stop="showDetails(entry)" @dblclick.stop>Details</button>
             <div class="bd">
               <b>{{ entry.name }}</b><small>{{ entry.folder ? `${entry.childCount} file${entry.childCount === 1 ? '' : 's'}` : formatBytes(entry.size) }} · {{ formatShort(entry.updatedAt) }}</small>
             </div>
           </div>
         </div>
-        <div v-if="actionTarget" class="action-menu" role="menu">
-          <b>{{ actionTarget.name }}</b>
-          <button type="button" @click="runTargetAction('rename')">Rename</button>
-          <button type="button" @click="runTargetAction('move')">Move</button>
-          <button type="button" @click="runTargetAction('copy')">Copy</button>
-          <button v-if="!actionTarget.folder" type="button" @click="runTargetAction('download')">Download</button>
-          <button v-if="!actionTarget.folder && dataSource.capabilities.onlineOnly" type="button" @click="runTargetAction(entrySync(actionTarget) === 'online-only' ? 'keep-local' : 'online-only')">{{ entrySync(actionTarget) === 'online-only' ? 'Keep on this computer' : 'Make online only' }}</button>
-          <button type="button" class="danger" @click="runTargetAction('trash')">Move to Trash</button>
-          <button type="button" @click="actionTarget = null">Cancel</button>
-        </div>
+        <Teleport to="body">
+          <div v-if="actionTarget" ref="actionMenu" class="action-menu" role="menu" :aria-label="`Actions for ${actionTarget.name}`" :style="{ left: `${menuPosition.x}px`, top: `${menuPosition.y}px` }" @keydown="onMenuKeydown" @contextmenu.prevent @click.stop @dblclick.stop>
+            <b>{{ actionTarget.name }}</b>
+            <button v-if="actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('open')">Open folder</button>
+            <button role="menuitem" type="button" @click="runTargetAction('details')">Details</button>
+            <button v-if="section !== 'trash' && canShareEntry(actionTarget)" role="menuitem" type="button" @click="runTargetAction('share')">Share</button>
+            <template v-if="section !== 'trash'">
+              <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('rename')">Rename</button>
+              <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('move')">Move</button>
+              <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('copy')">Copy</button>
+              <button v-if="!actionTarget.folder" role="menuitem" type="button" :disabled="busy" @click="runTargetAction('download')">Download</button>
+              <button v-if="!actionTarget.folder && dataSource.capabilities.onlineOnly && (entrySync(actionTarget) === 'online-only' ? dataSource.keepOnMac : dataSource.makeOnlineOnly)" role="menuitem" type="button" :disabled="busy" @click="runTargetAction(entrySync(actionTarget) === 'online-only' ? 'keep-local' : 'online-only')">{{ entrySync(actionTarget) === 'online-only' ? 'Keep on this computer' : 'Make online only' }}</button>
+              <button v-if="dataSource.capabilities.trash" role="menuitem" type="button" class="danger" :disabled="busy" @click="runTargetAction('trash')">Move to Trash</button>
+            </template>
+          </div>
+        </Teleport>
 
         <div
           v-if="!loading && !error && section === 'files'"
@@ -557,12 +573,18 @@
         />
       </div>
     </div>
+    <dialog v-if="folderDetails" ref="folderDialog" class="folder-details" aria-labelledby="folder-details-title" @close="folderDetails = null" @click="onFolderBackdrop">
+      <h2 id="folder-details-title">{{ folderDetails.name }}</h2>
+      <dl><dt>Type</dt><dd>Folder</dd><dt>Location</dt><dd>{{ folderDetails.path }}</dd><dt>Files</dt><dd>{{ folderDetails.childCount }}</dd><dt>Size</dt><dd>{{ formatBytes(folderDetails.size) }}</dd><dt>Modified</dt><dd>{{ formatDate(folderDetails.updatedAt, true) }}</dd></dl>
+      <button class="btn" type="button" @click="folderDialog?.close()">Close</button>
+      <button class="btn pri" type="button" @click="openPath(folderDetails.path); folderDialog?.close()">Open folder</button>
+    </dialog>
     <ShareSheet v-if="shareTarget" :data-source="dataSource" :target="shareTarget" @close="shareTarget = null" @updated="refresh(true)" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import FileDetail from './FileDetail.vue';
 import ShareSheet from './ShareSheet.vue';
@@ -615,6 +637,9 @@ const section = ref<Section>('files'); const currentPath = ref(''); const query 
 const activeFilters = ref<Record<'type' | 'person' | 'date' | 'folder', string>>({ type: '', person: '', date: '', folder: '' });
 const searchResults = ref<FilesItem[] | null>(null); const searchInput = ref<HTMLInputElement | null>(null);
 const selectedKeys = ref(new Set<string>()); const uploadProgress = ref<{ current: number; total: number; name: string; percent: number; done: boolean } | null>(null);
+const selectionAnchor = ref<string | null>(null);
+const actionMenu = ref<HTMLElement | null>(null); const menuPosition = ref({ x: 0, y: 0 }); let menuTrigger:HTMLElement | null = null;
+const folderDetails = ref<DisplayEntry | null>(null); const folderDialog = ref<HTMLDialogElement | null>(null);
 const operationError = ref(''); const actionTarget = ref<DisplayEntry | null>(null);
 const uploadLog = ref<{ name: string; percent: number; done: boolean }[]>([]);
 // In-progress upload first, then the ones already finished in this batch (the stream only reports the current file).
@@ -770,10 +795,29 @@ function shareCurrentFolder() {
   shareTarget.value = { id: `folder:${ currentPath.value }`, name: currentPath.value.split('/').at(-1) || 'My Files', folder: true, path: currentPath.value, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
 }
 async function togglePause() { if (!snapshot.value) return; snapshot.value.status = await props.dataSource.setPaused(syncState.value !== 'paused') }
-function selectSection(next:Section) { section.value = next; currentPath.value = ''; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set() }
-function openRoot() { section.value = 'files'; currentPath.value = ''; selected.value = null; selectedKeys.value = new Set() }
-function openPath(next:string) { section.value = 'files'; currentPath.value = next; selected.value = null; selectedKeys.value = new Set() }
-function focusEntry(entry:DisplayEntry, event:MouseEvent) { if (event.metaKey || event.ctrlKey) { toggleSelected(entry.key); return } selectedKeys.value = new Set([entry.key]) }
+function selectSection(next:Section) { closeActions(false); selectionAnchor.value = null; section.value = next; currentPath.value = ''; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set() }
+function openRoot() { closeActions(false); selectionAnchor.value = null; section.value = 'files'; currentPath.value = ''; selected.value = null; selectedKeys.value = new Set() }
+function openPath(next:string) { closeActions(false); selectionAnchor.value = null; section.value = 'files'; currentPath.value = next; selected.value = null; selectedKeys.value = new Set() }
+function focusEntry(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
+  closeActions(false);
+  if (event.shiftKey && selectionAnchor.value) {
+    const entries = groups.value.flatMap(group => group.entries);
+    const start = entries.findIndex(item => item.key === selectionAnchor.value); const end = entries.findIndex(item => item.key === entry.key);
+    if (start >= 0 && end >= 0) { selectedKeys.value = new Set([...(event.metaKey || event.ctrlKey ? selectedKeys.value : []), ...entries.slice(Math.min(start, end), Math.max(start, end) + 1).map(item => item.key)]); return }
+  }
+  selectionAnchor.value = entry.key;
+  if (event.metaKey || event.ctrlKey) toggleSelected(entry.key); else selectedKeys.value = new Set([entry.key]);
+}
+function onEntryKeydown(entry:DisplayEntry, event:KeyboardEvent) {
+  if (event.target !== event.currentTarget) return;
+  if (event.key === 'Enter') { event.preventDefault(); activate(entry) }
+  else if (event.key === ' ') { event.preventDefault(); if (event.shiftKey) focusEntry(entry, event); else { selectionAnchor.value = entry.key; toggleSelected(entry.key) } }
+  else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); openActions(entry, event) }
+}
+async function showDetails(entry:DisplayEntry) { closeActions(false); if (!entry.folder) { selectEntry(entry); return } folderDetails.value = entry; await nextTick(); folderDialog.value?.showModal() }
+function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } }
+function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
+
 function activate(entry:DisplayEntry) { if (entry.folder) openPath(entry.path); else selectEntry(entry); }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
 function selectEntry(entry:DisplayEntry) { if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
@@ -796,10 +840,27 @@ function syncClass(entry:FilesItem) { return ({ synced: 'local', syncing: 'synci
 function syncIcon(entry:FilesItem) { return ({ synced: icons.syncLocal, syncing: icons.syncSpin, 'online-only': icons.syncOnline, conflict: icons.alert } as Record<string, string>)[entrySync(entry)] ?? icons.syncLocal }
 function syncText(entry:FilesItem) { return ({ synced: 'On this computer', syncing: 'Syncing', 'online-only': 'Online only', conflict: 'Conflict' } as Record<string, string>)[entrySync(entry)] ?? 'On this computer' }
 function clearFilters() { activeFilters.value = { type: '', person: '', date: '', folder: '' } }
-function toggleSelected(key:string) { const next = new Set(selectedKeys.value); next.has(key) ? next.delete(key) : next.add(key); selectedKeys.value = next }
+function toggleSelected(key:string) { selectionAnchor.value = key; const next = new Set(selectedKeys.value); next.has(key) ? next.delete(key) : next.add(key); selectedKeys.value = next }
 function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set() : new Set(visibleEntries.value.map(entry => entry.key)) }
 async function toggleStar(id:string) { if (!snapshot.value) return; const entry = visibleEntries.value.find(item => item.id === id); if (!entry) return; const next = !starred.value.has(id); try { await props.dataSource.setStar(snapshot.value.collection.id, entry.folder ? { folderPath: entry.path } : { fileId: entry.id }, next); const changed = new Set(starred.value); next ? changed.add(id) : changed.delete(id); starred.value = changed } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } }
-function openActions(entry:DisplayEntry) { if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]); actionTarget.value = entry }
+function closeActions(restoreFocus = true) { actionTarget.value = null; if (restoreFocus) menuTrigger?.focus() }
+async function openActions(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
+  if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]);
+  menuTrigger = event.currentTarget as HTMLElement; const rect = menuTrigger.getBoundingClientRect();
+  menuPosition.value = event instanceof MouseEvent && event.type === 'contextmenu' ? { x: event.clientX, y: event.clientY } : { x: rect.left, y: rect.bottom };
+  actionTarget.value = entry; await nextTick(); const menu = actionMenu.value; if (!menu) return;
+  const bounds = menu.getBoundingClientRect();
+  menuPosition.value = { x: Math.max(4, Math.min(menuPosition.value.x, window.innerWidth - bounds.width - 4)), y: Math.max(4, Math.min(menuPosition.value.y, window.innerHeight - bounds.height - 4)) };
+  menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+}
+function dismissActions(event:PointerEvent) { if (actionTarget.value && !actionMenu.value?.contains(event.target as Node)) closeActions(false) }
+function onMenuKeydown(event:KeyboardEvent) {
+  if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); closeActions(); return }
+  const buttons = [...(actionMenu.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
+  const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && buttons.length) { event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length; buttons[next].focus() }
+}
+
 function joinPath(folder:string, name:string) { return [folder.replace(/^\/+|\/+$/g, ''), name].filter(Boolean).join('/') }
 function operationItems(entries:DisplayEntry[], destination:string) { return entries.map(entry => ({ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id }), targetPath: joinPath(destination, entry.name) })) }
 async function perform(action:'move' | 'copy', items:{ fileId?:string; folderPath?:string; targetPath:string }[]) { if (!snapshot.value) return; busy.value = true; operationError.value = ''; try { await props.dataSource.operate(action, snapshot.value.collection.id, items); selectedKeys.value = new Set(); actionTarget.value = null; await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause); await refresh(true) } finally { busy.value = false } }
@@ -808,8 +869,22 @@ async function moveSelected() { const entries = selectedEntries.value; if (!entr
 async function copySelected() { const entries = selectedEntries.value; if (!entries.length) return; const destination = window.prompt('Copy to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('copy', operationItems(entries, destination)) }
 async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; busy.value = true; operationError.value = ''; try { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) { operationError.value = result.error; } } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function trashSelected() { const entries = selectedEntries.value; const files = new Map<string, FilesItem>(); for (const entry of entries) { if (!entry.folder) files.set(entry.id, entry); else for (const file of activeFiles.value.filter(file => file.path.startsWith(`${ entry.path }/`))) files.set(file.id, file) } busy.value = true; operationError.value = ''; try { for (const file of files.values()) await props.dataSource.trashFile(file.id); selectedKeys.value = new Set(); actionTarget.value = null; } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { await refresh(true); busy.value = false } }
-async function runTargetAction(action:'rename' | 'move' | 'copy' | 'download' | 'online-only' | 'keep-local' | 'trash') { if (!actionTarget.value) return; selectedKeys.value = new Set([actionTarget.value.key]); if (action === 'rename') await renameSelected(); else if (action === 'move') await moveSelected(); else if (action === 'copy') await copySelected(); else if (action === 'download') await downloadSelected(); else if (action === 'online-only' || action === 'keep-local') { const target = actionTarget.value; const operation = action === 'online-only' ? props.dataSource.makeOnlineOnly : props.dataSource.keepOnMac; if (!operation) return; busy.value = true; operationError.value = ''; try { await operation.call(props.dataSource, target.id); actionTarget.value = null; await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } } else await trashSelected(); }
+async function runTargetAction(action:'open' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'download' | 'online-only' | 'keep-local' | 'trash') {
+  const target = actionTarget.value; if (!target) return; closeActions();
+  if (action === 'open') { activate(target); return }
+  if (action === 'details') { await showDetails(target); return }
+  if (action === 'share') {
+    if (target.folder && snapshot.value) shareTarget.value = { id: target.id, name: target.name, folder: true, path: target.path, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
+    else shareEntry(target);
+    return;
+  }
+  if (action === 'rename' || action === 'online-only' || action === 'keep-local') selectedKeys.value = new Set([target.key]);
+  if (action === 'rename') await renameSelected(); else if (action === 'move') await moveSelected(); else if (action === 'copy') await copySelected(); else if (action === 'download') await downloadSelected();
+  else if (action === 'online-only' || action === 'keep-local') { const operation = action === 'online-only' ? props.dataSource.makeOnlineOnly : props.dataSource.keepOnMac; if (!operation) return; busy.value = true; operationError.value = ''; try { await operation.call(props.dataSource, target.id); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+  else await trashSelected();
+}
 function trackUpload(progress:{ current: number; name: string; percent: number; done: boolean }) { const log = progress.current <= 1 && !uploadLog.value.some(item => item.name === progress.name) ? [] : uploadLog.value.map(item => item.name === progress.name ? item : { ...item, done: true, percent: 100 }); const rest = log.filter(item => item.name !== progress.name); uploadLog.value = [...rest, { name: progress.name, percent: progress.percent, done: progress.done || progress.percent >= 100 }] }
+function closeMenuOnResize() { closeActions(false) }
 function onKeydown(event:KeyboardEvent) { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchInput.value?.focus() } }
 function navigateTo(detail:FilesNavigationPayload) {
   if (detail.section === 'shared-by-me') { selectSection('sharedByMe'); return }
@@ -847,8 +922,8 @@ watch([query, section], ([value, requestedSection]) => {
 function consumeNavigation() { if (!mounted || !props.navigation || !snapshot.value) return; navigateTo(props.navigation); emit('navigation-consumed') }
 watch(() => props.navigation, () => consumeNavigation());
 let stopUploadProgress:(() => void) | undefined;
-onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); consumeNavigation() }, 12_000) });
-onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) clearTimeout(searchTimer); window.removeEventListener('keydown', onKeydown); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
+onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); consumeNavigation() }, 12_000) });
+onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) clearTimeout(searchTimer); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
 </script>
 
 <style scoped>
@@ -908,11 +983,12 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "tnum" 1, "cv11" 1;
 }
-.selection-bar { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:8px 10px; border:1px solid var(--accent-line); border-radius:8px; background:var(--accent-soft); }
+.selection-slot { height:52px; margin-bottom:12px; overflow-x:auto; }
+.selection-bar { height:40px; box-sizing:border-box; white-space:nowrap; width:max-content; min-width:100%; display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:8px 10px; border:1px solid var(--accent-line); border-radius:8px; background:var(--accent-soft); }
 .selection-bar b { margin-right:auto; font-size:12px; }
 .operation-error { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:9px 11px; border:1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius:8px; background:var(--bad-soft); color:var(--bad); }
 .operation-error .btn { margin-left:auto; }
-.action-menu { position:absolute; z-index:20; top:122px; right:32px; width:190px; padding:6px; border:1px solid var(--line-2); border-radius:10px; background:var(--card-solid); box-shadow:var(--shadow-lg); }
+.action-menu { --text:#1a2332; --line-2:rgba(26,35,50,.14); --card-solid:#fff; --ink-05:rgba(26,35,50,.05); --bad:#d9403a; --shadow-lg:0 12px 36px rgba(26,35,50,.2); font:13px system-ui,sans-serif; color:var(--text); box-sizing:border-box; max-width:calc(100vw - 8px); max-height:calc(100vh - 8px); overflow:auto; position:fixed; z-index:1000; width:190px; padding:6px; border:1px solid var(--line-2); border-radius:10px; background:var(--card-solid); box-shadow:var(--shadow-lg); }
 .action-menu b { display:block; padding:7px 9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .action-menu button { display:block; width:100%; padding:7px 9px; border:0; border-radius:6px; background:transparent; color:var(--text); text-align:left; }
 .action-menu button:hover { background:var(--ink-05); }
@@ -1193,11 +1269,14 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
   .toolbar { flex-wrap: wrap; gap: 4px 10px; }
   .filters { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
   .filters .view { margin-left: 0; flex: none; }
-  .files .tbl th:nth-child(1), .files .tbl td:nth-child(1), .files .tbl th:nth-child(3), .files .tbl td:nth-child(3), .files .tbl th:nth-child(5), .files .tbl td:nth-child(5), .files .tbl th:nth-child(7), .files .tbl td:nth-child(7) { display: none; }
+  .files .tbl th:nth-child(1), .files .tbl td:nth-child(1), .files .tbl th:nth-child(3), .files .tbl td:nth-child(3), .files .tbl th:nth-child(5), .files .tbl td:nth-child(5) { display: none; }
+  .files .actions .btn:not([title="More"]){display:none}
+  .files .tbl th:nth-child(7){width:80px!important}
   .gridv { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .drop { flex-wrap: wrap; }
   .drop .btn { margin-left: 0; }
   .upl { display: none; }
   .detail-panel { width: calc(100% - 64px); }
 }
+.details-action{opacity:1;white-space:nowrap}.row:focus-visible,.tile:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}.folder-details{max-width:min(440px,calc(100vw - 32px));border:1px solid var(--line-2);border-radius:12px;background:var(--card-solid);color:var(--text);padding:24px}.folder-details::backdrop{background:rgba(26,35,50,.35)}.folder-details dl{display:grid;grid-template-columns:auto 1fr;gap:10px}.folder-details dd{margin:0;overflow-wrap:anywhere}.folder-details .btn{margin-right:8px}
 </style>
