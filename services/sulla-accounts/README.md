@@ -21,9 +21,9 @@ Every server start idempotently reconciles the versioned `sulla` realm configura
 preserving existing users and the durable Keycloak database. It maintains a public native
 PKCE client named `sulla-desktop`, with only
 `http://127.0.0.1:3020/v1/oidc/callback`, and a separate confidential hosted client named
-`sulla-web`. The default `sulla-membership` client scope issues the base
+`sulla-web`. The default `sulla-audience-sulla-membership` client scope issues the base
 `sulla-membership` audience. Explicit resource audiences remain opt-in through client scopes
-named `sulla-audience:<audience>`. `/opt/keycloak/data` must be backed by a durable volume.
+named `sulla-audience-<audience>`. `/opt/keycloak/data` must be backed by a durable volume.
 
 The reverse proxy publishes only the stable `/auth` issuer path, public authority metadata,
 the subject-scoped membership resolver and required owner
