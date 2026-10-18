@@ -3764,19 +3764,23 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     });
 
     await this.progressTracker.action('Deploying new containers', 63, async() => {
-      const compose = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'];
+      const composeCommand = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'];
 
       // Start the core independently so an unavailable optional published image
       // can never prevent Postgres, Redis, or the function runtimes from starting.
       await this.execCommand(
-        { root: true }, ...compose, 'up', '-d',
+        { root: true }, ...composeCommand, 'up', '-d',
         'postgres', 'redis', 'python_runtime', 'shell_runtime', 'node_runtime',
       );
 
       this.#activeOptionalSullaServices.clear();
       const optionalServices = ['sulla_projects', 'sulla_relay', 'workflow_manager', 'tools', 'sulla_files'];
 
-      if (compose.services.sulla_accounts) {
+      const configuredServices = await this.execCommand(
+        { capture: true, root: true }, ...composeCommand, 'config', '--services',
+      );
+
+      if (configuredServices.split(/\s+/).includes('sulla_accounts')) {
         try {
           const accountsDatabaseExists = await this.execCommand(
             { capture: true, root: true }, 'docker', 'exec', 'sulla_postgres',
@@ -3799,7 +3803,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         try {
           // Compose performs the normal pull/build here. --no-deps protects the
           // already-running core if the image is missing or the user is offline.
-          await this.execCommand({ root: true }, ...compose, 'up', '-d', '--no-deps', service);
+          await this.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', service);
           this.#activeOptionalSullaServices.add(service);
         } catch (error) {
           const fallback = this.#optionalSullaFallbackImages.get(service);
@@ -3810,7 +3814,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
               console.warn(`[Sulla] Pinned image for ${ service } unavailable; trying ${ fallback.image }`);
               await this.execCommand(
                 { root: true }, 'env', `${ fallback.env }=${ fallback.image }`,
-                ...compose, 'up', '-d', '--no-deps', service,
+                ...composeCommand, 'up', '-d', '--no-deps', service,
               );
               this.#activeOptionalSullaServices.add(service);
               continue;
