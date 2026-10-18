@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { scryptSync } from 'node:crypto';
 import test from 'node:test';
 
-import { encrypt, encryptChunk } from './crypto.js';
+import { chunkId, encrypt, encryptChunk } from './crypto.js';
+import { RangeNotSatisfiableError } from './fileStream.js';
 import { FilesKeyring } from './keyring.js';
 import { SharesService } from './shares.js';
 
@@ -37,6 +38,27 @@ test('share authorization fails closed for unknown, revoked, expired, password, 
   assert.equal(await status(() => allowed.shares.authorize('protected', { password: 'correct horse battery staple', wantsDownload: true })), 200);
   assert.equal(allowed.writes.some(sql => sql.includes('view_count=view_count+1')), true);
   assert.equal(allowed.writes.some(sql => sql.includes('file_share_events')), true);
+});
+
+test('share streaming supports suffix and open-ended ranges without whole-file buffering', async() => {
+  const plain = Buffer.from('0123456789'); const data = Buffer.alloc(32, 7); const dedup = Buffer.alloc(32, 8);
+  const id = chunkId(plain, dedup); const encrypted = await encryptChunk(plain, data, id); const reads:string[] = [];
+  const db = { query: (sql:string) => {
+    if (sql.includes('FROM file_share_links')) return Promise.resolve({ rows: [{ id: 'share-1', target_type: 'file', file_id: 'file-1' }] });
+    if (sql.startsWith('SELECT * FROM files WHERE id=')) return Promise.resolve({ rows: [{ id: 'file-1', path: 'media/clip.mp4', mime: 'video/mp4', current_version_id: 'version-1', deleted_at: null }] });
+    if (sql.includes('files_protected_files')) return Promise.resolve({ rows: [], rowCount: 0 });
+    if (sql.includes('FROM files f')) return Promise.resolve({ rows: [{ id: 'file-1', path: 'media/clip.mp4', mime: 'video/mp4', version_id: 'version-1', chunk_collection_id: 'collection-1', size: plain.length, total_size: plain.length, chunk_ids: [id] }] });
+    if (sql.includes('FROM chunks')) return Promise.resolve({ rows: [{ id, size: plain.length, stored_size: encrypted.length }] });
+    return Promise.reject(new Error(`Unexpected query: ${ sql }`));
+  } };
+  const store = { getBounded: (_collection:string, chunk:string) => { reads.push(chunk); return Promise.resolve(encrypted) } };
+  const shares = new SharesService(db as any, { mode: 'desktop', keyring: { keys: () => Promise.resolve({ data, dedup }) } } as any, store as any);
+  const read = async(range:string) => { const content = await shares.streamContent('share-1', '', range, new AbortController().signal); const parts:Buffer[] = []; for await (const part of content.body) parts.push(part); return { content, bytes: Buffer.concat(parts).toString() } };
+
+  const suffix = await read('bytes=-4'); assert.equal(suffix.bytes, '6789'); assert.equal(suffix.content.contentRange, 'bytes 6-9/10');
+  const open = await read('bytes=4-'); assert.equal(open.bytes, '456789'); assert.equal(open.content.contentRange, 'bytes 4-9/10');
+  await assert.rejects(() => shares.streamContent('share-1', '', 'bytes=10-', new AbortController().signal), RangeNotSatisfiableError);
+  assert.deepEqual(reads, [id, id]);
 });
 
 test('restoring a password-protected link requires password re-entry before cloud registration', async() => {

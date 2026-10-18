@@ -320,7 +320,28 @@ export function createApp(
     else throw new HttpError(409, 'The selection mixes watched and stored-only Files. Move or copy them in separate operations.');
     response.json({ ok: true, count: expanded.length });
   } catch (error) { next(error) } });
-  app.get('/v1/local/shares/:id/content', async(request, response, next) => { try { const content = await shares.content(request.params.id, String(request.query.path ?? '')); response.type(content.mime).setHeader('X-Sulla-Filename', encodeURIComponent(content.name)).send(content.bytes) } catch (error) { next(error) } });
+  app.get('/v1/local/shares/:id/content', async(request, response, next) => {
+    const controller = new AbortController(); const abort = () => controller.abort();
+    request.once('aborted', abort); response.once('close', abort);
+    try {
+      const content = await shares.streamContent(request.params.id, String(request.query.path ?? ''), request.header('range'), controller.signal);
+      response.status(content.status).type(content.mime).setHeader('X-Sulla-Filename', encodeURIComponent(content.name));
+      response.setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', 'private, no-store'); response.setHeader('Content-Length', content.contentLength);
+      if (content.contentRange) response.setHeader('Content-Range', content.contentRange);
+      for await (const part of content.body) {
+        if (!response.write(part)) await new Promise<void>((resolve, reject) => {
+          const cleanup = () => { response.off('drain', drained); response.off('close', closed) };
+          const drained = () => { cleanup(); resolve() };
+          const closed = () => { cleanup(); reject(Object.assign(new Error('Share stream cancelled'), { name: 'AbortError' })) };
+          response.once('drain', drained); response.once('close', closed);
+        });
+      }
+      response.end();
+    } catch (error) {
+      if (error instanceof RangeNotSatisfiableError && !response.headersSent) { response.status(416).setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', 'private, no-store'); response.setHeader('Content-Range', `bytes */${ error.size }`); response.setHeader('Content-Length', '0'); response.end(); return }
+      if (!controller.signal.aborted && !response.headersSent) next(error); else if (!controller.signal.aborted) response.destroy(error as Error);
+    } finally { request.off('aborted', abort); response.off('close', abort) }
+  });
   // Narrow contract for the future public viewer/relay. It validates the link
   // policy and returns metadata only; content stays on the authenticated local
   // relay route above until the visitor viewer lands.

@@ -19,6 +19,7 @@ const mockSullaSettingsModel = {
   SullaSettingsModel: {
     get: jest.fn<() => Promise<any>>().mockResolvedValue(''),
     set: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    getServicePassword: jest.fn<() => Promise<string>>().mockResolvedValue('synthetic-files-token'),
   },
 };
 
@@ -208,6 +209,62 @@ describe('DesktopRelayClient durability', () => {
     live.close();
     await jest.advanceTimersByTimeAsync(1_500);
     expect(MockWebSocket.instances.length).toBe(3);
+  });
+});
+
+describe('DesktopRelayClient share byte ranges', () => {
+  beforeEach(() => {
+    mockSullaSettingsModel.SullaSettingsModel.getServicePassword.mockResolvedValue('synthetic-files-token');
+  });
+
+  it('forwards Range and propagates 206 metadata without buffering the response', async() => {
+    const sent:Record<string, any>[] = [];
+    const client = new DesktopRelayClient() as any;
+    client.sendUnchecked = (frame:Record<string, any>) => sent.push(frame);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn(async(_url:URL | RequestInfo, init?:RequestInit) => {
+      expect(new Headers(init?.headers).get('Range')).toBe('bytes=4-');
+      const stream = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('456789')); controller.close() } });
+      return new Response(stream, { status: 206, headers: { 'Content-Type': 'video/mp4', 'Content-Length': '6', 'Content-Range': 'bytes 4-9/10', 'Accept-Ranges': 'bytes', 'X-Sulla-Filename': 'clip.mp4' } });
+    }) as typeof fetch;
+    try { await client.serveShare({ type: 'share_fetch', requestId: 'request-1', linkId: 'share-1', range: 'bytes=4-' }) } finally { globalThis.fetch = originalFetch }
+    expect(sent.map(frame => frame.type)).toEqual(['share_fetch_start', 'share_fetch_chunk', 'share_fetch_end']);
+    expect(sent[0]).toMatchObject({ status: 206, contentLength: 6, contentRange: 'bytes 4-9/10', acceptRanges: 'bytes' });
+    expect(Buffer.from(sent[1].data, 'base64').toString()).toBe('456789');
+  });
+
+  it('propagates an empty 416 response with the full size', async() => {
+    const sent:Record<string, any>[] = [];
+    const client = new DesktopRelayClient() as any;
+    client.sendUnchecked = (frame:Record<string, any>) => sent.push(frame);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn(async() => new Response(null, { status: 416, headers: { 'Content-Length': '0', 'Content-Range': 'bytes */10', 'Accept-Ranges': 'bytes' } })) as typeof fetch;
+    try { await client.serveShare({ type: 'share_fetch', requestId: 'request-2', linkId: 'share-1', range: 'bytes=10-' }) } finally { globalThis.fetch = originalFetch }
+    expect(sent.map(frame => frame.type)).toEqual(['share_fetch_start', 'share_fetch_end']);
+    expect(sent[0]).toMatchObject({ status: 416, contentLength: 0, contentRange: 'bytes */10', acceptRanges: 'bytes' });
+  });
+
+  it('honors cancellation only when it remains bound to this Desktop', async() => {
+    const client = new DesktopRelayClient() as any;
+    const controller = new AbortController();
+    client.shareRequests.set('request-3', controller);
+    await client.handleMessage(JSON.stringify({ type: 'share_fetch_cancel', requestId: 'request-3', targetDeviceId: 'another-desktop' }));
+    expect(controller.signal.aborted).toBe(false);
+    await client.handleMessage(JSON.stringify({ type: 'share_fetch_cancel', requestId: 'request-3', targetDeviceId: 'desktop-1' }));
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  it('never makes a relay request without the local Files credential', async() => {
+    const sent:Record<string, any>[] = [];
+    const client = new DesktopRelayClient() as any;
+    client.sendUnchecked = (frame:Record<string, any>) => sent.push(frame);
+    mockSullaSettingsModel.SullaSettingsModel.getServicePassword.mockResolvedValueOnce('');
+    const originalFetch = globalThis.fetch;
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock as typeof fetch;
+    try { await client.serveShare({ type: 'share_fetch', requestId: 'request-4', linkId: 'share-1' }) } finally { globalThis.fetch = originalFetch }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sent).toEqual([{ type: 'share_fetch_error', requestId: 'request-4', error: 'Sulla Files authentication is unavailable' }]);
   });
 });
 
