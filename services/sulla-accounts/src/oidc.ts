@@ -30,7 +30,6 @@ export interface Authority {
   jwks_uri: string;
   revocation_endpoint?: string;
   membership_endpoint?: string;
-  membership_audience?: string;
   subject?: string;
   connected_at?: Date;
 }
@@ -87,26 +86,13 @@ export async function createAuthority(db: Database, input: Record<string, unknow
   if (membershipEndpoint && !remoteAuthorityId) throw new Error('remoteAuthorityId is required with membershipEndpoint');
   if (membershipEndpoint && !membershipAudience) throw new Error('membershipAudience is required with membershipEndpoint');
   if (membershipAudience && (!membershipEndpoint || !remoteAuthorityId)) throw new Error('membershipAudience requires remote authority enrollment');
-  if (remoteAuthorityId && !membershipEndpoint) throw new Error('membershipEndpoint is required with remoteAuthorityId');
-  if (membershipAudience) {
-    const advertised = object(await fetchJson(new URL('/.well-known/sulla-authority', metadata.issuer).href));
-    const advertisedAudiences = advertised.resourceAudiences;
-    if (advertised.issuer !== metadata.issuer || advertised.authorityId !== remoteAuthorityId ||
-        advertised.nativeClientId !== clientId || advertised.membershipResolver !== membershipEndpoint ||
-        advertised.membershipAudience !== membershipAudience || !Array.isArray(advertisedAudiences) ||
-        resourceAudiences.some(audience => !advertisedAudiences.includes(audience))) {
-      throw new Error('remote authority metadata mismatch');
-    }
-  }
-  const scopes = membershipAudience
-    ? [...new Set([...requestedScopes.filter(scope => !scope.startsWith('sulla-audience-')), audienceScope(membershipAudience)])]
-    : requestedScopes;
+  const scopes = membershipAudience ? [...new Set([...requestedScopes, audienceScope(membershipAudience)])] : requestedScopes;
   const id = randomUUID();
   const result = await db.query<Authority>(
     `INSERT INTO accounts.authorities
-       (id, remote_authority_id, issuer, client_id, resource_audiences, scopes, authorization_endpoint, token_endpoint, jwks_uri, revocation_endpoint, membership_endpoint, membership_audience)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-    [id, remoteAuthorityId, metadata.issuer, clientId, resourceAudiences, scopes, metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint, membershipEndpoint, membershipAudience],
+       (id, remote_authority_id, issuer, client_id, resource_audiences, scopes, authorization_endpoint, token_endpoint, jwks_uri, revocation_endpoint, membership_endpoint)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+    [id, remoteAuthorityId, metadata.issuer, clientId, resourceAudiences, scopes, metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint, membershipEndpoint],
   );
   return result.rows[0];
 }
@@ -325,13 +311,13 @@ export async function ensureHostedAuthority(db: Database, config: AccountsConfig
   if (config.mode !== 'server' || !config.keycloakIssuer || !config.keycloakAuthorityId || !config.keycloakNativeClientId || !config.keycloakMembershipAudience || !config.keycloakResourceAudiences.size) return;
   const metadata = await discover(config.keycloakIssuer);
   await db.query(
-    `INSERT INTO accounts.authorities(id,remote_authority_id,issuer,client_id,resource_audiences,scopes,authorization_endpoint,token_endpoint,jwks_uri,revocation_endpoint,membership_endpoint,membership_audience)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (issuer) DO UPDATE SET
+    `INSERT INTO accounts.authorities(id,remote_authority_id,issuer,client_id,resource_audiences,scopes,authorization_endpoint,token_endpoint,jwks_uri,revocation_endpoint,membership_endpoint)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (issuer) DO UPDATE SET
        remote_authority_id=EXCLUDED.remote_authority_id,client_id=EXCLUDED.client_id,
        resource_audiences=EXCLUDED.resource_audiences,scopes=EXCLUDED.scopes,
        authorization_endpoint=EXCLUDED.authorization_endpoint,token_endpoint=EXCLUDED.token_endpoint,
        jwks_uri=EXCLUDED.jwks_uri,revocation_endpoint=EXCLUDED.revocation_endpoint,
-       membership_endpoint=EXCLUDED.membership_endpoint,membership_audience=EXCLUDED.membership_audience,updated_at=now()`,
-    [randomUUID(), config.keycloakAuthorityId, metadata.issuer, config.keycloakNativeClientId, [...config.keycloakResourceAudiences], ['openid', 'profile', audienceScope(config.keycloakMembershipAudience)], metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint, new URL('/v1/authority/membership/resolve', config.publicUrl).href, config.keycloakMembershipAudience],
+       membership_endpoint=EXCLUDED.membership_endpoint,updated_at=now()`,
+    [randomUUID(), config.keycloakAuthorityId, metadata.issuer, config.keycloakNativeClientId, [...config.keycloakResourceAudiences], ['openid', 'profile', audienceScope(config.keycloakMembershipAudience)], metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint, new URL('/v1/authority/membership/resolve', config.publicUrl).href],
   );
 }
