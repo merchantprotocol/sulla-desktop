@@ -339,6 +339,21 @@
       >
         {{ subtitle }}
       </div>
+      <label
+        v-if="mode === 'edit'"
+        class="concurrency-setting"
+      >
+        <span>Max concurrent runs</span>
+        <input
+          v-model="maxConcurrentRunsInput"
+          type="number"
+          min="1"
+          step="1"
+          inputmode="numeric"
+          aria-label="Maximum concurrent workflow runs"
+          @blur="normalizeMaxConcurrentRuns"
+        >
+      </label>
     </div>
 
     <div class="ribbon">
@@ -831,6 +846,7 @@ import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientSe
 import { useLiveClock } from '@pkg/composables/useLiveClock';
 import { useWorkflowHistory } from '@pkg/composables/useWorkflowHistory';
 import { useWorkflowPersistence, type WorkflowDefinition } from '@pkg/composables/useWorkflowPersistence';
+import { concurrencyInputValue, concurrencyValueForSave } from '@pkg/pages/editor/workflow/workflowConcurrencyEditor';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type Mode = 'edit' | 'run';
@@ -1744,6 +1760,12 @@ const title = ref('Blog Production Pipeline');
 const subtitle = ref('Twenty-one agents, one article, nine minutes.');
 const workflowStatus = ref<'draft' | 'production' | 'archive'>('draft');
 const statusBusy = ref(false);
+const maxConcurrentRunsInput = ref('1');
+
+function normalizeMaxConcurrentRuns(): void {
+  if (maxConcurrentRunsInput.value.trim() === '' && (baseDefinition.value as any)?.concurrencyPolicy === 'allow') return;
+  maxConcurrentRunsInput.value = String(concurrencyValueForSave(maxConcurrentRunsInput.value, baseDefinition.value ?? {}));
+}
 
 async function togglePublished(): Promise<void> {
   if (!props.workflowId || statusBusy.value) return;
@@ -1847,13 +1869,17 @@ function buildDefinitionForSave(): WorkflowDefinition | null {
   if (!props.workflowId) return null;
 
   const base = baseDefinition.value ?? {};
+  const baseWithoutLimit = { ...base };
+  delete (baseWithoutLimit as any).maxConcurrentRuns;
   const vp: any = (base as any).viewport;
+  const maxConcurrentRuns = concurrencyValueForSave(maxConcurrentRunsInput.value, base as any);
 
   return {
-    ...base,
+    ...baseWithoutLimit,
     id:          props.workflowId,
     name:        title.value,
     description: subtitle.value,
+    ...(maxConcurrentRuns !== undefined ? { maxConcurrentRuns } : {}),
     nodes:       nodes.value.map(toPlainNode),
     edges:       edges.value.map(toPlainEdge),
     viewport:    vp
@@ -1871,6 +1897,7 @@ function buildDefinitionForSave(): WorkflowDefinition | null {
 function applyDefinition(def: WorkflowDefinition): void {
   if (typeof def.name === 'string') title.value = def.name;
   if (typeof def.description === 'string') subtitle.value = def.description;
+  maxConcurrentRunsInput.value = concurrencyInputValue(def as any);
   const status = (def as any)._status;
   if (status === 'draft' || status === 'production' || status === 'archive') {
     workflowStatus.value = status;
@@ -3029,7 +3056,7 @@ watch(nodes, () => recomputeEdgeFlow(), { deep: true });
 // Declared here — after nodes/edges — so TypeScript's TDZ analysis is
 // happy; at runtime Vue would hoist the refs either way.
 watch(
-  [title, subtitle, nodes, edges],
+  [title, subtitle, maxConcurrentRunsInput, nodes, edges],
   () => {
     if (!hasHydrated.value || !props.workflowId) return;
     // Suppress auto-save while we're re-hydrating from a history
@@ -3267,6 +3294,28 @@ watch(
   color: var(--steel-200);
   margin-top: 8px;
   letter-spacing: 0.01em;
+}
+.concurrency-setting {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  pointer-events: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--steel-200);
+  text-transform: uppercase;
+}
+.concurrency-setting input {
+  width: 54px;
+  padding: 4px 6px;
+  border: 1px solid rgba(168, 192, 220, 0.3);
+  border-radius: 4px;
+  background: rgba(7, 13, 26, 0.9);
+  color: white;
+  font: inherit;
+  text-align: right;
 }
 
 /* Opaque panel that occupies the stream's footprint, sitting above the

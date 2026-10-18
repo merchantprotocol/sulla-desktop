@@ -1,4 +1,5 @@
 import { createPlaybookState, createPlaybookStateFromNode } from '../../workflow/WorkflowPlaybook';
+import { isSingletonWorkflow, workflowConcurrencyLimit } from '../../workflow/workflowConcurrency';
 import { BaseTool, ToolResponse } from '../base';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
@@ -32,16 +33,9 @@ export interface ActivateWorkflowInput {
    * `resumeExecutionId` is set.
    */
   startNodeId?: string;
-  /**
-   * Bypass the concurrent-run guard. When true and an active row exists for
-   * this workflow, activation marks the stale row as failed and starts fresh.
-   * Used by the "Start Fresh" choice in the UI and by boot-time recovery.
-   */
+  /** Legacy input retained for callers. It never bypasses configured admission. */
   force?: boolean;
-  /**
-   * Internal task-scoped routines may own concurrency in a separate durable
-   * ledger. Never exposed by ExecuteWorkflowWorker's public manifest.
-   */
+  /** Legacy input retained for callers. It never bypasses configured admission. */
   allowConcurrent?: boolean;
 }
 
@@ -203,8 +197,10 @@ export async function activateWorkflowOnState(
     }
     try {
       const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-      const active = await WorkflowExecutionModel.findActiveByWorkflow(definition.id);
-      if (active) return { ok: false, skipped: 'already_active', responseString: 'Workflow already active; skipped before preflight and AI.' };
+      const activeCount = await WorkflowExecutionModel.countActiveByWorkflow(definition.id);
+      if (activeCount >= workflowConcurrencyLimit(definition)) {
+        return { ok: false, skipped: 'already_active', responseString: 'Workflow concurrency limit reached; skipped before preflight and AI.' };
+      }
       const preflight = definition.preflight;
       if (!preflight || typeof preflight.functionRef !== 'string'
         || !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(preflight.functionRef)
@@ -224,57 +220,23 @@ export async function activateWorkflowOnState(
     }
   }
 
-  const singleton = definition.concurrencyPolicy === 'forbid';
+  const maxConcurrentRuns = workflowConcurrencyLimit(definition);
+  const singleton = isSingletonWorkflow(definition);
   // `supersedesExecutionId`: the interrupted run this admission resumes. It is
   // settled in the admission transaction so it can't block its own resume.
   const admit = async(playbook: WorkflowPlaybookState, supersedesExecutionId?: string): Promise<void> => {
-    if (!singleton) return;
     if (playbook.definition.id !== definition.id) throw new Error('Checkpoint belongs to another workflow.');
-    // Preserve the admission policy even for checkpoints saved before it existed.
-    playbook.definition = { ...playbook.definition, concurrencyPolicy: 'forbid' };
+    // Preserve current admission config even for checkpoints saved before it existed.
+    playbook.definition = { ...playbook.definition, maxConcurrentRuns };
     const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-    await WorkflowExecutionModel.admitSingleton({
+    await WorkflowExecutionModel.admit({
       executionId: playbook.executionId, workflowId: definition.id,
       workflowName: definition.name, workflowSlug: workflowId,
+      autoRestart: singleton ? false : (definition.auto_restart !== false),
       triggerInput: message,
       scopeTaskId: executionScope?.taskId, scopeGeneration: executionScope?.generation,
-    }, { supersedesExecutionId });
+    }, { maxConcurrentRuns, supersedesExecutionId });
   };
-
-  // Concurrent-run guard: block if this workflow already has a running or
-  // suspended execution. Pass force=true to override (e.g. UI "Start Fresh"
-  // choice, boot recovery). When forcing, flip the stale row to failed so
-  // we don't leave two concurrent "running" rows behind.
-  const force = (input as any).force === true;
-  const allowConcurrent = input.allowConcurrent === true;
-  if (!singleton) try {
-    const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-    const active = executionScope
-      ? await WorkflowExecutionModel.findActiveByLaneScope(definition.id, executionScope.taskId, executionScope.generation)
-      : await WorkflowExecutionModel.findActiveByWorkflow(definition.id);
-    if (active && !allowConcurrent) {
-      const a = active.attributes as any;
-      if (!force) {
-        return {
-          ok:             false,
-          responseString: `Workflow "${ definition.name }" already has an active execution (${ a.execution_id }, status: ${ a.status }). Resume it with resumeExecutionId="${ a.execution_id }" or wait for it to complete.`,
-        };
-      }
-      try {
-        await WorkflowExecutionModel.markFailed(a.execution_id, 'superseded_by_force_restart');
-      } catch (err) {
-        console.warn(`[ExecuteWorkflow] Failed to mark superseded row ${ a.execution_id } as failed:`, err);
-      }
-    }
-  } catch (err) {
-    if (executionScope) {
-      return {
-        ok:             false,
-        responseString: `Lane-scoped workflow guard failed closed: ${ err instanceof Error ? err.message : String(err) }`,
-      };
-    }
-    console.warn('[ExecuteWorkflow] Concurrent-run guard check failed (continuing):', err);
-  }
 
   // Resume a specific prior execution (user clicked Resume on a row in the
   // Previous runs list). Walk every checkpoint for that executionId, seed
@@ -316,21 +278,6 @@ export async function activateWorkflowOnState(
 
         console.log(`[ExecuteWorkflow] Resuming execution ${ resumeExecutionId } → ${ resumedState.executionId }, completed=${ resumedState.completedNodeIds.length }, frontier=[${ resumedState.currentNodeIds.join(', ') }]`);
 
-        try {
-          const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-          if (!singleton) {
-            await WorkflowExecutionModel.markRunning({
-              executionId:  resumedState.executionId,
-              workflowId:   definition.id,
-              workflowName: definition.name,
-              workflowSlug: workflowId,
-            });
-            // Settle the interrupted row, or its expired lease makes boot
-            // recovery resume it again (duplicate runs) until the ceiling.
-            await WorkflowExecutionModel.supersede(resumeExecutionId, resumedState.executionId);
-          }
-        } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
-
         return {
           ok:             true,
           responseString: JSON.stringify({
@@ -367,19 +314,6 @@ export async function activateWorkflowOnState(
       state.metadata.activeWorkflow = playbook;
 
       console.log(`[ExecuteWorkflow] Resumed execution ${ resumeExecutionId } via legacy seed-outputs path → ${ playbook.executionId }, restarting at ${ lastNodeId }`);
-
-      try {
-        const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-        if (!singleton) {
-          await WorkflowExecutionModel.markRunning({
-            executionId:  playbook.executionId,
-            workflowId:   definition.id,
-            workflowName: definition.name,
-            workflowSlug: workflowId,
-          });
-          await WorkflowExecutionModel.supersede(resumeExecutionId, playbook.executionId);
-        }
-      } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
 
       return {
         ok:             true,
@@ -453,20 +387,10 @@ export async function activateWorkflowOnState(
             pendingDecision: undefined,
           };
 
-          await admit(resumedState);
+          await admit(resumedState, savedState.executionId);
           state.metadata.activeWorkflow = resumedState;
 
           console.log(`[ExecuteWorkflow] Resuming workflow "${ definition.name }" from checkpoint — original=${ savedState.executionId }, new=${ resumedState.executionId }, completed=${ resumedState.completedNodeIds.length } nodes, frontier=[${ resumedState.currentNodeIds.join(', ') }]`);
-
-          try {
-            const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-            if (!singleton) await WorkflowExecutionModel.markRunning({
-              executionId:  resumedState.executionId,
-              workflowId:   definition.id,
-              workflowName: definition.name,
-              workflowSlug: workflowId,
-            });
-          } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
 
           return {
             ok:             true,
@@ -500,30 +424,6 @@ export async function activateWorkflowOnState(
     // Verify state propagation
     const verify = state.metadata.activeWorkflow;
     console.log(`[ExecuteWorkflow] Loaded workflow "${ definition.name }" (${ workflowId }) as playbook — executionId=${ playbook.executionId }, frontier=[${ playbook.currentNodeIds.join(', ') }], stateVerify=${ verify?.status }/${ verify?.currentNodeIds?.length ?? 0 }`);
-
-    try {
-      const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-      const autoRestart = (definition as any).auto_restart !== false;
-      if (!singleton) await WorkflowExecutionModel.markRunning({
-        executionId:  playbook.executionId,
-        workflowId:   definition.id,
-        workflowName: definition.name,
-        workflowSlug: workflowId,
-        autoRestart,
-        triggerInput: input.message,
-        scopeTaskId: input.executionScope?.taskId,
-        scopeGeneration: input.executionScope?.generation,
-      });
-    } catch (e) {
-      if (executionScope) {
-        state.metadata.activeWorkflow = undefined;
-        return {
-          ok:             false,
-          responseString: `Lane-scoped workflow activation failed closed: ${ e instanceof Error ? e.message : String(e) }`,
-        };
-      }
-      console.warn('[ExecuteWorkflow] markRunning failed:', e);
-    }
 
     return {
       ok:             true,

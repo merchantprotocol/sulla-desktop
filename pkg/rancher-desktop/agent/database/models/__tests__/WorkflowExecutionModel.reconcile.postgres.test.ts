@@ -89,11 +89,35 @@ describeWithPostgres('WorkflowExecutionModel lease reconciliation (migrated Post
     await WorkflowExecutionModel.admitSingleton({ executionId: 'independent-singleton', workflowId: 'workflow-1', workflowName: 'Independent', workflowSlug: 'independent' });
     await WorkflowExecutionModel.markCompleted('independent-singleton');
     await WorkflowExecutionModel.markSuspended(rows[0].execution_id);
-    await expect(WorkflowExecutionModel.admitSingleton({ executionId: 'singleton-replacement', workflowId: 'singleton-workflow', workflowName: 'Singleton', workflowSlug: 'singleton' })).rejects.toThrow('active execution');
+    await expect(WorkflowExecutionModel.admitSingleton({ executionId: 'singleton-replacement', workflowId: 'singleton-workflow', workflowName: 'Singleton', workflowSlug: 'singleton' })).rejects.toThrow('concurrent run limit');
     await pool.query("UPDATE workflow_executions SET started_at = NOW() - INTERVAL '1 day', owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL WHERE execution_id = $1", [rows[0].execution_id]);
     expect(await WorkflowExecutionModel.reapStaleLeaselessExecutions()).not.toContain(rows[0].execution_id);
     await WorkflowExecutionModel.markCompleted(rows[0].execution_id);
     await WorkflowExecutionModel.admitSingleton({ executionId: 'singleton-next', workflowId: 'singleton-workflow', workflowName: 'Singleton', workflowSlug: 'singleton' });
+  });
+
+  it('atomically admits no more than the configured maximum and terminal settlement releases capacity', async() => {
+    await pool.query(`INSERT INTO workflows (id, name, status, definition) VALUES ('limited-workflow', 'Limited', 'production', '{}'::jsonb)`);
+    const attempts = await Promise.allSettled(Array.from({ length: 12 }, (_, index) =>
+      WorkflowExecutionModel.admit({
+        executionId: `limited-${ index }`, workflowId: 'limited-workflow', workflowName: 'Limited', workflowSlug: 'limited',
+      }, { maxConcurrentRuns: 2 })));
+    expect(attempts.filter(result => result.status === 'fulfilled')).toHaveLength(2);
+
+    const active = (await pool.query("SELECT execution_id FROM workflow_executions WHERE workflow_id='limited-workflow' ORDER BY execution_id")).rows;
+    expect(active).toHaveLength(2);
+    await WorkflowExecutionModel.acquireLease(active[0].execution_id, 'owner-1', 60_000, 'lease-1');
+    await WorkflowExecutionModel.settle(active[0].execution_id, 'completed');
+    await WorkflowExecutionModel.acquireLease(active[1].execution_id, 'owner-2', 60_000, 'lease-2');
+    await WorkflowExecutionModel.settle(active[1].execution_id, 'failed', 'expected failure');
+
+    const terminal = (await pool.query("SELECT status,completed_at,terminal_at,owner_id,lease_token,lease_expires_at FROM workflow_executions WHERE workflow_id='limited-workflow' ORDER BY execution_id")).rows;
+    expect(terminal.map(row => row.status).sort()).toEqual(['completed', 'failed']);
+    expect(terminal.every(row => row.completed_at && row.terminal_at && row.owner_id === null && row.lease_token === null && row.lease_expires_at === null)).toBe(true);
+
+    await expect(WorkflowExecutionModel.admit({
+      executionId: 'limited-next', workflowId: 'limited-workflow', workflowName: 'Limited', workflowSlug: 'limited',
+    }, { maxConcurrentRuns: 2 })).resolves.toBeUndefined();
   });
 
   it('keeps a slow node out of recovery and fences it after durable settlement', async() => {

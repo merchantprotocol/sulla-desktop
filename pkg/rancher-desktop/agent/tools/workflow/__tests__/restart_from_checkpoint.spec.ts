@@ -1,14 +1,12 @@
 import { jest } from '@jest/globals';
 
 const mockLoadWorkflow = jest.fn<() => Promise<any>>();
-const mockAdmitSingleton = jest.fn<() => Promise<void>>();
+const mockAdmit = jest.fn<() => Promise<void>>();
 jest.unstable_mockModule('../../../workflow/WorkflowRegistry', () => ({ getWorkflowRegistry: () => ({ loadWorkflow: mockLoadWorkflow }) }));
 
 const mockFindCheckpointBefore = jest.fn<() => Promise<any>>();
 const mockFindByNode = jest.fn<() => Promise<any>>();
 const mockFindByExecution = jest.fn<() => Promise<any[]>>();
-const mockMarkRunning = jest.fn<() => Promise<void>>();
-const mockMarkSupersededIfActive = jest.fn<() => Promise<void>>();
 
 jest.unstable_mockModule('../../../database/models/WorkflowCheckpointModel', () => ({
   WorkflowCheckpointModel: {
@@ -20,9 +18,7 @@ jest.unstable_mockModule('../../../database/models/WorkflowCheckpointModel', () 
 
 jest.unstable_mockModule('../../../database/models/WorkflowExecutionModel', () => ({
   WorkflowExecutionModel: {
-    markRunning:            mockMarkRunning,
-    admitSingleton:         mockAdmitSingleton,
-    markSupersededIfActive: mockMarkSupersededIfActive,
+    admit: mockAdmit,
   },
 }));
 
@@ -56,8 +52,7 @@ describe('RestartFromCheckpointWorker', () => {
     mockFindCheckpointBefore.mockResolvedValue(null);
     mockFindByNode.mockResolvedValue(null);
     mockFindByExecution.mockResolvedValue([checkpoint()]);
-    mockMarkRunning.mockResolvedValue(undefined);
-    mockMarkSupersededIfActive.mockResolvedValue(undefined);
+    mockAdmit.mockResolvedValue(undefined);
   });
 
   test('fails closed when a mutating restart has no graph state', async() => {
@@ -71,20 +66,18 @@ describe('RestartFromCheckpointWorker', () => {
     expect(result.responseString).toContain('No agent state available');
     expect(mockFindCheckpointBefore).not.toHaveBeenCalled();
     expect(mockFindByExecution).not.toHaveBeenCalled();
-    expect(mockMarkRunning).not.toHaveBeenCalled();
+    expect(mockAdmit).not.toHaveBeenCalled();
   });
 
   test('honors a current singleton policy on an older checkpoint and refuses overlap', async() => {
     mockLoadWorkflow.mockResolvedValue({ concurrencyPolicy: 'forbid' });
-    mockAdmitSingleton.mockRejectedValue(new Error('active execution'));
+    mockAdmit.mockRejectedValue(new Error('active execution'));
     const state: any = { metadata: {} };
     const worker = new RestartFromCheckpointWorker();
     worker.setState(state);
     const result = await (worker as any)._validatedCall({ executionId: 'wfp-original', nodeId: 'node-dah-prune' });
     expect(result.successBoolean).toBe(false);
     expect(result.responseString).toContain('active execution');
-    expect(mockMarkRunning).not.toHaveBeenCalled();
-    expect(mockMarkSupersededIfActive).not.toHaveBeenCalled();
     expect(state.metadata.activeWorkflow).toBeUndefined();
   });
 
@@ -100,17 +93,16 @@ describe('RestartFromCheckpointWorker', () => {
     const response = JSON.parse(result.responseString);
 
     expect(result.successBoolean).toBe(true);
-    expect(mockMarkSupersededIfActive).toHaveBeenCalledWith('wfp-original');
-    expect(mockMarkRunning).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockAdmit).toHaveBeenCalledWith(expect.objectContaining({
       executionId: response.executionId,
       workflowId:  'core-routine-dream-about-human',
-    }));
+    }), expect.objectContaining({ maxConcurrentRuns: 1, supersedesExecutionId: 'wfp-original' }));
     expect(state.metadata.activeWorkflow.executionId).toBe(response.executionId);
     expect(state.metadata.activeWorkflow.currentNodeIds).toContain('node-dah-prune');
   });
 
   test('does not claim success when execution persistence fails', async() => {
-    mockMarkRunning.mockRejectedValue(new Error('database offline'));
+    mockAdmit.mockRejectedValue(new Error('database offline'));
     const state: any = { metadata: {} };
     const worker = new RestartFromCheckpointWorker();
     worker.setState(state);

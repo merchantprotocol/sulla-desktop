@@ -14,6 +14,7 @@ tags:                                     # Optional array of strings
   - production
 _status: production                       # draft | production | archive
 enabled: true                             # Whether auto-triggers fire
+maxConcurrentRuns: 1                     # Positive integer; active run ceiling
 
 nodes:                                    # Required. Array of node objects
   - id: node-001
@@ -92,23 +93,26 @@ Unresolved variables remain as `{{literal}}` — they do NOT throw errors.
 | `loop` | `loop-start`, `loop-exit` | `loop-entry`, `loop-back` |
 | All others | `null` | `null` |
 
-## Refusing overlapping executions
+## Concurrent execution limit
 
-Set `concurrencyPolicy: forbid` at the definition root to admit at most one active
-execution for that workflow ID. Admission uses a PostgreSQL transaction and
-advisory lock before publishing the playbook state. Manual starts, scheduler
-starts, partial runs, checkpoint resumes, and force starts all use this guard.
-A database error refuses activation. An active suspended execution also blocks
-new starts; `force` and internal `allowConcurrent` do not override this policy.
+Set `maxConcurrentRuns` at the definition root to a positive integer. The
+default is `1`. Admission uses a PostgreSQL transaction and per-workflow
+advisory lock before publishing the playbook state, so simultaneous manual,
+scheduled, partial, restart, resume, child, and transfer starts cannot exceed
+the limit. Active suspended executions count toward the limit because timer and
+user-input waits are still live work. `force` and internal `allowConcurrent`
+inputs do not bypass the configured ceiling.
 
 ```yaml
-concurrencyPolicy: forbid
+maxConcurrentRuns: 3
 auto_restart: false
 ```
 
-The policy records `auto_restart: false` even if the definition omits that field.
-Automatic lease recovery and stale-row cleanup leave these executions alone.
-A failed singleton run is **settled as failed** (so the next run, including the
+Legacy definitions remain compatible: `concurrencyPolicy: forbid` maps to `1`,
+while `concurrencyPolicy: allow` without an explicit limit keeps its old
+unbounded behavior. New and edited workflows should use `maxConcurrentRuns`.
+
+A failed one-run workflow is **settled as failed** (so the next run, including the
 next scheduled run, is admitted) unless it may have left a worker running: a
 worker still pending, or one whose wait ended in a timeout/abort. Only then does
 the run stay **suspended**, holding admission, because a failed parent cannot
@@ -128,11 +132,11 @@ containing more than one nonempty `<PROMPT>` task before any agents are launched
 It does not restrict tools available inside that agent; configure the worker's
 tool policy separately if recursive delegation must be prohibited.
 
-Singleton workflows do not retry worker launches automatically, since a timed-out
+Workflows limited to one run do not retry worker launches automatically, since a timed-out
 launch does not prove that the prior process stopped. Nested workflow calls and
-workflow transfers involving a singleton source or target are refused; launch
+workflow transfers involving a one-run source or target are refused; launch
 that workflow through its normal activation entry point instead. Keep the
-singleton definition stable while a run is active.
+concurrency definition stable while a run is active.
 
 ## Deterministic preflight admission (zero-AI empty cycles)
 
