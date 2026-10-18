@@ -5,7 +5,6 @@ import path from 'node:path';
 import { safeStorage, session } from 'electron';
 
 import type {
-  BrowserFillPayload,
   BrowserFillTarget,
   HumanSessionResponse,
   LegacyMigrationResponse,
@@ -128,13 +127,6 @@ export class DesktopVaultClient {
     }
     // CSRF is intentionally discarded: only the same-origin container page uses it.
     return { url: url.toString(), expiresAt: result.expiresAt, phase: result.phase };
-  }
-
-  async consumeBrowserFill(tabId: string): Promise<BrowserFillPayload | null> {
-    const result = await this.request<{ fill: BrowserFillPayload | null }>('/v1/desktop/browser-fill/consume', {
-      method: 'POST', body: JSON.stringify({ tabId }),
-    });
-    return result.fill;
   }
 
   isUnlocked(): boolean { return this.lastStatus.unlocked }

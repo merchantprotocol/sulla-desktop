@@ -9,6 +9,8 @@ const primaryService = {
   getContextWindow: jest.fn(() => 100_000),
   getModel:         jest.fn(() => 'claude-code'),
   getProviderName:  jest.fn(() => 'Claude Code'),
+  getProviderId:    jest.fn(() => undefined),
+  getAccountId:     jest.fn(async() => undefined),
   chatStream:       primaryChatStreamMock,
   chat:             primaryChatMock,
 };
@@ -16,6 +18,8 @@ const primaryService = {
 const secondaryService = {
   getModel:        jest.fn(() => 'gpt-5'),
   getProviderName: jest.fn(() => 'OpenAI'),
+  getProviderId:   jest.fn(() => undefined),
+  getAccountId:    jest.fn(async() => undefined),
   initialize:      jest.fn(async() => true),
   isAvailable:     jest.fn(() => true),
   chat:            secondaryChatMock,

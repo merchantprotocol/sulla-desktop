@@ -22,6 +22,7 @@ export interface VaultConfig {
   approvalServiceToken?:       string;
   controlServiceId?:           string;
   controlServiceToken?:        string;
+  serverBootstrapToken?:       string;
   humanUiOrigin?:               string;
   legacyDatabaseUrl?:           string;
   tlsCertificatePath?:          string;
@@ -66,6 +67,7 @@ export function loadConfig(): VaultConfig {
     approvalServiceToken:       process.env.SULLA_VAULT_APPROVAL_TOKEN,
     controlServiceId:           process.env.SULLA_VAULT_DESKTOP_CONTROL_SERVICE_ID ?? 'sulla-desktop-control',
     controlServiceToken:        process.env.SULLA_VAULT_DESKTOP_CONTROL_TOKEN,
+    serverBootstrapToken:       process.env.SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN,
     humanUiOrigin:              process.env.SULLA_VAULT_HUMAN_UI_ORIGIN ?? `https://127.0.0.1:${ process.env.SULLA_VAULT_PUBLISHED_PORT ?? '30135' }`,
     legacyDatabaseUrl:          process.env.SULLA_VAULT_LEGACY_DATABASE_URL,
     tlsCertificatePath:         process.env.SULLA_VAULT_TLS_CERTIFICATE_PATH,
