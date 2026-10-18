@@ -12,6 +12,8 @@ import pg from 'pg';
 import { createApp } from './app.js';
 import { issueCapabilityToken } from './auth.js';
 import { migrate } from './db.js';
+import { storedIndexSource } from './indexSource.js';
+import { IndexingQueue } from './indexing.js';
 import { FilesKeyring } from './keyring.js';
 import { FileSearch } from './search.js';
 
@@ -29,6 +31,7 @@ test('real handlers provision collections and preserve authenticated content acr
   const admin = new pg.Pool({ connectionString: `postgresql://postgres@127.0.0.1:${ port }/postgres` });
   let db:pg.Pool | undefined;
   let server:ReturnType<ReturnType<typeof createApp>['listen']> | undefined;
+  let indexer:IndexingQueue | undefined;
   const master = randomBytes(32);
   let keyring:FilesKeyring | undefined;
   try {
@@ -74,8 +77,18 @@ test('real handlers provision collections and preserve authenticated content acr
       paused:               true,
       modelDir:             join(root, 'unused-model'),
     };
-    const embedder = { embed: () => new Float32Array([1, 0]) };
+    // Deterministic vectors isolate queue/extraction/search wiring; they do not measure embedding quality.
+    const embedder = {
+      dim:   512,
+      embed: (text:string) => {
+        const vector = new Float32Array(512);
+        vector[text.toLowerCase().includes('cobalt') ? 0 : text.toLowerCase().includes('marigold') ? 1 : 2] = 1;
+        return vector;
+      },
+    };
     const search = new FileSearch(db, embedder as any);
+    indexer = new IndexingQueue(db, storedIndexSource(db, config), embedder as any);
+    await indexer.start();
     server = createApp(db, config, undefined, undefined, search).listen(0, '127.0.0.1');
     await new Promise<void>((resolve, reject) => { server!.once('listening', resolve); server!.once('error', reject) });
     const address = server.address();
@@ -89,6 +102,16 @@ test('real handlers provision collections and preserve authenticated content acr
       const response = await fetch(`${ baseUrl }${ path }`, { ...init, headers: { ...auth, 'content-type': 'application/json', ...init.headers } });
       return { response, body: response.status === 204 ? undefined : await response.json() };
     };
+    const waitForIndex = async(fileId:string, versionId:string) => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const result = await db!.query(`SELECT f.current_version_id,f.extraction_status,j.status job_status
+          FROM files f LEFT JOIN file_index_jobs j ON j.version_id=f.current_version_id WHERE f.id=$1`, [fileId]);
+        const row = result.rows[0];
+        if (row?.current_version_id === versionId && row.extraction_status === 'indexed' && row.job_status === 'indexed') return;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      throw new Error(`Timed out waiting for Files index job ${ versionId }`);
+    };
 
     const unauthenticated = await fetch(`${ baseUrl }/v1/files?collectionId=${ collectionId }`);
     assert.equal(unauthenticated.status, 401);
@@ -100,13 +123,19 @@ test('real handlers provision collections and preserve authenticated content acr
     const ensuredBody = await ensured.json();
     assert.equal((await db.query('SELECT count(*)::int AS count FROM files_collection_keys WHERE collection_id=$1', [ensuredBody.collectionId])).rows[0].count, 1);
 
-    const firstBytes = Buffer.from('synthetic acceptance payload version one');
+    const firstBytes = Buffer.from('cobalt orchard proof');
     const upload = await fetch(`${ baseUrl }/v1/files/upload?collectionId=${ collectionId }&path=Proof%2Facceptance.txt`, {
       method: 'PUT', headers: { ...auth, 'content-type': 'text/plain' }, body: firstBytes,
     });
     assert.equal(upload.status, 201);
     const uploaded = await upload.json();
     assert.equal(uploaded.path, 'Proof/acceptance.txt');
+
+    await waitForIndex(uploaded.id, uploaded.current_version_id);
+    let indexed = await db.query(`SELECT f.search_text,c.version_id,c.content,j.status
+      FROM files f JOIN file_search_chunks c ON c.file_id=f.id JOIN file_index_jobs j ON j.version_id=c.version_id
+      WHERE f.id=$1`, [uploaded.id]);
+    assert.deepEqual(indexed.rows, [{ search_text: firstBytes.toString(), version_id: uploaded.current_version_id, content: firstBytes.toString(), status: 'indexed' }]);
 
     const outsider = await fetch(`${ baseUrl }/v1/files/${ uploaded.id }`, { headers: { authorization: `Bearer ${ outsiderToken }` } });
     assert.equal(outsider.status, 403);
@@ -132,10 +161,7 @@ test('real handlers provision collections and preserve authenticated content acr
     assert.equal(version.body.file.id, uploaded.id);
     assert.equal(version.body.manifest.total_size, firstBytes.length);
 
-    await db.query("UPDATE files SET search_text='synthetic acceptance searchable proof',extraction_status='indexed',extracted_at=NOW() WHERE id=$1", [uploaded.id]);
-    await db.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content,embedding_json)
-      VALUES($1,$2,0,'synthetic acceptance searchable proof',$3)`, [uploaded.id, uploaded.current_version_id, JSON.stringify([1, 0])]);
-    const searched = await requestJson('/v1/search', { method: 'POST', body: JSON.stringify({ query: 'searchable proof', collectionId }) });
+    let searched = await requestJson('/v1/search', { method: 'POST', body: JSON.stringify({ query: firstBytes.toString(), collectionId }) });
     assert.equal(searched.response.status, 200);
     assert.deepEqual(searched.body.map((file:any) => file.id), [uploaded.id]);
 
@@ -178,6 +204,27 @@ test('real handlers provision collections and preserve authenticated content acr
     const refs = await db.query('SELECT refcount FROM chunks WHERE collection_id=$1', [collectionId]);
     assert.deepEqual(refs.rows.map(row => Number(row.refcount)), [1]);
 
+    const secondBytes = Buffer.from('marigold turbine renewal');
+    const changed = await fetch(`${ baseUrl }/v1/files/upload?collectionId=${ collectionId }&path=Proof%2Facceptance.txt`, {
+      method: 'PUT', headers: { ...auth, 'content-type': 'text/plain' }, body: secondBytes,
+    });
+    assert.equal(changed.status, 201);
+    const changedBody = await changed.json();
+    assert.equal(changedBody.id, uploaded.id);
+    assert.notEqual(changedBody.current_version_id, uploaded.current_version_id);
+    await waitForIndex(uploaded.id, changedBody.current_version_id);
+
+    indexed = await db.query(`SELECT f.search_text,c.version_id,c.content,j.status
+      FROM files f JOIN file_search_chunks c ON c.file_id=f.id JOIN file_index_jobs j ON j.version_id=c.version_id
+      WHERE f.id=$1`, [uploaded.id]);
+    assert.deepEqual(indexed.rows, [{ search_text: secondBytes.toString(), version_id: changedBody.current_version_id, content: secondBytes.toString(), status: 'indexed' }]);
+    searched = await requestJson('/v1/search', { method: 'POST', body: JSON.stringify({ query: firstBytes.toString(), collectionId }) });
+    assert.equal(searched.response.status, 200);
+    assert.deepEqual(searched.body.map((file:any) => file.id), []);
+    searched = await requestJson('/v1/search', { method: 'POST', body: JSON.stringify({ query: secondBytes.toString(), collectionId }) });
+    assert.equal(searched.response.status, 200);
+    assert.deepEqual(searched.body.map((file:any) => file.id), [uploaded.id]);
+
     await new Promise<void>(resolve => server!.close(() => resolve()));
     server = undefined;
     await db.query('CREATE TABLE users(id TEXT PRIMARY KEY, disabled_at TIMESTAMPTZ)');
@@ -198,6 +245,7 @@ test('real handlers provision collections and preserve authenticated content acr
     assert.equal((await db.query('SELECT count(*)::int AS count FROM files_collection_keys WHERE collection_id=$1', [defaultBody.id])).rows[0].count, 1);
   } finally {
     await new Promise<void>(resolve => server?.close(() => resolve()) ?? resolve());
+    await indexer?.close();
     keyring?.close(); master.fill(0);
     await db?.end(); await admin.end();
     await run('pg_ctl', ['-D', cluster, '-m', 'fast', '-w', 'stop']).catch(() => undefined);
