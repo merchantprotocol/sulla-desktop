@@ -16,7 +16,7 @@ import { showErrorDialogWithReport } from '@pkg/main/errorReporter';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
-import { createTrayPanel, toggleTrayPanel, sendPanelState, sendAuthState, sendSettingsState, destroyTrayPanel } from '@pkg/main/trayPanel';
+import { createTrayPanel, toggleTrayPanel, sendPanelState, sendSettingsState, destroyTrayPanel } from '@pkg/main/trayPanel';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
@@ -35,7 +35,6 @@ export class Tray {
   protected trayMenu:              Electron.Tray;
   protected backendIsLocked = '';
   protected kubernetesState = State.STOPPED;
-  protected userLoggedIn = false;
   private settings:                Settings;
   private currentNetworkStatus:    networkStatus = networkStatus.CHECKING;
   private static instance:         Tray;
@@ -345,18 +344,6 @@ export class Tray {
     return Tray.instance;
   }
 
-  /** Update vault lock state and rebuild tray menu */
-  public setUserLoggedIn(unlocked: boolean): void {
-    this.userLoggedIn = unlocked;
-    this.updateMenu();
-    sendAuthState({ loggedIn: unlocked, vaultSetUp: true });
-  }
-
-  /** Get the singleton without requiring settings (for vault state updates) */
-  public static getInstanceIfExists(): Tray | null {
-    return Tray.instance || null;
-  }
-
   /**
    * Hide the tray menu.
    */
@@ -485,24 +472,6 @@ export class Tray {
       .forEach((item) => {
         item.enabled = !this.backendIsLocked;
       });
-
-    // Lock/unlock items based on vault login state
-    if (!this.userLoggedIn) {
-      const alwaysEnabled = new Set(['quit', 'help', 'main']);
-      this.contextMenuItems.forEach((item) => {
-        if (item.id && !alwaysEnabled.has(item.id)) {
-          item.enabled = false;
-        }
-      });
-    } else {
-      // Re-enable items that were disabled when logged out
-      const loginControlled = new Set(['docker-dashboard', 'secretary-mode']);
-      this.contextMenuItems.forEach((item) => {
-        if (item.id && loginControlled.has(item.id)) {
-          item.enabled = true;
-        }
-      });
-    }
 
     this.trayMenu.setImage(logo);
 

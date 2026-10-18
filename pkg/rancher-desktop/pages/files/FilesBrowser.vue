@@ -584,7 +584,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, triggerRef, watch } from 'vue';
 
 import FileDetail from './FileDetail.vue';
 import ShareSheet from './ShareSheet.vue';
@@ -922,8 +922,9 @@ watch([query, section], ([value, requestedSection]) => {
 function consumeNavigation() { if (!mounted || !props.navigation || !snapshot.value) return; navigateTo(props.navigation); emit('navigation-consumed') }
 watch(() => props.navigation, () => consumeNavigation());
 let stopUploadProgress:(() => void) | undefined;
-onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); consumeNavigation() }, 12_000) });
-onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) clearTimeout(searchTimer); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
+let stopCapabilitiesChanged:(() => void) | undefined;
+onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); stopCapabilitiesChanged = props.dataSource.onCapabilitiesChanged?.(() => triggerRef(snapshot)); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); consumeNavigation() }, 12_000) });
+onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) clearTimeout(searchTimer); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); stopCapabilitiesChanged?.(); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
 </script>
 
 <style scoped>

@@ -2,188 +2,164 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-/** Electron safeStorage delegates encryption to the OS credential store. */
 export interface FilesSafeStorage {
-  isEncryptionAvailable(): boolean;
-  getSelectedStorageBackend?(): string;
-  encryptString(value: string): Buffer;
-  decryptString(value: Buffer): string;
+  isEncryptionAvailable():boolean;
+  getSelectedStorageBackend?():string;
+  encryptString(value:string):Buffer;
+  decryptString(value:Buffer):string;
 }
+export interface LegacyFilesKeyLocation { sourcePath:string; archivePath:string }
 
-/** Never retains a plaintext key after the authenticated bootstrap completes. */
+/** Key-file mechanics used only by the isolated Files bootstrap process. */
 export class SullaFilesKeychain {
-  private opening?:   Promise<void>;
-  private archiving?: Promise<void>;
-
   constructor(
-    private readonly keyPath: string,
-    private readonly storage: () => Promise<FilesSafeStorage>,
-    private readonly bootstrap: (key: Buffer) => Promise<void>,
-    private readonly legacyKeys: { sourcePath: string; archivePath: string }[] = [],
-    private readonly legacyImporter?: (master:Buffer, legacyMasters:Buffer[]) => Promise<void>,
+    private readonly keyPath:string,
+    private readonly storage:()=>Promise<FilesSafeStorage>,
+    _retiredBootstrap?:unknown,
+    private readonly legacyKeys:LegacyFilesKeyLocation[] = [],
+    _retiredLegacyImporter?:unknown,
   ) {}
 
-  unlock(): Promise<void> {
-    this.opening ??= this.open().finally(() => { this.opening = undefined });
-    return this.opening;
-  }
-
-  async settled(): Promise<void> {
-    await Promise.all([this.opening?.catch(() => undefined), this.archiving?.catch(() => undefined)]);
-  }
-
-  /** Decrypt archived masters only inside Electron's safeStorage process. */
-  async importLegacy():Promise<void> {
-    if (!this.legacyImporter) throw new Error('Files legacy importer is unavailable');
-    const storage = await this.storage();
-    if (!storage.isEncryptionAvailable() || storage.getSelectedStorageBackend?.() === 'basic_text') throw new Error('Secure OS key storage is unavailable');
-    const master = await this.loadMaster(storage); const legacyMasters:Buffer[] = [];
-    try {
-      for (const legacy of this.legacyKeys) {
-        let file;
-        try { file = await fs.promises.open(legacy.archivePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW) } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-          throw error;
-        }
-        try {
-          const info = await file.stat(); if (!info.isFile() || info.size > 16_384) throw new Error('Invalid archived key');
-          const value = Buffer.from(storage.decryptString(await file.readFile()), 'base64');
-          if (value.length !== 32) { value.fill(0); throw new Error('Invalid archived key') }
-          legacyMasters.push(value);
-        } finally { await file.close() }
-      }
-      if (!legacyMasters.length) throw new Error('No archived legacy Files master is available');
-      await this.legacyImporter(master, legacyMasters);
-    } finally { master.fill(0); for (const key of legacyMasters) key.fill(0); }
-  }
-
-  /** Run only after the service confirms legacy classification has completed. */
-  archiveLegacyKeys():Promise<void> {
-    if (this.legacyKeys.length === 0) return Promise.resolve();
-    this.archiving ??= this.archiveAllLegacyKeys().finally(() => { this.archiving = undefined });
-    return this.archiving;
-  }
-
-  private async archiveAllLegacyKeys():Promise<void> {
-    try {
-      const storage = await this.storage();
-      if (!storage.isEncryptionAvailable() || storage.getSelectedStorageBackend?.() === 'basic_text') throw new Error('Secure OS key storage is unavailable');
-      for (const legacy of this.legacyKeys) await this.archiveLegacyKey(storage, legacy);
-    } catch {
-      throw new Error('Files could not secure legacy key material using the OS keychain');
-    }
-  }
-
-  /** Preserve old key material under OS protection before retiring plaintext. */
-  private async archiveLegacyKey(storage: FilesSafeStorage, legacy: { sourcePath: string; archivePath: string }): Promise<void> {
-    let source;
-    try {
-      source = await fs.promises.open(legacy.sourcePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+  async hasMaster():Promise<boolean> {
+    try { const file = await this.safeFile(this.keyPath); await file.close(); return true } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
       throw error;
     }
-    let original: Buffer | undefined;
-    let verified: Buffer | undefined;
-    let current: Buffer | undefined;
-    try {
-      const initial = await source.stat();
-      if (!initial.isFile() || initial.size !== 32) throw new Error('Invalid legacy key');
-      original = Buffer.alloc(32);
-      const originalRead = await source.read(original, 0, 32, 0);
-      if (originalRead.bytesRead !== 32) throw new Error('Invalid legacy key');
-      await fs.promises.mkdir(path.dirname(legacy.archivePath), { recursive: true, mode: 0o700 });
-      try {
-        const encrypted = storage.encryptString(original.toString('base64'));
-        const archive = await fs.promises.open(legacy.archivePath, 'wx', 0o600);
-        try {
-          await archive.writeFile(encrypted);
-          await archive.sync();
-        } finally {
-          await archive.close();
-        }
-      } catch (error) {
-        // Resume only when the durable archive decrypts to this exact source.
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      }
-      const archive = await fs.promises.open(legacy.archivePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-      try {
-        const info = await archive.stat();
-        if (!info.isFile() || info.size > 16_384) throw new Error('Invalid archived key');
-        verified = Buffer.from(storage.decryptString(await archive.readFile()), 'base64');
-        await archive.sync();
-      } finally {
-        await archive.close();
-      }
-      if (verified.length !== 32 || !crypto.timingSafeEqual(original, verified)) throw new Error('Legacy archive conflict');
-      const directory = await fs.promises.open(path.dirname(legacy.archivePath), fs.constants.O_RDONLY);
-      try { await directory.sync() } finally { await directory.close() }
-      const latest = await fs.promises.lstat(legacy.sourcePath);
-      if (!latest.isFile() || latest.dev !== initial.dev || latest.ino !== initial.ino || latest.size !== initial.size || latest.mtimeMs !== initial.mtimeMs || latest.ctimeMs !== initial.ctimeMs) throw new Error('Legacy key changed during migration');
-      current = Buffer.alloc(32);
-      const read = await source.read(current, 0, 32, 0);
-      if (read.bytesRead !== 32 || !crypto.timingSafeEqual(original, current)) throw new Error('Legacy key changed during migration');
-      await fs.promises.unlink(legacy.sourcePath);
-    } finally {
-      original?.fill(0);
-      verified?.fill(0);
-      current?.fill(0);
-      await source.close();
-    }
   }
 
-  private async open(): Promise<void> {
-    let key: Buffer | undefined;
-    try {
-      try {
-        const storage = await this.storage();
-        if (!storage.isEncryptionAvailable() || storage.getSelectedStorageBackend?.() === 'basic_text') {
-          throw new Error('Secure OS key storage is unavailable');
-        }
-        key = await this.loadMaster(storage);
-      } catch {
-        throw new Error('Files could not unlock using the OS keychain');
-      }
-      try {
-        await this.bootstrap(key);
-      } catch {
-        // Bootstrap responses are sanitized by the Files service. Keep them
-        // distinct from safeStorage failures without exposing decrypted material.
-        throw new Error('Files service could not finish secure startup');
-      }
-    } finally {
-      key?.fill(0);
-    }
+  async openExistingMaster():Promise<Buffer> {
+    const storage = await this.secureStorage(); const file = await this.safeFile(this.keyPath);
+    try { return this.decodeKey(storage.decryptString(await file.readFile()), 'Files master') } finally { await file.close() }
   }
 
-  private async loadMaster(storage:FilesSafeStorage):Promise<Buffer> {
+  generateMaster():Buffer { return crypto.randomBytes(32) }
+
+  /** Persist after authenticated service disposition, before any sealed handoff. */
+  async persistMaster(master:Buffer):Promise<void> {
+    if (master.length !== 32) throw new Error('Invalid Files master');
+    const storage = await this.secureStorage();
     await fs.promises.mkdir(path.dirname(this.keyPath), { recursive: true, mode: 0o700 });
-    let key:Buffer;
+    const encrypted = storage.encryptString(master.toString('base64url'));
+    const temporary = `${ this.keyPath }.candidate-${ process.pid }-${ crypto.randomUUID() }`;
     try {
-      const file = await fs.promises.open(this.keyPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      const candidate = await fs.promises.open(temporary, 'wx', 0o600);
       try {
-        const info = await file.stat(); if (!info.isFile() || info.size > 16_384) throw new Error('Invalid encrypted key');
-        const encoded = storage.decryptString(await file.readFile());
-        if (!/^[A-Za-z0-9+/]{43}=$/.test(encoded)) throw new Error('Invalid encrypted key');
-        key = Buffer.from(encoded, 'base64'); if (key.length !== 32) throw new Error('Invalid encrypted key');
-      } finally { await file.close() }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      key = crypto.randomBytes(32); const encrypted = storage.encryptString(key.toString('base64'));
-      const file = await fs.promises.open(this.keyPath, 'wx', 0o600);
-      try { await file.writeFile(encrypted); await file.sync() } finally { await file.close() }
+        await candidate.writeFile(encrypted); await candidate.sync();
+      } finally { await candidate.close() }
+      try { await fs.promises.link(temporary, this.keyPath) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        const existing = await this.openExistingMaster();
+        try { if (!crypto.timingSafeEqual(existing, master)) throw new Error('Files master appeared during bootstrap') } finally { existing.fill(0) }
+      }
+      const directory = await fs.promises.open(path.dirname(this.keyPath), fs.constants.O_RDONLY);
+      try {
+        await directory.sync();
+        await fs.promises.unlink(temporary);
+        await directory.sync();
+      } finally { await directory.close() }
+    } finally {
+      encrypted.fill(0);
+      await fs.promises.unlink(temporary).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error });
     }
-    let persisted:Buffer | undefined;
-    const file = await fs.promises.open(this.keyPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  }
+
+  /** Files, not this helper, decides whether any bounded candidate is used. */
+  async legacyCandidates():Promise<Buffer[]> {
+    const storage = await this.secureStorage(); const candidates:Buffer[] = [];
     try {
-      const info = await file.stat(); if (!info.isFile() || info.size > 16_384) throw new Error('Invalid encrypted key');
-      const encoded = storage.decryptString(await file.readFile()); if (!/^[A-Za-z0-9+/]{43}=$/.test(encoded)) throw new Error('Invalid encrypted key');
-      persisted = Buffer.from(encoded, 'base64');
-      if (persisted.length !== 32 || !crypto.timingSafeEqual(key, persisted)) throw new Error('Encrypted key verification failed');
-      await file.sync();
-    } finally { persisted?.fill(0); await file.close() }
-    const directory = await fs.promises.open(path.dirname(this.keyPath), fs.constants.O_RDONLY);
-    try { await directory.sync() } finally { await directory.close() }
+      for (const location of this.legacyKeys) {
+        const archived = await this.readOptionalKey(location.archivePath, value => storage.decryptString(value));
+        if (archived) candidates.push(archived);
+        const source = await this.readOptionalKey(location.sourcePath, value => value.toString('base64url'));
+        if (source) candidates.push(source);
+      }
+      const unique:Buffer[] = [];
+      for (const candidate of candidates) {
+        if (unique.some(value => crypto.timingSafeEqual(value, candidate))) candidate.fill(0); else unique.push(candidate);
+      }
+      return unique;
+    } catch (error) { for (const candidate of candidates) candidate.fill(0); throw error }
+  }
+
+  /** Archive and remove raw sources only after Files reports a completed import. */
+  async retireConsumedLegacySources():Promise<void> {
+    const storage = await this.secureStorage();
+    for (const location of this.legacyKeys) {
+      let source:fs.promises.FileHandle;
+      try { source = await this.safeFile(location.sourcePath) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
+      let raw:Buffer | undefined; let verified:Buffer | undefined; let currentBytes:Buffer | undefined;
+      try {
+        const initial = await source.stat(); raw = await source.readFile();
+        if (raw.length !== 32) throw new Error('Invalid legacy Files master');
+        await fs.promises.mkdir(path.dirname(location.archivePath), { recursive: true, mode: 0o700 });
+        const encrypted = storage.encryptString(raw.toString('base64url'));
+        const candidatePath = `${ location.archivePath }.candidate-${ process.pid }-${ crypto.randomUUID() }`;
+        try {
+          try {
+            const candidate = await fs.promises.open(candidatePath, 'wx', 0o600);
+            try { await candidate.writeFile(encrypted); await candidate.sync() } finally { await candidate.close() }
+            try { await fs.promises.link(candidatePath, location.archivePath) } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+            }
+          } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+        } finally {
+          encrypted.fill(0);
+          await fs.promises.unlink(candidatePath).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error });
+        }
+        const archive = await this.safeFile(location.archivePath);
+        try { verified = this.decodeKey(storage.decryptString(await archive.readFile()), 'archived legacy Files master') } finally { await archive.close() }
+        if (!crypto.timingSafeEqual(raw, verified)) throw new Error('Legacy Files archive conflict');
+        const archiveDirectory = await fs.promises.open(path.dirname(location.archivePath), fs.constants.O_RDONLY);
+        try { await archiveDirectory.sync() } finally { await archiveDirectory.close() }
+        const current = await fs.promises.lstat(location.sourcePath);
+        if (!current.isFile() || current.isSymbolicLink() || current.dev !== initial.dev || current.ino !== initial.ino || current.size !== 32 ||
+            current.mtimeMs !== initial.mtimeMs || current.ctimeMs !== initial.ctimeMs) {
+          throw new Error('Legacy Files master changed during archival');
+        }
+        currentBytes = Buffer.alloc(32);
+        const reread = await source.read(currentBytes, 0, currentBytes.length, 0);
+        if (reread.bytesRead !== 32 || !crypto.timingSafeEqual(raw, currentBytes)) throw new Error('Legacy Files master changed during archival');
+        await fs.promises.unlink(location.sourcePath);
+        const sourceDirectory = await fs.promises.open(path.dirname(location.sourcePath), fs.constants.O_RDONLY);
+        try { await sourceDirectory.sync() } finally { await sourceDirectory.close() }
+      } finally { raw?.fill(0); verified?.fill(0); currentBytes?.fill(0); await source.close() }
+    }
+  }
+
+  // Retired normal-process API: source-compatible, permanently fail closed.
+  unlock():Promise<void> { return Promise.reject(new Error('Files keys require the isolated bootstrap helper')) }
+  settled():Promise<void> { return Promise.resolve() }
+  importLegacy():Promise<void> { return Promise.reject(new Error('Files lifecycle owns legacy import')) }
+  archiveLegacyKeys():Promise<void> { return Promise.reject(new Error('Files lifecycle owns legacy import')) }
+
+  private async secureStorage():Promise<FilesSafeStorage> {
+    const storage = await this.storage();
+    if (!storage.isEncryptionAvailable() || storage.getSelectedStorageBackend?.() === 'basic_text') throw new Error('Secure OS key storage is unavailable');
+    return storage;
+  }
+  private async safeFile(filePath:string):Promise<fs.promises.FileHandle> {
+    const file = await fs.promises.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const info = await file.stat();
+    if (!info.isFile() || info.size <= 0 || info.size > 16_384) { await file.close(); throw new Error('Invalid Files key file') }
+    return file;
+  }
+  private decodeKey(encoded:string, label:string):Buffer {
+    // Accept the canonical historical padded base64 blob and new base64url encoding.
+    const key = /^[A-Za-z0-9+/]{43}=$/.test(encoded) ? Buffer.from(encoded, 'base64') : Buffer.from(encoded, 'base64url');
+    if ((!/^[A-Za-z0-9_-]{43}$/.test(encoded) && !/^[A-Za-z0-9+/]{43}=$/.test(encoded)) || key.length !== 32) {
+      key.fill(0); throw new Error(`Invalid ${ label }`);
+    }
     return key;
+  }
+  private async readOptionalKey(filePath:string, decode:(value:Buffer)=>string):Promise<Buffer | undefined> {
+    let file:fs.promises.FileHandle;
+    try { file = await this.safeFile(filePath) } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+    try { return this.decodeKey(decode(await file.readFile()), 'legacy Files master') } finally { await file.close() }
   }
 }

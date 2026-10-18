@@ -25,6 +25,8 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 : "${SULLA_PROJECTS_JWT_SECRET:?missing Projects JWT secret}"
 : "${SULLA_PROJECTS_JWT_ISSUER:?missing Projects JWT issuer}"
 : "${SULLA_PROJECTS_JWT_AUDIENCE:?missing Projects JWT audience}"
+: "${SULLA_FILES_MASTER_KEY:?missing persistent Files master; run install.sh or restore secure configuration}"
+[[ "$SULLA_FILES_MASTER_KEY" =~ ^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$ ]] || fail "invalid Files master encoding"
 : "${SULLA_VAULT_IMAGE:?missing pinned vault image}"
 : "${SULLA_FILES_IMAGE:?missing pinned Files image}"
 : "${SULLA_PROJECTS_IMAGE:?missing pinned Projects image}"
@@ -67,6 +69,7 @@ done
   --from-literal=projects-jwt-audience="$SULLA_PROJECTS_JWT_AUDIENCE" \
   --from-literal=jwt-secret="$SULLA_VAULT_JWT_SECRET" \
   --from-literal=files-capability-signing-key="$SULLA_FILES_CAPABILITY_SIGNING_KEY" \
+  --from-literal=files-master-key="$SULLA_FILES_MASTER_KEY" \
   --from-literal=bootstrap-token="$SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN" \
   --dry-run=client -o yaml | \
   sed '/^metadata:$/a\  labels:\n    app.kubernetes.io/managed-by: sulla-server-installer' | \

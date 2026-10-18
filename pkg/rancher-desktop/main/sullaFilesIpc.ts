@@ -9,22 +9,36 @@ import { BrowserWindow, dialog, protocol, shell } from 'electron';
 import { getIpcMainProxy } from './ipcMain';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
 import { pickAndImportChatFiles } from './sullaFilesChatImport';
+import { getSullaFilesClient } from './sullaFilesClient';
 import { createDirectoryWithinRoot } from './sullaFilesDirectory';
 import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
 
+import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
 const RESIDENCY_TRANSFER_TIMEOUT_MS = 30 * 60_000;
+const filesClient = getSullaFilesClient();
+
+async function cloudFilesAvailable():Promise<boolean> {
+  try {
+    const account = await getIntegrationService().getConnectionStatus('sulla-cloud');
+    if (!account.connected) return false;
+
+    const { getCloudConnectionStatus } = await import('@pkg/main/cloud/cloudLifecycle');
+    const cloud = await getCloudConnectionStatus();
+
+    return cloud.signedIn && cloud.device.registered && !cloud.device.revoked && cloud.channel?.state === 'connected';
+  } catch {
+    return false;
+  }
+}
 
 async function json(endpoint:string, init:RequestInit = {}, server = false):Promise<any> {
-  const response = await getSullaFilesWatcher().requestFiles(endpoint, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any) } }, server);
-  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error ?? `Files request failed (${ response.status })`) }
-
-  return response.status === 204 ? undefined : response.json();
+  return filesClient.json(endpoint, init, { server });
 }
 
 function safeTarget(root:string, name:string):string {
@@ -124,7 +138,7 @@ async function openReference(input:{ fileId:string; versionId?:string }):Promise
   if (!versionId) throw new Error('This file has no readable version.');
   const versions = await json(`/v1/files/${ encodeURIComponent(input.fileId) }/history`) as any[];
   if (!versions.some(version => version.id === versionId)) throw new Error('That file version is no longer available.');
-  const response = await getSullaFilesWatcher().requestFilesStream(`/v1/files/${ encodeURIComponent(input.fileId) }/preview?versionId=${ encodeURIComponent(versionId) }`);
+  const response = await filesClient.stream(`/v1/files/${ encodeURIComponent(input.fileId) }/preview?versionId=${ encodeURIComponent(versionId) }`);
   if (!response.ok) throw new Error(`Files content failed (${ response.status })`);
   const cacheRoot = path.join(paths.cache, 'files-open');
   await fs.promises.mkdir(cacheRoot, { recursive: true, mode: 0o700 });
@@ -149,7 +163,7 @@ async function downloadReference(event:Electron.IpcMainInvokeEvent, input:{ file
   const picked = owner ? await dialog.showSaveDialog(owner, { defaultPath: path.basename(input.name) }) : await dialog.showSaveDialog({ defaultPath: path.basename(input.name) });
   if (picked.canceled || !picked.filePath) return false;
   const query = input.versionId ? `?versionId=${ encodeURIComponent(input.versionId) }` : '';
-  const response = await getSullaFilesWatcher().requestFilesStream(`/v1/files/${ encodeURIComponent(input.fileId) }/download${ query }`);
+  const response = await filesClient.stream(`/v1/files/${ encodeURIComponent(input.fileId) }/download${ query }`);
   if (!response.ok || !response.body) throw new Error(`Files download failed (${ response.status })`);
   const temp = `${ picked.filePath }.sulla-partial-${ process.pid }-${ randomUUID() }`;
   let ownsTemp = false;
@@ -173,7 +187,7 @@ async function downloadReferences(event:Electron.IpcMainInvokeEvent, items:{ fil
   const created:string[] = [];
   try {
     for (const [index, item] of items.entries()) {
-      const response = await getSullaFilesWatcher().requestFilesStream(`/v1/files/${ encodeURIComponent(item.fileId) }/download${ item.versionId ? `?versionId=${ encodeURIComponent(item.versionId) }` : '' }`);
+      const response = await filesClient.stream(`/v1/files/${ encodeURIComponent(item.fileId) }/download${ item.versionId ? `?versionId=${ encodeURIComponent(item.versionId) }` : '' }`);
       if (!response.ok || !response.body) throw new Error(`Files download failed (${ response.status })`);
       const target = path.join(directory, names[index]); const temp = path.join(directory, `.sulla-partial-${ process.pid }-${ randomUUID() }`);
       const handle = await fs.promises.open(temp, 'wx', 0o600);
@@ -206,7 +220,7 @@ function initFilesMediaProtocol():void {
     const capability = mediaCapabilities.get(parts[0]);
     if (!capability || capability.expiresAt <= Date.now()) { mediaCapabilities.delete(parts[0]); return new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } }) }
     const endpoint = `/v1/files/${ encodeURIComponent(capability.fileId) }/preview${ capability.versionId ? `?versionId=${ encodeURIComponent(capability.versionId) }` : '' }`;
-    const upstream = await getSullaFilesWatcher().requestFilesStream(endpoint, { method: request.method, headers: request.headers.get('range') ? { range: request.headers.get('range')! } : undefined }, request.signal);
+    const upstream = await filesClient.stream(endpoint, { method: request.method, headers: request.headers.get('range') ? { range: request.headers.get('range')! } : undefined }, request.signal);
     const mime = upstream.headers.get('content-type') ?? '';
     if (upstream.ok && !passiveMedia(mime)) { await upstream.body?.cancel(); return new Response(null, { status: 415, headers: { 'cache-control': 'no-store' } }) }
     const headers = new Headers(upstream.headers);
@@ -227,7 +241,7 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('sulla-files:metadata', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }`));
   ipcMain.handle('sulla-files:history', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/history`));
   ipcMain.handle('sulla-files:preview', async(_event, input:{ fileId:string; versionId?:string; thumbnail?:boolean }) => {
-    const route = input.thumbnail ? 'thumbnail' : 'preview'; const query = input.versionId ? `?versionId=${ encodeURIComponent(input.versionId) }` : ''; const response = await getSullaFilesWatcher().requestFiles(`/v1/files/${ encodeURIComponent(input.fileId) }/${ route }${ query }`);
+    const route = input.thumbnail ? 'thumbnail' : 'preview'; const query = input.versionId ? `?versionId=${ encodeURIComponent(input.versionId) }` : ''; const response = await filesClient.request(`/v1/files/${ encodeURIComponent(input.fileId) }/${ route }${ query }`);
     if (!response.ok) throw new Error(`Files preview failed (${ response.status })`);
 
     return { mime: response.headers.get('content-type') ?? 'application/octet-stream', data: new Uint8Array(await response.arrayBuffer()) };
@@ -247,21 +261,20 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('sulla-files:members', (_event, input:{ orgId:string }) => json(`/v1/orgs/${ encodeURIComponent(input.orgId) }/members`, {}, true));
   ipcMain.handle('sulla-files:keep', (_event, input:{ fileId:string; collectionId:string; path?:string }) => json(`/v1/agent-files/${ encodeURIComponent(input.fileId) }/keep`, { method: 'POST', body: JSON.stringify({ collectionId: input.collectionId, path: input.path }) }));
   ipcMain.handle('files-ui:capabilities', async() => {
-    const status = await getSullaFilesWatcher().status();
-    const { getCurrentAccessToken } = await import('@pkg/main/sullaCloudAuth');
-    let residency:Record<string, unknown> | undefined;
-    let onlineOnlyReason = '';
-    try {
-      residency = await json('/v1/residency-capabilities') as Record<string, unknown>;
-    } catch (error) {
-      onlineOnlyReason = error instanceof Error ? error.message : 'Online-only residency is unavailable.';
-    }
+    const [status, cloudAvailable, residencyResult] = await Promise.all([
+      getSullaFilesWatcher().status(),
+      cloudFilesAvailable(),
+      json('/v1/residency-capabilities')
+        .then((residency:Record<string, unknown>) => ({ residency, reason: '' }))
+        .catch((error) => ({ residency: undefined, reason: error instanceof Error ? error.message : 'Online-only residency is unavailable.' })),
+    ]);
+    const { residency, reason: onlineOnlyReason } = residencyResult;
     const onlineOnly = residency?.onlineOnly === true && residency.keepOnComputer === true &&
       residency.authenticatedRemote === true && residency.verifiedRecovery === true;
 
     return {
-      orgSharing:  status.serverConfigured,
-      publicLinks: Boolean(await getCurrentAccessToken()),
+      orgSharing:  status.serverConfigured && status.state !== 'error',
+      publicLinks: cloudAvailable && status.state !== 'error',
       onlineOnly,
       keepOnComputer: onlineOnly,
       authenticatedRemote: onlineOnly,
@@ -299,12 +312,12 @@ export function initSullaFilesIpc():void {
   });
   ipcMain.handle('files-ui:reference-content', async(_event, input:{ fileId:string; versionId?:string }) => {
     const query = input.versionId ? `?versionId=${ encodeURIComponent(input.versionId) }` : '';
-    const response = await getSullaFilesWatcher().requestFiles(`/v1/files/${ encodeURIComponent(input.fileId) }/preview${ query }`);
+    const response = await filesClient.request(`/v1/files/${ encodeURIComponent(input.fileId) }/preview${ query }`);
     if (!response.ok) throw new Error(`Files content failed (${ response.status })`);
     return { mime: response.headers.get('content-type') ?? 'application/octet-stream', data: new Uint8Array(await response.arrayBuffer()) };
   });
   ipcMain.handle('files-ui:chat-inventory', async(_event, input:{ runIds:string[]; threadId:string }) => {
-    const response = await getSullaFilesWatcher().requestFiles('/v1/agent-files/query', {
+    const response = await filesClient.request('/v1/agent-files/query', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input),
     });
     if (!response.ok) throw new Error(`Chat Files inventory failed (${ response.status })`);

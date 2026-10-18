@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { getSullaFilesWatcher } from './sullaFilesWatcher';
+import { getSullaFilesClient } from './sullaFilesClient';
 
 import type { ArtifactFilesRegistration, FilesRegistrationResult } from '@pkg/agent/services/ChatArtifactService';
 import type { ChatArtifactKind, ChatArtifactRecord } from '@pkg/shared/chatArtifacts';
@@ -8,6 +8,13 @@ import type { ChatArtifactKind, ChatArtifactRecord } from '@pkg/shared/chatArtif
 const AGENT_ID = 'sulla-desktop-artifacts';
 const MAX_ATTEMPTS = 3;
 const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const filesClient = getSullaFilesClient();
+
+function artifactRequest(endpoint:string, artifact:ChatArtifactRecord, init:RequestInit = {}):Promise<Response> {
+  return filesClient.request(endpoint, init, {
+    authority: { kind: 'agent', agentId: AGENT_ID, threadId: artifact.threadId },
+  });
+}
 
 class ArtifactFilesRegistrationError extends Error {
   constructor(message: string, readonly filesPath: string) { super(message) }
@@ -71,11 +78,11 @@ export class ChatArtifactFilesRegistration implements ArtifactFilesRegistration 
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const response = await getSullaFilesWatcher().requestFiles('/v1/agent-files', {
+        const response = await artifactRequest('/v1/agent-files', artifact, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(input),
-        }, false, { agentId: AGENT_ID, threadId: artifact.threadId });
+        });
         if (response.ok) {
           const result = await response.json() as Partial<FilesRegistrationResult>;
           if (!result.fileId || !result.versionId || !result.collectionId || !result.path) {
@@ -115,15 +122,13 @@ export class ChatArtifactFilesRegistration implements ArtifactFilesRegistration 
     // age can attach an artifact to someone else's file. An unknown collection
     // is recovered through the idempotent write instead.
     if (!artifact.filesCollectionId) return undefined;
-    const watcher = getSullaFilesWatcher();
-    const capability = { agentId: AGENT_ID, threadId: artifact.threadId };
-    const collectionsResponse = await watcher.requestFiles('/v1/collections', {}, false, capability);
+    const collectionsResponse = await artifactRequest('/v1/collections', artifact);
     if (!collectionsResponse.ok) return undefined;
     const collections = await collectionsResponse.json() as { id: string }[];
     const candidates = collections.filter(collection => collection.id === artifact.filesCollectionId);
     const parentPath = path.posix.dirname(targetPath);
     for (const collection of candidates) {
-      const filesResponse = await watcher.requestFiles(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=${ encodeURIComponent(parentPath === '.' ? '' : parentPath) }&trash=false`, {}, false, capability);
+      const filesResponse = await artifactRequest(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=${ encodeURIComponent(parentPath === '.' ? '' : parentPath) }&trash=false`, artifact);
       if (!filesResponse.ok) continue;
       const files = await filesResponse.json() as { id: string; path: string; current_version_id: string; created_by_type?: string; created_by_id?: string }[];
       const file = files.find(candidate => candidate.path === targetPath);
@@ -131,7 +136,7 @@ export class ChatArtifactFilesRegistration implements ArtifactFilesRegistration 
       if ((artifact.filesFileId && file.id !== artifact.filesFileId) || file.created_by_type !== 'agent-run' || file.created_by_id !== AGENT_ID) {
         throw new ArtifactFilesPathConflictError('Files already contains a different item at this artifact path. Nothing was overwritten.', targetPath);
       }
-      const contentResponse = await watcher.requestFiles(`/v1/agent-files/${ encodeURIComponent(file.id) }`, {}, false, capability);
+      const contentResponse = await artifactRequest(`/v1/agent-files/${ encodeURIComponent(file.id) }`, artifact);
       if (!contentResponse.ok) continue;
       const content = await contentResponse.json() as { version?: { id?: string }; content_base64?: string };
       if (typeof content.content_base64 !== 'string' || Buffer.from(content.content_base64, 'base64').compare(Buffer.from(artifact.content, 'utf8')) !== 0) continue;
