@@ -9,6 +9,7 @@ import { BrowserWindow, dialog, protocol, shell } from 'electron';
 import { getIpcMainProxy } from './ipcMain';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
 import { pickAndImportChatFiles } from './sullaFilesChatImport';
+import { createDirectoryWithinRoot } from './sullaFilesDirectory';
 import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
 
@@ -319,9 +320,7 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:set-paused', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
   ipcMain.handle('files-ui:open-folder', () => getSullaFilesWatcher().openFolder());
   ipcMain.handle('files-ui:create-folder', async(_event, relativePath:string) => {
-    const root = getSullaFilesWatcher().folder; const target = path.resolve(root, relativePath);
-    if (!target.startsWith(`${ root }${ path.sep }`)) throw new Error('Folder path escapes ~/sulla/files');
-    await fs.promises.mkdir(target, { recursive: false });
+    await createDirectoryWithinRoot(getSullaFilesWatcher().folder, relativePath);
     await getSullaFilesWatcher().notifyRescan();
   });
   ipcMain.handle('files-ui:open-file', (_event, input:{ fileId:string; versionId?:string }) => openReference(input));
