@@ -30,7 +30,14 @@ export async function adoptVaultPrincipal(db:pg.Pool, config:Pick<Config, 'userI
             AND a.principal_type='user' AND a.principal_id=c.owner_user_id`,
         [sentinelIds],
       );
-      await client.query('UPDATE file_share_links SET owner_user_id=$2 WHERE owner_user_id=$1', [config.userId, principalId]);
+      await client.query(
+        `UPDATE file_share_links links SET owner_user_id=$2
+          WHERE links.owner_user_id=$3 AND (
+            links.collection_id=ANY($1::uuid[])
+            OR EXISTS(SELECT 1 FROM files WHERE files.id=links.file_id AND files.collection_id=ANY($1::uuid[]))
+          )`,
+        [sentinelIds, principalId, config.userId],
+      );
       await client.query('UPDATE collections SET owner_user_id=$2,updated_at=NOW() WHERE id=ANY($1::uuid[])', [sentinelIds, principalId]);
     }
     await client.query('COMMIT');
