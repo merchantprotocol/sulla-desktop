@@ -23,6 +23,11 @@ export interface Config {
   capabilitySigningKey: string | Buffer;
   serverJwtSecret?:     string;
   localToken?:          string;
+  bootstrapServiceId?:  string;
+  bootstrapToken?:      string;
+  tlsCertificatePath?:  string;
+  tlsPrivateKeyPath?:   string;
+  serverMasterKey?:     string;
   mode:                 'desktop' | 'server';
   deviceId:             string;
   userId:               string;
@@ -58,6 +63,11 @@ export function loadConfig():Config {
     capabilitySigningKey,
     serverJwtSecret:  process.env.SULLA_FILES_JWT_SECRET,
     localToken:       process.env.SULLA_FILES_LOCAL_TOKEN,
+    bootstrapServiceId: process.env.SULLA_FILES_BOOTSTRAP_SERVICE_ID ?? 'sulla-desktop-files-bootstrap',
+    bootstrapToken:     process.env.SULLA_FILES_BOOTSTRAP_TOKEN,
+    tlsCertificatePath: process.env.SULLA_FILES_TLS_CERTIFICATE_PATH,
+    tlsPrivateKeyPath:  process.env.SULLA_FILES_TLS_PRIVATE_KEY_PATH,
+    serverMasterKey:    process.env.SULLA_FILES_MASTER_KEY,
     mode,
     deviceId:         process.env.SULLA_FILES_DEVICE_ID ?? 'desktop',
     userId:           process.env.SULLA_FILES_USER_ID ?? 'desktop-user',

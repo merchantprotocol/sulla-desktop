@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { createApp } from './app.js';
 import { isLegacyInternalPath, runLegacyPreflight } from './legacyPreflight.js';
+import { FilesLifecycle } from './lifecycle.js';
 
 const collectionId = '12345678-1234-4123-8123-123456789abc';
 const chunkId = 'a'.repeat(64);
@@ -112,7 +112,7 @@ test('invalid or inaccessible watched-root metadata fails closed', async() => {
   } finally { await rm(directory, { recursive: true }) }
 });
 
-test('every unlock reruns classification and cannot manufacture native keys for external content', async() => {
+test('every bootstrap reruns classification and cannot manufacture native keys for external content', async() => {
   const root = await mkdtemp(join(tmpdir(), 'sulla-files-preflight-unlock-'));
   let unlocks = 0;
   try {
@@ -120,6 +120,11 @@ test('every unlock reruns classification and cannot manufacture native keys for 
     await writeFile(join(root, 'master.key'), Buffer.alloc(32, 5));
     await writeFile(join(root, 'chunks', collectionId, 'aa', chunkId), 'synthetic ciphertext');
     const db = database();
+    const originalQuery = db.query.bind(db);
+    db.query = (sql:string, values:any[] = []) => {
+      if (sql.startsWith('SELECT 1 FROM files_key_state')) return { rows: [], rowCount: 0 };
+      return originalQuery(sql, values);
+    };
     const config:any = {
       keyring:              { unlocked: false, unlock() { unlocks++; return Promise.resolve() }, close() {} },
       legacyPreflight:      { state: 'clear' },
@@ -130,17 +135,18 @@ test('every unlock reruns classification and cannot manufacture native keys for 
       localToken:           'synthetic-local-token',
       mode:                 'desktop',
     };
-    const server = createApp(db, config).listen(0); await new Promise<void>(resolve => server.once('listening', resolve));
+    const lifecycle = new FilesLifecycle(db, config, config.keyring, {
+      initialize: async() => undefined,
+      stop: async() => undefined,
+    });
+    const masterKey = randomBytes(32);
     try {
-      const base = `http://127.0.0.1:${ (server.address() as any).port }`;
-      const response = await fetch(`${ base }/v1/local/unlock`, {
-        method:  'POST',
-        headers: { 'content-type': 'application/json', 'x-sulla-files-token': config.localToken },
-        body:    JSON.stringify({ masterKey: randomBytes(32).toString('base64') }),
-      });
-      assert.equal(response.status, 503);
+      await assert.rejects(
+        lifecycle.bootstrap({ masterKey, legacyMasterKeys: [] }, 'existing', lifecycle.generation),
+        (error:any) => error?.code === 'FILES_LEGACY_KEY_REQUIRED',
+      );
       assert.equal(unlocks, 0);
       assert.equal(config.legacyPreflight.state, 'secure-import-required');
-    } finally { await new Promise<void>(resolve => server.close(() => resolve())) }
+    } finally { masterKey.fill(0) }
   } finally { await rm(root, { recursive: true }) }
 });

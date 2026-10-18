@@ -5,19 +5,19 @@ import path from 'node:path';
 
 import { app, shell } from 'electron';
 
-import { SullaFilesKeychain } from './sullaFilesKeychain';
+import { SullaFilesBootstrapFacade } from './sullaFilesBootstrapFacade';
+import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { spawnFile } from '@pkg/utils/childProcess';
 import Logging from '@pkg/utils/logging';
-import paths from '@pkg/utils/paths';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 import { resolveSullaFilesUserRoot } from '@pkg/utils/sullaFilesPaths';
 
 const console = Logging.background;
 const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/'];
-const API = 'http://127.0.0.1:30124';
+const API = FILES_HTTPS_ORIGIN;
 
 export interface SullaFilesStatus {
   state:             'synced' | 'syncing' | 'paused' | 'error' | 'conflict';
@@ -65,41 +65,7 @@ class SullaFilesWatcher {
   private started = false;
   private stopped = false;
   private lockGeneration = 0;
-  private readonly keychain = new SullaFilesKeychain(
-    path.join(paths.appHome, 'files-master-key.enc'),
-    async() => (await import('electron')).safeStorage,
-    async(key) => {
-      const generation = this.lockGeneration;
-      const body = Buffer.from(JSON.stringify({ masterKey: key.toString('base64') }));
-      try {
-        await this.requireAppUnlocked();
-        const unlock = await this.rawLocalRequest('/v1/local/unlock', { method: 'POST', body });
-        if (!unlock.ok) {
-          const failure = await unlock.json().catch(() => ({})) as { code?:unknown };
-          if (failure.code !== 'FILES_MASTER_KEY_REJECTED') throw new Error('Files secure startup failed');
-          const recovery = await this.rawLocalRequest('/v1/local/recovery/device', { method: 'POST', body });
-          if (!recovery.ok) throw new Error('Files keychain bootstrap and recovery failed');
-        }
-        if (generation !== this.lockGeneration || this.stopped || !await this.appUnlocked()) {
-          await this.rawLocalRequest('/v1/local/lock', { method: 'POST' });
-          throw new Error('Files is shutting down');
-        }
-      } finally {
-        body.fill(0);
-      }
-    },
-    [
-      { sourcePath: path.join(this.folder, 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-shared-master-key.enc') },
-      { sourcePath: path.join(paths.sullaHome, 'private-files-quarantine', 'master.key'), archivePath: path.join(paths.appHome, 'files-legacy-quarantined-master-key.enc') },
-    ],
-    async(master, legacyMasters) => {
-      const body = Buffer.from(JSON.stringify({ masterKey: master.toString('base64'), legacyMasterKeys: legacyMasters.map(key => key.toString('base64')) }));
-      try {
-        const response = await this.rawLocalRequest('/v1/local/legacy-import', { method: 'POST', body }, 30 * 60_000);
-        if (!response.ok) throw new Error('Legacy Files import failed');
-      } finally { body.fill(0) }
-    },
-  );
+  private readonly bootstrap = new SullaFilesBootstrapFacade();
 
   private async appUnlocked(): Promise<boolean> {
     const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
@@ -112,11 +78,12 @@ class SullaFilesWatcher {
 
   async lockService(): Promise<void> {
     this.lockGeneration++;
-    // Let an in-flight unlock finish before locking, preventing a late response
-    // from undoing an explicit user lock. New unlocks check the app vault state.
-    await this.keychain.settled();
-    const response = await this.rawLocalRequest('/v1/local/lock', { method: 'POST' });
-    if (!response.ok) throw new Error('Files service could not be locked');
+    // Invalidate the service generation first; an in-flight helper must not be
+    // allowed to complete before the lock reaches the lifecycle authority.
+    const response = await this.rawLocalRequest('/v1/local/lock', { method: 'POST' }).catch(() => undefined);
+    await this.bootstrap.settled();
+    const postHelper = await this.rawLocalRequest('/v1/local/lock', { method: 'POST' });
+    if (!response?.ok || !postHelper.ok) throw new Error('Files service could not be locked');
   }
 
   private async ensureUnlocked(): Promise<void> {
@@ -128,19 +95,20 @@ class SullaFilesWatcher {
     if (typeof health.locked !== 'boolean') throw new Error('Files service requires a keychain-compatible update');
     if (!health.legacyImport || !['clear', 'secure-import-required'].includes(health.legacyImport.state)) throw new Error('Files service requires a legacy-preflight-compatible update');
     if (health.locked) {
-      // The service has migrated/classified metadata before this point. Secure
-      // legacy plaintext custody separately, then refuse native unlock until
-      // explicit recovery has installed the external collection keys.
-      await this.keychain.archiveLegacyKeys();
-      if (health.legacyImport.state === 'secure-import-required') await this.keychain.importLegacy();
-      await this.keychain.unlock();
+      const generation = this.lockGeneration;
+      const result = await this.bootstrap.initialize();
+      if (!result.ok || result.state !== 'unlocked') throw new Error(result.code ?? 'Files secure bootstrap failed');
+      if (generation !== this.lockGeneration || this.stopped || !await this.appUnlocked()) {
+        await this.rawLocalRequest('/v1/local/lock', { method: 'POST' });
+        throw new Error('Files is shutting down');
+      }
     }
     await this.requireAppUnlocked();
   }
 
   private async rawLocalRequest(endpoint:string, init:RequestInit = {}, timeoutMs = 30_000):Promise<Response> {
     const token = await SullaSettingsModel.getServicePassword();
-    return fetch(`${ API }${ endpoint }`, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any), 'x-sulla-files-token': token }, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+    return desktopFilesFetch(`${ API }${ endpoint }`, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any), 'x-sulla-files-token': token }, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
   }
 
   private async isLockedResponse(response: Response): Promise<boolean> {
@@ -219,7 +187,7 @@ class SullaFilesWatcher {
     const send = async() => {
       const token = await this.capabilityToken(principalId, capability);
 
-      return fetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error' as const, signal: init.signal ?? AbortSignal.timeout(30_000) });
+      return desktopFilesFetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error' as const, signal: init.signal ?? AbortSignal.timeout(30_000) });
     };
     const response = await send();
     if (!await this.isLockedResponse(response)) return response;
@@ -238,7 +206,7 @@ class SullaFilesWatcher {
     const send = async() => {
       const token = await this.capabilityToken(principalId);
 
-      return fetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error' as const, signal });
+      return desktopFilesFetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error' as const, signal });
     };
     const response = await send();
     if (!await this.isLockedResponse(response)) return response;

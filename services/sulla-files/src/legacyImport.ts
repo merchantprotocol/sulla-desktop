@@ -262,7 +262,7 @@ export class LegacyFilesImporter {
     } finally { for (const key of legacyMasters) key.fill(0); }
   }
 
-  private async completedResult():Promise<{ collections: number; files: number; versions: number } | undefined> {
+  async completedResult():Promise<{ collections: number; files: number; versions: number } | undefined> {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
