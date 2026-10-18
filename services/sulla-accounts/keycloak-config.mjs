@@ -5,7 +5,11 @@ function audienceScope(name, audience) {
   return {
     name,
     protocol: 'openid-connect',
-    attributes: { 'display.on.consent.screen': 'false', 'sulla.reconciliation.version': '1' },
+    attributes: {
+      'display.on.consent.screen': 'false',
+      'include.in.token.scope': 'true',
+      'sulla.reconciliation.version': '1',
+    },
     protocolMappers: [{
       name: `audience-${audience}`,
       protocol: 'openid-connect',
@@ -32,6 +36,14 @@ export function exactKeycloakId(rows, field, expected) {
   if (!matches.length) return '';
   if (typeof matches[0].id !== 'string' || !matches[0].id) throw new Error('Keycloak lookup returned an invalid id');
   return matches[0].id;
+}
+
+export function staleKeycloakIds(rows, field, expected) {
+  if (!Array.isArray(rows)) throw new Error('Keycloak lookup did not return an array');
+  return rows.filter(row => row?.[field] !== expected).map(row => {
+    if (typeof row?.id !== 'string' || !row.id) throw new Error('Keycloak lookup returned an invalid id');
+    return row.id;
+  });
 }
 
 export function buildKeycloakConfig(environment) {
@@ -97,9 +109,11 @@ function writeConfiguration([realmFile, nativeClientFile, webClientFile]) {
   writeFileSync(nativeClientFile, JSON.stringify(config.nativeClient), { mode: 0o600 });
   writeFileSync(webClientFile, JSON.stringify(config.webClient), { mode: 0o600 });
   writeFileSync('/run/sulla-accounts-private/scope-membership.json', JSON.stringify(config.membershipScope), { mode: 0o600 });
+  writeFileSync('/run/sulla-accounts-private/mapper-membership.json', JSON.stringify(config.membershipScope.protocolMappers[0]), { mode: 0o600 });
   for (const scope of config.resourceScopes) {
     const audience = scope.protocolMappers[0].config['included.custom.audience'];
     writeFileSync(`/run/sulla-accounts-private/scope-resource-${audience}.json`, JSON.stringify(scope), { mode: 0o600 });
+    writeFileSync(`/run/sulla-accounts-private/mapper-resource-${audience}.json`, JSON.stringify(scope.protocolMappers[0]), { mode: 0o600 });
   }
 }
 
