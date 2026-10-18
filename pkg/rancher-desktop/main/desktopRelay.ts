@@ -528,7 +528,7 @@ export class DesktopRelayClient {
     if (msg.type === 'share_fetch_cancel') {
       if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
       const request = this.shareRequests.get(msg.requestId);
-      if (request) {
+      if (request && request.socket === sourceSocket && request.generation === sourceGeneration && this.isActiveShareRequest(request)) {
         request.controller.abort();
         this.shareRequests.delete(msg.requestId);
       }

@@ -275,6 +275,23 @@ describe('DesktopRelayClient share byte ranges', () => {
     expect(controller.signal.aborted).toBe(true);
   });
 
+  it('does not let a delayed cancellation abort a replacement connection request', async() => {
+    const { client, socket } = connectedClient();
+    const cancellation = client.handleMessage(JSON.stringify({ type: 'share_fetch_cancel', requestId: 'reused-request', targetDeviceId: 'desktop-1' }), socket, 1);
+    const replacement = new MockWebSocket('wss://replacement');
+    const controller = new AbortController();
+
+    replacement.readyState = MockWebSocket.OPEN;
+    client.ws = replacement;
+    client.openGeneration = 2;
+    client.shareRequests.set('reused-request', { requestId: 'reused-request', controller, socket: replacement, generation: 2 });
+    await cancellation;
+    expect(controller.signal.aborted).toBe(false);
+    expect(client.shareRequests.has('reused-request')).toBe(true);
+    await client.handleMessage(JSON.stringify({ type: 'share_fetch_cancel', requestId: 'reused-request', targetDeviceId: 'desktop-1' }), replacement, 2);
+    expect(controller.signal.aborted).toBe(true);
+  });
+
   it('never makes a relay request without the local Files credential', async() => {
     const { client, socket } = connectedClient();
     mockSullaSettingsModel.SullaSettingsModel.getServicePassword.mockResolvedValueOnce('');
