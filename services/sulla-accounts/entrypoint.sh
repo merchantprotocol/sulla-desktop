@@ -134,6 +134,36 @@ reconcile_keycloak() {
         process.stdout.write(exactKeycloakId(JSON.parse(input), process.argv[1], process.argv[2]));
       ' "$field" "$expected"
   }
+  reconcile_audience_mapper() {
+    scope_id="$1"
+    audience="$2"
+    mapper_file="$3"
+    mapper_collection="client-scopes/${scope_id}/protocol-mappers/models"
+    mapper_name="audience-${audience}"
+    mapper_id="$(find_named_id "$mapper_collection" name "$mapper_name")"
+    if [ -n "$mapper_id" ]; then
+      run_unprivileged "$kcadm" update "${mapper_collection}/${mapper_id}" --config "$kcadm_config" -r "$realm" -f "$mapper_file" >/dev/null
+    else
+      run_unprivileged "$kcadm" create "$mapper_collection" --config "$kcadm_config" -r "$realm" -f "$mapper_file" >/dev/null
+      mapper_id="$(find_named_id "$mapper_collection" name "$mapper_name")"
+    fi
+    [ -n "$mapper_id" ] || fail "failed to reconcile audience mapper ${mapper_name}"
+
+    # A client-scope representation update does not update or remove its nested
+    # protocol mappers. Remove only stale mappers inside this exact, named scope.
+    stale_mapper_ids="$(
+      run_unprivileged "$kcadm" get "$mapper_collection" --config "$kcadm_config" -r "$realm" |
+        run_unprivileged node --input-type=module -e '
+          import { staleKeycloakIds } from "/usr/local/lib/sulla-accounts/keycloak-config.mjs";
+          let input = "";
+          for await (const chunk of process.stdin) input += chunk;
+          for (const id of staleKeycloakIds(JSON.parse(input), "name", process.argv[1])) process.stdout.write(`${id}\n`);
+        ' "$mapper_name"
+    )"
+    for stale_mapper_id in $stale_mapper_ids; do
+      run_unprivileged "$kcadm" delete "${mapper_collection}/${stale_mapper_id}" --config "$kcadm_config" -r "$realm" >/dev/null
+    done
+  }
   run_unprivileged "$kcadm" config credentials --config "$kcadm_config" \
     --server http://127.0.0.1:8080/auth --realm master --user "$admin_username" --password "$admin_password" >/dev/null
   if ! run_unprivileged "$kcadm" get "realms/${realm}" --config "$kcadm_config" >/dev/null 2>&1; then
@@ -152,6 +182,7 @@ reconcile_keycloak() {
     membership_scope_id="$(find_named_id client-scopes name "$membership_scope_name")"
   fi
   [ -n "$membership_scope_id" ] || fail "failed to reconcile membership client scope"
+  reconcile_audience_mapper "$membership_scope_id" "$membership_audience" "${private_dir}/mapper-membership.json"
 
   old_ifs=$IFS
   IFS=,
@@ -164,7 +195,10 @@ reconcile_keycloak() {
       run_unprivileged "$kcadm" update "client-scopes/${scope_id}" --config "$kcadm_config" -r "$realm" -f "$scope_file" >/dev/null
     else
       run_unprivileged "$kcadm" create client-scopes --config "$kcadm_config" -r "$realm" -f "$scope_file" >/dev/null
+      scope_id="$(find_named_id client-scopes name "$scope_name")"
     fi
+    [ -n "$scope_id" ] || fail "failed to reconcile resource client scope ${scope_name}"
+    reconcile_audience_mapper "$scope_id" "$audience" "${private_dir}/mapper-resource-${audience}.json"
     IFS=,
   done
   IFS=$old_ifs
