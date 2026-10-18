@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { buildKeycloakConfig } from './keycloak-config.mjs';
+
+const config = buildKeycloakConfig({
+  realm: 'sulla',
+  nativeClientId: 'sulla-desktop',
+  nativeRedirectUri: 'http://127.0.0.1:3020/v1/oidc/callback',
+  webClientId: 'sulla-web',
+  webClientSecret: 'synthetic-secret',
+  webRedirectUris: 'https://accounts.example/web/oidc/callback',
+  publicUrl: 'https://accounts.example',
+  membershipAudience: 'sulla-membership',
+  resourceAudiences: 'sulla-projects,sulla-files,sulla-vault,sulla-workflows',
+});
+
+function mappedAudience(scope) {
+  assert.equal(scope.protocolMappers.length, 1);
+  const mapper = scope.protocolMappers[0];
+  assert.equal(mapper.protocolMapper, 'oidc-audience-mapper');
+  assert.equal(mapper.config['access.token.claim'], 'true');
+  assert.equal(mapper.config['id.token.claim'], 'false');
+  return mapper.config['included.custom.audience'];
+}
+
+test('membership is a distinct default audience scope', () => {
+  assert.equal(config.membershipScope.name, 'sulla-membership');
+  assert.equal(mappedAudience(config.membershipScope), 'sulla-membership');
+  assert.deepEqual(config.nativeClient.defaultClientScopes, ['profile', 'sulla-membership']);
+  assert.deepEqual(config.webClient.defaultClientScopes, ['profile', 'sulla-membership']);
+  assert.ok(!config.nativeClient.optionalClientScopes.includes(config.membershipScope.name));
+  assert.ok(!config.webClient.optionalClientScopes.includes(config.membershipScope.name));
+});
+
+test('resource audiences use the Accounts colon-named optional scope contract', () => {
+  const expected = new Map([
+    ['sulla-audience:sulla-projects', 'sulla-projects'],
+    ['sulla-audience:sulla-files', 'sulla-files'],
+    ['sulla-audience:sulla-vault', 'sulla-vault'],
+    ['sulla-audience:sulla-workflows', 'sulla-workflows'],
+  ]);
+  assert.deepEqual(new Map(config.resourceScopes.map(scope => [scope.name, mappedAudience(scope)])), expected);
+  assert.deepEqual(config.nativeClient.optionalClientScopes, [...expected.keys()]);
+  assert.deepEqual(config.webClient.optionalClientScopes, [...expected.keys()]);
+});
