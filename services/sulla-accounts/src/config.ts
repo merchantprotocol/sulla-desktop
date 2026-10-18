@@ -107,8 +107,8 @@ export async function loadConfig(): Promise<AccountsConfig> {
   const serviceTokens = new Map<string, ServiceGrant>();
   const serviceTokenFile = process.env.SULLA_ACCOUNTS_SERVICE_TOKENS_FILE;
   if (serviceTokenFile) {
-    const raw = await readSecretFile('SULLA_ACCOUNTS_SERVICE_TOKENS_FILE');
-    const parsed = JSON.parse(raw.toString('utf8')) as Record<string, { token?: unknown; issuers?: unknown; allowedAudiences?: unknown; pathPrefixes?: unknown; methods?: unknown }>;
+    const raw = await readTextFile('SULLA_ACCOUNTS_SERVICE_TOKENS_FILE');
+    const parsed = JSON.parse(raw) as Record<string, { token?: unknown; issuers?: unknown; allowedAudiences?: unknown; pathPrefixes?: unknown; methods?: unknown }>;
     for (const [name, grant] of Object.entries(parsed)) {
       if (!name || typeof grant?.token !== 'string' || Buffer.byteLength(grant.token) < 32 || !Array.isArray(grant.issuers) || !Array.isArray(grant.allowedAudiences) || !Array.isArray(grant.pathPrefixes)) {
         throw new Error('service token file contains an invalid entry');
