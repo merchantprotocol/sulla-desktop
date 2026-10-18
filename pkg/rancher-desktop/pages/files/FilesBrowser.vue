@@ -2,8 +2,8 @@
   <div
     class="files-browser"
     :class="{ dragging }"
-    @dragenter.prevent="dragging = true"
-    @dragover.prevent="dragging = true"
+    @dragenter.prevent="dataSource.capabilities.nativeFilesystem && (dragging = true)"
+    @dragover.prevent="dataSource.capabilities.nativeFilesystem && (dragging = true)"
     @dragleave="onDragLeave"
     @drop.prevent="onDrop"
   >
@@ -490,7 +490,7 @@
           <span
             class="ico"
             v-html="icons.upload"
-          /><div><b>Drop files here to upload to {{ pageTitle }}</b><small>{{ dropCopy }}</small></div><button
+          /><div><b>{{ uploadHeading }}</b><small>{{ dropCopy }}</small></div><button
             class="btn"
             type="button"
             :disabled="busy || !dataSource.capabilities.upload"
@@ -516,7 +516,7 @@
     />
 
     <div
-      v-if="dragging"
+      v-if="dragging && dataSource.capabilities.nativeFilesystem"
       class="drop-overlay"
     >
       <span v-html="icons.upload" /><strong>Drop files here to upload to {{ pageTitle }}</strong><p>{{ dropCopy }}</p>
@@ -671,8 +671,9 @@ const sections = computed(() => [
   { id: 'trash' as Section, label: 'Trash', icon: icons.trash, count: 0, warn: false },
 ]);
 const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', sharedByMe: 'No public links yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
-const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. They stay in ~/sulla/files.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: `Deleted files stay recoverable for ${ retentionDays.value } days.` }[section.value]));
-const dropCopy = computed(() => snapshot.value?.status.serverConfigured ? 'Or paste a screenshot. Files sync to the server and are versioned on every change.' : 'Or paste a screenshot. Files stay on this Mac and are versioned on every change.');
+const emptyCopy = computed(() => ({ files: props.dataSource.capabilities.nativeFilesystem ? 'Drop files here or choose files. They stay in ~/sulla/files.' : 'Choose files to upload. Files sync to the server and are versioned on every change.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: `Deleted files stay recoverable for ${ retentionDays.value } days.` }[section.value]));
+const uploadHeading = computed(() => props.dataSource.capabilities.nativeFilesystem ? `Drop files here to upload to ${ pageTitle.value }` : `Choose files to upload to ${ pageTitle.value }`);
+const dropCopy = computed(() => props.dataSource.capabilities.nativeFilesystem ? (snapshot.value?.status.serverConfigured ? 'Or paste a screenshot. Files sync to the server and are versioned on every change.' : 'Or paste a screenshot. Files stay on this Mac and are versioned on every change.') : 'Browser uploads use the file chooser.');
 const filters = computed(() => [
   { key: 'type' as const, label: 'Type', any: 'Any', options: [...new Set(activeFiles.value.map(file => kindLabel(file.mime, file.path)))].sort() },
   { key: 'person' as const, label: 'Person', any: 'Anyone', options: [...new Set(activeFiles.value.map(ownerName))].sort() },
@@ -778,7 +779,7 @@ function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([ent
 function selectEntry(entry:DisplayEntry) { if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
 async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await props.dataSource.openFile(fileId); }
 function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }
-async function onDrop(event:DragEvent) { dragging.value = false; const paths = [...(event.dataTransfer?.files ?? [])].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value)); if (!paths.length) { error.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return } busy.value = true; try { await props.dataSource.uploadPaths(paths, currentPath.value); setTimeout(() => refresh(true), 700) } finally { busy.value = false } }
+async function onDrop(event:DragEvent) { dragging.value = false; if (!props.dataSource.capabilities.nativeFilesystem) { operationError.value = 'Browser drag and drop is unavailable. Use Choose files instead.'; return } const paths = [...(event.dataTransfer?.files ?? [])].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value)); if (!paths.length) { operationError.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return } busy.value = true; try { await props.dataSource.uploadPaths(paths, currentPath.value); setTimeout(() => refresh(true), 700) } finally { busy.value = false } }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
 function dayLabel(date:Date) { const now = new Date(); if (date.toDateString() === now.toDateString()) return 'Today'; const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'; return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date) }
