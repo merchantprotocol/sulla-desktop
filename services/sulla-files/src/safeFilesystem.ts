@@ -210,10 +210,13 @@ export class FilesMutationCoordinator {
     } catch (error) { await handle.close(); throw error }
   }
 
-  exists(path:string):Promise<boolean> {
-    return this.pinParent(path).then(async parent => {
-      try { await lstat(parent.child); return true } catch (error:any) { if (error?.code === 'ENOENT') return false; throw error } finally { await parent.handle.close() }
-    });
+  async exists(path:string):Promise<boolean> {
+    let parent:{ handle: FileHandle; child: string };
+    try { parent = await this.pinParent(path) } catch (error:any) {
+      if (error?.code === 'ENOENT') return false;
+      throw error;
+    }
+    try { await lstat(parent.child); return true } catch (error:any) { if (error?.code === 'ENOENT') return false; throw error } finally { await parent.handle.close() }
   }
 
   private async restoreNoClobber(quarantine:string, source:string):Promise<void> {

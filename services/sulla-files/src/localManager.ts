@@ -39,6 +39,14 @@ interface PathOperationRow {
   operation_id: string;
   state: 'planned' | 'publishing' | 'db-committed';
   plan: PathOperationPlanEntry[];
+  receipts: PathOperationReceipt[];
+}
+interface PathOperationReceipt {
+  fileId: string;
+  stagePath: string;
+  targetPath: string;
+  published: true;
+  fingerprint?: { dev: string; ino: string; size: number; mtimeMs: number };
 }
 
 function mime(path:string):string {
@@ -63,6 +71,25 @@ function conflictPath(path:string, device:string):string {
 function collectionIdFor(userId:string):string {
   const value = createHash('sha256').update(`sulla-files:v1:${ userId }`).digest('hex').slice(0, 32).split(''); value[12] = '4'; value[16] = '8';
   return `${ value.slice(0, 8).join('') }-${ value.slice(8, 12).join('') }-${ value.slice(12, 16).join('') }-${ value.slice(16, 20).join('') }-${ value.slice(20).join('') }`;
+}
+
+function serializeFingerprint(value:PublicationReceipt['fingerprint']):PathOperationReceipt['fingerprint'] {
+  return { dev: value.dev.toString(), ino: value.ino.toString(), size: value.size, mtimeMs: value.mtimeMs };
+}
+
+function deserializeFingerprint(value:NonNullable<PathOperationReceipt['fingerprint']>):PublicationReceipt['fingerprint'] {
+  if (!/^\d+$/.test(value.dev) || !/^\d+$/.test(value.ino) || !Number.isSafeInteger(value.size) || !Number.isSafeInteger(value.mtimeMs)) {
+    throw new Error('Path operation publication receipt has an invalid fingerprint');
+  }
+  return { dev: BigInt(value.dev), ino: BigInt(value.ino), size: value.size, mtimeMs: value.mtimeMs };
+}
+
+function sameIdentity(left:PublicationReceipt['fingerprint'], right:PublicationReceipt['fingerprint']):boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameFingerprint(left:PublicationReceipt['fingerprint'], right:PublicationReceipt['fingerprint']):boolean {
+  return sameIdentity(left, right) && left.size === right.size && left.mtimeMs === right.mtimeMs;
 }
 
 /** Resolve symlinks before allowing plaintext watched files beside private storage. */
@@ -232,7 +259,13 @@ export class LocalFilesManager {
           }
           await this.db.query(
             `UPDATE files_path_operations SET receipts=receipts||$2::jsonb,updated_at=NOW() WHERE operation_id=$1`,
-            [operationId, JSON.stringify([{ fileId: operation.fileId, stagePath: operation.stagePath, targetPath: operation.targetPath, published: true }])],
+            [operationId, JSON.stringify([{
+              fileId:      operation.fileId,
+              stagePath:   operation.stagePath,
+              targetPath:  operation.targetPath,
+              published:   true,
+              fingerprint: serializeFingerprint(completed.at(-1)!.publication.fingerprint),
+            }])],
           );
         }
       }
@@ -306,15 +339,16 @@ export class LocalFilesManager {
   async recoverPathOperations():Promise<void> {
     return this.mutations.runExclusive(['.sulla-trash/.operations'], async() => {
       const rows = (await this.db.query(
-        `SELECT operation_id,state,plan FROM files_path_operations
+        `SELECT operation_id,state,plan,receipts FROM files_path_operations
           WHERE state IN('planned','publishing','db-committed') ORDER BY created_at`,
       )).rows as PathOperationRow[];
       for (const row of rows) {
         try {
           const plan = Array.isArray(row.plan) ? row.plan : [];
           if (!plan.length) throw new Error('Path operation has no recoverable plan');
-          if (row.state === 'db-committed') await this.finishCommittedPathOperation(plan);
-          else await this.rollbackUncommittedPathOperation(plan);
+          const receipts = Array.isArray(row.receipts) ? row.receipts : [];
+          if (row.state === 'db-committed') await this.finishCommittedPathOperation(plan, receipts);
+          else await this.rollbackUncommittedPathOperation(plan, receipts);
           await this.db.query("UPDATE files_path_operations SET state='completed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1", [row.operation_id]);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -325,26 +359,46 @@ export class LocalFilesManager {
     });
   }
 
-  private async finishCommittedPathOperation(plan:PathOperationPlanEntry[]):Promise<void> {
+  private async finishCommittedPathOperation(plan:PathOperationPlanEntry[], receipts:PathOperationReceipt[]):Promise<void> {
     for (const entry of plan) {
+      const receipt = this.operationReceipt(entry, receipts);
+      if (!receipt?.fingerprint) throw new Error(`Committed publication receipt is missing: ${ entry.targetPath }`);
+      const fingerprint = deserializeFingerprint(receipt.fingerprint);
       if (!await this.mutations.exists(entry.targetPath)) throw new Error(`Committed target is missing: ${ entry.targetPath }`);
-      await this.verifyOperationFile(entry.targetPath, entry.contentHash);
+      const target = await this.mutations.pin(entry.targetPath);
+      try {
+        if (!sameFingerprint(target.fingerprint, fingerprint)) throw new Error(`Committed target identity changed: ${ entry.targetPath }`);
+        await this.verifyOperationPinned(target, entry.contentHash);
+      } finally { await target.close() }
       if (await this.mutations.exists(entry.stagePath)) {
         const staged = await this.mutations.pin(entry.stagePath);
-        const receipt:PublicationReceipt = { staged: entry.stagePath, target: entry.targetPath, fingerprint: staged.fingerprint };
-        await staged.close();
-        await this.mutations.finalizePublication(receipt);
+        try {
+          if (!sameFingerprint(staged.fingerprint, fingerprint)) throw new Error(`Committed stage identity changed: ${ entry.stagePath }`);
+          await this.verifyOperationPinned(staged, entry.contentHash);
+        } finally { await staged.close() }
+        await this.mutations.finalizePublication({ staged: entry.stagePath, target: entry.targetPath, fingerprint });
       }
     }
   }
 
-  private async rollbackUncommittedPathOperation(plan:PathOperationPlanEntry[]):Promise<void> {
+  private async rollbackUncommittedPathOperation(plan:PathOperationPlanEntry[], receipts:PathOperationReceipt[]):Promise<void> {
     for (const entry of [...plan].reverse()) {
-      if (await this.mutations.exists(entry.targetPath)) {
-        const target = await this.mutations.pin(entry.targetPath);
-        const receipt:PublicationReceipt = { staged: entry.stagePath, target: entry.targetPath, fingerprint: target.fingerprint };
-        await target.close();
-        await this.mutations.rollbackPublication(receipt, pinned => this.verifyOperationPinned(pinned, entry.contentHash));
+      const durableReceipt = this.operationReceipt(entry, receipts);
+      const stageExists = await this.mutations.exists(entry.stagePath);
+      if (await this.mutations.exists(entry.targetPath) && (durableReceipt?.fingerprint || stageExists)) {
+        let fingerprint = durableReceipt?.fingerprint ? deserializeFingerprint(durableReceipt.fingerprint) : undefined;
+        if (!fingerprint) {
+          const [stage, target] = await Promise.all([this.mutations.pin(entry.stagePath), this.mutations.pin(entry.targetPath)]);
+          try {
+            if (!sameIdentity(stage.fingerprint, target.fingerprint)) throw new Error(`Uncommitted target is not owned by its recovery stage: ${ entry.targetPath }`);
+            await Promise.all([this.verifyOperationPinned(stage, entry.contentHash), this.verifyOperationPinned(target, entry.contentHash)]);
+            fingerprint = target.fingerprint;
+          } finally { await Promise.all([stage.close(), target.close()]) }
+        }
+        await this.mutations.rollbackPublication(
+          { staged: entry.stagePath, target: entry.targetPath, fingerprint },
+          pinned => this.verifyOperationPinned(pinned, entry.contentHash),
+        );
       }
       if (entry.kind === 'move' && await this.mutations.exists(entry.stagePath)) {
         const staged = await this.mutations.pin(entry.stagePath);
@@ -360,9 +414,8 @@ export class LocalFilesManager {
     }
   }
 
-  private async verifyOperationFile(path:string, expectedHash:string):Promise<void> {
-    const pinned = await this.mutations.pin(path);
-    try { await this.verifyOperationPinned(pinned, expectedHash) } finally { await pinned.close() }
+  private operationReceipt(entry:PathOperationPlanEntry, receipts:PathOperationReceipt[]):PathOperationReceipt | undefined {
+    return receipts.find(receipt => receipt.published && receipt.fileId === entry.fileId && receipt.stagePath === entry.stagePath && receipt.targetPath === entry.targetPath);
   }
 
   private async verifyOperationPinned(pinned:PinnedRegularFile, expectedHash:string):Promise<void> {
@@ -372,7 +425,7 @@ export class LocalFilesManager {
     await pinned.assertUnchanged();
   }
 
-  async rescan():Promise<void> { return this.serial(async() => { await this.scanFolder(); if (!this.paused) await this.syncNow(); }) }
+  async rescan():Promise<void> { return this.serial(async() => { await this.recoverPathOperations(); await this.scanFolder(); if (!this.paused) await this.syncNow(); }) }
   async sync():Promise<void> { if (this.paused || !this.config.serverUrl) return; return this.serial(() => this.syncNow()) }
   private async serial(operation:()=>Promise<void>):Promise<void> {
     return this.mutations.runExclusive(['.'], async() => {
