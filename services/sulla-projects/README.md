@@ -32,6 +32,12 @@ Run the isolated synthetic container acceptance (never points at a live database
 bash services/sulla-projects/scripts/synthetic-smoke.sh
 ```
 
-The script uses `/usr/bin/docker -H unix:///var/run/docker.sock`, builds `sulla-projects-synthetic:local`, and verifies Desktop capabilities/outbox, server RBAC and RLS, atomic mutation rollback, inherited claim handoff, legacy import verification, persistent legacy write fencing, and restart recovery. It removes only its uniquely named `sulla-projects-acceptance-*` fixtures on exit.
+The script uses `/usr/bin/docker -H unix:///var/run/docker.sock`, builds a uniquely tagged `sulla-projects-synthetic:<fixture-id>` image, and verifies Desktop capabilities/outbox, server RBAC and RLS, atomic mutation rollback, inherited claim handoff, legacy import verification, persistent legacy write fencing, and restart recovery. It removes only its uniquely named `sulla-projects-acceptance-*` fixtures and that image tag on exit.
 
-The legacy fence is reversible in code through `removeLegacyProjectsWriteFence(connectionString)`. It removes only the named fence triggers/function and leaves every legacy row intact.
+## Rollback and ownership
+
+`removeLegacyProjectsWriteFence(connectionString)` removes the named fence triggers, cutover function, and marker without deleting legacy rows. It is an ownership rollback primitive, not a reverse data migration: legacy rows do not include writes accepted by the container after import.
+
+Before returning ownership to Desktop, stop all Projects writers, preserve a recoverable copy of the authoritative Projects database, and reconcile post-cutover changes into the legacy schema. Verify that reconciliation before removing the fence and enabling legacy callers. Never enable both writable authorities. Prefer rolling back the service image while retaining its authoritative database when the schema permits it.
+
+Desktop migration startup and service import share the cutover advisory lock. The persisted fence contract is reapplied after Desktop migrations, including when the service started before legacy tables existed. Retired automation tables remain readable history; workflow recovery uses workflow-owned scope metadata.
