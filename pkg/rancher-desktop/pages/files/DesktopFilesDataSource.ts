@@ -30,7 +30,15 @@ export class DesktopFilesDataSource implements FilesDataSource {
     const [collections, status, capabilities] = await Promise.all([
       ipcRenderer.invoke('sulla-files:collections') as Promise<FilesApiCollection[]>,
       ipcRenderer.invoke('files-ui:status'),
-      ipcRenderer.invoke('files-ui:capabilities') as Promise<{ orgSharing:boolean; publicLinks:boolean; onlineOnly:boolean; keepOnComputer:boolean; authenticatedRemote:boolean; verifiedRecovery:boolean; onlineOnlyReason?:string }>,
+      (ipcRenderer.invoke('files-ui:capabilities') as Promise<{ orgSharing:boolean; publicLinks:boolean; onlineOnly:boolean; keepOnComputer:boolean; authenticatedRemote:boolean; verifiedRecovery:boolean; onlineOnlyReason?:string }>).catch(() => ({
+        orgSharing:         false,
+        publicLinks:        false,
+        onlineOnly:         false,
+        keepOnComputer:     false,
+        authenticatedRemote:false,
+        verifiedRecovery:   false,
+        onlineOnlyReason:   'Cloud and remote Files capabilities are unavailable.',
+      })),
     ]);
     const collection = collections.find(item => item.name === 'Files') ?? collections.find(item => item.kind === 'knowledge');
     if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/files to initialize it.');
