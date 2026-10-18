@@ -180,7 +180,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   }
 
   static async findStaleExecutions(now = new Date()): Promise<WorkflowExecutionModel[]> {
-    const rows = await postgresClient.queryAll<any>(`SELECT * FROM workflow_executions WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND lease_expires_at IS NOT NULL AND lease_expires_at <= $1 ORDER BY lease_expires_at ASC`, [now]);
+    const rows = await postgresClient.queryAll<any>(`SELECT * FROM workflow_executions WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND NOT EXISTS (SELECT 1 FROM workflows WHERE workflows.id = workflow_executions.workflow_id AND workflows.status = 'archive') AND lease_expires_at IS NOT NULL AND lease_expires_at <= $1 ORDER BY lease_expires_at ASC`, [now]);
     return rows.map(WorkflowExecutionModel.hydrate);
   }
 
@@ -202,6 +202,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
          WHERE status IN ('running', 'suspended')
            AND auto_restart = TRUE
            AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task'
+           AND NOT EXISTS (SELECT 1 FROM workflows WHERE workflows.id = workflow_executions.workflow_id AND workflows.status = 'archive')
            AND owner_id IS NULL
            AND lease_token IS NULL
            AND lease_expires_at IS NULL
@@ -222,7 +223,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     const row = await postgresClient.queryOne<{ next_expiry: Date | null }>(`
       SELECT MIN(lease_expires_at) AS next_expiry
       FROM workflow_executions
-      WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND lease_expires_at IS NOT NULL`);
+      WHERE status IN ('running', 'suspended') AND auto_restart = TRUE AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND NOT EXISTS (SELECT 1 FROM workflows WHERE workflows.id = workflow_executions.workflow_id AND workflows.status = 'archive') AND lease_expires_at IS NOT NULL`);
     return row?.next_expiry ? new Date(row.next_expiry) : null;
   }
 
@@ -251,12 +252,12 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
       const token = `${ ownerId }:${ executionId }`;
       const row = (await client.query(`UPDATE workflow_executions
         SET owner_id = $2, lease_token = $3, leased_at = NOW(), heartbeat_at = NOW(), lease_expires_at = NOW() + ($4 * INTERVAL '1 millisecond'), attempt_count = attempt_count + 1, updated_at = NOW()
-        WHERE execution_id = $1 AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND status IN ('running', 'suspended') AND auto_restart = TRUE AND lease_expires_at <= NOW() AND attempt_count < max_attempts RETURNING *`, [executionId, ownerId, token, ttlMs])).rows[0];
+        WHERE execution_id = $1 AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND NOT EXISTS (SELECT 1 FROM workflows WHERE workflows.id = workflow_executions.workflow_id AND workflows.status = 'archive') AND status IN ('running', 'suspended') AND auto_restart = TRUE AND lease_expires_at <= NOW() AND attempt_count < max_attempts RETURNING *`, [executionId, ownerId, token, ttlMs])).rows[0];
       if (!row) {
         await client.query(`UPDATE workflow_executions SET status = 'failed', completed_at = NOW(), terminal_at = NOW(),
             terminal_reason = 'recovery_attempt_ceiling', error = 'recovery attempt ceiling exceeded',
             owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
-          WHERE execution_id = $1 AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND status IN ('running', 'suspended')
+          WHERE execution_id = $1 AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task' AND NOT EXISTS (SELECT 1 FROM workflows WHERE workflows.id = workflow_executions.workflow_id AND workflows.status = 'archive') AND status IN ('running', 'suspended')
             AND auto_restart = TRUE AND lease_expires_at <= NOW() AND attempt_count >= max_attempts`, [executionId]);
         return null;
       }
@@ -278,6 +279,25 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     await WorkflowExecutionModel.settle(executionId, 'failed', error);
   }
 
+  /**
+   * Permanently settle every active run when its workflow is archived.
+   * Historical rows remain intact, but they can no longer be recovered.
+   */
+  static async retireActiveByWorkflow(workflowId: string, reason = 'workflow_archived'): Promise<string[]> {
+    const rows = await postgresClient.queryAll<{ execution_id: string }>(`
+      UPDATE workflow_executions
+         SET status = 'failed', auto_restart = FALSE,
+             completed_at = COALESCE(completed_at, NOW()),
+             terminal_at = COALESCE(terminal_at, NOW()),
+             terminal_reason = $2, error = COALESCE(error, $2),
+             owner_id = NULL, lease_token = NULL, lease_expires_at = NULL,
+             updated_at = NOW()
+       WHERE workflow_id = $1 AND status IN ('running', 'suspended')
+       RETURNING execution_id`,
+    [workflowId, reason]);
+    return rows.map(row => row.execution_id);
+  }
+
   /** Retire a source run only when it is still active. Restart must not
    * rewrite completed/failed history, but it also must not leave a zombie
    * eligible for the concurrent-run guard or boot recovery. */
@@ -295,6 +315,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     const rows = await postgresClient.queryAll(
       `SELECT * FROM workflow_executions
        WHERE status = 'suspended' AND scope_task_id IS NULL AND workflow_id <> 'core-routine-plan-project-task'
+         AND NOT EXISTS (SELECT 1 FROM workflows WHERE workflows.id = workflow_executions.workflow_id AND workflows.status = 'archive')
          AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
        ORDER BY started_at DESC`,
       [],

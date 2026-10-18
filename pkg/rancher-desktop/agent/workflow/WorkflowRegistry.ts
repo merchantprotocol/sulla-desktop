@@ -179,7 +179,10 @@ export class WorkflowRegistry {
 
     // Fast path: direct id match.
     const byId = await WorkflowModel.findById(workflowId);
-    if (byId) return definitionFromModel(byId);
+    if (byId) {
+      if (byId.attributes.status === 'archive') return null;
+      return definitionFromModel(byId);
+    }
 
     // Slug fallback — the LLM speaks slugs, so resolve them against
     // production rows. Falls through to null when nothing matches.

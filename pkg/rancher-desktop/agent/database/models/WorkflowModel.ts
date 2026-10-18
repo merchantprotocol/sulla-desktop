@@ -280,6 +280,11 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
         });
       }
 
+      if (status === 'archive') {
+        const { retireWorkflowExecutions } = await import('../../services/WorkflowRetirementService');
+        await retireWorkflowExecutions(id);
+      }
+
       console.log(`[WorkflowModel.upsert] ← ok ${ isInsert ? 'INSERT' : 'UPDATE' } id=${ id } status=${ status }${ options.skipHistory ? ' (no-history)' : '' }${ options.changeReason ? ` reason="${ options.changeReason }"` : '' }`);
 
       return model;
@@ -312,6 +317,10 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
     }
     const oldStatus = existing.attributes.status;
     if (oldStatus === newStatus) {
+      if (newStatus === 'archive') {
+        const { retireWorkflowExecutions } = await import('../../services/WorkflowRetirementService');
+        await retireWorkflowExecutions(id);
+      }
       console.log(`[WorkflowModel.updateStatus] ← noop id=${ id } already ${ newStatus }`);
 
       return existing;
@@ -341,6 +350,11 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
         changedBy:        options.changedBy ?? null,
         changeReason:     `status: ${ oldStatus } -> ${ newStatus }`,
       });
+
+      if (newStatus === 'archive') {
+        const { retireWorkflowExecutions } = await import('../../services/WorkflowRetirementService');
+        await retireWorkflowExecutions(id);
+      }
 
       console.log(`[WorkflowModel.updateStatus] ← ok id=${ id } ${ oldStatus } → ${ newStatus }`);
 

@@ -111,6 +111,7 @@ import { up as up_0121, down as down_0121 } from './0121_default_agent_run_locat
 import { up as up_0122, down as down_0122 } from './0122_register_chat_artifacts_in_files';
 import { up as up_0123, down as down_0123 } from './0123_create_knowledge_projection_outbox';
 import { up as up_0124, down as down_0124 } from './0124_scope_workflow_ownership';
+import { up as up_0125, down as down_0125 } from './0125_retire_archived_workflow_executions';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -223,4 +224,5 @@ export const migrationsRegistry = [
   { name: '0122_register_chat_artifacts_in_files', up: up_0122, down: down_0122 },
   { name: '0123_create_knowledge_projection_outbox', up: up_0123, down: down_0123 },
   { name: '0124_scope_workflow_ownership', up: up_0124, down: down_0124 },
+  { name: '0125_retire_archived_workflow_executions', up: up_0125, down: down_0125 },
 ] as const;

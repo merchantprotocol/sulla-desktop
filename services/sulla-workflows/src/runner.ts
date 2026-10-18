@@ -122,6 +122,19 @@ async function settle(playbook: WorkflowPlaybookState, status: 'completed' | 'fa
   await emitEvent(executionId, playbook.workflowId, status === 'completed' ? 'workflow_completed' : 'workflow_failed', error ? { error } : {});
 }
 
+async function assertExecutionActive(leaseToken: string): Promise<void> {
+  const active = await pool.query(
+    `SELECT 1 FROM workflow_executions
+      WHERE execution_id=$1 AND status='running' AND owner_id=$2 AND lease_token=$3
+        AND NOT EXISTS (
+          SELECT 1 FROM workflows
+           WHERE workflows.id=workflow_executions.workflow_id AND workflows.status='archive'
+        )`,
+    [executionId, ownerId, leaseToken],
+  );
+  if (!active.rowCount) throw new Error(`Execution ${ executionId } is no longer active`);
+}
+
 async function executeStep(playbook: WorkflowPlaybookState, step: PlaybookStepResult): Promise<{ playbook: WorkflowPlaybookState; exit?: boolean }> {
   switch (step.action) {
   case 'node_completed': {
@@ -221,6 +234,7 @@ async function main(): Promise<void> {
   heartbeat.unref();
   try {
     for (let iteration = 0; iteration < 10_000; iteration++) {
+      await assertExecutionActive(leaseToken);
       const outcome = await executeStep(playbook, processNextStep(playbook));
       playbook = outcome.playbook;
       if (outcome.exit) return;

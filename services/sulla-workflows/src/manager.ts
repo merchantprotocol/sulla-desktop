@@ -276,7 +276,9 @@ async function issueRunToken(run: any, allowedTools: string[]): Promise<string> 
 
 async function launch(executionId: string): Promise<string> {
   const run = (await pool.query(
-    'SELECT execution_id,playbook_state,owner_issuer,owner_subject,authority_id,organization_id FROM workflow_executions WHERE execution_id=$1',
+    `SELECT e.execution_id,e.playbook_state,e.owner_issuer,e.owner_subject,e.authority_id,e.organization_id
+       FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id
+      WHERE e.execution_id=$1 AND e.status IN ('running','suspended') AND w.status <> 'archive'`,
     [executionId],
   )).rows[0];
   if (!run?.owner_issuer || !run?.owner_subject) throw new Error('workflow execution has no owner');
@@ -287,12 +289,21 @@ async function launch(executionId: string): Promise<string> {
   }
   const token = await issueRunToken(run, allowedTools);
   const runnerId = await launcher.launchRunner({ executionId, runToken: token });
-  await pool.query(
+  const assigned = await pool.query(
     `UPDATE workflow_executions
        SET runner_id = $2, status = 'running', resume_at = NULL, wait_kind = NULL, updated_at = NOW()
-     WHERE execution_id = $1`,
+     WHERE execution_id = $1 AND status IN ('running','suspended')
+       AND NOT EXISTS (
+         SELECT 1 FROM workflows
+          WHERE workflows.id=workflow_executions.workflow_id AND workflows.status='archive'
+       )
+     RETURNING execution_id`,
     [executionId, runnerId],
   );
+  if (!assigned.rowCount) {
+    await launcher.stopRunner(runnerId).catch(() => {});
+    throw new Error(`workflow execution ${ executionId } became inactive before runner assignment`);
+  }
   return runnerId;
 }
 
@@ -331,7 +342,7 @@ async function startRun(params: {
   }
   const workflowResult = await pool.query(
     `SELECT * FROM workflows
-     WHERE (id = $5 OR definition->>'slug' = $5) AND enabled = TRUE AND location = $6 AND ${ identitySql }
+     WHERE (id = $5 OR definition->>'slug' = $5) AND enabled = TRUE AND status <> 'archive' AND location = $6 AND ${ identitySql }
      LIMIT 1`,
     [...identityParams(identity), params.workflowId, config.mode],
   );
@@ -588,6 +599,26 @@ app.patch('/v1/workflows/:id/status', requireOwner, async(request: Authenticated
       [...identityParams(identity), request.params.id, status],
     )).rows[0];
     if (!row) return response.status(404).json({ error: 'workflow not found' });
+    if (status === 'archive') {
+      const retired = (await pool.query(
+        `UPDATE workflow_executions
+            SET status='failed',auto_restart=FALSE,completed_at=COALESCE(completed_at,NOW()),
+                terminal_at=COALESCE(terminal_at,NOW()),terminal_reason='workflow_archived',
+                error=COALESCE(error,'workflow_archived'),owner_id=NULL,lease_token=NULL,
+                lease_expires_at=NULL,updated_at=NOW()
+          WHERE workflow_id=$5 AND status IN ('running','suspended') AND ${ identitySql }
+          RETURNING runner_id`,
+        [...identityParams(identity), row.id],
+      )).rows;
+      await Promise.all(retired.map(async(run: any) => {
+        if (!run.runner_id) return;
+        try {
+          await launcher.stopRunner(run.runner_id);
+        } catch (error) {
+          console.error(`[workflow-manager] could not stop archived workflow runner ${ run.runner_id }:`, error);
+        }
+      }));
+    }
     cancelSchedules(identity);
     await reconcileScheduleGrants(row, identity, requestBearer(request), true);
     await refreshSchedules(identity);
@@ -628,13 +659,30 @@ app.post('/v1/runs/:id/resume', requireOwner, async(request: AuthenticatedReques
       return response.status(400).json({ error: 'invalid execution id' });
     }
     const row = (await pool.query(
-      `SELECT * FROM workflow_executions WHERE execution_id=$5 AND ${ identitySql }`,
+      `SELECT * FROM workflow_executions
+       WHERE execution_id=$5
+         AND NOT EXISTS (
+           SELECT 1 FROM workflows
+            WHERE workflows.id=workflow_executions.workflow_id AND workflows.status='archive'
+         )
+         AND ${ identitySql }`,
       [...identityParams(request.identity!), executionId],
     )).rows[0];
     if (!row) return response.status(404).json({ error: 'run not found' });
     let state = row.playbook_state as WorkflowPlaybookState;
     if (row.wait_kind === 'user-input' && state.pendingDecision) state = resolveDecision(state, String(request.body.input ?? '')).updatedPlaybook;
-    await pool.query(`UPDATE workflow_executions SET playbook_state=$2::jsonb, resume_input=NULL, status='running', updated_at=NOW() WHERE execution_id=$1`, [executionId, JSON.stringify(state)]);
+    const resumed = await pool.query(
+      `UPDATE workflow_executions
+          SET playbook_state=$2::jsonb,resume_input=NULL,status='running',updated_at=NOW()
+        WHERE execution_id=$1 AND status IN ('running','suspended')
+          AND NOT EXISTS (
+            SELECT 1 FROM workflows
+             WHERE workflows.id=workflow_executions.workflow_id AND workflows.status='archive'
+          )
+        RETURNING execution_id`,
+      [executionId, JSON.stringify(state)],
+    );
+    if (!resumed.rowCount) return response.status(409).json({ error: 'run is no longer resumable' });
     response.status(202).json({ executionId, runnerId: await launch(executionId) });
   } catch (error) { next(error) }
 });
@@ -707,9 +755,11 @@ app.use((error: any, _request: express.Request, response: express.Response, _nex
 async function resumeDueRuns(): Promise<void> {
   if (!schedulerLeader) return;
   const due = (await pool.query(
-    `SELECT execution_id FROM workflow_executions
-     WHERE status='suspended' AND resume_at IS NOT NULL AND resume_at <= NOW()
-       AND owner_issuer IS NOT NULL AND owner_subject IS NOT NULL
+    `SELECT e.execution_id FROM workflow_executions e
+     JOIN workflows w ON w.id=e.workflow_id
+     WHERE e.status='suspended' AND e.resume_at IS NOT NULL AND e.resume_at <= NOW()
+       AND w.status <> 'archive'
+       AND e.owner_issuer IS NOT NULL AND e.owner_subject IS NOT NULL
      FOR UPDATE SKIP LOCKED`,
   )).rows;
   for (const row of due) {

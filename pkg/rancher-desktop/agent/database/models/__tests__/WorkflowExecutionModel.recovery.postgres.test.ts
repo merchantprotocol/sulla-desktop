@@ -145,4 +145,30 @@ describeWithPostgres('WorkflowExecutionModel recovery (migrated PostgreSQL)', ()
     expect(await row('done')).toMatchObject({ status: 'completed' });
     expect(await row('self')).toMatchObject({ status: 'running' });
   });
+
+  it('retires only active archived-workflow runs and preserves history', async() => {
+    await pool.query(`INSERT INTO workflow_executions
+      (execution_id, workflow_id, status, auto_restart, lease_expires_at, owner_id)
+      VALUES
+        ('archived-running', 'plain', 'running', TRUE, NOW() - INTERVAL '1 minute', 'runtime-1'),
+        ('archived-suspended', 'plain', 'suspended', TRUE, NOW() - INTERVAL '1 minute', 'runtime-1'),
+        ('archived-completed', 'plain', 'completed', TRUE, NULL, NULL),
+        ('unrelated-running', 'singleton', 'running', TRUE, NOW() - INTERVAL '1 minute', 'runtime-2')`);
+    await pool.query(`UPDATE workflows SET status = 'archive' WHERE id = 'plain'`);
+
+    try {
+      expect(await WorkflowExecutionModel.findSuspended()).toHaveLength(0);
+      expect((await WorkflowExecutionModel.findStaleExecutions()).map(item => (item.attributes as any).execution_id))
+        .toEqual(['unrelated-running']);
+
+      const retired = await WorkflowExecutionModel.retireActiveByWorkflow('plain');
+      expect(retired.sort()).toEqual(['archived-running', 'archived-suspended']);
+      expect(await row('archived-running')).toMatchObject({ status: 'failed', auto_restart: false, terminal_reason: 'workflow_archived' });
+      expect(await row('archived-suspended')).toMatchObject({ status: 'failed', auto_restart: false, terminal_reason: 'workflow_archived' });
+      expect(await row('archived-completed')).toMatchObject({ status: 'completed', auto_restart: true });
+      expect(await row('unrelated-running')).toMatchObject({ status: 'running', auto_restart: true });
+    } finally {
+      await pool.query(`UPDATE workflows SET status = 'production' WHERE id = 'plain'`);
+    }
+  });
 });
