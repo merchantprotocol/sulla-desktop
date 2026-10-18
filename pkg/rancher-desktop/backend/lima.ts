@@ -35,6 +35,7 @@ import { ContainerEngineClient, MobyClient, NerdctlClient } from './containerCli
 import * as K8s from './k8s';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 import { resolveSullaServiceImage } from './sullaServiceImages';
+import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import DEPENDENCY_VERSIONS from '@pkg/assets/dependencies.yaml';
@@ -43,18 +44,20 @@ import NETWORKS_CONFIG from '@pkg/assets/networks-config.yaml';
 import FLANNEL_CONFLIST from '@pkg/assets/scripts/10-flannel.conflist';
 import SERVICE_BUILDKITD_CONF from '@pkg/assets/scripts/buildkit.confd';
 import SERVICE_BUILDKITD_INIT from '@pkg/assets/scripts/buildkit.initd';
-import SULLA_THREAT_PROXY_INITD from '@pkg/assets/scripts/sulla-threat-proxy.initd';
 import DOCKER_CREDENTIAL_SCRIPT from '@pkg/assets/scripts/docker-credential-rancher-desktop';
 import LOGROTATE_LIMA_GUESTAGENT_SCRIPT from '@pkg/assets/scripts/logrotate-lima-guestagent';
 import LOGROTATE_OPENRESTY_SCRIPT from '@pkg/assets/scripts/logrotate-openresty';
 import NERDCTL from '@pkg/assets/scripts/nerdctl';
 import NGINX_CONF from '@pkg/assets/scripts/nginx.conf';
+import PROVISION_VAULT_TLS from '@pkg/assets/scripts/provision-vault-tls';
+import SULLA_THREAT_PROXY_INITD from '@pkg/assets/scripts/sulla-threat-proxy.initd';
 import SULLA_DOCKER_COMPOSE from '@pkg/assets/sulla-docker-compose.yaml';
 import { ContainerEngine, MountType, VMType } from '@pkg/config/settings';
 import * as settingsImpl from '@pkg/config/settingsImpl';
 import { getServerCredentialsPath, ServerState } from '@pkg/main/credentialServer/httpCredentialHelperServer';
 import { readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import mainEvents from '@pkg/main/mainEvents';
+import { refreshVaultPinnedSessions } from '@pkg/main/vaultTls';
 import { exec as sudo } from '@pkg/sudo-prompt';
 import { instantiateSullaStart, markSullaDockerServicesStarted } from '@pkg/sulla';
 import * as childProcess from '@pkg/utils/childProcess';
@@ -2878,7 +2881,16 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     // Check if Sulla services are already running — skip redeploy on restart
     let t = Date.now();
-    const alreadyRunning = await this.areSullaServicesRunning();
+    // Restore the public host pin even when containers survive a Desktop restart.
+    // Rotation also requires recreating TLS servers and single-file CA mounts:
+    // their in-memory certificate / mounted inode may still reference the old pair.
+    let vaultTlsIdentityChanged = false;
+    if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
+      const previousFingerprint = await fs.promises.readFile(path.join(paths.appHome, 'vault-tls-fingerprint'), 'utf8').catch(() => '');
+      const { fingerprint } = await this.prepareVaultTlsIdentity();
+      vaultTlsIdentityChanged = previousFingerprint.trim() !== fingerprint;
+    }
+    const alreadyRunning = !vaultTlsIdentityChanged && await this.areSullaServicesRunning();
 
     console.log(`[startup-perf] areSullaServicesRunning: ${ Date.now() - t }ms (result=${ alreadyRunning })`);
 
@@ -2945,6 +2957,35 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     requiredServices.push('sulla_relay', 'sulla_workflow_manager', 'sulla_tools');
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) requiredServices.push('sulla_vault');
     try {
+      if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
+        // A public deployment label survives failed redeploys and prevents
+        // accepting a server still holding the previous TLS identity in memory.
+        const deployedFingerprint = await this.execCommand(
+          { capture: true, root: true }, 'docker', 'inspect', '--format',
+          '{{index .Config.Labels "sulla.vault-tls-fingerprint"}}', 'sulla_vault',
+        );
+        const expectedFingerprint = await fs.promises.readFile(path.join(paths.appHome, 'vault-tls-fingerprint'), 'utf8');
+        if (deployedFingerprint.trim() !== expectedFingerprint.trim()) return false;
+        // Upgrade existing containers whose bind sources still live on tmpfs.
+        for (const [service, destination, source] of [
+          ['sulla_vault', '/run/sulla-vault-tls', VAULT_TLS_DIRECTORY],
+          ['sulla_tools', '/run/sulla-vault-ca/tls.crt', `${ VAULT_TLS_DIRECTORY }/tls.crt`],
+          ['sulla_files', '/run/sulla-vault-ca/tls.crt', `${ VAULT_TLS_DIRECTORY }/tls.crt`],
+        ]) {
+          // Files is optional: migrate it when installed without requiring it.
+          if (service === 'sulla_files') {
+            const installed = await this.execCommand(
+              { capture: true, root: true }, 'docker', 'ps', '-a', '--filter', 'name=^/sulla_files$', '--format', '{{.Names}}',
+            );
+            if (!installed.trim()) continue;
+          }
+          const mountedSource = await this.execCommand(
+            { capture: true, root: true }, 'docker', 'inspect', '--format',
+            `{{range .Mounts}}{{if eq .Destination "${ destination }"}}{{.Source}}{{end}}{{end}}`, service,
+          );
+          if (mountedSource.trim() !== source) return false;
+        }
+      }
       for (const service of requiredServices) {
         const status = await this.execCommand(
           { capture: true, root: true },
@@ -3027,12 +3068,14 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   private async prepareVaultTlsIdentity(): Promise<{ fingerprint: string }> {
     const certificate = await this.execCommand(
       { capture: true, root: true }, 'sh', '-c',
-      "set -eu; command -v openssl >/dev/null || { echo 'openssl is required by the bundled Lima image for vault TLS' >&2; exit 127; }; install -d -o 1000 -g 1000 -m 700 /var/lib/sulla/vault-tls; if [ ! -s /var/lib/sulla/vault-tls/tls.key ] || [ ! -s /var/lib/sulla/vault-tls/tls.crt ] || ! openssl x509 -in /var/lib/sulla/vault-tls/tls.crt -noout -checkhost sulla_vault >/dev/null 2>&1; then openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 3650 -subj '/CN=sulla-vault.local' -addext 'subjectAltName=DNS:sulla-vault.local,DNS:sulla_vault,IP:127.0.0.1' -keyout /var/lib/sulla/vault-tls/tls.key -out /var/lib/sulla/vault-tls/tls.crt >/dev/null 2>&1; fi; chown 1000:1000 /var/lib/sulla/vault-tls /var/lib/sulla/vault-tls/tls.key /var/lib/sulla/vault-tls/tls.crt; chmod 700 /var/lib/sulla/vault-tls; chmod 600 /var/lib/sulla/vault-tls/tls.key; chmod 644 /var/lib/sulla/vault-tls/tls.crt; cat /var/lib/sulla/vault-tls/tls.crt",
+      PROVISION_VAULT_TLS, '--', VAULT_TLS_DIRECTORY, '/var/lib/sulla/vault-tls', '1000', '1000',
     );
     const fingerprint = new crypto.X509Certificate(certificate).fingerprint256;
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(path.join(paths.appHome, 'vault-tls-certificate.pem'), certificate, { mode: 0o600 });
     await fs.promises.writeFile(path.join(paths.appHome, 'vault-tls-fingerprint'), `${ fingerprint }\n`, { mode: 0o600 });
+
+    await refreshVaultPinnedSessions();
 
     return { fingerprint };
   }
@@ -3060,7 +3103,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     this.#optionalSullaFallbackImages.clear();
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
       vaultIdentities = await this.loadOrCreateVaultServiceIdentities();
-      await this.prepareVaultTlsIdentity();
+      const { fingerprint: vaultTlsFingerprint } = await this.prepareVaultTlsIdentity();
       const vaultImage = resolveSullaServiceImage(
         'sulla-vault', process.cwd(), Electron.app.getVersion(), process.env.SULLA_VAULT_IMAGE,
       );
@@ -3076,6 +3119,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         ...vaultImage,
         image,
         container_name: 'sulla_vault',
+        labels: { 'sulla.vault-tls-fingerprint': vaultTlsFingerprint },
         depends_on: { postgres: { condition: 'service_healthy' } },
         environment: {
           SULLA_VAULT_MODE: 'desktop',
@@ -3093,7 +3137,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         },
         // 30121 on the host belongs to sullaSecretsServer; the vault must not share it.
         ports: ['127.0.0.1:30135:8787'],
-        volumes: ['/var/lib/sulla/vault-tls:/run/sulla-vault-tls:ro'],
+        volumes: [vaultTlsBind()],
         restart: 'unless-stopped',
         healthcheck: { test: ['CMD', 'wget', '--no-check-certificate', '-qO-', 'https://127.0.0.1:8787/healthz'], interval: '10s', timeout: '3s', retries: 5 },
       };
@@ -3203,7 +3247,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         } : {}),
       },
       ports: ['127.0.0.1:30123:3000'],
-      volumes: vaultIdentities ? ['/var/lib/sulla/vault-tls/tls.crt:/run/sulla-vault-ca/tls.crt:ro'] : [],
+      volumes: vaultIdentities
+        ? [vaultTlsBind(true)]
+        : [],
       restart: 'unless-stopped',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
@@ -3254,7 +3300,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
         `${ filesUserRoot.activePath }:/data/files`,
-        ...(vaultIdentities ? ['/var/lib/sulla/vault-tls/tls.crt:/run/sulla-vault-ca/tls.crt:ro'] : []),
+        ...(vaultIdentities
+          ? [vaultTlsBind(true)]
+          : []),
       ],
       restart: 'unless-stopped',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8792/healthz'], interval: '5s', timeout: '3s', retries: 10 },
