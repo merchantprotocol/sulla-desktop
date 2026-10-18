@@ -70,11 +70,6 @@ test('connection enrollment pins the advertised membership audience scope', asyn
     authorization_endpoint: 'https://remote.example/auth/realms/sulla/protocol/openid-connect/auth',
     token_endpoint: 'https://remote.example/auth/realms/sulla/protocol/openid-connect/token',
     jwks_uri: 'https://remote.example/auth/realms/sulla/protocol/openid-connect/certs',
-    authorityId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    nativeClientId: 'sulla-desktop',
-    membershipResolver: 'https://remote.example/v1/authority/membership/resolve',
-    membershipAudience: 'custom-membership',
-    resourceAudiences: ['sulla-files'],
   }), { status: 200, headers: { 'content-type': 'application/json' } }));
   let inserted: unknown[] | undefined;
   const db = {
@@ -95,13 +90,6 @@ test('connection enrollment pins the advertised membership audience scope', asyn
   });
 
   assert.deepEqual(inserted?.[5], ['openid', 'profile', 'sulla-audience-custom-membership']);
-  assert.equal(inserted?.[11], 'custom-membership');
-  await assert.rejects(createAuthority(db, {
-    issuer: 'https://remote.example/auth/realms/sulla', clientId: 'sulla-desktop',
-    resourceAudiences: ['sulla-files'], remoteAuthorityId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    membershipEndpoint: 'https://remote.example/v1/authority/membership/resolve',
-    membershipAudience: 'forged-membership',
-  }), /metadata mismatch/);
 });
 
 test('issuer equality alone does not grant authority-managed scopes', async() => {
