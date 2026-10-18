@@ -2,6 +2,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { basename, posix } from 'node:path';
 
 import { decryptChunk } from './crypto.js';
+import { parseByteRange, RangeNotSatisfiableError, streamFileContent } from './fileStream.js';
 import { assertUnprotectedFile, isProtectedPath } from './protectedFiles.js';
 
 import type { Config } from './config.js';
@@ -27,6 +28,14 @@ interface ShareInput {
 
 interface ShareAccessRequest { password?: string; wantsDownload?: boolean }
 type Queryable = Pick<pg.Pool, 'query'>;
+interface ShareStreamContent {
+  body:          AsyncIterable<Buffer>;
+  mime:          string;
+  name:          string;
+  status:        200 | 206;
+  contentLength: number;
+  contentRange?: string;
+}
 
 function passwordHash(password:string):string {
   const salt = randomBytes(16); const digest = scryptSync(password, salt, 32);
@@ -65,8 +74,9 @@ function remoteShareOverlay(value:unknown):Record<string, unknown> {
 class ServerShareRelay {
   private socket?:    WebSocket;
   private reconnect?: ReturnType<typeof setTimeout>;
+  private requests = new Map<string, AbortController>();
 
-  constructor(private db: pg.Pool, private config: Config, private content: (id: string, path: string) => Promise<{ bytes: Buffer; mime: string; name: string }>) {}
+  constructor(private db: pg.Pool, private config: Config, private content: (id: string, path: string, range: string | undefined, signal: AbortSignal) => Promise<ShareStreamContent>) {}
 
   connect(): void {
     if (this.config.mode !== 'server' || this.socket?.readyState === WebSocket.OPEN || this.socket?.readyState === WebSocket.CONNECTING) return;
@@ -93,14 +103,30 @@ class ServerShareRelay {
 
   private async handle(raw: string): Promise<void> {
     let frame: any; try { frame = JSON.parse(raw) } catch { return }
+    if (frame.type === 'share_fetch_cancel' && typeof frame.requestId === 'string') {
+      this.requests.get(frame.requestId)?.abort();
+      return;
+    }
     if (frame.type !== 'share_fetch' || typeof frame.requestId !== 'string' || typeof frame.linkId !== 'string') return;
     const send = (type: string, payload: Record<string, unknown> = {}) => this.socket?.send(JSON.stringify({ type, requestId: frame.requestId, ...payload }));
+    this.requests.get(frame.requestId)?.abort();
+    const controller = new AbortController(); this.requests.set(frame.requestId, controller);
     try {
-      const content = await this.content(frame.linkId, typeof frame.path === 'string' ? frame.path : '');
-      send('share_fetch_start', { mime: content.mime, name: content.name });
-      for (let offset = 0; offset < content.bytes.length; offset += 64 * 1024) send('share_fetch_chunk', { data: content.bytes.subarray(offset, offset + 64 * 1024).toString('base64') });
+      const content = await this.content(frame.linkId, typeof frame.path === 'string' ? frame.path : '', typeof frame.range === 'string' ? frame.range : undefined, controller.signal);
+      send('share_fetch_start', { status: content.status, mime: content.mime, name: content.name, contentLength: content.contentLength, contentRange: content.contentRange, acceptRanges: 'bytes' });
+      for await (const part of content.body) {
+        controller.signal.throwIfAborted();
+        for (let offset = 0; offset < part.length; offset += 64 * 1024) send('share_fetch_chunk', { data: part.subarray(offset, offset + 64 * 1024).toString('base64') });
+      }
       send('share_fetch_end');
-    } catch (error) { send('share_fetch_error', { error: error instanceof Error ? error.message : String(error) }) }
+    } catch (error) {
+      if (error instanceof RangeNotSatisfiableError) {
+        send('share_fetch_start', { status: 416, contentLength: 0, contentRange: `bytes */${ error.size }`, acceptRanges: 'bytes' });
+        send('share_fetch_end');
+      } else if (!controller.signal.aborted) send('share_fetch_error', { error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      if (this.requests.get(frame.requestId) === controller) this.requests.delete(frame.requestId);
+    }
   }
 }
 
@@ -109,7 +135,7 @@ export class SharesService {
   private readonly linkLocks = new Map<string, Promise<void>>();
 
   constructor(private db: pg.Pool, private config: Config, private store: Store) {
-    if (config.mode === 'server') { this.serverRelay = new ServerShareRelay(db, config, (id, path) => this.content(id, path)); this.serverRelay.connect() }
+    if (config.mode === 'server') { this.serverRelay = new ServerShareRelay(db, config, (id, path, range, signal) => this.streamContent(id, path, range, signal)); this.serverRelay.connect() }
   }
 
   private async withLinkLock<T>(id:string, operation:(client:pg.PoolClient)=>Promise<T>):Promise<T> {
@@ -397,6 +423,33 @@ export class SharesService {
 
   async content(id: string, requestedPath = ''): Promise<{ bytes: Buffer; mime: string; name: string }> {
     return this.readContent(id, requestedPath, false, this.db);
+  }
+
+  async streamContent(id:string, requestedPath:string, rangeHeader:string | undefined, signal:AbortSignal):Promise<ShareStreamContent> {
+    const share = (await this.db.query(`SELECT * FROM file_share_links WHERE id=$1 AND revoked_at IS NULL
+      AND (expires_at IS NULL OR expires_at>NOW())`, [id])).rows[0];
+    if (!share) throw Object.assign(new Error('share not found or inactive'), { status: 404 });
+    if (share.target_type === 'folder' && !requestedPath) {
+      const listing = await this.readContent(id, requestedPath, false, this.db);
+      const range = parseByteRange(rangeHeader, listing.bytes.length);
+      const bytes = range ? listing.bytes.subarray(range.start, range.end + 1) : listing.bytes;
+      async function * body() { signal.throwIfAborted(); if (bytes.length) yield bytes }
+      return { body: body(), mime: listing.mime, name: listing.name, status: range ? 206 : 200, contentLength: bytes.length,
+        contentRange: range ? `bytes ${ range.start }-${ range.end }/${ listing.bytes.length }` : undefined };
+    }
+    let file;
+    if (share.target_type === 'file') file = (await this.db.query('SELECT * FROM files WHERE id=$1 AND deleted_at IS NULL', [share.file_id])).rows[0];
+    else {
+      const relative = posix.normalize(requestedPath.replace(/^\/+/, ''));
+      if (!relative || relative === '..' || relative.startsWith('../')) throw Object.assign(new Error('invalid shared path'), { status: 400 });
+      file = (await this.db.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL', [share.collection_id, `${ share.folder_path }/${ relative }`])).rows[0];
+    }
+    if (!file) throw Object.assign(new Error('shared file not found'), { status: 404 });
+    await assertUnprotectedFile(this.db, file);
+    const stream = await streamFileContent(this.db, this.config, this.store, file.id, undefined, rangeHeader, signal);
+    if (!stream) throw Object.assign(new Error('shared file has no readable version'), { status: 404 });
+    return { body: stream.body, mime: stream.mime, name: basename(stream.path), status: stream.range ? 206 : 200,
+      contentLength: stream.contentLength, contentRange: stream.range ? `bytes ${ stream.range.start }-${ stream.range.end }/${ stream.size }` : undefined };
   }
 
   private async readContent(id:string, requestedPath:string, allowPendingPublication:boolean, queryable:Queryable):Promise<{ bytes:Buffer; mime:string; name:string }> {

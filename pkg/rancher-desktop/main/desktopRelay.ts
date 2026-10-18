@@ -75,6 +75,7 @@ interface IncomingMessage {
   requestId?:      string;
   linkId?:         string;
   path?:           string;
+  range?:          string;
   method?:         string;
   params?:         Record<string, unknown>;
   // content is a string, or text/image/document parts when the phone
@@ -126,6 +127,7 @@ export class DesktopRelayClient {
   // dashboard). Their frames go back through the channel to the approved
   // client that sent them, never to the legacy mobile relay room.
   private secureRoutes = new Map<string, (frame: Record<string, unknown>) => void>();
+  private shareRequests = new Map<string, AbortController>();
 
   // ── Liveness tracking ──────────────────────────────────────
   // The DO auto-responds to application-level "ping" frames with "pong",
@@ -502,6 +504,12 @@ export class DesktopRelayClient {
       return;
     }
 
+    if (msg.type === 'share_fetch_cancel') {
+      if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
+      this.shareRequests.get(msg.requestId)?.abort();
+      return;
+    }
+
     if (msg.type === 'chat') {
       if (msg.conversationId) this.secureRoutes.delete(msg.conversationId);
       // When mobile targets a specific desktop, only the matching device
@@ -541,13 +549,25 @@ export class DesktopRelayClient {
   private async serveShare(msg: IncomingMessage): Promise<void> {
     if (!msg.requestId || !msg.linkId) return;
     const frame = (type: string, payload: Record<string, unknown> = {}) => this.sendUnchecked({ type, requestId: msg.requestId, ...payload });
+    this.shareRequests.get(msg.requestId)?.abort();
+    const controller = new AbortController(); this.shareRequests.set(msg.requestId, controller);
     try {
       const token = await SullaSettingsModel.getServicePassword();
+      if (!token) throw new Error('Sulla Files authentication is unavailable');
       const url = new URL(`/v1/local/shares/${ encodeURIComponent(msg.linkId) }/content`, 'http://127.0.0.1:30124');
       if (msg.path) url.searchParams.set('path', msg.path);
-      const response = await fetch(url, { headers: { 'X-Sulla-Files-Token': token } });
-      if (!response.ok || !response.body) throw new Error((await response.text()).slice(0, 200) || `Sulla Files returned ${ response.status }`);
-      frame('share_fetch_start', { mime: response.headers.get('content-type') || 'application/octet-stream', name: decodeURIComponent(response.headers.get('x-sulla-filename') || 'shared-file') });
+      const headers = new Headers({ 'X-Sulla-Files-Token': token }); if (msg.range) headers.set('Range', msg.range);
+      const response = await fetch(url, { headers, signal: controller.signal });
+      if (![200, 206, 416].includes(response.status) || (response.status !== 416 && !response.body)) throw new Error((await response.text()).slice(0, 200) || `Sulla Files returned ${ response.status }`);
+      frame('share_fetch_start', {
+        status:        response.status,
+        mime:          response.headers.get('content-type') || 'application/octet-stream',
+        name:          decodeURIComponent(response.headers.get('x-sulla-filename') || 'shared-file'),
+        contentLength: Number(response.headers.get('content-length') || 0),
+        contentRange:  response.headers.get('content-range') || undefined,
+        acceptRanges:  response.headers.get('accept-ranges') || 'bytes',
+      });
+      if (!response.body) { frame('share_fetch_end'); return }
       const reader = response.body.getReader();
       while (true) {
         const { done, value } = await reader.read(); if (done) break;
@@ -555,7 +575,9 @@ export class DesktopRelayClient {
       }
       frame('share_fetch_end');
     } catch (error) {
-      frame('share_fetch_error', { error: error instanceof Error ? error.message : String(error) });
+      if (!controller.signal.aborted) frame('share_fetch_error', { error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      if (this.shareRequests.get(msg.requestId) === controller) this.shareRequests.delete(msg.requestId);
     }
   }
 
