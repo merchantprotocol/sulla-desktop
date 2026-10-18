@@ -25,14 +25,23 @@ function audiences(input) {
   return values;
 }
 
+export function exactKeycloakId(rows, field, expected) {
+  if (!Array.isArray(rows)) throw new Error('Keycloak lookup did not return an array');
+  const matches = rows.filter(row => row?.[field] === expected);
+  if (matches.length > 1) throw new Error(`Keycloak lookup returned duplicate ${field} values`);
+  if (!matches.length) return '';
+  if (typeof matches[0].id !== 'string' || !matches[0].id) throw new Error('Keycloak lookup returned an invalid id');
+  return matches[0].id;
+}
+
 export function buildKeycloakConfig(environment) {
   const membershipAudience = environment.membershipAudience;
   if (!/^[A-Za-z0-9._-]+$/.test(membershipAudience)) throw new Error(`invalid audience ${membershipAudience}`);
   const resourceAudiences = audiences(environment.resourceAudiences);
   if (resourceAudiences.includes(membershipAudience)) throw new Error('membership audience must not also be a resource audience');
 
-  const membershipScope = audienceScope('sulla-membership', membershipAudience);
-  const resourceScopes = resourceAudiences.map(audience => audienceScope(`sulla-audience:${audience}`, audience));
+  const membershipScope = audienceScope(`sulla-audience-${membershipAudience}`, membershipAudience);
+  const resourceScopes = resourceAudiences.map(audience => audienceScope(`sulla-audience-${audience}`, audience));
   const defaultClientScopes = ['profile', membershipScope.name];
   const optionalClientScopes = resourceScopes.map(scope => scope.name);
   const clientAttributes = { 'sulla.reconciliation.version': '1' };
