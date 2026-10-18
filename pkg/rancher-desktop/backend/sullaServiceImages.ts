@@ -49,3 +49,12 @@ export function resolveSullaServiceImage(
 
   return { image: `ghcr.io/merchantprotocol/${ name }:${ tag }` };
 }
+
+/**
+ * Default published images are managed by Desktop and may be refreshed during
+ * startup. Source builds and explicit operator overrides retain their existing
+ * local / externally-managed lifecycle.
+ */
+export function shouldRefreshSullaServiceImage(image: SullaServiceImage, override?: string): boolean {
+  return !image.build && !override;
+}

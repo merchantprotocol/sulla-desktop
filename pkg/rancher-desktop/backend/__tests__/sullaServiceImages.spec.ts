@@ -1,6 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 
-import { resolveSullaServiceImage } from '../sullaServiceImages';
+import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '../sullaServiceImages';
 
 describe(resolveSullaServiceImage, () => {
   test('uses the source build in a development checkout', () => {
@@ -31,5 +31,15 @@ describe(resolveSullaServiceImage, () => {
   test('falls back to latest only without a release or commit tag', () => {
     expect(resolveSullaServiceImage('sulla-workflows', '/packaged', '?', undefined, () => false).image)
       .toBe('ghcr.io/merchantprotocol/sulla-workflows:latest');
+  });
+
+  test('refreshes only Desktop-managed published images', () => {
+    const published = resolveSullaServiceImage('sulla-tools', '/packaged', '1.6.1', undefined, () => false);
+    const overridden = resolveSullaServiceImage('sulla-tools', '/packaged', '1.6.1', 'registry.example/tools:stable', () => false);
+    const source = resolveSullaServiceImage('sulla-tools', '/source', '1.6.1', undefined, () => true);
+
+    expect(shouldRefreshSullaServiceImage(published)).toBe(true);
+    expect(shouldRefreshSullaServiceImage(overridden, 'registry.example/tools:stable')).toBe(false);
+    expect(shouldRefreshSullaServiceImage(source)).toBe(false);
   });
 });
