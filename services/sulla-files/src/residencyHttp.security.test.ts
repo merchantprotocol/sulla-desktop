@@ -21,7 +21,7 @@ test('residency requests follow Vault adoption and reject sentinel or mismatched
   };
   const input = {
     versionId: 'synthetic-version', collectionId: 'synthetic-collection',
-    chunk: { id: 'synthetic-chunk', size: 1, storedSize: 1 },
+    chunk: { id: 'synthetic-chunk', size: 1, storedSize: 1, ciphertextSha256: 'synthetic-ciphertext-hash' },
     signal: new AbortController().signal,
   };
   try {
