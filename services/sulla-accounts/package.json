@@ -1,0 +1,23 @@
+{
+  "name": "@sulla/accounts-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "express": "5.2.1",
+    "jsonwebtoken": "9.0.3",
+    "pg": "8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/jsonwebtoken": "9.0.10",
+    "@types/node": "22.19.15",
+    "@types/pg": "8.16.0",
+    "typescript": "5.9.3"
+  }
+}
