@@ -142,7 +142,7 @@ reconcile_keycloak() {
     mapper_name="audience-${audience}"
     mapper_id="$(find_named_id "$mapper_collection" name "$mapper_name")"
     if [ -n "$mapper_id" ]; then
-      run_unprivileged "$kcadm" update "${mapper_collection}/${mapper_id}" --config "$kcadm_config" -r "$realm" -f "$mapper_file" >/dev/null
+      run_unprivileged "$kcadm" update "${mapper_collection}/${mapper_id}" --config "$kcadm_config" -r "$realm" -f "$mapper_file" -s "id=${mapper_id}" >/dev/null
     else
       run_unprivileged "$kcadm" create "$mapper_collection" --config "$kcadm_config" -r "$realm" -f "$mapper_file" >/dev/null
       mapper_id="$(find_named_id "$mapper_collection" name "$mapper_name")"
