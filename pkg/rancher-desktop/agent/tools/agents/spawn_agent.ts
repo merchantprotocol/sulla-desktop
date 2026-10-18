@@ -613,18 +613,21 @@ export class SpawnAgentWorker extends BaseTool {
           threadId,
         };
       } finally {
-        await containerLifecycle?.close();
-        if (subStateRef?.metadata) subStateRef.metadata.delegatedRunActive = false;
-        // Deregister from parent's active-sub-agents list so stale threadIds
-        // don't receive abort signals after the subagent has already exited
-        const parentMeta = (this.state as any)?.metadata;
-        if (parentMeta?.activeSubAgentThreadIds) {
-          const arr: string[] = parentMeta.activeSubAgentThreadIds;
-          const idx = arr.indexOf(threadId);
-          if (idx >= 0) arr.splice(idx, 1);
+        try {
+          await containerLifecycle?.close();
+        } finally {
+          if (subStateRef?.metadata) subStateRef.metadata.delegatedRunActive = false;
+          // Deregister from parent's active-sub-agents list so stale threadIds
+          // don't receive abort signals after the subagent has already exited
+          const parentMeta = (this.state as any)?.metadata;
+          if (parentMeta?.activeSubAgentThreadIds) {
+            const arr: string[] = parentMeta.activeSubAgentThreadIds;
+            const idx = arr.indexOf(threadId);
+            if (idx >= 0) arr.splice(idx, 1);
+          }
+          // Clean up registry to prevent memory leaks
+          GraphRegistry.delete(threadId);
         }
-        // Clean up registry to prevent memory leaks
-        GraphRegistry.delete(threadId);
       }
     };
 
