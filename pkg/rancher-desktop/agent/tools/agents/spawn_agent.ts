@@ -22,6 +22,7 @@ import {
   releaseJobWatcher,
   updateJobTask,
 } from './jobRegistry';
+import { DEFAULT_AGENT_RUN_LOCATION } from '../../database/models/AgentDefinitionModel';
 import {
   delegationSituation,
   delegationTaskId,
@@ -519,7 +520,7 @@ export class SpawnAgentWorker extends BaseTool {
           if (!active.includes(threadId)) active.push(threadId);
         }
 
-        const runLocation = String(subState.metadata.agent?.runLocation ?? 'vm');
+        const runLocation = String(subState.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION);
         if (runLocation === 'container') {
           const provider = String(subState.metadata.agent?.provider ?? '').trim();
           if (!activityJobId) throw new Error('Container agents require a durable job identity');
