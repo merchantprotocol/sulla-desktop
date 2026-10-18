@@ -1,8 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import paths from '@pkg/utils/paths';
-
 import type { ProjectsApplicationService, ProjectsCommandContext } from './ProjectsApplicationService';
 
 interface RpcResponse<T> { result?: T; error?: string }
@@ -70,9 +68,13 @@ export class ProjectsApiClient {
     const human = context.source === 'ipc' && context.actor === 'human';
     const configured = (human ? process.env.SULLA_PROJECTS_HUMAN_API_TOKEN : process.env.SULLA_PROJECTS_API_TOKEN)?.trim();
     if (configured) return configured;
-    const tokenPath = human
-      ? process.env.SULLA_PROJECTS_HUMAN_TOKEN_FILE?.trim() || path.join(paths.appHome, 'projects-human-token')
-      : process.env.SULLA_PROJECTS_LOCAL_TOKEN_FILE?.trim() || path.join(paths.appHome, 'projects-local-token');
+    const configuredTokenPath = human
+      ? process.env.SULLA_PROJECTS_HUMAN_TOKEN_FILE?.trim()
+      : process.env.SULLA_PROJECTS_LOCAL_TOKEN_FILE?.trim();
+    const tokenPath = configuredTokenPath || path.join(
+      (await import('@pkg/utils/paths')).default.appHome,
+      human ? 'projects-human-token' : 'projects-local-token',
+    );
     const stat = await fs.stat(tokenPath);
     if ((stat.mode & 0o077) !== 0) throw new Error('Projects service token file permissions are unsafe');
     const token = (await fs.readFile(tokenPath, 'utf8')).trim();
