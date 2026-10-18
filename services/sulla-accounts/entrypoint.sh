@@ -110,58 +110,15 @@ reconcile_keycloak() {
   native_redirect_uri="$5"
   web_client_id="$6"
   web_client_secret="$7"
-  service_audiences="$8"
+  membership_audience="$8"
+  resource_audiences="$9"
 
-  export realm native_client_id native_redirect_uri web_client_id web_client_secret service_audiences
+  export realm native_client_id native_redirect_uri web_client_id web_client_secret membership_audience resource_audiences
   realm_file="${private_dir}/realm.json"
   native_client_file="${private_dir}/native-client.json"
   web_client_file="${private_dir}/web-client.json"
-  run_unprivileged node --input-type=module -e '
-    import { writeFileSync } from "node:fs";
-    const audiences = process.env.service_audiences.split(",").map(value => value.trim()).filter(Boolean);
-    for (const audience of audiences) {
-      if (!/^[A-Za-z0-9._-]+$/.test(audience)) throw new Error(`invalid audience ${audience}`);
-      writeFileSync(`/run/sulla-accounts-private/scope-${audience}.json`, JSON.stringify({
-        name: `sulla-audience-${audience}`,
-        protocol: "openid-connect",
-        attributes: { "display.on.consent.screen": "false", "sulla.reconciliation.version": "1" },
-        protocolMappers: [{
-          name: `audience-${audience}`,
-          protocol: "openid-connect",
-          protocolMapper: "oidc-audience-mapper",
-          consentRequired: false,
-          config: { "included.custom.audience": audience, "access.token.claim": "true", "id.token.claim": "false" },
-        }],
-      }), { mode: 0o600 });
-    }
-    const optionalClientScopes = audiences.map(audience => `sulla-audience-${audience}`);
-    writeFileSync(process.argv[1], JSON.stringify({ realm: process.env.realm, enabled: true, registrationAllowed: false, resetPasswordAllowed: true }), { mode: 0o600 });
-    writeFileSync(process.argv[2], JSON.stringify({
-      clientId: process.env.native_client_id,
-      name: "Sulla Desktop",
-      protocol: "openid-connect",
-      publicClient: true,
-      standardFlowEnabled: true,
-      directAccessGrantsEnabled: false,
-      redirectUris: [process.env.native_redirect_uri],
-      webOrigins: [],
-      attributes: { "pkce.code.challenge.method": "S256", "sulla.reconciliation.version": "1" },
-      optionalClientScopes,
-    }), { mode: 0o600 });
-    writeFileSync(process.argv[3], JSON.stringify({
-      clientId: process.env.web_client_id,
-      name: "Sulla Accounts Web",
-      protocol: "openid-connect",
-      publicClient: false,
-      secret: process.env.web_client_secret,
-      standardFlowEnabled: true,
-      directAccessGrantsEnabled: false,
-      redirectUris: process.env.SULLA_ACCOUNTS_KEYCLOAK_WEB_REDIRECT_URIS.split(",").map(value => value.trim()).filter(Boolean),
-      webOrigins: [process.env.SULLA_ACCOUNTS_PUBLIC_URL],
-      attributes: { "sulla.reconciliation.version": "1" },
-      optionalClientScopes,
-    }), { mode: 0o600 });
-  ' "$realm_file" "$native_client_file" "$web_client_file"
+  run_unprivileged node /usr/local/lib/sulla-accounts/keycloak-config.mjs \
+    "$realm_file" "$native_client_file" "$web_client_file"
 
   kcadm=/opt/keycloak/bin/kcadm.sh
   kcadm_config="${private_dir}/kcadm.config"
@@ -173,21 +130,40 @@ reconcile_keycloak() {
     run_unprivileged "$kcadm" update "realms/${realm}" --config "$kcadm_config" -f "$realm_file" >/dev/null
   fi
 
+  membership_scope_name=sulla-membership
+  membership_scope_file="${private_dir}/scope-membership.json"
+  membership_scope_id="$(run_unprivileged "$kcadm" get client-scopes --config "$kcadm_config" -r "$realm" -q "name=${membership_scope_name}" --fields id --format csv --noquotes | sed -n '1p')"
+  if [ -n "$membership_scope_id" ]; then
+    run_unprivileged "$kcadm" update "client-scopes/${membership_scope_id}" --config "$kcadm_config" -r "$realm" -f "$membership_scope_file" >/dev/null
+  else
+    run_unprivileged "$kcadm" create client-scopes --config "$kcadm_config" -r "$realm" -f "$membership_scope_file" >/dev/null
+    membership_scope_id="$(run_unprivileged "$kcadm" get client-scopes --config "$kcadm_config" -r "$realm" -q "name=${membership_scope_name}" --fields id --format csv --noquotes | sed -n '1p')"
+  fi
+  [ -n "$membership_scope_id" ] || fail "failed to reconcile membership client scope"
+
   old_ifs=$IFS
   IFS=,
-  for audience in $service_audiences; do
+  for audience in $resource_audiences; do
     IFS=$old_ifs
-    scope_name="sulla-audience-${audience}"
-    scope_file="${private_dir}/scope-${audience}.json"
+    scope_name="sulla-audience:${audience}"
+    scope_file="${private_dir}/scope-resource-${audience}.json"
     scope_id="$(run_unprivileged "$kcadm" get client-scopes --config "$kcadm_config" -r "$realm" -q "name=${scope_name}" --fields id --format csv --noquotes | sed -n '1p')"
     if [ -n "$scope_id" ]; then
       run_unprivileged "$kcadm" update "client-scopes/${scope_id}" --config "$kcadm_config" -r "$realm" -f "$scope_file" >/dev/null
     else
       run_unprivileged "$kcadm" create client-scopes --config "$kcadm_config" -r "$realm" -f "$scope_file" >/dev/null
     fi
+    legacy_scope_id="$(run_unprivileged "$kcadm" get client-scopes --config "$kcadm_config" -r "$realm" -q "name=sulla-audience-${audience}" --fields id --format csv --noquotes | sed -n '1p')"
+    if [ -n "$legacy_scope_id" ]; then
+      run_unprivileged "$kcadm" delete "client-scopes/${legacy_scope_id}" --config "$kcadm_config" -r "$realm" >/dev/null
+    fi
     IFS=,
   done
   IFS=$old_ifs
+  legacy_membership_scope_id="$(run_unprivileged "$kcadm" get client-scopes --config "$kcadm_config" -r "$realm" -q "name=sulla-audience-${membership_audience}" --fields id --format csv --noquotes | sed -n '1p')"
+  if [ -n "$legacy_membership_scope_id" ]; then
+    run_unprivileged "$kcadm" delete "client-scopes/${legacy_membership_scope_id}" --config "$kcadm_config" -r "$realm" >/dev/null
+  fi
 
   for specification in "${native_client_id}:${native_client_file}" "${web_client_id}:${web_client_file}"; do
     client_id=${specification%%:*}
@@ -197,9 +173,33 @@ reconcile_keycloak() {
       run_unprivileged "$kcadm" update "clients/${internal_id}" --config "$kcadm_config" -r "$realm" -f "$client_file" >/dev/null
     else
       run_unprivileged "$kcadm" create clients --config "$kcadm_config" -r "$realm" -f "$client_file" >/dev/null
+      internal_id="$(run_unprivileged "$kcadm" get clients --config "$kcadm_config" -r "$realm" -q "clientId=${client_id}" --fields id --format csv --noquotes | sed -n '1p')"
     fi
+    [ -n "$internal_id" ] || fail "failed to reconcile client ${client_id}"
+    if ! run_unprivileged "$kcadm" get "clients/${internal_id}/default-client-scopes" --config "$kcadm_config" -r "$realm" --fields id --format csv --noquotes | grep -Fx "$membership_scope_id" >/dev/null; then
+      run_unprivileged "$kcadm" update "clients/${internal_id}/default-client-scopes/${membership_scope_id}" --config "$kcadm_config" -r "$realm" >/dev/null
+    fi
+    if run_unprivileged "$kcadm" get "clients/${internal_id}/optional-client-scopes" --config "$kcadm_config" -r "$realm" --fields id --format csv --noquotes | grep -Fx "$membership_scope_id" >/dev/null; then
+      run_unprivileged "$kcadm" delete "clients/${internal_id}/optional-client-scopes/${membership_scope_id}" --config "$kcadm_config" -r "$realm" >/dev/null
+    fi
+    old_ifs=$IFS
+    IFS=,
+    for audience in $resource_audiences; do
+      IFS=$old_ifs
+      scope_name="sulla-audience:${audience}"
+      scope_id="$(run_unprivileged "$kcadm" get client-scopes --config "$kcadm_config" -r "$realm" -q "name=${scope_name}" --fields id --format csv --noquotes | sed -n '1p')"
+      [ -n "$scope_id" ] || fail "failed to reconcile resource client scope ${scope_name}"
+      if run_unprivileged "$kcadm" get "clients/${internal_id}/default-client-scopes" --config "$kcadm_config" -r "$realm" --fields id --format csv --noquotes | grep -Fx "$scope_id" >/dev/null; then
+        run_unprivileged "$kcadm" delete "clients/${internal_id}/default-client-scopes/${scope_id}" --config "$kcadm_config" -r "$realm" >/dev/null
+      fi
+      if ! run_unprivileged "$kcadm" get "clients/${internal_id}/optional-client-scopes" --config "$kcadm_config" -r "$realm" --fields id --format csv --noquotes | grep -Fx "$scope_id" >/dev/null; then
+        run_unprivileged "$kcadm" update "clients/${internal_id}/optional-client-scopes/${scope_id}" --config "$kcadm_config" -r "$realm" >/dev/null
+      fi
+      IFS=,
+    done
+    IFS=$old_ifs
   done
-  unset realm native_client_id native_redirect_uri web_client_id web_client_secret service_audiences
+  unset realm native_client_id native_redirect_uri web_client_id web_client_secret membership_audience resource_audiences
 }
 
 if [ "$mode" = server ]; then
@@ -234,7 +234,6 @@ if [ "$mode" = server ]; then
   require_value SULLA_ACCOUNTS_KEYCLOAK_WEB_REDIRECT_URIS
   membership_audience="${SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE:-sulla-membership}"
   resource_audiences="${SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES:-sulla-projects,sulla-files,sulla-vault,sulla-workflows}"
-  service_audiences="${membership_audience},${resource_audiences}"
 
   export KC_DB=postgres
   export KC_DB_URL="$SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL"
@@ -255,7 +254,7 @@ if [ "$mode" = server ]; then
     sleep 2
   done
   reconcile_keycloak "$realm" "$keycloak_admin_username" "$keycloak_admin_password" \
-    "$native_client_id" "$native_redirect_uri" "$web_client_id" "$web_client_secret" "$service_audiences"
+    "$native_client_id" "$native_redirect_uri" "$web_client_id" "$web_client_secret" "$membership_audience" "$resource_audiences"
   unset keycloak_db_username keycloak_db_password keycloak_admin_username keycloak_admin_password web_client_secret
   unset KC_DB_PASSWORD KC_BOOTSTRAP_ADMIN_USERNAME KC_BOOTSTRAP_ADMIN_PASSWORD
 fi
