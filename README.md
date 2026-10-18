@@ -32,6 +32,10 @@
 > ```bash
 > npx sulla-desktop
 > ```
+> Installing Sulla Server on Linux? The same package launches its guided Docker/Kubernetes setup:
+> ```bash
+> npx sulla-desktop server
+> ```
 > Or grab an installer from the [latest release](https://github.com/merchantprotocol/sulla-desktop/releases/latest).
 
 <div align="center">

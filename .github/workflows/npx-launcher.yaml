@@ -36,9 +36,14 @@ jobs:
       with:
         node-version: ${{ matrix.node }}
     - name: Syntax check
-      run: node --check bin.js
+      run: |
+        node --check bin.js
+        node --check server.js
+        diff -qr ../../deploy/server server
     - name: Help
-      run: node bin.js --help
+      run: |
+        node bin.js --help
+        node bin.js server --help
     - name: Dry run picks an asset for this platform
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -54,5 +59,14 @@ jobs:
     - name: Unknown flag fails cleanly
       run: |
         if node bin.js --nope; then echo "expected a non-zero exit"; exit 1; fi
-    - name: Package contents
-      run: npm pack --dry-run
+    - name: Packed artifact
+      run: |
+        archive="$(npm pack --json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s)[0].filename))")"
+        tar -tzf "$archive" > pack-files.txt
+        grep -q 'package/server/install.sh' pack-files.txt
+        grep -q 'package/server/k8s/sulla-vault.yaml' pack-files.txt
+        npm exec --yes --package="./$archive" -- sulla-desktop --help
+        npm exec --yes --package="./$archive" -- sulla-desktop server --help
+        if [ "${{ runner.os }}" = Linux ]; then
+          npm exec --yes --package="./$archive" -- sulla-desktop server --dry-run | grep -q '43ac3ede766509792c81d91e2ffd2c4c555b6ab9'
+        fi
