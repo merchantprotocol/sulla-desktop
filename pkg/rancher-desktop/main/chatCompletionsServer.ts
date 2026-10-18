@@ -1132,7 +1132,7 @@ export class ChatCompletionsServer {
 
         // Prefer the optional stateless service for catalog-target tools. A
         // stopped/unhealthy container falls through to today's in-process path.
-        if (toolRegistry.getExecutionTarget(String(tool.name || prefixed)) === 'catalog') {
+        if (slug !== 'github' && toolRegistry.getExecutionTarget(String(tool.name || prefixed)) === 'catalog') {
           try {
             const health = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(300) });
             if (health.ok) {
@@ -1172,6 +1172,9 @@ export class ChatCompletionsServer {
         const interactiveNames = new Set(['ask_user_question']);
         const toolName = String((tool)?.name || endpoint || '').trim();
         const sessionToken = req.header('X-Sulla-Tool-Session');
+        if (slug === 'github' && usesContainerVaultAuthority() && !sessionToken) {
+          return res.status(403).json({ success: false, error: 'GitHub tool requires a verified tool session' });
+        }
         if (sessionToken) {
           const state = getMCPServerHost().getToolSessionState(sessionToken);
           if (!state) return res.status(403).json({ success: false, error: 'Expired tool session' });
