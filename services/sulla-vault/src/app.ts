@@ -221,7 +221,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     if (allowed) {
       response.setHeader('Access-Control-Allow-Origin', origin as string);
       response.setHeader('Vary', 'Origin');
-      response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Sulla-Accounts-Authorization, X-Sulla-Authority-Id, X-Sulla-Organization-Id');
+      response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Sulla-Accounts-Authorization, X-Sulla-Accounts-Authority-Id, X-Sulla-Authority-Id, X-Sulla-Organization-Id');
       response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
       response.setHeader('Access-Control-Allow-Credentials', 'true');
     }
@@ -1001,8 +1001,8 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   app.get('/v1/orgs/:orgId/accounts-identities', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredUuid(request.params.orgId, 'orgId');
     const actorId = requireVaultAuthentication(request);
-    if (await getOrgRole(db, actorId, orgId) !== 'owner') {
-      throw new AccessDenied('Only an existing Vault organization owner can manage Accounts identities');
+    if (!await getOrgRole(db, actorId, orgId)) {
+      throw new AccessDenied('Only a confirmed Vault organization member can manage their Accounts identities');
     }
     const result = await db.query(
       'SELECT issuer, subject, created_at FROM accounts_identities WHERE user_id = $1 ORDER BY created_at',
@@ -1014,48 +1014,47 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   app.post('/v1/orgs/:orgId/accounts-identities', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredUuid(request.params.orgId, 'orgId');
     const actorId = requireVaultAuthentication(request);
-    if (await getOrgRole(db, actorId, orgId) !== 'owner') {
-      throw new AccessDenied('Only an existing Vault organization owner can link an Accounts identity');
+    if (!await getOrgRole(db, actorId, orgId)) {
+      throw new AccessDenied('Only a confirmed Vault organization member can link an Accounts identity');
     }
     const authorization = request.header('x-sulla-accounts-authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1];
-    const authorityId = request.header('x-sulla-authority-id');
+    const authorityId = request.header('x-sulla-accounts-authority-id');
     if (!authorization || !authorityId) {
       throw new HttpError(400, 'Accounts authorization and authority id are required');
     }
     const context = await resolveAccountsContext(config, {
       bearerToken: authorization,
-      authorityId: requiredUuid(authorityId, 'X-Sulla-Authority-Id'),
+      authorityId: requiredUuid(authorityId, 'X-Sulla-Accounts-Authority-Id'),
       organizationId: orgId,
     });
-    const existingIdentity = await db.query<{ user_id: string }>(
-      'SELECT user_id FROM accounts_identities WHERE issuer = $1 AND subject = $2',
-      [context.issuer, context.subject],
-    );
-    if (existingIdentity.rows[0] && existingIdentity.rows[0].user_id !== actorId) {
-      throw new HttpError(409, 'Accounts identity is already linked to another Vault user');
-    }
-    const existingIssuer = await db.query<{ subject: string }>(
-      'SELECT subject FROM accounts_identities WHERE user_id = $1 AND issuer = $2',
-      [actorId, context.issuer],
-    );
-    if (existingIssuer.rows[0] && existingIssuer.rows[0].subject !== context.subject) {
-      throw new HttpError(409, 'Vault user already has a different identity for this issuer');
-    }
     const linked = await db.query(
       `INSERT INTO accounts_identities(issuer, subject, user_id) VALUES ($1, $2, $3)
-       ON CONFLICT (issuer, subject) DO UPDATE SET user_id = EXCLUDED.user_id
+       ON CONFLICT DO NOTHING
        RETURNING issuer, subject, created_at`,
       [context.issuer, context.subject, actorId],
     );
+    if (!linked.rowCount) {
+      const existing = await db.query(
+        `SELECT issuer, subject, created_at FROM accounts_identities
+          WHERE issuer = $1 AND subject = $2 AND user_id = $3`,
+        [context.issuer, context.subject, actorId],
+      );
+      if (!existing.rowCount) {
+        throw new HttpError(409, 'Accounts identity conflicts with an existing Vault identity link');
+      }
+      await auditEvent(db, actorId, orgId, 'accounts_identity_linked');
+      response.json(existing.rows[0]);
+      return;
+    }
     await auditEvent(db, actorId, orgId, 'accounts_identity_linked');
-    response.status(existingIdentity.rowCount ? 200 : 201).json(linked.rows[0]);
+    response.status(201).json(linked.rows[0]);
   });
 
   app.delete('/v1/orgs/:orgId/accounts-identities', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredUuid(request.params.orgId, 'orgId');
     const actorId = requireVaultAuthentication(request);
-    if (await getOrgRole(db, actorId, orgId) !== 'owner') {
-      throw new AccessDenied('Only an existing Vault organization owner can unlink an Accounts identity');
+    if (!await getOrgRole(db, actorId, orgId)) {
+      throw new AccessDenied('Only a confirmed Vault organization member can unlink an Accounts identity');
     }
     const result = await db.query(
       'DELETE FROM accounts_identities WHERE user_id = $1 AND issuer = $2 AND subject = $3 RETURNING issuer, subject',
@@ -1400,29 +1399,32 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   });
 
   app.put('/v1/groups/:groupId/members/:memberId', async(request: AuthenticatedRequest, response) => {
-    const orgId = await groupOrganization(db, request.params.groupId);
+    const groupId = requiredString(request.params.groupId, 'groupId');
+    const orgId = await groupOrganization(db, groupId);
     requireAccountsOrganization(request, orgId);
     await requireOrgManager(db, userId(request), orgId);
     const member = await db.query("SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2 AND status = 'confirmed'", [orgId, request.params.memberId]);
     if (!member.rowCount) throw new HttpError(400, 'Member must belong to the group organization');
-    await db.query('INSERT INTO group_members(group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [request.params.groupId, request.params.memberId]);
+    await db.query('INSERT INTO group_members(group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [groupId, request.params.memberId]);
     response.status(204).end();
   });
 
   app.get('/v1/groups/:groupId/members', async(request: AuthenticatedRequest, response) => {
-    const orgId = await groupOrganization(db, request.params.groupId);
+    const groupId = requiredString(request.params.groupId, 'groupId');
+    const orgId = await groupOrganization(db, groupId);
     requireAccountsOrganization(request, orgId);
     if (!await getOrgRole(db, userId(request), orgId)) throw new AccessDenied('Organization access denied');
     const result = await db.query(`SELECT u.id,u.email FROM group_members gm JOIN users u ON u.id=gm.user_id
-      WHERE gm.group_id=$1 ORDER BY u.email`, [request.params.groupId]);
+      WHERE gm.group_id=$1 ORDER BY u.email`, [groupId]);
     response.json({ members: result.rows });
   });
 
   app.delete('/v1/groups/:groupId/members/:memberId', async(request: AuthenticatedRequest, response) => {
-    const orgId = await groupOrganization(db, request.params.groupId);
+    const groupId = requiredString(request.params.groupId, 'groupId');
+    const orgId = await groupOrganization(db, groupId);
     requireAccountsOrganization(request, orgId);
     await requireOrgManager(db, userId(request), orgId);
-    await db.query('DELETE FROM group_members WHERE group_id=$1 AND user_id=$2', [request.params.groupId, request.params.memberId]);
+    await db.query('DELETE FROM group_members WHERE group_id=$1 AND user_id=$2', [groupId, request.params.memberId]);
     response.status(204).end();
   });
 
