@@ -67,6 +67,7 @@ async function getContainerDispatcher():Promise<Agent> {
 }
 
 const containerFilesFetch:FilesFetch = async(input, init) => {
+  if (new URL(input).origin !== CONTAINER_FILES_ORIGIN) throw new Error('Files container transport rejected an untrusted origin');
   return undiciFetch(input, {
     ...init,
     dispatcher: await getContainerDispatcher(),
@@ -88,13 +89,15 @@ async function localPrincipal(api:URL, request:FilesFetch, servicePassword:strin
 export async function filesContainerRequest(path:string, context:FilesCallerContext, init:RequestInit = {}):Promise<Response> {
   if (!path.startsWith('/') || path.startsWith('//')) throw new Error('Files endpoint must be service-relative');
   const { api, request } = filesApi();
+  const target = new URL(path, api);
+  if (target.origin !== api.origin) throw new Error('Files endpoint must use the trusted local service origin');
   const servicePassword = await SullaSettingsModel.getServicePassword();
   // The Files service owns user identity. Never trust a caller-supplied subject
   // for local ACL decisions, including tool contexts restored from old threads.
   const sub = await localPrincipal(api, request, servicePassword);
   const token = issueCapabilityToken({ ...context, sub, scopes: ['files/*'], expiresInSeconds: 300 }, sullaFilesCapabilityKey(servicePassword));
   const headers = new Headers(init.headers); headers.set('authorization', `Bearer ${ token }`); if (init.body) headers.set('content-type', 'application/json');
-  const response = await request(new URL(path, api), { ...init, headers, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(30_000) });
+  const response = await request(target, { ...init, headers, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(30_000) });
   if (!response.ok) {
     const body = await response.clone().json().catch(() => ({})) as { error?: unknown };
     throw new Error(typeof body.error === 'string' && body.error ? body.error : `Sulla Files returned ${ response.status }`);

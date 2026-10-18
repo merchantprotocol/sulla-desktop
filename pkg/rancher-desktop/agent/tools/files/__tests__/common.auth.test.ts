@@ -90,6 +90,12 @@ describe('FilesTool container authentication', () => {
     await expect(verifyCapabilityToken(bearerToken(), explicitKey)).resolves.toMatchObject({ scopes: ['files/*'] });
   });
 
+  it('rejects backslash network paths before reading credentials', async() => {
+    await expect(filesContainerRequest('/\\evil.invalid/path', {})).rejects.toThrow('trusted local service origin');
+    expect(desktopFilesFetch).not.toHaveBeenCalled();
+    expect(getServicePassword).not.toHaveBeenCalled();
+  });
+
   it('refuses to send Files authority to a configured non-loopback origin', async() => {
     process.env.SULLA_FILES_API_URL = 'https://files.invalid';
 
