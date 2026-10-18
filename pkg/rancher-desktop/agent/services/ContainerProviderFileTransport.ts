@@ -45,12 +45,16 @@ export class ContainerProviderFileTransport implements ProviderFileTransport {
     const name = `${ crypto.randomUUID() }-${ safeName }`;
     const storageTarget = assertWorkspacePath(this.storageRoot, path.join(this.storageRoot, name));
     const providerTarget = assertWorkspacePath(CONTAINER_PROVIDER_FILES_PATH, path.posix.join(CONTAINER_PROVIDER_FILES_PATH, name));
+    const mode = ((request.mode ?? 0o600) & 0o700) | 0o044;
     const fd = fs.openSync(
       storageTarget,
       fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0),
-      ((request.mode ?? 0o600) & 0o700) | 0o044,
+      mode,
     );
     try {
+      // open(2) applies the process umask. Reapply the intended mode to the
+      // descriptor so the provider UID can read this read-only bind mount.
+      fs.fchmodSync(fd, mode);
       fs.writeFileSync(fd, request.data);
     } finally {
       fs.closeSync(fd);

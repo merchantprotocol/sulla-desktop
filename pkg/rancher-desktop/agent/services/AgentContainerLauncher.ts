@@ -6,6 +6,7 @@ import * as path from 'node:path';
 
 import Electron from 'electron';
 
+import { createIsolatedCheckout, isolatedCheckoutPrefix } from './AgentContainerCheckout';
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
 import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
@@ -270,15 +271,15 @@ async function prepareCheckout(source: string | undefined, jobKey: string): Prom
   const top = (await limactl(['git', '-C', resolved, 'rev-parse', '--show-toplevel'])).stdout.trim();
   if (fs.realpathSync(top) !== resolved) throw new Error('container workspacePath must be a Git worktree root');
   const commonGitDir = (await limactl(['git', '-C', resolved, 'rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();
-  const repository = safeName(path.basename(path.dirname(commonGitDir)));
+  const repository = path.basename(path.dirname(commonGitDir));
   const branch = await limactl(['git', '-C', resolved, 'symbolic-ref', '--short', 'HEAD'])
     .then(result => result.stdout.trim())
     .catch(async() => `detached-${ (await limactl(['git', '-C', resolved, 'rev-parse', '--short', 'HEAD'])).stdout.trim() }`);
-  const checkout = path.join(worktreeRoot, `${ repository }-${ safeName(`${ branch }-agent-${ jobKey }`) }`);
-  if (!fs.existsSync(path.join(checkout, '.git'))) {
-    await limactl(['git', 'clone', '--local', '--no-hardlinks', resolved, checkout]);
-  }
-  return checkout;
+  return await createIsolatedCheckout(
+    worktreeRoot,
+    isolatedCheckoutPrefix(repository, branch, jobKey),
+    checkout => limactl(['git', 'clone', '--local', '--no-hardlinks', resolved, checkout]).then(() => undefined),
+  );
 }
 
 interface ContainerProviderTransportOptions {
