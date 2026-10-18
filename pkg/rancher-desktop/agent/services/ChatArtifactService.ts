@@ -342,20 +342,27 @@ export class ChatArtifactService {
 
     const previous = filesRegistrationQueues.get(artifact.id) ?? Promise.resolve();
     const operation = previous.catch(() => undefined).then(async() => {
+      const current = await this.store.get(artifact.threadId, artifact.id, true);
+      // The queued snapshot may have been superseded or deleted while an older
+      // Files write was in flight. The matching newer mutation owns the next
+      // queue position, so this operation must not regress the durable file.
+      if (!current || current.isDeleted || current.version !== artifact.version) return current ?? artifact;
+      if (current.filesRegistrationStatus === 'synced' && current.filesArtifactVersion === current.version) return current;
+
       let persisted: ChatArtifactRecord | null;
       try {
-        const result = await this.filesRegistration!.register(artifact);
-        persisted = await this.store.recordFilesRegistration(artifact.id, artifact.version, result);
+        const result = await this.filesRegistration!.register(current);
+        persisted = await this.store.recordFilesRegistration(current.id, current.version, result);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const filesPath = typeof (error as { filesPath?: unknown })?.filesPath === 'string'
           ? (error as { filesPath: string }).filesPath
           : undefined;
-        persisted = await this.store.recordFilesRegistration(artifact.id, artifact.version, { error: message, path: filesPath });
-        console.warn(`[ChatArtifactService] Files registration failed for ${ artifact.id } v${ artifact.version }:`, message);
+        persisted = await this.store.recordFilesRegistration(current.id, current.version, { error: message, path: filesPath });
+        console.warn(`[ChatArtifactService] Files registration failed for ${ current.id } v${ current.version }:`, message);
       }
       if (persisted) this.publish(persisted.threadId, persisted);
-      return persisted ?? artifact;
+      return persisted ?? current;
     });
     const queued = operation.then(() => undefined, () => undefined);
     filesRegistrationQueues.set(artifact.id, queued);
