@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -6,6 +7,7 @@ import { BrowserWindow, app, clipboard, desktopCapturer, dialog, screen } from '
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { callCaptureStudio } from '@pkg/main/captureStudioRpc';
+import { createDirectoryWithinRoot } from '@pkg/main/sullaFilesDirectory';
 import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher, type RecentSullaFile } from '@pkg/main/sullaFilesWatcher';
 
@@ -24,12 +26,57 @@ function stamp():string {
   return `${ value.getFullYear() }-${ pad(value.getMonth() + 1) }-${ pad(value.getDate()) } at ${ pad(value.getHours()) }.${ pad(value.getMinutes()) }.${ pad(value.getSeconds()) }`;
 }
 
-async function unique(dir:string, filename:string):Promise<string> {
-  const extension = path.extname(filename); const stem = extension ? filename.slice(0, -extension.length) : filename;
-  for (let index = 0; ; index++) {
-    const candidate = path.join(dir, index ? `${ stem } (${ index })${ extension }` : filename);
-    try { await fs.promises.access(candidate) } catch { return candidate }
+function inside(root:string, candidate:string):boolean {
+  const relative = path.relative(root, candidate);
+
+  return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${ path.sep }`));
+}
+
+async function captureDirectory(relativePath:string):Promise<string> {
+  const root = getSullaFilesWatcher().folder;
+  const realRoot = await fs.promises.realpath(root);
+  const target = path.join(root, relativePath);
+  try {
+    await createDirectoryWithinRoot(root, relativePath);
+  } catch (error:any) {
+    if (error?.code !== 'EEXIST') throw error;
   }
+  const [targetInfo, resolved] = await Promise.all([fs.promises.lstat(target), fs.promises.realpath(target)]);
+  if (targetInfo.isSymbolicLink() || !targetInfo.isDirectory() || !inside(realRoot, resolved)) {
+    throw new Error(`The ${ relativePath } capture folder must be a real directory inside Sulla Files.`);
+  }
+
+  return resolved;
+}
+
+async function commitUniqueFile(dir:string, filename:string, write:(temporaryPath:string) => Promise<void>):Promise<string> {
+  const extension = path.extname(filename);
+  const stem = extension ? filename.slice(0, -extension.length) : filename;
+  const temporaryPath = path.join(dir, `.sulla-capture-${ randomUUID() }.partial`);
+  try {
+    await write(temporaryPath);
+    const info = await fs.promises.lstat(temporaryPath);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error('Capture output was not a regular file.');
+    await fs.promises.chmod(temporaryPath, 0o600);
+    for (let index = 0; ; index++) {
+      const candidate = path.join(dir, index ? `${ stem } (${ index })${ extension }` : filename);
+      try {
+        // link() is an atomic no-overwrite commit on the same filesystem.
+        await fs.promises.link(temporaryPath, candidate);
+        return candidate;
+      } catch (error:any) {
+        if (error?.code !== 'EEXIST') throw error;
+      }
+    }
+  } finally {
+    await fs.promises.rm(temporaryPath, { force: true });
+  }
+}
+
+function safeStreamLabel(value:unknown):string {
+  const label = String(value ?? '').normalize('NFKC').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+
+  return label.slice(0, 64) || 'track';
 }
 
 async function waitForFile(relativePath:string):Promise<RecentSullaFile | undefined> {
@@ -62,14 +109,15 @@ export class SullaFilesCaptureService {
   private recording = false;
 
   async screenshot(mode:ScreenshotMode):Promise<CaptureResult> {
-    const root = path.join(getSullaFilesWatcher().folder, SCREENSHOTS); await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
-    const target = await unique(root, `Screenshot ${ stamp() }.png`);
-    if (process.platform === 'darwin') {
-      const args = mode === 'full' ? ['-x', '-o', '-t', 'png', target] : mode === 'window' ? ['-iW', '-o', '-t', 'png', target] : ['-i', '-o', '-t', 'png', target];
-      await runMacScreenshot(args);
-    } else {
-      await electronScreenshot(target, mode === 'window' ? 'window' : 'screen');
-    }
+    const root = await captureDirectory(SCREENSHOTS);
+    const target = await commitUniqueFile(root, `Screenshot ${ stamp() }.png`, async temporaryPath => {
+      if (process.platform === 'darwin') {
+        const args = mode === 'full' ? ['-x', '-o', '-t', 'png', temporaryPath] : mode === 'window' ? ['-iW', '-o', '-t', 'png', temporaryPath] : ['-i', '-o', '-t', 'png', temporaryPath];
+        await runMacScreenshot(args);
+      } else {
+        await electronScreenshot(temporaryPath, mode === 'window' ? 'window' : 'screen');
+      }
+    });
     const info = await fs.promises.stat(target); const relativePath = path.relative(getSullaFilesWatcher().folder, target).split(path.sep).join('/');
     const file = await waitForFile(relativePath);
 
@@ -91,20 +139,20 @@ export class SullaFilesCaptureService {
   }
 
   private async saveRecording(sessionDir:string):Promise<CaptureResult> {
-    const destination = path.join(getSullaFilesWatcher().folder, RECORDINGS); await fs.promises.mkdir(destination, { recursive: true, mode: 0o700 });
+    const destination = await captureDirectory(RECORDINGS);
     const raw = JSON.parse(await fs.promises.readFile(path.join(sessionDir, 'manifest.json'), 'utf8'));
     const streams:any[] = raw.streams ?? []; const primary = streams.find(stream => stream.type === 'screen') ?? streams.find(stream => stream.type === 'camera');
     if (!primary) throw new Error('Capture Studio recording contains no video track');
     const stem = `Recording ${ stamp() }`; const primaryExtension = path.extname(primary.filename) || '.webm';
-    const target = await unique(destination, `${ stem }${ primaryExtension }`); const chosenStem = path.basename(target, path.extname(target));
-    await fs.promises.copyFile(path.join(sessionDir, path.basename(primary.filename)), target);
+    const target = await commitUniqueFile(destination, `${ stem }${ primaryExtension }`, temporaryPath => fs.promises.copyFile(path.join(sessionDir, path.basename(primary.filename)), temporaryPath, fs.constants.COPYFILE_EXCL));
+    const chosenStem = path.basename(target, path.extname(target));
     const copied:any[] = [{ ...primary, filename: path.basename(target) }];
     for (const stream of streams.filter(stream => stream !== primary && Number(stream.bytes) > 0)) {
-      const suffix = stream.type === 'camera' ? 'camera' : stream.type === 'mic' ? 'mic' : stream.type === 'system-audio' ? 'system-audio' : String(stream.type);
-      const output = path.join(destination, `${ chosenStem }-${ suffix }${ path.extname(stream.filename) || '.webm' }`);
-      await fs.promises.copyFile(path.join(sessionDir, path.basename(stream.filename)), output); copied.push({ ...stream, filename: path.basename(output) });
+      const suffix = safeStreamLabel(stream.type);
+      const output = await commitUniqueFile(destination, `${ chosenStem }-${ suffix }${ path.extname(stream.filename) || '.webm' }`, temporaryPath => fs.promises.copyFile(path.join(sessionDir, path.basename(stream.filename)), temporaryPath, fs.constants.COPYFILE_EXCL));
+      copied.push({ ...stream, filename: path.basename(output) });
     }
-    await fs.promises.writeFile(path.join(destination, `${ chosenStem }.capture.json`), JSON.stringify({ ...raw, streams: copied }, null, 2));
+    await commitUniqueFile(destination, `${ chosenStem }.capture.json`, temporaryPath => fs.promises.writeFile(temporaryPath, JSON.stringify({ ...raw, streams: copied }, null, 2), { flag: 'wx', mode: 0o600 }));
     const info = await fs.promises.stat(target); const relativePath = path.relative(getSullaFilesWatcher().folder, target).split(path.sep).join('/');
     const file = await waitForFile(relativePath);
 
@@ -114,8 +162,8 @@ export class SullaFilesCaptureService {
   async upload():Promise<CaptureResult | undefined> {
     const picked = await dialog.showOpenDialog({ title: 'Upload & copy link', properties: ['openFile'] });
     if (picked.canceled || !picked.filePaths[0]) return undefined;
-    const source = picked.filePaths[0]; const uploads = path.join(getSullaFilesWatcher().folder, 'Uploads'); await fs.promises.mkdir(uploads, { recursive: true, mode: 0o700 });
-    const target = await unique(uploads, path.basename(source)); await fs.promises.copyFile(source, target, fs.constants.COPYFILE_EXCL);
+    const source = picked.filePaths[0]; const uploads = await captureDirectory('Uploads');
+    const target = await commitUniqueFile(uploads, path.basename(source), temporaryPath => fs.promises.copyFile(source, temporaryPath, fs.constants.COPYFILE_EXCL));
     const info = await fs.promises.stat(target); const relativePath = path.relative(getSullaFilesWatcher().folder, target).split(path.sep).join('/');
     const file = await waitForFile(relativePath);
 
