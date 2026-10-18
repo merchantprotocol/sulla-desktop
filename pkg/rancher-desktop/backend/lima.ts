@@ -35,6 +35,7 @@ import { ContainerEngineClient, MobyClient, NerdctlClient } from './containerCli
 import * as K8s from './k8s';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 import { resolveSullaServiceImage } from './sullaServiceImages';
+import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
 import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -50,6 +51,7 @@ import LOGROTATE_OPENRESTY_SCRIPT from '@pkg/assets/scripts/logrotate-openresty'
 import NERDCTL from '@pkg/assets/scripts/nerdctl';
 import NGINX_CONF from '@pkg/assets/scripts/nginx.conf';
 import PROVISION_VAULT_TLS from '@pkg/assets/scripts/provision-vault-tls';
+import PROVISION_FILES_TLS from '@pkg/assets/scripts/provision-files-tls';
 import SULLA_THREAT_PROXY_INITD from '@pkg/assets/scripts/sulla-threat-proxy.initd';
 import SULLA_DOCKER_COMPOSE from '@pkg/assets/sulla-docker-compose.yaml';
 import { ContainerEngine, MountType, VMType } from '@pkg/config/settings';
@@ -58,6 +60,7 @@ import { getServerCredentialsPath, ServerState } from '@pkg/main/credentialServe
 import { readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import mainEvents from '@pkg/main/mainEvents';
 import { refreshVaultPinnedSessions } from '@pkg/main/vaultTls';
+import { refreshFilesPinnedSessions } from '@pkg/main/sullaFilesTls';
 import { exec as sudo } from '@pkg/sudo-prompt';
 import { instantiateSullaStart, markSullaDockerServicesStarted } from '@pkg/sulla';
 import * as childProcess from '@pkg/utils/childProcess';
@@ -2986,6 +2989,39 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           if (mountedSource.trim() !== source) return false;
         }
       }
+      const filesInstalled = await this.execCommand(
+        { capture: true, root: true }, 'docker', 'ps', '-a', '--filter', 'name=^/sulla_files$', '--format', '{{.Names}}',
+      );
+      if (filesInstalled.trim()) {
+        for (const requiredIdentity of [
+          path.join(paths.appHome, 'files-bootstrap-identity.enc'),
+          path.join(paths.appHome, 'files-tls-certificate.pem'),
+          path.join(paths.appHome, 'files-tls-fingerprint'),
+        ]) {
+          const stat = await fs.promises.stat(requiredIdentity);
+          if (!stat.isFile() || stat.size === 0) return false;
+        }
+        const deployedFingerprint = await this.execCommand(
+          { capture: true, root: true }, 'docker', 'inspect', '--format',
+          '{{index .Config.Labels "sulla.files-tls-fingerprint"}}', 'sulla_files',
+        );
+        const expectedFingerprint = await fs.promises.readFile(path.join(paths.appHome, 'files-tls-fingerprint'), 'utf8');
+        if (deployedFingerprint.trim() !== expectedFingerprint.trim()) return false;
+        const mountedSource = await this.execCommand(
+          { capture: true, root: true }, 'docker', 'inspect', '--format',
+          '{{range .Mounts}}{{if eq .Destination "/run/sulla-files-tls"}}{{.Source}}{{end}}{{end}}', 'sulla_files',
+        );
+        if (mountedSource.trim() !== FILES_TLS_DIRECTORY) return false;
+        const toolsCaSource = await this.execCommand(
+          { capture: true, root: true }, 'docker', 'inspect', '--format',
+          '{{range .Mounts}}{{if eq .Destination "/run/sulla-files-ca/tls.crt"}}{{.Source}}{{end}}{{end}}', 'sulla_tools',
+        );
+        if (toolsCaSource.trim() !== `${ FILES_TLS_DIRECTORY }/tls.crt`) return false;
+        await this.execCommand(
+          { capture: true, root: true }, 'sh', '-c',
+          'test -s "$1/tls.crt" && test -s "$1/tls.key"', '--', FILES_TLS_DIRECTORY,
+        );
+      }
       for (const service of requiredServices) {
         const status = await this.execCommand(
           { capture: true, root: true },
@@ -3080,6 +3116,53 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     return { fingerprint };
   }
 
+  private async loadOrCreateFilesBootstrapIdentity():Promise<string> {
+    if (!Electron.safeStorage.isEncryptionAvailable()) throw new Error('OS-protected storage is required for Files bootstrap');
+    const target = path.join(paths.appHome, 'files-bootstrap-identity.enc');
+    let encrypted:Buffer;
+    try {
+      encrypted = await fs.promises.readFile(target);
+      const token = Electron.safeStorage.decryptString(encrypted);
+      if (Buffer.byteLength(token) < 32) throw new Error('Existing Files bootstrap identity is invalid');
+      return token;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const token = crypto.randomBytes(48).toString('base64url');
+    await fs.promises.mkdir(paths.appHome, { recursive: true });
+    const temporary = `${ target }.${ process.pid }.tmp`;
+    const protectedToken = Electron.safeStorage.encryptString(token);
+    try {
+      const file = await fs.promises.open(temporary, 'wx', 0o600);
+      try { await file.writeFile(protectedToken); await file.sync() } finally { await file.close() }
+      try { await fs.promises.link(temporary, target) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        const concurrent = Electron.safeStorage.decryptString(await fs.promises.readFile(target));
+        if (Buffer.byteLength(concurrent) < 32) throw new Error('Concurrent Files bootstrap identity is invalid');
+        return concurrent;
+      }
+      const directory = await fs.promises.open(path.dirname(target), fs.constants.O_RDONLY);
+      try { await directory.sync() } finally { await directory.close() }
+    } finally {
+      protectedToken.fill(0);
+      await fs.promises.unlink(temporary).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error });
+    }
+    return token;
+  }
+
+  private async prepareFilesTlsIdentity():Promise<{ fingerprint:string }> {
+    const { uid, gid } = os.userInfo();
+    const certificate = await this.execCommand(
+      { capture: true, root: true }, 'sh', '-c', PROVISION_FILES_TLS, '--', FILES_TLS_DIRECTORY, String(uid), String(gid),
+    );
+    const fingerprint = new crypto.X509Certificate(certificate).fingerprint256;
+    await fs.promises.mkdir(paths.appHome, { recursive: true });
+    await fs.promises.writeFile(path.join(paths.appHome, 'files-tls-certificate.pem'), certificate, { mode: 0o600 });
+    await fs.promises.writeFile(path.join(paths.appHome, 'files-tls-fingerprint'), `${ fingerprint }\n`, { mode: 0o600 });
+    await refreshFilesPinnedSessions();
+    return { fingerprint };
+  }
+
   /**
    * Prepares the Docker Compose file for Sulla services by parsing and modifying dynamic values like passwords.
    */
@@ -3097,6 +3180,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
     if (!sullaApiToken) throw new Error('Sulla API token is unavailable while preparing container services');
     sullaApiToken = escapeForCompose(sullaApiToken);
+    const filesBootstrapIdentity = await this.loadOrCreateFilesBootstrapIdentity();
+    const { fingerprint: filesTlsFingerprint } = await this.prepareFilesTlsIdentity();
     let vaultIdentities: {
       bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string; filesToken: string;
     } | undefined;
@@ -3238,6 +3323,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_URL: 'http://sulla_relay:8790',
         SULLA_RELAY_TOKEN: sullaApiToken,
+        SULLA_FILES_API_URL:     'https://sulla_files:8792',
+        SULLA_FILES_TLS_CA_FILE: '/run/sulla-files-ca/tls.crt',
         ...(vaultIdentities ? {
           SULLA_VAULT_BROKER_URL:        'https://sulla_vault:8787',
           SULLA_VAULT_BROKER_SERVICE_ID: 'sulla-tools',
@@ -3247,9 +3334,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         } : {}),
       },
       ports: ['127.0.0.1:30123:3000'],
-      volumes: vaultIdentities
-        ? [vaultTlsBind(true)]
-        : [],
+      volumes: [
+        ...(vaultIdentities ? [vaultTlsBind(true)] : []),
+        filesTlsBind(true),
+      ],
       restart: 'unless-stopped',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
@@ -3269,6 +3357,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       ...filesImage,
       image: resolvedFilesImage,
       container_name: 'sulla_files',
+      labels: { 'sulla.files-tls-fingerprint': filesTlsFingerprint },
       depends_on: {
         postgres: { condition: 'service_healthy' },
         ...(vaultIdentities ? { sulla_vault: { condition: 'service_healthy' } } : {}),
@@ -3284,6 +3373,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_GID:                   String(os.userInfo().gid),
         SULLA_FILES_CAPABILITY_SIGNING_KEY: sullaFilesCapabilityKey(sullaServicePassword),
         SULLA_FILES_LOCAL_TOKEN:           sullaServicePassword,
+        SULLA_FILES_BOOTSTRAP_SERVICE_ID:  'sulla-desktop-files-bootstrap',
+        SULLA_FILES_BOOTSTRAP_TOKEN:       filesBootstrapIdentity,
+        SULLA_FILES_TLS_CERTIFICATE_PATH:  '/run/sulla-files-tls/tls.crt',
+        SULLA_FILES_TLS_PRIVATE_KEY_PATH:  '/run/sulla-files-tls/tls.key',
         SULLA_FILES_CASE_INSENSITIVE_ROOT: process.platform === 'darwin' ? '1' : '0',
         ...(vaultIdentities ? {
           SULLA_FILES_VAULT_AUTHORITY_URL:        'https://sulla_vault:8787',
@@ -3300,12 +3393,19 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
         `${ filesUserRoot.activePath }:/data/files`,
+        filesTlsBind(),
         ...(vaultIdentities
           ? [vaultTlsBind(true)]
           : []),
       ],
       restart: 'unless-stopped',
-      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8792/healthz'], interval: '5s', timeout: '3s', retries: 10 },
+      healthcheck: {
+        test: [
+          'CMD', 'node', '-e',
+          "const fs=require('fs'),https=require('https');const r=https.get({hostname:'127.0.0.1',port:8792,path:'/healthz',ca:fs.readFileSync('/run/sulla-files-tls/tls.crt')},x=>{x.resume();process.exit(x.statusCode===200?0:1)});r.on('error',()=>process.exit(1));r.setTimeout(2500,()=>r.destroy())",
+        ],
+        interval: '5s', timeout: '3s', retries: 10,
+      },
     };
 
     // Modify dynamic values like passwords
