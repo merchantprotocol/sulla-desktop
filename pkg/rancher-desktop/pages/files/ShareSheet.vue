@@ -12,7 +12,7 @@
 
         <section v-if="canManageMembers" class="block">
           <div class="block-title"><b>People and groups</b><span>{{ accessRows.length }} with access</span></div>
-          <div v-for="share in accessRows" :key="`${share.inherited ? 'inherited' : 'direct'}:${share.principalType}:${share.principalId}`" class="access-row">
+          <div v-for="share in accessRows" :key="accessRowKey(share)" class="access-row">
             <span class="avatar">{{ initials(share.principalName || share.principalId) }}</span>
             <div class="access-name"><b>{{ share.principalName || share.principalId }}</b><small v-if="share.owner">Owner</small><small v-else-if="share.inherited">{{ share.principalType === 'group' ? 'Group' : 'Member' }} · inherited from {{ share.source === 'collection' ? 'collection access' : share.folderPath }}</small><small v-else>{{ share.principalType === 'group' ? 'Group' : 'Member' }}</small></div>
             <span v-if="share.owner" class="fixed-role">Owner</span>
@@ -88,6 +88,7 @@ const accessRows = computed<DisplayShare[]>(() => ownerPrincipal.value ? [{ id: 
 const memberPrincipals = computed(() => principals.value.filter(item => item.type === 'user'));
 const groupPrincipals = computed(() => principals.value.filter(item => item.type === 'group'));
 const principalKey = (principal:SharePrincipal) => `${ principal.type }:${ principal.id }`;
+const accessRowKey = (share:DisplayShare) => [share.owner ? 'owner' : share.inherited ? 'inherited' : 'direct', share.id ?? '', 'source' in share ? share.source ?? '' : '', 'folderPath' in share ? share.folderPath ?? '' : '', share.principalType, share.principalId].join(':');
 
 function dateValue(value?:string) { return value ? new Date(value).toISOString().slice(0, 10) : '' }
 function dateTime(value:string) { return value ? new Date(`${ value }T23:59:59.999Z`).toISOString() : null }
