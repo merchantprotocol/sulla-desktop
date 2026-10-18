@@ -308,7 +308,7 @@ export function initSullaFilesIpc():void {
   });
   ipcMain.handle('files-ui:capture-screenshot', (_event, mode:ScreenshotMode = 'area') => getSullaFilesCaptureService().screenshot(mode));
   ipcMain.handle('files-ui:toggle-recording', (_event, input:{ mic:boolean; camera:boolean }) => getSullaFilesCaptureService().toggleRecording(input));
-  ipcMain.handle('files-ui:create-link', (_event, input:{ fileId:string; mode:'view' | 'download'; password?:string; expiresAt?:string; keepAvailable:boolean; keepUntil?:string; displaySharerName?:boolean; assetKind?:'file' | 'capture' | 'artifact'; captureMetadata?:Record<string, unknown> }) => getSullaFilesLinkService().create(input));
+  ipcMain.handle('files-ui:create-link', (_event, input:CreateShareInput) => getSullaFilesLinkService().create(input));
   ipcMain.handle('files-ui:list-links', () => getSullaFilesLinkService().list());
   ipcMain.handle('files-ui:revoke-link', (_event, id:string) => getSullaFilesLinkService().revoke(id));
   ipcMain.handle('files-ui:update-link', (_event, input:{ id:string; options:Partial<CreateShareInput> }) => getSullaFilesLinkService().update(input.id, input.options));
