@@ -23,6 +23,7 @@ export interface AccountsConfig {
   adminSecret?: Buffer;
   serviceTokens: Map<string, ServiceGrant>;
   keycloakIssuer?: string;
+  keycloakAuthorityId?: string;
   keycloakNativeClientId?: string;
   keycloakWebClientId?: string;
   keycloakMembershipAudience?: string;
@@ -94,12 +95,13 @@ export async function loadConfig(): Promise<AccountsConfig> {
   const databaseUrl = await readTextFile('SULLA_ACCOUNTS_DATABASE_URL_FILE');
   const publicUrl = normalizeIssuer(process.env.SULLA_ACCOUNTS_PUBLIC_URL ?? 'https://127.0.0.1:3020');
   const keycloakIssuer = process.env.SULLA_ACCOUNTS_KEYCLOAK_ISSUER ? normalizeIssuer(process.env.SULLA_ACCOUNTS_KEYCLOAK_ISSUER) : undefined;
+  const keycloakAuthorityId = process.env.SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID;
   const keycloakNativeClientId = process.env.SULLA_ACCOUNTS_KEYCLOAK_NATIVE_CLIENT_ID;
   const keycloakWebClientId = process.env.SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID;
   const keycloakMembershipAudience = process.env.SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE;
   const keycloakResourceAudiences = new Set((process.env.SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES ?? '').split(',').map(value => value.trim()).filter(Boolean));
-  if (mode === 'server' && (!keycloakIssuer || !keycloakNativeClientId || !keycloakWebClientId || !keycloakMembershipAudience || !keycloakResourceAudiences.size)) {
-    throw new Error('server mode requires Keycloak issuer, native/web clients, membership audience, and resource audiences');
+  if (mode === 'server' && (!keycloakIssuer || !keycloakAuthorityId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(keycloakAuthorityId) || !keycloakNativeClientId || !keycloakWebClientId || !keycloakMembershipAudience || !keycloakResourceAudiences.size)) {
+    throw new Error('server mode requires Keycloak authority id, issuer, native/web clients, membership audience, and resource audiences');
   }
 
   const serviceTokens = new Map<string, ServiceGrant>();
@@ -139,6 +141,7 @@ export async function loadConfig(): Promise<AccountsConfig> {
     adminSecret: mode === 'server' ? await readSecretFile('SULLA_ACCOUNTS_ADMIN_SECRET_FILE') : undefined,
     serviceTokens,
     keycloakIssuer,
+    keycloakAuthorityId,
     keycloakNativeClientId,
     keycloakWebClientId,
     keycloakMembershipAudience,
