@@ -1,26 +1,35 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, createReadStream, createWriteStream } from 'node:fs';
-import { link, lstat, mkdir, open, readFile, readdir, realpath, rename, stat } from 'node:fs/promises';
-import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
-import { pipeline } from 'node:stream/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdir, readFile, readdir, realpath, rename, stat } from 'node:fs/promises';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 
 import { issueCapabilityToken } from './auth.js';
 import { chunkId, decryptChunk, encryptChunk } from './crypto.js';
+import { copyLockedFile } from './fileOperations.js';
 import { isProtectedPath } from './protectedFiles.js';
+import { FilesMutationCoordinator } from './safeFilesystem.js';
 import { Store } from './store.js';
 
 import type { FilesIdentity } from './auth.js';
 import type { Config } from './config.js';
 import type { IndexingQueue } from './indexing.js';
+import type { EvictionReceipt, PinnedRegularFile, PublicationReceipt } from './safeFilesystem.js';
 import type pg from 'pg';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/', '.sulla-operation-recovery/', 'master.key'];
 
 interface RuntimeState {
-  state: 'synced' | 'syncing' | 'paused' | 'error'; pendingFiles: number; pendingBytes: number;
-  processedBytes: number; totalBytes: number; estimatedSeconds?: number; lastError?: string;
-  lastScanAt?: string; lastSyncAt?: string; serverConfigured: boolean;
+  state: 'synced' | 'syncing' | 'paused' | 'error';
+  pendingFiles: number;
+  pendingBytes: number;
+  processedBytes: number;
+  totalBytes: number;
+  estimatedSeconds?: number;
+  lastError?: string;
+  lastScanAt?: string;
+  lastSyncAt?: string;
+  serverConfigured: boolean;
 }
 interface WatchedRow { collection_id: string; path: string; file_id: string; content_hash: string; size: string; mtime_ms: string; role?: string }
 
@@ -67,13 +76,16 @@ export class LocalFilesManager {
   private lastScanAt?:    string;
   private lastSyncAt?:    string;
   private syncTimer?:     NodeJS.Timeout;
-  private operationAudits:{ targetPath:string; folder:boolean; sourcePath:string; actor:FilesIdentity; action:'copy' }[] = [];
   private pendingFiles = 0;
   private pendingBytes = 0;
   private processedBytes = 0;
   private totalBytes = 0;
   private progressStartedAt = 0;
-  constructor(private readonly db:pg.Pool, private readonly config:Config, private readonly indexer?:IndexingQueue) { this.store = new Store(config.chunkRoot); this.paused = config.paused }
+  readonly mutations: FilesMutationCoordinator;
+  constructor(private readonly db:pg.Pool, private readonly config:Config, private readonly indexer?:IndexingQueue, mutations?:FilesMutationCoordinator) {
+    this.store = new Store(config.chunkRoot); this.paused = config.paused;
+    this.mutations = mutations ?? new FilesMutationCoordinator(config.filesRoot ?? config.dataRoot);
+  }
 
   async initialize():Promise<void> {
     this.stopped = false;
@@ -90,7 +102,11 @@ export class LocalFilesManager {
     this.syncTimer.unref();
   }
 
-  async close():Promise<void> { this.stopped = true; if (this.syncTimer) clearInterval(this.syncTimer); await this.running?.catch(() => undefined); }
+  async close():Promise<void> {
+    this.stopped = true;
+    if (this.syncTimer) clearInterval(this.syncTimer);
+    await this.mutations.runExclusive(['.'], () => Promise.resolve()).catch(() => undefined);
+  }
   status():RuntimeState {
     const elapsed = Math.max(0.001, (Date.now() - this.progressStartedAt) / 1_000); const rate = this.processedBytes / elapsed;
     return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, pendingBytes: this.pendingBytes, processedBytes: this.processedBytes, totalBytes: this.totalBytes, estimatedSeconds: this.running && rate > 0 ? Math.max(1, Math.ceil(this.pendingBytes / rate)) : undefined, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl) };
@@ -123,132 +139,122 @@ export class LocalFilesManager {
   }
 
   async applyPathOperations(action:'move' | 'copy', items:{ sourcePath:string; targetPath:string; folder:boolean; fileSnapshots:{ id:string; path:string; currentVersionId:string }[] }[], actor:FilesIdentity):Promise<void> {
-    while (this.running) await this.running.catch(() => undefined);
-    return this.serial(() => this.applyPathOperationsNow(action, items, actor));
+    const paths = items.flatMap(item => [item.sourcePath, item.targetPath]);
+    return this.serial(() => this.mutations.runExclusive(paths, () => this.applyPathOperationsNow(action, items, actor)));
   }
 
   private async applyPathOperationsNow(action:'move' | 'copy', items:{ sourcePath:string; targetPath:string; folder:boolean; fileSnapshots:{ id:string; path:string; currentVersionId:string }[] }[], actor:FilesIdentity):Promise<void> {
     if (!this.config.filesRoot) throw Object.assign(new Error('The watched Files folder is unavailable'), { status: 409 });
-    const normalized = items.map(item => ({ source: this.safe(item.sourcePath), target: this.safe(item.targetPath), targetPath: item.targetPath }));
-    const assertSafeAncestors = async(absolute:string) => {
-      let cursor = this.config.filesRoot!;
-      for (const part of relative(this.config.filesRoot!, dirname(absolute)).split(sep).filter(Boolean)) {
-        cursor = join(cursor, part); const info = await lstat(cursor).catch(() => undefined); if (!info) break;
-        if (info.isSymbolicLink() || !info.isDirectory()) throw Object.assign(new Error('Files operation path contains an unsafe ancestor'), { status: 409 });
-      }
-    };
-    if (new Set(normalized.map(item => item.target)).size !== normalized.length) throw Object.assign(new Error('Two selected items have the same destination'), { status: 409 });
-    for (const item of normalized) {
-      await assertSafeAncestors(item.source); await assertSafeAncestors(item.target);
-      const source = await lstat(item.source).catch(() => undefined);
-      if (!source || source.isSymbolicLink() || (!source.isFile() && !source.isDirectory())) throw Object.assign(new Error('A selected item is no longer available'), { status: 404 });
-      if (item.target === item.source || item.target.startsWith(`${ item.source }${ sep }`)) throw Object.assign(new Error('A folder cannot be moved or copied into itself'), { status: 400 });
-      if (await lstat(item.target).then(() => true, () => false)) throw Object.assign(new Error(`An item already exists at ${ item.targetPath }`), { status: 409 });
-    }
-    const sources = normalized.map(item => item.source);
-    if (sources.some((source, index) => sources.some((candidate, other) => index !== other && source.startsWith(`${ candidate }${ sep }`)))) throw Object.assign(new Error('Choose either a folder or an item inside it, not both'), { status: 400 });
-    const recoveryBase = this.safe(`.sulla-operation-recovery/${ randomUUID() }`);
-    const completed:{ target:string; recovery:string; relocated:boolean; device:number; inode:number }[] = [];
+    const sources = items.map(item => item.sourcePath);
+    if (sources.some((source, index) => sources.some((candidate, other) => index !== other && source.startsWith(`${ candidate }/`)))) throw Object.assign(new Error('Choose either a folder or an item inside it, not both'), { status: 400 });
+    const destinations = items.flatMap(item => item.fileSnapshots.map(file => `${ item.targetPath }${ file.path.slice(item.sourcePath.length) }`));
+    if (new Set(destinations).size !== destinations.length) throw Object.assign(new Error('Two selected items have the same destination'), { status: 409 });
+    if (items.some(item => item.fileSnapshots.some(file => `${ item.targetPath }${ file.path.slice(item.sourcePath.length) }` === file.path))) throw Object.assign(new Error('The destination must be different from the source'), { status: 400 });
+    const operationId = randomUUID();
+    const completed:{ publication:PublicationReceipt; eviction?:EvictionReceipt }[] = [];
     const client = await this.db.connect(); let transaction = false;
     try {
       await client.query('BEGIN'); transaction = true;
       const lockedRows:any[][] = [];
       for (const item of items) {
         const snapshots = new Map(item.fileSnapshots.map(file => [file.id, file]));
-        const rows = await client.query(`SELECT f.id::text,w.path,f.current_version_id::text FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
-          WHERE f.collection_id=$1 AND f.id=ANY($2::uuid[]) AND f.deleted_at IS NULL ORDER BY w.path FOR UPDATE OF f,w`, [this.collectionId, [...snapshots.keys()]]);
-        if (rows.rowCount !== snapshots.size || rows.rows.some(row => { const snapshot = snapshots.get(row.id); return !snapshot || snapshot.path !== row.path || snapshot.currentVersionId !== row.current_version_id })) throw Object.assign(new Error('A selected file changed while this operation was starting. Refresh Files and try again.'), { status: 409 });
+        const rows = await client.query(`SELECT f.*,f.id::text,w.path AS watched_path,w.content_hash,w.size AS watched_size,w.mtime_ms,f.current_version_id::text
+          FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+          WHERE f.collection_id=$1 AND f.id=ANY($2::uuid[]) AND f.deleted_at IS NULL
+            AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+          ORDER BY w.path FOR UPDATE OF f,w`, [this.collectionId, [...snapshots.keys()]]);
+        if (rows.rowCount !== snapshots.size || rows.rows.some(row => { const snapshot = snapshots.get(row.id); return !snapshot || snapshot.path !== row.watched_path || snapshot.currentVersionId !== row.current_version_id })) throw Object.assign(new Error('A selected file changed or became protected while this operation was starting. Refresh Files and try again.'), { status: 409 });
         for (const row of rows.rows) {
-          const nextPath = `${ item.targetPath }${ row.path.slice(item.sourcePath.length) }`;
+          const nextPath = `${ item.targetPath }${ row.watched_path.slice(item.sourcePath.length) }`;
           const collision = await client.query('SELECT 1 FROM files WHERE collection_id=$1 AND path=$2 AND id<>$3 AND deleted_at IS NULL', [this.collectionId, nextPath, row.id]);
           if (collision.rowCount) throw Object.assign(new Error(`An item already exists at ${ nextPath }`), { status: 409 });
         }
         lockedRows.push(rows.rows);
       }
-      for (const [index, item] of normalized.entries()) {
-        const entries:{ source:string; target:string; relative:string; directory:boolean; device:number; inode:number; mode:number }[] = [];
-        const expectedPaths = new Set(items[index].fileSnapshots.map(file => file.path));
-        const walk = async(source:string, target:string, relative:string):Promise<void> => {
-          if (isProtectedPath(relative)) throw Object.assign(new Error(`Protected Files content cannot be ${ action === 'move' ? 'moved' : 'copied' }`), { status: 403 });
-          const info = await lstat(source); if (info.isSymbolicLink() || (!info.isFile() && !info.isDirectory())) throw Object.assign(new Error('Files operations do not follow links or special files'), { status: 409 });
-          if (info.isFile() && !expectedPaths.delete(relative)) throw Object.assign(new Error('The folder contains material that has not been safely indexed yet. Wait for sync and try again.'), { status: 409 });
-          entries.push({ source, target, relative, directory: info.isDirectory(), device: info.dev, inode: info.ino, mode: info.mode });
-          if (info.isDirectory()) for (const child of await readdir(source)) await walk(join(source, child), join(target, child), `${ relative }/${ child }`);
-        };
-        await walk(item.source, item.target, items[index].sourcePath);
-        if (expectedPaths.size) throw Object.assign(new Error('A selected file changed while this operation was starting. Refresh Files and try again.'), { status: 409 });
-        await mkdir(dirname(item.target), { recursive: true });
-        await assertSafeAncestors(item.target);
-        const recovery = `${ recoveryBase }/${ index }`;
-        let record:{ target:string; recovery:string; relocated:boolean; device:number; inode:number } | undefined;
-        for (const entry of entries) {
-          if (entry.directory) await mkdir(entry.target);
-          else {
-            await mkdir(dirname(entry.target), { recursive: true });
-            const [sourceParent, targetParent, filesRoot] = await Promise.all([realpath(dirname(entry.source)), realpath(dirname(entry.target)), realpath(this.config.filesRoot!)]);
-            if ((sourceParent !== filesRoot && !sourceParent.startsWith(`${ filesRoot }${ sep }`)) || (targetParent !== filesRoot && !targetParent.startsWith(`${ filesRoot }${ sep }`))) throw Object.assign(new Error('Files operation path changed to an unsafe location'), { status: 409 });
-            if (action === 'copy') {
-              const staging = `${ recoveryBase }/staging-${ randomUUID() }`; await mkdir(dirname(staging), { recursive: true });
-              const sourceHandle = await open(entry.source, constants.O_RDONLY | constants.O_NOFOLLOW); const targetHandle = await open(staging, 'wx', entry.mode & 0o777);
-              try {
-                const current = await sourceHandle.stat();
-                if (current.dev !== entry.device || current.ino !== entry.inode || !current.isFile()) throw Object.assign(new Error('A selected file changed while it was being copied'), { status: 409 });
-                await pipeline(sourceHandle.createReadStream(), targetHandle.createWriteStream());
-              } finally { await sourceHandle.close().catch(() => undefined); await targetHandle.close().catch(() => undefined) }
-              await link(staging, entry.target);
-            } else {
-              await link(entry.source, entry.target);
-              const published = await lstat(entry.target);
-              if (published.isSymbolicLink() || published.dev !== entry.device || published.ino !== entry.inode) throw Object.assign(new Error('A selected file changed while it was being moved'), { status: 409 });
+      for (const [index, item] of items.entries()) {
+        for (const row of lockedRows[index]) {
+          const sourcePath = row.watched_path;
+          const targetPath = `${ item.targetPath }${ sourcePath.slice(item.sourcePath.length) }`;
+          if (isProtectedPath(sourcePath) || isProtectedPath(targetPath)) throw Object.assign(new Error(`Protected Files content cannot be ${ action === 'move' ? 'moved' : 'copied' }`), { status: 403 });
+          const verify = async(pinned:PinnedRegularFile) => {
+            const hash = createHash('sha256');
+            for await (const chunk of pinned.createReadStream()) hash.update(chunk);
+            if (hash.digest('hex') !== row.content_hash) throw Object.assign(new Error('A selected file changed while the operation was starting. Refresh Files and try again.'), { status: 409 });
+          };
+          if (action === 'copy') {
+            completed.push({ publication: await this.mutations.copyVerified({ source: sourcePath, target: targetPath, verify }) });
+          } else {
+            const eviction = await this.mutations.evictVerified({ source: sourcePath, quarantine: `.sulla-trash/.residency/${ operationId }/${ row.id }`, verify });
+            try {
+              const publication = await this.mutations.publishVerified({ staged: eviction.quarantine, target: targetPath, verify });
+              completed.push({ publication, eviction });
+            } catch (error) {
+              try { await this.mutations.recoverEviction(eviction, verify) } catch (recoveryError) {
+                throw Object.assign(new Error(`${ error instanceof Error ? error.message : String(error) }. The source was preserved for recovery at ${ eviction.quarantine }: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`), { status: (error as any)?.status ?? 500 });
+              }
+              throw error;
             }
           }
-          if (!record) { const published = await lstat(item.target); record = { target: item.target, recovery, relocated: false, device: published.dev, inode: published.ino }; completed.push(record) }
         }
-        if (action === 'move') { await mkdir(dirname(recovery), { recursive: true }); await rename(item.source, recovery); record!.relocated = true }
       }
-      if (action === 'move') {
-          for (const [index, item] of items.entries()) {
-            for (const row of lockedRows[index]) {
-              const nextPath = `${ item.targetPath }${ row.path.slice(item.sourcePath.length) }`;
-              await client.query('UPDATE files SET path=$2,updated_at=NOW() WHERE id=$1', [row.id, nextPath]);
-              await client.query('UPDATE watched_folder_state SET path=$3 WHERE collection_id=$1 AND file_id=$2', [this.collectionId, row.id, nextPath]);
-              await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'rename')", [this.collectionId, row.id, row.current_version_id]);
-              await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'move',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, row.id, row.current_version_id, JSON.stringify({ collectionId: this.collectionId, from: row.path, to: nextPath })]);
-            }
-            if (item.folder) {
-              const folderStars = await client.query(`SELECT principal_type,principal_id,folder_path FROM file_stars WHERE collection_id=$1 AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) FOR UPDATE`, [this.collectionId, item.sourcePath]);
-              for (const star of folderStars.rows) await client.query(`UPDATE file_stars SET folder_path=$4 WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND folder_path=$5`, [star.principal_type, star.principal_id, this.collectionId, `${ item.targetPath }${ star.folder_path.slice(item.sourcePath.length) }`, star.folder_path]);
-              for (const table of ['folder_shares', 'file_share_links']) await client.query(`UPDATE ${ table } SET folder_path=$3||substr(folder_path,length($2)+1) WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/'))`, [this.collectionId, item.sourcePath, item.targetPath]);
-            }
+      let receiptIndex = 0;
+      for (const [index, item] of items.entries()) {
+        for (const row of lockedRows[index]) {
+          const nextPath = `${ item.targetPath }${ row.watched_path.slice(item.sourcePath.length) }`;
+          const receipt = completed[receiptIndex++].publication;
+          if (action === 'move') {
+            await client.query('UPDATE files SET path=$2,updated_at=NOW() WHERE id=$1', [row.id, nextPath]);
+            await client.query('UPDATE watched_folder_state SET path=$3 WHERE collection_id=$1 AND file_id=$2', [this.collectionId, row.id, nextPath]);
+            await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'rename')", [this.collectionId, row.id, row.current_version_id]);
+            await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'move',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, row.id, row.current_version_id, JSON.stringify({ collectionId: this.collectionId, from: row.path, to: nextPath })]);
+          } else {
+            const copied = await copyLockedFile(client, row, nextPath, actor);
+            await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms)
+              VALUES($1,$2,$3,$4,$5,$6)`, [this.collectionId, nextPath, copied.id, row.content_hash, receipt.fingerprint.size, Math.trunc(receipt.fingerprint.mtimeMs)]);
+            await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'copy',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, copied.id, copied.current_version_id, JSON.stringify({ collectionId: this.collectionId, from: row.watched_path, to: nextPath })]);
           }
+        }
+        if (action === 'move' && item.folder) {
+          const folderStars = await client.query(`SELECT principal_type,principal_id,folder_path FROM file_stars WHERE collection_id=$1 AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) FOR UPDATE`, [this.collectionId, item.sourcePath]);
+          for (const star of folderStars.rows) await client.query(`UPDATE file_stars SET folder_path=$4 WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND folder_path=$5`, [star.principal_type, star.principal_id, this.collectionId, `${ item.targetPath }${ star.folder_path.slice(item.sourcePath.length) }`, star.folder_path]);
+          for (const table of ['folder_shares', 'file_share_links']) await client.query(`UPDATE ${ table } SET folder_path=$3||substr(folder_path,length($2)+1) WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/'))`, [this.collectionId, item.sourcePath, item.targetPath]);
+        }
       }
       await client.query('COMMIT'); transaction = false;
     } catch (error) {
       const preservationErrors:string[] = [];
-      if (transaction) try { await client.query('ROLLBACK'); } catch (rollbackError) { preservationErrors.push(`database rollback failed: ${ rollbackError instanceof Error ? rollbackError.message : String(rollbackError) }`) }
-      await mkdir(recoveryBase, { recursive: true }).catch(recoveryError => preservationErrors.push(`recovery folder failed: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`));
-      for (const [index, item] of completed.reverse().entries()) {
-        try {
-          const current = await lstat(item.target);
-          if (current.dev !== item.device || current.ino !== item.inode) { preservationErrors.push(`${ item.target } changed outside Sulla and was left in place`); continue }
-          await rename(item.target, `${ recoveryBase }/published-${ index }`);
-        } catch (preservationError) { preservationErrors.push(`${ item.target }: ${ preservationError instanceof Error ? preservationError.message : String(preservationError) }`) }
+      if (transaction) {
+        try { await client.query('ROLLBACK') } catch (rollbackError) { preservationErrors.push(`database rollback failed: ${ rollbackError instanceof Error ? rollbackError.message : String(rollbackError) }`) }
       }
-      const hasRecovery = await lstat(recoveryBase).then(() => true, () => false);
-      const reason = error instanceof Error ? error.message : String(error); const recovery = hasRecovery ? ` Operation data was preserved under ${ recoveryBase }.` : '';
-      throw Object.assign(new Error(`${ reason }${ recovery }${ preservationErrors.length ? ` Recovery warnings: ${ preservationErrors.join('; ') }` : '' }`), { status: (error as any)?.status ?? 500 });
+      for (const item of completed.reverse()) {
+        const verify = async(pinned:PinnedRegularFile) => { await pinned.assertUnchanged() };
+        try { await this.mutations.rollbackPublication(item.publication, verify) } catch (recoveryError) { preservationErrors.push(`${ item.publication.target }: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`); continue }
+        if (item.eviction) {
+          try { await this.mutations.recoverEviction(item.eviction, verify) } catch (recoveryError) { preservationErrors.push(`${ item.eviction.source }: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`) }
+        } else {
+          try { await this.mutations.finalizePublication(item.publication) } catch (recoveryError) { preservationErrors.push(`${ item.publication.staged }: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`) }
+        }
+      }
+      const reason = error instanceof Error ? error.message : String(error);
+      throw Object.assign(new Error(`${ reason }${ preservationErrors.length ? ` Recovery artifacts were preserved: ${ preservationErrors.join('; ') }` : '' }`), { status: (error as any)?.status ?? 500 });
     } finally { client.release() }
-    this.operationAudits = action === 'copy' ? items.map(item => ({ targetPath: item.targetPath, folder: item.folder, sourcePath: item.sourcePath, actor, action })) : [];
-    try { await this.scanFolder(); if (!this.paused) await this.syncNow() } finally { this.operationAudits = [] }
+    const cleanupErrors:string[] = [];
+    for (const item of completed) await this.mutations.finalizePublication(item.publication).catch(error => cleanupErrors.push(`${ item.publication.staged }: ${ error instanceof Error ? error.message : String(error) }`));
+    if (cleanupErrors.length) throw Object.assign(new Error(`The operation committed, but protected cleanup artifacts remain: ${ cleanupErrors.join('; ') }. Refresh Files before retrying.`), { status: 500 });
+    this.indexer?.wake();
+    await this.scanFolder();
+    if (!this.paused) await this.syncNow();
   }
 
   async rescan():Promise<void> { return this.serial(async() => { await this.scanFolder(); if (!this.paused) await this.syncNow(); }) }
   async sync():Promise<void> { if (this.paused || !this.config.serverUrl) return; return this.serial(() => this.syncNow()) }
   private async serial(operation:()=>Promise<void>):Promise<void> {
-    if (this.stopped) throw new Error('Files is locked');
-    if (this.running) return this.running;
-    this.running = operation().then(() => { this.lastError = undefined }).catch(error => { this.fail(error); throw error }).finally(() => { this.running = undefined });
-    return this.running;
+    return this.mutations.runExclusive(['.'], async() => {
+      if (this.stopped) throw new Error('Files is locked');
+      const running = operation().then(() => { this.lastError = undefined }).catch(error => { this.fail(error); throw error });
+      this.running = running;
+      try { await running } finally { if (this.running === running) this.running = undefined; }
+    });
   }
 
   private fail(error:unknown):void { this.lastError = error instanceof Error ? error.message : String(error); this.db.query("UPDATE files_runtime_state SET state='error',last_error=$1,updated_at=NOW() WHERE id=TRUE", [this.lastError]).catch(dbError => console.error('[SullaFiles] failed to record runtime error', dbError)) }
@@ -310,8 +316,6 @@ export class LocalFilesManager {
         VALUES($1,$2,$3,$4,$5,'user',$6,$7,$8,$3) RETURNING id`, [fileId, collectionId, parent, manifestHash, total, this.config.userId, renameFrom ? `Renamed ${ renameFrom.path } to ${ path }` : 'Watched folder change', this.config.deviceId])).rows[0];
       await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [fileId, version.id]); await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, ids]);
       await client.query('INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,$4)', [collectionId, fileId, version.id, renameFrom ? 'rename' : 'put']);
-      const operation = this.operationAudits.find(item => path === item.targetPath || (item.folder && path.startsWith(`${ item.targetPath }/`)));
-      if (operation) await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'copy',$6)`, [operation.actor.kind === 'capability' ? 'agent-or-device' : 'user', operation.actor.userId, operation.actor.deviceId || null, fileId, version.id, JSON.stringify({ collectionId, from: operation.sourcePath, to: path })]);
       if (renameFrom) await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND path=$2', [collectionId, renameFrom.path]);
       await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms) VALUES($1,$2,$3,$4,$5,$6)
         ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms`, [collectionId, path, fileId, contentHash, total, Math.trunc(mtimeMs)]);

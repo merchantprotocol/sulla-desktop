@@ -10,7 +10,7 @@ async function assertAvailable(client:pg.PoolClient, collectionId:string, paths:
   if (existing.rowCount) throw new FileOperationConflict(`A file already exists at ${ existing.rows[0].path }`);
 }
 
-async function copyOne(client:pg.PoolClient, source:any, targetPath:string, actor:FilesIdentity):Promise<any> {
+export async function copyLockedFile(client:pg.PoolClient, source:any, targetPath:string, actor:FilesIdentity):Promise<any> {
   const version = (await client.query(`SELECT v.*,m.chunk_ids FROM file_versions v JOIN manifests m ON m.hash=v.manifest_hash
     WHERE v.id=$1 AND NOT v.deleted`, [source.current_version_id])).rows[0];
   if (!version) throw Object.assign(new Error('The current version is not copyable'), { status: 409 });
@@ -41,7 +41,7 @@ export async function applyDatabaseFileOperations(db:pg.Pool, action:'move' | 'c
     const results:any[] = [];
     for (const item of locked) {
       let result:any;
-      if (action === 'copy') result = await copyOne(client, item.file, item.targetPath, actor);
+      if (action === 'copy') result = await copyLockedFile(client, item.file, item.targetPath, actor);
       else {
         result = (await client.query('UPDATE files SET path=$2,updated_at=NOW() WHERE id=$1 RETURNING *', [item.file.id, item.targetPath])).rows[0];
         await client.query('UPDATE watched_folder_state SET path=$2 WHERE file_id=$1', [item.file.id, item.targetPath]);
