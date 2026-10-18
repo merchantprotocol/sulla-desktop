@@ -24,15 +24,26 @@ import { Store } from './store.js';
 import { cleanupStaleUploads } from './uploadCleanup.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
 import { adoptVaultPrincipal } from './vaultPrincipal.js';
+import { FilesStartupDiagnostics, type FilesStartupStage } from './startupDiagnostics.js';
 
 const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
 if (command === 'restore') { await restore(config, process.argv[3]); process.exit(0) }
 const db = await connect(config.databaseUrl); await migrate(db);
+const processDiagnostics = new FilesStartupDiagnostics();
 if (config.mode === 'desktop') {
-  await cleanupStaleUploads(db, new Store(config.chunkRoot)).catch(error => { console.warn('[SullaFiles] stale upload cleanup deferred:', error) });
+  await cleanupStaleUploads(db, new Store(config.chunkRoot)).catch(error => processDiagnostics.cleanupFailed(error));
 }
-if (config.mode === 'desktop' && config.filesRoot) config.legacyPreflight = await runLegacyPreflight(db, config.filesRoot, { caseInsensitive: config.caseInsensitiveRoot });
+if (config.mode === 'desktop' && config.filesRoot) {
+  processDiagnostics.stage('preflight');
+  try {
+    config.legacyPreflight = await runLegacyPreflight(db, config.filesRoot, { caseInsensitive: config.caseInsensitiveRoot });
+    processDiagnostics.completed('preflight');
+  } catch (error) {
+    processDiagnostics.failed('preflight', error);
+    throw error;
+  }
+}
 config.keyring = new FilesKeyring(db);
 const vaultAuthority = configuredVaultFilesKeyBundleAuthority(config);
 const keyRecovery = vaultAuthority && config.keyring instanceof FilesKeyring
@@ -62,19 +73,36 @@ const enrichment = config.mode === 'desktop' && config.filesRoot ? new Recording
 const search = new FileSearch(db, embedder);
 let initialization:Promise<void> | undefined;
 
-const initialize = () => {
+const initialize = (reportStage:(stage:FilesStartupStage)=>void) => {
   initialization ??= (async() => {
     if (vaultAuthority) {
+      reportStage('identity-adoption');
       const { principalId } = await vaultAuthority.unlockedPrincipal();
       await adoptVaultPrincipal(db, config, principalId);
     }
     if (manager) {
+      reportStage('manager-initialization');
       await manager.initialize(async() => {
-        if (keyRecovery) await keyRecovery.enrollAllCollections(config.userId);
-        await residency?.recoverPending();
+        if (keyRecovery) {
+          reportStage('recovery-enrollment');
+          await keyRecovery.enrollAllCollections(config.userId);
+        }
+        if (residency) {
+          reportStage('residency-recovery');
+          await residency.recoverPending();
+        }
+        reportStage('manager-initialization');
       });
-    } else if (keyRecovery) await keyRecovery.enrollAllCollections(config.userId);
-    await indexer.start(); await enrichment?.start();
+    } else if (keyRecovery) {
+      reportStage('recovery-enrollment');
+      await keyRecovery.enrollAllCollections(config.userId);
+    }
+    reportStage('indexer');
+    await indexer.start();
+    if (enrichment) {
+      reportStage('enrichment');
+      await enrichment.start();
+    }
   })().catch(error => { initialization = undefined; throw error });
   return initialization;
 };
