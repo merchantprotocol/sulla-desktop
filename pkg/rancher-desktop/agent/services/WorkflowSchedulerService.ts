@@ -121,8 +121,8 @@ export class WorkflowSchedulerService {
         const { getWorkflowManagerClient } = await import('./WorkflowManagerClient');
         await getWorkflowManagerClient().request('POST', '/v1/schedules/catch-up', {});
       } catch (err) {
-        await this.enableFallback('schedule catch-up', err);
-        await this.catchUpMissedFires();
+        this.cancelAll();
+        console.error('[WorkflowSchedulerService] Workflow manager refused catch-up; schedules remain fail-closed:', err);
       }
     } else {
       await this.catchUpMissedFires();
@@ -177,8 +177,9 @@ export class WorkflowSchedulerService {
         return;
       }
     } catch (err) {
-      await this.enableFallback('schedule refresh', err);
-      return;
+      this.cancelAll();
+      this.containerOwned = true;
+      throw err;
     }
     await this.enableFallback('workflow scheduling');
   }
@@ -204,8 +205,8 @@ export class WorkflowSchedulerService {
         const { getWorkflowManagerClient } = await import('./WorkflowManagerClient');
         await getWorkflowManagerClient().request('POST', '/v1/schedules/catch-up', {});
       } catch (err) {
-        await this.enableFallback('resume catch-up', err);
-        await this.catchUpMissedFires();
+        this.cancelAll();
+        console.error('[WorkflowSchedulerService] Workflow manager refused resume catch-up; schedules remain fail-closed:', err);
       }
     } else {
       await this.catchUpMissedFires();
@@ -272,8 +273,10 @@ export class WorkflowSchedulerService {
       console.log('[WorkflowSchedulerService] Workflow manager recovered; transferred schedule ownership and disabled in-process jobs');
       return true;
     } catch (err) {
-      console.warn('[WorkflowSchedulerService] Workflow manager became healthy but could not accept schedule ownership:', err);
-      return false;
+      this.cancelAll();
+      this.containerOwned = true;
+      console.error('[WorkflowSchedulerService] Healthy workflow manager refused schedule ownership; schedules remain fail-closed:', err);
+      return true;
     }
   }
 
