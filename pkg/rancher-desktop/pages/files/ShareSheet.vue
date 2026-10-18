@@ -88,7 +88,10 @@ async function load() {
   loading.value = true; error.value = '';
   try {
     if (!props.target.folder && props.dataSource.listPublicLinks) {
-      const links = await props.dataSource.listPublicLinks(); const existing = links.find(item => item.targetId === props.target.id || item.name === props.target.name);
+      // Names are display metadata, not identity. Two folders can contain files
+      // with the same basename; binding by name could expose or revoke the other
+      // file's public link from this sheet.
+      const links = await props.dataSource.listPublicLinks(); const existing = links.find(item => item.targetId === props.target.id);
       if (existing) applyLink(existing);
     }
     if (canManageMembers.value) {
