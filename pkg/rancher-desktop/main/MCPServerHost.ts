@@ -154,6 +154,11 @@ export class MCPServerHost {
     return this.sessions.get(id)?.state ?? null;
   }
 
+  /** Resolve the complete verified session, including its execution identity. */
+  getToolSession(id: string): ToolSession | null {
+    return this.sessions.get(id);
+  }
+
   private resolveSession(req: Request): ToolSession | null {
     const auth = req.get('authorization') ?? req.get('Authorization');
     if (!auth) return null;
