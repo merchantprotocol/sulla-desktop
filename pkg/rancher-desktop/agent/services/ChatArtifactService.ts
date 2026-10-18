@@ -57,12 +57,28 @@ interface ChatArtifactStore {
   mutate(input: Parameters<typeof ChatArtifactModel.mutate>[0]): Promise<ChatArtifactRecord>;
   history(threadId: string, idOrName: string): Promise<ChatArtifactRevision[]>;
   revision(threadId: string, idOrName: string, version: number): Promise<ChatArtifactRevision | null>;
+  recordFilesRegistration(
+    artifactId: string,
+    artifactVersion: number,
+    result: FilesRegistrationResult | { error: string; path?: string },
+  ): Promise<ChatArtifactRecord | null>;
 }
 
 export interface ArtifactBookmarkSync {
   created(artifact: ChatArtifactRecord): Promise<void>;
   renamed(artifact: ChatArtifactRecord): Promise<void>;
   deleted(artifact: ChatArtifactRecord): Promise<void>;
+}
+
+export interface FilesRegistrationResult {
+  fileId:       string;
+  versionId:    string;
+  collectionId: string;
+  path:         string;
+}
+
+export interface ArtifactFilesRegistration {
+  register(artifact: ChatArtifactRecord): Promise<FilesRegistrationResult>;
 }
 
 function required(value: unknown, label: string): string {
@@ -88,14 +104,20 @@ export class ChatArtifactService {
   constructor(
     private readonly store: ChatArtifactStore = ChatArtifactModel,
     private bookmarkSync: ArtifactBookmarkSync | null = configuredBookmarkSync,
+    private filesRegistration: ArtifactFilesRegistration | null = configuredFilesRegistration,
   ) {}
 
   setBookmarkSync(sync: ArtifactBookmarkSync): void {
     this.bookmarkSync = sync;
   }
 
-  list(threadId: string, includeClosed = false): Promise<ChatArtifactRecord[]> {
-    return this.store.list(required(threadId, 'threadId'), includeClosed);
+  setFilesRegistration(registration: ArtifactFilesRegistration): void {
+    this.filesRegistration = registration;
+  }
+
+  async list(threadId: string, includeClosed = false): Promise<ChatArtifactRecord[]> {
+    const artifacts = await this.store.list(required(threadId, 'threadId'), includeClosed);
+    return Promise.all(artifacts.map(artifact => artifact.filesRegistrationStatus === 'pending' ? this.syncFiles(artifact) : artifact));
   }
 
   async get(threadId: string, idOrName: string): Promise<ChatArtifactRecord> {
@@ -111,7 +133,7 @@ export class ChatArtifactService {
 
     if (existing) {
       const wasDeleted = existing.isDeleted;
-      const artifact = await this.store.mutate({
+      let artifact = await this.store.mutate({
         threadId: scopedThreadId,
         idOrName: existing.id,
         author:   input.author ?? 'agent',
@@ -129,10 +151,11 @@ export class ChatArtifactService {
       });
       this.publish(scopedThreadId, artifact, input.focus ?? true);
       if (wasDeleted) this.syncBookmark('created', artifact);
+      artifact = await this.syncFiles(artifact);
       return { artifact, created: false };
     }
 
-    const artifact = await this.store.create({
+    let artifact = await this.store.create({
       threadId: scopedThreadId,
       name,
       kind:     cleanKind(input.kind),
@@ -144,6 +167,7 @@ export class ChatArtifactService {
     });
     this.publish(scopedThreadId, artifact, input.focus ?? true);
     this.syncBookmark('created', artifact);
+    artifact = await this.syncFiles(artifact);
     return { artifact, created: true };
   }
 
@@ -153,7 +177,7 @@ export class ChatArtifactService {
   }
 
   async update(threadId: string, idOrName: string, input: UpdateArtifactInput): Promise<ChatArtifactRecord> {
-    const artifact = await this.mutate(threadId, idOrName, input, current => ({
+    let artifact = await this.mutate(threadId, idOrName, input, current => ({
       content:  input.content === undefined ? current.content : String(input.content),
       name:     input.name === undefined ? current.name : required(input.name, 'Artifact name'),
       status:   input.status === undefined ? current.status : cleanStatus(input.status),
@@ -162,6 +186,7 @@ export class ChatArtifactService {
     }));
     this.publish(artifact.threadId, artifact, input.focus);
     if (input.name !== undefined) this.syncBookmark('renamed', artifact);
+    artifact = await this.syncFiles(artifact);
     return artifact;
   }
 
@@ -173,7 +198,7 @@ export class ChatArtifactService {
     author: ChatArtifactAuthor = 'agent',
   ): Promise<ChatArtifactRecord> {
     if (!Array.isArray(edits) || edits.length === 0) throw new Error('At least one exact edit is required.');
-    const artifact = await this.mutate(threadId, idOrName, { expectedVersion, author }, (current) => {
+    let artifact = await this.mutate(threadId, idOrName, { expectedVersion, author }, (current) => {
       let content = current.content;
 
       for (const [index, edit] of edits.entries()) {
@@ -190,6 +215,7 @@ export class ChatArtifactService {
       return { content };
     });
     this.publish(artifact.threadId, artifact);
+    artifact = await this.syncFiles(artifact);
     return artifact;
   }
 
@@ -200,10 +226,11 @@ export class ChatArtifactService {
     expectedVersion?: number,
     author: ChatArtifactAuthor = 'agent',
   ): Promise<ChatArtifactRecord> {
-    const artifact = await this.mutate(threadId, idOrName, { expectedVersion, author }, current => ({
+    let artifact = await this.mutate(threadId, idOrName, { expectedVersion, author }, current => ({
       content: current.content + String(text ?? ''),
     }));
     this.publish(artifact.threadId, artifact);
+    artifact = await this.syncFiles(artifact);
     return artifact;
   }
 
@@ -250,9 +277,16 @@ export class ChatArtifactService {
   ): Promise<ChatArtifactRecord> {
     const revision = await this.store.revision(required(threadId, 'threadId'), required(idOrName, 'artifact id or name'), version);
     if (!revision) throw new Error(`Artifact revision ${ version } was not found.`);
-    const artifact = await this.mutate(threadId, idOrName, { expectedVersion, author }, () => ({ content: revision.content }));
+    let artifact = await this.mutate(threadId, idOrName, { expectedVersion, author }, () => ({ content: revision.content }));
     this.publish(artifact.threadId, artifact);
+    artifact = await this.syncFiles(artifact);
     return artifact;
+  }
+
+  async retryFilesRegistration(threadId: string, idOrName: string): Promise<ChatArtifactRecord> {
+    const artifact = await this.get(threadId, idOrName);
+    if (artifact.filesRegistrationStatus === 'synced' && artifact.filesArtifactVersion === artifact.version) return artifact;
+    return this.syncFiles(artifact, true);
   }
 
   private mutate(
@@ -301,14 +335,56 @@ export class ChatArtifactService {
       .then(() => sync[action](artifact))
       .catch(err => console.warn(`[ChatArtifactService] Bookmark ${ action } sync failed:`, err));
   }
+
+  private syncFiles(artifact: ChatArtifactRecord, force = false): Promise<ChatArtifactRecord> {
+    if (!this.filesRegistration || artifact.isDeleted ||
+        (!force && artifact.filesRegistrationStatus === 'synced')) return Promise.resolve(artifact);
+
+    const previous = filesRegistrationQueues.get(artifact.id) ?? Promise.resolve();
+    const operation = previous.catch(() => undefined).then(async() => {
+      const current = await this.store.get(artifact.threadId, artifact.id, true);
+      // The queued snapshot may have been superseded or deleted while an older
+      // Files write was in flight. The matching newer mutation owns the next
+      // queue position, so this operation must not regress the durable file.
+      if (!current || current.isDeleted || current.version !== artifact.version) return current ?? artifact;
+      if (current.filesRegistrationStatus === 'synced' && current.filesArtifactVersion === current.version) return current;
+
+      let persisted: ChatArtifactRecord | null;
+      try {
+        const result = await this.filesRegistration!.register(current);
+        persisted = await this.store.recordFilesRegistration(current.id, current.version, result);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const filesPath = typeof (error as { filesPath?: unknown })?.filesPath === 'string'
+          ? (error as { filesPath: string }).filesPath
+          : undefined;
+        persisted = await this.store.recordFilesRegistration(current.id, current.version, { error: message, path: filesPath });
+        console.warn(`[ChatArtifactService] Files registration failed for ${ current.id } v${ current.version }:`, message);
+      }
+      if (persisted) this.publish(persisted.threadId, persisted);
+      return persisted ?? current;
+    });
+    const queued = operation.then(() => undefined, () => undefined);
+    filesRegistrationQueues.set(artifact.id, queued);
+    return operation.finally(() => {
+      if (filesRegistrationQueues.get(artifact.id) === queued) filesRegistrationQueues.delete(artifact.id);
+    });
+  }
 }
 
 let instance: ChatArtifactService | null = null;
 let configuredBookmarkSync: ArtifactBookmarkSync | null = null;
+let configuredFilesRegistration: ArtifactFilesRegistration | null = null;
+const filesRegistrationQueues = new Map<string, Promise<void>>();
 
 export function configureChatArtifactBookmarkSync(sync: ArtifactBookmarkSync): void {
   configuredBookmarkSync = sync;
   instance?.setBookmarkSync(sync);
+}
+
+export function configureChatArtifactFilesRegistration(registration: ArtifactFilesRegistration): void {
+  configuredFilesRegistration = registration;
+  instance?.setFilesRegistration(registration);
 }
 
 export function getChatArtifactService(): ChatArtifactService {

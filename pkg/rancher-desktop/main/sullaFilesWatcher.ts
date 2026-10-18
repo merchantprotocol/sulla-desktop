@@ -45,6 +45,12 @@ export interface RecentSullaFile {
   syncState:        'synced' | 'syncing' | 'error';
 }
 
+export interface SullaFilesCapabilityContext {
+  agentId?:  string;
+  jobId?:    string;
+  threadId?: string;
+}
+
 function ignored(relativePath:string, patterns:string[]):boolean {
   const normalized = relativePath.split(path.sep).join('/'); const parts = normalized.split('/');
   return patterns.some(raw => { const pattern = raw.trim().replace(/^\//, ''); if (!pattern || pattern.startsWith('#')) return false; if (pattern.endsWith('/')) return parts.slice(0, -1).includes(pattern.slice(0, -1)); const expression = new RegExp(`^${ pattern.split('*').map(value => value.replace(/[|\\{}()[\]^$+?.]/g, '\\$&')).join('.*') }$`); return expression.test(normalized) || parts.some(part => expression.test(part)) });
@@ -185,27 +191,31 @@ class SullaFilesWatcher {
     return body.principalId;
   }
 
-  private async capabilityToken(userId = process.env.SULLA_FILES_USER_ID ?? 'desktop-user'):Promise<string> {
+  private async capabilityToken(userId = process.env.SULLA_FILES_USER_ID ?? 'desktop-user', context: SullaFilesCapabilityContext = {}):Promise<string> {
     const key = sullaFilesCapabilityKey(await SullaSettingsModel.getServicePassword()); const now = Math.floor(Date.now() / 1_000); const encode = (value:string) => Buffer.from(value).toString('base64url'); const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
     const deviceId = await getDesktopDeviceId().catch(() => os.hostname());
-    const payload = encode(JSON.stringify({ sub: userId, device_id: deviceId, scopes: ['files/*'], v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 300, jti: crypto.randomUUID() }));
+    const payload = encode(JSON.stringify({
+      sub: userId, device_id: deviceId, scopes: ['files/*'],
+      agent_id: context.agentId, job_id: context.jobId, thread_id: context.threadId,
+      v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 300, jti: crypto.randomUUID(),
+    }));
 
     return `${ header }.${ payload }.${ crypto.createHmac('sha256', key).update(`${ header }.${ payload }`).digest('base64url') }`;
   }
 
-  async requestFiles(endpoint:string, init:RequestInit = {}, server = false):Promise<Response> {
+  async requestFiles(endpoint:string, init:RequestInit = {}, server = false, capability: SullaFilesCapabilityContext = {}):Promise<Response> {
     const base = server && process.env.SULLA_FILES_SERVER_URL ? process.env.SULLA_FILES_SERVER_URL : API;
     const url = new URL(endpoint, base);
     if (url.origin !== new URL(base).origin) throw new Error('Files endpoint must use the configured service');
     if (base !== API) {
-      const token = await this.capabilityToken();
+      const token = await this.capabilityToken(undefined, capability);
 
       return fetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error', signal: AbortSignal.timeout(30_000) });
     }
     await this.ensureUnlocked();
     let principalId = await this.localPrincipalId();
     const send = async() => {
-      const token = await this.capabilityToken(principalId);
+      const token = await this.capabilityToken(principalId, capability);
 
       return fetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error' as const, signal: AbortSignal.timeout(30_000) });
     };

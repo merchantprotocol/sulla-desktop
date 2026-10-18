@@ -2,7 +2,8 @@ import { ipcMain } from 'electron';
 
 import { ChatArtifactModel } from '@pkg/agent/database/models/ChatArtifactModel';
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
-import { getChatArtifactService } from '@pkg/agent/services/ChatArtifactService';
+import { configureChatArtifactFilesRegistration, getChatArtifactService } from '@pkg/agent/services/ChatArtifactService';
+import { getChatArtifactFilesRegistration } from '@pkg/main/chatArtifactFilesRegistration';
 import type { ChatArtifactStatus } from '@pkg/shared/chatArtifacts';
 
 function text(value: unknown): string {
@@ -10,6 +11,7 @@ function text(value: unknown): string {
 }
 
 export function initChatArtifactsIpc(): void {
+  configureChatArtifactFilesRegistration(getChatArtifactFilesRegistration());
   const service = getChatArtifactService();
 
   ipcMain.handle('chat-artifacts:list', (_event, input: { threadId: string; includeClosed?: boolean }) =>
@@ -50,4 +52,7 @@ export function initChatArtifactsIpc(): void {
 
   ipcMain.handle('chat-artifacts:reopen', (_event, input: { threadId: string; idOrName: string }) =>
     service.reopen(text(input?.threadId), text(input?.idOrName), undefined, 'human'));
+
+  ipcMain.handle('chat-artifacts:retry-files-registration', (_event, input: { threadId: string; idOrName: string }) =>
+    service.retryFilesRegistration(text(input?.threadId), text(input?.idOrName)));
 }
