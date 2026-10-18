@@ -5,6 +5,16 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { FileAccessList, FilesDataSource, FilesDetail, FileShare, FilesItem, FilesPreview, FilesSnapshot, FilesVersion, FolderShare, ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType } from './types';
 import type { IpcRendererEvent } from 'electron';
 
+interface RemoteCapabilities {
+  orgSharing: boolean;
+  publicLinks: boolean;
+  onlineOnly: boolean;
+  keepOnComputer: boolean;
+  authenticatedRemote: boolean;
+  verifiedRecovery: boolean;
+  onlineOnlyReason?: string;
+}
+
 export class DesktopFilesDataSource implements FilesDataSource {
   readonly capabilities = {
     upload:          true,
@@ -25,24 +35,68 @@ export class DesktopFilesDataSource implements FilesDataSource {
   private files: FilesItem[] = [];
   private currentVersions = new Map<string, string>();
   private collectionId = '';
+  private capabilitiesGeneration = 0;
+  private capabilitiesListeners = new Set<() => void>();
+
+  private resetRemoteCapabilities():void {
+    Object.assign(this.capabilities, {
+      orgSharing:         false,
+      publicLinks:        false,
+      onlineOnly:         false,
+      keepOnComputer:     false,
+      authenticatedRemote:false,
+      verifiedRecovery:   false,
+    });
+    this.onlineOnlyReason = '';
+    this.capabilitiesListeners.forEach(listener => listener());
+  }
+
+  private refreshCapabilities(accessRole:string, generation:number):void {
+    void (ipcRenderer.invoke('files-ui:capabilities') as Promise<RemoteCapabilities>)
+      .then((capabilities) => {
+        if (generation !== this.capabilitiesGeneration) return;
+        Object.assign(this.capabilities, capabilities, {
+          orgSharing: capabilities.orgSharing && ['manage', 'owner'].includes(accessRole),
+        });
+        this.onlineOnlyReason = capabilities.onlineOnlyReason ?? '';
+        this.capabilitiesListeners.forEach(listener => listener());
+      })
+      .catch(() => {
+        if (generation !== this.capabilitiesGeneration) return;
+        Object.assign(this.capabilities, {
+          orgSharing:         false,
+          publicLinks:        false,
+          onlineOnly:         false,
+          keepOnComputer:     false,
+          authenticatedRemote:false,
+          verifiedRecovery:   false,
+        });
+        this.onlineOnlyReason = 'Cloud and remote Files capabilities are unavailable.';
+        this.capabilitiesListeners.forEach(listener => listener());
+      });
+  }
 
   async load():Promise<FilesSnapshot> {
-    const [collections, status, capabilities] = await Promise.all([
+    const capabilitiesGeneration = ++this.capabilitiesGeneration;
+    this.resetRemoteCapabilities();
+    const [collections, status] = await Promise.all([
       ipcRenderer.invoke('sulla-files:collections') as Promise<FilesApiCollection[]>,
       ipcRenderer.invoke('files-ui:status'),
-      ipcRenderer.invoke('files-ui:capabilities') as Promise<{ orgSharing:boolean; publicLinks:boolean; onlineOnly:boolean; keepOnComputer:boolean; authenticatedRemote:boolean; verifiedRecovery:boolean; onlineOnlyReason?:string }>,
     ]);
     const collection = collections.find(item => item.name === 'Files') ?? collections.find(item => item.kind === 'knowledge');
     if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/files to initialize it.');
     this.collectionId = collection.id;
-    Object.assign(this.capabilities, capabilities, {
-      orgSharing: capabilities.orgSharing && ['manage', 'owner'].includes(collection.access_role ?? ''),
-    });
-    this.onlineOnlyReason = capabilities.onlineOnlyReason ?? '';
+    this.refreshCapabilities(collection.access_role ?? '', capabilitiesGeneration);
     const [active, trash] = await Promise.all([
       ipcRenderer.invoke('sulla-files:list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
       ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
-    ]);
+    ]).catch((error) => {
+      if (capabilitiesGeneration === this.capabilitiesGeneration) {
+        this.capabilitiesGeneration++;
+        this.resetRemoteCapabilities();
+      }
+      throw error;
+    });
 
     this.files = [...active, ...trash].map(file => {
       const item = filesItem(file);
@@ -97,6 +151,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
   chooseUpload(destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:pick-upload', destination) }
   uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination }) }
   createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', path) }
+  onCapabilitiesChanged(listener:() => void):() => void {
+    this.capabilitiesListeners.add(listener);
+    return () => this.capabilitiesListeners.delete(listener);
+  }
   onUploadProgress(listener:(progress:{ current: number; total: number; name: string; percent: number; done: boolean }) => void):() => void {
     const wrapped = (_event:IpcRendererEvent, progress:{ current: number; total: number; name: string; percent: number; done: boolean }) => listener(progress);
 

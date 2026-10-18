@@ -183,6 +183,7 @@ export interface FilesDataSource {
   chooseUpload(destination?:string): Promise<number>;
   uploadPaths(paths:string[], destination?:string): Promise<number>;
   createFolder(path:string): Promise<void>;
+  onCapabilitiesChanged?(listener:() => void):() => void;
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
   openFile(fileId:string, versionId?:string): Promise<void>;
