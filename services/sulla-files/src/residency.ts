@@ -387,6 +387,15 @@ export class FileResidencyManager {
         const ciphertext = await collectBounded(remoteChunk, chunk.storedSize, maxEncryptedChunkBytes(chunk.size), signal);
         if (sha256(ciphertext) !== chunk.ciphertextSha256) throw new Error(`Remote ciphertext verification failed for ${ chunk.id }`);
         const plain = await decryptAndVerifyChunk(ciphertext, keys.data, keys.dedup, chunk.id, chunk.size);
+        await this.store.put(descriptor.chunkCollectionId, chunk.id, ciphertext);
+        const cached = await this.store.getBounded(
+          descriptor.chunkCollectionId,
+          chunk.id,
+          maxEncryptedChunkBytes(chunk.size),
+          chunk.storedSize,
+        );
+        const cachedPlain = await decryptAndVerifyChunk(cached, keys.data, keys.dedup, chunk.id, chunk.size);
+        if (!cachedPlain.equals(plain)) throw new Error(`Local ciphertext cache verification failed for ${ chunk.id }`);
         let offset = 0;
         while (offset < plain.byteLength) {
           const { bytesWritten } = await handle.write(plain, offset);
