@@ -53,6 +53,7 @@ function publicAuthority(authority: Record<string, unknown>): Record<string, unk
     id: authority.id,
     type: 'oidc',
     issuer: authority.issuer,
+    remoteAuthorityId: authority.remote_authority_id ?? null,
     clientId: authority.client_id,
     resourceAudiences: authority.resource_audiences,
     scopes: authority.scopes,
@@ -65,7 +66,7 @@ function publicAuthority(authority: Record<string, unknown>): Record<string, unk
 }
 
 async function authorityById(db: Database, id: string): Promise<Authority> {
-  const found = await db.query<Authority>('SELECT * FROM accounts.authorities WHERE id=$1', [id]);
+  const found = await db.query<Authority>('SELECT * FROM accounts.authorities WHERE id=$1 OR remote_authority_id=$1', [id]);
   if (!found.rows[0]) throw new HttpError(404, 'authority not found');
   return found.rows[0];
 }
@@ -83,8 +84,9 @@ async function freshRemoteMembership(
   authority: Authority,
   bearerToken: string,
   organizationId: string,
+  expectedSubject: string,
 ): Promise<MembershipContext> {
-  if (!authority.membership_endpoint) throw new HttpError(403, 'authority has no remote membership endpoint');
+  if (!authority.membership_endpoint || !authority.remote_authority_id) throw new HttpError(403, 'authority has no remote membership contract');
   let remote: Record<string, unknown>;
   try {
     remote = object(await fetchJson(authority.membership_endpoint, {
@@ -93,22 +95,29 @@ async function freshRemoteMembership(
       body: JSON.stringify({ organizationId }),
     }, 256 * 1024));
   } catch { throw new HttpError(403, 'current membership could not be confirmed'); }
-  const context: MembershipContext = {
-    issuer: string(remote.issuer, 'membership issuer'),
-    subject: string(remote.subject, 'membership subject'),
-    organizationId: uuid(remote.organizationId, 'membership organizationId'),
-    roles: stringArray(remote.roles, 'membership roles'),
-    groups: stringArray(remote.groups, 'membership groups'),
-  };
-  if (context.issuer !== authority.issuer || context.organizationId !== organizationId) {
+  let context: MembershipContext;
+  let remoteAuthorityId: string;
+  try {
+    context = {
+      issuer: string(remote.issuer, 'membership issuer'),
+      subject: string(remote.subject, 'membership subject'),
+      organizationId: uuid(remote.organizationId, 'membership organizationId'),
+      roles: stringArray(remote.roles, 'membership roles'),
+      groups: stringArray(remote.groups, 'membership groups'),
+    };
+    remoteAuthorityId = uuid(remote.authorityId, 'membership authorityId');
+  } catch {
+    throw new HttpError(403, 'membership response is invalid');
+  }
+  if (context.issuer !== authority.issuer || remoteAuthorityId !== authority.remote_authority_id || context.subject !== expectedSubject || context.organizationId !== organizationId) {
     throw new HttpError(403, 'membership identity mismatch');
   }
   await db.query(
-    `INSERT INTO accounts.membership_cache(authority_id,organization_id,roles,groups,source_updated_at,expires_at)
-     VALUES ($1,$2,$3,$4,now(),now()+interval '5 minutes')
+    `INSERT INTO accounts.membership_cache(authority_id,organization_id,subject,roles,groups,source_updated_at,expires_at)
+     VALUES ($1,$2,$3,$4,$5,now(),now()+interval '5 minutes')
      ON CONFLICT (authority_id,organization_id) DO UPDATE SET
-       roles=EXCLUDED.roles,groups=EXCLUDED.groups,source_updated_at=EXCLUDED.source_updated_at,expires_at=EXCLUDED.expires_at`,
-    [authority.id, organizationId, context.roles, context.groups],
+       subject=EXCLUDED.subject,roles=EXCLUDED.roles,groups=EXCLUDED.groups,source_updated_at=EXCLUDED.source_updated_at,expires_at=EXCLUDED.expires_at`,
+    [authority.id, organizationId, context.subject, context.roles, context.groups],
   );
   return context;
 }
@@ -144,7 +153,7 @@ async function currentMembership(
     return { ...identity, organizationId, roles: membership.rows[0].roles, groups: membership.rows[0].groups };
   }
   if (!bearerToken) throw new HttpError(403, 'current membership could not be confirmed');
-  const context = await freshRemoteMembership(db, authority, bearerToken, organizationId);
+  const context = await freshRemoteMembership(db, authority, bearerToken, organizationId, identity.subject);
   if (context.subject !== identity.subject) throw new HttpError(403, 'membership subject mismatch');
   return context;
 }
@@ -180,11 +189,12 @@ export function publicAuthorityRoutes(db: Database, config: AccountsConfig): Rou
   const router = Router();
 
   router.get('/.well-known/sulla-authority', route(async(_request, response) => {
-    if (config.mode !== 'server' || !config.keycloakIssuer || !config.keycloakNativeClientId || !config.keycloakMembershipAudience) {
+    if (config.mode !== 'server' || !config.keycloakIssuer || !config.keycloakAuthorityId || !config.keycloakNativeClientId || !config.keycloakMembershipAudience) {
       throw new HttpError(404, 'hosted authority is not enabled');
     }
     response.json({
       issuer: config.keycloakIssuer,
+      authorityId: config.keycloakAuthorityId,
       nativeClientId: config.keycloakNativeClientId,
       nativeRedirectUris: ['http://127.0.0.1:3020/v1/oidc/callback'],
       scopes: ['openid', 'profile'],
@@ -195,7 +205,7 @@ export function publicAuthorityRoutes(db: Database, config: AccountsConfig): Rou
   }));
 
   router.post('/v1/authority/membership/resolve', route(async(request, response) => {
-    if (config.mode !== 'server' || !config.keycloakIssuer || !config.keycloakMembershipAudience) {
+    if (config.mode !== 'server' || !config.keycloakIssuer || !config.keycloakAuthorityId || !config.keycloakMembershipAudience) {
       throw new HttpError(404, 'hosted authority is not enabled');
     }
     const input = requestBody(request);
@@ -205,7 +215,55 @@ export function publicAuthorityRoutes(db: Database, config: AccountsConfig): Rou
     if (!authority) throw new HttpError(503, 'hosted authority is not ready');
     const identity = await verifiedIdentity(getBearer(request), authority, config.keycloakMembershipAudience);
     const context = await currentMembership(db, config, authority, identity, organizationId);
-    response.json(context);
+    response.json({ ...context, authorityId: config.keycloakAuthorityId });
+  }));
+
+  router.post('/v1/authority/schedule-grants', route(async(request, response) => {
+    const input = requestBody(request);
+    const authority = await authorityById(db, uuid(input.authorityId, 'authorityId'));
+    const organizationId = uuid(input.organizationId, 'organizationId');
+    const audience = string(input.audience, 'audience', 300);
+    const serviceId = string(input.serviceId, 'serviceId', 120);
+    const service = config.serviceTokens.get(serviceId);
+    if (!service || !service.issuers.has(authority.issuer) || !service.allowedAudiences.has(audience) || !authority.resource_audiences.includes(audience)) {
+      throw new HttpError(403, 'service is not allowed to delegate this authority audience');
+    }
+    const bearerToken = getBearer(request);
+    const identity = await verifiedIdentity(bearerToken, authority, audience);
+    const requiredRoles = stringArray(input.requiredRoles ?? [], 'requiredRoles');
+    const membership = await currentMembership(db, config, authority, identity, organizationId, bearerToken);
+    requireRoles(membership, requiredRoles);
+    const workflowId = string(input.workflowId, 'workflowId', 300);
+    const scheduleNodeId = string(input.scheduleNodeId, 'scheduleNodeId', 300);
+    const expiresAt = grantExpiry(input.expiresAt);
+    const replacementId = input.replaceGrantId === undefined ? undefined : uuid(input.replaceGrantId, 'replaceGrantId');
+    const grantId = randomUUID();
+    const grantToken = base64url(32);
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      if (replacementId) {
+        const replaced = await client.query(
+          `UPDATE accounts.delegated_schedule_grants SET revoked_at=now(),updated_at=now()
+            WHERE id=$1 AND service_id=$2 AND authority_id=$3 AND issuer=$4 AND subject=$5
+              AND organization_id=$6 AND audience=$7 AND workflow_id=$8 AND schedule_node_id=$9
+              AND revoked_at IS NULL AND expires_at>now()`,
+          [replacementId, serviceId, authority.id, identity.issuer, identity.subject, organizationId, audience, workflowId, scheduleNodeId],
+        );
+        if (!replaced.rowCount) throw new HttpError(403, 'replacement grant does not match this schedule identity');
+      }
+      await client.query(
+        `INSERT INTO accounts.delegated_schedule_grants
+          (id,token_digest,service_id,authority_id,issuer,subject,organization_id,audience,workflow_id,schedule_node_id,required_roles,expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [grantId, digest(grantToken), serviceId, authority.id, identity.issuer, identity.subject, organizationId, audience, workflowId, scheduleNodeId, requiredRoles, expiresAt],
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
+    response.status(201).json({ grantId, grantToken, expiresAt: expiresAt.toISOString() });
   }));
 
   return router;
@@ -288,9 +346,9 @@ export function ownerRoutes(db: Database, config: AccountsConfig): Router {
         WHERE m.revoked_at IS NULL ORDER BY m.issuer,m.organization_id`,
     );
     const remote = await db.query(
-      `SELECT c.authority_id,a.issuer,a.subject,c.organization_id,c.roles,c.groups,c.source_updated_at,c.expires_at
+      `SELECT c.authority_id,a.issuer,c.subject,c.organization_id,c.roles,c.groups,c.source_updated_at,c.expires_at
          FROM accounts.membership_cache c JOIN accounts.authorities a ON a.id=c.authority_id
-        WHERE a.subject IS NOT NULL ORDER BY a.issuer,c.organization_id`,
+        WHERE a.subject IS NOT NULL AND c.subject=a.subject ORDER BY a.issuer,c.organization_id`,
     );
     response.json({ local: local.rows, remoteDisplayHints: remote.rows });
   }));
@@ -304,7 +362,8 @@ export function privateRoutes(db: Database, config: AccountsConfig): Router {
 
   router.post('/resolve-context', route(async(request: ServiceRequest, response) => {
     const input = requestBody(request);
-    const authority = await authorityById(db, uuid(input.authorityId, 'authorityId'));
+    const authorityId = uuid(input.authorityId, 'authorityId');
+    const authority = await authorityById(db, authorityId);
     if (!request.service!.issuers.has(authority.issuer)) throw new HttpError(403, 'service is not allowed to use this authority');
     const bearerToken = string(input.bearerToken, 'bearerToken', 64 * 1024);
     const audience = string(input.audience, 'audience', 300);
@@ -316,55 +375,7 @@ export function privateRoutes(db: Database, config: AccountsConfig): Router {
     const identity = await verifiedIdentity(bearerToken, authority, audience);
     const context = await currentMembership(db, config, authority, identity, organizationId, bearerToken);
     requireRoles(context, requiredRoles);
-    response.json({ ...context, authorityId: authority.id, audience });
-  }));
-
-  router.post('/schedule-grants/issue', route(async(request: ServiceRequest, response) => {
-    const input = requestBody(request);
-    const authority = await authorityById(db, uuid(input.authorityId, 'authorityId'));
-    const organizationId = uuid(input.organizationId, 'organizationId');
-    const audience = string(input.audience, 'audience', 300);
-    const serviceId = string(input.serviceId, 'serviceId', 120);
-    if (serviceId !== request.service!.id) throw new HttpError(403, 'service identity does not match grant request');
-    if (!request.service!.issuers.has(authority.issuer) || !request.service!.allowedAudiences.has(audience) || !authority.resource_audiences.includes(audience)) {
-      throw new HttpError(403, 'service is not allowed to delegate this authority audience');
-    }
-    const bearerToken = string(input.bearerToken, 'bearerToken', 64 * 1024);
-    const identity = await verifiedIdentity(bearerToken, authority, audience);
-    const requiredRoles = stringArray(input.requiredRoles ?? [], 'requiredRoles');
-    const membership = await currentMembership(db, config, authority, identity, organizationId, bearerToken);
-    requireRoles(membership, requiredRoles);
-    const workflowId = string(input.workflowId, 'workflowId', 300);
-    const scheduleNodeId = string(input.scheduleNodeId, 'scheduleNodeId', 300);
-    const expiresAt = grantExpiry(input.expiresAt);
-    const replacementId = input.replaceGrantId === undefined ? undefined : uuid(input.replaceGrantId, 'replaceGrantId');
-    const grantId = randomUUID();
-    const grantToken = base64url(32);
-    const client = await db.connect();
-    try {
-      await client.query('BEGIN');
-      if (replacementId) {
-        const replaced = await client.query(
-          `UPDATE accounts.delegated_schedule_grants SET revoked_at=now(),updated_at=now()
-            WHERE id=$1 AND service_id=$2 AND authority_id=$3 AND issuer=$4 AND subject=$5
-              AND organization_id=$6 AND audience=$7 AND workflow_id=$8 AND schedule_node_id=$9
-              AND revoked_at IS NULL AND expires_at>now()`,
-          [replacementId, serviceId, authority.id, identity.issuer, identity.subject, organizationId, audience, workflowId, scheduleNodeId],
-        );
-        if (!replaced.rowCount) throw new HttpError(403, 'replacement grant does not match this schedule identity');
-      }
-      await client.query(
-        `INSERT INTO accounts.delegated_schedule_grants
-          (id,token_digest,service_id,authority_id,issuer,subject,organization_id,audience,workflow_id,schedule_node_id,required_roles,expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [grantId, digest(grantToken), serviceId, authority.id, identity.issuer, identity.subject, organizationId, audience, workflowId, scheduleNodeId, requiredRoles, expiresAt],
-      );
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally { client.release(); }
-    response.status(201).json({ grantId, grantToken, expiresAt: expiresAt.toISOString() });
+    response.json({ ...context, authorityId, audience });
   }));
 
   router.post('/schedule-grants/resolve', route(async(request: ServiceRequest, response) => {
@@ -399,7 +410,7 @@ export function privateRoutes(db: Database, config: AccountsConfig): Router {
     response.json({
       issuer: grant.issuer,
       subject: grant.subject,
-      authorityId: grant.authority_id,
+      authorityId: authority.remote_authority_id ?? authority.id,
       organizationId: grant.organization_id,
       roles: membership.roles,
       groups: membership.groups,
@@ -446,7 +457,7 @@ export function privateRoutes(db: Database, config: AccountsConfig): Router {
     }
     const accessIdentity = await verifiedIdentity(accessToken, authority, audience);
     if (!authority.subject || accessIdentity.subject !== authority.subject) throw new HttpError(403, 'stored authority identity mismatch');
-    const membership = await freshRemoteMembership(db, authority, accessToken, organizationId);
+    const membership = await freshRemoteMembership(db, authority, accessToken, organizationId, accessIdentity.subject);
     if (!authority.subject || membership.subject !== authority.subject) throw new HttpError(403, 'owner membership subject mismatch');
     requireRoles(membership, requiredRoles);
     if (target.searchParams.has('organizationId') && target.searchParams.get('organizationId') !== organizationId) {
@@ -458,7 +469,12 @@ export function privateRoutes(db: Database, config: AccountsConfig): Router {
     }
     const data = await fetchJson(target.href, {
       method,
-      headers: { authorization: `Bearer ${accessToken}`, ...(method === 'POST' ? { 'content-type': 'application/json' } : {}) },
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        'x-sulla-authority-id': authority.remote_authority_id!,
+        'x-sulla-organization-id': organizationId,
+        ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
+      },
       body: method === 'POST' ? JSON.stringify(input.body ?? {}) : undefined,
     });
     response.json({ data });
