@@ -6,6 +6,7 @@ export type AccountsMode = 'desktop' | 'server';
 export interface ServiceGrant {
   token: Buffer;
   issuers: Set<string>;
+  allowedAudiences: Set<string>;
   pathPrefixes: string[];
   methods: Set<string>;
 }
@@ -16,13 +17,16 @@ export interface AccountsConfig {
   databaseUrl: string;
   publicUrl: string;
   allowedReturnOrigins: Set<string>;
-  bootstrapSecret: Buffer;
+  bootstrapSecret?: Buffer;
   sessionSecret: Buffer;
   encryptionKey: Buffer;
   adminSecret?: Buffer;
   serviceTokens: Map<string, ServiceGrant>;
   keycloakIssuer?: string;
-  keycloakAudience?: string;
+  keycloakNativeClientId?: string;
+  keycloakWebClientId?: string;
+  keycloakMembershipAudience?: string;
+  keycloakResourceAudiences: Set<string>;
   trustedProxy: boolean;
 }
 
@@ -45,6 +49,18 @@ async function readSecretFile(variable: string, exactBytes?: number, preserveRaw
   if (exactBytes !== undefined ? value.length !== exactBytes : value.length < 32) {
     throw new Error(`${variable} has an invalid length`);
   }
+  return value;
+}
+
+async function readTextFile(variable: string): Promise<string> {
+  const path = process.env[variable];
+  if (!path) throw new Error(`${variable} is required`);
+  const info = await stat(path);
+  if (!info.isFile() || (info.mode & 0o077) !== 0) {
+    throw new Error(`${variable} must name a regular file inaccessible to group and other users`);
+  }
+  const value = (await readFile(path, 'utf8')).trim();
+  if (!value) throw new Error(`${variable} must not be empty`);
   return value;
 }
 
@@ -75,34 +91,39 @@ export function assertTrustedUrl(input: string, issuer: string): string {
 export async function loadConfig(): Promise<AccountsConfig> {
   const mode = process.env.SULLA_ACCOUNTS_MODE ?? 'desktop';
   if (mode !== 'desktop' && mode !== 'server') throw new Error('SULLA_ACCOUNTS_MODE must be desktop or server');
-  const databaseUrl = process.env.SULLA_ACCOUNTS_DATABASE_URL;
-  if (!databaseUrl) throw new Error('SULLA_ACCOUNTS_DATABASE_URL is required');
+  const databaseUrl = await readTextFile('SULLA_ACCOUNTS_DATABASE_URL_FILE');
   const publicUrl = normalizeIssuer(process.env.SULLA_ACCOUNTS_PUBLIC_URL ?? 'https://127.0.0.1:3020');
   const keycloakIssuer = process.env.SULLA_ACCOUNTS_KEYCLOAK_ISSUER ? normalizeIssuer(process.env.SULLA_ACCOUNTS_KEYCLOAK_ISSUER) : undefined;
-  const keycloakAudience = process.env.SULLA_ACCOUNTS_KEYCLOAK_AUDIENCE;
-  if (mode === 'server' && (!keycloakIssuer || !keycloakAudience)) throw new Error('server mode requires Keycloak issuer and audience');
+  const keycloakNativeClientId = process.env.SULLA_ACCOUNTS_KEYCLOAK_NATIVE_CLIENT_ID;
+  const keycloakWebClientId = process.env.SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID;
+  const keycloakMembershipAudience = process.env.SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE;
+  const keycloakResourceAudiences = new Set((process.env.SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES ?? '').split(',').map(value => value.trim()).filter(Boolean));
+  if (mode === 'server' && (!keycloakIssuer || !keycloakNativeClientId || !keycloakWebClientId || !keycloakMembershipAudience || !keycloakResourceAudiences.size)) {
+    throw new Error('server mode requires Keycloak issuer, native/web clients, membership audience, and resource audiences');
+  }
 
   const serviceTokens = new Map<string, ServiceGrant>();
   const serviceTokenFile = process.env.SULLA_ACCOUNTS_SERVICE_TOKENS_FILE;
   if (serviceTokenFile) {
     const raw = await readSecretFile('SULLA_ACCOUNTS_SERVICE_TOKENS_FILE');
-    const parsed = JSON.parse(raw.toString('utf8')) as Record<string, { token?: unknown; issuers?: unknown; pathPrefixes?: unknown; methods?: unknown }>;
+    const parsed = JSON.parse(raw.toString('utf8')) as Record<string, { token?: unknown; issuers?: unknown; allowedAudiences?: unknown; pathPrefixes?: unknown; methods?: unknown }>;
     for (const [name, grant] of Object.entries(parsed)) {
-      if (!name || typeof grant?.token !== 'string' || Buffer.byteLength(grant.token) < 32 || !Array.isArray(grant.issuers) || !Array.isArray(grant.pathPrefixes)) {
+      if (!name || typeof grant?.token !== 'string' || Buffer.byteLength(grant.token) < 32 || !Array.isArray(grant.issuers) || !Array.isArray(grant.allowedAudiences) || !Array.isArray(grant.pathPrefixes)) {
         throw new Error('service token file contains an invalid entry');
       }
       const issuers = new Set(grant.issuers.map(value => normalizeIssuer(String(value))));
+      const allowedAudiences = new Set(grant.allowedAudiences.map(value => String(value)));
       const pathPrefixes = grant.pathPrefixes.map(value => String(value));
       const configuredMethods = grant.methods ?? ['GET', 'POST'];
       if (!Array.isArray(configuredMethods)) throw new Error('service token grant methods must be an array');
       const methods = new Set(configuredMethods.map(value => String(value).toUpperCase()));
-      if (!issuers.size || !pathPrefixes.length || pathPrefixes.some(prefix => !prefix.startsWith('/') || prefix.startsWith('//'))) {
-        throw new Error('service token grant must contain trusted issuers and absolute path prefixes');
+      if (!issuers.size || !allowedAudiences.size || [...allowedAudiences].some(value => !value || value.length > 300) || !pathPrefixes.length || pathPrefixes.some(prefix => !prefix.startsWith('/') || prefix.startsWith('//'))) {
+        throw new Error('service token grant must contain trusted issuers, audiences, and absolute path prefixes');
       }
       if (!methods.size || [...methods].some(method => !['GET', 'POST'].includes(method))) {
         throw new Error('service token grant methods must contain only GET and POST');
       }
-      serviceTokens.set(name, { token: Buffer.from(grant.token), issuers, pathPrefixes, methods });
+      serviceTokens.set(name, { token: Buffer.from(grant.token), issuers, allowedAudiences, pathPrefixes, methods });
     }
   }
 
@@ -112,13 +133,16 @@ export async function loadConfig(): Promise<AccountsConfig> {
     databaseUrl,
     publicUrl,
     allowedReturnOrigins: new Set((process.env.SULLA_ACCOUNTS_ALLOWED_RETURN_ORIGINS ?? '').split(',').map(v => v.trim()).filter(Boolean)),
-    bootstrapSecret: await readSecretFile('SULLA_ACCOUNTS_BOOTSTRAP_SECRET_FILE'),
+    bootstrapSecret: mode === 'desktop' ? await readSecretFile('SULLA_ACCOUNTS_BOOTSTRAP_SECRET_FILE') : undefined,
     sessionSecret: await readSecretFile('SULLA_ACCOUNTS_SESSION_SECRET_FILE', undefined, true),
     encryptionKey: await readSecretFile('SULLA_ACCOUNTS_ENCRYPTION_KEY_FILE', 32),
     adminSecret: mode === 'server' ? await readSecretFile('SULLA_ACCOUNTS_ADMIN_SECRET_FILE') : undefined,
     serviceTokens,
     keycloakIssuer,
-    keycloakAudience,
+    keycloakNativeClientId,
+    keycloakWebClientId,
+    keycloakMembershipAudience,
+    keycloakResourceAudiences,
     trustedProxy: process.env.SULLA_ACCOUNTS_TRUSTED_PROXY === '1',
   };
 }
