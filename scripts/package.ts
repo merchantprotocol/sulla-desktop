@@ -11,7 +11,6 @@ import * as path from 'path';
 
 import { flipFuses, FuseV1Options, FuseVersion } from '@electron/fuses';
 import { findIdentity } from 'app-builder-lib/out/codeSign/macCodeSign';
-import { MacPackager } from 'app-builder-lib/out/macPackager';
 import { executeAppBuilder, log } from 'builder-util';
 import {
   AfterPackContext, Arch, build, CliOptions, Configuration, LinuxTargetSpecificOptions,
@@ -226,6 +225,8 @@ class Builder {
   }
 
   protected async signFinderSyncExtension(context:AfterPackContext):Promise<void> {
+    const { MacPackager } = await import('app-builder-lib/out/macPackager');
+
     if (!(context.packager instanceof MacPackager)) return;
     const { keychainFile } = await context.packager.codeSigningInfo.value;
     const identity = await findIdentity('Developer ID Application', context.packager.platformSpecificBuildOptions.identity, keychainFile);
