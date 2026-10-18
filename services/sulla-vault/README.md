@@ -51,12 +51,12 @@ Accounts authorization is optional and fail-closed. Configure all of `SULLA_VAUL
 must be a regular `0600` file with at least 32 bytes. The audience is fixed to `sulla-vault`, and
 `SULLA_VAULT_ACCOUNTS_REQUIRED_ROLES` defaults to `member`.
 
-Linking is an explicit two-session operation. An existing Vault organization owner authenticates
+Linking is an explicit two-session operation. An existing confirmed Vault organization member authenticates
 with the normal Vault bearer, supplies the verified Accounts bearer separately in
 `X-Sulla-Accounts-Authorization`, and supplies the enrolled authority UUID in
-`X-Sulla-Authority-Id` to `POST /v1/orgs/:orgId/accounts-identities`. Vault records only the
+`X-Sulla-Accounts-Authority-Id` to `POST /v1/orgs/:orgId/accounts-identities`. Vault records only the
 verified `(issuer, subject)` tuple against the existing Vault user UUID; it never links by email.
-List and unlink operations use the same owner-only route with `GET` and `DELETE`.
+List and unlink operations manage only the authenticated member's own links with `GET` and `DELETE`.
 
 After linking, an Accounts request carries its bearer in `Authorization` plus exact
 `X-Sulla-Authority-Id` and `X-Sulla-Organization-Id` headers. Vault resolves fresh Accounts
@@ -81,7 +81,7 @@ All request and response key material described as encrypted is an opaque JSON e
 | `GET`, `POST` | `/v1/folders` | List or create personal encrypted folders |
 | `PATCH`, `DELETE` | `/v1/folders/:folderId` | Revision-update or delete a personal folder |
 | `GET`, `POST` | `/v1/orgs` | List memberships or create an organization and owner membership |
-| `GET`, `POST`, `DELETE` | `/v1/orgs/:orgId/accounts-identities` | Explicitly list, link, or unlink a verified Accounts identity as an existing Vault owner |
+| `GET`, `POST`, `DELETE` | `/v1/orgs/:orgId/accounts-identities` | Explicitly list, link, or unlink a verified Accounts identity for the authenticated confirmed Vault member |
 | `PATCH` | `/v1/orgs/:orgId` | Update an encrypted organization name |
 | `GET`, `POST`, `DELETE` | `/v1/orgs/:orgId/members[/:memberId]` | List, add/update, or remove members |
 | `GET`, `POST` | `/v1/orgs/:orgId/collections` | List authorized collections or create one |
