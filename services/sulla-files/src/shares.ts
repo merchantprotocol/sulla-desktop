@@ -37,6 +37,10 @@ interface ShareStreamContent {
   contentRange?: string;
 }
 
+const RELAY_MAX_BUFFERED_BYTES = 1024 * 1024;
+const RELAY_RESUME_BUFFERED_BYTES = RELAY_MAX_BUFFERED_BYTES / 2;
+const RELAY_BUFFER_POLL_MS = 10;
+
 function passwordHash(password:string):string {
   const salt = randomBytes(16); const digest = scryptSync(password, salt, 32);
   return `${ salt.toString('base64url') }:${ digest.toString('base64url') }`;
@@ -74,7 +78,7 @@ function remoteShareOverlay(value:unknown):Record<string, unknown> {
 class ServerShareRelay {
   private socket?:    WebSocket;
   private reconnect?: ReturnType<typeof setTimeout>;
-  private requests = new Map<string, AbortController>();
+  private requests = new Map<WebSocket, Map<string, AbortController>>();
 
   constructor(private db: pg.Pool, private config: Config, private content: (id: string, path: string, range: string | undefined, signal: AbortSignal) => Promise<ShareStreamContent>) {}
 
@@ -91,8 +95,12 @@ class ServerShareRelay {
     const url = new URL(`/share-relay/${ encodeURIComponent(row.id) }`, this.config.cloudUrl);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'; url.searchParams.set('secret', row.relay_secret);
     const socket = new WebSocket(url); this.socket = socket;
-    socket.addEventListener('message', event => this.handle(String(event.data)).catch(error => console.warn('[SullaFiles] share relay request failed', error)));
-    socket.addEventListener('close', () => { if (this.socket === socket) this.socket = undefined; this.retry() });
+    socket.addEventListener('message', event => this.handle(socket, String(event.data)).catch(error => console.warn('[SullaFiles] share relay request failed', error)));
+    socket.addEventListener('close', () => {
+      this.abortSocketRequests(socket);
+      if (this.socket !== socket) return;
+      this.socket = undefined; this.retry();
+    });
     socket.addEventListener('error', () => socket.close());
   }
 
@@ -101,31 +109,78 @@ class ServerShareRelay {
     this.reconnect = setTimeout(() => { this.reconnect = undefined; this.connect() }, 5_000);
   }
 
-  private async handle(raw: string): Promise<void> {
+  private abortSocketRequests(socket: WebSocket): void {
+    const requests = this.requests.get(socket);
+    if (!requests) return;
+    this.requests.delete(socket);
+    for (const controller of requests.values()) controller.abort();
+  }
+
+  private async waitForSendCapacity(socket: WebSocket, bytes: number, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    if (socket.readyState !== WebSocket.OPEN) throw new Error('share relay socket is not open');
+    if (socket.bufferedAmount + bytes <= RELAY_MAX_BUFFERED_BYTES) return;
+
+    // The WHATWG WebSocket API exposes bufferedAmount but no portable drain
+    // event. Poll below the low-water mark so a slow Cloud connection cannot
+    // grow the process buffer without bound. Request/socket aborts interrupt
+    // the wait immediately.
+    await new Promise<void>((resolve, reject) => {
+      let timer:ReturnType<typeof setTimeout> | undefined;
+      const cleanup = () => { if (timer) clearTimeout(timer); signal.removeEventListener('abort', onAbort) };
+      const fail = (error:unknown) => { cleanup(); reject(error) };
+      const onAbort = () => fail(signal.reason ?? new DOMException('The operation was aborted', 'AbortError'));
+      const poll = () => {
+        if (signal.aborted) return onAbort();
+        if (socket.readyState !== WebSocket.OPEN) return fail(new Error('share relay socket is not open'));
+        if (socket.bufferedAmount <= RELAY_RESUME_BUFFERED_BYTES && socket.bufferedAmount + bytes <= RELAY_MAX_BUFFERED_BYTES) {
+          cleanup(); resolve(); return;
+        }
+        timer = setTimeout(poll, RELAY_BUFFER_POLL_MS);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      timer = setTimeout(poll, RELAY_BUFFER_POLL_MS);
+    });
+  }
+
+  private async send(socket: WebSocket, requestId: string, signal: AbortSignal, type: string, payload: Record<string, unknown> = {}): Promise<void> {
+    const serialized = JSON.stringify({ type, requestId, ...payload });
+    await this.waitForSendCapacity(socket, Buffer.byteLength(serialized), signal);
+    signal.throwIfAborted();
+    if (socket.readyState !== WebSocket.OPEN) throw new Error('share relay socket is not open');
+    socket.send(serialized);
+  }
+
+  private async handle(socket: WebSocket, raw: string): Promise<void> {
+    if (socket.readyState !== WebSocket.OPEN) return;
     let frame: any; try { frame = JSON.parse(raw) } catch { return }
     if (frame.type === 'share_fetch_cancel' && typeof frame.requestId === 'string') {
-      this.requests.get(frame.requestId)?.abort();
+      this.requests.get(socket)?.get(frame.requestId)?.abort();
       return;
     }
     if (frame.type !== 'share_fetch' || typeof frame.requestId !== 'string' || typeof frame.linkId !== 'string') return;
-    const send = (type: string, payload: Record<string, unknown> = {}) => this.socket?.send(JSON.stringify({ type, requestId: frame.requestId, ...payload }));
-    this.requests.get(frame.requestId)?.abort();
-    const controller = new AbortController(); this.requests.set(frame.requestId, controller);
+    let socketRequests = this.requests.get(socket);
+    if (!socketRequests) { socketRequests = new Map(); this.requests.set(socket, socketRequests) }
+    socketRequests.get(frame.requestId)?.abort();
+    const controller = new AbortController(); socketRequests.set(frame.requestId, controller);
+    const send = (type: string, payload: Record<string, unknown> = {}) => this.send(socket, frame.requestId, controller.signal, type, payload);
     try {
       const content = await this.content(frame.linkId, typeof frame.path === 'string' ? frame.path : '', typeof frame.range === 'string' ? frame.range : undefined, controller.signal);
-      send('share_fetch_start', { status: content.status, mime: content.mime, name: content.name, contentLength: content.contentLength, contentRange: content.contentRange, acceptRanges: 'bytes' });
+      await send('share_fetch_start', { status: content.status, mime: content.mime, name: content.name, contentLength: content.contentLength, contentRange: content.contentRange, acceptRanges: 'bytes' });
       for await (const part of content.body) {
         controller.signal.throwIfAborted();
-        for (let offset = 0; offset < part.length; offset += 64 * 1024) send('share_fetch_chunk', { data: part.subarray(offset, offset + 64 * 1024).toString('base64') });
+        for (let offset = 0; offset < part.length; offset += 64 * 1024) await send('share_fetch_chunk', { data: part.subarray(offset, offset + 64 * 1024).toString('base64') });
       }
-      send('share_fetch_end');
+      await send('share_fetch_end');
     } catch (error) {
+      if (controller.signal.aborted) return;
       if (error instanceof RangeNotSatisfiableError) {
-        send('share_fetch_start', { status: 416, contentLength: 0, contentRange: `bytes */${ error.size }`, acceptRanges: 'bytes' });
-        send('share_fetch_end');
-      } else if (!controller.signal.aborted) send('share_fetch_error', { error: error instanceof Error ? error.message : String(error) });
+        await send('share_fetch_start', { status: 416, contentLength: 0, contentRange: `bytes */${ error.size }`, acceptRanges: 'bytes' });
+        await send('share_fetch_end');
+      } else await send('share_fetch_error', { error: error instanceof Error ? error.message : String(error) });
     } finally {
-      if (this.requests.get(frame.requestId) === controller) this.requests.delete(frame.requestId);
+      if (socketRequests.get(frame.requestId) === controller) socketRequests.delete(frame.requestId);
+      if (!socketRequests.size && this.requests.get(socket) === socketRequests) this.requests.delete(socket);
     }
   }
 }

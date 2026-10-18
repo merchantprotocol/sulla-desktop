@@ -24,6 +24,58 @@ function service(row?:Record<string, unknown>) {
 
 async function status(operation:()=>Promise<unknown>) { try { await operation(); return 200 } catch (error:any) { return error.status } }
 
+class SyntheticWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 3;
+  static instances: SyntheticWebSocket[] = [];
+
+  readyState = SyntheticWebSocket.OPEN;
+  bufferedAmount = 0;
+  readonly sent: string[] = [];
+  private readonly listeners = new Map<string, ((event:any)=>unknown)[]>();
+
+  constructor(readonly url:string | URL) { SyntheticWebSocket.instances.push(this) }
+
+  addEventListener(type:string, listener:(event:any)=>unknown):void {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener); this.listeners.set(type, listeners);
+  }
+
+  send(data:string):void {
+    if (this.readyState !== SyntheticWebSocket.OPEN) throw new Error('synthetic socket is closed');
+    this.sent.push(data);
+  }
+
+  close():void {
+    if (this.readyState === SyntheticWebSocket.CLOSED) return;
+    this.readyState = SyntheticWebSocket.CLOSED;
+    for (const listener of this.listeners.get('close') ?? []) listener({});
+  }
+
+  async receive(frame:Record<string, unknown>):Promise<void> {
+    await Promise.all((this.listeners.get('message') ?? []).map(listener => listener({ data: JSON.stringify(frame) })));
+  }
+}
+
+async function waitFor(check:()=>boolean, message:string):Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!check()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+}
+
+async function withSyntheticWebSockets(operation:()=>Promise<void>):Promise<void> {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
+  SyntheticWebSocket.instances = [];
+  Object.defineProperty(globalThis, 'WebSocket', { configurable: true, writable: true, value: SyntheticWebSocket });
+  try { await operation() } finally {
+    if (descriptor) Object.defineProperty(globalThis, 'WebSocket', descriptor);
+    else delete (globalThis as any).WebSocket;
+  }
+}
+
 test('share authorization fails closed for unknown, revoked, expired, password, and download policy boundaries', async() => {
   assert.equal(await status(() => service().shares.authorize('missing', {})), 404);
   assert.equal(await status(() => service({ id: 'revoked', revoked_at: new Date().toISOString() }).shares.authorize('revoked', {})), 404);
@@ -59,6 +111,68 @@ test('share streaming supports suffix and open-ended ranges without whole-file b
   const open = await read('bytes=4-'); assert.equal(open.bytes, '456789'); assert.equal(open.content.contentRange, 'bytes 4-9/10');
   await assert.rejects(() => shares.streamContent('share-1', '', 'bytes=10-', new AbortController().signal), RangeNotSatisfiableError);
   assert.deepEqual(reads, [id, id]);
+});
+
+test('server relay binds a request to its source socket and aborts it before reconnect', async() => {
+  await withSyntheticWebSockets(async() => {
+    const db = { query: () => Promise.resolve({ rows: [{ id: 'synthetic-share', relay_secret: 'synthetic-secret' }] }) };
+    const shares = new SharesService(db as any, { mode: 'server', cloudUrl: 'https://synthetic.invalid' } as any, {} as any) as any;
+    const relay = shares.serverRelay;
+    let releaseContent:()=>void = () => {}; let markContent:()=>void = () => {}; let sourceSignal:AbortSignal | undefined;
+    const contentGate = new Promise<void>(resolve => { releaseContent = resolve });
+    const contentStarted = new Promise<void>(resolve => { markContent = resolve });
+    relay.content = async(_id:string, _path:string, _range:string | undefined, signal:AbortSignal) => {
+      sourceSignal = signal; markContent(); await contentGate;
+      async function * body() { await Promise.resolve(); yield Buffer.from('stale tail') }
+      return { body: body(), mime: 'text/plain', name: 'synthetic.txt', status: 200, contentLength: 10 };
+    };
+
+    await waitFor(() => SyntheticWebSocket.instances.length === 1, 'first relay socket did not open');
+    const socketA = SyntheticWebSocket.instances[0];
+    const handling = socketA.receive({ type: 'share_fetch', requestId: 'request-a', linkId: 'synthetic-share' });
+    await contentStarted;
+    socketA.close();
+    assert.equal(sourceSignal?.aborted, true);
+    if (relay.reconnect) { clearTimeout(relay.reconnect); relay.reconnect = undefined }
+    relay.connect();
+    await waitFor(() => SyntheticWebSocket.instances.length === 2, 'replacement relay socket did not open');
+    const socketB = SyntheticWebSocket.instances[1];
+
+    releaseContent(); await handling;
+    assert.deepEqual(socketA.sent, []);
+    assert.deepEqual(socketB.sent, [], 'a stale request must never write frames onto its replacement socket');
+  });
+});
+
+test('server relay bounds WebSocket buffering and cancellation interrupts the capacity wait', async() => {
+  await withSyntheticWebSockets(async() => {
+    const db = { query: () => Promise.resolve({ rows: [{ id: 'synthetic-share', relay_secret: 'synthetic-secret' }] }) };
+    const shares = new SharesService(db as any, { mode: 'server', cloudUrl: 'https://synthetic.invalid' } as any, {} as any) as any;
+    const relay = shares.serverRelay;
+    await waitFor(() => SyntheticWebSocket.instances.length === 1, 'relay socket did not open');
+    const socket = SyntheticWebSocket.instances[0];
+    relay.content = (id:string) => {
+      async function * body() { await Promise.resolve(); socket.bufferedAmount = 2 * 1024 * 1024; yield Buffer.from(id) }
+      return Promise.resolve({ body: body(), mime: 'text/plain', name: `${ id }.txt`, status: 200, contentLength: id.length });
+    };
+
+    const first = socket.receive({ type: 'share_fetch', requestId: 'drain-request', linkId: 'drain-body' });
+    await waitFor(() => socket.sent.length === 1, 'relay did not send the start frame');
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.deepEqual(socket.sent.map(raw => JSON.parse(raw).type), ['share_fetch_start']);
+    socket.bufferedAmount = 0;
+    await first;
+    assert.deepEqual(socket.sent.map(raw => JSON.parse(raw).type), ['share_fetch_start', 'share_fetch_chunk', 'share_fetch_end']);
+
+    const beforeCancel = socket.sent.length;
+    const cancelled = socket.receive({ type: 'share_fetch', requestId: 'cancel-request', linkId: 'cancel-body' });
+    await waitFor(() => socket.sent.length === beforeCancel + 1, 'second relay start frame was not sent');
+    await socket.receive({ type: 'share_fetch_cancel', requestId: 'cancel-request' });
+    await cancelled;
+    const cancelledFrames = socket.sent.slice(beforeCancel).map(raw => JSON.parse(raw));
+    assert.deepEqual(cancelledFrames.map(frame => frame.type), ['share_fetch_start']);
+    assert.equal(cancelledFrames.every(frame => frame.requestId === 'cancel-request'), true);
+  });
 });
 
 test('restoring a password-protected link requires password re-entry before cloud registration', async() => {
