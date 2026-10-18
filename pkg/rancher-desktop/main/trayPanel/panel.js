@@ -154,7 +154,11 @@ document.getElementById('btn-capture-studio').addEventListener('click', () => {
 });
 
 let filesPaused = false;
-document.getElementById('btn-open-files').addEventListener('click', () => ipcRenderer.send('tray-panel:files-open'));
+async function openFilesFolder() {
+  try { await ipcRenderer.invoke('tray-panel:files-open') } catch (error) { showFilesToast(error.message || 'Could not open the Files folder', true) }
+}
+
+document.getElementById('btn-open-files').addEventListener('click', openFilesFolder);
 document.getElementById('btn-pause-files').addEventListener('click', async() => {
   try { await ipcRenderer.invoke('tray-panel:files-pause', !filesPaused); await refreshFilesStatus() } catch { /* status refresh shows the error */ }
 });
@@ -487,7 +491,7 @@ document.getElementById('files-pause-hour').addEventListener('click', async() =>
   try { await ipcRenderer.invoke('tray-panel:files-pause-hour'); showFilesToast('Sync paused for 1 hour') } catch (error) { showFilesToast(error.message || 'Could not pause sync', true) }
   refreshFilesDashboard();
 });
-document.getElementById('files-open-folder').addEventListener('click', () => ipcRenderer.send('tray-panel:files-open'));
+document.getElementById('files-open-folder').addEventListener('click', openFilesFolder);
 document.getElementById('files-open-sulla').addEventListener('click', () => ipcRenderer.send('tray-panel:open-main'));
 document.getElementById('files-preferences').addEventListener('click', () => ipcRenderer.send('tray-panel:files-preferences', 'capture'));
 document.getElementById('files-all-files').addEventListener('click', () => ipcRenderer.send('tray-panel:open-files-screen'));
@@ -501,7 +505,10 @@ document.getElementById('panel-files').addEventListener('click', async(event) =>
       showFilesToast(result.message, !result.url); refreshFilesDashboard();
     } catch (error) { showFilesToast(error.message || 'Sharing failed', true) }
   } else if (target.dataset.copy) {
-    await ipcRenderer.invoke('tray-panel:copy-share', decodeURIComponent(target.dataset.copy)); showFilesToast('Link copied');
-  } else if (target.dataset.resolve) ipcRenderer.send('tray-panel:resolve-file', decodeURIComponent(target.dataset.resolve));
-  else ipcRenderer.send('tray-panel:open-file', decodeURIComponent(target.dataset.open));
+    try { await ipcRenderer.invoke('tray-panel:copy-share', decodeURIComponent(target.dataset.copy)); showFilesToast('Link copied') } catch (error) { showFilesToast(error.message || 'Could not copy the link', true) }
+  } else if (target.dataset.resolve) {
+    try { await ipcRenderer.invoke('tray-panel:resolve-file', decodeURIComponent(target.dataset.resolve)) } catch (error) { showFilesToast(error.message || 'Could not reveal the file', true) }
+  } else {
+    try { await ipcRenderer.invoke('tray-panel:open-file', decodeURIComponent(target.dataset.open)) } catch (error) { showFilesToast(error.message || 'Could not open the file', true) }
+  }
 });

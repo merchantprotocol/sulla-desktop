@@ -26,6 +26,8 @@ import { URL } from 'url';
 
 import Electron from 'electron';
 
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { getSullaFilesLinkService, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
@@ -120,8 +122,15 @@ function dispatch(target: Electron.BrowserWindow, rawUrl: string): void {
   const section = parsed.hostname;
   const action = parsed.pathname.replace(/^\/+/, '');
 
-  if (section === 'files' && ['share', 'history', 'keep', 'online-only'].includes(action)) {
-    handleFilesAction(target, action, parsed.searchParams.get('path') ?? '').catch(err => console.error('[deep-link] Files action failed:', err));
+  if (section === 'files' && ['copy-link', 'share', 'history', 'keep', 'online-only'].includes(action)) {
+    handleFilesAction(target, action, parsed.searchParams.get('path') ?? '').catch(async(err) => {
+      console.error('[deep-link] Files action failed:', err);
+      await Electron.dialog.showMessageBox(target, {
+        type:    'error',
+        message: 'Sulla Files could not complete that action.',
+        detail:  err instanceof Error ? err.message : String(err),
+      });
+    });
     return;
   }
 
@@ -150,14 +159,14 @@ async function handleFilesAction(target:Electron.BrowserWindow, action:string, a
   try { [root, resolved] = await Promise.all([fs.promises.realpath(watcher.folder), fs.promises.realpath(absolutePath)]) } catch {
     await Electron.dialog.showMessageBox(target, { type: 'error', message: 'That Sulla Files item is unavailable.' }); return;
   }
-  if (!resolved.startsWith(`${ root }${ path.sep }`)) {
+  if (resolved !== root && !resolved.startsWith(`${ root }${ path.sep }`)) {
     await Electron.dialog.showMessageBox(target, { type: 'error', message: 'That item is outside Sulla Files.' }); return;
   }
   const relativePath = path.relative(root, resolved).split(path.sep).join('/');
   const info = await fs.promises.stat(resolved);
   if (info.isDirectory()) {
-    if (action === 'history') {
-      await Electron.dialog.showMessageBox(target, { type: 'info', message: 'Version history is available for files, not folders.' }); return;
+    if (action === 'history' || action === 'copy-link') {
+      await Electron.dialog.showMessageBox(target, { type: 'info', message: action === 'history' ? 'Version history is available for files, not folders.' : 'Copy link is available for files. Use Share with people… to review folder sharing.' }); return;
     }
     target.focus();
     target.webContents.send('agent-command', { command: 'open-tab', mode: 'files', path: relativePath, section: action === 'share' ? 'share-review' : 'files' });
@@ -165,6 +174,26 @@ async function handleFilesAction(target:Electron.BrowserWindow, action:string, a
   }
   const file = await watcher.findFile(relativePath);
   if (!file) { await Electron.dialog.showMessageBox(target, { type: 'info', message: 'Sulla is still indexing this file. Try again after sync finishes.' }); return }
+  if (action === 'copy-link') {
+    const [configuredMode, keepAvailable, expiryDays] = await Promise.all([
+      SullaSettingsModel.get('sullaFilesCaptureVisitorMode', 'view'),
+      SullaSettingsModel.get('sullaFilesOrdinaryKeepAvailable', false),
+      SullaSettingsModel.get('sullaFilesCaptureExpiryDays', 30),
+    ]);
+    const mode:ShareMode = configuredMode === 'download' ? 'download' : 'view';
+    const days = Number(expiryDays);
+    const expiresAt = Number.isFinite(days) && days > 0 ? new Date(Date.now() + days * 86_400_000).toISOString() : undefined;
+    const link = await getSullaFilesLinkService().create({
+      fileId:        file.id,
+      mode,
+      keepAvailable: keepAvailable === true,
+      expiresAt,
+    });
+
+    Electron.clipboard.writeText(link.url);
+    await Electron.dialog.showMessageBox(target, { type: 'info', message: 'Sulla link copied.', detail: link.name });
+    return;
+  }
   if (action === 'online-only') {
     await Electron.dialog.showMessageBox(target, { type: 'warning', message: 'This file was not removed from your Mac.', detail: 'Online-only needs secure collection-key exchange before Sulla can guarantee recovery. The local copy remains intact.' }); return;
   }

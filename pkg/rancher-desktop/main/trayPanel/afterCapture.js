@@ -94,7 +94,15 @@ $('share').addEventListener('click', share);
 $('save').addEventListener('click', close);
 $('close').addEventListener('click', close);
 $('keep').addEventListener('click', () => { $('keep').classList.toggle('on'); $('keep').setAttribute('aria-checked', String($('keep').classList.contains('on'))); stopCountdown() });
-$('markup').addEventListener('click', () => { if (capture?.kind === 'screenshot') ipcRenderer.send('tray-panel:markup', capture.path); close() });
+$('markup').addEventListener('click', async() => {
+  if (capture?.kind !== 'screenshot') return;
+  try {
+    await ipcRenderer.invoke('tray-panel:markup', capture.path);
+    close();
+  } catch (error) {
+    $('countdown').classList.add('err'); $('countdown').textContent = error.message || 'Could not open markup'; fitWindow();
+  }
+});
 const openPreferences = (event) => { event.preventDefault(); ipcRenderer.send('tray-panel:files-preferences', 'capture'); stopCountdown() };
 $('preferences').addEventListener('click', openPreferences);
 $('preferences-link').addEventListener('click', openPreferences);
