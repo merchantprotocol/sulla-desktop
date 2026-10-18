@@ -110,23 +110,17 @@ export class ChatArtifactFilesRegistration implements ArtifactFilesRegistration 
   }
 
   private async recover(artifact: ChatArtifactRecord, targetPath: string): Promise<FilesRegistrationResult | undefined> {
+    // Only the server can resolve the default owned, native collection. The
+    // visible collection list also contains shared collections, so guessing by
+    // age can attach an artifact to someone else's file. An unknown collection
+    // is recovered through the idempotent write instead.
+    if (!artifact.filesCollectionId) return undefined;
     const watcher = getSullaFilesWatcher();
     const capability = { agentId: AGENT_ID, threadId: artifact.threadId };
     const collectionsResponse = await watcher.requestFiles('/v1/collections', {}, false, capability);
     if (!collectionsResponse.ok) return undefined;
-    const collections = await collectionsResponse.json() as { id: string; created_at?: string }[];
-    const candidates = artifact.filesCollectionId
-      ? collections.filter(collection => collection.id === artifact.filesCollectionId)
-      // /v1/agent-files chooses the owner's oldest native knowledge collection
-      // when no collection is supplied. Recovery must inspect that same target,
-      // not attach this artifact to a same-named file in another collection.
-      : [...collections].sort((left, right) => {
-        const leftTime = Date.parse(left.created_at ?? '');
-        const rightTime = Date.parse(right.created_at ?? '');
-
-        return (Number.isFinite(leftTime) ? leftTime : Number.MAX_SAFE_INTEGER) -
-          (Number.isFinite(rightTime) ? rightTime : Number.MAX_SAFE_INTEGER);
-      }).slice(0, 1);
+    const collections = await collectionsResponse.json() as { id: string }[];
+    const candidates = collections.filter(collection => collection.id === artifact.filesCollectionId);
     const parentPath = path.posix.dirname(targetPath);
     for (const collection of candidates) {
       const filesResponse = await watcher.requestFiles(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=${ encodeURIComponent(parentPath === '.' ? '' : parentPath) }&trash=false`, {}, false, capability);
