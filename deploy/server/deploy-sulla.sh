@@ -92,7 +92,7 @@ EOF
   cat >>"$ingress" <<EOF
   rules:
     - host: ${SULLA_HOSTNAME}
-  http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: sulla-gateway, port: {name: http}}}}]}
+      http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: sulla-gateway, port: {name: http}}}}]}
 EOF
   "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$ingress"; rm -f "$ingress"
 fi

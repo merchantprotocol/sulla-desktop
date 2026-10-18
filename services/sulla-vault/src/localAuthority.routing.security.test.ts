@@ -1,4 +1,5 @@
-import { describe, expect, test } from '@jest/globals';
+import assert from 'node:assert/strict';
+import { describe, test } from 'node:test';
 
 import { localAuthorityTestHooks } from './localAuthority.js';
 
@@ -23,10 +24,11 @@ describe('local authority ChatGPT routing', () => {
     localAuthorityTestHooks.deriveChatgptAccountRoutingForRequest({
       operation: 'provider.cli', ref: { integrationId: 'codex', accountId: 'synthetic' },
     }, codex);
-    expect(codex.integration.properties).toEqual({
-      access_token: expect.any(String),
+    assert.deepEqual(codex.integration.properties, {
+      access_token: codex.integration.properties.access_token,
       chatgpt_account_id: 'workspace-synthetic',
     });
+    assert.equal(typeof codex.integration.properties.access_token, 'string');
 
     for (const request of [
       { operation: 'provider.cli', ref: { integrationId: 'openai', accountId: 'synthetic' } },
@@ -34,7 +36,7 @@ describe('local authority ChatGPT routing', () => {
     ]) {
       const other = syntheticItem(request.ref.integrationId);
       localAuthorityTestHooks.deriveChatgptAccountRoutingForRequest(request, other);
-      expect(other.integration.properties.chatgpt_account_id).toBeUndefined();
+      assert.equal(other.integration.properties.chatgpt_account_id, undefined);
     }
   });
 });

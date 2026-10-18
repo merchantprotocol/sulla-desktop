@@ -8,7 +8,7 @@ const iso = (days = 0) => new Date(now + days * 86_400_000).toISOString();
 /** In-memory fixtures for the isolated /files-preview route. Never reads Files IPC. */
 export class SyntheticFilesDataSource implements FilesDataSource {
   readonly syntheticPreview = true;
-  capabilities = { upload: true, versionHistory: true, restoreVersions: true, trash: true, orgSharing: true, publicLinks: true, onlineOnly: false };
+  capabilities = { upload: true, versionHistory: true, restoreVersions: true, trash: true, orgSharing: true, publicLinks: true, onlineOnly: false, nativeFilesystem: true };
   onlineOnlyReason = 'Synthetic preview';
   private shares:ShareLink[] = [
     { id: 'share-capture', url: 'https://share.sulla.cloud/v/m3Xp9A', name: 'Screenshot 2026-10-16 at 11.17.02.png', mode: 'view', password: false, expiresAt: iso(30), viewCount: 0, keepAvailable: true, keepUntil: iso(30), displaySharerName: true, servedFrom: 'cloud', assetKind: 'capture', source: 'Copy on Sulla Cloud', createdAt: iso(-1) },
@@ -26,12 +26,16 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   async mediaUrl():Promise<string> { return '' }
   async search() { return (await this.load()).files }
   async setPaused() { return (await this.load()).status }
-  async chooseUpload() { return 0 }
-  async uploadPaths() { return 0 }
+  async chooseUpload(_destination = '') { return 0 }
+  async uploadPaths(_paths:string[], _destination = '') { return 0 }
   async createFolder() {}
   async openFolder() {}
   async openFile() {}
   async downloadFile() { return true }
+  async downloadFiles(items:{ fileId:string }[]) { return { count: items.length } }
+  async listStars() { return [] }
+  async setStar() {}
+  async operate() {}
   async restoreVersion() {}
   async restoreTrash() {}
   async trashFile() {}

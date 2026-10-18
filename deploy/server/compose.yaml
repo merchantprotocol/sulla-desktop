@@ -81,7 +81,7 @@ services:
     environment:
       SULLA_TLS_CERT_CONTAINER_PATH: ${SULLA_TLS_CERT_CONTAINER_PATH:-}
       SULLA_TLS_KEY_CONTAINER_PATH: ${SULLA_TLS_KEY_CONTAINER_PATH:-}
-    entrypoint: ["/etc/sulla/entrypoint.sh"]
+    entrypoint: ["sh", "/etc/sulla/entrypoint.sh"]
     ports:
       - "${SULLA_BIND_ADDRESS}:${SULLA_PORT}:8787"
     volumes:

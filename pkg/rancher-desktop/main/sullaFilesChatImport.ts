@@ -8,6 +8,10 @@ import { getSullaFilesWatcher } from './sullaFilesWatcher';
 import paths from '@pkg/utils/paths';
 
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024 * 1024;
+// One deadline covers the initial request and the single locked-service retry.
+// The 2 GiB import limit must remain usable on slow links without permitting an
+// unbounded upload to retain an open file descriptor forever.
+const IMPORT_REQUEST_TIMEOUT_MS = 6 * 60 * 60 * 1_000;
 const SENSITIVE_PARTS = new Set([
   '.aws', '.azure', '.gnupg', '.keychain', '.password-store', '.ssh', 'gcloud', 'keychains',
   'crypto-wallet', 'private-files-quarantine', 'vault', 'wallet', 'wallets',
@@ -196,7 +200,7 @@ async function uploadPreparedSource(source:PreparedSource, endpoint:string, mime
     body,
     duplex:  'half',
   } as RequestInit & { duplex: 'half' };
-  const response = await getSullaFilesWatcher().requestFiles(endpoint, init);
+  const response = await getSullaFilesWatcher().requestFilesStream(endpoint, init, AbortSignal.timeout(IMPORT_REQUEST_TIMEOUT_MS));
   const sourceChanged = !matchesPreparedSource(source, await source.handle.stat());
   return { response, sourceChanged };
 }

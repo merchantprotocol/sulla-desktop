@@ -14,8 +14,7 @@ COPY services/sulla-files/tsconfig.json ./
 COPY services/sulla-files/vite.config.ts ./
 COPY services/sulla-files/src ./src
 COPY services/sulla-files/web-src ./web-src
-COPY pkg/rancher-desktop/pages/files/FilesBrowser.vue /app/pkg/rancher-desktop/pages/files/FilesBrowser.vue
-COPY pkg/rancher-desktop/pages/files/types.ts /app/pkg/rancher-desktop/pages/files/types.ts
+COPY pkg/rancher-desktop/pages/files /app/pkg/rancher-desktop/pages/files
 RUN npm run build && npm prune --omit=dev
 FROM node:24-alpine
 ENV NODE_ENV=production

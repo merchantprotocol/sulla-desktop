@@ -20,9 +20,12 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 : "${SULLA_POSTGRES_PASSWORD:?missing PostgreSQL password}"
 : "${SULLA_VAULT_JWT_SECRET:?missing JWT secret}"
 : "${SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN:?missing bootstrap token}"
+: "${SULLA_FILES_CAPABILITY_SIGNING_KEY:?missing Files capability signing key}"
 : "${SULLA_VAULT_IMAGE:?missing pinned vault image}"
+: "${SULLA_FILES_IMAGE:?missing pinned Files image}"
 : "${SULLA_STORAGE_CLASS:?missing storage class}"
 : "${SULLA_STORAGE_SIZE:?missing storage size}"
+: "${SULLA_FILES_STORAGE_SIZE:?missing Files storage size}"
 : "${SULLA_KUBECONTEXT:?missing Kubernetes context}"
 if [[ ${SULLA_INGRESS_MODE:-create} == create ]]; then : "${SULLA_HOSTNAME:?missing ingress hostname}"; fi
 
@@ -38,7 +41,7 @@ else
   "${KUBECTL[@]}" apply -f "$K8S_DIR/namespace.yaml"
 fi
 
-for owned_resource in "secret/$SECRET_NAME" pvc/postgres-data; do
+for owned_resource in "secret/$SECRET_NAME" pvc/postgres-data pvc/files-data configmap/sulla-gateway; do
   if "${KUBECTL[@]}" --namespace "$NAMESPACE" get "$owned_resource" >/dev/null 2>&1; then
     managed_by="$("${KUBECTL[@]}" --namespace "$NAMESPACE" get "$owned_resource" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}')"
     [[ "$managed_by" == sulla-server-installer ]] || fail "$NAMESPACE/$owned_resource already exists and is not owned by this installer; refusing to overwrite it"
@@ -49,18 +52,29 @@ done
   --from-literal=postgres-username=sulla --from-literal=postgres-password="$SULLA_POSTGRES_PASSWORD" \
   --from-literal=postgres-database=sulla \
   --from-literal=database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla" \
+  --from-literal=files-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_files" \
   --from-literal=jwt-secret="$SULLA_VAULT_JWT_SECRET" \
+  --from-literal=files-capability-signing-key="$SULLA_FILES_CAPABILITY_SIGNING_KEY" \
   --from-literal=bootstrap-token="$SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN" \
   --dry-run=client -o yaml | \
   sed '/^metadata:$/a\  labels:\n    app.kubernetes.io/managed-by: sulla-server-installer' | \
   "${KUBECTL[@]}" apply -f - >/dev/null
 
-rendered="$(mktemp)"; rendered_storage="$(mktemp)"; trap 'rm -f "$rendered" "$rendered_storage"' EXIT
+"${KUBECTL[@]}" --namespace "$NAMESPACE" create configmap sulla-gateway \
+  --from-file=nginx.conf="$SCRIPT_DIR/gateway/nginx.kubernetes.conf.template" \
+  --dry-run=client -o yaml | \
+  sed '/^metadata:$/a\  labels:\n    app.kubernetes.io/managed-by: sulla-server-installer' | \
+  "${KUBECTL[@]}" apply -f - >/dev/null
+
+rendered="$(mktemp)"; rendered_files="$(mktemp)"; rendered_storage="$(mktemp)"; trap 'rm -f "$rendered" "$rendered_files" "$rendered_storage"' EXIT
 sed "s|__SULLA_VAULT_IMAGE__|${SULLA_VAULT_IMAGE}|g" "$K8S_DIR/sulla-vault.yaml" >"$rendered"
-sed -e "s|__SULLA_STORAGE_CLASS__|${SULLA_STORAGE_CLASS}|g" -e "s|__SULLA_STORAGE_SIZE__|${SULLA_STORAGE_SIZE}|g" "$K8S_DIR/storage.yaml" >"$rendered_storage"
+sed "s|__SULLA_FILES_IMAGE__|${SULLA_FILES_IMAGE}|g" "$K8S_DIR/sulla-files.yaml" >"$rendered_files"
+sed -e "s|__SULLA_STORAGE_CLASS__|${SULLA_STORAGE_CLASS}|g" -e "s|__SULLA_STORAGE_SIZE__|${SULLA_STORAGE_SIZE}|g" -e "s|__SULLA_FILES_STORAGE_SIZE__|${SULLA_FILES_STORAGE_SIZE}|g" "$K8S_DIR/storage.yaml" >"$rendered_storage"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_storage"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$K8S_DIR/postgres.yaml"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered"
+"${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_files"
+"${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$K8S_DIR/sulla-gateway.yaml"
 if [[ ${SULLA_INGRESS_MODE:-create} == create ]]; then
   ingress="$(mktemp)"
   cat >"$ingress" <<EOF
@@ -78,12 +92,14 @@ EOF
   cat >>"$ingress" <<EOF
   rules:
     - host: ${SULLA_HOSTNAME}
-      http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: sulla-vault, port: {name: http}}}}]}
+      http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: sulla-gateway, port: {name: http}}}}]}
 EOF
   "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$ingress"; rm -f "$ingress"
 fi
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/postgres --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-vault --timeout=5m
+"${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-files --timeout=5m
+"${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-gateway --timeout=5m
 
 printf '\nSulla services are ready:\n'
 "${KUBECTL[@]}" --namespace "$NAMESPACE" get pods,pvc,services -o wide
