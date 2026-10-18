@@ -953,8 +953,11 @@ async function saveProfile() {
 
 function accountsErrorMessage(error: unknown): string {
   const message = String((error as Error)?.message ?? error);
-  if (message.includes('accounts_unavailable') || message.includes('authority_discovery_unavailable')) {
+  if (message.includes('accounts_unavailable')) {
     return 'The Accounts service is unavailable. Check that Sulla is running, then retry.';
+  }
+  if (message.includes('authority_discovery_unavailable')) {
+    return 'That server could not be reached. Check its address and availability, then retry.';
   }
   if (message.includes('invalid_authority_metadata')) {
     return 'That server did not publish valid Sulla authority details. Check the address or contact its administrator.';
