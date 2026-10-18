@@ -19,6 +19,8 @@ interface Keys { data: Buffer; dedup: Buffer }
 interface SourceCollection { id: string; encrypted_data_key: Envelope; dedup_key_ciphertext: Envelope; compatibility_state: string }
 interface ConvertedManifest { hash: string; ids: string[]; totalSize: number; plaintextHash: string; chunks: Map<string, { size: number; storedSize: number }> }
 
+export class LegacyImportContinuationRequiredError extends Error {}
+
 function validId(value:string, expression:RegExp, label:string):string {
   if (!expression.test(value)) throw new Error(`Invalid legacy ${ label } identity`);
   return value;
@@ -178,8 +180,12 @@ export class LegacyFilesImporter {
 
   async run(nativeMaster:Buffer, suppliedLegacyMasters:Buffer[]):Promise<{ collections: number; files: number; versions: number }> {
     if (nativeMaster.length !== 32 || suppliedLegacyMasters.some(key => key.length !== 32) || suppliedLegacyMasters.length === 0) throw new Error('Invalid Files import key material');
-    const completed = await this.completedResult();
-    if (completed) return completed;
+    try {
+      const completed = await this.completedResult();
+      if (completed) return completed;
+    } catch (error) {
+      if (!(error instanceof LegacyImportContinuationRequiredError)) throw error;
+    }
     const legacyMasters = suppliedLegacyMasters.map(value => Buffer.from(value));
     try {
       await this.stage(nativeMaster);
@@ -267,12 +273,25 @@ export class LegacyFilesImporter {
     try {
       await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
       if (!(await client.query("SELECT 1 FROM files_legacy_imports WHERE id=TRUE AND state='completed'")).rowCount) { await client.query('COMMIT'); return undefined }
-      const incomplete = await client.query(`SELECT 1 FROM collections c LEFT JOIN files_legacy_collection_map cm ON cm.source_collection_id=c.id
+      const incompleteIdentity = await client.query(`SELECT 1 FROM collections c LEFT JOIN files_legacy_collection_map cm ON cm.source_collection_id=c.id
         WHERE c.legacy_source=TRUE AND (cm.source_collection_id IS NULL OR cm.published_at IS NULL)
-        UNION ALL SELECT 1 FROM files f JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE LEFT JOIN files_legacy_file_map fm ON fm.source_file_id=f.id WHERE fm.source_file_id IS NULL
-        UNION ALL SELECT 1 FROM file_versions v JOIN files f ON f.id=v.file_id JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=v.id WHERE vm.source_version_id IS NULL
-        UNION ALL SELECT 1 FROM files f JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=f.current_version_id WHERE f.current_version_id IS NOT NULL AND vm.source_version_id IS NULL LIMIT 1`);
-      if (incomplete.rowCount) throw new Error('Completed legacy Files import source changed or mapping is incomplete');
+        UNION ALL SELECT 1 FROM files f JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE
+          LEFT JOIN files_legacy_file_map fm ON fm.source_file_id=f.id WHERE fm.source_file_id IS NULL LIMIT 1`);
+      if (incompleteIdentity.rowCount) throw new Error('Completed legacy Files import source identity changed or mapping is incomplete');
+      const versionDrift = (await client.query(`SELECT count(*)::int count,
+          COALESCE(bool_and(source.current_version_id=v.id AND (
+            (v.parent_version_id IS NULL AND shadow.current_version_id IS NULL) OR parent.shadow_version_id=shadow.current_version_id
+          ) AND (v.base_server_version_id IS NULL OR base.shadow_version_id IS NOT NULL)),FALSE) continuable
+        FROM file_versions v JOIN files source ON source.id=v.file_id JOIN collections c ON c.id=source.collection_id AND c.legacy_source=TRUE
+        JOIN files_legacy_file_map fm ON fm.source_file_id=source.id JOIN files shadow ON shadow.id=fm.shadow_file_id
+        LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=v.id
+        LEFT JOIN files_legacy_version_map parent ON parent.source_version_id=v.parent_version_id
+        LEFT JOIN files_legacy_version_map base ON base.source_version_id=v.base_server_version_id
+        WHERE vm.source_version_id IS NULL`)).rows[0];
+      if (Number(versionDrift.count) > 0) {
+        if (versionDrift.continuable) throw new LegacyImportContinuationRequiredError('Completed legacy Files import has a safe linear version continuation');
+        throw new Error('Completed legacy Files import version history changed or diverged');
+      }
       const counts = (await client.query(`SELECT
         (SELECT count(*)::int FROM files_legacy_collection_map cm JOIN collections c ON c.id=cm.source_collection_id AND c.legacy_source=TRUE) collections,
         (SELECT count(*)::int FROM files_legacy_file_map fm JOIN files f ON f.id=fm.source_file_id JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE) files,
@@ -295,7 +314,11 @@ export class LegacyFilesImporter {
       const collections = (await client.query<SourceCollection>('SELECT id::text,encrypted_data_key,dedup_key_ciphertext,compatibility_state FROM collections WHERE legacy_source=TRUE ORDER BY id FOR UPDATE')).rows;
       if (!collections.length) throw new Error('No legacy Files collections require import');
       await client.query(`INSERT INTO files_protected_files(file_id) SELECT f.id FROM files f JOIN collections c ON c.id=f.collection_id WHERE c.legacy_source=TRUE ON CONFLICT DO NOTHING`);
-      await client.query("INSERT INTO files_legacy_imports(id,state) VALUES(TRUE,'staging') ON CONFLICT(id) DO UPDATE SET state=CASE WHEN files_legacy_imports.state='completed' THEN files_legacy_imports.state ELSE 'staging' END");
+      // A safe post-receipt continuation must revoke the completed receipt
+      // before its identity-map changes commit. A crash then re-enters the
+      // normal secure-import path instead of accepting partially published
+      // continuation mappings as complete.
+      await client.query("INSERT INTO files_legacy_imports(id,state) VALUES(TRUE,'staging') ON CONFLICT(id) DO UPDATE SET state='staging',completed_at=NULL");
       for (const source of collections) {
         const mapping = (await client.query('SELECT * FROM files_legacy_collection_map WHERE source_collection_id=$1', [source.id])).rows[0];
         if (!mapping) {
