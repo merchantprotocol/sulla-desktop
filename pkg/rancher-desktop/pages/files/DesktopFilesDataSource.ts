@@ -38,6 +38,19 @@ export class DesktopFilesDataSource implements FilesDataSource {
   private capabilitiesGeneration = 0;
   private capabilitiesListeners = new Set<() => void>();
 
+  private resetRemoteCapabilities():void {
+    Object.assign(this.capabilities, {
+      orgSharing:         false,
+      publicLinks:        false,
+      onlineOnly:         false,
+      keepOnComputer:     false,
+      authenticatedRemote:false,
+      verifiedRecovery:   false,
+    });
+    this.onlineOnlyReason = '';
+    this.capabilitiesListeners.forEach(listener => listener());
+  }
+
   private refreshCapabilities(accessRole:string, generation:number):void {
     void (ipcRenderer.invoke('files-ui:capabilities') as Promise<RemoteCapabilities>)
       .then((capabilities) => {
@@ -65,6 +78,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
   async load():Promise<FilesSnapshot> {
     const capabilitiesGeneration = ++this.capabilitiesGeneration;
+    this.resetRemoteCapabilities();
     const [collections, status] = await Promise.all([
       ipcRenderer.invoke('sulla-files:collections') as Promise<FilesApiCollection[]>,
       ipcRenderer.invoke('files-ui:status'),
@@ -76,7 +90,13 @@ export class DesktopFilesDataSource implements FilesDataSource {
     const [active, trash] = await Promise.all([
       ipcRenderer.invoke('sulla-files:list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
       ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
-    ]);
+    ]).catch((error) => {
+      if (capabilitiesGeneration === this.capabilitiesGeneration) {
+        this.capabilitiesGeneration++;
+        this.resetRemoteCapabilities();
+      }
+      throw error;
+    });
 
     this.files = [...active, ...trash].map(file => {
       const item = filesItem(file);
