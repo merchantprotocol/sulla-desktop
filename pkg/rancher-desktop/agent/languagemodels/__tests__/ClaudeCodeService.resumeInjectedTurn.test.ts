@@ -274,7 +274,7 @@ describe('CLI fault recovery lifecycle', () => {
 
   it('does not retry permanent provider failures and preserves normal fallback classification', async() => {
     let attempts = 0;
-    const fault = new Error('invalid api key');
+    const fault = new CliFaultError('process_exit', 'invalid api key', undefined, false, false);
     const run = runWithCliFaultRecovery('Synthetic CLI', () => {
       attempts += 1;
       return Promise.reject(fault);
