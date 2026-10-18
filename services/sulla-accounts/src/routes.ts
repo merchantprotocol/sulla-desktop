@@ -58,6 +58,7 @@ function publicAuthority(authority: Record<string, unknown>): Record<string, unk
     resourceAudiences: authority.resource_audiences,
     scopes: authority.scopes,
     membershipEndpoint: authority.membership_endpoint ?? null,
+    membershipAudience: authority.membership_audience ?? null,
     subject: authority.subject ?? null,
     connectedAt: authority.connected_at ?? null,
     createdAt: authority.created_at,
