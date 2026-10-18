@@ -10,6 +10,7 @@ const MIGRATIONS = resolve(dirname(fileURLToPath(import.meta.url)), '../../migra
 const ROW_BATCH = 256;
 const MAX_ROW_BYTES = 16 * 1024 * 1024;
 export const EPHEMERAL_TABLE_DATA:Record<string, string> = {
+  file_share_chunk_uploads:   'Short-lived upload authorizations are never restored because replay would revive a capability in a different runtime.',
   file_upload_intents:        'Incomplete unpublished uploads are not Files state; only chunks committed to the chunks table are included.',
   files_restore_publications: 'Restore publication markers are local crash-recovery state and are regenerated when a snapshot is published.',
   generated_previews:         'Generated thumbnails are a disposable cache and are regenerated from authenticated file content.',

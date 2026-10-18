@@ -14,19 +14,14 @@ CREATE INDEX IF NOT EXISTS idx_file_shares_principal ON file_shares(principal_ty
 CREATE INDEX IF NOT EXISTS idx_file_shares_file ON file_shares(file_id);
 
 CREATE TABLE IF NOT EXISTS file_share_chunk_uploads (
-  file_id UUID NOT NULL,
-  target_collection_id UUID NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
-  file_path TEXT NOT NULL,
+  file_id UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   version_id UUID NOT NULL,
   chunk_collection_id UUID NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
   chunk_id TEXT NOT NULL,
   principal_id TEXT NOT NULL,
-  actor_scope TEXT NOT NULL,
-  plain_size INTEGER NOT NULL CHECK(plain_size>=0),
-  uploaded_at TIMESTAMPTZ,
   expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '30 minutes',
-  PRIMARY KEY(version_id,chunk_id,principal_id,actor_scope)
+  PRIMARY KEY(version_id,chunk_id,principal_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_file_share_chunk_uploads_lookup
-  ON file_share_chunk_uploads(chunk_collection_id,chunk_id,principal_id,actor_scope,expires_at);
+  ON file_share_chunk_uploads(chunk_collection_id,chunk_id,principal_id,expires_at);
