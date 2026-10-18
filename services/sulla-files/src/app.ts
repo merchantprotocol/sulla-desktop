@@ -241,13 +241,14 @@ export function createApp(
     try {
       await client.query('BEGIN');
       const id = randomUUID(); const kind = actor.jobId ? 'scratch' : 'knowledge';
-      const wrapped = await config.keyring!.create(id, client);
       const row = (await client.query(`INSERT INTO collections
         (id,org_id,owner_user_id,agent_run_id,thread_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy)
         VALUES($1,$2,$3,$4,$5,$6,$7,'desktop-only',$8,$9,$10) RETURNING *`,
-      [id, actor.orgId ?? null, actor.userId, actor.jobId ?? null, actor.threadId ?? null, actor.jobId ? `Scratch ${ actor.jobId }` : 'Knowledge', kind, wrapped.data, wrapped.dedup, actor.jobId ? { ttlDaysAfterRun: 14 } : {}])).rows[0];
+      [id, actor.orgId ?? null, actor.userId, actor.jobId ?? null, actor.threadId ?? null, actor.jobId ? `Scratch ${ actor.jobId }` : 'Knowledge', kind, {}, {}, actor.jobId ? { ttlDaysAfterRun: 14 } : {}])).rows[0];
+      const wrapped = await config.keyring!.create(id, client);
+      await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
       await client.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')", [id, actor.userId]);
-      await client.query('COMMIT'); return row;
+      await client.query('COMMIT'); return { ...row, encrypted_data_key: wrapped.data, dedup_key_ciphertext: wrapped.dedup };
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
@@ -352,10 +353,13 @@ export function createApp(
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${ orgId }:${ actor.userId }:default-files`]);
       let collection = (await client.query("SELECT * FROM collections WHERE org_id=$1 AND owner_user_id=$2 AND is_default=TRUE AND published=TRUE AND legacy_source=FALSE", [orgId, actor.userId])).rows[0];
       if (!collection) {
-        const id = randomUUID(); const wrapped = await config.keyring!.create(id, client);
+        const id = randomUUID();
         collection = (await client.query(`INSERT INTO collections
           (id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,is_default)
-          VALUES($1,$2,$3,'Files','knowledge','synced',$4,$5,$6,TRUE) RETURNING *`, [id, orgId, actor.userId, wrapped.data, wrapped.dedup, { trashDays: 90 }])).rows[0];
+          VALUES($1,$2,$3,'Files','knowledge','synced',$4,$5,$6,TRUE) RETURNING *`, [id, orgId, actor.userId, {}, {}, { trashDays: 90 }])).rows[0];
+        const wrapped = await config.keyring!.create(id, client);
+        await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
+        collection = { ...collection, encrypted_data_key: wrapped.data, dedup_key_ciphertext: wrapped.dedup };
         await client.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')", [id, actor.userId]);
       }
       await client.query('COMMIT');
