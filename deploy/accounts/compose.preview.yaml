@@ -1,0 +1,134 @@
+services:
+  postgres:
+    image: postgres:16.14-alpine
+    environment:
+      POSTGRES_USER: sulla
+      POSTGRES_PASSWORD: preview-only-change-me
+      POSTGRES_DB: postgres
+    volumes:
+      - preview-postgres:/var/lib/postgresql/data
+      - ./init-preview-databases.sql:/docker-entrypoint-initdb.d/001-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sulla -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  accounts-local:
+    image: sulla-accounts:preview
+    build:
+      context: ../..
+      dockerfile: services/sulla-accounts/Dockerfile
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      SULLA_ACCOUNTS_MODE: desktop
+      SULLA_ACCOUNTS_PORT: 3020
+      SULLA_ACCOUNTS_DATABASE_URL: postgresql://sulla:preview-only-change-me@postgres:5432/sulla_accounts_local
+      SULLA_ACCOUNTS_PUBLIC_URL: https://accounts.localhost:8787
+      SULLA_ACCOUNTS_BOOTSTRAP_SECRET_FILE: /run/sulla-accounts/bootstrap.secret
+      SULLA_ACCOUNTS_SESSION_SECRET_FILE: /run/sulla-accounts/session.secret
+      SULLA_ACCOUNTS_ENCRYPTION_KEY_FILE: /run/sulla-accounts/encryption.key
+      SULLA_ACCOUNTS_TRUSTED_PROXY: "1"
+      NODE_EXTRA_CA_CERTS: /run/sulla-tls/ca.crt
+    volumes:
+      - ./preview-secrets/local:/run/sulla-accounts:ro
+      - ./preview-secrets/tls:/run/sulla-tls:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "2", "http://127.0.0.1:3020/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  accounts-authority-a:
+    image: sulla-accounts:preview
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      SULLA_ACCOUNTS_MODE: server
+      SULLA_ACCOUNTS_PORT: 3020
+      SULLA_ACCOUNTS_DATABASE_URL: postgresql://sulla:preview-only-change-me@postgres:5432/sulla_accounts_a
+      SULLA_ACCOUNTS_PUBLIC_URL: https://authority-a.localhost:8787
+      SULLA_ACCOUNTS_KEYCLOAK_ISSUER: https://authority-a.localhost:8787/auth/realms/sulla
+      SULLA_ACCOUNTS_KEYCLOAK_AUDIENCE: preview-a
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL: jdbc:postgresql://postgres:5432/keycloak_a
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_USERNAME: sulla
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_PASSWORD: preview-only-change-me
+      SULLA_ACCOUNTS_BOOTSTRAP_SECRET_FILE: /run/sulla-accounts/bootstrap.secret
+      SULLA_ACCOUNTS_SESSION_SECRET_FILE: /run/sulla-accounts/session.secret
+      SULLA_ACCOUNTS_ENCRYPTION_KEY_FILE: /run/sulla-accounts/encryption.key
+      SULLA_ACCOUNTS_ADMIN_SECRET_FILE: /run/sulla-accounts/admin.secret
+      SULLA_ACCOUNTS_TRUSTED_PROXY: "1"
+      NODE_EXTRA_CA_CERTS: /run/sulla-tls/ca.crt
+      KEYCLOAK_ADMIN: preview-admin
+      KEYCLOAK_ADMIN_PASSWORD: preview-only-change-me
+    volumes:
+      - ./preview-secrets/authority-a:/run/sulla-accounts:ro
+      - ./preview-secrets/tls:/run/sulla-tls:ro
+      - preview-keycloak-a:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error --max-time 2 http://127.0.0.1:3020/readyz >/dev/null && curl --fail --silent --show-error --max-time 2 http://127.0.0.1:9000/health/ready >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  accounts-authority-b:
+    image: sulla-accounts:preview
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      SULLA_ACCOUNTS_MODE: server
+      SULLA_ACCOUNTS_PORT: 3020
+      SULLA_ACCOUNTS_DATABASE_URL: postgresql://sulla:preview-only-change-me@postgres:5432/sulla_accounts_b
+      SULLA_ACCOUNTS_PUBLIC_URL: https://authority-b.localhost:8787
+      SULLA_ACCOUNTS_KEYCLOAK_ISSUER: https://authority-b.localhost:8787/auth/realms/sulla
+      SULLA_ACCOUNTS_KEYCLOAK_AUDIENCE: preview-b
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL: jdbc:postgresql://postgres:5432/keycloak_b
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_USERNAME: sulla
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_PASSWORD: preview-only-change-me
+      SULLA_ACCOUNTS_BOOTSTRAP_SECRET_FILE: /run/sulla-accounts/bootstrap.secret
+      SULLA_ACCOUNTS_SESSION_SECRET_FILE: /run/sulla-accounts/session.secret
+      SULLA_ACCOUNTS_ENCRYPTION_KEY_FILE: /run/sulla-accounts/encryption.key
+      SULLA_ACCOUNTS_ADMIN_SECRET_FILE: /run/sulla-accounts/admin.secret
+      SULLA_ACCOUNTS_TRUSTED_PROXY: "1"
+      NODE_EXTRA_CA_CERTS: /run/sulla-tls/ca.crt
+      KEYCLOAK_ADMIN: preview-admin
+      KEYCLOAK_ADMIN_PASSWORD: preview-only-change-me
+    volumes:
+      - ./preview-secrets/authority-b:/run/sulla-accounts:ro
+      - ./preview-secrets/tls:/run/sulla-tls:ro
+      - preview-keycloak-b:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error --max-time 2 http://127.0.0.1:3020/readyz >/dev/null && curl --fail --silent --show-error --max-time 2 http://127.0.0.1:9000/health/ready >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  gateway:
+    image: nginx:1.29-alpine
+    depends_on:
+      accounts-local: { condition: service_started }
+      accounts-authority-a: { condition: service_started }
+      accounts-authority-b: { condition: service_started }
+    ports: ["127.0.0.1:8787:8787"]
+    entrypoint: ["sh", "/etc/sulla/entrypoint.sh"]
+    environment:
+      SULLA_TLS_CERT_CONTAINER_PATH: /run/sulla-tls/tls.crt
+      SULLA_TLS_KEY_CONTAINER_PATH: /run/sulla-tls/tls.key
+    volumes:
+      - ./nginx.preview.conf.template:/etc/sulla/nginx.conf.template:ro
+      - ./gateway-entrypoint.sh:/etc/sulla/entrypoint.sh:ro
+      - ./preview-secrets/tls:/run/sulla-tls:ro
+    networks:
+      default:
+        aliases:
+          - accounts.localhost
+          - authority-a.localhost
+          - authority-b.localhost
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://127.0.0.1:8787/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  preview-postgres:
+  preview-keycloak-a:
+  preview-keycloak-b:
