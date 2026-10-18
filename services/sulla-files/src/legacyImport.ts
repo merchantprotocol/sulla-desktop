@@ -111,6 +111,10 @@ class LegacyImportTrace {
     this.write('legacy-import-source-key', details);
   }
 
+  versionConflict(details: Record<string, boolean>): void {
+    this.write('legacy-import-version-conflict', details);
+  }
+
   failed(error:unknown):void {
     const name = safeErrorProperty(error, 'name');
     const message = safeErrorProperty(error, 'message');
@@ -122,7 +126,7 @@ class LegacyImportTrace {
     });
   }
 
-  private write(event:'legacy-import-stage' | 'legacy-import-source-key' | 'legacy-import-completed' | 'legacy-import-failed', details:Record<string, unknown> = {}):void {
+  private write(event:'legacy-import-stage' | 'legacy-import-source-key' | 'legacy-import-version-conflict' | 'legacy-import-completed' | 'legacy-import-failed', details:Record<string, unknown> = {}):void {
     try {
       const output = JSON.stringify({ source: 'sulla-files', event, correlationId: this.correlationId, sequence: ++this.sequence, phase: this.phase, ...details });
       if (event === 'legacy-import-failed') console.error(output); else console.info(output);
@@ -547,16 +551,40 @@ export class LegacyFilesImporter {
       await client.query('UPDATE file_versions SET parent_version_id=$2,base_server_version_id=$3 WHERE id=$1', [versionMap.get(version.id), parent, base]);
     }
     trace.mark('version-provenance-verification');
-    const versionConflict = await client.query(`SELECT 1 FROM file_versions source JOIN files_legacy_version_map vm ON vm.source_version_id=source.id
+    const versionConflict = (await client.query(`SELECT
+        COALESCE(bool_or(shadow.file_id IS DISTINCT FROM fm.shadow_file_id),FALSE) file_mapping,
+        COALESCE(bool_or(shadow.chunk_collection_id IS DISTINCT FROM cm.shadow_collection_id),FALSE) collection_mapping,
+        COALESCE(bool_or(shadow.manifest_hash IS DISTINCT FROM vm.shadow_manifest_hash),FALSE) manifest_mapping,
+        COALESCE(bool_or(shadow.parent_version_id IS DISTINCT FROM (SELECT p.shadow_version_id FROM files_legacy_version_map p WHERE p.source_version_id=source.parent_version_id)),FALSE) parent_mapping,
+        COALESCE(bool_or(shadow.base_server_version_id IS DISTINCT FROM (SELECT b.shadow_version_id FROM files_legacy_version_map b WHERE b.source_version_id=source.base_server_version_id)),FALSE) base_mapping,
+        COALESCE(bool_or(shadow.size IS DISTINCT FROM source.size),FALSE) size,
+        COALESCE(bool_or(shadow.deleted IS DISTINCT FROM source.deleted),FALSE) deleted,
+        COALESCE(bool_or(shadow.created_by_type IS DISTINCT FROM source.created_by_type),FALSE) creator_type,
+        COALESCE(bool_or(shadow.created_by_id IS DISTINCT FROM source.created_by_id),FALSE) creator_id,
+        COALESCE(bool_or(shadow.created_at IS DISTINCT FROM source.created_at),FALSE) created_at,
+        COALESCE(bool_or(shadow.message IS DISTINCT FROM source.message),FALSE) message,
+        COALESCE(bool_or(shadow.device_id IS DISTINCT FROM source.device_id),FALSE) device_id
+      FROM file_versions source JOIN files_legacy_version_map vm ON vm.source_version_id=source.id
         JOIN file_versions shadow ON shadow.id=vm.shadow_version_id JOIN files_legacy_file_map fm ON fm.source_file_id=source.file_id
-        JOIN files_legacy_collection_map cm ON cm.source_collection_id=source.chunk_collection_id
-        WHERE shadow.file_id IS DISTINCT FROM fm.shadow_file_id OR shadow.chunk_collection_id IS DISTINCT FROM cm.shadow_collection_id
-          OR shadow.manifest_hash IS DISTINCT FROM vm.shadow_manifest_hash
-          OR shadow.parent_version_id IS DISTINCT FROM (SELECT p.shadow_version_id FROM files_legacy_version_map p WHERE p.source_version_id=source.parent_version_id)
-          OR shadow.base_server_version_id IS DISTINCT FROM (SELECT b.shadow_version_id FROM files_legacy_version_map b WHERE b.source_version_id=source.base_server_version_id)
-          OR shadow.size IS DISTINCT FROM source.size OR shadow.deleted IS DISTINCT FROM source.deleted OR shadow.created_by_type IS DISTINCT FROM source.created_by_type
-          OR shadow.created_by_id IS DISTINCT FROM source.created_by_id OR shadow.created_at IS DISTINCT FROM source.created_at OR shadow.message IS DISTINCT FROM source.message OR shadow.device_id IS DISTINCT FROM source.device_id LIMIT 1`);
-    if (versionConflict.rowCount) throw new Error('Legacy Files version conflict does not match source provenance');
+        JOIN files_legacy_collection_map cm ON cm.source_collection_id=source.chunk_collection_id`)).rows[0];
+    const versionConflicts = {
+      fileMapping: Boolean(versionConflict.file_mapping),
+      collectionMapping: Boolean(versionConflict.collection_mapping),
+      manifestMapping: Boolean(versionConflict.manifest_mapping),
+      parentMapping: Boolean(versionConflict.parent_mapping),
+      baseMapping: Boolean(versionConflict.base_mapping),
+      size: Boolean(versionConflict.size),
+      deleted: Boolean(versionConflict.deleted),
+      creatorType: Boolean(versionConflict.creator_type),
+      creatorId: Boolean(versionConflict.creator_id),
+      createdAt: Boolean(versionConflict.created_at),
+      message: Boolean(versionConflict.message),
+      deviceId: Boolean(versionConflict.device_id),
+    };
+    if (Object.values(versionConflicts).some(Boolean)) {
+      trace.versionConflict(versionConflicts);
+      throw new Error('Legacy Files version conflict does not match source provenance');
+    }
     trace.mark('current-version-publication');
     await client.query(`UPDATE files shadow SET current_version_id=vm.shadow_version_id FROM files source
         JOIN files_legacy_file_map fm ON fm.source_file_id=source.id LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=source.current_version_id
