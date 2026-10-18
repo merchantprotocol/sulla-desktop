@@ -1,4 +1,3 @@
-import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 import { createHash, randomUUID } from 'node:crypto';
 
 import express from 'express';
@@ -6,6 +5,8 @@ import express from 'express';
 import { resolveCollectionGrants, ROLE_LEVEL, searchableScopes } from './acl.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, encryptChunk } from './crypto.js';
+import { runLegacyPreflight } from './legacyPreflight.js';
+import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 import { loadFileContent, thumbnail } from './preview.js';
 import { SharesService } from './shares.js';
 import { Store } from './store.js';
@@ -48,6 +49,10 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
       if (!config.keyring || typeof request.body?.masterKey !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(request.body.masterKey)) return response.status(400).json({ error: 'Invalid Files master key' });
       key = Buffer.from(request.body.masterKey, 'base64'); delete request.body.masterKey;
       await serial(async() => {
+        if (config.filesRoot) {
+          config.legacyPreflight = await runLegacyPreflight(db, config.filesRoot, { caseInsensitive: config.caseInsensitiveRoot });
+          if (config.legacyPreflight.state === 'secure-import-required') throw new Error('Legacy Files secure import is required');
+        }
         await config.keyring!.unlock(key!, config.capabilitySigningKey);
         try { await onUnlock?.(); ready = true } catch (error) { ready = false; try { await onLock?.() } finally { config.keyring!.close() } throw error }
       });
@@ -143,7 +148,7 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
-  app.get('/healthz', (_request, response) => response.json({ ok: true, mode: config.mode, locked: !ready }));
+  app.get('/healthz', (_request, response) => response.json({ ok: true, mode: config.mode, locked: !ready, legacyImport: config.legacyPreflight }));
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
   app.get('/v1/local/recent', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.recent(Number(request.query.limit ?? 4), typeof request.query.path === 'string' ? request.query.path : undefined)) } catch (error) { next(error) } });
   app.post('/v1/local/rescan', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.rescan().catch(error => console.error('[SullaFiles] rescan failed', error)); response.status(202).json({ accepted: true }) });

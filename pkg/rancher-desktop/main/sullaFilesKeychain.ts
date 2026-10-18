@@ -13,6 +13,7 @@ export interface FilesSafeStorage {
 /** Never retains a plaintext key after the authenticated bootstrap completes. */
 export class SullaFilesKeychain {
   private opening?: Promise<void>;
+  private archiving?: Promise<void>;
 
   constructor(
     private readonly keyPath: string,
@@ -27,7 +28,24 @@ export class SullaFilesKeychain {
   }
 
   async settled(): Promise<void> {
-    await this.opening?.catch(() => undefined);
+    await Promise.all([this.opening?.catch(() => undefined), this.archiving?.catch(() => undefined)]);
+  }
+
+  /** Run only after the service confirms legacy classification has completed. */
+  archiveLegacyKeys():Promise<void> {
+    if (this.legacyKeys.length === 0) return Promise.resolve();
+    this.archiving ??= this.archiveAllLegacyKeys().finally(() => { this.archiving = undefined });
+    return this.archiving;
+  }
+
+  private async archiveAllLegacyKeys():Promise<void> {
+    try {
+      const storage = await this.storage();
+      if (!storage.isEncryptionAvailable() || storage.getSelectedStorageBackend?.() === 'basic_text') throw new Error('Secure OS key storage is unavailable');
+      for (const legacy of this.legacyKeys) await this.archiveLegacyKey(storage, legacy);
+    } catch {
+      throw new Error('Files could not secure legacy key material using the OS keychain');
+    }
   }
 
   /** Preserve old key material under OS protection before retiring plaintext. */
@@ -59,8 +77,7 @@ export class SullaFilesKeychain {
           await archive.close();
         }
       } catch (error) {
-        // An interrupted previous migration is recoverable only if the existing
-        // archive decrypts to exactly the same key. Never overwrite a conflict.
+        // Resume only when the durable archive decrypts to this exact source.
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       }
       const archive = await fs.promises.open(legacy.archivePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -73,8 +90,6 @@ export class SullaFilesKeychain {
         await archive.close();
       }
       if (verified.length !== 32 || !crypto.timingSafeEqual(original, verified)) throw new Error('Legacy archive conflict');
-      // Persist the directory entry as well as the archive contents before the
-      // plaintext is unlinked. Unsupported durability primitives fail closed.
       const directory = await fs.promises.open(path.dirname(legacy.archivePath), fs.constants.O_RDONLY);
       try { await directory.sync() } finally { await directory.close() }
       const latest = await fs.promises.lstat(legacy.sourcePath);
@@ -99,7 +114,6 @@ export class SullaFilesKeychain {
         throw new Error('Secure OS key storage is unavailable');
       }
       await fs.promises.mkdir(path.dirname(this.keyPath), { recursive: true, mode: 0o700 });
-      for (const legacy of this.legacyKeys) await this.archiveLegacyKey(storage, legacy);
       try {
         const file = await fs.promises.open(this.keyPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
         try {

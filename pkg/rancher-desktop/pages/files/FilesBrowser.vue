@@ -249,7 +249,7 @@
               type="button"
               @click="dataSource.openFolder()"
             >
-              Open ~/sulla/Files
+              Open ~/sulla/files
             </button>
           </div>
         </div>
@@ -597,7 +597,7 @@
           class="detail-body"
         >
           <dl>
-            <dt>Type</dt><dd>{{ selected.mime }}</dd><dt>Size</dt><dd>{{ formatBytes(selected.size) }}</dd><dt>Location</dt><dd>~/sulla/Files/{{ selected.path }}</dd><dt>Modified</dt><dd>{{ formatDate(selected.updatedAt, true) }}</dd><dt>Sync</dt><dd>
+            <dt>Type</dt><dd>{{ selected.mime }}</dd><dt>Size</dt><dd>{{ formatBytes(selected.size) }}</dd><dt>Location</dt><dd>~/sulla/files/{{ selected.path }}</dd><dt>Modified</dt><dd>{{ formatDate(selected.updatedAt, true) }}</dd><dt>Sync</dt><dd>
               <span class="status-inline"><span
                 class="sync-dot tiny"
                 :class="syncState"
@@ -778,6 +778,7 @@ const brandLine = computed(() => `${ snapshot.value?.collection.accountName || '
 const syncLine = computed(() => {
   const status = snapshot.value?.status;
   if (!status) return 'Checking sync…';
+  if (status.legacyImport?.state === 'secure-import-required') return status.legacyImport.action || 'Legacy Files data is contained pending secure import';
   if (status.state === 'syncing') return `Syncing ${ status.pendingFiles || '' } file${ status.pendingFiles === 1 ? '' : 's' }`.replace('  ', ' ');
   if (status.state === 'paused') return 'Sync paused · click to resume';
   if (status.state === 'conflict') return 'A file needs a decision';
@@ -809,7 +810,7 @@ const sections = computed(() => [
   { id: 'trash' as Section, label: 'Trash', icon: icons.trash, count: 0, warn: false },
 ]);
 const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
-const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. They stay in ~/sulla/Files.', shared: 'Folders teammates share with you appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: `Deleted files stay recoverable for ${ retentionDays.value } days.` }[section.value]));
+const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. They stay in ~/sulla/files.', shared: 'Folders teammates share with you appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: `Deleted files stay recoverable for ${ retentionDays.value } days.` }[section.value]));
 const dropCopy = computed(() => snapshot.value?.status.serverConfigured ? 'Or paste a screenshot. Files sync to the server and are versioned on every change.' : 'Or paste a screenshot. Files stay on this Mac and are versioned on every change.');
 const filters = computed(() => [
   { key: 'type' as const, label: 'Type', any: 'Any', options: [...new Set(activeFiles.value.map(file => kindLabel(file.mime, file.path)))].sort() },

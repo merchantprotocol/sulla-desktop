@@ -171,7 +171,7 @@ export function initSullaFilesIpc():void {
     const refs:FileReference[] = [];
     for (const selected of picked.filePaths) {
       const [realRoot, resolved] = await Promise.all([fs.promises.realpath(root), fs.promises.realpath(selected)]);
-      if (!resolved.startsWith(`${ realRoot }${ path.sep }`)) throw new Error('Choose a file inside ~/sulla/Files');
+      if (!resolved.startsWith(`${ realRoot }${ path.sep }`)) throw new Error('Choose a file inside ~/sulla/files');
       if (!(await fs.promises.stat(resolved)).isFile()) throw new Error('Choose a regular file from Sulla Files.');
       const relativePath = path.relative(realRoot, resolved).split(path.sep).join('/');
       const found = await findReferenceByPath(relativePath, watchedCollection.id);
@@ -205,7 +205,7 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:open-folder', () => getSullaFilesWatcher().openFolder());
   ipcMain.handle('files-ui:create-folder', async(_event, relativePath:string) => {
     const root = getSullaFilesWatcher().folder; const target = path.resolve(root, relativePath);
-    if (!target.startsWith(`${ root }${ path.sep }`)) throw new Error('Folder path escapes ~/sulla/Files');
+    if (!target.startsWith(`${ root }${ path.sep }`)) throw new Error('Folder path escapes ~/sulla/files');
     await fs.promises.mkdir(target, { recursive: false });
     await getSullaFilesWatcher().notifyRescan();
   });
