@@ -347,7 +347,7 @@
               v-if="!accountsLoading"
               type="button"
               class="account-inline-btn"
-              :disabled="accountsPending"
+              :disabled="Boolean(accountsPending)"
               @click="refreshAccounts"
             >
               Refresh
@@ -367,7 +367,7 @@
             <button
               type="button"
               class="account-action-btn"
-              :disabled="accountsPending"
+              :disabled="Boolean(accountsPending)"
               @click="refreshAccounts"
             >
               Retry Accounts service
@@ -389,14 +389,14 @@
                   maxlength="120"
                   placeholder="Your name"
                   class="account-input"
-                  :disabled="accountsPending"
+                  :disabled="Boolean(accountsPending)"
                 >
               </div>
               <div class="account-btn-row">
                 <button
                   type="button"
                   class="account-save-btn"
-                  :disabled="accountsPending || !accountsDisplayName.trim() || accountsDisplayName.trim() === accountsProfile?.displayName"
+                  :disabled="Boolean(accountsPending) || !accountsDisplayName.trim() || accountsDisplayName.trim() === accountsProfile?.displayName"
                   @click="saveAccountsProfile"
                 >
                   {{ accountsPending === 'profile' ? 'Saving…' : 'Save local profile' }}
@@ -424,7 +424,7 @@
                   type="url"
                   placeholder="https://sulla.example.com"
                   class="account-input"
-                  :disabled="accountsPending || Boolean(discoveredAuthority)"
+                  :disabled="Boolean(accountsPending) || Boolean(discoveredAuthority)"
                   @keydown.enter.prevent="discoverAuthority"
                 >
               </div>
@@ -443,7 +443,7 @@
                   <button
                     type="button"
                     class="account-save-btn"
-                    :disabled="accountsPending"
+                    :disabled="Boolean(accountsPending)"
                     @click="enrollAuthority"
                   >
                     {{ accountsPending === 'enroll' ? 'Connecting…' : 'Connect server' }}
@@ -451,7 +451,7 @@
                   <button
                     type="button"
                     class="account-action-btn"
-                    :disabled="accountsPending"
+                    :disabled="Boolean(accountsPending)"
                     @click="cancelAuthority"
                   >
                     Cancel
@@ -462,7 +462,7 @@
                 v-else
                 type="button"
                 class="account-action-btn"
-                :disabled="accountsPending || !authorityUrl.trim()"
+                :disabled="Boolean(accountsPending) || !authorityUrl.trim()"
                 @click="discoverAuthority"
               >
                 {{ accountsPending === 'discover' ? 'Checking…' : 'Check server' }}
@@ -494,7 +494,7 @@
                   <button
                     type="button"
                     class="account-action-btn account-danger-btn"
-                    :disabled="accountsPending"
+                    :disabled="Boolean(accountsPending)"
                     @click="disconnectAccount(connection.id)"
                   >
                     {{ accountsPending === `disconnect:${connection.id}` ? 'Disconnecting…' : 'Disconnect' }}
@@ -508,11 +508,8 @@
                   <select
                     v-model="selectedAudience[connection.id]"
                     class="account-input"
-                    :disabled="accountsPending"
+                    :disabled="Boolean(accountsPending)"
                   >
-                    <option value="">
-                      Account identity only
-                    </option>
                     <option
                       v-for="audience in connection.resourceAudiences"
                       :key="audience"
@@ -525,7 +522,7 @@
                 <button
                   type="button"
                   class="account-save-btn"
-                  :disabled="accountsPending"
+                  :disabled="Boolean(accountsPending) || !selectedAudience[connection.id]"
                   @click="authorizeAccount(connection.id)"
                 >
                   {{ accountsPending === `authorize:${connection.id}` ? 'Opening sign-in…' : (connection.subject ? 'Authorize again' : 'Authorize') }}
@@ -995,7 +992,7 @@ async function refreshAccounts() {
     accountsConnections.value = connectionResult.connections;
     accountsMemberships.value = memberships;
     for (const connection of connectionResult.connections) {
-      selectedAudience.value[connection.id] ??= '';
+      selectedAudience.value[connection.id] ??= connection.resourceAudiences[0] ?? '';
     }
   } catch (error) {
     accountsError.value = accountsErrorMessage(error);
@@ -1083,11 +1080,15 @@ async function disconnectAccount(id: string) {
 }
 
 async function authorizeAccount(id: string) {
+  const resourceAudience = selectedAudience.value[id];
+  if (!resourceAudience) {
+    accountsError.value = 'This server does not offer a service that Sulla can authorize.';
+    return;
+  }
   accountsPending.value = `authorize:${ id }`;
   accountsError.value = '';
   authorizationNotice.value = '';
   try {
-    const resourceAudience = selectedAudience.value[id] || undefined;
     const result = await accountsRenderer.invoke<{ opened: boolean; expiresAt: string }>(
       'accounts:authorize',
       { id, resourceAudience },
