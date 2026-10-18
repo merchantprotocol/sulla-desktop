@@ -30,16 +30,19 @@ desktop mode.
 | --- | --- | --- |
 | `SULLA_ACCOUNTS_MODE` | no | `desktop` (default) or `server` |
 | `SULLA_ACCOUNTS_PORT` | no | Broker port; default `3020` |
-| `SULLA_ACCOUNTS_DATABASE_URL` | yes | PostgreSQL database owned by Accounts |
-| `SULLA_ACCOUNTS_BOOTSTRAP_SECRET_FILE` | yes | `0600` regular file used only to mint the first local owner session |
+| `SULLA_ACCOUNTS_DATABASE_URL_FILE` | yes | `0600` file containing the PostgreSQL URL for the Accounts-owned database; the URL is never accepted directly in the environment |
+| `SULLA_ACCOUNTS_BOOTSTRAP_SECRET_FILE` | desktop | `0600` regular file used only to mint the local Desktop owner session; forbidden and unread in server mode |
 | `SULLA_ACCOUNTS_SESSION_SECRET_FILE` | yes | `0600` file containing at least 32 bytes for short-lived broker JWTs |
 | `SULLA_ACCOUNTS_ENCRYPTION_KEY_FILE` | yes | `0600` file containing exactly 32 raw bytes or 64 hexadecimal characters for AES-256-GCM |
 | `SULLA_ACCOUNTS_PUBLIC_URL` | yes | Externally stable HTTPS broker URL used for OIDC redirects |
 | `SULLA_ACCOUNTS_ALLOWED_RETURN_ORIGINS` | no | Comma-separated exact HTTPS origins; loopback HTTP is allowed in desktop mode |
 | `SULLA_ACCOUNTS_ADMIN_SECRET_FILE` | server | Separate `0600` secret for private membership administration |
-| `SULLA_ACCOUNTS_SERVICE_TOKENS_FILE` | private API | `0600` JSON map of service ids to `{token, issuers, pathPrefixes, methods}` grants; methods are limited to `GET`/`POST` |
+| `SULLA_ACCOUNTS_SERVICE_TOKENS_FILE` | private API | `0600` JSON map of service ids to `{token, issuers, allowedAudiences, pathPrefixes, methods}` grants; methods are limited to `GET`/`POST` |
 | `SULLA_ACCOUNTS_KEYCLOAK_ISSUER` | server | Stable external issuer, normally `${PUBLIC_URL}/auth/realms/sulla`; never the internal port |
-| `SULLA_ACCOUNTS_KEYCLOAK_AUDIENCE` | server | Required audience for hosted bearer tokens |
+| `SULLA_ACCOUNTS_KEYCLOAK_NATIVE_CLIENT_ID` | server | Public PKCE client advertised to Desktop; stable value `sulla-desktop` |
+| `SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID` | server | Separate confidential hosted web client; stable value `sulla-web` |
+| `SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE` | server | Dedicated audience required by the public membership resolver; stable value `sulla-membership` |
+| `SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES` | server | Comma-separated target audiences minted by Keycloak and accepted only when explicitly granted to a service |
 | `SULLA_ACCOUNTS_TRUSTED_PROXY` | no | `1` only behind the packaged reverse proxy |
 
 Secrets are read at startup. Environment variables may name secret files but must not contain
@@ -54,18 +57,22 @@ secret files. The reverse proxy publishes the stable Keycloak issuer path and fo
 - Owner routes require `Authorization: Bearer <broker-session>`. Broker sessions have audience
   `sulla-accounts`, issuer equal to `SULLA_ACCOUNTS_PUBLIC_URL`, a random session id, and a
   maximum lifetime of 15 minutes.
-- `POST /v1/bootstrap/session` requires the bootstrap file value as a bearer token. It is the
+- `POST /v1/private/bootstrap/session` exists only in `desktop` mode and requires the bootstrap
+  file value as a bearer token. It is the
   only owner-session acquisition endpoint: it creates the stable local profile only when absent,
   then mints a short-lived session on first run and later app restarts. The packaged desktop
   control process reads the protected file and keeps the value out of renderer/UI/model scope.
   There is no unauthenticated owner mint, loopback trust, default credential, or query-string
-  credential.
+  credential. Server mode does not register this route and never reads or stages a Desktop
+  bootstrap secret.
 - `/v1/admin/**` is available only in server mode and requires the distinct admin file value as
   a bearer token. It never accepts an owner session.
 - Internal authorization checks use `POST /v1/private/resolve-context` with both
   `X-Sulla-Service-Id` and that service's credential in `X-Sulla-Service-Token`. Credentials
   come from `SULLA_ACCOUNTS_SERVICE_TOKENS_FILE`; this endpoint never returns OIDC tokens and a
-  service credential alone grants no access to an owner's stored authority session.
+  service credential alone grants no access to an owner's stored authority session. Every
+  service grant has an explicit `allowedAudiences` list; Accounts rejects a requested target
+  audience that is absent even when the issuer is otherwise allowed.
 - Remote consumers use the same scoped service identity with
   `POST /v1/private/authorities/:id/fetch`. Accounts refreshes its own authority access token
   internally, then performs a bounded same-origin request. The call must also carry the local
@@ -80,16 +87,16 @@ secret files. The reverse proxy publishes the stable Keycloak issuer path and fo
 
 | Method and path | Result |
 | --- | --- |
-| `POST /v1/bootstrap/session` | Authenticated bootstrap; returns `{token, expiresAt, profile}` |
+| `POST /v1/private/bootstrap/session` | Desktop-only authenticated bootstrap; returns `{token, expiresAt, profile}` |
 | `POST /v1/sessions/refresh` | Rotates the current short-lived broker session |
 | `GET /v1/profile` | Local profile (id, display name, created/updated timestamps) |
 | `PATCH /v1/profile` | Changes local display name only |
 | `GET /v1/connections` | Sanitized authority registry; never tokens or authorization secrets |
-| `POST /v1/connections` | Pins an explicit issuer, client id, audience, scopes, and optional membership endpoint |
+| `POST /v1/connections` | Pins an explicit issuer, client id, resource-audience list, scopes, and optional membership endpoint |
 | `DELETE /v1/connections/:id` | Revokes locally if possible, then deletes encrypted session and connection |
-| `POST /v1/connections/:id/authorize` | Creates PKCE S256 transaction and returns `{authorizationUrl, expiresAt}` |
+| `POST /v1/connections/:id/authorize` | Creates PKCE S256 transaction for one allowed `resourceAudience` and returns `{authorizationUrl, expiresAt}` |
 | `GET /v1/oidc/callback?code=…&state=…` | Strict one-use state callback; exchanges code and stores encrypted tokens |
-| `GET /v1/memberships` | Local hosted memberships plus remote display hints, partitioned by authority |
+| `GET /v1/memberships` | Hints only for subjects on this owner's connected authority sessions; never a hosted member directory |
 
 Connection creation is the explicit trust-enrollment action and performs OIDC discovery with an
 exact canonical URL issuer match (path slashes are not stripped). Self-hosted LAN issuers are supported over HTTPS. Loopback HTTP is
@@ -109,6 +116,42 @@ digest plus the encrypted PKCE verifier. The callback consumes the transaction b
 exchange, requires the discovered issuer to remain pinned, verifies ID-token signature,
 `iss`, `aud`, `exp`, nonce, and non-empty `sub`, and records the identity tuple.
 
+## Hosted authority discovery and membership
+
+Server mode publishes `GET /.well-known/sulla-authority` from the same origin as the hosted
+issuer. Its stable response is:
+
+```json
+{
+  "issuer": "https://accounts.example/auth/realms/sulla",
+  "nativeClientId": "sulla-desktop",
+  "nativeRedirectUris": ["http://127.0.0.1:3020/v1/oidc/callback"],
+  "scopes": ["openid", "profile"],
+  "membershipAudience": "sulla-membership",
+  "resourceAudiences": ["sulla-projects", "sulla-files", "sulla-vault", "sulla-workflows"],
+  "membershipResolver": "https://accounts.example/v1/authority/membership/resolve"
+}
+```
+
+The packaged realm has two distinct clients: public native client `sulla-desktop`, requiring
+authorization-code plus PKCE S256 and allowing only the Desktop loopback callback above; and
+confidential hosted client `sulla-web`, whose redirects are separately deployment-configured.
+The packaged Desktop integration must bind or forward host loopback port `3020` to the Accounts
+listener before launching the system browser; Lima reachability is not assumed by this contract.
+The base login token carries only the explicit `sulla-membership` audience. Each resource
+audience is attached to a separate optional client scope named `sulla-audience:<audience>`;
+clients request only the scope needed for that operation. No client receives every resource
+audience by default. Client ids, issuer ids, and resource audiences are never interchangeable.
+
+`POST /v1/authority/membership/resolve` is public in the network sense and requires
+`Authorization: Bearer <hosted-access-token>`; it accepts `{ "organizationId": "uuid" }`.
+Accounts verifies the JWT signature using the hosted JWKS, exact configured issuer, `exp`,
+non-empty `sub`, and exact `sulla-membership` audience. It derives the subject only from the
+JWT, queries exactly `(issuer, subject, organizationId)`, and returns
+`{issuer, subject, organizationId, roles, groups}` only for that active membership. It never
+accepts subject in input and never lists memberships. Invalid or missing JWTs are `401`, a valid
+identity without that active membership is `403`, and malformed input is `400`.
+
 ## Private authorization contract
 
 `POST /v1/private/resolve-context` accepts:
@@ -123,13 +166,67 @@ exchange, requires the discovered issuer to remain pinned, verifies ID-token sig
 }
 ```
 
-It returns `{issuer, subject, authorityId, organizationId, roles, groups}` only after token
+It returns `{issuer, subject, authorityId, organizationId, roles, groups, audience}` only after token
 signature/issuer/audience/expiry validation and a current membership check. For a remote
 connection, Accounts calls its explicit membership endpoint on every resolution using the
 validated caller bearer token, never the local owner's stored session. The live response must
 repeat the exact validated issuer+subject and requested organization. A timeout, issuer mismatch,
 missing organization, or revoked membership returns `403`; cached rows are not authorization
-evidence. For the local hosted authority, the Accounts membership table is authoritative.
+evidence. For the local hosted authority, the Accounts membership table is authoritative. The
+returned `audience` is the exact requested and verified target audience so every consumer can
+compare the full context tuple.
+
+## Renewable delegated schedule grants
+
+Workflow schedules never persist a user bearer or send runner tokens to Accounts. The workflow
+manager persists only the opaque grant returned by Accounts and treats it as a secret.
+
+`POST /v1/private/schedule-grants/issue` requires the workflow manager's normal
+`X-Sulla-Service-Id` / `X-Sulla-Service-Token` headers. It accepts the current user token only
+over that trusted service transport and never exposes the returned grant through renderer,
+tool, model, or log output:
+
+```json
+{
+  "authorityId": "uuid",
+  "organizationId": "uuid",
+  "audience": "sulla-workflows",
+  "serviceId": "workflows",
+  "workflowId": "stable workflow id",
+  "scheduleNodeId": "stable schedule node id",
+  "requiredRoles": ["member"],
+  "expiresAt": "RFC3339 timestamp, at most 90 days",
+  "replaceGrantId": "optional existing grant uuid",
+  "bearerToken": "current user access token, never persisted"
+}
+```
+
+Accounts verifies the bearer for the exact issuer and target audience, derives its subject,
+checks that the authenticated service grant permits the issuer and audience, and confirms fresh
+active membership plus all required roles. `replaceGrantId`, when present, must belong to the
+same derived identity, service, authority, organization, audience, workflow, and schedule node;
+the old grant is revoked in the same transaction. Success returns
+`{grantId, grantToken, expiresAt}`. `grantToken` is 256 bits of randomness returned once;
+Accounts stores only its SHA-256 digest. This is the sole delegated-authorization secret returned
+by Accounts and is available only to an authenticated service, never a browser caller. Renewal is an authenticated replacement before expiry,
+not silent extension. Expired grants fail closed and remain unusable.
+
+At every scheduled fire, catch-up, delayed continuation, and wait resume, the workflow manager
+calls `POST /v1/private/schedule-grants/resolve` with its normal
+`X-Sulla-Service-Id` / `X-Sulla-Service-Token` headers and body
+`{ "grantToken": "opaque secret" }`. Accounts requires the calling service to match the grant,
+then rechecks the current membership and bound roles. Hosted memberships are read from the
+authoritative table; remote memberships use Accounts' encrypted renewable authority session,
+whose exact subject must match the grant. Success returns exactly
+`{issuer, subject, authorityId, organizationId, roles, groups, audience, workflowId, scheduleNodeId, expiresAt}`.
+Revocation, expiry, missing roles, membership failure, session-subject mismatch, or service or
+audience mismatch is `403` and the workflow must not run.
+
+On schedule deletion or ownership or scope change, the manager calls
+`POST /v1/private/schedule-grants/revoke` with service headers and
+`{ "grantToken": "opaque secret" }`. It is idempotent and returns `204`; it can revoke only a
+grant bound to that calling service. Accounts never accepts workflow runner tokens as user
+bearers or delegated grant tokens.
 
 ## Private admin API
 
@@ -146,7 +243,7 @@ authoritative row; no cache can restore it.
 
 ## PostgreSQL storage
 
-Migration `001_accounts.sql` creates an `accounts` schema with:
+The Accounts migrations create an `accounts` schema with:
 
 - `local_profile`: exactly one installation-local owner profile.
 - `authorities`: issuer pin, client metadata, discovery endpoints, trust policy, and timestamps.
@@ -160,6 +257,9 @@ Migration `001_accounts.sql` creates an `accounts` schema with:
   authorization evidence.
 - `broker_sessions`: hashed session ids supporting rotation/revocation without storing bearer
   tokens.
+- `delegated_schedule_grants`: digested opaque grant tokens bound to issuer, subject, authority,
+  organization, target audience, service, workflow, schedule node, required roles, expiry, and
+  revocation state.
 - `accounts_schema_migrations`: append-only migration ledger.
 
 Encryption uses AES-256-GCM with a fresh 96-bit nonce and authenticated context containing the
