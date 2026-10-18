@@ -1,4 +1,5 @@
 import Cocoa
+import CoreServices
 import Darwin
 import FinderSync
 
@@ -7,7 +8,7 @@ private let appGroup = "group.io.sulla.desktop"
 
 final class FinderSync: FIFinderSync {
     private var watchedRoot: URL?
-    private var directorySource: DispatchSourceFileSystemObject?
+    private var eventStream: FSEventStreamRef?
     private var visibleURLs = Set<URL>()
 
     override init() {
@@ -45,26 +46,37 @@ final class FinderSync: FIFinderSync {
     }
 
     override func requestBadgeIdentifier(for url: URL) {
-        visibleURLs.insert(url.standardizedFileURL)
-        let state = extendedAttribute(url: url, name: syncAttribute) ?? "unknown"
-        FIFinderSyncController.default().setBadgeIdentifier(state, for: url)
+        let target = url.standardizedFileURL
+        guard isInsideWatchedRoot(target) else { return }
+        visibleURLs.insert(target)
+        DispatchQueue.global(qos: .utility).async {
+            let state = self.badgeIdentifier(at: target)
+            DispatchQueue.main.async {
+                FIFinderSyncController.default().setBadgeIdentifier(state, for: url)
+            }
+        }
     }
 
     override func endObservingDirectory(at url: URL) {
-        visibleURLs = Set(visibleURLs.filter { !$0.path.hasPrefix(url.standardizedFileURL.path) })
+        let directory = url.standardizedFileURL
+        visibleURLs = Set(visibleURLs.filter { !is($0, inside: directory) })
     }
 
     override func menu(for menuKind: FIMenuKind) -> NSMenu? {
         let controller = FIFinderSyncController.default()
         guard let target = controller.targetedURL() else { return nil }
-        let selection = controller.selectedItemURLs() ?? []
-        let targets = selection.contains(target) ? selection : [target]
+        let selection = (controller.selectedItemURLs() ?? []).filter(isInsideWatchedRoot)
+        let targets = selection.contains(target) ? selection : [target].filter(isInsideWatchedRoot)
+        guard !targets.isEmpty else { return nil }
         let menu = NSMenu(title: "Sulla Files")
-        add(menu, title: targets.count > 1 ? "Review sharing for selected items" : "Share with Sulla", action: #selector(share(_:)), targets: targets)
+        if targets.count == 1 {
+            add(menu, title: "Copy Sulla link", action: #selector(copyLink(_:)), targets: targets)
+        }
+        add(menu, title: targets.count > 1 ? "Share selected items with people…" : "Share with people…", action: #selector(share(_:)), targets: targets)
         add(menu, title: targets.count > 1 ? "Version history for selected items" : "Version history", action: #selector(history(_:)), targets: targets)
         menu.addItem(.separator())
         unavailable(menu, title: "Keep on this Mac — unavailable")
-        unavailable(menu, title: "Make online only — unavailable")
+        unavailable(menu, title: "Free up space — unavailable")
         return menu
     }
 
@@ -74,11 +86,12 @@ final class FinderSync: FIFinderSync {
     }
     private func unavailable(_ menu: NSMenu, title: String) { let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); item.isEnabled = false; menu.addItem(item) }
 
+    @objc private func copyLink(_ sender: NSMenuItem) { open(action: "copy-link", sender: sender) }
     @objc private func share(_ sender: NSMenuItem) { open(action: "share", sender: sender) }
     @objc private func history(_ sender: NSMenuItem) { open(action: "history", sender: sender) }
     private func open(action: String, sender: NSMenuItem) {
         guard let files = sender.representedObject as? [URL] else { return }
-        for file in files {
+        for file in files.map(\.standardizedFileURL).filter(isInsideWatchedRoot) {
             guard var parts = URLComponents(string: "sulla://files/\(action)") else { continue }
             parts.queryItems = [URLQueryItem(name: "path", value: file.path)]
             if let url = parts.url { NSWorkspace.shared.open(url) }
@@ -86,15 +99,83 @@ final class FinderSync: FIFinderSync {
     }
 
     private func subscribe(to root: URL) {
-        let descriptor = open(root.path, O_EVTONLY)
-        guard descriptor >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .attrib, .rename], queue: .main)
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            for url in self.visibleURLs { self.requestBadgeIdentifier(for: url) }
+        var context = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passUnretained(self).toOpaque(),
+            retain: nil,
+            release: nil,
+            copyDescription: nil
+        )
+        let callback: FSEventStreamCallback = { _, clientInfo, _, _, _, _ in
+            guard let clientInfo else { return }
+            let instance = Unmanaged<FinderSync>.fromOpaque(clientInfo).takeUnretainedValue()
+            DispatchQueue.main.async { instance.refreshVisibleBadges() }
         }
-        source.setCancelHandler { close(descriptor) }
-        source.resume(); directorySource = source
+        guard let stream = FSEventStreamCreate(
+            nil,
+            callback,
+            &context,
+            [root.path] as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            0.2,
+            UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes)
+        ) else { return }
+        FSEventStreamSetDispatchQueue(stream, DispatchQueue.global(qos: .utility))
+        guard FSEventStreamStart(stream) else {
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+            return
+        }
+        eventStream = stream
+    }
+
+    private func refreshVisibleBadges() {
+        for url in visibleURLs { requestBadgeIdentifier(for: url) }
+    }
+
+    private func badgeIdentifier(at url: URL) -> String {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return "unknown" }
+        if !isDirectory.boolValue {
+            return normalizedBadgeIdentifier(extendedAttribute(url: url, name: syncAttribute))
+        }
+
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return "unknown" }
+        var states = Set<String>()
+        for case let descendant as URL in enumerator {
+            guard (try? descendant.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+            states.insert(normalizedBadgeIdentifier(extendedAttribute(url: descendant, name: syncAttribute)))
+            if states.contains("conflict") { return "conflict" }
+        }
+        if states.contains("syncing") { return "syncing" }
+        if !states.isEmpty && states.isSubset(of: ["online-only"]) { return "online-only" }
+        if states.contains("synced") { return "synced" }
+        return "unknown"
+    }
+
+    private func normalizedBadgeIdentifier(_ value: String?) -> String {
+        switch value {
+        case "synced", "local", "kept": return "synced"
+        case "syncing": return "syncing"
+        case "online", "online-only": return "online-only"
+        case "conflict", "error": return "conflict"
+        default: return "unknown"
+        }
+    }
+
+    private func isInsideWatchedRoot(_ url: URL) -> Bool {
+        guard let watchedRoot else { return false }
+        return is(url, inside: watchedRoot)
+    }
+
+    private func is(_ candidate: URL, inside directory: URL) -> Bool {
+        let root = directory.standardizedFileURL.path
+        let target = candidate.standardizedFileURL.path
+        return target == root || target.hasPrefix(root + "/")
     }
 
     private func extendedAttribute(url: URL, name: String) -> String? {
@@ -104,5 +185,13 @@ final class FinderSync: FIFinderSync {
         let result = data.withUnsafeMutableBytes { getxattr(url.path, name, $0.baseAddress, length, 0, 0) }
         guard result == length else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+
+    deinit {
+        if let eventStream {
+            FSEventStreamStop(eventStream)
+            FSEventStreamInvalidate(eventStream)
+            FSEventStreamRelease(eventStream)
+        }
     }
 }
