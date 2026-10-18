@@ -147,6 +147,7 @@ function ensureBootSweep(): Promise<void> {
       ) as any[];
       // Jobs that died with the previous process hand their tasks back.
       await WorkTaskOwnershipModel.releaseSweptJobs((swept ?? []).map((row: any) => row.job_id));
+      await WorkTaskOwnershipModel.recoverRunningJobs();
     } catch (err) {
       console.warn('[jobRegistry] boot sweep failed (will rely on in-memory state):', (err as Error).message);
     }

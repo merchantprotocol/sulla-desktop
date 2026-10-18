@@ -4,8 +4,8 @@
 // and shows desktop notifications instead of WebSocket chat messages.
 
 import { BaseNode } from './BaseNode';
-import { WorkItemsModel } from '../database/models/WorkItemsModel';
 import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
+import { getProjectsApplicationService } from '../projects/application/ProjectsApplicationService';
 import { buildIdeaLabDigest, IDEA_LAB_PROJECT_SLUG } from '../prompts/heartbeatIdeaLab';
 import { throwIfAborted } from '../services/AbortService';
 import { buildRoutinesDigest } from '../tools/workflow/routines_digest';
@@ -544,7 +544,7 @@ export class HeartbeatNode extends BaseNode {
     const humanComment = (await listHumanCommentTriage(1))[0] ?? null;
     let task: WorkTaskRecord | undefined = humanComment?.task;
     if (!task) {
-      const candidates = await WorkItemsModel.listTasks({ ...reportOpts, limit: 500 });
+      const candidates = await getProjectsApplicationService().listTasks({ ...reportOpts, limit: 500 });
       // Match projectReport's section order: hydrate open work first. If the
       // lane is fully blocked, hydrate the top blocked task.
       task = candidates.find(candidate => candidate.status !== 'blocked' && candidate.status !== 'planning') ??
@@ -553,11 +553,11 @@ export class HeartbeatNode extends BaseNode {
     if (!task) return '';
 
     const [project, epic, parent, children, comments] = await Promise.all([
-      WorkItemsModel.getProject(task.project_id),
-      task.epic_id ? WorkItemsModel.getEpic(task.epic_id) : Promise.resolve(null),
-      task.parent_id ? WorkItemsModel.getTask(task.parent_id) : Promise.resolve(null),
-      WorkItemsModel.listTasks({ parentId: task.id, includeDone: true, limit: 12 }),
-      WorkItemsModel.listComments(task.id),
+      getProjectsApplicationService().getProject(task.project_id),
+      task.epic_id ? getProjectsApplicationService().getEpic(task.epic_id) : Promise.resolve(null),
+      task.parent_id ? getProjectsApplicationService().getTask(task.parent_id) : Promise.resolve(null),
+      getProjectsApplicationService().listTasks({ parentId: task.id, includeDone: true, limit: 12 }),
+      getProjectsApplicationService().listComments(task.id),
     ]);
 
     (state.metadata as any).heartbeatSelectedTaskId = task.id;
@@ -750,15 +750,15 @@ export class HeartbeatNode extends BaseNode {
       // Any Heartbeat-authored Projects write this wake counts: an idea lab
       // entry, a new task, a move, or a comment. Requiring a comment on the
       // hydrated task instead forced "still waiting" notes on unchanged work.
-      const [latest] = await WorkItemsModel.listRecentActivity({ author: 'heartbeat', limit: 1 });
+      const [latest] = await getProjectsApplicationService().listRecentActivity({ author: 'heartbeat', limit: 1 });
       if (latest?.activity_at && Date.parse(latest.activity_at) >= sinceMs) return;
 
       if (snapshot?.taskId) {
         // Writes that forgot the 'heartbeat' actor still count on the
         // hydrated task itself.
         const [task, comments] = await Promise.all([
-          WorkItemsModel.getTask(snapshot.taskId),
-          WorkItemsModel.listComments(snapshot.taskId),
+          getProjectsApplicationService().getTask(snapshot.taskId),
+          getProjectsApplicationService().listComments(snapshot.taskId),
         ]);
         if (task && (task.status !== snapshot.status || (task.assignee || null) !== snapshot.assignee)) return;
         const taskComments = comments || [];
@@ -813,8 +813,8 @@ export class HeartbeatNode extends BaseNode {
   private async buildLaneHealthDigest(reportOpts: { projectId?: string; assignee?: string }): Promise<string> {
     const nowMs = Date.now();
     const [laneInProgress, laneBlocked] = await Promise.all([
-      WorkItemsModel.listTasks({ ...reportOpts, status: 'in_progress', limit: 50 }),
-      WorkItemsModel.listTasks({ ...reportOpts, status: 'blocked', limit: 50 }),
+      getProjectsApplicationService().listTasks({ ...reportOpts, status: 'in_progress', limit: 50 }),
+      getProjectsApplicationService().listTasks({ ...reportOpts, status: 'blocked', limit: 50 }),
     ]);
 
     const lines: string[] = [];
@@ -840,12 +840,12 @@ export class HeartbeatNode extends BaseNode {
     // 2. Stale in_progress. add_task_comment does NOT bump last_moved_at, so
     //    measure staleness from the LATEST of last_moved_at and the most recent
     //    comment, so comment-only progress counts as movement.
-    const latestCommentAt = await WorkItemsModel.latestCommentAtByTask(
+    const latestCommentAt = await getProjectsApplicationService().latestCommentAtByTask(
       leafInProgress.map(task => task.id),
     );
     for (const task of leafInProgress) {
       const movedMs = Date.parse(task.last_moved_at);
-      const commentMs = Date.parse(latestCommentAt.get(task.id) ?? '');
+      const commentMs = Date.parse(latestCommentAt[task.id] ?? '');
       const lastActivityMs = Math.max(
         Number.isFinite(movedMs) ? movedMs : -Infinity,
         Number.isFinite(commentMs) ? commentMs : -Infinity,
@@ -865,7 +865,7 @@ export class HeartbeatNode extends BaseNode {
 
     // 4. Lane drift — heartbeat in_progress work outside the Operator lane.
     if (reportOpts.projectId) {
-      const heartbeatInProgress = await WorkItemsModel.listTasks({ assignee: 'heartbeat', status: 'in_progress', limit: 50 });
+      const heartbeatInProgress = await getProjectsApplicationService().listTasks({ assignee: 'heartbeat', status: 'in_progress', limit: 50 });
       const offLane = heartbeatInProgress.filter(task => task.project_id !== reportOpts.projectId);
       if (offLane.length) {
         const refs = offLane.map(task => `${ this.escapeXmlText(task.id) } (project ${ this.escapeXmlText(task.project_id) })`).join(', ');
@@ -878,7 +878,7 @@ export class HeartbeatNode extends BaseNode {
   }
 
   private async resolveHeartbeatProjectReportOpts(): Promise<{ projectId?: string; assignee?: string }> {
-    await WorkItemsModel.ensureTables();
+    await getProjectsApplicationService().ready();
 
     // Primary: the cross-project assignee lane (per the "Boot From Your Lane"
     // prompt contract — `list_project_items {assignee:"heartbeat"}` is the
@@ -888,7 +888,7 @@ export class HeartbeatNode extends BaseNode {
     // heartbeat-assigned work (e.g. Data Ripple DOD1 tasks) behind whatever
     // project happens to be named/owned as the operator lane — regardless of
     // priority, since a same-project task always wins a project-scoped query.
-    const assigneeTasks = await WorkItemsModel.listTasks({ assignee: 'heartbeat', limit: 1 });
+    const assigneeTasks = await getProjectsApplicationService().listTasks({ assignee: 'heartbeat', limit: 1 });
     if (assigneeTasks.length > 0) {
       return { assignee: 'heartbeat' };
     }
@@ -897,7 +897,7 @@ export class HeartbeatNode extends BaseNode {
     // pick the top open task from the operator-platform project", find it by
     // owner, slug, or title and scope to it so Heartbeat still has somewhere
     // to work instead of going idle.
-    const projects = await WorkItemsModel.listProjects({ includeDone: false, limit: 500 });
+    const projects = await getProjectsApplicationService().listProjects({ includeDone: false, limit: 500 });
     const operatorProject = projects.find(project => String(project.owner || '').trim().toLowerCase() === 'heartbeat') ??
       projects.find(project => project.slug === HEARTBEAT_OPERATOR_PROJECT_SLUG) ??
       projects.find(project => /operator platform/i.test(project.title || ''));

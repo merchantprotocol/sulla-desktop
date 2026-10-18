@@ -30,8 +30,7 @@ import { signDeviceMessage } from './deviceKey';
 
 import { AgentJobMessagingModel } from '@pkg/agent/database/models/AgentJobMessagingModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-import { WorkItemsModel } from '@pkg/agent/database/models/WorkItemsModel';
-import { WorkLaneDefinitionModel } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
+import { getProjectsApplicationService } from '@pkg/agent/projects/application/ProjectsApplicationService';
 import { decisionService } from '@pkg/agent/services/DecisionService';
 import { getVaultBackupService, type VaultSnapshot } from '@pkg/agent/services/VaultBackupService';
 import { getVaultKeyService } from '@pkg/agent/services/VaultKeyService';
@@ -81,10 +80,11 @@ export async function buildSealedVaultBody(): Promise<{ body: string; dedupe: st
 }
 
 export async function buildProjectsBody(): Promise<{ body: string; dedupe: string }> {
-  const projects = (await WorkItemsModel.listProjects({ includeDone: true, limit: 1000 })).filter((p: any) => !p.archived);
+  const projectsService = getProjectsApplicationService();
+  const projects = (await projectsService.listProjects({ includeDone: true, limit: 1000 })).filter((p: any) => !p.archived);
   const [epics, projectTasks, jobs] = await Promise.all([
-    WorkItemsModel.listEpics({ includeDone: true, limit: 5000 }),
-    WorkItemsModel.listTasks({ includeDone: true, limit: 10000 }),
+    projectsService.listEpics({ includeDone: true, limit: 5000 }),
+    projectsService.listTasks({ includeDone: true, limit: 10000 }),
     getAllJobs(),
   ]);
   const runningJobs = jobs.filter(job => job.status === 'running');
@@ -116,7 +116,7 @@ export async function buildProjectsBody(): Promise<{ body: string; dedupe: strin
   });
   const lanes: Record<string, unknown> = {};
   for (const p of projects) {
-    try { lanes[(p as any).id] = await WorkLaneDefinitionModel.resolveEffective((p as any).id) } catch { /* lanes optional */ }
+    try { lanes[(p as any).id] = await projectsService.resolveEffectiveLanes((p as any).id) } catch { /* lanes optional */ }
   }
   const content = { projects, epics, tasks, lanes, agents, decisions: await decisionService.list() };
   const dedupe = crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex');

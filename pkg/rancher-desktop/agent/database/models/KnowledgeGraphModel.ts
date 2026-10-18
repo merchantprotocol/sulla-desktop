@@ -1,3 +1,8 @@
+import {
+  acquireKnowledgeProjectionLock,
+  enqueueKnowledgeProjectionMerge,
+  enqueueKnowledgeProjectionUpsert,
+} from '../../services/KnowledgeProjectionOutboxService';
 import { postgresClient } from '../PostgresClient';
 
 export interface KnowledgeNodeRecord {
@@ -162,8 +167,10 @@ export class KnowledgeGraphModel {
   }
 
   static async upsertNode(input: UpsertKnowledgeNodeInput): Promise<KnowledgeNodeRecord> {
-    const row = await postgresClient.queryOne<KnowledgeNodeRecord>(
-      `INSERT INTO ${ this.NODES_TABLE }
+    return postgresClient.transaction(async(client) => {
+      await acquireKnowledgeProjectionLock(client);
+      const { rows } = await client.query<KnowledgeNodeRecord>(
+        `INSERT INTO ${ this.NODES_TABLE }
          (id, node_type, title, summary, detail, source, archived, merged_into)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (id) DO UPDATE SET
@@ -172,12 +179,15 @@ export class KnowledgeGraphModel {
          source = EXCLUDED.source, archived = EXCLUDED.archived,
          merged_into = EXCLUDED.merged_into, updated_at = now()
        RETURNING *`,
-      [input.id, input.node_type ?? 'entity', input.title, input.summary ?? '',
-        input.detail ?? null, input.source ?? null, input.archived ?? false,
-        input.merged_into ?? null],
-    );
-    if (!row) throw new Error(`Failed to upsert knowledge node: ${ input.id }`);
-    return row;
+        [input.id, input.node_type ?? 'entity', input.title, input.summary ?? '',
+          input.detail ?? null, input.source ?? null, input.archived ?? false,
+          input.merged_into ?? null],
+      );
+      const row = rows[0];
+      if (!row) throw new Error(`Failed to upsert knowledge node: ${ input.id }`);
+      await enqueueKnowledgeProjectionUpsert(client, row);
+      return row;
+    });
   }
 
   static async addAlias(nodeId: string, alias: string): Promise<NodeAliasRecord> {
@@ -289,48 +299,34 @@ export class KnowledgeGraphModel {
   }
 
   static async archiveNode(id: string): Promise<boolean> {
-    const result = await postgresClient.queryWithResult(
-      `UPDATE ${ this.NODES_TABLE } SET archived = true, updated_at = now() WHERE id = $1`,
-      [id],
-    );
-    return (result.rowCount ?? 0) > 0;
+    return postgresClient.transaction(async(client) => {
+      await acquireKnowledgeProjectionLock(client);
+      const { rows } = await client.query<KnowledgeNodeRecord>(
+        `UPDATE ${ this.NODES_TABLE } SET archived = true, updated_at = now() WHERE id = $1 RETURNING *`,
+        [id],
+      );
+      const row = rows[0];
+      if (!row) return false;
+      await enqueueKnowledgeProjectionUpsert(client, row);
+      return true;
+    });
   }
 
-  /** Merge graph and work-item references atomically onto one canonical node. */
+  /** Merge the source-owned graph, then reconcile Projects' cached projection. */
   static async mergeNode(sourceId: string, canonicalId: string): Promise<KnowledgeNodeRecord> {
     if (sourceId === canonicalId) throw new Error('Cannot merge a knowledge node into itself.');
 
-    return postgresClient.transaction(async(client) => {
+    const canonical = await postgresClient.transaction(async(client) => {
+      await acquireKnowledgeProjectionLock(client);
       const { rows: nodes } = await client.query<KnowledgeNodeRecord>(
         `SELECT * FROM ${ this.NODES_TABLE } WHERE id = ANY($1::text[]) FOR UPDATE`,
         [[sourceId, canonicalId]],
       );
       if (nodes.length !== 2) throw new Error('Both source and canonical knowledge nodes must exist.');
-      const canonical = nodes.find(node => node.id === canonicalId);
-      if (!canonical || canonical.archived || canonical.merged_into) {
+      const target = nodes.find(node => node.id === canonicalId);
+      if (!target || target.archived || target.merged_into) {
         throw new Error('Merge target must be an active canonical knowledge node.');
       }
-
-      await client.query(
-        `UPDATE work_item_knowledge_links l
-         SET knowledge_node_id = $2, updated_at = now()
-         WHERE l.knowledge_node_id = $1
-           AND NOT EXISTS (
-             SELECT 1 FROM work_item_knowledge_links existing
-             WHERE existing.knowledge_node_id = $2
-               AND existing.relation_type = l.relation_type
-               AND existing.archived = l.archived
-               AND existing.project_id IS NOT DISTINCT FROM l.project_id
-               AND existing.epic_id IS NOT DISTINCT FROM l.epic_id
-               AND existing.task_id IS NOT DISTINCT FROM l.task_id
-           )`,
-        [sourceId, canonicalId],
-      );
-      await client.query(
-        `UPDATE work_item_knowledge_links SET archived = true, updated_at = now()
-         WHERE knowledge_node_id = $1`,
-        [sourceId],
-      );
       await client.query(
         `INSERT INTO ${ this.ALIASES_TABLE } (alias, alias_norm, node_id)
          SELECT alias, alias_norm, $2 FROM ${ this.ALIASES_TABLE } WHERE node_id = $1
@@ -343,8 +339,10 @@ export class KnowledgeGraphModel {
          WHERE id = $1`,
         [sourceId, canonicalId],
       );
+      await enqueueKnowledgeProjectionMerge(client, sourceId, canonicalId);
 
-      return canonical;
+      return target;
     });
+    return canonical;
   }
 }

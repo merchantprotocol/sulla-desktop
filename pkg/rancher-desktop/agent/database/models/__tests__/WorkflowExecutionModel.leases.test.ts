@@ -32,7 +32,7 @@ describe('WorkflowExecutionModel leases', () => {
     expect(await WorkflowExecutionModel.settle('e1', 'completed')).not.toBeNull();
     expect(await WorkflowExecutionModel.settle('e1', 'completed')).toBeNull();
     expect(db.queryOne.mock.calls[0][0]).toContain("status IN ('running', 'suspended')");
-    expect(db.queryOne.mock.calls[0][0]).toContain('lane_settled AS');
+    expect(db.queryOne.mock.calls[0][0]).not.toContain('work_lane_entry_automations');
   });
   it('expires leases during graceful suspension so boot recovery cannot miss them', async() => {
     db.queryAll.mockResolvedValue([]);
@@ -40,17 +40,12 @@ describe('WorkflowExecutionModel leases', () => {
     expect(db.queryAll.mock.calls[0][0]).toContain('lease_expires_at = NOW()');
   });
   it('retires only old executions with no owner, lease, or heartbeat', async() => {
-    const client: any = {
-      query: (jest.fn() as any)
-        .mockResolvedValueOnce({ rows: [{ execution_id: 'stale' }] })
-        .mockResolvedValueOnce({ rows: [] }),
-    };
-    db.transaction.mockImplementation((fn: any) => Promise.resolve(fn(client)));
+    db.queryAll.mockResolvedValueOnce([{ execution_id: 'stale' }]);
     expect(await WorkflowExecutionModel.reapStaleLeaselessExecutions()).toEqual(['stale']);
-    expect(client.query.mock.calls[0][0]).toContain('owner_id IS NULL');
-    expect(client.query.mock.calls[0][0]).toContain('heartbeat_at IS NULL');
-    expect(client.query.mock.calls[0][0]).toContain("INTERVAL '1 hour'");
-    expect(client.query.mock.calls[1][0]).toContain('work_lane_entry_automations');
+    expect(db.queryAll.mock.calls[0][0]).toContain('owner_id IS NULL');
+    expect(db.queryAll.mock.calls[0][0]).toContain('heartbeat_at IS NULL');
+    expect(db.queryAll.mock.calls[0][0]).toContain("INTERVAL '1 hour'");
+    expect(db.queryAll.mock.calls[0][0]).not.toContain('work_lane_entry_automations');
   });
   it('recovers through one transaction and reads the last checkpoint', async() => {
     const client = {

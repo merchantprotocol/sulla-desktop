@@ -1,6 +1,8 @@
-import { isHumanCommentAuthor } from '../../database/models/WorkItemsModel';
 import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
+
+const isHumanCommentAuthor = (author: unknown): boolean =>
+  ['human', 'user', 'owner', 'me'].includes(String(author ?? '').trim().toLowerCase());
 
 /**
  * Append a GitHub-issue-style comment to a task. Append-only.

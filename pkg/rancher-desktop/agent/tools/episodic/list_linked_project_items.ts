@@ -1,4 +1,4 @@
-import { WorkItemKnowledgeModel } from '../../database/models/WorkItemKnowledgeModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 import { formatJson, parseNodeId } from '../knowledgeAssociationAdapter';
 
@@ -8,7 +8,7 @@ export class ListLinkedProjectItemsWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      const rows = await WorkItemKnowledgeModel.listForNode(parseNodeId(input), {
+      const rows = await getProjectsApplicationService().listWorkForKnowledge(parseNodeId(input), {
         includeArchived: Boolean(input.include_archived ?? false),
         relationType:    input.relation_type,
         limit:           input.limit,

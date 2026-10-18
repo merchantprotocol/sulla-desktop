@@ -1,4 +1,4 @@
-import { WorkItemKnowledgeModel } from '../../database/models/WorkItemKnowledgeModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 import { associationInput, formatJson } from '../knowledgeAssociationAdapter';
 
@@ -8,7 +8,10 @@ export class LinkProjectItemWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      const link = await WorkItemKnowledgeModel.link(associationInput({ ...input, actor: input.actor || 'sulla' }));
+      const actor = typeof input.actor === 'string' && input.actor.trim() ? input.actor.trim() : 'sulla';
+      const link = await getProjectsApplicationService().linkKnowledge(
+        associationInput({ ...input, actor }), { actor, source: 'tool' },
+      );
       return { successBoolean: true, responseString: formatJson(link) };
     } catch (err: any) {
       return { successBoolean: false, responseString: `Link project item failed: ${ err?.message ?? String(err) }` };

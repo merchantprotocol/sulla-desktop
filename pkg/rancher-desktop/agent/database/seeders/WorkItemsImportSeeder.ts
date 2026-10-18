@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { WorkItemsModel } from '../models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { resolveSullaLedgerDir } from '../../utils/sullaPaths';
 
 interface ParsedTask {
@@ -183,8 +183,10 @@ function parseGoalFile(filePath: string, slug: string): ParsedGoal | null {
 
 async function importGoal(goal: ParsedGoal): Promise<{ projects: number; epics: number; tasks: number }> {
   const counts = { projects: 0, epics: 0, tasks: 0 };
+  const projects = getProjectsApplicationService();
+  const context = { actor: 'ledger-import', source: 'system' } as const;
   const projectSlug = `goal-${goal.slug}`;
-  const project = await WorkItemsModel.upsertProject({
+  const projectInput = {
     slug:        projectSlug,
     title:       goal.title,
     description: goal.description,
@@ -192,12 +194,16 @@ async function importGoal(goal: ParsedGoal): Promise<{ projects: number; epics: 
     priority:    goal.priority,
     source:      'ledger_import',
     source_ref:  goal.sourcePath,
-  });
+  };
+  const existingProject = await projects.getProjectBySlug(projectSlug);
+  const project = existingProject
+    ? await projects.updateProject(existingProject.id, projectInput, context) ?? existingProject
+    : await projects.createProject(projectInput, context);
   counts.projects = 1;
 
   for (const epic of goal.epics) {
     const epicSlug = `epic-${goal.slug}-${epic.position + 1}-${slugify(epic.title)}`;
-    const epicRow = await WorkItemsModel.upsertEpic({
+    const epicInput = {
       project_id:  project.id,
       slug:        epicSlug,
       title:       epic.title,
@@ -207,12 +213,21 @@ async function importGoal(goal: ParsedGoal): Promise<{ projects: number; epics: 
       position:    epic.position,
       source:      'ledger_import',
       source_ref:  `${goal.sourcePath}#epic-${epic.position + 1}`,
-    });
+    };
+    const existingEpic = (await projects.listEpics({ projectId: project.id, includeDone: true, limit: 5000 }))
+      .find(item => item.slug === epicSlug);
+    const epicRow = existingEpic
+      ? await projects.updateEpic(existingEpic.id, epicInput, context) ?? existingEpic
+      : await projects.createEpic(epicInput, context);
     counts.epics += 1;
+    const existingTasks = new Map(
+      (await projects.listTasks({ epicId: epicRow.id, includeDone: true, limit: 5000 }))
+        .map(item => [item.slug, item]),
+    );
 
     for (const task of epic.tasks) {
       const taskSlug = `task-${goal.slug}-${epic.position + 1}-${task.position + 1}-${slugify(task.title)}`;
-      await WorkItemsModel.upsertTask({
+      const taskInput = {
         epic_id:     epicRow.id,
         parent_id:   null,
         slug:        taskSlug,
@@ -223,7 +238,10 @@ async function importGoal(goal: ParsedGoal): Promise<{ projects: number; epics: 
         position:    task.position,
         source:      'ledger_import',
         source_ref:  `${goal.sourcePath}#task-${epic.position + 1}-${task.position + 1}`,
-      });
+      };
+      const existingTask = existingTasks.get(taskSlug);
+      if (existingTask) await projects.updateTask(existingTask.id, taskInput, context);
+      else await projects.createTask(taskInput, context);
       counts.tasks += 1;
     }
   }
@@ -233,7 +251,7 @@ async function importGoal(goal: ParsedGoal): Promise<{ projects: number; epics: 
 
 async function initialize(): Promise<void> {
   console.log('[WorkItemsImportSeeder] Importing local ledger goals...');
-  await WorkItemsModel.ensureTables();
+  await getProjectsApplicationService().ready();
 
   const goalsDir = path.join(resolveSullaLedgerDir(), 'goals');
   if (!fs.existsSync(goalsDir)) {

@@ -27,6 +27,8 @@ import * as path from 'path';
 import { app, webContents } from 'electron';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
+import { getProjectsDomainEventConsumer } from '@pkg/agent/services/ProjectsDomainEventConsumer';
+import { getKnowledgeProjectionOutboxService } from '@pkg/agent/services/KnowledgeProjectionOutboxService';
 
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { markSyntheticInput } from '@pkg/main/browserTabs/syntheticInput';
@@ -240,6 +242,30 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => {
       getProjectsAutoArchiveService().destroy();
       console.log('[Background] ProjectsAutoArchiveService destroyed');
+    },
+  );
+
+  lifecycle.register('projects-domain-events', ['heartbeat'],
+    async() => {
+      await getProjectsDomainEventConsumer().initialize();
+      console.log('[Background] Projects domain-event consumer initialized');
+    },
+    () => {
+      getProjectsDomainEventConsumer().destroy();
+      console.log('[Background] Projects domain-event consumer destroyed');
+      return Promise.resolve();
+    },
+  );
+
+  lifecycle.register('knowledge-projection-outbox', ['database-manager'],
+    async() => {
+      await getKnowledgeProjectionOutboxService().initialize();
+      console.log('[Background] Knowledge projection outbox initialized');
+    },
+    () => {
+      getKnowledgeProjectionOutboxService().destroy();
+      console.log('[Background] Knowledge projection outbox destroyed');
+      return Promise.resolve();
     },
   );
 

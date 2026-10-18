@@ -2957,7 +2957,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla_shell_runtime',
       'sulla_node_runtime',
     ];
-    requiredServices.push('sulla_relay', 'sulla_workflow_manager', 'sulla_tools');
+    requiredServices.push('sulla_relay', 'sulla_workflow_manager', 'sulla_tools', 'sulla_projects');
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) requiredServices.push('sulla_vault');
     try {
       if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
@@ -3041,6 +3041,32 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       console.log('[Sulla] Failed to check service status, will redeploy:', err);
 
       return false;
+    }
+  }
+
+  private async loadOrCreateProjectsServiceSecret(name: 'projects-local-token' | 'projects-human-token' | 'projects-database-password'): Promise<string> {
+    await fs.promises.mkdir(paths.appHome, { recursive: true });
+    const target = path.join(paths.appHome, name);
+    const read = async(): Promise<string> => {
+      const stat = await fs.promises.lstat(target);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Invalid Projects identity file');
+      const value = (await fs.promises.readFile(target, 'utf8')).trim();
+      if (!/^[A-Za-z0-9_-]{64}$/.test(value)) throw new Error('Invalid Projects identity; refusing to rotate it silently');
+      await fs.promises.chmod(target, 0o600);
+      return value;
+    };
+    try {
+      return await read();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const value = crypto.randomBytes(48).toString('base64url');
+    try {
+      await fs.promises.writeFile(target, value, { mode: 0o600, flag: 'wx' });
+      return value;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      return read();
     }
   }
 
@@ -3228,6 +3254,42 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       };
     }
 
+    const projectsToken = await this.loadOrCreateProjectsServiceSecret('projects-local-token');
+    const projectsHumanToken = await this.loadOrCreateProjectsServiceSecret('projects-human-token');
+    const projectsDatabasePassword = await this.loadOrCreateProjectsServiceSecret('projects-database-password');
+    const projectsAdminPassword = escapeForCompose(encodeURIComponent(await SullaSettingsModel.getServicePassword()));
+    const projectsArchiveHours = Number(await SullaSettingsModel.get('projectsAutoArchiveDoneAfterHours', 24));
+    const projectsImage = resolveSullaServiceImage(
+      'sulla-projects', process.cwd(), Electron.app.getVersion(), process.env.SULLA_PROJECTS_IMAGE,
+    );
+    const resolvedProjectsImage = projectsImage.build ? projectsImage.image : `\${SULLA_PROJECTS_IMAGE:-${ projectsImage.image }}`;
+    if (!projectsImage.build && !process.env.SULLA_PROJECTS_IMAGE && !projectsImage.image.endsWith(':latest')) {
+      this.#optionalSullaFallbackImages.set('sulla_projects', {
+        env: 'SULLA_PROJECTS_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-projects:latest',
+      });
+    }
+    compose.services.sulla_projects = {
+      ...projectsImage,
+      image: resolvedProjectsImage,
+      container_name: 'sulla_projects',
+      depends_on: { postgres: { condition: 'service_healthy' } },
+      environment: {
+        SULLA_PROJECTS_MODE: 'desktop',
+        SULLA_PROJECTS_PORT: '8793',
+        SULLA_PROJECTS_LOCAL_TOKEN: projectsToken,
+        SULLA_PROJECTS_HUMAN_TOKEN: projectsHumanToken,
+        SULLA_PROJECTS_AUTO_ARCHIVE_HOURS: String(Number.isFinite(projectsArchiveHours) && projectsArchiveHours > 0 ? projectsArchiveHours : 0),
+        SULLA_PROJECTS_ADMIN_DATABASE_URL: `postgresql://sulla:${ projectsAdminPassword }@postgres:5432/sulla`,
+        SULLA_PROJECTS_MIGRATION_DATABASE_URL: `postgresql://sulla:${ projectsAdminPassword }@postgres:5432/sulla_projects`,
+        SULLA_PROJECTS_DATABASE_URL: `postgresql://sulla_projects_service:${ projectsDatabasePassword }@postgres:5432/sulla_projects`,
+        SULLA_PROJECTS_DATABASE_PASSWORD: projectsDatabasePassword,
+        SULLA_PROJECTS_LEGACY_DATABASE_URL: `postgresql://sulla:${ projectsAdminPassword }@postgres:5432/sulla`,
+      },
+      ports: ['127.0.0.1:30138:8793'],
+      restart: 'unless-stopped',
+      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8793/healthz'], interval: '10s', timeout: '3s', retries: 10 },
+    };
+
     // Desktop is a single-node Sulla Server. The manager and its ephemeral
     // runners use the same image that the server deployment will use; only
     // the launcher driver differs (Docker here, Kubernetes on k3s).
@@ -3257,6 +3319,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       env_file: ['/etc/sulla-env'],
       environment: {
         SULLA_WORKFLOW_ROLE: 'manager',
+        SULLA_PROJECTS_API_URL: 'http://sulla_projects:8793',
+        SULLA_PROJECTS_API_TOKEN: projectsToken,
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_MANAGER_URL: 'http://workflow_manager:8788',
@@ -3323,6 +3387,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_URL: 'http://sulla_relay:8790',
         SULLA_RELAY_TOKEN: sullaApiToken,
+        SULLA_PROJECTS_API_URL: 'http://sulla_projects:8793',
+        SULLA_PROJECTS_API_TOKEN: projectsToken,
         SULLA_FILES_API_URL:     'https://sulla_files:8792',
         SULLA_FILES_TLS_CA_FILE: '/run/sulla-files-ca/tls.crt',
         ...(vaultIdentities ? {
@@ -3545,7 +3611,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       );
 
       this.#activeOptionalSullaServices.clear();
-      const optionalServices = ['sulla_relay', 'workflow_manager', 'tools', 'sulla_files'];
+      const optionalServices = ['sulla_projects', 'sulla_relay', 'workflow_manager', 'tools', 'sulla_files'];
 
       if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) optionalServices.push('sulla_vault');
       for (const service of optionalServices) {
@@ -3571,7 +3637,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
               unavailableError = fallbackError;
             }
           }
-          console.warn(`[Sulla] Optional service ${ service } unavailable; using its in-app fallback:`, unavailableError);
+          console.warn(`[Sulla] Service ${ service } unavailable; continuing startup without it:`, unavailableError);
         }
       }
     });
@@ -3588,6 +3654,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
     const optionalServices = ['sulla_python_runtime', 'sulla_shell_runtime', 'sulla_node_runtime'];
 
+    if (this.#activeOptionalSullaServices.has('sulla_projects')) optionalServices.push('sulla_projects');
     if (this.#activeOptionalSullaServices.has('workflow_manager')) optionalServices.push('sulla_workflow_manager');
     if (this.#activeOptionalSullaServices.has('sulla_relay')) optionalServices.push('sulla_relay');
     if (this.#activeOptionalSullaServices.has('tools')) optionalServices.push('sulla_tools');

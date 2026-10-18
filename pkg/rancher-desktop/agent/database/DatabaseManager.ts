@@ -12,6 +12,7 @@ import { postgresClient } from '@pkg/agent/database/PostgresClient';
 
 const MIGRATIONS_TABLE = 'sulla_migrations';
 const SEEDERS_TABLE = 'sulla_seeders';
+const PROJECTS_CUTOVER_LOCK = 'sulla-projects-legacy-cutover';
 
 interface TrackedItem {
   id:          number;
@@ -57,7 +58,38 @@ export class DatabaseManager {
     await postgresClient.query('SELECT 1');
     console.log('[DB] Connection healthy');
 
-    await this.runMigrations();
+    // The service takes the same session lock before scanning the legacy
+    // schema. Holding it across the full immutable migration chain prevents
+    // import from observing a half-migrated schema. This does not wait on
+    // service readiness, so either process may safely win startup order.
+    const projectsCutoverLock = await postgresClient.getClient();
+    let projectsCutoverLocked = false;
+    let projectsCutoverReleaseError: Error | undefined;
+    try {
+      await projectsCutoverLock.query('SELECT pg_advisory_lock(hashtext($1))', [PROJECTS_CUTOVER_LOCK]);
+      projectsCutoverLocked = true;
+      await this.runMigrations();
+
+      // The Projects container may complete an empty legacy import before a
+      // fresh Desktop install has created its historical Projects tables. The
+      // service leaves this durable cutover function in the legacy database;
+      // invoke it only after the immutable migration chain has finished, but
+      // before any seeder, registry, or lifecycle-dependent caller can write.
+      await this.applyProjectsLegacyCutoverFence();
+    } finally {
+      if (projectsCutoverLocked) {
+        try {
+          const released = await projectsCutoverLock.query<{ unlocked: boolean }>(
+            'SELECT pg_advisory_unlock(hashtext($1)) AS unlocked', [PROJECTS_CUTOVER_LOCK]);
+          if (!released.rows[0]?.unlocked) {
+            projectsCutoverReleaseError = new Error('Projects cutover advisory lock was not released');
+          }
+        } catch (error) {
+          projectsCutoverReleaseError = error instanceof Error ? error : new Error(String(error));
+        }
+      }
+      projectsCutoverLock.release(projectsCutoverReleaseError);
+    }
 
     // Seed only the integrations that ship inside the app. Nothing from the
     // user's ~/sulla folders is copied in at startup (Jonathon, 2026-10-15).
@@ -261,5 +293,18 @@ export class DatabaseManager {
     }
 
     console.log('[DB] Seeders complete');
+  }
+
+  private async applyProjectsLegacyCutoverFence(): Promise<void> {
+    const applied = await postgresClient.transaction(async(client) => {
+      const cutover = await client.query<{ active: boolean }>(`
+        SELECT to_regclass('public.sulla_projects_legacy_cutover') IS NOT NULL
+          AND to_regprocedure('public.sulla_projects_apply_legacy_write_fence()') IS NOT NULL AS active
+      `);
+      if (!cutover.rows[0]?.active) return false;
+      await client.query('SELECT public.sulla_projects_apply_legacy_write_fence()');
+      return true;
+    });
+    if (applied) console.log('[DB] Legacy Projects tables fenced for container ownership');
   }
 }

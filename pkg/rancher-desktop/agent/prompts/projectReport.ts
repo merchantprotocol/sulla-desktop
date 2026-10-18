@@ -1,7 +1,7 @@
 /**
  * Project standup report — shared builder used by both the `project_report` CLI tool
  * and the one-time context injection into the orchestrating agent's first run
- * (see AgentNode). Read-only; builds from WorkItemsModel.
+ * (see AgentNode). Read-only; builds through the Projects service boundary.
  *
  * "Done" = tasks whose completed_at falls in the look-back window. Open work
  * is split into actionable, planning, and blocked queues. Within a priority
@@ -9,8 +9,7 @@
  * round-robin rotation whenever an agent edits or comments on a task.
  */
 
-import { WorkItemsModel } from '../database/models/WorkItemsModel';
-import { WorkTaskDependencyModel } from '../database/models/WorkTaskDependencyModel';
+import { getProjectsApplicationService } from '../projects/application/ProjectsApplicationService';
 
 export interface ProjectReportOpts {
   hours?:                number;
@@ -42,11 +41,12 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   const assignee = opts.assignee?.trim() || undefined;
   const cutoffMs = Date.now() - (hours * 60 * 60 * 1000);
 
-  await WorkItemsModel.ensureTables();
+  const projectsService = getProjectsApplicationService();
+  await projectsService.ready();
 
   const [projects, epics] = await Promise.all([
-    WorkItemsModel.listProjects({ includeDone: true, limit: 500 }),
-    WorkItemsModel.listEpics({ includeDone: true, limit: 2000 }),
+    projectsService.listProjects({ includeDone: true, limit: 500 }),
+    projectsService.listEpics({ includeDone: true, limit: 2000 }),
   ]);
   const projectTitle = new Map(projects.map(p => [p.id, p.title]));
   const epicTitle = new Map(epics.map(e => [e.id, e.title]));
@@ -59,17 +59,22 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   };
 
   // DONE in window
-  const doneRows = await WorkItemsModel.listTasks({ projectId, assignee, includeDone: true, limit: 3000 });
+  const doneRows = await projectsService.listTasks({ projectId, assignee, includeDone: true, limit: 3000 });
   const completed = doneRows
     .filter(t => (t.status === 'done' || t.status === 'cancelled') && t.completed_at && Date.parse(t.completed_at) >= cutoffMs)
     .sort((a, b) => Date.parse(b.completed_at!) - Date.parse(a.completed_at!));
   const doneEpics = epics.filter(e => e.status === 'done' && Date.parse(e.last_moved_at) >= cutoffMs);
   const doneProjects = projects.filter(p => p.status === 'done' && Date.parse(p.last_moved_at) >= cutoffMs);
 
-  // OPEN QUEUES — WorkItemsModel already orders by epic priority → task
+  // OPEN QUEUES — Projects already orders by epic priority → task
   // priority → oldest activity. Preserve that order while separating states.
-  const openRows = await WorkItemsModel.listTasks({ projectId, assignee, limit: 500 });
-  const dependencyHolds = await WorkTaskDependencyModel.listUnresolvedForTasks(openRows.map(task => task.id));
+  const openRows = await projectsService.listTasks({ projectId, assignee, limit: 500 });
+  const readiness = await Promise.all([...new Set(openRows.map(task => task.project_id))]
+    .map(currentProjectId => projectsService.readyTasks({ projectId: currentProjectId, limit: 500 })));
+  const openIds = new Set(openRows.map(task => task.id));
+  const dependencyHolds = readiness.flatMap(result => result.blocked)
+    .filter(row => openIds.has(row.task.id))
+    .flatMap(row => row.holds);
   const dependencyHeldIds = new Set(dependencyHolds.map(hold => hold.taskId));
   const actionableRows = openRows.filter(t =>
     t.status !== 'blocked' && t.status !== 'planning' && !dependencyHeldIds.has(t.id),

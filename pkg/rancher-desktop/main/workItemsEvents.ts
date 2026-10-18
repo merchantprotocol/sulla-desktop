@@ -1,10 +1,10 @@
 /**
- * Work-items IPC — bridge from the renderer to the Postgres Projects:
+ * Work-items IPC — bridge from the renderer to the Projects service:
  * work_projects → work_epics → work_tasks → work_task_comments.
  *
  * Backs the Projects view (ProjectsHome.vue / useProjects.ts). The renderer
  * never touches the DB directly — it invokes these channels and the main
- * process reads/writes through WorkItemsModel.
+ * process reads/writes through ProjectsApplicationService.
  *
  * Full CRUD:
  *   read    → work-items:board, work-items:comments, work-items:activity
@@ -16,11 +16,11 @@
  * we resolve a unique slug here before inserting. Tasks use insertTask (always
  * new) and require an epic_id.
  *
- * The DB layer is pulled in via a dynamic import (same pattern as
+ * The service client is pulled in via a dynamic import (same pattern as
  * sullaWorkflowEvents.ts) so the main process doesn't eagerly load the
  * Postgres stack at startup.
  *
- * DUAL-STORE NOTE: reads/writes ONLY Postgres via WorkItemsModel — never Redis.
+ * The renderer never receives service credentials and cannot bypass IPC.
  */
 
 import type { KnowledgeLinkInput, KnowledgeWorkItemKind } from '@pkg/agent/database/models/WorkItemKnowledgeModel';
@@ -103,24 +103,13 @@ export function initWorkItemsEvents(): void {
       await app.resolveEffectiveLanes(project.id),
     ] as const));
     const laneCapability = await app.laneRuntimeCapability();
-    const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
-    const activeAgents = await postgresClient.query<{ project_id: string; task_id: string; agent_id: string }>(`
-      SELECT DISTINCT active.project_id, active.task_id, active.agent_id
-        FROM (
-          SELECT task.project_id, task.id AS task_id,
-                 COALESCE(NULLIF(worker.value->>'agentId', ''), NULLIF(task.assignee, ''), 'agent') AS agent_id
-            FROM agent_jobs job
-            CROSS JOIN LATERAL unnest(job.project_task_ids) owned(task_id)
-            JOIN work_tasks task ON task.id = owned.task_id AND task.archived = false
-            LEFT JOIN LATERAL jsonb_array_elements(job.tasks) worker(value) ON true
-           WHERE job.status = 'running'
-          UNION ALL
-          SELECT task.project_id, task.id AS task_id, dispatch.agent_id
-            FROM work_task_dispatches dispatch
-            JOIN work_tasks task ON task.id = dispatch.task_id AND task.archived = false
-           WHERE dispatch.status = 'running'
-        ) active
-    `).catch(() => []);
+    const taskById = new Map(tasks.map(task => [task.id, task]));
+    const activeAgents = (await app.listActiveTaskAgents(tasks.map(task => task.id))).flatMap(claim => {
+      const task = taskById.get(claim.task_id);
+      return task && !task.archived
+        ? [{ project_id: task.project_id, task_id: task.id, agent_id: claim.agent_id }]
+        : [];
+    });
 
     return {
       projects:       projects.map(item => ({ ...item, knowledge_count: projectCounts[item.id] ?? 0 })),
@@ -370,7 +359,7 @@ export function initWorkItemsEvents(): void {
   ipcMainProxy.handle('work-items:comment-add', async(_event: unknown, input: AddCommentInput) => {
     const projects = await importProjectsApplicationService();
 
-    return projects.addComment(input, { actor: input.author ?? 'human', source: 'ipc' });
+    return projects.addComment(input, { actor: 'human', source: 'ipc' });
   });
 
   // ── reorder / move (batch position + optional status/epic move) ────────

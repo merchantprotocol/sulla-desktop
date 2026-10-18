@@ -39,6 +39,29 @@ describe('Projects adapter boundary contract', () => {
     expect(source).toContain("projects.createTask({ ...input, actor: 'human' }");
   });
 
+  it('keeps active Desktop callers on the authenticated Projects client', () => {
+    const application = fs.readFileSync(
+      `${ repoRoot }/pkg/rancher-desktop/agent/projects/application/ProjectsApplicationService.ts`, 'utf8',
+    );
+    expect(application).toContain('getProjectsApiClient');
+    expect(application).not.toMatch(/PostgresProjectsRepository|postgresClient/);
+
+    const callers = [
+      'agent/nodes/HeartbeatNode.ts',
+      'agent/prompts/projectReport.ts',
+      'agent/prompts/heartbeatIdeaLab.ts',
+      'agent/services/HumanCommentTriage.ts',
+      'main/mobileCompanion.ts',
+      'main/cloud/desktopObjectSync.ts',
+      'main/workItemsEvents.ts',
+    ];
+    for (const caller of callers) {
+      const source = fs.readFileSync(`${ repoRoot }/pkg/rancher-desktop/${ caller }`, 'utf8');
+      expect(source).not.toMatch(/\b(?:WorkItemsModel|WorkLaneDefinitionModel|WorkItemKnowledgeModel|WorkTaskDependencyModel)\.[a-zA-Z]+\s*\(/);
+      expect(source).not.toMatch(/(?:FROM|JOIN|INTO|UPDATE|DELETE FROM)\s+work_(?:projects|epics|tasks|task_comments|lane_definitions|item_knowledge_links)\b/i);
+    }
+  });
+
   it('keeps schema ownership in ordered migrations', () => {
     const source = fs.readFileSync(`${ repoRoot }/pkg/rancher-desktop/agent/database/models/WorkItemsModel.ts`, 'utf8');
     expect(source).not.toMatch(/CREATE\s+(?:TABLE|INDEX|EXTENSION)|ALTER\s+TABLE/i);
