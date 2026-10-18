@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { join } from 'node:path';
 
 import express from 'express';
 
@@ -8,8 +7,7 @@ import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
 import { applyDatabaseFileOperations, type FileOperationItem } from './fileOperations.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
-import { LegacyFilesImporter } from './legacyImport.js';
-import { runLegacyPreflight } from './legacyPreflight.js';
+import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
 import { loadFileContent, thumbnail } from './preview.js';
 import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 import { registerResidencyRoutes } from './residencyHttp.js';
@@ -18,7 +16,7 @@ import { SharesService } from './shares.js';
 import { Store } from './store.js';
 import { insertStreamingUpload } from './streamingUpload.js';
 import { beginUploadIntent, completeUploadIntent } from './uploadCleanup.js';
-import { FilesMasterKeyRejectedError } from './keyring.js';
+import type { FilesLifecycle } from './lifecycle.js';
 
 import type { Config } from './config.js';
 import type { LocalFilesManager } from './localManager.js';
@@ -69,14 +67,28 @@ export function createApp(
   onLock?:()=>Promise<void>,
   onRecover?:(master:Buffer)=>Promise<number>,
   residency?:FileResidencyManager,
+  filesLifecycle?:FilesLifecycle,
+  bootstrapAuthority?:FilesBootstrapAuthority,
 ) {
   const app = express(); const store = new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
-  let lifecycle:Promise<unknown> = Promise.resolve();
-  let ready = Boolean(config.keyring?.unlocked);
-  let unlockFailure:{ code:string; stage:string } | undefined;
-  const serial = <T>(operation:()=>Promise<T>):Promise<T> => { const result = lifecycle.then(operation); lifecycle = result.catch(() => undefined); return result; };
+  const bootstrapJsonParser = express.json({ limit: '32kb' });
+  const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
   app.disable('x-powered-by');
   if (config.mode === 'server') app.use('/files', serverUi());
+  app.post('/v1/bootstrap/challenge', bootstrapJsonParser, async(request, response) => {
+    if (config.mode !== 'desktop' || !bootstrapAuthority) return response.sendStatus(404);
+    try { return response.json(await bootstrapAuthority.challenge(request.body)) } catch (error) {
+      const failure = error instanceof FilesBootstrapError ? error : new FilesBootstrapError('FILES_BOOTSTRAP_FAILED', 503, 'Files bootstrap failed');
+      return response.status(failure.status).json({ code: failure.code, error: failure.message });
+    }
+  });
+  app.post('/v1/bootstrap/unlock', bootstrapJsonParser, async(request, response) => {
+    if (config.mode !== 'desktop' || !bootstrapAuthority) return response.sendStatus(404);
+    try { return response.json(await bootstrapAuthority.unlock(request.body)) } catch (error) {
+      const failure = error instanceof FilesBootstrapError ? error : new FilesBootstrapError('FILES_BOOTSTRAP_FAILED', 503, 'Files bootstrap failed');
+      return response.status(failure.status).json({ code: failure.code, error: failure.message });
+    }
+  });
   app.use((request, response, next) => ['/v1/files/upload', '/v1/files/import'].includes(request.path) ? next() : jsonParser(request, response, next));
   app.use((request:RequestWithIdentity, response, next) => {
     if (request.path === '/healthz') return next();
@@ -88,88 +100,15 @@ export function createApp(
       .then(result => result.rowCount ? next() : response.status(401).json({ error: 'session is no longer active' }))
       .catch(next);
   });
-  app.post('/v1/local/unlock', async(request, response) => {
-    if (config.mode !== 'desktop') return response.sendStatus(404);
-    let key:Buffer | undefined;
-    let stage:'preflight' | 'master-key' | 'initialization' = 'preflight';
-    try {
-      if (!config.keyring || typeof request.body?.masterKey !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(request.body.masterKey)) return response.status(400).json({ error: 'Invalid Files master key' });
-      key = Buffer.from(request.body.masterKey, 'base64'); delete request.body.masterKey;
-      await serial(async() => {
-        stage = 'preflight';
-        if (config.filesRoot) {
-          config.legacyPreflight = await runLegacyPreflight(db, config.filesRoot, { caseInsensitive: config.caseInsensitiveRoot });
-          if (config.legacyPreflight.state === 'secure-import-required') throw new Error('Legacy Files secure import is required');
-        }
-        stage = 'master-key';
-        await config.keyring!.unlock(key!, config.capabilitySigningKey);
-        stage = 'initialization';
-        try { await onUnlock?.(); ready = true } catch (error) { ready = false; try { await onLock?.() } finally { config.keyring!.close() } throw error }
-      });
-      unlockFailure = undefined;
-      return response.json({ ok: true });
-    } catch (error) {
-      if (error instanceof FilesMasterKeyRejectedError) {
-        unlockFailure = { code: error.code, stage: 'master-key' };
-        return response.status(409).json({ error: 'Files master key was rejected; existing data was preserved', code: error.code, stage: 'master-key' });
-      }
-      unlockFailure = { code: 'FILES_STARTUP_FAILED', stage };
-      return response.status(503).json({ error: 'Files startup failed; existing data was preserved', code: 'FILES_STARTUP_FAILED', stage });
-    }
-    finally { key?.fill(0); if (request.body) delete request.body.masterKey }
-  });
   app.post('/v1/local/lock', async(_request, response) => {
     if (config.mode !== 'desktop') return response.sendStatus(404);
-    await serial(async() => { ready = false; try { await onLock?.() } finally { config.keyring?.close() } }); response.json({ ok: true });
-  });
-  app.post('/v1/local/legacy-import', async(request, response) => {
-    if (config.mode !== 'desktop' || !config.filesRoot || !config.legacyPreflight?.protectedPrefix || /[/\\]/.test(config.legacyPreflight.protectedPrefix)) return response.sendStatus(404);
-    let master:Buffer | undefined; const legacy:Buffer[] = [];
-    try {
-      if (typeof request.body?.masterKey !== 'string' || !Array.isArray(request.body?.legacyMasterKeys)) throw new Error('Invalid import request');
-      master = Buffer.from(request.body.masterKey, 'base64');
-      for (const encoded of request.body.legacyMasterKeys) {
-        if (typeof encoded !== 'string') throw new Error('Invalid import request');
-        legacy.push(Buffer.from(encoded, 'base64'));
-      }
-      delete request.body.masterKey; delete request.body.legacyMasterKeys;
-      if (master.length !== 32 || legacy.length === 0 || legacy.some(key => key.length !== 32)) throw new Error('Invalid import request');
-      const importer = new LegacyFilesImporter(db, join(config.filesRoot, config.legacyPreflight.protectedPrefix), config.chunkRoot);
-      const result = await serial(() => importer.run(master!, legacy));
-      config.legacyPreflight = { state: 'clear', protectedPrefix: config.legacyPreflight?.protectedPrefix };
-      return response.json({ ok: true, ...result });
-    } catch { return response.status(409).json({ error: 'Legacy Files import failed; source data remains protected' }) } finally {
-      master?.fill(0); for (const key of legacy) key.fill(0); if (request.body) { delete request.body.masterKey; delete request.body.legacyMasterKeys }
-    }
-  });
-  app.post('/v1/local/recovery/device', async(request, response) => {
-    if (config.mode !== 'desktop' || !onRecover) return response.sendStatus(404);
-    let key:Buffer | undefined;
-    try {
-      if (!config.keyring || typeof request.body?.masterKey !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(request.body.masterKey)) return response.status(400).json({ error: 'Invalid Files replacement master key' });
-      key = Buffer.from(request.body.masterKey, 'base64'); delete request.body.masterKey;
-      const recovered = await serial(async() => {
-        ready = false;
-        try {
-          await onLock?.(); config.keyring!.close();
-          const count = await onRecover(key!);
-          if (!config.keyring!.unlocked) throw new Error('Files replacement master was not persisted');
-          await onUnlock?.();
-          if (!config.keyring!.unlocked) throw new Error('Files recovery initialization did not retain the replacement master');
-          ready = true;
-          return count;
-        } catch (error) {
-          ready = false;
-          try { await onLock?.() } finally { config.keyring!.close() }
-          throw error;
-        }
-      });
-      return response.json({ recovered });
-    } catch { return response.status(503).json({ error: 'Files recovery failed; Files remains locked' }) }
-    finally { key?.fill(0); if (request.body) delete request.body.masterKey }
+    if (filesLifecycle) await filesLifecycle.lock();
+    else { await onLock?.(); config.keyring?.close() }
+    bootstrapAuthority?.invalidate();
+    response.json({ ok: true });
   });
   app.use((request, response, next) => {
-    if (request.path !== '/healthz' && !ready) return response.status(503).json({ code: 'FILES_LOCKED', error: 'Files is locked; Desktop keychain unlock is required' });
+    if (request.path !== '/healthz' && !ready()) return response.status(503).json({ code: 'FILES_LOCKED', error: 'Files is locked; secure bootstrap is required' });
     next();
   });
   const identity = (request:RequestWithIdentity):FilesIdentity => { if (!request.filesIdentity) throw new HttpError(401, 'identity required'); return request.filesIdentity };
@@ -281,7 +220,10 @@ export function createApp(
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
-  app.get('/healthz', (_request, response) => response.json({ ok: true, mode: config.mode, locked: !ready, legacyImport: config.legacyPreflight, unlockFailure }));
+  app.get('/healthz', (_request, response) => response.json({
+    ok: true, mode: config.mode, locked: !ready(), legacyImport: config.legacyPreflight,
+    lifecycle: filesLifecycle?.status(),
+  }));
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
   app.get('/v1/local/recent', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.recent(Number(request.query.limit ?? 4), typeof request.query.path === 'string' ? request.query.path : undefined)) } catch (error) { next(error) } });
@@ -852,5 +794,5 @@ export function createApp(
       FROM collections c WHERE f.collection_id=c.id AND c.owner_user_id=$1 AND c.agent_run_id=$2 AND c.kind='scratch' AND c.published=TRUE AND c.legacy_source=FALSE AND f.expires_at IS NULL AND f.deleted_at IS NULL RETURNING f.id`, [actor.userId, actor.jobId]);
     response.json({ count: result.rowCount ?? result.rows.length });
   } catch (error) { next(error) } });
-  app.use((error:any, _request:any, response:any, _next:any) => response.status(error.status ?? (error.code === '23505' ? 409 : 500)).json({ error: _request.path === '/v1/local/unlock' || error.type === 'entity.parse.failed' ? 'Invalid request' : error.message ?? 'server error' })); return app;
+  app.use((error:any, _request:any, response:any, _next:any) => response.status(error.status ?? (error.code === '23505' ? 409 : 500)).json({ error: _request.path.startsWith('/v1/bootstrap/') || error.type === 'entity.parse.failed' ? 'Invalid request' : error.message ?? 'server error' })); return app;
 }

@@ -1,0 +1,40 @@
+#!/bin/sh
+# Keep private material inside the VM persistent disk. stdout is public PEM only.
+set -eu
+DEST=$1
+OWNER=$2
+GROUP=$3
+command -v openssl >/dev/null || { echo 'openssl is required for Files TLS' >&2; exit 127; }
+umask 077
+valid_identity() {
+  [ ! -L "$1" ] && [ ! -L "$1/tls.key" ] && [ ! -L "$1/tls.crt" ] &&
+  [ -f "$1/tls.key" ] && [ -s "$1/tls.key" ] && [ -f "$1/tls.crt" ] && [ -s "$1/tls.crt" ] &&
+  openssl x509 -in "$1/tls.crt" -noout -checkend 86400 >/dev/null 2>&1 &&
+  openssl x509 -in "$1/tls.crt" -noout -checkhost sulla_files >/dev/null 2>&1 &&
+  openssl x509 -in "$1/tls.crt" -noout -checkhost sulla-files.local >/dev/null 2>&1 &&
+  openssl x509 -in "$1/tls.crt" -noout -checkip 127.0.0.1 >/dev/null 2>&1 &&
+  [ "$(openssl x509 -in "$1/tls.crt" -pubkey -noout 2>/dev/null)" = "$(openssl pkey -passin pass: -in "$1/tls.key" -pubout 2>/dev/null)" ]
+}
+[ ! -L "$DEST" ] || { echo 'Files TLS directory must not be a symlink' >&2; exit 1; }
+mkdir -p "$DEST"; chmod 700 "$DEST"
+for file in tls.key tls.crt; do
+  [ ! -L "$DEST/$file" ] || { echo 'Files TLS file must not be a symlink' >&2; exit 1; }
+  if [ -d "$DEST/$file" ]; then rmdir "$DEST/$file"; fi
+done
+if ! valid_identity "$DEST"; then
+  STAGE=$(mktemp -d "$DEST/.identity.XXXXXX")
+  trap 'rm -f "$STAGE/tls.key" "$STAGE/tls.crt"; rmdir "$STAGE"' EXIT
+  openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 3650 \
+    -subj '/CN=sulla-files.local' \
+    -addext 'subjectAltName=DNS:sulla-files.local,DNS:sulla_files,IP:127.0.0.1' \
+    -keyout "$STAGE/tls.key" -out "$STAGE/tls.crt" 2>/dev/null || {
+      echo 'Failed to generate Files TLS identity' >&2; exit 1;
+    }
+  valid_identity "$STAGE" || { echo 'Invalid Files TLS identity' >&2; exit 1; }
+  chown "$OWNER:$GROUP" "$STAGE/tls.key" "$STAGE/tls.crt"
+  chmod 600 "$STAGE/tls.key"; chmod 644 "$STAGE/tls.crt"
+  mv "$STAGE/tls.key" "$DEST/tls.key"; mv "$STAGE/tls.crt" "$DEST/tls.crt"
+fi
+chown "$OWNER:$GROUP" "$DEST" "$DEST/tls.key" "$DEST/tls.crt"
+chmod 700 "$DEST"; chmod 600 "$DEST/tls.key"; chmod 644 "$DEST/tls.crt"
+cat "$DEST/tls.crt"

@@ -1,6 +1,6 @@
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { getSullaFilesClient } from '@pkg/main/sullaFilesClient';
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
-import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 
 export type ShareMode = 'view' | 'download';
 
@@ -49,6 +49,7 @@ export interface LinkService {
 }
 
 export class SharingUnavailableError extends Error {}
+const filesClient = getSullaFilesClient();
 
 function normalize(value:any):ShareLink {
   return {
@@ -79,7 +80,7 @@ async function requestWithContractFallback(paths:string[], init:RequestInit):Pro
   for (const path of paths) {
     let response:Response;
 
-    try { response = await getSullaFilesWatcher().requestFiles(path, init) } catch (error) {
+    try { response = await filesClient.request(path, init) } catch (error) {
       throw new SharingUnavailableError(`Sharing service is offline: ${ error instanceof Error ? error.message : String(error) }`);
     }
     if (![404, 405].includes(response.status)) return response;

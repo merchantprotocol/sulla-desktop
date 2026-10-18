@@ -27,6 +27,15 @@ export class FilesKeyring {
   get unlocked():boolean { return Boolean(this.master) }
 
   async unlock(master:Buffer, legacySigningKey:string | Buffer):Promise<void> {
+    return this.unlockInternal(master, legacySigningKey, false);
+  }
+
+  /** One-time server migration wraps the exact historical derived keys transactionally. */
+  async unlockServer(master:Buffer, legacySigningKey:string | Buffer):Promise<void> {
+    return this.unlockInternal(master, legacySigningKey, true);
+  }
+
+  private async unlockInternal(master:Buffer, legacySigningKey:string | Buffer, migrateServerMarkers:boolean):Promise<void> {
     if (master.length !== 32) throw new Error('Invalid Files master key');
     const epoch = this.epoch;
     if (this.pending) await this.pending;
@@ -36,11 +45,11 @@ export class FilesKeyring {
       return;
     }
     const copy = Buffer.from(master);
-    this.pending = this.initialize(copy, legacySigningKey, epoch).finally(() => copy.fill(0));
+    this.pending = this.initialize(copy, legacySigningKey, epoch, migrateServerMarkers).finally(() => copy.fill(0));
     try { await this.pending } finally { this.pending = undefined }
   }
 
-  private async initialize(master:Buffer, legacySigningKey:string | Buffer, epoch:number):Promise<void> {
+  private async initialize(master:Buffer, legacySigningKey:string | Buffer, epoch:number, migrateServerMarkers:boolean):Promise<void> {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
@@ -60,13 +69,22 @@ export class FilesKeyring {
         // Only migration-classified native rows are known to have used the
         // historical signing-derived scheme. Ambiguous/external rows remain
         // unkeyed until the separate secure import flow proves their origin.
-        const rows = (await client.query("SELECT id FROM collections WHERE compatibility_state='native'")).rows;
+        const rows = (await client.query(`SELECT c.id,k.data_key,k.dedup_key,k.key_origin
+          FROM collections c LEFT JOIN files_collection_keys k ON k.collection_id=c.id
+          WHERE c.compatibility_state='native' ORDER BY c.id FOR UPDATE OF c`)).rows;
         for (const row of rows) {
           // The legacy master.key wrapped metadata only; content used these deterministic keys.
           const data = createHmac('sha256', legacySigningKey).update(`sulla:files:data-key:v1:${ row.id }`).digest();
           const dedup = createHmac('sha256', legacySigningKey).update(`sulla:files:dedup-key:v1:${ row.id }`).digest();
           try {
-            await client.query("INSERT INTO files_collection_keys(collection_id,data_key,dedup_key,key_origin) VALUES($1,$2,$3,'legacy-signing-v1')", [row.id, await encrypt(data, master, `sulla:files:data-key:v1:${ row.id }`), await encrypt(dedup, master, `sulla:files:dedup-key:v1:${ row.id }`)]);
+            const wrapped = [await encrypt(data, master, `sulla:files:data-key:v1:${ row.id }`), await encrypt(dedup, master, `sulla:files:dedup-key:v1:${ row.id }`)];
+            if (!row.data_key && !row.dedup_key) {
+              await client.query("INSERT INTO files_collection_keys(collection_id,data_key,dedup_key,key_origin) VALUES($1,$2,$3,'legacy-signing-v1')", [row.id, ...wrapped]);
+            } else if (migrateServerMarkers && serverMarker(row.data_key, 'data', row.id) && serverMarker(row.dedup_key, 'dedup', row.id)) {
+              await client.query("UPDATE files_collection_keys SET data_key=$2,dedup_key=$3,key_origin='legacy-signing-v1' WHERE collection_id=$1", [row.id, ...wrapped]);
+            } else {
+              throw new Error('Existing Files key state cannot be migrated automatically');
+            }
           } finally { data.fill(0); dedup.fill(0) }
         }
         await client.query('INSERT INTO files_key_state(id,verifier) VALUES(TRUE,$1)', [await encrypt(CHECK, master, CONTEXT)]);
@@ -189,24 +207,9 @@ export class FilesKeyring {
   }
 }
 
-/** Existing standalone server protocol. Never used by Desktop or as an unlock fallback. */
-export class LegacyServerKeyring extends FilesKeyring {
-  constructor(db:pg.Pool, private readonly signingKey:string | Buffer) { super(db) }
-  override get unlocked():boolean { return true }
-  override keys(id:string, _queryable?:Queryable):Promise<CollectionKeys> {
-    return Promise.resolve({
-      data:  createHmac('sha256', this.signingKey).update(`sulla:files:data-key:v1:${ id }`).digest(),
-      dedup: createHmac('sha256', this.signingKey).update(`sulla:files:dedup-key:v1:${ id }`).digest(),
-    });
-  }
-
-  override unlock():Promise<void> { return Promise.reject(new Error('Desktop keychain bootstrap is unavailable in server mode')) }
-
-  override async create(id:string, _client:pg.PoolClient):Promise<{ data:Envelope; dedup:Envelope }> {
-    // Server keys stay derived inside this process from signingKey. These
-    // legacy envelope columns contain only non-secret protocol markers.
-    const marker = (purpose:string):Envelope => ({ version: 1, algorithm: 'xchacha20-poly1305', nonce: '', ciphertext: `server-derived:${ purpose }:${ id }` });
-
-    return { data: marker('data'), dedup: marker('dedup') };
-  }
+function serverMarker(value:unknown, purpose:'data' | 'dedup', id:string):boolean {
+  if (!value || typeof value !== 'object') return false;
+  const marker = value as Partial<Envelope>;
+  return marker.version === 1 && marker.algorithm === 'xchacha20-poly1305' && marker.nonce === '' &&
+    marker.ciphertext === `server-derived:${ purpose }:${ id }`;
 }

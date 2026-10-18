@@ -15,6 +15,43 @@
 # ============================================================================
 set -euo pipefail
 
+# Persist one distinct Files master before deploying the envelope keyring.
+# This subshell never prints secrets or exports them to its caller.
+ensure_files_master_key() (
+  set -euo pipefail
+  umask 077
+  local_file="$1"
+  key_lock="$local_file.files-key.lock"
+  key_tmp=''
+  [[ -f "$local_file" && ! -L "$local_file" ]] || { echo 'Files key configuration must be a regular file' >&2; exit 1; }
+  mkdir "$key_lock" 2>/dev/null || { echo 'Another installer is provisioning the Files master; retry after it finishes' >&2; exit 1; }
+  trap '[[ -z "$key_tmp" ]] || rm -f -- "$key_tmp"; rmdir -- "$key_lock"' EXIT
+  unset SULLA_FILES_MASTER_KEY SULLA_FILES_ENVELOPE_VERSION
+  # Read again under the lock so concurrent upgrades cannot choose different keys.
+  # shellcheck disable=SC1090
+  . "$local_file"
+  [[ ! ${SULLA_FILES_ENVELOPE_VERSION+x} || "$SULLA_FILES_ENVELOPE_VERSION" == 1 ]] || { echo 'Unsupported Files envelope configuration version; existing configuration was preserved' >&2; exit 1; }
+  new_key=false
+  if [[ ! ${SULLA_FILES_MASTER_KEY+x} ]]; then
+    [[ ! ${SULLA_FILES_ENVELOPE_VERSION+x} ]] || { echo 'Files master is missing after envelope provisioning; restore it from secure configuration backup' >&2; exit 1; }
+    SULLA_FILES_MASTER_KEY="$(openssl rand -base64 32 | tr '/+' '_-' | tr -d '=\n')"
+    new_key=true
+  fi
+  [[ "$SULLA_FILES_MASTER_KEY" =~ ^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$ ]] || { echo 'Files master must be a canonical 32-byte base64url key; existing configuration was preserved' >&2; exit 1; }
+  [[ "$SULLA_FILES_MASTER_KEY" != "${SULLA_FILES_CAPABILITY_SIGNING_KEY:-}" && "$SULLA_FILES_MASTER_KEY" != "${SULLA_VAULT_JWT_SECRET:-}" ]] || { echo 'Files master must be separate from authentication secrets' >&2; exit 1; }
+  if [[ "$new_key" == true || ! ${SULLA_FILES_ENVELOPE_VERSION+x} ]]; then
+    key_tmp="$(mktemp "$local_file.files-key.XXXXXX")"
+    cat "$local_file" >"$key_tmp"
+    [[ "$new_key" == false ]] || printf '\nSULLA_FILES_MASTER_KEY=%q\n' "$SULLA_FILES_MASTER_KEY" >>"$key_tmp"
+    printf '\nSULLA_FILES_ENVELOPE_VERSION=1\n' >>"$key_tmp"
+    chmod 600 "$key_tmp"
+    sync -f "$key_tmp"
+    mv -- "$key_tmp" "$local_file"
+    sync -f "$local_file"
+    key_tmp=''
+  fi
+)
+
 # Everything runs inside main() so bash reads the whole script before any
 # child process can consume the piped stdin.
 main() {
@@ -220,6 +257,7 @@ main() {
     mv "$env_tmp" "$env_file"
   }
   chmod 600 "$env_file"
+  ensure_files_master_key "$env_file"
   # shellcheck disable=SC1090
   set -a; . "$env_file"; set +a
   if [[ -z ${SULLA_FILES_CAPABILITY_SIGNING_KEY:-} ]]; then

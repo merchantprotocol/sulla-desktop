@@ -196,6 +196,27 @@ Use `sudo kubectl ...` on the first server. k3s stores its admin kubeconfig at `
 
 ## Undo
 
+### Files envelope-key custody
+
+The installer persists a distinct `SULLA_FILES_MASTER_KEY` in the root-readable
+`server.env` and supplies it to Files through Compose or the `files-master-key`
+entry of the managed Kubernetes Secret. Reruns preserve this key. An installation
+created before envelope encryption receives a key once, before the service wraps
+its historical collection keys. Do not rotate the Files master by changing the
+environment variable; use a supported recovery or rewrapping procedure.
+
+Keep a secure backup of `server.env` separate from Files ciphertext backups.
+Restoring a database and chunks requires the matching Files master as well.
+Additional replicas of the same Files database must use that same key. The
+installer refuses a missing master after it has recorded envelope provisioning;
+restore the saved key rather than deleting the marker or key-state rows.
+
+Take a coordinated database/chunk/configuration recovery point before upgrading
+an existing server. Older signing-derived-key code cannot read newly created
+random-key collections. After new writes, rollback requires restoring that
+coordinated recovery point, with the resulting loss of later writes, or applying
+a forward fix. Reverting only the image is not a safe data rollback.
+
 Remove Sulla workloads while leaving k3s installed:
 
 ```bash

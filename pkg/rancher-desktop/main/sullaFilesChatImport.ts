@@ -3,11 +3,12 @@ import path from 'node:path';
 
 import { dialog, type BrowserWindow } from 'electron';
 
-import { getSullaFilesWatcher } from './sullaFilesWatcher';
+import { getSullaFilesClient } from './sullaFilesClient';
 
 import paths from '@pkg/utils/paths';
 
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024 * 1024;
+const filesClient = getSullaFilesClient();
 const SENSITIVE_PARTS = new Set([
   '.aws', '.azure', '.gnupg', '.keychain', '.password-store', '.ssh', 'gcloud', 'keychains',
   'crypto-wallet', 'private-files-quarantine', 'vault', 'wallet', 'wallets',
@@ -103,12 +104,7 @@ function mimeFor(name:string):string {
 }
 
 async function responseJson<T>(endpoint:string, init:RequestInit = {}):Promise<T> {
-  const response = await getSullaFilesWatcher().requestFiles(endpoint, init);
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({})) as { error?: string };
-    throw new Error(error.error || `Files import failed (${ response.status })`);
-  }
-  return await response.json() as T;
+  return filesClient.json<T>(endpoint, init);
 }
 
 interface PreparedSource {
@@ -197,7 +193,7 @@ async function uploadPreparedSource(source:PreparedSource, endpoint:string, mime
     duplex:  'half',
   } as RequestInit & { duplex: 'half' };
   // Large native imports need a transfer deadline, not the metadata request timeout.
-  const response = await getSullaFilesWatcher().requestFilesStream(endpoint, init, AbortSignal.timeout(30 * 60_000));
+  const response = await filesClient.stream(endpoint, init, AbortSignal.timeout(30 * 60_000));
   const sourceChanged = !matchesPreparedSource(source, await source.handle.stat());
   return { response, sourceChanged };
 }
