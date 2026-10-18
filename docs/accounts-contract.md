@@ -95,7 +95,7 @@ secret files. The reverse proxy publishes the stable Keycloak issuer path and fo
 | `GET /v1/profile` | Local profile (id, display name, created/updated timestamps) |
 | `PATCH /v1/profile` | Changes local display name only |
 | `GET /v1/connections` | Sanitized authority registry; never tokens or authorization secrets |
-| `POST /v1/connections` | Pins an explicit issuer, client id, resource-audience list, scopes, and optional membership endpoint plus its `remoteAuthorityId` |
+| `POST /v1/connections` | Pins an explicit issuer, client id, resource-audience list, scopes, and optional membership endpoint plus its `remoteAuthorityId` and `membershipAudience`, verified against authority metadata |
 | `DELETE /v1/connections/:id` | Revokes locally if possible, then deletes encrypted session and connection |
 | `POST /v1/connections/:id/authorize` | Creates PKCE S256 transaction for one allowed `resourceAudience` and returns `{authorizationUrl, expiresAt}` |
 | `GET /v1/oidc/callback?code=…&state=…` | Strict one-use state callback; exchanges code and stores encrypted tokens |
@@ -148,7 +148,7 @@ confidential hosted client `sulla-web`, whose redirects are separately deploymen
 The packaged Desktop integration must bind or forward host loopback port `3020` to the Accounts
 listener before launching the system browser; Lima reachability is not assumed by this contract.
 The base login token carries only the explicit `sulla-membership` audience. Each resource
-audience is attached to a separate optional client scope named `sulla-audience:<audience>`;
+audience is attached to a separate optional client scope named `sulla-audience-<audience>`;
 clients request only the scope needed for that operation. No client receives every resource
 audience by default. Client ids, issuer ids, and resource audiences are never interchangeable.
 
