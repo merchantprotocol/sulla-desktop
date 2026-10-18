@@ -5,6 +5,7 @@ import express from 'express';
 import { resolveCollectionGrants, ROLE_LEVEL, searchableScopes } from './acl.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, encryptChunk } from './crypto.js';
+import { applyDatabaseFileOperations, type FileOperationItem } from './fileOperations.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
 import { loadFileContent, thumbnail } from './preview.js';
 import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
@@ -164,6 +165,53 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
 
   app.post('/v1/search', async(request:RequestWithIdentity, response, next) => { try { if (!search) return response.status(503).json({ error: 'search unavailable' }); response.json(await search.search(request.body, await searchableScopes(db, identityDb, identity(request)))) } catch (error) { next(error) } });
+  const starPrincipal = (request:RequestWithIdentity) => { const actor = identity(request); return actor.agentId || actor.jobId ? { type: 'agent', id: actor.agentId || actor.jobId! } : { type: 'user', id: actor.userId } };
+  app.get('/v1/stars', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? ''); await requireCollection(request, collectionId, 'view', true); const principal = starPrincipal(request);
+    const rows = await db.query(`SELECT s.collection_id,s.file_id,s.folder_path FROM file_stars s LEFT JOIN files f ON f.id=s.file_id
+      WHERE s.principal_type=$1 AND s.principal_id=$2 AND s.collection_id=$3 AND (s.file_id IS NULL OR (f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id))) ORDER BY s.created_at`, [principal.type, principal.id, collectionId]);
+    const visible = []; for (const row of rows.rows) { try { await requirePath(request, collectionId, row.folder_path ?? (await fileRow(row.file_id)).path, 'view'); visible.push({ collectionId, fileId: row.file_id ?? undefined, folderPath: row.folder_path ?? undefined }) } catch { /* inaccessible stars are hidden */ } }
+    response.json(visible);
+  } catch (error) { next(error) } });
+  app.put('/v1/stars', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.body.collectionId ?? ''); const fileId = typeof request.body.fileId === 'string' ? request.body.fileId : undefined; const folderPath = typeof request.body.folderPath === 'string' ? cleanPath(request.body.folderPath, false) : undefined;
+    if (Boolean(fileId) === Boolean(folderPath)) throw new HttpError(400, 'provide exactly one fileId or folderPath');
+    const file = fileId ? await requireFile(request, fileId, 'view') : undefined; if (file && file.collection_id !== collectionId) throw new HttpError(400, 'file belongs to another collection');
+    const path = file?.path ?? folderPath!; await requirePath(request, collectionId, path, 'view'); const principal = starPrincipal(request);
+    if (fileId) await db.query(`INSERT INTO file_stars(principal_type,principal_id,collection_id,file_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [principal.type, principal.id, collectionId, fileId]);
+    else await db.query(`INSERT INTO file_stars(principal_type,principal_id,collection_id,folder_path) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [principal.type, principal.id, collectionId, folderPath]);
+    response.status(204).end();
+  } catch (error) { next(error) } });
+  app.delete('/v1/stars', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.body.collectionId ?? ''); const fileId = typeof request.body.fileId === 'string' ? request.body.fileId : undefined; const folderPath = typeof request.body.folderPath === 'string' ? cleanPath(request.body.folderPath, false) : undefined;
+    if (Boolean(fileId) === Boolean(folderPath)) throw new HttpError(400, 'provide exactly one fileId or folderPath');
+    await requireCollection(request, collectionId, 'view', true); const principal = starPrincipal(request);
+    await db.query(`DELETE FROM file_stars WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND (($4::uuid IS NOT NULL AND file_id=$4) OR ($5::text IS NOT NULL AND folder_path=$5))`, [principal.type, principal.id, collectionId, fileId ?? null, folderPath ?? null]);
+    response.status(204).end();
+  } catch (error) { next(error) } });
+  app.post('/v1/file-operations', async(request:RequestWithIdentity, response, next) => { try {
+    const action = request.body.action; const collectionId = String(request.body.collectionId ?? ''); const items = request.body.items as FileOperationItem[];
+    if (!['move', 'copy'].includes(action) || !Array.isArray(items) || !items.length || items.length > 250) throw new HttpError(400, 'action and 1-250 items are required');
+    const expanded:{ file:any; targetPath:string }[] = []; const localItems:{ sourcePath:string; targetPath:string; folder:boolean; fileSnapshots:{ id:string; path:string; currentVersionId:string }[] }[] = []; const folderMoves:{ collectionId:string; sourcePath:string; targetPath:string }[] = [];
+    for (const raw of items) {
+      const targetPath = cleanPath(raw.targetPath, false);
+      if (raw.fileId) { const file = await requireFile(request, String(raw.fileId), action === 'copy' ? 'view' : 'edit'); if (file.collection_id !== collectionId) throw new HttpError(400, 'selected file belongs to another collection'); await requirePath(request, collectionId, targetPath, 'edit'); expanded.push({ file, targetPath }); localItems.push({ sourcePath: file.path, targetPath, folder: false, fileSnapshots: [{ id: file.id, path: file.path, currentVersionId: file.current_version_id }] }); }
+      else if (raw.folderPath) {
+        const folderPath = cleanPath(raw.folderPath, false); if (targetPath === folderPath || targetPath.startsWith(`${ folderPath }/`)) throw new HttpError(400, 'a folder cannot be moved or copied into itself'); await requirePath(request, collectionId, folderPath, action === 'copy' ? 'view' : 'edit'); await requirePath(request, collectionId, targetPath, 'edit');
+        const rows = await db.query(`SELECT * FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND (path=$2 OR starts_with(path,$2||'/')) ORDER BY path`, [collectionId, folderPath]);
+        const fileSnapshots = [];
+        for (const candidate of rows.rows) { const file = await requireFile(request, candidate.id, action === 'copy' ? 'view' : 'edit'); expanded.push({ file, targetPath: `${ targetPath }${ file.path.slice(folderPath.length) }` }); fileSnapshots.push({ id: file.id, path: file.path, currentVersionId: file.current_version_id }); }
+        localItems.push({ sourcePath: folderPath, targetPath, folder: true, fileSnapshots });
+        folderMoves.push({ collectionId, sourcePath: folderPath, targetPath });
+      } else throw new HttpError(400, 'each item requires fileId or folderPath');
+    }
+    if (!expanded.length) throw new HttpError(404, 'folder not found');
+    const watched = manager ? await manager.watchedPathCoverage(collectionId, localItems) : 0;
+    if (manager && watched === expanded.length) await manager.applyPathOperations(action, localItems, identity(request));
+    else if (watched === 0) await applyDatabaseFileOperations(db, action, expanded, identity(request), folderMoves);
+    else throw new HttpError(409, 'The selection mixes watched and stored-only Files. Move or copy them in separate operations.');
+    response.json({ ok: true, count: expanded.length });
+  } catch (error) { next(error) } });
   app.get('/v1/local/shares/:id/content', async(request, response, next) => { try { const content = await shares.content(request.params.id, String(request.query.path ?? '')); response.type(content.mime).setHeader('X-Sulla-Filename', encodeURIComponent(content.name)).send(content.bytes) } catch (error) { next(error) } });
   // Narrow contract for the future public viewer/relay. It validates the link
   // policy and returns metadata only; content stays on the authenticated local
