@@ -682,8 +682,7 @@ export async function executeRoutine(
       }
       manager.logFallback('Run button execution');
     } catch (error) {
-      const { getWorkflowManagerClient } = await import('@pkg/agent/services/WorkflowManagerClient');
-      getWorkflowManagerClient().logFallback('Run button execution', error);
+      throw new Error(`Workflow manager refused run execution: ${ error instanceof Error ? error.message : String(error) }`);
     }
   }
 

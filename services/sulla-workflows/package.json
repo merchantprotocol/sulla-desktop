@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test:grant": "node --test dist/services/sulla-workflows/src/scheduleGrantRequest.test.js",
     "manager": "node dist/services/sulla-workflows/src/manager.js",
     "runner": "node dist/services/sulla-workflows/src/runner.js"
   },
