@@ -103,10 +103,10 @@ export class WorkItemKnowledgeModel {
   private static async canonicalNode(client: PoolClient, id: string): Promise<KnowledgeNodeRecord> {
     const { rows } = await client.query<KnowledgeNodeRecord>(
       `WITH RECURSIVE chain AS (
-         SELECT n.*, 0 depth, ARRAY[n.id] path FROM knowledge_nodes n WHERE n.id = $1
+         SELECT n.*, 0 depth, ARRAY[n.id] path FROM projects_knowledge_projection n WHERE n.id = $1
          UNION ALL
          SELECT next.*, chain.depth + 1, chain.path || next.id
-         FROM chain JOIN knowledge_nodes next ON next.id = chain.merged_into
+         FROM chain JOIN projects_knowledge_projection next ON next.id = chain.merged_into
          WHERE chain.merged_into IS NOT NULL AND chain.depth < 32
            AND NOT next.id = ANY(chain.path)
        )
@@ -183,9 +183,9 @@ export class WorkItemKnowledgeModel {
     await this.assertItem(input.itemKind, input.itemId, false);
     const node = await postgresClient.queryOne<{ id: string }>(
       `WITH RECURSIVE chain AS (
-         SELECT id, merged_into, ARRAY[id] path FROM knowledge_nodes WHERE id = $1
+         SELECT id, merged_into, ARRAY[id] path FROM projects_knowledge_projection WHERE id = $1
          UNION ALL SELECT n.id, n.merged_into, chain.path || n.id
-         FROM chain JOIN knowledge_nodes n ON n.id = chain.merged_into
+         FROM chain JOIN projects_knowledge_projection n ON n.id = chain.merged_into
          WHERE NOT n.id = ANY(chain.path)
        ) SELECT id FROM chain WHERE merged_into IS NULL LIMIT 1`,
       [input.knowledgeNodeId],
@@ -234,7 +234,7 @@ export class WorkItemKnowledgeModel {
        SELECT l.*, n.id node_id, n.node_type, n.title, n.summary, n.detail,
               n.source node_source, n.archived node_archived,
               CASE WHEN l.ord = 0 THEN 'direct' ELSE 'inherited' END scope
-       FROM links l JOIN knowledge_nodes n ON n.id = l.knowledge_node_id
+       FROM links l JOIN projects_knowledge_projection n ON n.id = l.knowledge_node_id
        WHERE ($3::boolean OR (l.archived = false AND n.archived = false))
          AND ($4::text IS NULL OR l.relation_type = $4)
        ORDER BY l.ord ASC, l.updated_at DESC, n.title ASC
@@ -251,9 +251,9 @@ export class WorkItemKnowledgeModel {
     const relation = opts.relationType?.trim() || null;
     const node = await postgresClient.queryOne<{ id: string; archived: boolean }>(
       `WITH RECURSIVE chain AS (
-         SELECT id, merged_into, archived, ARRAY[id] path FROM knowledge_nodes WHERE id = $1
+         SELECT id, merged_into, archived, ARRAY[id] path FROM projects_knowledge_projection WHERE id = $1
          UNION ALL SELECT n.id, n.merged_into, n.archived, chain.path || n.id
-         FROM chain JOIN knowledge_nodes n ON n.id = chain.merged_into
+         FROM chain JOIN projects_knowledge_projection n ON n.id = chain.merged_into
          WHERE NOT n.id = ANY(chain.path)
        ) SELECT id, archived FROM chain WHERE merged_into IS NULL LIMIT 1`,
       [knowledgeNodeId],
@@ -263,9 +263,9 @@ export class WorkItemKnowledgeModel {
 
     return postgresClient.query<LinkedWorkItemRecord>(
       `WITH RECURSIVE chain AS (
-         SELECT id, merged_into, ARRAY[id] path FROM knowledge_nodes WHERE id = $1
+         SELECT id, merged_into, ARRAY[id] path FROM projects_knowledge_projection WHERE id = $1
          UNION ALL SELECT n.id, n.merged_into, chain.path || n.id
-         FROM chain JOIN knowledge_nodes n ON n.id = chain.merged_into
+         FROM chain JOIN projects_knowledge_projection n ON n.id = chain.merged_into
          WHERE NOT n.id = ANY(chain.path)
        ), canonical AS (SELECT id FROM chain WHERE merged_into IS NULL LIMIT 1), items AS (
          SELECT l.*, 'project'::text item_kind, p.id item_id, p.title item_title,
@@ -302,7 +302,7 @@ export class WorkItemKnowledgeModel {
     if (!uniqueIds.length) return {};
     const rows = await postgresClient.query<{ item_id: string; count: string }>(
       `SELECT ${ target.column } item_id, count(*)::text count
-       FROM ${ this.TABLE } l JOIN knowledge_nodes n ON n.id = l.knowledge_node_id
+       FROM ${ this.TABLE } l JOIN projects_knowledge_projection n ON n.id = l.knowledge_node_id
        WHERE ${ target.column } = ANY($1::text[]) AND l.archived = false AND n.archived = false
        GROUP BY ${ target.column }`,
       [uniqueIds],

@@ -8,7 +8,7 @@ network="sulla-projects-acceptance-net-$fixture_id"
 database="sulla-projects-acceptance-db-$fixture_id"
 api="sulla-projects-acceptance-api-$fixture_id"
 migration_api="sulla-projects-acceptance-migration-api-$fixture_id"
-image=sulla-projects-synthetic:local
+image="sulla-projects-synthetic:${fixture_id}"
 
 cleanup() {
   local result=$?
@@ -18,6 +18,7 @@ cleanup() {
   fi
   "${docker[@]}" rm -fv "$api" "$migration_api" "$database" >/dev/null 2>&1 || true
   "${docker[@]}" network rm "$network" >/dev/null 2>&1 || true
+  "${docker[@]}" image rm "$image" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -77,6 +78,18 @@ if (real.author !== 'human') throw new Error('human capability lost author');
 const events = await rpc(local, 'claimDomainEvents', [{ consumerId: 'smoke', eventTypes: ['projects.human_comment_added'] }]);
 if (events.length !== 1) throw new Error('human event missing');
 if (await rpc(local, 'completeDomainEvents', [[events[0].id], 'smoke']) !== 1) throw new Error('event ack failed');
+await rpc(local, 'upsertKnowledgeProjection', [{ id: 'knowledge-source', title: 'Source' }]);
+await rpc(local, 'upsertKnowledgeProjection', [{ id: 'knowledge-target', title: 'Target' }]);
+for (const knowledgeNodeId of ['knowledge-source', 'knowledge-target']) {
+  await rpc(local, 'linkKnowledge', [{ itemKind: 'task', itemId: 'task-parent', knowledgeNodeId }]);
+}
+await rpc(local, 'linkKnowledge', [{ itemKind: 'task', itemId: 'task-child', knowledgeNodeId: 'knowledge-source' }]);
+await rpc(local, 'mergeKnowledgeProjection', ['knowledge-source', 'knowledge-target']);
+await rpc(local, 'mergeKnowledgeProjection', ['knowledge-source', 'knowledge-target']);
+const links = await rpc(local, 'listWorkForKnowledge', ['knowledge-target']);
+if (links.length !== 2 || new Set(links.map(link => link.task_id)).size !== 2) {
+  throw new Error('Knowledge merge lost links or duplicated overlapping links');
+}
 NODE
 
 # A crashed consumer must not strand a processing event forever.
@@ -192,4 +205,62 @@ SQL
 "${docker[@]}" restart "$migration_api" >/dev/null
 for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:38795/healthz >/dev/null 2>&1 && break; sleep 1; done
 curl -fsS http://127.0.0.1:38795/healthz >/dev/null
+# Service-first fresh install: no legacy tables exist during the one-time
+# import. Desktop creates them later and reapplies the persisted fence before
+# enabling callers, without restarting the already-running Projects service.
+"${docker[@]}" rm -fv "$migration_api" >/dev/null
+"${docker[@]}" exec "$database" createdb -U sulla fresh_legacy
+"${docker[@]}" run -d --name "$migration_api" --network "$network" -p 127.0.0.1:38795:8793 \
+  -e SULLA_PROJECTS_PORT=8793 -e SULLA_PROJECTS_MODE=desktop -e SULLA_PROJECTS_LOCAL_TOKEN=synthetic-fresh-token \
+  -e SULLA_PROJECTS_ADMIN_DATABASE_URL=postgresql://sulla:synthetic-admin-password@"$database":5432/sulla \
+  -e SULLA_PROJECTS_MIGRATION_DATABASE_URL=postgresql://sulla:synthetic-admin-password@"$database":5432/sulla_projects_fresh \
+  -e SULLA_PROJECTS_DATABASE_URL=postgresql://sulla_projects_service:synthetic-runtime-password@"$database":5432/sulla_projects_fresh \
+  -e SULLA_PROJECTS_DATABASE_PASSWORD=synthetic-runtime-password -e SULLA_PROJECTS_DATABASE_NAME=sulla_projects_fresh \
+  -e SULLA_PROJECTS_DATABASE_OWNER=sulla -e SULLA_PROJECTS_DATABASE_ROLE=sulla_projects_service \
+  -e SULLA_PROJECTS_LEGACY_DATABASE_URL=postgresql://sulla:synthetic-admin-password@"$database":5432/fresh_legacy \
+  -e SULLA_PROJECTS_TENANT_ID=fresh-tenant -e SULLA_PROJECTS_USER_ID=fresh-user "$image" >/dev/null
+for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:38795/healthz >/dev/null 2>&1 && break; sleep 1; done
+curl -fsS http://127.0.0.1:38795/healthz >/dev/null
+"${docker[@]}" exec -i "$database" psql -v ON_ERROR_STOP=1 -U sulla -d fresh_legacy >/dev/null <<'SQL'
+CREATE TABLE work_projects(id text PRIMARY KEY, title text NOT NULL);
+CREATE TABLE workflow_executions(execution_id text PRIMARY KEY, scope_task_id text, scope_generation integer, updated_at timestamptz);
+CREATE TABLE work_task_planning_runs(execution_id text, task_id text, attempt integer);
+CREATE TABLE work_lane_entry_automations(id text);
+CREATE TABLE work_task_dispatches(id text);
+CREATE TABLE work_task_waits(id text);
+CREATE TABLE agent_jobs(id text);
+CREATE TABLE knowledge_nodes(id text);
+CREATE TABLE work_routine_slots(id text);
+CREATE TABLE work_file_claims(id text);
+INSERT INTO workflow_executions VALUES ('legacy-planning', NULL, NULL, now());
+INSERT INTO work_task_planning_runs VALUES ('legacy-planning', 'legacy-task', 2);
+SELECT public.sulla_projects_apply_legacy_write_fence();
+DO $$
+DECLARE history_table text;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM workflow_executions WHERE execution_id='legacy-planning' AND scope_task_id='legacy-task' AND scope_generation=2) THEN
+    RAISE EXCEPTION 'legacy workflow scope not preserved';
+  END IF;
+  FOREACH history_table IN ARRAY ARRAY['work_task_planning_runs','work_lane_entry_automations','work_task_dispatches','work_task_waits'] LOOP
+    EXECUTE format('SELECT count(*) FROM %I', history_table);
+    BEGIN
+      EXECUTE format('DELETE FROM %I', history_table);
+      RAISE EXCEPTION 'retired history remained writable: %', history_table;
+    EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+    END;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE t.tgname='sulla_projects_container_write_fence' AND c.relname=ANY(ARRAY['agent_jobs','workflow_executions','knowledge_nodes','work_routine_slots','work_file_claims'])) THEN
+    RAISE EXCEPTION 'non-Projects owner was fenced';
+  END IF;
+END $$;
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO work_projects VALUES('forbidden', 'Competing owner');
+    RAISE EXCEPTION 'late legacy table remained writable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    NULL;
+  END;
+END $$;
+SQL
 echo 'Sulla Projects synthetic acceptance passed.'

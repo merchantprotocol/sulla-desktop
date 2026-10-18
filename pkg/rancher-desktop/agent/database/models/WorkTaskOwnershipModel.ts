@@ -32,8 +32,29 @@ const projectsClient = new ProjectsApiClient();
 const activeLeases = new Map<string, ClaimLease[]>();
 const renewTimers = new Map<string, ReturnType<typeof setInterval>>();
 
+function leaseWasRejected(error: unknown): boolean {
+  return error instanceof Error && /\(invalid_lease\)$/.test(error.message);
+}
+
+function isClaimLease(value: unknown): value is ClaimLease {
+  return Boolean(value && typeof value === 'object' &&
+    typeof (value as ClaimLease).taskId === 'string' &&
+    typeof (value as ClaimLease).token === 'string' &&
+    typeof (value as ClaimLease).expiresAt === 'string');
+}
+
 function leaseRecord(leases: ClaimLease[]): Record<string, ClaimLease> {
   return Object.fromEntries(leases.map(lease => [lease.taskId, lease]));
+}
+
+function leaseIdentityRecord(leases: ClaimLease[]): Record<string, Pick<ClaimLease, 'taskId' | 'token'>> {
+  return Object.fromEntries(leases.map(({ taskId, token }) => [taskId, { taskId, token }]));
+}
+
+function sameLeaseIdentity(left: ClaimLease[] | undefined, right: ClaimLease[]): boolean {
+  if (!left || left.length !== right.length) return false;
+  const identities = leaseIdentityRecord(left);
+  return right.every(lease => identities[lease.taskId]?.token === lease.token);
 }
 
 async function storedLeases(jobId: string): Promise<ClaimLease[]> {
@@ -43,7 +64,7 @@ async function storedLeases(jobId: string): Promise<ClaimLease[]> {
     'SELECT project_task_prior_assignees FROM agent_jobs WHERE job_id = $1', [jobId],
   );
   const leases = Object.values(row?.project_task_prior_assignees ?? {})
-    .filter(value => value && typeof value.taskId === 'string' && typeof value.token === 'string');
+    .filter(isClaimLease);
   if (leases.length) activeLeases.set(jobId, leases);
   return leases;
 }
@@ -84,20 +105,63 @@ function stopRenewal(jobId: string): void {
   renewTimers.delete(jobId);
 }
 
+async function clearRejectedLeases(jobId: string, leases: ClaimLease[]): Promise<void> {
+  const cleared = await postgresClient.queryOne<{ job_id: string }>(`
+    UPDATE agent_jobs
+       SET project_task_ids = '{}'::text[], project_task_prior_assignees = '{}'::jsonb
+     WHERE job_id = $1
+       AND project_task_prior_assignees @> $2::jsonb
+       AND (SELECT count(*) FROM jsonb_object_keys(project_task_prior_assignees)) = $3
+     RETURNING job_id
+  `, [jobId, JSON.stringify(leaseIdentityRecord(leases)), leases.length]);
+  if (cleared && sameLeaseIdentity(activeLeases.get(jobId), leases)) {
+    stopRenewal(jobId);
+    activeLeases.delete(jobId);
+  }
+}
+
+async function clearInvalidStoredCustody(row: {
+  job_id: string; project_task_ids: string[]; project_task_prior_assignees: Record<string, unknown>;
+}): Promise<boolean> {
+  const cleared = await postgresClient.queryOne<{ job_id: string }>(`
+    UPDATE agent_jobs
+       SET project_task_ids = '{}'::text[], project_task_prior_assignees = '{}'::jsonb
+     WHERE job_id = $1 AND project_task_ids = $2::text[] AND project_task_prior_assignees = $3::jsonb
+     RETURNING job_id
+  `, [row.job_id, row.project_task_ids, JSON.stringify(row.project_task_prior_assignees)]);
+  if (cleared && !activeLeases.has(row.job_id)) stopRenewal(row.job_id);
+  return Boolean(cleared);
+}
+
+async function renewLeases(jobId: string, leases: ClaimLease[]): Promise<void> {
+  try {
+    const renewed = await projectsClient.request<ClaimLease[]>('/v1/claims/renew', {
+      externalRef: jobId, leases, leaseSeconds: LEASE_SECONDS,
+    });
+    const persisted = await postgresClient.queryOne<{ job_id: string }>(`
+      UPDATE agent_jobs SET project_task_prior_assignees = $2::jsonb
+       WHERE job_id = $1
+         AND project_task_prior_assignees @> $3::jsonb
+         AND (SELECT count(*) FROM jsonb_object_keys(project_task_prior_assignees)) = $4
+       RETURNING job_id
+    `, [jobId, JSON.stringify(leaseRecord(renewed)), JSON.stringify(leaseIdentityRecord(leases)), leases.length]);
+    if (!persisted) throw new Error(`Agent job ${ jobId } changed task custody while its leases were renewed.`);
+    activeLeases.set(jobId, renewed);
+  } catch (error) {
+    if (leaseWasRejected(error)) {
+      await clearRejectedLeases(jobId, leases);
+    }
+    throw error;
+  }
+}
+
 function startRenewal(jobId: string): void {
   stopRenewal(jobId);
   const timer = setInterval(() => {
     (async() => {
       const leases = await storedLeases(jobId);
       if (!leases.length) return;
-      const renewed = await projectsClient.request<ClaimLease[]>('/v1/claims/renew', {
-        externalRef: jobId, leases, leaseSeconds: LEASE_SECONDS,
-      });
-      activeLeases.set(jobId, renewed);
-      await postgresClient.query(
-        'UPDATE agent_jobs SET project_task_prior_assignees = $2::jsonb WHERE job_id = $1',
-        [jobId, JSON.stringify(leaseRecord(renewed))],
-      );
+      await renewLeases(jobId, leases);
     })().catch(error => console.warn(`[WorkTaskOwnership] Could not renew task claims for ${ jobId }:`, error));
   }, RENEW_INTERVAL_MS);
   timer.unref?.();
@@ -199,23 +263,32 @@ export class WorkTaskOwnershipModel {
 
   /** Resume renewable claims for tab jobs that intentionally survive restart. */
   static async recoverRunningJobs(): Promise<void> {
-    const rows = await postgresClient.query<{ job_id: string }>(`
-      SELECT job_id FROM agent_jobs
+    const rows = await postgresClient.query<{
+      job_id: string; project_task_ids: string[]; project_task_prior_assignees: Record<string, unknown>;
+    }>(`
+      SELECT job_id, project_task_ids, project_task_prior_assignees FROM agent_jobs
        WHERE status = 'running' AND cardinality(project_task_ids) > 0
     `);
     for (const row of rows) {
       let leases: ClaimLease[] = [];
       try {
-        leases = await storedLeases(row.job_id);
-        if (!leases.length) continue;
-        const renewed = await projectsClient.request<ClaimLease[]>('/v1/claims/renew', {
-          externalRef: row.job_id, leases, leaseSeconds: LEASE_SECONDS,
-        });
-        activeLeases.set(row.job_id, renewed);
+        const record = row.project_task_prior_assignees ?? {};
+        const keys = Object.keys(record);
+        leases = Object.values(record).filter(isClaimLease);
+        const valid = keys.length === row.project_task_ids.length && leases.length === row.project_task_ids.length &&
+          row.project_task_ids.every(taskId => isClaimLease(record[taskId]) && record[taskId].taskId === taskId);
+        if (!valid) {
+          if (await clearInvalidStoredCustody(row)) {
+            console.warn(`[WorkTaskOwnership] Cleared invalid stored task claims for ${ row.job_id }.`);
+          }
+          continue;
+        }
+        activeLeases.set(row.job_id, leases);
+        await renewLeases(row.job_id, leases);
         startRenewal(row.job_id);
       } catch (error) {
         console.warn(`[WorkTaskOwnership] Could not recover task claims for ${ row.job_id }:`, error);
-        if (leases.length) startRenewal(row.job_id);
+        if (leases.length && !leaseWasRejected(error)) startRenewal(row.job_id);
       }
     }
   }

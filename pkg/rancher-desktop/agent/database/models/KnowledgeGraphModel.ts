@@ -1,4 +1,8 @@
-import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
+import {
+  acquireKnowledgeProjectionLock,
+  enqueueKnowledgeProjectionMerge,
+  enqueueKnowledgeProjectionUpsert,
+} from '../../services/KnowledgeProjectionOutboxService';
 import { postgresClient } from '../PostgresClient';
 
 export interface KnowledgeNodeRecord {
@@ -163,8 +167,10 @@ export class KnowledgeGraphModel {
   }
 
   static async upsertNode(input: UpsertKnowledgeNodeInput): Promise<KnowledgeNodeRecord> {
-    const row = await postgresClient.queryOne<KnowledgeNodeRecord>(
-      `INSERT INTO ${ this.NODES_TABLE }
+    return postgresClient.transaction(async(client) => {
+      await acquireKnowledgeProjectionLock(client);
+      const { rows } = await client.query<KnowledgeNodeRecord>(
+        `INSERT INTO ${ this.NODES_TABLE }
          (id, node_type, title, summary, detail, source, archived, merged_into)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (id) DO UPDATE SET
@@ -173,13 +179,15 @@ export class KnowledgeGraphModel {
          source = EXCLUDED.source, archived = EXCLUDED.archived,
          merged_into = EXCLUDED.merged_into, updated_at = now()
        RETURNING *`,
-      [input.id, input.node_type ?? 'entity', input.title, input.summary ?? '',
-        input.detail ?? null, input.source ?? null, input.archived ?? false,
-        input.merged_into ?? null],
-    );
-    if (!row) throw new Error(`Failed to upsert knowledge node: ${ input.id }`);
-    await getProjectsApplicationService().upsertKnowledgeProjection(row);
-    return row;
+        [input.id, input.node_type ?? 'entity', input.title, input.summary ?? '',
+          input.detail ?? null, input.source ?? null, input.archived ?? false,
+          input.merged_into ?? null],
+      );
+      const row = rows[0];
+      if (!row) throw new Error(`Failed to upsert knowledge node: ${ input.id }`);
+      await enqueueKnowledgeProjectionUpsert(client, row);
+      return row;
+    });
   }
 
   static async addAlias(nodeId: string, alias: string): Promise<NodeAliasRecord> {
@@ -291,13 +299,17 @@ export class KnowledgeGraphModel {
   }
 
   static async archiveNode(id: string): Promise<boolean> {
-    const row = await postgresClient.queryOne<KnowledgeNodeRecord>(
-      `UPDATE ${ this.NODES_TABLE } SET archived = true, updated_at = now() WHERE id = $1 RETURNING *`,
-      [id],
-    );
-    if (!row) return false;
-    await getProjectsApplicationService().upsertKnowledgeProjection(row);
-    return true;
+    return postgresClient.transaction(async(client) => {
+      await acquireKnowledgeProjectionLock(client);
+      const { rows } = await client.query<KnowledgeNodeRecord>(
+        `UPDATE ${ this.NODES_TABLE } SET archived = true, updated_at = now() WHERE id = $1 RETURNING *`,
+        [id],
+      );
+      const row = rows[0];
+      if (!row) return false;
+      await enqueueKnowledgeProjectionUpsert(client, row);
+      return true;
+    });
   }
 
   /** Merge the source-owned graph, then reconcile Projects' cached projection. */
@@ -305,6 +317,7 @@ export class KnowledgeGraphModel {
     if (sourceId === canonicalId) throw new Error('Cannot merge a knowledge node into itself.');
 
     const canonical = await postgresClient.transaction(async(client) => {
+      await acquireKnowledgeProjectionLock(client);
       const { rows: nodes } = await client.query<KnowledgeNodeRecord>(
         `SELECT * FROM ${ this.NODES_TABLE } WHERE id = ANY($1::text[]) FOR UPDATE`,
         [[sourceId, canonicalId]],
@@ -326,10 +339,10 @@ export class KnowledgeGraphModel {
          WHERE id = $1`,
         [sourceId, canonicalId],
       );
+      await enqueueKnowledgeProjectionMerge(client, sourceId, canonicalId);
 
       return target;
     });
-    await getProjectsApplicationService().mergeKnowledgeProjection(sourceId, canonicalId);
     return canonical;
   }
 }

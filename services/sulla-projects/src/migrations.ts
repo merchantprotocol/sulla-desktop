@@ -132,6 +132,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS github_pr_mirror_task_unique ON github_pr_proj
 `;
 
 const quoteIdent = (value: string) => `"${ value.replace(/"/g, '""') }"`;
+const quoteLiteral = (value: string) => `'${ value.replace(/'/g, "''") }'`;
 
 async function applyRls(client: PoolClient, runtimeRole: string): Promise<void> {
   for (const table of PROJECT_TABLES) {
@@ -189,30 +190,77 @@ const LEGACY_TABLES: Array<{ source: string; target: string }> = [
   { source: 'work_artifact_receipts', target: 'work_artifact_receipts' },
   { source: 'github_pr_project_mirrors', target: 'github_pr_project_mirrors' },
 ];
-const LEGACY_FENCED_TABLES = new Set(LEGACY_TABLES.map(mapping => mapping.source).filter(table => table !== 'knowledge_nodes'));
+const LEGACY_FENCED_TABLES = new Set([
+  ...LEGACY_TABLES.map(mapping => mapping.source).filter(table => table !== 'knowledge_nodes'),
+  // The plain-board cutover retired these control-plane adapters. Keep their
+  // audit history readable, but prevent dormant Desktop code or old database
+  // triggers from reviving a second Projects authority.
+  'lifecycle_capabilities',
+  'work_task_dispatches',
+  'work_task_waits',
+  'work_task_recovery_attempts',
+  'work_task_stage_claims',
+  'work_lane_workflow_bindings',
+  'work_lane_entry_automations',
+  'work_task_planning_runs',
+  'work_task_outcome_journal',
+]);
 const LEGACY_FENCE_TRIGGER = 'sulla_projects_container_write_fence';
 const LEGACY_FENCE_FUNCTION = 'sulla_projects_reject_legacy_write';
+const LEGACY_APPLY_FENCE_FUNCTION = 'sulla_projects_apply_legacy_write_fence';
+const LEGACY_CUTOVER_TABLE = 'sulla_projects_legacy_cutover';
+const LEGACY_CUTOVER_LOCK = 'sulla-projects-legacy-cutover';
 
-async function installLegacyWriteFence(client: PoolClient, tables: string[]): Promise<void> {
-  if (!tables.length) return;
+async function installLegacyCutoverContract(client: PoolClient): Promise<void> {
   await client.query(`CREATE OR REPLACE FUNCTION ${ quoteIdent(LEGACY_FENCE_FUNCTION) }() RETURNS trigger
     LANGUAGE plpgsql AS $$ BEGIN
       RAISE EXCEPTION 'Projects data moved to sulla-projects; legacy write rejected for %', TG_TABLE_NAME
         USING ERRCODE = '55000';
     END $$`);
-  for (const table of tables.filter(name => LEGACY_FENCED_TABLES.has(name))) {
-    await client.query(`DROP TRIGGER IF EXISTS ${ quoteIdent(LEGACY_FENCE_TRIGGER) } ON ${ quoteIdent(table) }`);
-    await client.query(`CREATE TRIGGER ${ quoteIdent(LEGACY_FENCE_TRIGGER) }
-      BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON ${ quoteIdent(table) }
-      FOR EACH STATEMENT EXECUTE FUNCTION ${ quoteIdent(LEGACY_FENCE_FUNCTION) }()`);
-  }
+  await client.query(`CREATE OR REPLACE FUNCTION ${ quoteIdent(LEGACY_APPLY_FENCE_FUNCTION) }() RETURNS void
+    LANGUAGE plpgsql AS $$
+    DECLARE legacy_table text;
+    BEGIN
+      -- Workflow recovery must classify old planning runs without joining the
+      -- fenced Projects history. Persist that ownership on the workflow row
+      -- first, while the shared cutover lock excludes Desktop startup.
+      IF to_regclass('public.workflow_executions') IS NOT NULL
+         AND to_regclass('public.work_task_planning_runs') IS NOT NULL THEN
+        UPDATE public.workflow_executions execution
+           SET scope_task_id = planning.task_id,
+               scope_generation = GREATEST(planning.attempt, 1),
+               updated_at = NOW()
+          FROM public.work_task_planning_runs planning
+         WHERE planning.execution_id = execution.execution_id
+           AND execution.scope_task_id IS NULL
+           AND execution.scope_generation IS NULL;
+      END IF;
+      FOREACH legacy_table IN ARRAY ARRAY[${ [...LEGACY_FENCED_TABLES].map(quoteLiteral).join(',') }] LOOP
+        IF to_regclass(format('%I.%I', 'public', legacy_table)) IS NOT NULL THEN
+          EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I.%I', ${ quoteLiteral(LEGACY_FENCE_TRIGGER) }, 'public', legacy_table);
+          EXECUTE format(
+            'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON %I.%I FOR EACH STATEMENT EXECUTE FUNCTION %I.%I()',
+            ${ quoteLiteral(LEGACY_FENCE_TRIGGER) }, 'public', legacy_table, 'public', ${ quoteLiteral(LEGACY_FENCE_FUNCTION) }
+          );
+        END IF;
+      END LOOP;
+    END $$`);
+  await client.query(`CREATE TABLE IF NOT EXISTS ${ quoteIdent(LEGACY_CUTOVER_TABLE) }(
+    singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),
+    activated_at timestamptz NOT NULL DEFAULT now()
+  )`);
+  await client.query(`INSERT INTO ${ quoteIdent(LEGACY_CUTOVER_TABLE) }(singleton) VALUES(true) ON CONFLICT DO NOTHING`);
+  await client.query(`SELECT ${ quoteIdent(LEGACY_APPLY_FENCE_FUNCTION) }()`);
 }
 
 /** Explicit rollback path if the isolated service is retired and legacy ownership must be restored. */
 export async function removeLegacyProjectsWriteFence(connectionString: string): Promise<void> {
   const pool = new Pool({ connectionString, max: 1 });
   const client = await pool.connect();
+  let locked = false;
   try {
+    await client.query('SELECT pg_advisory_lock(hashtext($1))', [LEGACY_CUTOVER_LOCK]);
+    locked = true;
     await client.query('BEGIN');
     for (const table of LEGACY_FENCED_TABLES) {
       const exists = await client.query('SELECT to_regclass($1) AS table', [`public.${ table }`]);
@@ -220,12 +268,17 @@ export async function removeLegacyProjectsWriteFence(connectionString: string): 
         await client.query(`DROP TRIGGER IF EXISTS ${ quoteIdent(LEGACY_FENCE_TRIGGER) } ON ${ quoteIdent(table) }`);
       }
     }
+    await client.query(`DROP TABLE IF EXISTS ${ quoteIdent(LEGACY_CUTOVER_TABLE) }`);
+    await client.query(`DROP FUNCTION IF EXISTS ${ quoteIdent(LEGACY_APPLY_FENCE_FUNCTION) }()`);
     await client.query(`DROP FUNCTION IF EXISTS ${ quoteIdent(LEGACY_FENCE_FUNCTION) }()`);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
     throw error;
   } finally {
+    if (locked) {
+      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [LEGACY_CUTOVER_LOCK]).catch(() => undefined);
+    }
     client.release();
     await pool.end();
   }
@@ -314,17 +367,47 @@ export async function importLegacyProjects(config: ProjectsConfig): Promise<void
   const sourceClient = await source.connect();
   const destinationClient = await destination.connect();
   const counts: Record<string, number> = Object.create(null);
+  let sourceLocked = false;
   try {
+    await sourceClient.query('SELECT pg_advisory_lock(hashtext($1))', [LEGACY_CUTOVER_LOCK]);
+    sourceLocked = true;
     await sourceClient.query('BEGIN');
     const existingSources: string[] = [];
     for (const mapping of LEGACY_TABLES) {
       const exists = await sourceClient.query('SELECT to_regclass($1) AS table', [`public.${ mapping.source }`]);
       if (exists.rows[0]?.table) existingSources.push(mapping.source);
     }
+    const completedImport = await destinationClient.query<{ tenant_id: string }>(
+      'SELECT tenant_id FROM projects_import_ledger WHERE source_fingerprint=$1', [fingerprint]);
+    if (completedImport.rows[0]) {
+      if (completedImport.rows[0].tenant_id !== config.tenantId) {
+        throw new Error('Legacy Projects import ledger tenant does not match the configured tenant');
+      }
+      // A committed ledger makes the destination authoritative. Legacy
+      // migrations may evolve afterward, so reapply the fence contract to
+      // every currently known table without re-validating or re-importing it.
+      await installLegacyCutoverContract(sourceClient);
+      await sourceClient.query('COMMIT');
+      return;
+    }
+    if (existingSources.length > 0 && existingSources.length !== LEGACY_TABLES.length) {
+      const missing = LEGACY_TABLES.map(mapping => mapping.source).filter(table => !existingSources.includes(table));
+      throw new Error(`Legacy Projects schema is still migrating; missing tables: ${ missing.join(', ') }`);
+    }
+    // Validate every existing source before making the cutover durable. If an
+    // older Desktop schema wins the startup race, the service exits cleanly
+    // without fencing it; Desktop can finish migrations and service restart
+    // can retry against the complete schema.
+    for (const mapping of LEGACY_TABLES) {
+      if (!existingSources.includes(mapping.source)) continue;
+      assertCompatibleColumns(mapping, await columns(sourceClient, mapping.source), await columns(destinationClient, mapping.target));
+    }
     if (existingSources.length) await sourceClient.query(`LOCK TABLE ${ existingSources.map(quoteIdent).join(',') } IN SHARE MODE`);
-    await installLegacyWriteFence(sourceClient, existingSources);
-    // Commit the persistent source fence before copying. If the process dies
-    // after this point, legacy clients remain rejected and restart is safe.
+    await installLegacyCutoverContract(sourceClient);
+    // Commit the persistent source fence contract before copying. It records
+    // cutover even when Desktop has not created its legacy Projects tables
+    // yet; Desktop reapplies the contract after migrations and before callers.
+    // If either process dies after this point, restart remains safe.
     await sourceClient.query('COMMIT');
     await sourceClient.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ');
     if (existingSources.includes('knowledge_nodes')) {
@@ -377,6 +460,9 @@ export async function importLegacyProjects(config: ProjectsConfig): Promise<void
     await sourceClient.query('ROLLBACK').catch(() => undefined);
     throw error;
   } finally {
+    if (sourceLocked) {
+      await sourceClient.query('SELECT pg_advisory_unlock(hashtext($1))', [LEGACY_CUTOVER_LOCK]).catch(() => undefined);
+    }
     sourceClient.release(); destinationClient.release();
     await source.end(); await destination.end();
   }

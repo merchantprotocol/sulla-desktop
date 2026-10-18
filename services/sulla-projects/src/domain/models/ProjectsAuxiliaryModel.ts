@@ -138,8 +138,31 @@ export class ProjectsAuxiliaryModel {
     [input.id,input.node_type ?? 'entity',input.title,input.summary ?? '',input.detail ?? null,input.archived ?? false,input.merged_into ?? null,input.source ?? null]);
   }
   static async mergeKnowledgeProjection(sourceId: string, targetId: string) {
-    await postgresClient.query('UPDATE projects_knowledge_projection SET merged_into=$2,archived=true,updated_at=now() WHERE id=$1', [sourceId,targetId]);
-    await postgresClient.query('UPDATE work_item_knowledge_links SET knowledge_node_id=$2,updated_at=now() WHERE knowledge_node_id=$1 AND archived=false', [sourceId,targetId]);
-    return true;
+    if (sourceId === targetId) throw new Error('Cannot merge a Knowledge projection into itself');
+    return postgresClient.transaction(async(client) => {
+      const projections = await client.query<{ id: string }>(`SELECT id FROM projects_knowledge_projection
+        WHERE id=ANY($1::text[]) FOR UPDATE`, [[sourceId,targetId]]);
+      if (projections.rows.length !== 2) {
+        throw new Error('Both source and target Knowledge projections must exist before merge');
+      }
+      await client.query(`UPDATE work_item_knowledge_links AS source
+        SET knowledge_node_id=$2,updated_at=now()
+        WHERE source.knowledge_node_id=$1 AND source.archived=false
+          AND NOT EXISTS (
+            SELECT 1 FROM work_item_knowledge_links AS target
+            WHERE target.knowledge_node_id=$2 AND target.relation_type=source.relation_type
+              AND target.archived=false
+              AND target.project_id IS NOT DISTINCT FROM source.project_id
+              AND target.epic_id IS NOT DISTINCT FROM source.epic_id
+              AND target.task_id IS NOT DISTINCT FROM source.task_id
+          )`, [sourceId,targetId]);
+      await client.query(`UPDATE work_item_knowledge_links
+        SET archived=true,updated_at=now()
+        WHERE knowledge_node_id=$1 AND archived=false`, [sourceId]);
+      await client.query(`UPDATE projects_knowledge_projection
+        SET merged_into=$2,archived=true,updated_at=now()
+        WHERE id=$1`, [sourceId,targetId]);
+      return true;
+    });
   }
 }

@@ -67,13 +67,23 @@ describe('KnowledgeGraphModel #516 compatibility', () => {
     expect(client.query.mock.calls[0][0]).toContain('SET link_count = link_count + 1');
   });
 
-  it('retains recall counters and soft archive behavior', async() => {
+  it('retains recall counters and atomically queues soft archive projection', async() => {
     jest.spyOn(postgresClient, 'query').mockResolvedValue([{ id: 'node-a', recall_count: 1 }] as any);
-    jest.spyOn(postgresClient, 'queryWithResult').mockResolvedValue({ rowCount: 1 } as any);
+    const client = {
+      query: jest.fn((sql: string) => Promise.resolve(sql.includes('UPDATE knowledge_nodes')
+        ? { rows: [{ id: 'node-a', archived: true }] }
+        : { rows: [] })),
+    } as any;
+    jest.spyOn(postgresClient, 'transaction').mockImplementation((callback: any) => callback(client));
 
     await expect(KnowledgeGraphModel.bumpRecalled(['node-a', 'node-a', ''])).resolves.toHaveLength(1);
     await expect(KnowledgeGraphModel.archiveNode('node-a')).resolves.toBe(true);
     expect(postgresClient.query).toHaveBeenCalledWith(expect.stringContaining('recall_count = recall_count + 1'), [['node-a']]);
+    expect(client.query.mock.calls.map(([sql]: [string]) => sql)).toEqual([
+      expect.stringContaining('pg_advisory_xact_lock'),
+      expect.stringContaining('UPDATE knowledge_nodes'),
+      expect.stringContaining('INSERT INTO knowledge_projection_outbox'),
+    ]);
   });
 
   it('adapts alias resolution to full nodes without changing resolveAliases', async() => {
