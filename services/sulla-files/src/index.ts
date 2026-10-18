@@ -14,6 +14,7 @@ import { FileSearch } from './search.js';
 import { Store } from './store.js';
 import { cleanupStaleUploads } from './uploadCleanup.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
+import { adoptVaultPrincipal } from './vaultPrincipal.js';
 
 const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
@@ -35,50 +36,12 @@ const manager = config.mode === 'desktop' ? new LocalFilesManager(db, config, in
 const enrichment = config.mode === 'desktop' && config.filesRoot ? new RecordingEnrichmentQueue(db, config.filesRoot) : undefined;
 const search = new FileSearch(db, embedder);
 let initialization:Promise<void> | undefined;
-const adoptVaultPrincipal = async(principalId:string) => {
-  if (config.userId === principalId) return;
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    const owners = (await client.query<{ owner_user_id: string }>(
-      'SELECT owner_user_id FROM collections FOR UPDATE',
-    )).rows;
-    const foreignBundle = (await client.query(
-      'SELECT 1 FROM files_collection_key_bundles WHERE principal_id<>$1 LIMIT 1', [principalId],
-    )).rowCount;
-    // A restarted process loads its configured sentinel again, while ownership
-    // already belongs to the same authenticated Vault principal.
-    if (!foreignBundle && owners.every(row => row.owner_user_id === principalId)) {
-      await client.query('COMMIT');
-      config.userId = principalId;
-      return;
-    }
-    if (config.userId !== 'desktop-user' || owners.some(row => row.owner_user_id !== config.userId) || foreignBundle) {
-      throw new Error('Existing Files collections belong to another principal; secure migration is required');
-    }
-    await client.query(
-      `INSERT INTO collection_acl(collection_id,principal_type,principal_id,role)
-       SELECT id,'user',$2,'manage' FROM collections WHERE owner_user_id=$1
-       ON CONFLICT(collection_id,principal_type,principal_id) DO UPDATE SET role='manage'`,
-      [config.userId, principalId],
-    );
-    await client.query("DELETE FROM collection_acl WHERE principal_type='user' AND principal_id=$1", [config.userId]);
-    await client.query('UPDATE file_share_links SET owner_user_id=$2 WHERE owner_user_id=$1', [config.userId, principalId]);
-    await client.query('UPDATE collections SET owner_user_id=$2,updated_at=NOW() WHERE owner_user_id=$1', [config.userId, principalId]);
-    await client.query('COMMIT');
-    config.userId = principalId;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-};
+
 const initialize = () => {
   initialization ??= (async() => {
     if (vaultAuthority) {
       const { principalId } = await vaultAuthority.unlockedPrincipal();
-      await adoptVaultPrincipal(principalId);
+      await adoptVaultPrincipal(db, config, principalId);
     }
     await manager?.initialize();
     if (keyRecovery) await keyRecovery.enrollAllCollections(config.userId);
