@@ -9,6 +9,60 @@ jest.unstable_mockModule('@pkg/utils/logging', () => {
 const { ServiceLifecycleManager } = await import('../ServiceLifecycleManager');
 
 describe('ServiceLifecycleManager.waitUntilStarted', () => {
+  it('keeps stable definitions and stops a superseded startup generation', async() => {
+    const lifecycle = new ServiceLifecycleManager();
+    let current = true;
+    let originalStarts = 0;
+    let replacementStarts = 0;
+    let dependentStarts = 0;
+    let originalStops = 0;
+
+    lifecycle.registerOnce('first', [], async() => {
+      await Promise.resolve();
+      originalStarts += 1;
+      current = false;
+    }, async() => {
+      await Promise.resolve();
+      originalStops += 1;
+    });
+    lifecycle.registerOnce('first', [], async() => {
+      await Promise.resolve();
+      replacementStarts += 1;
+    }, async() => { await Promise.resolve() });
+    lifecycle.registerOnce('dependent', ['first'], async() => {
+      await Promise.resolve();
+      dependentStarts += 1;
+    }, async() => { await Promise.resolve() });
+
+    await expect(lifecycle.startAll(() => {
+      if (!current) throw new Error('superseded');
+    })).rejects.toThrow('superseded');
+    expect(originalStarts).toBe(1);
+    expect(replacementStarts).toBe(0);
+    expect(dependentStarts).toBe(0);
+    expect(lifecycle.isStarted('first')).toBe(true);
+    await lifecycle.stopAll();
+    expect(originalStops).toBe(1);
+    expect(lifecycle.isStarted('first')).toBe(false);
+  });
+
+  it('hands a service that finishes starting after shutdown back to teardown', async() => {
+    const lifecycle = new ServiceLifecycleManager();
+    let releaseStart!: () => void;
+    let stops = 0;
+    const startGate = new Promise<void>((resolve) => { releaseStart = resolve });
+
+    lifecycle.register('slow', [], async() => { await startGate }, async() => { await Promise.resolve(); stops += 1 });
+    const starting = lifecycle.startAll();
+    await Promise.resolve();
+    await lifecycle.stopAll();
+    releaseStart();
+    await starting;
+
+    expect(stops).toBe(1);
+    expect(lifecycle.isStarted('slow')).toBe(false);
+  });
+
   it('waits for the requested service and then resolves', async() => {
     let releaseStart!: () => void;
     const startGate = new Promise<void>((resolve) => { releaseStart = resolve });
