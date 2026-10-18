@@ -1,6 +1,6 @@
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-import type { FilesDataSource, FilesDetail, FilesItem, FilesPreview, FilesSnapshot, FilesVersion, FolderShare, ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType } from './types';
+import type { FileAccessList, FilesDataSource, FilesDetail, FileShare, FilesItem, FilesPreview, FilesSnapshot, FilesVersion, FolderShare, ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType } from './types';
 import type { IpcRendererEvent } from 'electron';
 
 interface ContainerCollection {
@@ -194,6 +194,29 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
   unshareFolder(share:FolderShare):Promise<void> {
     return ipcRenderer.invoke('sulla-files:unshare', share);
+  }
+
+  async listFileShares(fileId:string):Promise<FileAccessList> {
+    const access = await ipcRenderer.invoke('sulla-files:file-shares', { fileId });
+    return {
+      ownerId: access.ownerId ?? access.owner_id,
+      direct: access.direct.map((share:any) => ({ id: share.id, fileId: share.file_id ?? share.fileId ?? fileId, principalType: share.principal_type ?? share.principalType, principalId: share.principal_id ?? share.principalId, role: share.role })),
+      inherited: access.inherited.map((share:any) => ({ id: share.id, collectionId: share.collection_id ?? share.collectionId ?? this.collectionId, source: share.source, folderPath: share.folder_path ?? share.folderPath, principalType: share.principal_type ?? share.principalType, principalId: share.principal_id ?? share.principalId, role: share.role })),
+    };
+  }
+
+  async shareFile(fileId:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FileShare> {
+    const share = await ipcRenderer.invoke('sulla-files:share-file', { fileId, principalType, principalId, role });
+    return { id: share.id, fileId: share.file_id ?? fileId, principalType: share.principal_type ?? principalType, principalId: share.principal_id ?? principalId, role: share.role ?? role };
+  }
+
+  async updateFileShare(fileId:string, shareId:string, role:'view' | 'edit'):Promise<FileShare> {
+    const share = await ipcRenderer.invoke('sulla-files:update-file-share', { fileId, shareId, role });
+    return { id: share.id, fileId: share.file_id ?? fileId, principalType: share.principal_type, principalId: share.principal_id, role: share.role };
+  }
+
+  unshareFile(fileId:string, shareId:string):Promise<void> {
+    return ipcRenderer.invoke('sulla-files:unshare-file', { fileId, shareId });
   }
 
   listMembers(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[]; groups?:{ id:string; name?:string; encrypted_name?:string; members?:string[] }[] }> {

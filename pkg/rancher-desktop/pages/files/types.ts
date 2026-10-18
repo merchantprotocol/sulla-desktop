@@ -104,6 +104,32 @@ export interface FolderShare {
   role: 'view' | 'edit';
 }
 
+export interface FileShare {
+  id: string;
+  fileId: string;
+  principalType: SharePrincipalType;
+  principalId: string;
+  principalName?: string;
+  role: 'view' | 'edit';
+}
+
+export interface InheritedFileShare {
+  id: string;
+  collectionId: string;
+  source: 'collection' | 'folder';
+  folderPath?: string;
+  principalType: SharePrincipalType;
+  principalId: string;
+  principalName?: string;
+  role: 'view' | 'use-by-agents' | 'edit' | 'manage';
+}
+
+export interface FileAccessList {
+  ownerId?: string;
+  direct: FileShare[];
+  inherited: InheritedFileShare[];
+}
+
 export interface ShareLinkOptions {
   mode: ShareAccessMode;
   password?: string;
@@ -177,6 +203,10 @@ export interface FilesDataSource {
   listFolderShares?(collectionId:string):Promise<FolderShare[]>;
   shareFolder?(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FolderShare>;
   unshareFolder?(share:FolderShare):Promise<void>;
+  listFileShares?(fileId:string):Promise<FileAccessList>;
+  shareFile?(fileId:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FileShare>;
+  updateFileShare?(fileId:string, shareId:string, role:'view' | 'edit'):Promise<FileShare>;
+  unshareFile?(fileId:string, shareId:string):Promise<void>;
   listMembers?(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[]; groups?:{ id:string; name?:string; encrypted_name?:string; members?:string[] }[] }>;
   keepOnMac?(fileId:string):Promise<void>;
   makeOnlineOnly?(fileId:string):Promise<void>;

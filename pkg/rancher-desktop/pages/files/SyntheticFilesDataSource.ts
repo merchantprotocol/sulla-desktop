@@ -1,4 +1,4 @@
-import type { FilesDataSource, FilesDetail, FilesPreview, FilesSnapshot, FilesVersion, FolderShare, ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType } from './types';
+import type { FileAccessList, FilesDataSource, FilesDetail, FileShare, FilesPreview, FilesSnapshot, FilesVersion, FolderShare, ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType } from './types';
 
 /* eslint-disable @typescript-eslint/require-await -- the preview adapter intentionally implements the async production datasource contract in memory */
 
@@ -18,6 +18,9 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   ];
 
   private folderShares:FolderShare[] = [];
+  private fileShares:FileShare[] = [
+    { id: 'file-share-design', fileId: 'synthetic-file', principalType: 'group', principalId: 'design', principalName: 'Design', role: 'view' },
+  ];
 
   async load():Promise<FilesSnapshot> { return { collection: { id: 'synthetic-collection', name: 'Files', home: 'desktop-only', orgId: 'synthetic-org', retentionPolicy: { trashDays: 90 }, storageQuota: 10_000_000_000, keptBytes: 184_000_000, desktopCount: 2, memberCount: 4, accountName: 'Jonathon', accountRole: 'owner', ownerUserId: 'synthetic-owner' }, files: [{ id: 'synthetic-file', path: 'Sulla Server/Mockups/Vault phase 2 walkthrough.mp4', mime: 'video/mp4', size: 184_000_000, updatedAt: iso(0), currentVersionId: 'version-7', versionCount: 7, createdByType: 'agent-run', createdById: 'heartbeat run #4,112', ownerDisplayName: 'Jonathon', syncState: 'online-only' }], status: { state: 'synced', pendingFiles: 0, lastSyncAt: iso(0), serverConfigured: true, location: 'server', serverLabel: 'Sulla Server' } } }
   async history():Promise<FilesVersion[]> { return Array.from({ length: 7 }, (_, index) => ({ id: `version-${ 7 - index }`, size: 184_000_000 + index * 300_000, deleted: false, created_by_type: index ? 'user' : 'agent-run', created_by_id: index ? 'Jonathon' : 'heartbeat run #4,112', created_at: iso(-index / 24), message: index ? ['Trimmed last 12 seconds', 'Camera bubble moved to corner', 'Uploaded from tray'][index - 1] || 'Recording updated' : 'Transcript added', device_id: index ? 'Mac Studio' : 'heartbeat run #4,112', current: index === 0 })) }
@@ -48,5 +51,9 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   async listFolderShares() { return this.folderShares }
   async shareFolder(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit') { const share = { id: `${ principalType }:${ principalId }`, collectionId, folderPath, principalType, principalId, role }; this.folderShares.push(share); return share }
   async unshareFolder(share:FolderShare) { this.folderShares = this.folderShares.filter(item => item.id !== share.id) }
-  async listMembers() { return { members: [{ id: 'maya', email: 'maya@example.test', role: 'member' }], groups: [{ id: 'design', name: 'Design', members: ['maya'] }] } }
+  async listFileShares(fileId:string):Promise<FileAccessList> { return { ownerId: 'synthetic-owner', direct: this.fileShares.filter(item => item.fileId === fileId).map(item => ({ ...item })), inherited: this.folderShares.map(item => ({ ...item, id: item.id ?? `folder:${ item.folderPath }:${ item.principalType }:${ item.principalId }`, source: 'folder' as const })) } }
+  async shareFile(fileId:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit') { const existing = this.fileShares.find(item => item.fileId === fileId && item.principalType === principalType && item.principalId === principalId); if (existing) { existing.role = role; return { ...existing } } const share:FileShare = { id: `file:${ fileId }:${ principalType }:${ principalId }`, fileId, principalType, principalId, role }; this.fileShares.push(share); return { ...share } }
+  async updateFileShare(fileId:string, shareId:string, role:'view' | 'edit') { const share = this.fileShares.find(item => item.fileId === fileId && item.id === shareId); if (!share) throw new Error('Synthetic file share not found'); share.role = role; return { ...share } }
+  async unshareFile(fileId:string, shareId:string) { this.fileShares = this.fileShares.filter(item => item.fileId !== fileId || item.id !== shareId) }
+  async listMembers() { return { members: [{ id: 'synthetic-owner', email: 'jonathon@example.test', role: 'owner' }, { id: 'maya', email: 'maya@example.test', role: 'member' }], groups: [{ id: 'design', name: 'Design', members: ['maya'] }] } }
 }

@@ -515,6 +515,10 @@ export interface IpcMainInvokeEvents {
   'sulla-files:shares':          (input: { collectionId: string }) => any[];
   'sulla-files:share':           (input: { collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string; role: 'view' | 'edit' }) => any;
   'sulla-files:unshare':         (input: { collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string }) => void;
+  'sulla-files:file-shares':     (input: { fileId: string }) => { ownerId?: string; direct: any[]; inherited: any[] };
+  'sulla-files:share-file':      (input: { fileId: string; principalType: 'user' | 'group'; principalId: string; role: 'view' | 'edit' }) => any;
+  'sulla-files:update-file-share': (input: { fileId: string; shareId: string; role: 'view' | 'edit' }) => any;
+  'sulla-files:unshare-file':    (input: { fileId: string; shareId: string }) => void;
   'sulla-files:members':         (input: { orgId: string }) => { members: any[]; groups: any[] };
   'sulla-files:keep':            (input: { fileId: string; collectionId: string; path?: string }) => any;
 

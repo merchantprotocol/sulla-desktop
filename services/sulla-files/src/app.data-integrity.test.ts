@@ -14,11 +14,12 @@ const token = issueCapabilityToken({ sub: ownerId, device_id: 'device-1', scopes
 
 function fakeDb() {
   const mutations:string[] = [];
-  const query = (sql:string, params:any[] = []) => {
+  const query = async(sql:string, params:any[] = []) => {
     if (/^(?:INSERT|UPDATE|DELETE)/.test(sql)) mutations.push(sql);
     if (sql === 'SELECT * FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE') {
       return { rows: [{ id: collectionId, owner_user_id: ownerId, published: true, legacy_source: false }], rowCount: 1 };
     }
+    if (sql === 'SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL') return { rows: [{ '?column?': 1 }], rowCount: 1 };
     if (sql.startsWith('SELECT id,collection_id,current_version_id FROM files')) {
       return { rows: [{ id: fileId, collection_id: collectionId, current_version_id: currentVersionId }], rowCount: 1 };
     }
@@ -56,7 +57,7 @@ async function withServer(db:any, fn:(baseUrl:string) => Promise<void>) {
     cloudUrl:             'https://cloud.invalid',
     caseInsensitiveRoot:  false,
     paused:               false,
-  }).listen(0);
+  }, undefined, db).listen(0);
   await new Promise<void>(resolve => app.once('listening', resolve));
   try { await fn(`http://127.0.0.1:${ (app.address() as any).port }`) } finally { app.close() }
 }
@@ -98,9 +99,10 @@ test('remote commit authorizes and protects the stored file before exposing iden
   for (const scenario of cases) {
     const queries:string[] = [];
     const mutations:string[] = [];
-    const query = (sql:string, params:any[] = []) => {
+    const query = async(sql:string, params:any[] = []) => {
       queries.push(sql);
       if (/^(?:INSERT|UPDATE|DELETE)/.test(sql)) mutations.push(sql);
+      if (sql === 'SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL') return { rows: [{ '?column?': 1 }], rowCount: 1 };
       if (sql === 'SELECT * FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE') {
         return { rows: [{ id: collectionId, owner_user_id: scenario.owner, published: true, legacy_source: false }], rowCount: 1 };
       }
