@@ -22,7 +22,7 @@ export interface Authority {
   id: string;
   issuer: string;
   client_id: string;
-  audience: string;
+  resource_audiences: string[];
   scopes: string[];
   authorization_endpoint: string;
   token_endpoint: string;
@@ -70,16 +70,16 @@ export async function createAuthority(db: Database, input: Record<string, unknow
   const issuer = string(input.issuer, 'issuer');
   const metadata = await discover(issuer);
   const clientId = string(input.clientId, 'clientId', 300);
-  const audience = string(input.audience, 'audience', 300);
+  const resourceAudiences = stringArray(input.resourceAudiences, 'resourceAudiences', 20);
   const scopes = stringArray(input.scopes ?? ['openid', 'profile'], 'scopes', 20);
   if (!scopes.includes('openid')) throw new Error('scopes must include openid');
   const membershipEndpoint = input.membershipEndpoint === undefined ? undefined : assertTrustedUrl(string(input.membershipEndpoint, 'membershipEndpoint'), metadata.issuer);
   const id = randomUUID();
   const result = await db.query<Authority>(
     `INSERT INTO accounts.authorities
-       (id, issuer, client_id, audience, scopes, authorization_endpoint, token_endpoint, jwks_uri, revocation_endpoint, membership_endpoint)
+       (id, issuer, client_id, resource_audiences, scopes, authorization_endpoint, token_endpoint, jwks_uri, revocation_endpoint, membership_endpoint)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [id, metadata.issuer, clientId, audience, scopes, metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint, membershipEndpoint],
+    [id, metadata.issuer, clientId, resourceAudiences, scopes, metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint, membershipEndpoint],
   );
   return result.rows[0];
 }
@@ -92,7 +92,15 @@ function safeReturnTo(config: AccountsConfig, input: unknown): string | undefine
   return url.href;
 }
 
-export async function beginAuthorization(db: Database, config: AccountsConfig, authority: Authority, returnInput: unknown): Promise<{ authorizationUrl: string; expiresAt: string }> {
+export async function beginAuthorization(
+  db: Database,
+  config: AccountsConfig,
+  authority: Authority,
+  returnInput: unknown,
+  audienceInput: unknown,
+): Promise<{ authorizationUrl: string; expiresAt: string }> {
+  const resourceAudience = audienceInput === undefined ? authority.resource_audiences[0] : string(audienceInput, 'resourceAudience', 300);
+  if (!resourceAudience || !authority.resource_audiences.includes(resourceAudience)) throw new Error('resourceAudience is not allowed');
   const id = randomUUID();
   const state = base64url(32);
   const verifier = base64url(64);
@@ -124,12 +132,13 @@ export async function beginAuthorization(db: Database, config: AccountsConfig, a
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('client_id', authority.client_id);
   url.searchParams.set('redirect_uri', redirectUri);
-  url.searchParams.set('scope', authority.scopes.join(' '));
+  const scopes = authority.issuer === config.keycloakIssuer ? [...authority.scopes, `sulla-audience:${resourceAudience}`] : authority.scopes;
+  url.searchParams.set('scope', scopes.join(' '));
   url.searchParams.set('state', state);
   url.searchParams.set('nonce', nonce);
   url.searchParams.set('code_challenge_method', 'S256');
   url.searchParams.set('code_challenge', createHash('sha256').update(verifier).digest('base64url'));
-  if (authority.audience) url.searchParams.set('audience', authority.audience);
+  url.searchParams.set('audience', resourceAudience);
   return { authorizationUrl: url.href, expiresAt: expiresAt.toISOString() };
 }
 
@@ -139,7 +148,7 @@ export async function completeAuthorization(db: Database, config: AccountsConfig
   try {
     await client.query('BEGIN');
     const found = await client.query(
-      `SELECT t.*, a.issuer, a.client_id, a.audience, a.authorization_endpoint, a.token_endpoint, a.jwks_uri, a.revocation_endpoint
+      `SELECT t.*, a.issuer, a.client_id, a.authorization_endpoint, a.token_endpoint, a.jwks_uri, a.revocation_endpoint
          FROM accounts.authorization_transactions t JOIN accounts.authorities a ON a.id=t.authority_id
         WHERE t.state_digest=$1 FOR UPDATE`, [digest(state)],
     );
@@ -284,13 +293,13 @@ export async function revokeAuthoritySession(db: Database, config: AccountsConfi
 }
 
 export async function ensureHostedAuthority(db: Database, config: AccountsConfig): Promise<void> {
-  if (config.mode !== 'server' || !config.keycloakIssuer || !config.keycloakAudience) return;
+  if (config.mode !== 'server' || !config.keycloakIssuer || !config.keycloakNativeClientId || !config.keycloakResourceAudiences.size) return;
   const existing = await db.query('SELECT 1 FROM accounts.authorities WHERE issuer=$1', [config.keycloakIssuer]);
   if (existing.rowCount) return;
   const metadata = await discover(config.keycloakIssuer);
   await db.query(
-    `INSERT INTO accounts.authorities(id,issuer,client_id,audience,scopes,authorization_endpoint,token_endpoint,jwks_uri,revocation_endpoint)
-     VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8) ON CONFLICT (issuer) DO NOTHING`,
-    [randomUUID(), metadata.issuer, config.keycloakAudience, ['openid', 'profile'], metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint],
+    `INSERT INTO accounts.authorities(id,issuer,client_id,resource_audiences,scopes,authorization_endpoint,token_endpoint,jwks_uri,revocation_endpoint,membership_endpoint)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (issuer) DO NOTHING`,
+    [randomUUID(), metadata.issuer, config.keycloakNativeClientId, [...config.keycloakResourceAudiences], ['openid', 'profile'], metadata.authorizationEndpoint, metadata.tokenEndpoint, metadata.jwksUri, metadata.revocationEndpoint, new URL('/v1/authority/membership/resolve', config.publicUrl).href],
   );
 }
