@@ -249,10 +249,15 @@ export function requireBrokeredContainerAuth(context: ProviderTransportContext):
   }
 
   const keys = Object.keys(config.environment).sort();
-  const allowed = context.provider === 'codex'
-    ? ['SULLA_PROVIDER_BRIDGE_TOKEN']
-    : ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'];
-  if (keys.length !== allowed.length || keys.some((key, index) => key !== allowed[index]) ||
+  const allowedSets = context.provider === 'codex'
+    ? [['SULLA_PROVIDER_BRIDGE_TOKEN']]
+    : [
+      ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
+      ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_OAUTH_TOKEN'],
+    ];
+  const matchesAllowedSet = allowedSets.some(allowed =>
+    keys.length === allowed.length && keys.every((key, index) => key === allowed[index]));
+  if (!matchesAllowedSet ||
       keys.some(key => !config.environment[key])) {
     throw new Error(`Container ${ context.provider } broker environment violates the provider allowlist`);
   }
