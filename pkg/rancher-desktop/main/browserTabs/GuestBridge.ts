@@ -13,9 +13,9 @@
 // CDP-based methods (screenshot, trusted mouse/keyboard events) use
 // `webContents` APIs directly — no guest-side code needed.
 
-import type { WebContents, NativeImage } from 'electron';
-
 import { markSyntheticInput } from './syntheticInput';
+
+import type { WebContents } from 'electron';
 
 function jsArg(value: unknown): string {
   return JSON.stringify(value);
@@ -186,24 +186,14 @@ export class GuestBridge {
     await this.exec(`document.querySelectorAll('[data-sulla-annotation]').forEach(el => el.remove())`);
   }
 
-  // ── Native screenshot (Electron 40 webContents.capturePage) ───────
+  // ── Screenshot capture (Chrome DevTools Protocol) ────────────────
   async captureScreenshot(options: {
     format?: 'jpeg' | 'png'; quality?: number; clip?: { x: number; y: number; width: number; height: number };
   } = {}): Promise<{ base64: string; mediaType: string } | null> {
-    // Electron 40 REMOVED webContents.incrementCapturerCount / decrementCapturerCount.
-    // The replacement is webContents.capturePage(rect?, { stayHidden, stayAwake }) —
-    // same lifecycle semantics, different shape. `stayHidden: true` instructs the
-    // renderer to keep producing frames even when the WebContentsView is detached
-    // from the window's contentView, which is exactly our case: the single-source-
-    // of-truth manager fully detaches every non-focused tab, so without stayHidden
-    // the compositor produces no frames and any capture hangs indefinitely.
-    //
-    // Earlier versions of this method used `this.wc.debugger.sendCommand(
-    // 'Page.captureScreenshot', ...)` bracketed with incrementCapturerCount — that
-    // stack is completely broken on Electron 40 because incrementCapturerCount
-    // silently no-ops (the method doesn't exist on `this.wc`), so painting is
-    // never forced and the CDP call waits forever for a frame. Using the typed
-    // Electron API here avoids that trap.
+    // Electron capturePage returns an empty NativeImage for parked/offscreen
+    // views. CDP can capture those views when their owner supplies a live
+    // compositor; ChromeApiService does that for hidden tabs by attaching them
+    // outside the visible viewport for the duration of its serialized capture.
     const format = options.format === 'png' ? 'png' : 'jpeg';
     const quality = typeof options.quality === 'number' ? options.quality : 80;
     const rect = options.clip
@@ -228,19 +218,20 @@ export class GuestBridge {
       // capturePage returns empty NativeImage because the compositor has no frame.
       // CDP forces a render pass regardless of visibility.
       const dbg = this.wc.debugger;
-      let attached = false;
-      try {
-        dbg.attach('1.3');
-        attached = true;
-      } catch {
-        // Already attached by DevTools or a previous call — that's fine, we can still send commands.
-        attached = false;
+      let attachedByCapture = false;
+
+      if (!dbg.isAttached()) {
+        try {
+          dbg.attach('1.3');
+          attachedByCapture = true;
+        } catch (error) {
+          // Another debugger owner may have attached between isAttached() and
+          // attach(). Continue only when that attachment actually exists.
+          if (!dbg.isAttached()) throw error;
+        }
       }
 
       try {
-        // Ensure Page domain is enabled so captureScreenshot works.
-        await dbg.sendCommand('Page.enable');
-
         const cdpParams: Record<string, unknown> = {
           format,
           fromSurface:           true,
@@ -257,12 +248,33 @@ export class GuestBridge {
           };
         }
 
-        const result = await Promise.race([
-          dbg.sendCommand('Page.captureScreenshot', cdpParams),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('CDP captureScreenshot timed out after 10s')), 10_000),
-          ),
-        ]) as { data: string };
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        let operationExpired = false;
+        const timeoutPromise = new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            operationExpired = true;
+            reject(new Error('CDP screenshot operation timed out after 10s'));
+          }, 10_000);
+        });
+        const captureOperation = (async() => {
+          await dbg.sendCommand('Page.enable');
+          if (operationExpired) {
+            throw new Error('CDP screenshot operation expired before capture');
+          }
+
+          return await dbg.sendCommand('Page.captureScreenshot', cdpParams) as { data: string };
+        })();
+        let result: { data: string };
+
+        try {
+          result = await Promise.race([
+            captureOperation,
+            timeoutPromise,
+          ]);
+        } finally {
+          operationExpired = true;
+          if (timeout) clearTimeout(timeout);
+        }
 
         const base64 = result?.data;
         if (!base64) {
@@ -273,16 +285,16 @@ export class GuestBridge {
         console.log(`[GuestBridge] CDP capture ok assetId=${ this.assetId } bytes=${ base64.length }`);
         return { base64, mediaType: `image/${ format }` };
       } finally {
-        if (attached) {
-          try { dbg.detach(); } catch { /* ignore */ }
+        if (attachedByCapture) {
+          try {
+            if (dbg.isAttached()) dbg.detach();
+          } catch { /* webContents may have been destroyed */ }
         }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : '';
       console.warn(`[GuestBridge] captureScreenshot failed assetId=${ this.assetId }: ${ msg }\n${ stack }`);
-      try {
-      } catch { /* ignore */ }
       return null;
     }
   }

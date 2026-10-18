@@ -18,7 +18,11 @@ import { EventEmitter } from 'events';
 
 import Electron, { WebContentsView } from 'electron';
 
+import { createChromeBookmarks } from './chromeBookmarks';
+import { ChromeEventImpl } from './chromeEvent';
+
 import type { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
+import { GuestBridge } from '@pkg/main/browserTabs/GuestBridge';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
 import { getBrowserSession } from '@pkg/main/browserTabs/browserSession';
 import Logging from '@pkg/utils/logging';
@@ -70,10 +74,9 @@ import type {
   ChromeEvent,
   EventListener,
 } from './types';
-import { createChromeBookmarks } from './chromeBookmarks';
-import { ChromeEventImpl } from './chromeEvent';
 
 const console = Logging.sulla;
+const HIDDEN_TAB_BOUNDS: Electron.Rectangle = { x: 0, y: 0, width: 1280, height: 800 };
 // ---------------------------------------------------------------------------
 // Storage implementation (backed by SullaSettingsModel)
 // ---------------------------------------------------------------------------
@@ -136,6 +139,8 @@ export class ChromeApiService implements ChromeApi {
 
   // Hidden (headless) views not attached to any window
   private hiddenViews = new Map<string, WebContentsView>();
+  /** Serializes capture and destruction for each service-owned hidden tab. */
+  private hiddenTabOperationTails = new Map<string, Promise<void>>();
   // Window abstractions (windowId → tab mapping)
   private windowRegistry = new Map<string, { state: 'normal' | 'hidden'; tabId: string }>();
 
@@ -302,6 +307,32 @@ export class ChromeApiService implements ChromeApi {
     return ChromeApiService.instance;
   }
 
+  /**
+   * Run one lifecycle-sensitive operation per hidden tab at a time. Keeping the
+   * queue entry until the newest waiter finishes prevents an earlier capture
+   * from deleting a later operation's tail during cleanup.
+   */
+  private async withHiddenTabOperation<T>(tabId: string, operation: () => Promise<T> | T): Promise<T> {
+    const previous = this.hiddenTabOperationTails.get(tabId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.catch(() => {}).then(() => current);
+
+    this.hiddenTabOperationTails.set(tabId, tail);
+    await previous.catch(() => {});
+
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.hiddenTabOperationTails.get(tabId) === tail) {
+        this.hiddenTabOperationTails.delete(tabId);
+      }
+    }
+  }
+
   // =========================================================================
   // chrome.tabs
   // =========================================================================
@@ -357,6 +388,11 @@ export class ChromeApiService implements ChromeApi {
           throw new Error('[ChromeApi] Hidden WebContentsView did not adopt the shared browser session');
         }
 
+        // Detached views otherwise start at 0x0, which makes responsive pages
+        // render their zero-width layout and leaves screenshots without a useful
+        // frame. This viewport does not attach the view to a window.
+        view.setBounds(HIDDEN_TAB_BOUNDS);
+
         this.hiddenViews.set(tabId, view);
         this.attachWebNavigationListeners(tabId, view.webContents);
 
@@ -387,11 +423,16 @@ export class ChromeApiService implements ChromeApi {
 
     remove: async(tabId: string): Promise<void> => {
       if (this.hiddenViews.has(tabId)) {
-        const view = this.hiddenViews.get(tabId)!;
+        await this.withHiddenTabOperation(tabId, () => {
+          const view = this.hiddenViews.get(tabId);
 
-        (view.webContents as any).close?.();
-        this.hiddenViews.delete(tabId);
-        console.log(`[ChromeApi] Removed hidden tab tabId=${ tabId }`);
+          if (!view) return;
+          (view.webContents as any).close?.();
+          if (this.hiddenViews.get(tabId) === view) {
+            this.hiddenViews.delete(tabId);
+          }
+          console.log(`[ChromeApi] Removed hidden tab tabId=${ tabId }`);
+        });
       } else if (!tabRegistry.close(tabId)) {
         // Not registry-owned (legacy view) — tear the view down directly.
         this.tabViewManager.destroyView(tabId);
@@ -466,6 +507,59 @@ export class ChromeApiService implements ChromeApi {
     onRemoved:  this.tabRemovedEvent as ChromeEvent<[string]>,
     onUpdated:  this.tabUpdatedEvent as ChromeEvent<[string, TabChangeInfo, ChromeTab]>,
   };
+
+  /**
+   * Capture a service-owned hidden tab. Electron needs the view in a live
+   * compositor, so it is attached outside the visible window bounds only for
+   * the duration of this serialized operation and always detached afterward.
+   */
+  async captureHiddenTabScreenshot(tabId: string): Promise<{ base64: string; mediaType: string } | null> {
+    return this.withHiddenTabOperation(tabId, async() => {
+      const view = this.hiddenViews.get(tabId);
+
+      if (!view || view.webContents.isDestroyed()) {
+        throw new Error(`[ChromeApi] Hidden tab not found: ${ tabId }`);
+      }
+
+      const mainWindow = require('@pkg/window').getWindow('main-agent') as Electron.BrowserWindow | null;
+
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        throw new Error('[ChromeApi] Cannot capture hidden tab without the main window');
+      }
+
+      const previousBounds = view.getBounds();
+      const wasThrottled = view.webContents.getBackgroundThrottling();
+      const captureBounds: Electron.Rectangle = {
+        x:      -(HIDDEN_TAB_BOUNDS.width + 100),
+        y:      0,
+        width:  HIDDEN_TAB_BOUNDS.width,
+        height: HIDDEN_TAB_BOUNDS.height,
+      };
+      let attached = false;
+
+      try {
+        view.setBounds(captureBounds);
+        view.webContents.setBackgroundThrottling(false);
+        // Mark before the native call so a partial attach is still cleaned up
+        // if Electron throws after mutating the view tree.
+        attached = true;
+        mainWindow.contentView.addChildView(view, 0);
+
+        return await new GuestBridge(view.webContents, tabId).captureScreenshot({
+          format:  'jpeg',
+          quality: 80,
+        });
+      } finally {
+        if (attached && !mainWindow.isDestroyed()) {
+          try { mainWindow.contentView.removeChildView(view) } catch { /* already detached */ }
+        }
+        if (!view.webContents.isDestroyed()) {
+          view.setBounds(previousBounds);
+          view.webContents.setBackgroundThrottling(wasThrottled);
+        }
+      }
+    });
+  }
 
   // =========================================================================
   // chrome.scripting
