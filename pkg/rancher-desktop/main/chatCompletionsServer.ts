@@ -1178,6 +1178,33 @@ export class ChatCompletionsServer {
           const allowed = (state.metadata as { allowedToolNames?: string[] }).allowedToolNames;
           if (!sessionAllowsTool(allowed, toolName)) return res.status(403).json({ success: false, error: 'Tool not allowed for this session' });
           tool.setState?.(state);
+          // The tool-session token is the graph-issued proof binding this CLI
+          // request to a live agent turn. Preserve that verified identity when
+          // the tool needs Desktop vault authority; otherwise GitHub workers
+          // reach the broker as an unbound, context-free caller. Account scope
+          // is selected here from the trusted integration service. Git workers
+          // narrow it further to the repository resolved from their own remote.
+          if (slug === 'github' && usesContainerVaultAuthority()) {
+            const metadata = state.metadata as Record<string, any>;
+            const agentId = String(metadata.agentId ?? metadata.wsChannel ?? '').trim();
+            const threadId = String(metadata.threadId ?? '').trim();
+            if (!agentId || !threadId) {
+              return res.status(403).json({ success: false, error: 'GitHub tool session is missing trusted graph identity' });
+            }
+            const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+            const accountId = await getIntegrationService().getActiveAccountId('github');
+            tool.executionContext = await issueLocalBrokerContext({
+              agentId,
+              podId:              String(metadata.podId ?? `desktop:${ threadId }`),
+              credentialScope:    { integration_id: 'github', account_id: accountId },
+              threadId,
+              jobId:              metadata.jobId,
+              workflowExecutionId: metadata.activeWorkflow?.executionId,
+              orgId:              metadata.orgId,
+              requestId:          req.header('X-Request-Id') ?? crypto.randomUUID(),
+              signal:             AbortSignal.timeout(60_000),
+            });
+          }
         }
         if (interactiveNames.has(toolName) && typeof (tool).sendChatMessage !== 'function') {
           try {
