@@ -34,7 +34,9 @@ export class ContainerProviderFileTransport implements ProviderFileTransport {
     fs.mkdirSync(storageParent, { recursive: true, mode: 0o700 });
     fs.chmodSync(storageParent, 0o700);
     this.storageRoot = fs.mkdtempSync(path.join(storageParent, 'container-'));
-    fs.chmodSync(this.storageRoot, 0o700);
+    // The provider runs as a different UID. Allow traversal of the mounted
+    // root without directory listing; Docker's read-only bind prevents writes.
+    fs.chmodSync(this.storageRoot, 0o711);
     this.bindMount = `${ this.storageRoot }:${ CONTAINER_PROVIDER_FILES_PATH }:ro`;
   }
 
@@ -46,7 +48,7 @@ export class ContainerProviderFileTransport implements ProviderFileTransport {
     const fd = fs.openSync(
       storageTarget,
       fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0),
-      request.mode ?? 0o600,
+      ((request.mode ?? 0o600) & 0o700) | 0o044,
     );
     try {
       fs.writeFileSync(fd, request.data);

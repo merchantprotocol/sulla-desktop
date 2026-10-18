@@ -30,7 +30,10 @@ describe('container provider file transport', () => {
 
     expect(transport.bindMount).toBe(`${ storageRoot }:${ CONTAINER_PROVIDER_FILES_PATH }:ro`);
     expect(ref.path).toBe(path.posix.join(CONTAINER_PROVIDER_FILES_PATH, path.basename(ref.path)));
-    expect(fs.readFileSync(path.join(storageRoot, path.basename(ref.path)), 'utf8')).toBe('synthetic provider input');
+    const storageTarget = path.join(storageRoot, path.basename(ref.path));
+    expect(fs.readFileSync(storageTarget, 'utf8')).toBe('synthetic provider input');
+    expect(fs.statSync(storageRoot).mode & 0o777).toBe(0o711);
+    expect(fs.statSync(storageTarget).mode & 0o077).toBe(0o044);
     expect(fs.readdirSync(outside)).toEqual([]);
 
     ref.dispose();
