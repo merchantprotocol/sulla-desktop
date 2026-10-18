@@ -50,6 +50,7 @@ export function authenticate(config: VaultConfig, db: Queryable) {
         const mapped = await db.query<{ user_id: string }>(
           `SELECT ai.user_id FROM accounts_identities ai
             JOIN org_members om ON om.user_id=ai.user_id AND om.org_id=$3 AND om.status='confirmed'
+            JOIN users u ON u.id=ai.user_id AND u.disabled_at IS NULL
            WHERE ai.issuer=$1 AND ai.subject=$2`,
           [context.issuer, context.subject, context.organizationId],
         );
