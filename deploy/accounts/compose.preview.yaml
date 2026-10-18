@@ -1,0 +1,216 @@
+services:
+  postgres:
+    image: postgres:16.14-alpine
+    environment:
+      POSTGRES_USER_FILE: /run/secrets/database_username
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
+      POSTGRES_DB: postgres
+    secrets:
+      - database_username
+      - database_password
+    volumes:
+      - preview-postgres:/var/lib/postgresql/data
+      - ./init-preview-databases.sql:/docker-entrypoint-initdb.d/001-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$(cat /run/secrets/database_username)\" -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  accounts-local:
+    image: sulla-accounts:preview
+    build:
+      context: ../..
+      dockerfile: services/sulla-accounts/Dockerfile
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      SULLA_ACCOUNTS_MODE: desktop
+      SULLA_ACCOUNTS_PORT: 3020
+      SULLA_ACCOUNTS_DATABASE_HOST: postgres
+      SULLA_ACCOUNTS_DATABASE_NAME: sulla_accounts_local
+      SULLA_ACCOUNTS_DATABASE_USERNAME_FILE: /run/secrets/database_username
+      SULLA_ACCOUNTS_DATABASE_PASSWORD_FILE: /run/secrets/database_password
+      SULLA_ACCOUNTS_PUBLIC_URL: http://127.0.0.1:3020
+      SULLA_ACCOUNTS_BOOTSTRAP_SECRET_SOURCE_FILE: /run/secrets/local_bootstrap
+      SULLA_ACCOUNTS_SESSION_SECRET_SOURCE_FILE: /run/secrets/local_session
+      SULLA_ACCOUNTS_ENCRYPTION_KEY_SOURCE_FILE: /run/secrets/local_encryption
+      SULLA_ACCOUNTS_SERVICE_TOKENS_SOURCE_FILE: /run/secrets/local_service_tokens
+      NODE_EXTRA_CA_CERTS: /run/sulla-tls/ca.crt
+    ports:
+      - "127.0.0.1:3020:3020"
+    secrets:
+      - database_username
+      - database_password
+      - local_bootstrap
+      - local_session
+      - local_encryption
+      - local_service_tokens
+    tmpfs:
+      - /run/sulla-accounts-private:uid=10001,gid=10001,mode=0700
+    volumes:
+      - ./preview-secrets/tls:/run/sulla-tls:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "2", "http://127.0.0.1:3020/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  accounts-authority-a:
+    image: sulla-accounts:preview
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      SULLA_ACCOUNTS_MODE: server
+      SULLA_ACCOUNTS_PORT: 3020
+      SULLA_ACCOUNTS_DATABASE_HOST: postgres
+      SULLA_ACCOUNTS_DATABASE_NAME: sulla_accounts_a
+      SULLA_ACCOUNTS_DATABASE_USERNAME_FILE: /run/secrets/database_username
+      SULLA_ACCOUNTS_DATABASE_PASSWORD_FILE: /run/secrets/database_password
+      SULLA_ACCOUNTS_PUBLIC_URL: https://authority-a.localhost:8787
+      SULLA_ACCOUNTS_KEYCLOAK_ISSUER: https://authority-a.localhost:8787/auth/realms/sulla
+      SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1
+      SULLA_ACCOUNTS_KEYCLOAK_NATIVE_CLIENT_ID: sulla-desktop
+      SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID: sulla-web
+      SULLA_ACCOUNTS_KEYCLOAK_WEB_REDIRECT_URIS: https://authority-a.localhost:8787/web/oidc/callback
+      SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE: sulla-membership
+      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-projects,sulla-files,sulla-vault,sulla-workflows
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL: jdbc:postgresql://postgres:5432/keycloak_a
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_USERNAME_FILE: /run/secrets/database_username
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_PASSWORD_FILE: /run/secrets/database_password
+      SULLA_ACCOUNTS_KEYCLOAK_ADMIN_USERNAME_FILE: /run/secrets/authority_a_keycloak_admin_username
+      SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/authority_a_keycloak_admin_password
+      SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE: /run/secrets/authority_a_web_client_secret
+      SULLA_ACCOUNTS_SESSION_SECRET_SOURCE_FILE: /run/secrets/authority_a_session
+      SULLA_ACCOUNTS_ENCRYPTION_KEY_SOURCE_FILE: /run/secrets/authority_a_encryption
+      SULLA_ACCOUNTS_ADMIN_SECRET_SOURCE_FILE: /run/secrets/authority_a_admin
+      SULLA_ACCOUNTS_SERVICE_TOKENS_SOURCE_FILE: /run/secrets/authority_a_service_tokens
+      SULLA_ACCOUNTS_TRUSTED_PROXY: "1"
+      NODE_EXTRA_CA_CERTS: /run/sulla-tls/ca.crt
+    secrets:
+      - database_username
+      - database_password
+      - authority_a_session
+      - authority_a_encryption
+      - authority_a_admin
+      - authority_a_service_tokens
+      - authority_a_keycloak_admin_username
+      - authority_a_keycloak_admin_password
+      - authority_a_web_client_secret
+      - authority_a_synthetic_user_credential
+    tmpfs:
+      - /run/sulla-accounts-private:uid=10001,gid=10001,mode=0700
+    volumes:
+      - ./preview-secrets/tls:/run/sulla-tls:ro
+      - preview-keycloak-a:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error --max-time 2 http://127.0.0.1:3020/readyz >/dev/null && curl --fail --silent --show-error --max-time 2 http://127.0.0.1:9000/auth/health/ready >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  accounts-authority-b:
+    image: sulla-accounts:preview
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      SULLA_ACCOUNTS_MODE: server
+      SULLA_ACCOUNTS_PORT: 3020
+      SULLA_ACCOUNTS_DATABASE_HOST: postgres
+      SULLA_ACCOUNTS_DATABASE_NAME: sulla_accounts_b
+      SULLA_ACCOUNTS_DATABASE_USERNAME_FILE: /run/secrets/database_username
+      SULLA_ACCOUNTS_DATABASE_PASSWORD_FILE: /run/secrets/database_password
+      SULLA_ACCOUNTS_PUBLIC_URL: https://authority-b.localhost:8787
+      SULLA_ACCOUNTS_KEYCLOAK_ISSUER: https://authority-b.localhost:8787/auth/realms/sulla
+      SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2
+      SULLA_ACCOUNTS_KEYCLOAK_NATIVE_CLIENT_ID: sulla-desktop
+      SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID: sulla-web
+      SULLA_ACCOUNTS_KEYCLOAK_WEB_REDIRECT_URIS: https://authority-b.localhost:8787/web/oidc/callback
+      SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE: sulla-membership
+      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-projects,sulla-files,sulla-vault,sulla-workflows
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL: jdbc:postgresql://postgres:5432/keycloak_b
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_USERNAME_FILE: /run/secrets/database_username
+      SULLA_ACCOUNTS_KEYCLOAK_DATABASE_PASSWORD_FILE: /run/secrets/database_password
+      SULLA_ACCOUNTS_KEYCLOAK_ADMIN_USERNAME_FILE: /run/secrets/authority_b_keycloak_admin_username
+      SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/authority_b_keycloak_admin_password
+      SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE: /run/secrets/authority_b_web_client_secret
+      SULLA_ACCOUNTS_SESSION_SECRET_SOURCE_FILE: /run/secrets/authority_b_session
+      SULLA_ACCOUNTS_ENCRYPTION_KEY_SOURCE_FILE: /run/secrets/authority_b_encryption
+      SULLA_ACCOUNTS_ADMIN_SECRET_SOURCE_FILE: /run/secrets/authority_b_admin
+      SULLA_ACCOUNTS_SERVICE_TOKENS_SOURCE_FILE: /run/secrets/authority_b_service_tokens
+      SULLA_ACCOUNTS_TRUSTED_PROXY: "1"
+      NODE_EXTRA_CA_CERTS: /run/sulla-tls/ca.crt
+    secrets:
+      - database_username
+      - database_password
+      - authority_b_session
+      - authority_b_encryption
+      - authority_b_admin
+      - authority_b_service_tokens
+      - authority_b_keycloak_admin_username
+      - authority_b_keycloak_admin_password
+      - authority_b_web_client_secret
+      - authority_b_synthetic_user_credential
+    tmpfs:
+      - /run/sulla-accounts-private:uid=10001,gid=10001,mode=0700
+    volumes:
+      - ./preview-secrets/tls:/run/sulla-tls:ro
+      - preview-keycloak-b:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error --max-time 2 http://127.0.0.1:3020/readyz >/dev/null && curl --fail --silent --show-error --max-time 2 http://127.0.0.1:9000/auth/health/ready >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  gateway:
+    image: nginx:1.29-alpine
+    depends_on:
+      accounts-local: { condition: service_started }
+      accounts-authority-a: { condition: service_started }
+      accounts-authority-b: { condition: service_started }
+    ports: ["127.0.0.1:8787:8787"]
+    entrypoint: ["sh", "/etc/sulla/entrypoint.sh"]
+    environment:
+      SULLA_TLS_CERT_CONTAINER_PATH: /run/sulla-tls/tls.crt
+      SULLA_TLS_KEY_CONTAINER_PATH: /run/sulla-tls/tls.key
+    volumes:
+      - ./nginx.preview.conf.template:/etc/sulla/nginx.conf.template:ro
+      - ./gateway-entrypoint.sh:/etc/sulla/entrypoint.sh:ro
+      - ./preview-secrets/tls:/run/sulla-tls:ro
+    networks:
+      default:
+        aliases:
+          - accounts.localhost
+          - authority-a.localhost
+          - authority-b.localhost
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://127.0.0.1:8787/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  preview-postgres:
+  preview-keycloak-a:
+  preview-keycloak-b:
+
+secrets:
+  database_username: { file: ./preview-secrets/database.username }
+  database_password: { file: ./preview-secrets/database.password }
+  local_bootstrap: { file: ./preview-secrets/local/bootstrap.secret }
+  local_session: { file: ./preview-secrets/local/session.secret }
+  local_encryption: { file: ./preview-secrets/local/encryption.key }
+  local_service_tokens: { file: ./preview-secrets/local/service-tokens.json }
+  authority_a_session: { file: ./preview-secrets/authority-a/session.secret }
+  authority_a_encryption: { file: ./preview-secrets/authority-a/encryption.key }
+  authority_a_admin: { file: ./preview-secrets/authority-a/admin.secret }
+  authority_a_service_tokens: { file: ./preview-secrets/authority-a/service-tokens.json }
+  authority_a_keycloak_admin_username: { file: ./preview-secrets/authority-a/keycloak-admin.username }
+  authority_a_keycloak_admin_password: { file: ./preview-secrets/authority-a/keycloak-admin.password }
+  authority_a_web_client_secret: { file: ./preview-secrets/authority-a/web-client.secret }
+  authority_a_synthetic_user_credential: { file: ./preview-secrets/authority-a/synthetic-user-credential.json }
+  authority_b_session: { file: ./preview-secrets/authority-b/session.secret }
+  authority_b_encryption: { file: ./preview-secrets/authority-b/encryption.key }
+  authority_b_admin: { file: ./preview-secrets/authority-b/admin.secret }
+  authority_b_service_tokens: { file: ./preview-secrets/authority-b/service-tokens.json }
+  authority_b_keycloak_admin_username: { file: ./preview-secrets/authority-b/keycloak-admin.username }
+  authority_b_keycloak_admin_password: { file: ./preview-secrets/authority-b/keycloak-admin.password }
+  authority_b_web_client_secret: { file: ./preview-secrets/authority-b/web-client.secret }
+  authority_b_synthetic_user_credential: { file: ./preview-secrets/authority-b/synthetic-user-credential.json }
