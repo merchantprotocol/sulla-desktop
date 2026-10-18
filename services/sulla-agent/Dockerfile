@@ -3,6 +3,8 @@ FROM node:22-bookworm-slim
 ARG CLAUDE_CODE_VERSION=latest
 ARG CODEX_VERSION=0.162.1
 
+LABEL com.sulla.agent.transport-version="1"
+
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bash build-essential ca-certificates curl git jq openssh-client python3 python3-pip tini \
