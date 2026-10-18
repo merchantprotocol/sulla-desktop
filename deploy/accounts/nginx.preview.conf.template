@@ -1,11 +1,13 @@
 events {}
 
 http {
-  upstream local_accounts { server accounts-local:3020; }
-  upstream authority_a_accounts { server accounts-authority-a:3020; }
-  upstream authority_a_keycloak { server accounts-authority-a:8080; }
-  upstream authority_b_accounts { server accounts-authority-b:3020; }
-  upstream authority_b_keycloak { server accounts-authority-b:8080; }
+  resolver 127.0.0.11 valid=5s ipv6=off;
+  resolver_timeout 2s;
+  upstream local_accounts { zone local_accounts 64k; server accounts-local:3020 resolve; }
+  upstream authority_a_accounts { zone authority_a_accounts 64k; server accounts-authority-a:3020 resolve; }
+  upstream authority_a_keycloak { zone authority_a_keycloak 64k; server accounts-authority-a:8080 resolve; }
+  upstream authority_b_accounts { zone authority_b_accounts 64k; server accounts-authority-b:3020 resolve; }
+  upstream authority_b_keycloak { zone authority_b_keycloak 64k; server accounts-authority-b:8080 resolve; }
 
   map $http_host $forwarded_port {
     ~:([0-9]+)$ $1;
