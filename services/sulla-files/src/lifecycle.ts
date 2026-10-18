@@ -6,11 +6,12 @@ import type { Config } from './config.js';
 import { FilesMasterKeyRejectedError, type FilesKeyring } from './keyring.js';
 import { LegacyFilesImporter } from './legacyImport.js';
 import { runLegacyPreflight } from './legacyPreflight.js';
+import { FilesStartupDiagnostics, type FilesStartupStage } from './startupDiagnostics.js';
 
 import type pg from 'pg';
 
 interface LifecycleHooks {
-  initialize():Promise<void>;
+  initialize(reportStage:(stage:FilesStartupStage)=>void):Promise<void>;
   stop():Promise<void>;
   recover?(master:Buffer):Promise<number>;
 }
@@ -18,7 +19,7 @@ interface LifecycleHooks {
 export interface FilesLifecycleStatus {
   state:'locked' | 'starting' | 'unlocked' | 'error';
   legacyImport:'clear' | 'secure-import-required';
-  failure?:{ code:string; stage:string };
+  failure?:{ code:string; stage:FilesStartupStage };
 }
 
 /** Sole owner of Files key activation, migration, recovery, readiness, and lock ordering. */
@@ -86,6 +87,10 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
     return this.serial(async() => {
       this.assertGeneration(generation);
       this.currentState = 'starting'; this.failure = undefined;
+      const diagnostics = new FilesStartupDiagnostics();
+      let stage:FilesStartupStage = 'bootstrap-state';
+      const reportStage = (next:FilesStartupStage) => { stage = next; diagnostics.stage(stage) };
+      diagnostics.stage(stage);
       try {
         const hasState = Boolean((await this.db.query('SELECT 1 FROM files_key_state WHERE id=TRUE')).rowCount);
         if (disposition === 'create-new' && hasState) throw new FilesBootstrapError('FILES_BOOTSTRAP_STATE_CHANGED', 409, 'Files key state changed during bootstrap');
@@ -94,10 +99,12 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
           throw new FilesBootstrapError('FILES_BOOTSTRAP_STATE_CHANGED', 409, 'Files key state changed during bootstrap');
         }
         if (this.config.filesRoot) {
+          reportStage('preflight');
           this.config.legacyPreflight = await runLegacyPreflight(this.db, this.config.filesRoot, { caseInsensitive: this.config.caseInsensitiveRoot });
         }
         let imported = false;
         if (this.config.legacyPreflight?.state === 'secure-import-required') {
+          reportStage('legacy-import');
           if (disposition !== 'existing' || !this.config.filesRoot || !this.config.legacyPreflight.protectedPrefix || !material.legacyMasterKeys.length) {
             throw new FilesBootstrapError('FILES_LEGACY_KEY_REQUIRED', 409, 'Legacy Files import requires the existing OS-protected key material');
           }
@@ -105,6 +112,7 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
             this.db, join(this.config.filesRoot, this.config.legacyPreflight.protectedPrefix), this.config.chunkRoot,
           );
           await importer.run(material.masterKey, material.legacyMasterKeys);
+          reportStage('legacy-import-verification');
           this.config.legacyPreflight = await runLegacyPreflight(this.db, this.config.filesRoot, { caseInsensitive: this.config.caseInsensitiveRoot });
           if (this.config.legacyPreflight.state !== 'clear') throw new FilesBootstrapError('FILES_LEGACY_IMPORT_INCOMPLETE', 409, 'Legacy Files import did not complete');
           imported = true;
@@ -112,21 +120,25 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
           // A prior import may have committed before its response reached the
           // helper. Revalidate the durable receipt and every identity mapping
           // before authorizing retirement of the raw legacy master.
+          reportStage('legacy-import-verification');
           const importer = new LegacyFilesImporter(this.db, this.config.filesRoot, this.config.chunkRoot);
           imported = Boolean(await importer.completedResult());
         }
         this.assertGeneration(generation);
         let recovered = disposition === 'recover';
         if (recovered) {
+          reportStage('recovery');
           if (!this.hooks.recover) throw new FilesBootstrapError('FILES_RECOVERY_UNAVAILABLE', 409, 'Files recovery authority is unavailable');
           await this.hooks.recover(material.masterKey);
         } else {
+          reportStage('keyring');
           try { await this.keyring.unlock(material.masterKey, this.config.capabilitySigningKey) } catch (error) {
             if (error instanceof FilesMasterKeyRejectedError) {
               if (this.config.legacyPreflight?.state !== 'clear' || !this.hooks.recover || !await this.recoveryComplete()) {
                 throw new FilesBootstrapError(error.code, 409, 'Files master key was rejected; existing data was preserved');
               }
               this.keyring.close();
+              reportStage('recovery');
               await this.hooks.recover(material.masterKey);
               recovered = true;
             } else {
@@ -135,17 +147,19 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
           }
         }
         this.assertGeneration(generation);
-        await this.hooks.initialize();
+        await this.hooks.initialize(reportStage);
         this.assertGeneration(generation);
         this.currentState = 'unlocked';
+        diagnostics.completed(stage);
         return { state: 'unlocked', legacyImport: imported ? 'imported' : 'clear', recovered };
       } catch (error) {
-        await this.hooks.stop().catch(() => undefined);
+        diagnostics.failed(stage, error);
+        await this.hooks.stop().catch(cleanupError => diagnostics.cleanupFailed(cleanupError));
         const invalidated = generation !== this.currentGeneration;
         this.currentState = invalidated ? 'locked' : 'error';
         this.failure = invalidated ? undefined : {
           code: error instanceof FilesBootstrapError ? error.code : 'FILES_STARTUP_FAILED',
-          stage: this.config.legacyPreflight?.state === 'secure-import-required' ? 'legacy-import' : 'bootstrap',
+          stage,
         };
         this.keyring.close();
         if (error instanceof FilesBootstrapError) throw error;
@@ -158,17 +172,24 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
     return this.serial(async() => {
       const generation = this.currentGeneration;
       this.currentState = 'starting';
+      const diagnostics = new FilesStartupDiagnostics();
+      let stage:FilesStartupStage = 'server-keyring';
+      const reportStage = (next:FilesStartupStage) => { stage = next; diagnostics.stage(stage) };
+      diagnostics.stage(stage);
       try {
         await this.keyring.unlockServer(master, this.config.capabilitySigningKey);
         this.assertGeneration(generation);
-        await this.hooks.initialize();
+        reportStage('server-initialization');
+        await this.hooks.initialize(reportStage);
         this.assertGeneration(generation);
         this.currentState = 'unlocked'; this.failure = undefined;
+        diagnostics.completed(stage);
       } catch (error) {
-        await this.hooks.stop().catch(() => undefined);
+        diagnostics.failed(stage, error);
+        await this.hooks.stop().catch(cleanupError => diagnostics.cleanupFailed(cleanupError));
         const invalidated = generation !== this.currentGeneration;
         this.currentState = invalidated ? 'locked' : 'error';
-        this.failure = invalidated ? undefined : { code: 'FILES_SERVER_STARTUP_FAILED', stage: 'server-bootstrap' };
+        this.failure = invalidated ? undefined : { code: 'FILES_SERVER_STARTUP_FAILED', stage };
         this.keyring.close(); throw error;
       }
     });

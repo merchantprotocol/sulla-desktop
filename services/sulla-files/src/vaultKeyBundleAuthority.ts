@@ -4,6 +4,7 @@ import https from 'node:https';
 
 import type { Config } from './config.js';
 import type { FilesKeyBundleAuthority, StoredFilesKeyBundle } from './keyBundleRecovery.js';
+import { FilesSafeDiagnosticError, type VaultAuthorityOperation } from './startupDiagnostics.js';
 import type {
   Base64,
   FilesKeyBundleContext,
@@ -41,26 +42,34 @@ export class VaultFilesKeyBundleAuthority implements FilesKeyBundleAuthority {
   }
 
   unlockedPrincipal():Promise<{ principalId: string; generation: number }> {
-    return this.request('/v1/desktop/files/principal');
+    return this.request('principal-read', '/v1/desktop/files/principal');
   }
 
   custodyRecipient(context:FilesKeyBundleContext):Promise<{ keyId: string; publicKey: Base64 }> {
-    return this.request('/v1/desktop/files/custody-recipient', { context });
+    return this.request('custody-recipient', '/v1/desktop/files/custody-recipient', { context });
   }
 
   registerBundle(bundle:StoredFilesKeyBundle):Promise<void> {
-    return this.request('/v1/desktop/files/key-bundles', bundle);
+    return this.request('bundle-registration', '/v1/desktop/files/key-bundles', bundle);
   }
 
   authorizeDeviceRecovery(request:{ context: FilesKeyBundleContext; devicePublicKey: Base64 }):Promise<FilesKeyBundleEnvelope> {
-    return this.request('/v1/desktop/files/device-recovery', request);
+    return this.request('device-recovery', '/v1/desktop/files/device-recovery', request);
   }
 
-  private async request<T>(pathname:string, body?:unknown):Promise<T> {
+  private async request<T>(operation:VaultAuthorityOperation, pathname:string, body?:unknown):Promise<T> {
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
-    const ca = this.origin.protocol === 'https:' ? await (this.ca ??= readFile(this.config.caPath!)) : undefined;
+    let ca:Buffer | undefined;
+    try {
+      ca = this.origin.protocol === 'https:' ? await (this.ca ??= readFile(this.config.caPath!)) : undefined;
+    } catch (error) {
+      throw new FilesSafeDiagnosticError({ code: 'FILES_VAULT_AUTHORITY_CA_UNAVAILABLE', class: 'vault-authority', operation }, error);
+    }
     const transport = this.origin.protocol === 'https:' ? https : http;
     return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const resolveOnce = (value:T) => { if (!settled) { settled = true; resolve(value) } };
+      const rejectOnce = (error:unknown) => { if (!settled) { settled = true; reject(error) } };
       const request = transport.request(new URL(pathname, this.origin), {
         method:  payload ? 'POST' : 'GET',
         ca,
@@ -82,28 +91,44 @@ export class VaultFilesKeyBundleAuthority implements FilesKeyBundleAuthority {
         response.on('data', (chunk:Buffer) => {
           size += chunk.byteLength;
           if (size > MAX_RESPONSE_BYTES) {
-            response.destroy(new Error('Vault authority response exceeded the limit'));
+            rejectOnce(new FilesSafeDiagnosticError({
+              code: 'FILES_VAULT_AUTHORITY_RESPONSE_TOO_LARGE', class: 'vault-authority', operation,
+            }));
+            response.destroy();
             return;
           }
           chunks.push(chunk);
         });
+        response.on('aborted', () => rejectOnce(new FilesSafeDiagnosticError({
+          code: 'FILES_VAULT_AUTHORITY_REQUEST_ABORTED', class: 'vault-authority', operation,
+        })));
+        response.on('error', error => rejectOnce(new FilesSafeDiagnosticError({
+          code: 'FILES_VAULT_AUTHORITY_RESPONSE_FAILED', class: 'vault-authority', operation,
+        }, error)));
         response.on('end', () => {
+          const httpStatus = response.statusCode && response.statusCode >= 100 && response.statusCode <= 599
+            ? response.statusCode
+            : undefined;
+          if (!httpStatus || httpStatus < 200 || httpStatus >= 300) {
+            rejectOnce(new FilesSafeDiagnosticError({
+              code: 'FILES_VAULT_AUTHORITY_HTTP_FAILED', class: 'vault-authority', operation,
+              ...(httpStatus ? { httpStatus } : {}),
+            }));
+            return;
+          }
           let parsed:unknown;
           try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') } catch {
-            reject(new Error('Vault authority returned invalid JSON'));
+            rejectOnce(new FilesSafeDiagnosticError({
+              code: 'FILES_VAULT_AUTHORITY_RESPONSE_INVALID', class: 'vault-authority', operation,
+            }));
             return;
           }
-          if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
-            const message = parsed && typeof parsed === 'object' && typeof (parsed as { message?: unknown }).message === 'string'
-              ? (parsed as { message: string }).message
-              : `Vault authority request failed (${ response.statusCode ?? 0 })`;
-            reject(new Error(message));
-            return;
-          }
-          resolve(parsed as T);
+          resolveOnce(parsed as T);
         });
       });
-      request.on('error', reject);
+      request.on('error', error => rejectOnce(error instanceof FilesSafeDiagnosticError
+        ? error
+        : new FilesSafeDiagnosticError({ code: 'FILES_VAULT_AUTHORITY_REQUEST_FAILED', class: 'vault-authority', operation }, error)));
       request.end(payload);
     });
   }
