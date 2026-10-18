@@ -19,9 +19,7 @@
 // consumed by the HTTP server in `main/sullaSecretsServer.ts`.
 import * as crypto from 'crypto';
 
-import { getDesktopVaultClient } from './DesktopVaultClient';
-import { mayInjectSecretIntoAgentCode, resolveLlmAccess } from './vaultAccessPolicy';
-import { IntegrationValueModel } from '../database/models/IntegrationValueModel';
+import { usesContainerVaultAuthority } from '../../vault-broker';
 
 const DEFAULT_TTL_MS = 60_000;
 const SWEEP_INTERVAL_MS = 30_000;
@@ -50,7 +48,8 @@ export type ResolveOutcome =
   | 'key-not-allowed'
   | 'key-already-consumed'
   | 'access-denied'
-  | 'not-found';
+  | 'not-found'
+  | 'unsupported_secret_egress';
 
 export class SecretsResolveError extends Error {
   constructor(public outcome: Exclude<ResolveOutcome, 'granted'>) {
@@ -86,6 +85,9 @@ export class SecretsCapabilityService {
     refs:         Record<string, SecretRef>;
     ttlMs?:       number;
   }): { token: string } {
+    if (usesContainerVaultAuthority()) {
+      throw new SecretsResolveError('unsupported_secret_egress');
+    }
     const token = crypto.randomBytes(TOKEN_BYTES).toString('base64url');
     const ttl = params.ttlMs ?? DEFAULT_TTL_MS;
 
@@ -121,6 +123,10 @@ export class SecretsCapabilityService {
    * error responses — that is the server's responsibility.
    */
   async resolve(token: string, envKey: string): Promise<string> {
+    if (usesContainerVaultAuthority()) {
+      this.logOutcome('?', envKey, 'unsupported_secret_egress');
+      throw new SecretsResolveError('unsupported_secret_egress');
+    }
     const cap = this.capabilities.get(token);
     if (!cap) {
       this.logOutcome('?', envKey, 'unknown-token');
@@ -144,30 +150,20 @@ export class SecretsCapabilityService {
       throw new SecretsResolveError('key-already-consumed');
     }
 
-    let resolved: string | null = null;
+    // Server-mode egress remains temporarily available until its independent
+    // zero-knowledge migration. Desktop mode returned above and can never
+    // reach this compatibility path.
+    const { getDesktopVaultClient } = await import('./DesktopVaultClient');
     const vault = getDesktopVaultClient();
-    if (vault.isUnlocked()) {
-      resolved = await vault.resolveCredential({
+    const resolved = vault.isUnlocked()
+      ? await vault.resolveCredential({
         integrationId: ref.integrationId,
         accountId:     ref.accountId,
         property:      ref.property,
         agentId:       cap.agentId,
         level:         ref.integrationId === 'website' ? 'full' : 'autofill',
-      });
-    }
-    if (resolved === null) {
-      // Read-only rollback path until the importer has verified the account.
-      // The legacy access flag only applies on this fallback path; migrated
-      // items are governed by their encrypted v2 agent policy above.
-      const accessRow = await IntegrationValueModel.findByKey(ref.integrationId, ref.accountId, 'llm_access');
-      if (!mayInjectSecretIntoAgentCode(ref.integrationId, resolveLlmAccess(accessRow?.attributes.value))) {
-        cap.consumed.add(envKey);
-        this.logOutcome(cap.invocationId, envKey, 'access-denied');
-        throw new SecretsResolveError('access-denied');
-      }
-      const row = await IntegrationValueModel.findByKey(ref.integrationId, ref.accountId, ref.property);
-      resolved = row?.attributes.value ?? null;
-    }
+      })
+      : null;
     if (resolved == null) {
       // Mark consumed even on miss to preserve single-use semantics and
       // avoid spin-probing of valid keys.

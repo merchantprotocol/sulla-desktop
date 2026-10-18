@@ -5,10 +5,15 @@
  * tool discovery, and tool execution.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
+import { requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '../../../vault-broker';
+
+import type { ToolExecutionContext } from '../../tools/executionContext';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 const LOG = '[MCPClient]';
@@ -49,12 +54,19 @@ export class MCPClient {
   private transport: Transport | null = null;
   private _tools:    MCPToolDefinition[] = [];
   private _connected = false;
+  private readonly executionContexts = new AsyncLocalStorage<ToolExecutionContext>();
 
   constructor(
     private serverUrl: string,
     private accountId: string,
     private authToken?: string,
-  ) {}
+    private defaultExecutionContext?: ToolExecutionContext,
+    private credentialFree = false,
+  ) {
+    if (credentialFree && authToken) {
+      throw new Error('unsupported_secret_egress: credential-free MCP transport cannot accept an auth token');
+    }
+  }
 
   get connected(): boolean {
     return this._connected;
@@ -140,10 +152,17 @@ export class MCPClient {
   /**
    * Call a tool on the MCP server.
    */
-  async callTool(toolName: string, args: Record<string, any> = {}): Promise<MCPToolCallResult> {
+  async callTool(
+    toolName: string,
+    args: Record<string, any> = {},
+    executionContext?: ToolExecutionContext,
+  ): Promise<MCPToolCallResult> {
     if (!this.client) throw new Error(`${ LOG } Not connected`);
 
-    const result = await this.client.callTool({ name: toolName, arguments: args });
+    const invoke = () => this.client!.callTool({ name: toolName, arguments: args });
+    const result = executionContext
+      ? await this.executionContexts.run(executionContext, invoke)
+      : await invoke();
 
     // Normalize response — MCP returns { content: [...], isError?: boolean }
     // or { toolResult: unknown } for compatibility mode
@@ -240,7 +259,9 @@ export class MCPClient {
       requestInit.headers = { Authorization: `Bearer ${ this.authToken }` };
     }
     const skipTls = this.serverUrl.startsWith('https:') && this.isLocalUrl();
-    const fetchImpl = skipTls ? this.createTlsPermissiveFetch() : fetch;
+    const fetchImpl = usesContainerVaultAuthority() && !this.credentialFree
+      ? this.createBrokerFetch()
+      : skipTls ? this.createTlsPermissiveFetch() : fetch;
     return new StreamableHTTPClientTransport(
       new URL(this.serverUrl),
       {
@@ -253,7 +274,7 @@ export class MCPClient {
           // instead of the specification's 405; normalize that response so
           // the SDK keeps using request/response POSTs rather than failing or
           // incorrectly falling back to the legacy SSE transport.
-          if ((init?.method || 'GET').toUpperCase() === 'GET' && response.status === 404) {
+          if (new Request(url, init).method.toUpperCase() === 'GET' && response.status === 404) {
             await response.body?.cancel();
             return new Response(null, {
               status:     405,
@@ -283,8 +304,48 @@ export class MCPClient {
       new URL(this.serverUrl),
       {
         requestInit,
-        ...(skipTls ? { fetch: this.createTlsPermissiveFetch() } : {}),
+        ...(usesContainerVaultAuthority() && !this.credentialFree
+          ? { fetch: this.createBrokerFetch() }
+          : skipTls ? { fetch: this.createTlsPermissiveFetch() } : {}),
       },
     );
+  }
+
+  private createBrokerFetch(): typeof fetch {
+    return async(input: string | URL | Request, init?: RequestInit) => {
+      const ctx = this.executionContexts.getStore() ?? this.defaultExecutionContext;
+      if (!ctx) throw new Error('mcp.http requires a verified execution context');
+      if (ctx.credential_scope?.integration_id !== 'mcp' || ctx.credential_scope.account_id !== this.accountId) {
+        throw new Error('mcp.http requires a signed credential scope for the selected MCP account');
+      }
+      const request = new Request(input, init);
+      const headers = new Headers(request.headers);
+      headers.delete('authorization');
+      const directRequest = new Request(request.clone(), { headers });
+      let body: unknown;
+      if (!['GET', 'HEAD'].includes(request.method)) {
+        const text = await request.text();
+        body = text;
+        try { body = JSON.parse(text) } catch { /* preserve MCP text payload */ }
+      }
+      const broker = requireConfiguredCredentialBroker();
+      try {
+        return await broker.executeStream(broker.requestFor(ctx, {
+          operation: 'mcp.http',
+          ref:       { integrationId: 'mcp', accountId: this.accountId },
+          url:       request.url,
+          method:    request.method,
+          headers:   Object.fromEntries(headers.entries()),
+          body,
+          injections: [{ field: 'auth_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+          responseType: 'stream',
+        }), request.signal);
+      } catch (error) {
+        if (error instanceof VaultBrokerError && error.code === 'credential_field_missing') {
+          return fetch(directRequest);
+        }
+        throw error;
+      }
+    };
   }
 }

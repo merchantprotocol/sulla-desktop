@@ -1,6 +1,4 @@
-import { Octokit } from '@octokit/rest';
-
-import { getIntegrationService } from '../../services/IntegrationService';
+import { createGitHubOctokit } from './octokit';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -36,12 +34,7 @@ export class GitHubDeleteRefWorker extends BaseTool {
       .replace(/^tags\//, '');
     const apiRef = `${ refType }/${ name }`; // git.getRef/deleteRef want no leading "refs/"
 
-    const integrationService = getIntegrationService();
-    const tokenValue = await integrationService.getIntegrationValue('github', 'token');
-    if (!tokenValue) {
-      return { successBoolean: false, responseString: 'Error: GitHub token not configured.' };
-    }
-    const octokit = new Octokit({ auth: tokenValue.value });
+    const octokit = await createGitHubOctokit(this.executionContext);
 
     // Resolve the current SHA first (also proves it exists) so we can report it.
     let sha = '';

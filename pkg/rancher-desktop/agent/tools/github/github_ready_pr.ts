@@ -1,6 +1,4 @@
-import { Octokit } from '@octokit/rest';
-
-import { getIntegrationService } from '../../services/IntegrationService';
+import { createGitHubOctokit } from './octokit';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -23,13 +21,7 @@ export class GitHubReadyPrWorker extends BaseTool {
       return { successBoolean: false, responseString: 'Error: owner, repo, and pull_number are required.' };
     }
 
-    const integrationService = getIntegrationService();
-    const tokenValue = await integrationService.getIntegrationValue('github', 'token');
-    if (!tokenValue) {
-      return { successBoolean: false, responseString: 'Error: GitHub token not configured.' };
-    }
-
-    const octokit = new Octokit({ auth: tokenValue.value });
+    const octokit = await createGitHubOctokit(this.executionContext);
 
     try {
       // Resolve the PR's GraphQL node id (REST → node_id), then mark it ready.

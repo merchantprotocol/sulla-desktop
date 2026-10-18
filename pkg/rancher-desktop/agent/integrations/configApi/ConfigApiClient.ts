@@ -1,3 +1,4 @@
+import { requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 import type {
@@ -45,6 +46,8 @@ export interface CallOptions {
   signal?:    AbortSignal;
   /** Account ID for credential lookup (overrides active account) */
   accountId?: string;
+  /** Verified or trusted-bound caller identity for container vault routing. */
+  executionContext?: import('../../tools/executionContext').ToolExecutionContext;
 }
 
 export interface PaginatedResult<T = any> {
@@ -166,7 +169,9 @@ export class ConfigApiClient {
 
     console.log(`${ LOG } ${ ep.method } ${ url.toString() }`);
 
-    const res = await fetch(url.toString(), fetchInit);
+    const res = usesContainerVaultAuthority()
+      ? await this.callBroker(url, fetchInit, epConfig, options)
+      : await fetch(url.toString(), fetchInit);
 
     if (!res.ok) {
       const errText = await res.text().catch(() => 'Unknown error');
@@ -236,7 +241,7 @@ export class ConfigApiClient {
     const { MCPBridge } = await import('../mcp/MCPBridge');
     const bridge = MCPBridge.getInstance();
 
-    const result = await bridge.callTool(accountId, endpointName, params);
+    const result = await bridge.callTool(accountId, endpointName, params, options.executionContext);
 
     if (result.isError) {
       throw new Error(`${ LOG } MCP tool "${ endpointName }" returned error: ${ JSON.stringify(result.content) }`);
@@ -263,6 +268,71 @@ export class ConfigApiClient {
     }
 
     return '';
+  }
+
+  private async callBroker(url: URL, init: RequestInit, endpoint: EndpointConfig, options: CallOptions): Promise<Response> {
+    if (options.token || options.apiKey) {
+      throw new Error('unsupported_secret_egress: explicit credential overrides are unavailable in Desktop vault mode');
+    }
+
+    const headers = new Headers(init.headers);
+    headers.delete('authorization');
+    headers.delete('x-api-key');
+    headers.delete('api-key');
+    const directInit = { ...init, headers };
+
+    // Public catalog endpoints do not need a vault account, an unlocked vault,
+    // or a signed credential scope. Decide that before consulting vault-backed
+    // metadata so auth:none integrations remain usable while the vault is
+    // locked or has not been configured yet.
+    if (endpoint.endpoint.auth === 'none') {
+      return fetch(url, directInit);
+    }
+
+    const ctx = options.executionContext;
+    if (!ctx) throw new Error('catalog.http requires a verified execution context');
+    const accountId = options.accountId || await getIntegrationService().getActiveAccountId(this.slug);
+    if (ctx.credential_scope?.integration_id !== this.slug || ctx.credential_scope.account_id !== accountId) {
+      throw new Error('catalog.http requires a signed credential scope for the selected integration account');
+    }
+
+    const auth = this.integration.auth;
+    const injections: import('../../../vault-broker').BrokerInjection[] = [];
+    if (auth.auth.type === 'oauth2') {
+      injections.push({ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' });
+    } else if (auth.auth.type === 'bearer') {
+      injections.push({ field: 'bearer_token', target: 'header', name: 'authorization', scheme: 'Bearer' });
+    } else if (auth.auth.type === 'apiKey' && auth.auth.header) {
+      injections.push({ field: 'api_key', target: 'header', name: auth.auth.header, scheme: 'raw' });
+    } else if (auth.api_key_fallback?.enabled) {
+      injections.push({ field: 'api_key', target: 'query', name: auth.api_key_fallback.param_name, scheme: 'raw' });
+    }
+    let body: unknown = typeof init.body === 'string' ? init.body : undefined;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body) } catch { /* preserve non-JSON request body */ }
+    }
+    const broker = requireConfiguredCredentialBroker();
+    try {
+      const result = await broker.execute(broker.requestFor(ctx, {
+        operation: 'catalog.http',
+        ref:       { integrationId: this.slug, accountId },
+        url:       url.toString(),
+        method:    init.method ?? 'GET',
+        headers:   Object.fromEntries(headers.entries()),
+        body,
+        injections,
+        responseType: 'json',
+      }), init.signal ?? undefined);
+      return new Response(result.body == null ? null : JSON.stringify(result.body), {
+        status:  result.status,
+        headers: result.headers,
+      });
+    } catch (error) {
+      if (endpoint.endpoint.auth === 'optional' && error instanceof VaultBrokerError && error.code === 'credential_field_missing') {
+        return fetch(url, directInit);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -320,7 +390,7 @@ export class ConfigApiClient {
 
     // API key fallback
     const auth = this.integration.auth;
-    if (auth.api_key_fallback?.enabled) {
+    if (!usesContainerVaultAuthority() && auth.api_key_fallback?.enabled) {
       const apiKey = options.apiKey || await this.resolveCredential('api_key', auth.api_key_fallback.value, accountId);
       if (apiKey) {
         url.searchParams.set(auth.api_key_fallback.param_name, apiKey);
@@ -334,6 +404,11 @@ export class ConfigApiClient {
     const headers: Record<string, string> = { Referer: 'https://sulla.app', ...this.defaultHeaders, ...options.headers };
     const authConfig = this.integration.auth.auth;
 
+    if (usesContainerVaultAuthority()) {
+      delete headers.Authorization;
+      delete headers.authorization;
+      return headers;
+    }
     if (options.token) {
       headers.Authorization = `Bearer ${ options.token }`;
     } else if (authConfig.type === 'oauth2') {

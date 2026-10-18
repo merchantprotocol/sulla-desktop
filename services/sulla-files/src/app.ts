@@ -36,7 +36,16 @@ function cleanPath(value:unknown, allowEmpty = true):string {
 }
 function bearer(request:express.Request):string | undefined { return request.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] }
 
-export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager, identityDb?:pg.Pool, search?:FileSearch, onUnlock?:()=>Promise<void>, onLock?:()=>Promise<void>) {
+export function createApp(
+  db:pg.Pool,
+  config:Config,
+  manager?:LocalFilesManager,
+  identityDb?:pg.Pool,
+  search?:FileSearch,
+  onUnlock?:()=>Promise<void>,
+  onLock?:()=>Promise<void>,
+  onRecover?:(master:Buffer)=>Promise<number>,
+) {
   const app = express(); const store = new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   let lifecycle:Promise<unknown> = Promise.resolve();
   let ready = Boolean(config.keyring?.unlocked);
@@ -88,6 +97,32 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
     } catch { return response.status(409).json({ error: 'Legacy Files import failed; source data remains protected' }) } finally {
       master?.fill(0); for (const key of legacy) key.fill(0); if (request.body) { delete request.body.masterKey; delete request.body.legacyMasterKeys }
     }
+  });
+  app.post('/v1/local/recovery/device', async(request, response) => {
+    if (config.mode !== 'desktop' || !onRecover) return response.sendStatus(404);
+    let key:Buffer | undefined;
+    try {
+      if (!config.keyring || typeof request.body?.masterKey !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(request.body.masterKey)) return response.status(400).json({ error: 'Invalid Files replacement master key' });
+      key = Buffer.from(request.body.masterKey, 'base64'); delete request.body.masterKey;
+      const recovered = await serial(async() => {
+        ready = false;
+        try {
+          await onLock?.(); config.keyring!.close();
+          const count = await onRecover(key!);
+          if (!config.keyring!.unlocked) throw new Error('Files replacement master was not persisted');
+          await onUnlock?.();
+          if (!config.keyring!.unlocked) throw new Error('Files recovery initialization did not retain the replacement master');
+          ready = true;
+          return count;
+        } catch (error) {
+          ready = false;
+          try { await onLock?.() } finally { config.keyring!.close() }
+          throw error;
+        }
+      });
+      return response.json({ recovered });
+    } catch { return response.status(503).json({ error: 'Files recovery failed; Files remains locked' }) }
+    finally { key?.fill(0); if (request.body) delete request.body.masterKey }
   });
   app.use((request, response, next) => {
     if (request.path !== '/healthz' && !ready) return response.status(503).json({ code: 'FILES_LOCKED', error: 'Files is locked; Desktop keychain unlock is required' });
@@ -174,6 +209,7 @@ export function createApp(db:pg.Pool, config:Config, manager?:LocalFilesManager,
   }
 
   app.get('/healthz', (_request, response) => response.json({ ok: true, mode: config.mode, locked: !ready, legacyImport: config.legacyPreflight }));
+  app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
   app.get('/v1/local/recent', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.recent(Number(request.query.limit ?? 4), typeof request.query.path === 'string' ? request.query.path : undefined)) } catch (error) { next(error) } });
   app.post('/v1/local/rescan', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.rescan().catch(error => console.error('[SullaFiles] rescan failed', error)); response.status(202).json({ accepted: true }) });

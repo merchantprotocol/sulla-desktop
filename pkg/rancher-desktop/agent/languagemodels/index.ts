@@ -15,6 +15,7 @@
 import { BaseLanguageModel } from './BaseLanguageModel';
 import { modelDiscoveryService, type ModelInfo } from './ModelDiscoveryService';
 import { isTierName, resolveTierToModelId, type ModelTier } from './ModelTierResolver';
+import { usesContainerVaultAuthority } from '../../vault-broker';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from '../services/IntegrationService';
 
@@ -176,7 +177,7 @@ class LLMRegistryImpl {
     const secondaryModelId = mps?.getSecondaryModelId?.() || await SullaSettingsModel.get('secondaryModelId', '');
     const modelOverride = secondaryModelId
       ? (isTierName(secondaryModelId)
-        ? await resolveTierToModelId(providerId, secondaryModelId as ModelTier)
+        ? await resolveTierToModelId(providerId, secondaryModelId)
         : secondaryModelId)
       : undefined;
     return this.getServiceByProvider(providerId, modelOverride);
@@ -199,7 +200,7 @@ class LLMRegistryImpl {
 
     const heartbeatModelId = mps?.getHeartbeatModelId?.() || await SullaSettingsModel.get('heartbeatModelId', 'fast');
     const modelOverride = isTierName(heartbeatModelId)
-      ? await resolveTierToModelId(effectiveProvider, heartbeatModelId as ModelTier)
+      ? await resolveTierToModelId(effectiveProvider, heartbeatModelId)
       : (heartbeatModelId || undefined);
 
     return this.getServiceByProvider(effectiveProvider, modelOverride);
@@ -236,7 +237,7 @@ class LLMRegistryImpl {
       : primaryProvider;
 
     const modelOverride = isTierName(subconsciousModelId)
-      ? await resolveTierToModelId(effectiveProvider, subconsciousModelId as ModelTier)
+      ? await resolveTierToModelId(effectiveProvider, subconsciousModelId)
       : (subconsciousModelId || undefined);
 
     const hasUsableModel = (svc: BaseLanguageModel | null | undefined): boolean => {
@@ -293,7 +294,7 @@ class LLMRegistryImpl {
 
       const modelOverride = model
         ? (isTierName(model)
-          ? await resolveTierToModelId(effectiveProvider, model as ModelTier)
+          ? await resolveTierToModelId(effectiveProvider, model)
           : model)
         : undefined;
 
@@ -396,6 +397,9 @@ class LLMRegistryImpl {
   // ============================================================================
 
   async fetchModelsForProvider(providerId: string, apiKey?: string): Promise<ModelInfo[]> {
+    if (usesContainerVaultAuthority() && providerId !== 'ollama') {
+      return modelDiscoveryService.fetchModelsForProvider(providerId);
+    }
     let key = apiKey || '';
 
     if (!key) {

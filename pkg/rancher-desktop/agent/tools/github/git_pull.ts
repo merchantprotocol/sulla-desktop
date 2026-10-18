@@ -1,3 +1,5 @@
+import { withGitHubBrokerRemote } from './gitBrokerTransport';
+import { usesContainerVaultAuthority } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
@@ -21,6 +23,7 @@ export class GitPullWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { absolutePath, remote = 'origin', branch } = input;
+    const localAuthority = usesContainerVaultAuthority();
 
     // Strip a secret from any string we hand back to the caller / logs.
     const redact = (s: string, secret?: string): string =>
@@ -45,10 +48,13 @@ export class GitPullWorker extends BaseTool {
       let pullRemote = remote;
       let authPrefix = '';
       let credFlags = '';
-      const integrationService = getIntegrationService();
-      const tokenValue = await integrationService.getIntegrationValue('github', 'token');
-      const token = tokenValue?.value;
+      let token: string | undefined;
 
+      if (!localAuthority) {
+        const integrationService = getIntegrationService();
+        const tokenValue = await integrationService.getIntegrationValue('github', 'token');
+        token = tokenValue?.value;
+      }
       if (token) {
         const remoteUrlResult = await runCommand(
           `git -C "${ repoRoot }" remote get-url ${ remote }`,
@@ -81,7 +87,17 @@ export class GitPullWorker extends BaseTool {
         cmd += ` ${ branch }`;
       }
 
-      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 120_000 });
+      const result = localAuthority
+        ? await (async() => {
+          const remoteUrlResult = await runCommand(`git -C "${ repoRoot }" remote get-url ${ remote }`, [], { runInLimaShell: true, timeoutMs: 10_000 });
+          if (remoteUrlResult.exitCode !== 0) return remoteUrlResult;
+          return withGitHubBrokerRemote(this.executionContext, remoteUrlResult.stdout.trim(), (proxyUrl) => {
+            let brokerCommand = `git -C "${ repoRoot }" pull --no-rebase --no-edit "${ proxyUrl }"`;
+            if (branch) brokerCommand += ` ${ branch }`;
+            return runCommand(brokerCommand, [], { runInLimaShell: true, timeoutMs: 120_000 });
+          });
+        })()
+        : await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 120_000 });
 
       if (result.exitCode !== 0) {
         // Check for merge conflicts

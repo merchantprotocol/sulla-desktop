@@ -13,9 +13,11 @@ import {
   type GenerateResult,
   type DiffResult,
 } from './MCPConfigGenerator';
+import { issueLocalBrokerContext, usesContainerVaultAuthority } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 import type { MCPToolDefinition, MCPToolCallResult } from './MCPClient';
+import type { ToolExecutionContext } from '../../tools/executionContext';
 
 const LOG = '[MCPBridge]';
 const INTEGRATION_ID = 'mcp';
@@ -77,7 +79,6 @@ export class MCPBridge {
     const svc = getIntegrationService();
 
     const serverUrlVal = await svc.getIntegrationValue(INTEGRATION_ID, 'server_url', accountId);
-    const authTokenVal = await svc.getIntegrationValue(INTEGRATION_ID, 'auth_token', accountId);
 
     const serverUrl = serverUrlVal?.value;
     if (!serverUrl) {
@@ -85,9 +86,22 @@ export class MCPBridge {
       return;
     }
 
-    const authToken = authTokenVal?.value || undefined;
+    const accountMetadata = usesContainerVaultAuthority()
+      ? (await svc.getAccounts(INTEGRATION_ID)).find(account => account.account_id === accountId)
+      : undefined;
+    const credentialFree = usesContainerVaultAuthority() && accountMetadata?.credentialRequired === false;
+    const authToken = usesContainerVaultAuthority()
+      ? undefined
+      : (await svc.getIntegrationValue(INTEGRATION_ID, 'auth_token', accountId))?.value || undefined;
+    const defaultExecutionContext = usesContainerVaultAuthority() && !credentialFree
+      ? await issueLocalBrokerContext({
+        agentId:         'mcp-bridge',
+        podId:           'desktop-main',
+        credentialScope: { integration_id: INTEGRATION_ID, account_id: accountId },
+      })
+      : undefined;
 
-    const client = new MCPClient(serverUrl, accountId, authToken);
+    const client = new MCPClient(serverUrl, accountId, authToken, defaultExecutionContext, credentialFree);
     await client.initialize();
     this.clients.set(accountId, client);
 
@@ -163,12 +177,17 @@ export class MCPBridge {
   /**
    * Call a tool on a specific MCP server account.
    */
-  async callTool(accountId: string, toolName: string, args: Record<string, any> = {}): Promise<MCPToolCallResult> {
+  async callTool(
+    accountId: string,
+    toolName: string,
+    args: Record<string, any> = {},
+    executionContext?: ToolExecutionContext,
+  ): Promise<MCPToolCallResult> {
     const client = this.clients.get(accountId);
     if (!client) {
       throw new Error(`${ LOG } No MCP client for account "${ accountId }". Connected accounts: ${ [...this.clients.keys()].join(', ') || 'none' }`);
     }
-    return client.callTool(toolName, args);
+    return client.callTool(toolName, args, executionContext);
   }
 
   // ── Config Generation (MCP → YAML) ────────────────────────────

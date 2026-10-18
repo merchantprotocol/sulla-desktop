@@ -16,6 +16,19 @@ export interface VaultConfig {
   extensionOrigins:            string[];
   brokerServiceId?:            string;
   brokerServiceToken?:         string;
+  filesServiceId?:             string;
+  filesServiceToken?:          string;
+  bootstrapServiceId?:         string;
+  bootstrapServiceToken?:      string;
+  approvalServiceId?:          string;
+  approvalServiceToken?:       string;
+  controlServiceId?:           string;
+  controlServiceToken?:        string;
+  serverBootstrapToken?:       string;
+  humanUiOrigin?:               string;
+  legacyDatabaseUrl?:           string;
+  tlsCertificatePath?:          string;
+  tlsPrivateKeyPath?:           string;
 }
 
 function jsonEnvironment(name: string): unknown | undefined {
@@ -50,5 +63,18 @@ export function loadConfig(): VaultConfig {
     extensionOrigins:           (process.env.SULLA_VAULT_EXTENSION_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean),
     brokerServiceId:            process.env.SULLA_VAULT_BROKER_SERVICE_ID ?? 'sulla-tools',
     brokerServiceToken:         process.env.SULLA_VAULT_BROKER_TOKEN,
+    filesServiceId:             process.env.SULLA_VAULT_FILES_SERVICE_ID ?? 'sulla-files',
+    filesServiceToken:          process.env.SULLA_VAULT_FILES_TOKEN,
+    bootstrapServiceId:         process.env.SULLA_VAULT_BOOTSTRAP_SERVICE_ID ?? 'sulla-desktop-bootstrap',
+    bootstrapServiceToken:      process.env.SULLA_VAULT_BOOTSTRAP_TOKEN,
+    approvalServiceId:          process.env.SULLA_VAULT_APPROVAL_SERVICE_ID ?? 'sulla-desktop-approval',
+    approvalServiceToken:       process.env.SULLA_VAULT_APPROVAL_TOKEN,
+    controlServiceId:           process.env.SULLA_VAULT_DESKTOP_CONTROL_SERVICE_ID ?? 'sulla-desktop-control',
+    controlServiceToken:        process.env.SULLA_VAULT_DESKTOP_CONTROL_TOKEN,
+    serverBootstrapToken:       process.env.SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN,
+    humanUiOrigin:              process.env.SULLA_VAULT_HUMAN_UI_ORIGIN ?? `https://127.0.0.1:${ process.env.SULLA_VAULT_PUBLISHED_PORT ?? '30135' }`,
+    legacyDatabaseUrl:          process.env.SULLA_VAULT_LEGACY_DATABASE_URL,
+    tlsCertificatePath:         process.env.SULLA_VAULT_TLS_CERTIFICATE_PATH,
+    tlsPrivateKeyPath:          process.env.SULLA_VAULT_TLS_PRIVATE_KEY_PATH,
   };
 }

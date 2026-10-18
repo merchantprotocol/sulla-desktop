@@ -33,8 +33,6 @@ export type TranscribeMode = 'conversation' | 'secretary';
 /** STT engine. `whisper` = local whisper.cpp; `grok` = xAI Grok STT. */
 export type SttProvider = 'whisper' | 'grok';
 
-const GROK_STT_URL = 'https://api.x.ai/v1/stt';
-
 export interface TranscriptEvent {
   // `utterance_end` is an additive end-of-turn signal (conversation mode only):
   // the user has stopped speaking (VAD silent) AND the transcription pipeline has
@@ -46,6 +44,7 @@ export interface TranscriptEvent {
 }
 
 type TranscriptCallback = (event: TranscriptEvent) => void;
+export type GrokTranscriber = (wav: Buffer, language: string, filename: string, signal: AbortSignal) => Promise<string>;
 
 // ─── Configuration ──────────────────────────────────────────
 
@@ -75,9 +74,9 @@ let sessionId = '';
 let sessionStartedAt = 0;
 
 // STT engine for this session. Defaults to local whisper; the transcribe-start
-// IPC handler passes `grok` + the api key when the user selects Grok STT.
+// IPC handler passes `grok` + a keyless vault callback when Grok STT is selected.
 let provider: SttProvider = 'whisper';
-let grokApiKey: string | null = null;
+let grokTranscriber: GrokTranscriber | null = null;
 
 // Per-channel PCM accumulators (raw s16le, 16kHz, mono)
 const micBuffer: Buffer[] = [];
@@ -122,7 +121,7 @@ export function start(opts: {
   language?:    string;
   model?:       string;
   provider?:    SttProvider;
-  grokApiKey?:  string | null;
+  grokTranscriber?: GrokTranscriber | null;
   profileId?:    string;
   sessionId?:    string;
   /** Push-to-talk: no silence-based utterance_end — the turn ends only via finish(). */
@@ -130,10 +129,10 @@ export function start(opts: {
 }): boolean {
   const useGrok = opts.provider === 'grok';
 
-  // Grok STT needs an api key; local whisper needs the binary + a model.
+  // Grok STT needs the keyless vault adapter; local whisper needs a binary/model.
   if (useGrok) {
-    if (!opts.grokApiKey) {
-      log.error('WhisperTranscribe', 'Cannot start — Grok STT selected but no xAI api key');
+    if (!opts.grokTranscriber) {
+      log.error('WhisperTranscribe', 'Cannot start — Grok STT selected but vault transcription is unavailable');
       return false;
     }
   } else if (!whisperModel.isAvailable()) {
@@ -161,7 +160,7 @@ export function start(opts: {
   }
 
   provider = opts.provider || 'whisper';
-  grokApiKey = opts.grokApiKey || null;
+  grokTranscriber = opts.grokTranscriber || null;
   profileId = opts.profileId?.trim() || 'default';
   sessionId = opts.sessionId?.trim() || `transcription-${ Date.now() }`;
   sessionStartedAt = Date.now();
@@ -228,7 +227,7 @@ export function stop(): void {
   mode = null;
   onTranscript = null;
   provider = 'whisper';
-  grokApiKey = null;
+  grokTranscriber = null;
   resetBuffers();
   log.info('WhisperTranscribe', 'Stopped');
 }
@@ -497,7 +496,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string, opt
   }
 
   // Cloud engine: transcribe the segment via Grok STT instead of local whisper.
-  if (provider === 'grok' && grokApiKey) {
+  if (provider === 'grok' && grokTranscriber) {
     transcribeChunkGrok(pcm, channel, speakerLabel, opts);
     return;
   }
@@ -625,10 +624,8 @@ function writeWav(filePath: string, pcm: Buffer): void {
 }
 
 /**
- * Grok STT engine — transcribe a PCM segment via `POST https://api.x.ai/v1/stt`.
- * Wraps the segment as WAV and uploads it as multipart/form-data (the `file`
- * field must come after the other fields per the xAI API). Emits the same
- * transcript_turn event whisper does, so all downstream UI is unchanged.
+ * Grok STT engine. Audio goes to the local vault adapter, which constructs the
+ * provider request and injects the credential at the final outbound hop.
  */
 function transcribeChunkGrok(pcm: Buffer, channel: number, speakerLabel: string, opts: TranscribeOpts = {}): void {
   const eventType: TranscriptEvent['event_type'] = opts.partial ? 'transcript_partial' : 'transcript_turn';
@@ -636,30 +633,11 @@ function transcribeChunkGrok(pcm: Buffer, channel: number, speakerLabel: string,
 
   transcribing = true;
 
-  const form = new FormData();
-
-  form.append('language', language);
-  // `file` must be appended last (xAI multipart requirement).
-  form.append('file', new Blob([new Uint8Array(wav)], { type: 'audio/wav' }), `ch${ channel }.wav`);
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? 10000);
-
-  fetch(GROK_STT_URL, {
-    method:  'POST',
-    signal:  controller.signal,
-    headers: { Authorization: `Bearer ${ grokApiKey }` },
-    body:    form,
-  })
-    .then(async(response) => {
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        log.warn('WhisperTranscribe', 'Grok STT failed', { status: response.status, body: body.slice(0, 200) });
-        return;
-      }
-
-      const data = await response.json() as { text?: string };
-      const text = (data.text || '').trim();
+  grokTranscriber!(wav, language, `ch${ channel }.wav`, controller.signal)
+    .then((result) => {
+      const text = result.trim();
 
       if (!text || text.length < 2) {
         log.debug('WhisperTranscribe', 'Grok STT blank/empty — skipping', { channel });

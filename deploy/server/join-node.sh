@@ -24,7 +24,11 @@ command -v systemctl >/dev/null 2>&1 || fail "systemd is required"
 
 [[ -n "$SERVER_URL" ]] || fail "server URL is required as argument 1 or K3S_URL"
 [[ "$SERVER_URL" == https://*:6443 ]] || fail "server URL must look like https://192.168.1.10:6443"
-[[ -n "$NODE_TOKEN" ]] || fail "node token is required as argument 2 or K3S_TOKEN"
+if [[ -z "$NODE_TOKEN" ]]; then
+  exec 3<>/dev/tty || fail "node token is required through a terminal or K3S_TOKEN"
+  printf 'Node token: ' >&3; stty -echo <&3; IFS= read -r NODE_TOKEN <&3; stty echo <&3; printf '\n' >&3
+fi
+[[ -n "$NODE_TOKEN" ]] || fail "node token is required"
 
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
   printf 'Warning: UFW is active. Confirm the cluster ports in README.md are allowed.\n' >&2

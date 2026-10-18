@@ -8,6 +8,11 @@ import { BrowserWindow, shell } from 'electron';
 
 import { getIntegrationService } from './IntegrationService';
 import { startOAuthCallbackServer } from './OAuthCallbackServer';
+import {
+  issueLocalBrokerContext,
+  requireConfiguredCredentialBroker,
+  usesContainerVaultAuthority,
+} from '../../vault-broker';
 import { postgresClient } from '../database/PostgresClient';
 import { getOAuthProvider, type OAuthTokenSet } from '../integrations/oauth';
 
@@ -35,11 +40,6 @@ interface OAuthTokenRow {
   raw_response:   Record<string, unknown> | null;
   created_at:     Date;
   updated_at:     Date;
-}
-
-interface DynamicClientRegistrationResponse {
-  client_id?:    string;
-  [key: string]: unknown;
 }
 
 // ─── Active refresh timers ────────────────────────────────────────
@@ -127,12 +127,16 @@ export class OAuthService {
       throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
     }
     const cfg = provider.config;
-
     // Resolve effective client_id (built-in takes precedence for public clients).
     // Providers with registrationEndpoint can fill this after the callback
     // server starts, because DCR needs the actual redirect_uri for this flow.
     let effectiveClientId = cfg.builtInClientId || clientId;
-    const effectiveClientSecret = cfg.clientAuthMethod === 'none' ? '' : clientSecret;
+    if (usesContainerVaultAuthority() && !effectiveClientId) {
+      const metadata = await getIntegrationService().getMetadataValues(integrationId, accountId);
+      const values = Object.fromEntries(metadata.map(value => [value.property, value.value]));
+      effectiveClientId = values.oauth_client_id || values.client_id || '';
+    }
+    const effectiveClientSecret = usesContainerVaultAuthority() || cfg.clientAuthMethod === 'none' ? '' : clientSecret;
 
     // Generate CSRF state
     const state = crypto.randomBytes(24).toString('hex');
@@ -158,15 +162,17 @@ export class OAuthService {
 
     try {
       if (!effectiveClientId && cfg.registrationEndpoint) {
-        const registration = await this.registerDynamicClient(cfg, redirectUri);
+        const registration = await this.registerDynamicClient(cfg, redirectUri, integrationId, accountId);
         effectiveClientId = registration.clientId;
-        const integrationService = getIntegrationService();
-        await integrationService.setIntegrationValue({
-          integration_id: integrationId,
-          account_id:     accountId,
-          property:       'oauth_client_id',
-          value:          effectiveClientId,
-        });
+        if (!usesContainerVaultAuthority()) {
+          const integrationService = getIntegrationService();
+          await integrationService.setIntegrationValue({
+            integration_id: integrationId,
+            account_id:     accountId,
+            property:       'oauth_client_id',
+            value:          effectiveClientId,
+          });
+        }
         console.log(`${ LOG_PREFIX } Registered OAuth client for ${ integrationId }/${ accountId }`);
       }
 
@@ -198,12 +204,21 @@ export class OAuthService {
 
       // Exchange code for tokens
       const tokens = normalizeTokenExpiry(
-        await this.exchangeCode(cfg, effectiveClientId, effectiveClientSecret, code, redirectUri, codeVerifier),
+        await this.exchangeCode(
+          cfg, effectiveClientId, effectiveClientSecret, code, redirectUri, codeVerifier, integrationId, accountId,
+        ),
       );
       if (cfg.registrationEndpoint) {
         tokens.oauth_client_id = effectiveClientId;
       }
       console.log(`${ LOG_PREFIX } Token exchange successful`);
+
+      if (usesContainerVaultAuthority()) {
+        // The authority persisted the token response before returning this
+        // metadata-only acknowledgement. No provider hook may receive it as a
+        // token set and the legacy OAuth table must remain untouched.
+        return tokens;
+      }
 
       // Let the provider do post-processing
       await provider.onTokenReceived(tokens, { integrationId, accountId, providerId, clientId: effectiveClientId });
@@ -320,7 +335,9 @@ export class OAuthService {
   private async registerDynamicClient(
     cfg: OAuthProviderConfig,
     redirectUri: string,
-  ): Promise<{ clientId: string; response: DynamicClientRegistrationResponse }> {
+    integrationId: string,
+    accountId: string,
+  ): Promise<{ clientId: string }> {
     if (!cfg.registrationEndpoint) {
       throw new Error(`${ LOG_PREFIX } OAuth provider ${ cfg.id } has no registrationEndpoint`);
     }
@@ -333,6 +350,36 @@ export class OAuthService {
       ...cfg.registrationClientMetadata,
       redirect_uris:              [redirectUri],
     };
+
+    if (usesContainerVaultAuthority()) {
+      const context = await issueLocalBrokerContext({
+        agentId:         'oauth-register',
+        podId:           'desktop-main',
+        credentialScope: { integration_id: integrationId, account_id: accountId },
+      });
+      const broker = requireConfiguredCredentialBroker();
+      const result = await broker.execute(broker.requestFor(context, {
+        operation:  'oauth.register',
+        ref:        { integrationId, accountId },
+        url:        cfg.registrationEndpoint,
+        method:     'POST',
+        headers:    {
+          'content-type': 'application/json',
+          accept:         'application/json',
+          'user-agent':   'Sulla-Desktop/1.0',
+        },
+        body:       metadata,
+        injections: [],
+      }));
+      const body = result.body;
+      const clientId = body && typeof body === 'object' && typeof (body as Record<string, unknown>).client_id === 'string'
+        ? (body as Record<string, string>).client_id
+        : '';
+      if (result.status < 200 || result.status >= 300 || !clientId) {
+        throw new Error(`${ LOG_PREFIX } Vault-owned dynamic client registration failed`);
+      }
+      return { clientId };
+    }
 
     const res = await fetch(cfg.registrationEndpoint, {
       method:  'POST',
@@ -349,12 +396,12 @@ export class OAuthService {
       throw new Error(`${ LOG_PREFIX } Dynamic client registration failed (${ res.status }): ${ text }`);
     }
 
-    const json = await res.json() as DynamicClientRegistrationResponse;
+    const json = await res.json() as { client_id?: string };
     if (!json.client_id || typeof json.client_id !== 'string') {
       throw new Error(`${ LOG_PREFIX } Dynamic client registration response missing client_id`);
     }
 
-    return { clientId: json.client_id, response: json };
+    return { clientId: json.client_id };
   }
 
   // ── Exchange auth code for tokens ─────────────────────────────
@@ -366,6 +413,8 @@ export class OAuthService {
     code: string,
     redirectUri: string,
     codeVerifier?: string,
+    integrationId?: string,
+    accountId?: string,
   ): Promise<OAuthTokenSet> {
     const body: Record<string, string> = {
       grant_type:   'authorization_code',
@@ -384,6 +433,38 @@ export class OAuthService {
       Accept:         'application/json',
       'User-Agent':   'Sulla-Desktop/1.0',
     };
+
+    if (usesContainerVaultAuthority()) {
+      if (!integrationId || !accountId) throw new Error(`${ LOG_PREFIX } OAuth exchange is missing its vault scope`);
+      const injections = cfg.clientAuthMethod === 'header'
+        ? [{ field: 'client_secret', target: 'header' as const, name: 'authorization', scheme: 'BasicClient' as const }]
+        : cfg.clientAuthMethod === 'none'
+          ? []
+          : [
+            { field: 'client_id', target: 'form' as const, name: 'client_id', scheme: 'raw' as const },
+            { field: 'client_secret', target: 'form' as const, name: 'client_secret', scheme: 'raw' as const },
+          ];
+      if (cfg.clientAuthMethod === 'none') body.client_id = clientId;
+      const context = await issueLocalBrokerContext({
+        agentId:         'oauth-exchange',
+        podId:           'desktop-main',
+        credentialScope: { integration_id: integrationId, account_id: accountId },
+      });
+      const broker = requireConfiguredCredentialBroker();
+      const result = await broker.execute(broker.requestFor(context, {
+        operation: 'oauth.exchange',
+        ref:       { integrationId, accountId },
+        url:       cfg.tokenUrl,
+        method:    'POST',
+        headers,
+        body,
+        injections,
+      }));
+      if (result.status < 200 || result.status >= 300 || !result.body || typeof result.body !== 'object') {
+        throw new Error(`${ LOG_PREFIX } Vault-owned token exchange failed`);
+      }
+      return result.body as OAuthTokenSet;
+    }
 
     if (cfg.clientAuthMethod === 'header') {
       const basic = Buffer.from(`${ clientId }:${ clientSecret }`).toString('base64');
@@ -426,6 +507,46 @@ export class OAuthService {
       throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
     }
     const cfg = provider.config;
+
+    if (usesContainerVaultAuthority()) {
+      const context = await issueLocalBrokerContext({
+        agentId:         'oauth-refresh',
+        podId:           'desktop-main',
+        credentialScope: { integration_id: integrationId, account_id: accountId },
+      });
+      const injections = cfg.clientAuthMethod === 'header'
+        ? [
+          { field: 'refresh_token', target: 'form' as const, name: 'refresh_token', scheme: 'raw' as const },
+          { field: 'client_secret', target: 'header' as const, name: 'authorization', scheme: 'BasicClient' as const },
+        ]
+        : cfg.clientAuthMethod === 'none'
+          ? [
+            { field: 'refresh_token', target: 'form' as const, name: 'refresh_token', scheme: 'raw' as const },
+            { field: 'client_id', target: 'form' as const, name: 'client_id', scheme: 'raw' as const },
+          ]
+          : [
+            { field: 'refresh_token', target: 'form' as const, name: 'refresh_token', scheme: 'raw' as const },
+            { field: 'client_id', target: 'form' as const, name: 'client_id', scheme: 'raw' as const },
+            { field: 'client_secret', target: 'form' as const, name: 'client_secret', scheme: 'raw' as const },
+          ];
+      const broker = requireConfiguredCredentialBroker();
+      const result = await broker.execute(broker.requestFor(context, {
+        operation:  'oauth.refresh',
+        ref:        { integrationId, accountId },
+        url:        cfg.tokenUrl,
+        method:     'POST',
+        headers:    { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+        body:       { grant_type: 'refresh_token', ...cfg.extraTokenParams },
+        injections,
+      }));
+      if (result.status < 200 || result.status >= 300 || !result.body || typeof result.body !== 'object') {
+        throw new Error(`${ LOG_PREFIX } Vault-owned token refresh failed`);
+      }
+      // The authority persisted the rotated credentials and deliberately
+      // returns metadata only. Keep that boundary explicit in the legacy
+      // return type until all callers consume refresh metadata directly.
+      return result.body as OAuthTokenSet;
+    }
 
     const stored = await this.getStoredTokens(integrationId, accountId);
     if (!stored?.refresh_token) {
@@ -498,6 +619,9 @@ export class OAuthService {
     providerId: string,
     tokens: OAuthTokenSet,
   ): Promise<void> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth token adoption must complete inside the local vault authority');
+    }
     const provider = getOAuthProvider(providerId);
     if (!provider) {
       throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
@@ -588,6 +712,28 @@ export class OAuthService {
   // ── Revoke tokens ─────────────────────────────────────────────
 
   async revokeTokens(integrationId: string, accountId = 'default'): Promise<void> {
+    if (usesContainerVaultAuthority()) {
+      const metadata = await getIntegrationService().getMetadataValues(integrationId, accountId);
+      const values = Object.fromEntries(metadata.map(value => [value.property, value.value]));
+      const provider = getOAuthProvider(values.provider_id || values.provider || '');
+      if (!provider?.config.revokeUrl) throw new Error(`${ LOG_PREFIX } OAuth provider does not expose a revoke endpoint`);
+      const context = await issueLocalBrokerContext({
+        agentId:         'oauth-revoke',
+        podId:           'desktop-main',
+        credentialScope: { integration_id: integrationId, account_id: accountId },
+      });
+      const broker = requireConfiguredCredentialBroker();
+      await broker.execute(broker.requestFor(context, {
+        operation:  'oauth.revoke',
+        ref:        { integrationId, accountId },
+        url:        provider.config.revokeUrl,
+        method:     'POST',
+        headers:    { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+        body:       {},
+        injections: [{ field: 'access_token', target: 'form', name: 'token', scheme: 'raw' }],
+      }));
+      return;
+    }
     const stored = await this.getStoredTokens(integrationId, accountId);
     if (!stored) return;
 
@@ -646,6 +792,9 @@ export class OAuthService {
     clientId?: string,
     clientSecret?: string,
   ): Promise<string> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth access tokens stay inside the local vault authority');
+    }
     const tokens = await this.ensureFreshTokens(integrationId, accountId, clientId, clientSecret);
 
     return tokens.access_token;
@@ -657,6 +806,9 @@ export class OAuthService {
     clientId?: string,
     clientSecret?: string,
   ): Promise<OAuthTokenSet> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth token sets stay inside the local vault authority');
+    }
     const stored = await this.getStoredTokens(integrationId, accountId);
     if (!stored) {
       throw new Error(`${ LOG_PREFIX } No OAuth tokens for ${ integrationId }/${ accountId }`);
@@ -717,6 +869,9 @@ export class OAuthService {
     providerId: string,
     tokens: OAuthTokenSet,
   ): Promise<void> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth token storage is owned by the local vault authority');
+    }
     normalizeTokenExpiry(tokens);
 
     await postgresClient.query(
@@ -752,6 +907,9 @@ export class OAuthService {
   // ── DB: Read tokens ───────────────────────────────────────────
 
   async getStoredTokens(integrationId: string, accountId = 'default'): Promise<OAuthTokenRow | null> {
+    if (usesContainerVaultAuthority()) {
+      throw new Error('unsupported_secret_egress: OAuth token records stay inside the local vault authority');
+    }
     return postgresClient.queryOne<OAuthTokenRow>(
       `SELECT * FROM oauth_tokens WHERE integration_id = $1 AND account_id = $2`,
       [integrationId, accountId],
@@ -789,6 +947,7 @@ export class OAuthService {
   // ── Resume refresh timers on startup ──────────────────────────
 
   async resumeRefreshTimers(): Promise<void> {
+    if (usesContainerVaultAuthority()) return;
     try {
       const rows = await postgresClient.query<OAuthTokenRow>(
         `SELECT * FROM oauth_tokens WHERE refresh_token IS NOT NULL`,

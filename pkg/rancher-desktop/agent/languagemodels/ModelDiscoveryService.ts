@@ -6,6 +6,15 @@
  * Features: Caching, error handling, provider-specific endpoint mapping
  */
 
+import {
+  issueServiceProviderExecutionContext,
+  loadProviderRuntimeConfig,
+  providerFetch,
+} from './providerBroker';
+import { usesContainerVaultAuthority } from '../../vault-broker';
+
+import type { BrokerInjection } from '../../vault-broker';
+
 interface ModelInfo {
   id:             string;
   name:           string;
@@ -133,7 +142,7 @@ export class ModelDiscoveryService {
       // The Coding Plan /models endpoint DOES return a live catalog (verified 2026-07-20).
       // Fetch it live so new models (e.g. qwen3.6-plus, qwen3.7-plus) appear automatically;
       // fall back to the list below only if the endpoint is unreachable.
-      preferLive: true,
+      preferLive:   true,
       staticModels: [
         { id: 'qwen3.5-plus', name: 'Qwen 3.5 Plus', provider: 'alibaba' },
         { id: 'qwen3.6-plus', name: 'Qwen 3.6 Plus', provider: 'alibaba' },
@@ -327,8 +336,10 @@ export class ModelDiscoveryService {
   /**
    * Fetch available models for a specific provider
    */
-  async fetchModelsForProvider(providerId: string, apiKey: string): Promise<ModelInfo[]> {
-    const cacheKey = `${ providerId }-${ apiKey.slice(-8) }`;
+  async fetchModelsForProvider(providerId: string, apiKey = ''): Promise<ModelInfo[]> {
+    const containerAuthority = usesContainerVaultAuthority() && providerId !== 'ollama';
+    const runtime = containerAuthority ? await loadProviderRuntimeConfig(providerId) : null;
+    const cacheKey = containerAuthority ? `${ providerId }-${ runtime!.accountId }` : `${ providerId }-${ apiKey.slice(-8) }`;
     const cached = this.cache.get(cacheKey);
 
     // Return cached results if still valid
@@ -347,17 +358,21 @@ export class ModelDiscoveryService {
     // never as the authoritative catalog. See the catch block and empty-result
     // handling below.
     try {
-      const url = `${ provider.baseUrl }${ provider.modelsEndpoint }`;
+      const url = provider.modelsEndpoint.startsWith('http')
+        ? provider.modelsEndpoint
+        : `${ provider.baseUrl }${ provider.modelsEndpoint }`;
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'User-Agent':   'Sulla-Desktop/1.0',
       };
 
-      // Set auth header
-      if (provider.authHeader === 'Authorization') {
-        headers.Authorization = `Bearer ${ apiKey }`;
-      } else {
-        headers[provider.authHeader] = apiKey;
+      if (!containerAuthority) {
+        // Server mode retains the existing direct provider transport.
+        if (provider.authHeader === 'Authorization') {
+          headers.Authorization = `Bearer ${ apiKey }`;
+        } else {
+          headers[provider.authHeader] = apiKey;
+        }
       }
 
       // Add required headers for specific providers
@@ -365,10 +380,20 @@ export class ModelDiscoveryService {
         headers['anthropic-version'] = '2023-06-01';
       }
 
-      const response = await fetch(url, {
+      const injections: BrokerInjection[] = provider.authHeader === 'Authorization'
+        ? [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }]
+        : [{ field: 'api_key', target: 'header', name: provider.authHeader.toLowerCase(), scheme: 'raw' }];
+      const executionContext = containerAuthority
+        ? await issueServiceProviderExecutionContext('model-discovery', providerId, runtime!.accountId)
+        : undefined;
+      const response = await providerFetch(providerId, url, {
         method: 'GET',
         headers,
         signal: AbortSignal.timeout(10000), // 10 second timeout
+      }, executionContext, {
+        streaming: false,
+        operation: 'provider.discovery',
+        injections,
       });
 
       if (!response.ok) {

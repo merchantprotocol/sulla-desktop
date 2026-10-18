@@ -61,6 +61,18 @@ export class FilesKeyBundleRecovery {
     private readonly authority:FilesKeyBundleAuthority,
   ) {}
 
+  async enrollAllCollections(principalId:string):Promise<number> {
+    if (!principalId) throw new Error('Files recovery enrollment requires a principal');
+    const rows = (await this.db.query<{ collection_id: string }>(
+      `SELECT k.collection_id FROM files_collection_keys k JOIN collections c ON c.id=k.collection_id
+        WHERE c.owner_user_id=$1 AND c.compatibility_state='native' AND k.key_origin='random'
+        ORDER BY k.collection_id`,
+      [principalId],
+    )).rows;
+    for (const row of rows) await this.enrollCollection(row.collection_id);
+    return rows.length;
+  }
+
   async enrollCollection(collectionId:string):Promise<StoredFilesKeyBundle> {
     const row = (await this.db.query(
       `SELECT k.collection_id,c.owner_user_id,c.compatibility_state,k.key_origin,k.key_version,k.key_epoch

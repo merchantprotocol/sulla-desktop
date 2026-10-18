@@ -1,5 +1,6 @@
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, type LLMServiceConfig } from './BaseLanguageModel';
 import { readSSEEvents } from './SSEStreamReader';
+import { providerFetch } from './providerBroker';
 import { getIntegrationService } from '../services/IntegrationService';
 
 /**
@@ -76,7 +77,10 @@ export class AnthropicService extends BaseLanguageModel {
 
         const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
         const fetchOpts = this.buildFetchOptions(body, signal);
-        const res = await fetch(url, fetchOpts);
+        const res = await providerFetch('anthropic', url, fetchOpts, options?.executionContext, {
+          streaming:  false,
+          injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+        });
 
         if (!res.ok) {
           const text = await res.text().catch(() => '');
@@ -362,7 +366,10 @@ export class AnthropicService extends BaseLanguageModel {
 
         const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
         const fetchOpts = this.buildFetchOptions(body, signal);
-        const res = await fetch(url, fetchOpts);
+        const res = await providerFetch('anthropic', url, fetchOpts, options?.executionContext, {
+          streaming:  true,
+          injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+        });
 
         if (!res.ok) {
           const text = await res.text().catch(() => '');

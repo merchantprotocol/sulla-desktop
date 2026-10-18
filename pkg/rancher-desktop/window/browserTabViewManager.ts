@@ -866,6 +866,10 @@ export class BrowserTabViewManager {
     }
   }
 
+  getTrustedMainFrameOrigin(tabId: string): string | null {
+    return trustedFrameOrigin(this.views.get(tabId)?.webContents.mainFrame);
+  }
+
   // ---------------------------------------------------------------------------
   // Accessors
   // ---------------------------------------------------------------------------
