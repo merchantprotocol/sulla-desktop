@@ -37,6 +37,7 @@ import {
 import { postgresClient } from '../database/PostgresClient';
 import {
   AgentDefinitionModel,
+  DEFAULT_AGENT_RUN_LOCATION,
   type AgentDefinition,
   type AgentDefinitionPatch,
 } from '../database/models/AgentDefinitionModel';
@@ -179,6 +180,9 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
           status:        'production',
           enabled:       true,
           sourceKind:    'local',
+          // Only newly installed built-ins inherit the rollout default. Existing
+          // rows are never rewritten, so an explicit VM selection stays intact.
+          runLocation:   DEFAULT_AGENT_RUN_LOCATION,
           ...(typeof spec.card?.frontDoor === 'boolean' ? { frontDoor: spec.card.frontDoor } : {}),
         });
         summary.inserted++;

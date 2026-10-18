@@ -14,6 +14,7 @@ import { ipcMain } from 'electron';
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
 
+import { DEFAULT_AGENT_RUN_LOCATION } from '@pkg/agent/database/models/AgentDefinitionModel';
 import type { ActiveAgent } from '@pkg/agent/services/ActiveAgentsRegistry';
 
 // ── Response shape ───────────────────────────────────────────────────────────
@@ -207,7 +208,7 @@ export function initAgentsIpc(): void {
       promptFiles:   { 'prompt.md': input.prompt },
       status:        'production',
       sourceKind:    'local',
-      runLocation:   input.runLocation ?? 'vm',
+      runLocation:   input.runLocation ?? DEFAULT_AGENT_RUN_LOCATION,
     });
   });
 
