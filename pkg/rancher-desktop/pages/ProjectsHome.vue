@@ -2170,7 +2170,15 @@ const issueRouteId = computed(() => typeof route.query.issue === 'string' ? rout
 const issueChecklist = computed(() => allTasks.value
   .map(row => row.task)
   .filter(task => task.parent_id === issueRouteId.value)
-  .map(task => ({ id: task.id, title: task.title, done: task.lane?.semantic_role === 'terminal', assignee: task.assignee })));
+  .map(task => {
+    const lane = lanesByProject.value[task.project_id]?.find(item => item.lane_key === task.status);
+    return {
+      id: task.id,
+      title: task.title,
+      done: lane ? lane.semantic_role === 'terminal' : ['done', 'cancelled', 'parked'].includes(task.status),
+      assignee: task.assignee,
+    };
+  }));
 const taskDraft = reactive<TaskDraft>({ title: '' });
 const taskComments = ref<WorkCommentRecord[]>([]);
 const taskDependencies = ref<WorkTaskDependencyRecord[]>([]);
