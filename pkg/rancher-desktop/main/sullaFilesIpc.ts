@@ -243,16 +243,28 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:capabilities', async() => {
     const status = await getSullaFilesWatcher().status();
     const { getCurrentAccessToken } = await import('@pkg/main/sullaCloudAuth');
+    let residency:Record<string, unknown> | undefined;
+    let onlineOnlyReason = '';
+    try {
+      residency = await json('/v1/residency-capabilities') as Record<string, unknown>;
+    } catch (error) {
+      onlineOnlyReason = error instanceof Error ? error.message : 'Online-only residency is unavailable.';
+    }
+    const onlineOnly = residency?.onlineOnly === true && residency.keepOnComputer === true &&
+      residency.authenticatedRemote === true && residency.verifiedRecovery === true;
 
     return {
       orgSharing:  status.serverConfigured,
       publicLinks: Boolean(await getCurrentAccessToken()),
-      // Local eviction stays fail-closed until random collection keys can be
-      // exchanged and rehydrated. See services/sulla-files/KEY_STORAGE.md.
-      onlineOnly:  false,
-      onlineOnlyReason: 'Online-only needs secure collection-key exchange before Sulla can evict a recoverable local copy.',
+      onlineOnly,
+      keepOnComputer: onlineOnly,
+      authenticatedRemote: onlineOnly,
+      verifiedRecovery: onlineOnly,
+      onlineOnlyReason: onlineOnly ? '' : onlineOnlyReason || 'Online-only recovery is not fully configured.',
     };
   });
+  ipcMain.handle('files-ui:residency-status', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/residency`));
+  ipcMain.handle('files-ui:set-residency', (_event, input:{ fileId:string; desiredState:'local' | 'online-only' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/residency`, { method: 'POST', body: JSON.stringify({ desiredState: input.desiredState }) }));
   ipcMain.handle('files-ui:recent-references', async(_event, limit = 5) => {
     const groups = await collectionsWithFiles();
     return groups.flatMap(item => item.files.map(file => reference(file, item.collection)))

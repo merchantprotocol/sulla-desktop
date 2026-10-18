@@ -48,6 +48,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
     orgSharing:      false,
     publicLinks:     false,
     onlineOnly:      false,
+    keepOnComputer:  false,
+    authenticatedRemote:false,
+    verifiedRecovery:false,
     nativeFilesystem:true,
   };
 
@@ -83,7 +86,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     const [collections, status, capabilities] = await Promise.all([
       ipcRenderer.invoke('sulla-files:collections') as Promise<ContainerCollection[]>,
       ipcRenderer.invoke('files-ui:status'),
-      ipcRenderer.invoke('files-ui:capabilities') as Promise<{ orgSharing:boolean; publicLinks:boolean; onlineOnly:boolean; onlineOnlyReason?:string }>,
+      ipcRenderer.invoke('files-ui:capabilities') as Promise<{ orgSharing:boolean; publicLinks:boolean; onlineOnly:boolean; keepOnComputer:boolean; authenticatedRemote:boolean; verifiedRecovery:boolean; onlineOnlyReason?:string }>,
     ]);
     const collection = collections.find(item => item.name === 'Files') ?? collections.find(item => item.kind === 'knowledge');
     if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/files to initialize it.');
@@ -163,6 +166,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
   restoreVersion(fileId:string, versionId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:restore-version', { fileId, versionId }) }
   restoreTrash(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash-restore', { fileId }) }
   trashFile(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash', { fileId }) }
+  keepOnMac(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'local' }) }
+  makeOnlineOnly(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'online-only' }) }
+  residencyStatus(fileId:string):Promise<{ desiredState:'local' | 'online-only'; state:string; lastError:string | null }> { return ipcRenderer.invoke('files-ui:residency-status', { fileId }) }
   createPublicLink(fileId:string, options:ShareLinkOptions):Promise<ShareLink> {
     return ipcRenderer.invoke('files-ui:create-link', { fileId, ...options });
   }
