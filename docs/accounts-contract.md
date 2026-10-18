@@ -39,6 +39,7 @@ desktop mode.
 | `SULLA_ACCOUNTS_ADMIN_SECRET_FILE` | server | Separate `0600` secret for private membership administration |
 | `SULLA_ACCOUNTS_SERVICE_TOKENS_FILE` | private API | `0600` JSON map of service ids to `{token, issuers, allowedAudiences, pathPrefixes, methods}` grants; methods are limited to `GET`/`POST` |
 | `SULLA_ACCOUNTS_KEYCLOAK_ISSUER` | server | Stable external issuer, normally `${PUBLIC_URL}/auth/realms/sulla`; never the internal port |
+| `SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID` | server | Stable UUID for this hosted authority, advertised publicly and forwarded to domain services |
 | `SULLA_ACCOUNTS_KEYCLOAK_NATIVE_CLIENT_ID` | server | Public PKCE client advertised to Desktop; stable value `sulla-desktop` |
 | `SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID` | server | Separate confidential hosted web client; stable value `sulla-web` |
 | `SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE` | server | Dedicated audience required by the public membership resolver; stable value `sulla-membership` |
@@ -82,6 +83,8 @@ secret files. The reverse proxy publishes the stable Keycloak issuer path and fo
   stored issuer+subject's fresh remote membership before the outbound call. The configured
   grant must include the authority issuer, method, and a matching path prefix. No access token,
   refresh token, cookie, redirect, or arbitrary response header crosses the broker boundary.
+  After verification, Accounts forwards `X-Sulla-Authority-Id` using the authority's stable
+  remote UUID and `X-Sulla-Organization-Id` using the exact verified organization UUID.
 
 ## Versioned owner API
 
@@ -92,7 +95,7 @@ secret files. The reverse proxy publishes the stable Keycloak issuer path and fo
 | `GET /v1/profile` | Local profile (id, display name, created/updated timestamps) |
 | `PATCH /v1/profile` | Changes local display name only |
 | `GET /v1/connections` | Sanitized authority registry; never tokens or authorization secrets |
-| `POST /v1/connections` | Pins an explicit issuer, client id, resource-audience list, scopes, and optional membership endpoint |
+| `POST /v1/connections` | Pins an explicit issuer, client id, resource-audience list, scopes, and optional membership endpoint plus its `remoteAuthorityId` |
 | `DELETE /v1/connections/:id` | Revokes locally if possible, then deletes encrypted session and connection |
 | `POST /v1/connections/:id/authorize` | Creates PKCE S256 transaction for one allowed `resourceAudience` and returns `{authorizationUrl, expiresAt}` |
 | `GET /v1/oidc/callback?code=…&state=…` | Strict one-use state callback; exchanges code and stores encrypted tokens |
@@ -105,6 +108,11 @@ have the same origin as the pinned issuer; redirects and cross-origin credential
 refused.
 Discovery and token calls reject redirects, use bounded response sizes and timeouts, and never
 fall back to email matching.
+
+Each connection has an installation-local `id` used to address its encrypted session and a
+distinct `remoteAuthorityId` advertised by the hosted authority. The two UUIDs must never be
+substituted: local APIs select the connection by `id`; outbound domain-service context uses
+`remoteAuthorityId`.
 
 The connection response labels these records as `type: "oidc"` and includes a separate
 `legacyCloudConnections` metadata collection. Legacy Sulla Cloud connection metadata is not
@@ -123,6 +131,7 @@ issuer. Its stable response is:
 
 ```json
 {
+  "authorityId": "f72a606e-1da4-4fc4-8ac8-18c49bb758ee",
   "issuer": "https://accounts.example/auth/realms/sulla",
   "nativeClientId": "sulla-desktop",
   "nativeRedirectUris": ["http://127.0.0.1:3020/v1/oidc/callback"],
@@ -148,7 +157,7 @@ audience by default. Client ids, issuer ids, and resource audiences are never in
 Accounts verifies the JWT signature using the hosted JWKS, exact configured issuer, `exp`,
 non-empty `sub`, and exact `sulla-membership` audience. It derives the subject only from the
 JWT, queries exactly `(issuer, subject, organizationId)`, and returns
-`{issuer, subject, organizationId, roles, groups}` only for that active membership. It never
+`{issuer, subject, authorityId, organizationId, roles, groups}` only for that active membership. It never
 accepts subject in input and never lists memberships. Invalid or missing JWTs are `401`, a valid
 identity without that active membership is `403`, and malformed input is `400`.
 
@@ -181,14 +190,12 @@ compare the full context tuple.
 Workflow schedules never persist a user bearer or send runner tokens to Accounts. The workflow
 manager persists only the opaque grant returned by Accounts and treats it as a secret.
 
-`POST /v1/private/schedule-grants/issue` requires the workflow manager's normal
-`X-Sulla-Service-Id` / `X-Sulla-Service-Token` headers. It accepts the current user token only
-over that trusted service transport and never exposes the returned grant through renderer,
-tool, model, or log output:
+`POST /v1/authority/schedule-grants` requires the current user's OIDC access token in the
+`Authorization: Bearer` header. It accepts:
 
 ```json
 {
-  "authorityId": "uuid",
+  "authorityId": "stable remote authority UUID from authority metadata",
   "organizationId": "uuid",
   "audience": "sulla-workflows",
   "serviceId": "workflows",
@@ -196,19 +203,19 @@ tool, model, or log output:
   "scheduleNodeId": "stable schedule node id",
   "requiredRoles": ["member"],
   "expiresAt": "RFC3339 timestamp, at most 90 days",
-  "replaceGrantId": "optional existing grant uuid",
-  "bearerToken": "current user access token, never persisted"
+  "replaceGrantId": "optional existing grant uuid"
 }
 ```
 
 Accounts verifies the bearer for the exact issuer and target audience, derives its subject,
-checks that the authenticated service grant permits the issuer and audience, and confirms fresh
+checks that the named configured service grant permits the issuer and audience, and confirms fresh
 active membership plus all required roles. `replaceGrantId`, when present, must belong to the
 same derived identity, service, authority, organization, audience, workflow, and schedule node;
 the old grant is revoked in the same transaction. Success returns
 `{grantId, grantToken, expiresAt}`. `grantToken` is 256 bits of randomness returned once;
-Accounts stores only its SHA-256 digest. This is the sole delegated-authorization secret returned
-by Accounts and is available only to an authenticated service, never a browser caller. Renewal is an authenticated replacement before expiry,
+Accounts stores only its SHA-256 digest. The workflow manager must receive this response through
+its authenticated scheduling flow and keep it out of renderer, tool, model, and log output.
+Renewal is an authenticated replacement before expiry,
 not silent extension. Expired grants fail closed and remain unusable.
 
 At every scheduled fire, catch-up, delayed continuation, and wait resume, the workflow manager
@@ -246,7 +253,8 @@ authoritative row; no cache can restore it.
 The Accounts migrations create an `accounts` schema with:
 
 - `local_profile`: exactly one installation-local owner profile.
-- `authorities`: issuer pin, client metadata, discovery endpoints, trust policy, and timestamps.
+- `authorities`: local connection UUID, distinct remote authority UUID, issuer pin, client
+  metadata, discovery endpoints, trust policy, and timestamps.
 - `authority_sessions`: encrypted access/refresh/id token envelopes and expiry metadata, keyed
   by authority; ciphertext, nonce, and authentication tag are stored separately.
 - `authorization_transactions`: state digest, encrypted verifier, nonce, redirect URI, expiry,
@@ -254,7 +262,8 @@ The Accounts migrations create an `accounts` schema with:
 - `memberships`: authoritative local Sulla memberships keyed by `(issuer, subject,
   organization_id)` with roles/groups and revocation timestamp.
 - `membership_cache`: remote display hints with source timestamp and expiry; never consulted as
-  authorization evidence.
+  authorization evidence. Each row carries the verified subject and owner views filter it against
+  the connection subject, so another caller cannot pollute the owner's hints.
 - `broker_sessions`: hashed session ids supporting rotation/revocation without storing bearer
   tokens.
 - `delegated_schedule_grants`: digested opaque grant tokens bound to issuer, subject, authority,
