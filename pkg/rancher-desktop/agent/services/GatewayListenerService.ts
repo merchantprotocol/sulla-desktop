@@ -21,6 +21,8 @@
 
 import * as os from 'os';
 
+import WebSocket from 'ws';
+
 import { getIntegrationService } from './IntegrationService';
 import {
   issueLocalBrokerContext,
@@ -38,12 +40,6 @@ import {
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
-
-// Use __non_webpack_require__ to bypass webpack bundling for the ws package.
-// The global WebSocket API doesn't support custom headers, which we need for
-// Authorization bearer tokens on the WebSocket handshake.
-declare const __non_webpack_require__: typeof require;
-const WebSocket = __non_webpack_require__('ws');
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -456,7 +452,7 @@ export class GatewayListenerService {
       }).catch(error => console.error('[GatewayListener] Vault audio send failed:', error));
       return;
     }
-    if (!this.audioWs || this.audioWs.readyState !== WebSocket.OPEN) {
+    if (this.audioWs?.readyState !== WebSocket.OPEN) {
       if (this.audioChunkCount === 0) {
         console.warn(`[GatewayListener] sendAudio called but WebSocket not open (ws=${ !!this.audioWs }, readyState=${ this.audioWs?.readyState })`);
       }
@@ -694,7 +690,7 @@ export class GatewayListenerService {
 
   /** Send a JSON message on the lobby WebSocket. */
   private lobbySend(msg: Record<string, unknown>): void {
-    if (this.lobbyWs && this.lobbyWs.readyState === WebSocket.OPEN) {
+    if (this.lobbyWs?.readyState === WebSocket.OPEN) {
       try {
         this.lobbyWs.send(JSON.stringify(msg));
       } catch (err: any) {
