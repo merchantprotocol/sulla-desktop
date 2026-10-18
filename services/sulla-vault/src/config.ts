@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { readFileSync, statSync } from 'node:fs';
 
 export type VaultMode = 'desktop' | 'server';
 
@@ -29,11 +30,43 @@ export interface VaultConfig {
   legacyDatabaseUrl?:           string;
   tlsCertificatePath?:          string;
   tlsPrivateKeyPath?:           string;
+  accounts?: {
+    url:           string;
+    serviceId:     string;
+    serviceToken:  string;
+    audience:      string;
+    requiredRoles: string[];
+  };
 }
 
 function jsonEnvironment(name: string): unknown | undefined {
   const value = process.env[name];
   return value ? JSON.parse(value) : undefined;
+}
+
+function requiredEnvironment(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${ name } is required when Accounts integration is configured`);
+  return value;
+}
+
+function secretFile(name: string): string {
+  const path = requiredEnvironment(name);
+  const stat = statSync(path);
+  if (!stat.isFile() || (stat.mode & 0o077) !== 0) {
+    throw new Error(`${ name } must name a regular file inaccessible to group and other users`);
+  }
+  const value = readFileSync(path, 'utf8').trim();
+  if (Buffer.byteLength(value) < 32) throw new Error(`${ name } must contain at least 32 bytes`);
+  return value;
+}
+
+function accountsBaseUrl(value: string): string {
+  const url = new URL(value);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') {
+    throw new Error('SULLA_VAULT_ACCOUNTS_URL must be an HTTP(S) origin without credentials, path, query, or fragment');
+  }
+  return url.origin;
 }
 
 export function loadConfig(): VaultConfig {
@@ -49,6 +82,33 @@ export function loadConfig(): VaultConfig {
   if (jwtSecret.length < 32) {
     throw new Error('SULLA_VAULT_JWT_SECRET must contain at least 32 characters in server mode');
   }
+  const accountsNames = [
+    'SULLA_VAULT_ACCOUNTS_URL',
+    'SULLA_VAULT_ACCOUNTS_SERVICE_ID',
+    'SULLA_VAULT_ACCOUNTS_SERVICE_TOKEN_FILE',
+    'SULLA_VAULT_ACCOUNTS_AUDIENCE',
+    'SULLA_VAULT_ACCOUNTS_REQUIRED_ROLES',
+  ];
+  const accountsConfigured = accountsNames.some(name => Boolean(process.env[name]?.trim()));
+  if (accountsConfigured && mode !== 'server') {
+    throw new Error('Accounts integration is available only in server mode');
+  }
+  const configuredAudience = process.env.SULLA_VAULT_ACCOUNTS_AUDIENCE?.trim() || 'sulla-vault';
+  if (accountsConfigured && configuredAudience !== 'sulla-vault') {
+    throw new Error('SULLA_VAULT_ACCOUNTS_AUDIENCE must be sulla-vault');
+  }
+  const requiredRoles = (process.env.SULLA_VAULT_ACCOUNTS_REQUIRED_ROLES ?? 'member')
+    .split(',').map(value => value.trim()).filter(Boolean);
+  if (accountsConfigured && requiredRoles.length === 0) {
+    throw new Error('SULLA_VAULT_ACCOUNTS_REQUIRED_ROLES must contain at least one role');
+  }
+  const accounts = accountsConfigured ? {
+    url:           accountsBaseUrl(requiredEnvironment('SULLA_VAULT_ACCOUNTS_URL')),
+    serviceId:     requiredEnvironment('SULLA_VAULT_ACCOUNTS_SERVICE_ID'),
+    serviceToken:  secretFile('SULLA_VAULT_ACCOUNTS_SERVICE_TOKEN_FILE'),
+    audience:      configuredAudience,
+    requiredRoles,
+  } : undefined;
   return {
     mode,
     port:                       Number(process.env.SULLA_VAULT_PORT ?? 8787),
@@ -76,5 +136,6 @@ export function loadConfig(): VaultConfig {
     legacyDatabaseUrl:          process.env.SULLA_VAULT_LEGACY_DATABASE_URL,
     tlsCertificatePath:         process.env.SULLA_VAULT_TLS_CERTIFICATE_PATH,
     tlsPrivateKeyPath:          process.env.SULLA_VAULT_TLS_PRIVATE_KEY_PATH,
+    accounts,
   };
 }
