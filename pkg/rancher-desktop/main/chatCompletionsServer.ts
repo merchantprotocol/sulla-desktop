@@ -1132,7 +1132,7 @@ export class ChatCompletionsServer {
 
         // Prefer the optional stateless service for catalog-target tools. A
         // stopped/unhealthy container falls through to today's in-process path.
-        if (toolRegistry.getExecutionTarget(String(tool.name || prefixed)) === 'catalog') {
+        if (slug !== 'github' && toolRegistry.getExecutionTarget(String(tool.name || prefixed)) === 'catalog') {
           try {
             const health = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(300) });
             if (health.ok) {
@@ -1172,12 +1172,42 @@ export class ChatCompletionsServer {
         const interactiveNames = new Set(['ask_user_question']);
         const toolName = String((tool)?.name || endpoint || '').trim();
         const sessionToken = req.header('X-Sulla-Tool-Session');
+        if (slug === 'github' && usesContainerVaultAuthority() && !sessionToken) {
+          return res.status(403).json({ success: false, error: 'GitHub tool requires a verified tool session' });
+        }
         if (sessionToken) {
           const state = getMCPServerHost().getToolSessionState(sessionToken);
           if (!state) return res.status(403).json({ success: false, error: 'Expired tool session' });
           const allowed = (state.metadata as { allowedToolNames?: string[] }).allowedToolNames;
           if (!sessionAllowsTool(allowed, toolName)) return res.status(403).json({ success: false, error: 'Tool not allowed for this session' });
           tool.setState?.(state);
+          // The tool-session token is the graph-issued proof binding this CLI
+          // request to a live agent turn. Preserve that verified identity when
+          // the tool needs Desktop vault authority; otherwise GitHub workers
+          // reach the broker as an unbound, context-free caller. Account scope
+          // is selected here from the trusted integration service. Git workers
+          // narrow it further to the repository resolved from their own remote.
+          if (slug === 'github' && usesContainerVaultAuthority()) {
+            const metadata = state.metadata as Record<string, any>;
+            const agentId = String(metadata.agentId ?? metadata.wsChannel ?? '').trim();
+            const threadId = String(metadata.threadId ?? '').trim();
+            if (!agentId || !threadId) {
+              return res.status(403).json({ success: false, error: 'GitHub tool session is missing trusted graph identity' });
+            }
+            const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+            const accountId = await getIntegrationService().getActiveAccountId('github');
+            tool.executionContext = await issueLocalBrokerContext({
+              agentId,
+              podId:              String(metadata.podId ?? `desktop:${ threadId }`),
+              credentialScope:    { integration_id: 'github', account_id: accountId },
+              threadId,
+              jobId:              metadata.jobId,
+              workflowExecutionId: metadata.activeWorkflow?.executionId,
+              orgId:              metadata.orgId,
+              requestId:          req.header('X-Request-Id') ?? crypto.randomUUID(),
+              signal:             AbortSignal.timeout(60_000),
+            });
+          }
         }
         if (interactiveNames.has(toolName) && typeof (tool).sendChatMessage !== 'function') {
           try {

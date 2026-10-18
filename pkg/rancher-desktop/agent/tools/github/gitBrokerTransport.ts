@@ -48,6 +48,26 @@ function githubRepositoryPath(remoteUrl: string): string {
   return path.endsWith('.git') ? path : `${ path }.git`;
 }
 
+/** Narrow a verified GitHub caller context to the repository resolved by git. */
+export function scopeGitHubRepositoryContext(
+  ctx: ToolExecutionContext,
+  accountId: string,
+  repository: string,
+): ToolExecutionContext {
+  const scope = ctx.credential_scope;
+  if (scope && (
+    scope.integration_id !== 'github' ||
+    scope.account_id !== accountId ||
+    (scope.repository !== undefined && scope.repository !== repository)
+  )) {
+    throw new Error('github.git requires a signed credential scope for the active account and repository');
+  }
+  return {
+    ...ctx,
+    credential_scope: { integration_id: 'github', account_id: accountId, repository },
+  };
+}
+
 async function readBody(request: http.IncomingMessage): Promise<string | undefined> {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -72,19 +92,10 @@ export async function withGitHubBrokerRemote<T>(
   const transportToken = crypto.randomBytes(24).toString('base64url');
   const scopedPath = `/${ transportToken }${ repositoryPath }`;
   const accountId = await getIntegrationService().getActiveAccountId('github');
-  const scope = ctx.credential_scope;
-  if (scope && (scope.integration_id !== 'github' || scope.account_id !== accountId || scope.repository !== repository)) {
-    throw new Error('github.git requires a signed credential scope for the active account and repository');
-  }
   // For agent-local Git the tools service cannot inspect absolutePath because
   // that path exists only in the worker. The canonical Git worker resolves the
   // remote first; narrow the already-verified caller context here from that URL.
-  const brokerContext: ToolExecutionContext = scope
-    ? ctx
-    : {
-      ...ctx,
-      credential_scope: { integration_id: 'github', account_id: accountId, repository },
-    };
+  const brokerContext = scopeGitHubRepositoryContext(ctx, accountId, repository);
   const broker = requireConfiguredCredentialBroker();
   const containerRuntime = currentAgentContainerRuntime();
 
