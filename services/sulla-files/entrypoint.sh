@@ -1,7 +1,11 @@
 #!/bin/sh
 set -eu
+run_as=node:node
 if [ -n "${SULLA_FILES_UID:-}" ] && [ -n "${SULLA_FILES_GID:-}" ]; then
-  chown -R "${SULLA_FILES_UID}:${SULLA_FILES_GID}" /var/lib/sulla-files
-  exec su-exec "${SULLA_FILES_UID}:${SULLA_FILES_GID}" "$@"
+  run_as="${SULLA_FILES_UID}:${SULLA_FILES_GID}"
 fi
-exec su-exec node:node "$@"
+chown -R "$run_as" /var/lib/sulla-files
+if [ -d /backup ]; then
+  chown -R "$run_as" /backup
+fi
+exec su-exec "$run_as" "$@"

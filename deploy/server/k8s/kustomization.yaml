@@ -6,3 +6,5 @@ resources:
   - storage.yaml
   - postgres.yaml
   - sulla-vault.yaml
+  - sulla-files.yaml
+  - sulla-gateway.yaml

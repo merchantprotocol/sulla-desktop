@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sulla-files
+  namespace: sulla
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: sulla-files}}
+  template:
+    metadata: {labels: {app: sulla-files}}
+    spec:
+      initContainers:
+        - name: provision-database
+          image: postgres:16.14-alpine
+          env:
+            - {name: PGPASSWORD, valueFrom: {secretKeyRef: {name: sulla-server, key: postgres-password}}}
+          command: [sh, -ec]
+          args:
+            - >-
+              test "$(psql -h postgres -U sulla -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='sulla_files'")" = 1 ||
+              createdb -h postgres -U sulla -O sulla sulla_files
+      containers:
+        - name: files
+          image: __SULLA_FILES_IMAGE__
+          imagePullPolicy: IfNotPresent
+          ports: [{name: http, containerPort: 8792}]
+          env:
+            - {name: SULLA_FILES_MODE, value: server}
+            - {name: SULLA_FILES_PORT, value: "8792"}
+            - {name: SULLA_FILES_DATABASE_URL, valueFrom: {secretKeyRef: {name: sulla-server, key: files-database-url}}}
+            - {name: SULLA_FILES_VAULT_DATABASE_URL, valueFrom: {secretKeyRef: {name: sulla-server, key: database-url}}}
+            - {name: SULLA_FILES_CAPABILITY_SIGNING_KEY, valueFrom: {secretKeyRef: {name: sulla-server, key: files-capability-signing-key}}}
+            - {name: SULLA_FILES_JWT_SECRET, valueFrom: {secretKeyRef: {name: sulla-server, key: jwt-secret}}}
+          volumeMounts:
+            - {name: files-data, mountPath: /var/lib/sulla-files}
+          readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 30, periodSeconds: 10}
+      volumes:
+        - name: files-data
+          persistentVolumeClaim: {claimName: files-data}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: sulla-files, namespace: sulla}
+spec:
+  selector: {app: sulla-files}
+  ports: [{name: http, port: 8792, targetPort: http}]
