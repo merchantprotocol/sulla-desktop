@@ -182,7 +182,7 @@ function matchesPreparedSource(source:PreparedSource, info:fs.Stats):boolean {
 
 async function uploadPreparedSource(source:PreparedSource, endpoint:string, mime:string):Promise<{ response: Response; sourceChanged: boolean }> {
   if (!matchesPreparedSource(source, await source.handle.stat())) throw new Error('The source changed while Files was importing it. Try again.');
-  // requestFiles can retry once after unlocking. A fresh positional stream per
+  // requestFilesStream can retry once after unlocking. A fresh positional stream per
   // iterator makes the same body safe to send again without buffering the file.
   const body = {
     async * [Symbol.asyncIterator]() {
@@ -196,7 +196,8 @@ async function uploadPreparedSource(source:PreparedSource, endpoint:string, mime
     body,
     duplex:  'half',
   } as RequestInit & { duplex: 'half' };
-  const response = await getSullaFilesWatcher().requestFiles(endpoint, init);
+  // Large native imports need a transfer deadline, not the metadata request timeout.
+  const response = await getSullaFilesWatcher().requestFilesStream(endpoint, init, AbortSignal.timeout(30 * 60_000));
   const sourceChanged = !matchesPreparedSource(source, await source.handle.stat());
   return { response, sourceChanged };
 }
