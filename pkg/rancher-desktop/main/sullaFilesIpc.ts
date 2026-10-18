@@ -40,13 +40,23 @@ async function availableTarget(root:string, name:string):Promise<string> {
   }
 }
 
-async function importPaths(paths:string[], progress?:(value:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):Promise<number> {
-  const watcher = getSullaFilesWatcher(); let imported = 0;
+async function uploadDestination(root:string, relativePath:string):Promise<string> {
+  if (path.isAbsolute(relativePath)) throw new Error('Upload destination must be inside the Sulla Files folder');
+  const target = path.resolve(root, relativePath || '.');
+  const [realRoot, realTarget] = await Promise.all([fs.promises.realpath(root), fs.promises.realpath(target)]);
+  if (realTarget !== realRoot && !realTarget.startsWith(`${ realRoot }${ path.sep }`)) throw new Error('Upload destination escapes the Sulla Files folder');
+  if (!(await fs.promises.lstat(target)).isDirectory()) throw new Error('Upload destination is not a folder');
+
+  return realTarget;
+}
+
+async function importPaths(paths:string[], destination = '', progress?:(value:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):Promise<number> {
+  const watcher = getSullaFilesWatcher(); const targetRoot = await uploadDestination(watcher.folder, destination); let imported = 0;
   for (const [index, source] of paths.entries()) {
     const info = await fs.promises.stat(source);
     if (!info.isFile()) continue;
     progress?.({ current: index + 1, total: paths.length, name: path.basename(source), percent: 12, done: false });
-    await fs.promises.copyFile(source, await availableTarget(watcher.folder, source), fs.constants.COPYFILE_EXCL);
+    await fs.promises.copyFile(source, await availableTarget(targetRoot, source), fs.constants.COPYFILE_EXCL);
     imported++;
     progress?.({ current: index + 1, total: paths.length, name: path.basename(source), percent: 100, done: index + 1 === paths.length });
   }
@@ -150,6 +160,27 @@ async function downloadReference(event:Electron.IpcMainInvokeEvent, input:{ file
   return true;
 }
 
+async function downloadReferences(event:Electron.IpcMainInvokeEvent, items:{ fileId:string; name:string; versionId?:string }[]):Promise<{ count:number; error?:string }> {
+  if (!Array.isArray(items) || !items.length || items.length > 250 || items.some(item => !item.fileId || !item.name || path.basename(item.name) !== item.name)) throw new Error('Choose between 1 and 250 valid files to download.');
+  const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+  const picked = owner ? await dialog.showOpenDialog(owner, { title: 'Download selected Files', properties: ['openDirectory', 'createDirectory'] }) : await dialog.showOpenDialog({ title: 'Download selected Files', properties: ['openDirectory', 'createDirectory'] });
+  if (picked.canceled || !picked.filePaths[0]) return { count: 0 };
+  const directory = picked.filePaths[0]; const names = items.map(item => path.basename(item.name));
+  if (new Set(names).size !== names.length) throw new Error('Two selected files have the same name. Move them into separate folders before downloading together.');
+  for (const name of names) if (await fs.promises.lstat(path.join(directory, name)).then(() => true, () => false)) throw new Error(`${ name } already exists in the selected folder. Nothing was downloaded.`);
+  const created:string[] = [];
+  try {
+    for (const [index, item] of items.entries()) {
+      const response = await getSullaFilesWatcher().requestFilesStream(`/v1/files/${ encodeURIComponent(item.fileId) }/download${ item.versionId ? `?versionId=${ encodeURIComponent(item.versionId) }` : '' }`);
+      if (!response.ok || !response.body) throw new Error(`Files download failed (${ response.status })`);
+      const target = path.join(directory, names[index]); const temp = path.join(directory, `.sulla-partial-${ process.pid }-${ randomUUID() }`);
+      const handle = await fs.promises.open(temp, 'wx', 0o600);
+      try { await pipeline(Readable.fromWeb(response.body as any), handle.createWriteStream()); await fs.promises.link(temp, target); created.push(target) } catch (error) { await response.body.cancel().catch(() => undefined); await handle.close().catch(() => undefined); throw error } finally { await fs.promises.rm(temp, { force: true }) }
+    }
+    return { count: created.length };
+  } catch (error) { return { count: created.length, error: `${ created.length } file${ created.length === 1 ? '' : 's' } downloaded before the remaining download failed: ${ error instanceof Error ? error.message : String(error) }` } }
+}
+
 const mediaCapabilities = new Map<string, { fileId:string; versionId?:string; expiresAt:number }>();
 function mediaCapability(input:{ fileId:string; versionId?:string }):string {
   const now = Date.now();
@@ -187,6 +218,10 @@ export function initSullaFilesIpc():void {
   try { initFilesMediaProtocol() } catch (error) { console.error('Files media protocol failed to initialize:', error) }
   ipcMain.handle('sulla-files:collections', () => json('/v1/collections'));
   ipcMain.handle('sulla-files:list', (_event, input:{ collectionId:string; path?:string; trash?:boolean }) => json(`/v1/files?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`));
+  ipcMain.handle('sulla-files:search', (_event, input:{ query:string; collectionId?:string }) => json('/v1/search', { method: 'POST', body: JSON.stringify(input) }));
+  ipcMain.handle('sulla-files:stars', (_event, input:{ collectionId:string }) => json(`/v1/stars?collectionId=${ encodeURIComponent(input.collectionId) }`));
+  ipcMain.handle('sulla-files:set-star', (_event, input:{ starred:boolean; collectionId:string; fileId?:string; folderPath?:string }) => json('/v1/stars', { method: input.starred ? 'PUT' : 'DELETE', body: JSON.stringify(input) }));
+  ipcMain.handle('sulla-files:operate', (_event, input:{ action:'move' | 'copy'; collectionId:string; items:{ fileId?:string; folderPath?:string; targetPath:string }[] }) => json('/v1/file-operations', { method: 'POST', body: JSON.stringify(input) }));
   ipcMain.handle('sulla-files:metadata', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }`));
   ipcMain.handle('sulla-files:history', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/history`));
   ipcMain.handle('sulla-files:preview', async(_event, input:{ fileId:string; versionId?:string; thumbnail?:boolean }) => {
@@ -278,24 +313,25 @@ export function initSullaFilesIpc():void {
   });
   ipcMain.handle('files-ui:open-file', (_event, input:{ fileId:string; versionId?:string }) => openReference(input));
   ipcMain.handle('files-ui:download-file', (event, input:{ fileId:string; versionId?:string; name:string }) => downloadReference(event, input));
+  ipcMain.handle('files-ui:download-files', (event, input:{ fileId:string; versionId?:string; name:string }[]) => downloadReferences(event, input));
   ipcMain.handle('files-ui:media-url', async(event, input:{ fileId:string; versionId?:string }) => {
     const senderUrl = event.senderFrame?.url;
     if (!senderUrl || new URL(senderUrl).protocol !== 'app:') throw new Error('Files media URLs are only available to the Sulla application');
     await json(`/v1/files/${ encodeURIComponent(input.fileId) }`);
     return mediaCapability(input);
   });
-  ipcMain.handle('files-ui:pick-upload', async(event) => {
+  ipcMain.handle('files-ui:pick-upload', async(event, destination = '') => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const picked = owner
       ? await dialog.showOpenDialog(owner, { title: 'Upload to Sulla Files', properties: ['openFile', 'multiSelections'] })
       : await dialog.showOpenDialog({ title: 'Upload to Sulla Files', properties: ['openFile', 'multiSelections'] });
     if (picked.canceled) return 0;
 
-    return importPaths(picked.filePaths, progress => event.sender.send('files-ui:upload-progress', progress));
+    return importPaths(picked.filePaths, destination, progress => event.sender.send('files-ui:upload-progress', progress));
   });
   ipcMain.handle('files-ui:pick-upload-references', async(event) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     return pickAndImportChatFiles(owner);
   });
-  ipcMain.handle('files-ui:upload-paths', (event, paths:string[]) => importPaths(paths, progress => event.sender.send('files-ui:upload-progress', progress)));
+  ipcMain.handle('files-ui:upload-paths', (event, input:{ paths:string[]; destination?:string }) => importPaths(input.paths, input.destination, progress => event.sender.send('files-ui:upload-progress', progress)));
 }

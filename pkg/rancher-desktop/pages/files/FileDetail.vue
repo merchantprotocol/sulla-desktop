@@ -19,7 +19,7 @@
             <video v-if="mediaUrl && item.mime.startsWith('video/')" ref="video" :src="mediaUrl" controls preload="metadata" />
             <audio v-else-if="mediaUrl && item.mime.startsWith('audio/')" ref="audio" :src="mediaUrl" controls preload="metadata" />
             <img v-else-if="mediaUrl && item.mime.startsWith('image/')" :src="mediaUrl" :alt="name">
-            <iframe v-else-if="mediaUrl && item.mime === 'application/pdf'" :src="mediaUrl" :title="name" />
+            <iframe v-else-if="mediaUrl && item.mime === 'application/pdf'" :src="mediaUrl" :title="name" sandbox="" />
             <div v-else-if="dataSource.syntheticPreview" class="synthetic-frame" aria-label="Synthetic media preview"><div class="window"><i /><i /><i /><div class="sidebar" /><div class="lines" /></div><span class="play" v-html="icons.play" /></div>
             <div v-else class="preview-unavailable"><span class="unavailable-icon" v-html="fileIcon(item.mime)" /><b>Preview unavailable</b><small>{{ previewStatus }}</small></div>
           </div>
@@ -29,7 +29,7 @@
           </div>
           <div class="media-pane">
             <template v-if="mediaTab === 'Preview'">
-              <h3>Preview <span class="muted">{{ item.mime }}</span></h3><p class="preview-note">{{ mediaUrl ? 'Use the player above to review this file.' : previewStatus }}</p>
+              <h3>Preview <span class="muted">{{ item.mime }}</span></h3><p v-if="mediaUrl && item.mime === 'application/pdf'" class="preview-note">This PDF preview is sandboxed. Download the file if it cannot be displayed.</p><p v-else class="preview-note">{{ mediaUrl ? 'Use the player above to review this file.' : previewStatus }}</p><button v-if="mediaUrl && item.mime === 'application/pdf'" class="btn sm" type="button" :disabled="busy" @click="download">Download PDF</button>
             </template>
             <template v-else-if="mediaTab === 'Transcript'">
               <h3>Transcript <span class="pill idle">{{ detail?.recording?.generator || 'Not generated' }}</span><small>Click a time to jump</small></h3>

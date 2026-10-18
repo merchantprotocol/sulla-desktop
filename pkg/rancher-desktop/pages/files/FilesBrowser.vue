@@ -60,6 +60,7 @@
         </div><span>{{ activeFiles.length.toLocaleString() }} file{{ activeFiles.length === 1 ? '' : 's' }}<template v-if="snapshot?.collection.keptBytes !== undefined"> · {{ formatBytes(snapshot.collection.keptBytes) }} kept on this Mac</template></span>
       </div>
       <button
+        v-if="dataSource.capabilities.nativeFilesystem"
         class="syncline"
         type="button"
         :title="syncTooltip"
@@ -70,6 +71,9 @@
           :class="syncState"
         />{{ syncLine }}
       </button>
+      <div v-else class="syncline" :title="syncTooltip">
+        <span class="dot" :class="syncState" />{{ syncLine }}
+      </div>
       <div class="foot">
         <div class="avatar">
           {{ initials(accountName) }}
@@ -110,6 +114,7 @@
         ><kbd>⌘K</kbd></label>
         <div v-if="section !== 'sharedByMe'" class="acts">
           <button
+            v-if="dataSource.capabilities.nativeFilesystem"
             class="btn"
             type="button"
             @click="newFolder"
@@ -226,6 +231,18 @@
           </div>
         </div>
 
+        <div v-if="selectedEntries.length" class="selection-bar">
+          <b>{{ selectedEntries.length }} selected</b>
+          <button class="btn sm" type="button" :disabled="busy || selectedEntries.length !== 1" @click="renameSelected">Rename</button>
+          <button class="btn sm" type="button" :disabled="busy" @click="moveSelected">Move</button>
+          <button class="btn sm" type="button" :disabled="busy" @click="copySelected">Copy</button>
+          <button class="btn sm" type="button" :disabled="busy || selectedEntries.every(entry => entry.folder)" @click="downloadSelected">Download</button>
+          <button class="btn sm danger" type="button" :disabled="busy" @click="trashSelected">Move to Trash</button>
+        </div>
+        <div v-if="operationError" class="operation-error" role="alert">
+          {{ operationError }} <button class="btn sm ghost" type="button" @click="operationError = ''">Dismiss</button>
+        </div>
+
         <div
           v-if="loading"
           class="state-panel"
@@ -248,6 +265,7 @@
             >
               Try again
             </button><button
+              v-if="dataSource.capabilities.nativeFilesystem"
               class="btn"
               type="button"
               @click="dataSource.openFolder()"
@@ -319,6 +337,7 @@
                   :class="{ 'is-sel': selectedKeys.has(entry.key), agent: entry.agent }"
                   @click="focusEntry(entry, $event)"
                   @dblclick="activate(entry)"
+                  @contextmenu.prevent="openActions(entry)"
                 >
                   <td>
                     <button
@@ -385,7 +404,7 @@
                         class="btn ico"
                         type="button"
                         title="More"
-                        @click.stop="activate(entry)"
+                        @click.stop="openActions(entry)"
                         v-html="icons.more"
                       />
                     </div>
@@ -410,7 +429,7 @@
                         class="btn ico"
                         type="button"
                         title="More"
-                        @click.stop="activate(entry)"
+                        @click.stop="openActions(entry)"
                         v-html="icons.more"
                       />
                     </div>
@@ -432,6 +451,7 @@
             :class="{ 'is-sel': selectedKeys.has(entry.key) }"
             @click="focusEntry(entry, $event)"
             @dblclick="activate(entry)"
+            @contextmenu.prevent="openActions(entry)"
           >
             <div
               class="th"
@@ -451,6 +471,15 @@
               <b>{{ entry.name }}</b><small>{{ entry.folder ? `${entry.childCount} file${entry.childCount === 1 ? '' : 's'}` : formatBytes(entry.size) }} · {{ formatShort(entry.updatedAt) }}</small>
             </div>
           </div>
+        </div>
+        <div v-if="actionTarget" class="action-menu" role="menu">
+          <b>{{ actionTarget.name }}</b>
+          <button type="button" @click="runTargetAction('rename')">Rename</button>
+          <button type="button" @click="runTargetAction('move')">Move</button>
+          <button type="button" @click="runTargetAction('copy')">Copy</button>
+          <button v-if="!actionTarget.folder" type="button" @click="runTargetAction('download')">Download</button>
+          <button type="button" class="danger" @click="runTargetAction('trash')">Move to Trash</button>
+          <button type="button" @click="actionTarget = null">Cancel</button>
         </div>
 
         <div
@@ -585,12 +614,13 @@ const section = ref<Section>('files'); const currentPath = ref(''); const query 
 const activeFilters = ref<Record<'type' | 'person' | 'date' | 'folder', string>>({ type: '', person: '', date: '', folder: '' });
 const searchResults = ref<FilesItem[] | null>(null); const searchInput = ref<HTMLInputElement | null>(null);
 const selectedKeys = ref(new Set<string>()); const uploadProgress = ref<{ current: number; total: number; name: string; percent: number; done: boolean } | null>(null);
+const operationError = ref(''); const actionTarget = ref<DisplayEntry | null>(null);
 const uploadLog = ref<{ name: string; percent: number; done: boolean }[]>([]);
 // In-progress upload first, then the ones already finished in this batch (the stream only reports the current file).
 const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done), ...uploadLog.value.filter(item => item.done).reverse()]);
 const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details');
 const dragging = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
-const starred = ref(new Set<string>(JSON.parse(localStorage.getItem('sulla:files-starred') || '[]')));
+const starred = ref(new Set<string>());
 const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string; assetKind?:'file' | 'capture' | 'artifact' } | null>(null);
 
 const activeFiles = computed(() => snapshot.value?.files.filter(file => !file.deletedAt) ?? []);
@@ -706,6 +736,13 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
     if (!flat && parts.length > 1) folders.add(parts[0]); else if (file.mime !== 'inode/directory') entries.push(toDisplay(file));
   }
   for (const name of folders) entries.push(folderEntry(prefix, name, files.filter(file => file.path.startsWith(`${ prefix }${ name }/`))));
+  if (section.value === 'starred') {
+    for (const key of starred.value) {
+      if (!key.startsWith('folder:')) continue;
+      const path = key.slice('folder:'.length); const children = activeFiles.value.filter(file => file.path.startsWith(`${ path }/`));
+      if (children.length) entries.push(folderEntry(`${ path.split('/').slice(0, -1).join('/') }${ path.includes('/') ? '/' : '' }`, path.split('/').at(-1)!, children));
+    }
+  }
   const filtered = entries.filter(entry => (!activeFilters.value.type || kindLabel(entry.mime, entry.path) === activeFilters.value.type) && (!activeFilters.value.person || ownerName(entry) === activeFilters.value.person) && (!activeFilters.value.folder || entry.path.split('/')[0] === activeFilters.value.folder) && (!activeFilters.value.date || dateBucket(entry.updatedAt) === activeFilters.value.date));
   return filtered.sort((a, b) => { if (a.folder !== b.folder) return a.folder ? -1 : 1; if (a.agent !== b.agent) return a.agent ? 1 : -1; if (sort.value === 'modified') return Date.parse(b.updatedAt || '0') - Date.parse(a.updatedAt || '0'); if (sort.value === 'size') return b.size - a.size; if (sort.value === 'type') return a.mime.localeCompare(b.mime); return a.name.localeCompare(b.name, undefined, { numeric: true }) });
 });
@@ -715,9 +752,10 @@ const groups = computed(() => [
 ].filter(group => group.entries.length));
 const allVisibleSelected = computed(() => Boolean(visibleEntries.value.length) && visibleEntries.value.every(entry => selectedKeys.value.has(entry.key)));
 const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !entry.folder && selectedKeys.value.has(entry.key)) ?? selected.value);
+const selectedEntries = computed(() => visibleEntries.value.filter(entry => selectedKeys.value.has(entry.key)));
 
-async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); error.value = '' } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
-async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
+async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); const stars = await props.dataSource.listStars(snapshot.value.collection.id); starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = ''; selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key))) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
+async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(currentPath.value); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
 async function newFolder() { const name = window.prompt('Name this folder'); if (!name?.trim()) return; await props.dataSource.createFolder([currentPath.value, name.trim()].filter(Boolean).join('/')); await refresh(true) }
 function shareEntry(entry:DisplayEntry | null) {
   if (!entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
@@ -739,7 +777,7 @@ function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([ent
 function selectEntry(entry:DisplayEntry) { if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
 async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await props.dataSource.openFile(fileId); }
 function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }
-async function onDrop(event:DragEvent) { dragging.value = false; const paths = [...(event.dataTransfer?.files ?? [])].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value)); if (!paths.length) { error.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return } busy.value = true; try { await props.dataSource.uploadPaths(paths); setTimeout(() => refresh(true), 700) } finally { busy.value = false } }
+async function onDrop(event:DragEvent) { dragging.value = false; const paths = [...(event.dataTransfer?.files ?? [])].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value)); if (!paths.length) { error.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return } busy.value = true; try { await props.dataSource.uploadPaths(paths, currentPath.value); setTimeout(() => refresh(true), 700) } finally { busy.value = false } }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
 function dayLabel(date:Date) { const now = new Date(); if (date.toDateString() === now.toDateString()) return 'Today'; const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'; return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date) }
@@ -758,7 +796,17 @@ function syncText(entry:FilesItem) { return ({ synced: 'On this computer', synci
 function clearFilters() { activeFilters.value = { type: '', person: '', date: '', folder: '' } }
 function toggleSelected(key:string) { const next = new Set(selectedKeys.value); next.has(key) ? next.delete(key) : next.add(key); selectedKeys.value = next }
 function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set() : new Set(visibleEntries.value.map(entry => entry.key)) }
-function toggleStar(id:string) { const next = new Set(starred.value); next.has(id) ? next.delete(id) : next.add(id); starred.value = next; localStorage.setItem('sulla:files-starred', JSON.stringify([...next])) }
+async function toggleStar(id:string) { if (!snapshot.value) return; const entry = visibleEntries.value.find(item => item.id === id); if (!entry) return; const next = !starred.value.has(id); try { await props.dataSource.setStar(snapshot.value.collection.id, entry.folder ? { folderPath: entry.path } : { fileId: entry.id }, next); const changed = new Set(starred.value); next ? changed.add(id) : changed.delete(id); starred.value = changed } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } }
+function openActions(entry:DisplayEntry) { if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]); actionTarget.value = entry }
+function joinPath(folder:string, name:string) { return [folder.replace(/^\/+|\/+$/g, ''), name].filter(Boolean).join('/') }
+function operationItems(entries:DisplayEntry[], destination:string) { return entries.map(entry => ({ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id }), targetPath: joinPath(destination, entry.name) })) }
+async function perform(action:'move' | 'copy', items:{ fileId?:string; folderPath?:string; targetPath:string }[]) { if (!snapshot.value) return; busy.value = true; operationError.value = ''; try { await props.dataSource.operate(action, snapshot.value.collection.id, items); selectedKeys.value = new Set(); actionTarget.value = null; await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause); await refresh(true) } finally { busy.value = false } }
+async function renameSelected() { const entry = selectedEntries.value[0]; if (!entry || selectedEntries.value.length !== 1) return; const name = window.prompt('New name', entry.name)?.trim(); if (!name || name.includes('/')) { if (name) operationError.value = 'Names cannot contain “/”.'; return } const parent = entry.path.split('/').slice(0, -1).join('/'); await perform('move', [{ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id }), targetPath: joinPath(parent, name) }]) }
+async function moveSelected() { const entries = selectedEntries.value; if (!entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
+async function copySelected() { const entries = selectedEntries.value; if (!entries.length) return; const destination = window.prompt('Copy to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('copy', operationItems(entries, destination)) }
+async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; busy.value = true; operationError.value = ''; try { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) { operationError.value = result.error; } } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function trashSelected() { const entries = selectedEntries.value; const files = new Map<string, FilesItem>(); for (const entry of entries) { if (!entry.folder) files.set(entry.id, entry); else for (const file of activeFiles.value.filter(file => file.path.startsWith(`${ entry.path }/`))) files.set(file.id, file) } busy.value = true; operationError.value = ''; try { for (const file of files.values()) await props.dataSource.trashFile(file.id); selectedKeys.value = new Set(); actionTarget.value = null; } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { await refresh(true); busy.value = false } }
+async function runTargetAction(action:'rename' | 'move' | 'copy' | 'download' | 'trash') { if (!actionTarget.value) return; selectedKeys.value = new Set([actionTarget.value.key]); if (action === 'rename') await renameSelected(); else if (action === 'move') await moveSelected(); else if (action === 'copy') await copySelected(); else if (action === 'download') await downloadSelected(); else await trashSelected(); }
 function trackUpload(progress:{ current: number; name: string; percent: number; done: boolean }) { const log = progress.current <= 1 && !uploadLog.value.some(item => item.name === progress.name) ? [] : uploadLog.value.map(item => item.name === progress.name ? item : { ...item, done: true, percent: 100 }); const rest = log.filter(item => item.name !== progress.name); uploadLog.value = [...rest, { name: progress.name, percent: progress.percent, done: progress.done || progress.percent >= 100 }] }
 function onKeydown(event:KeyboardEvent) { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchInput.value?.focus() } }
 function navigateTo(detail:FilesNavigationPayload) {
@@ -843,6 +891,15 @@ onBeforeUnmount(() => { mounted = false; window.removeEventListener('keydown', o
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "tnum" 1, "cv11" 1;
 }
+.selection-bar { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:8px 10px; border:1px solid var(--accent-line); border-radius:8px; background:var(--accent-soft); }
+.selection-bar b { margin-right:auto; font-size:12px; }
+.operation-error { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:9px 11px; border:1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius:8px; background:var(--bad-soft); color:var(--bad); }
+.operation-error .btn { margin-left:auto; }
+.action-menu { position:absolute; z-index:20; top:122px; right:32px; width:190px; padding:6px; border:1px solid var(--line-2); border-radius:10px; background:var(--card-solid); box-shadow:var(--shadow-lg); }
+.action-menu b { display:block; padding:7px 9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.action-menu button { display:block; width:100%; padding:7px 9px; border:0; border-radius:6px; background:transparent; color:var(--text); text-align:left; }
+.action-menu button:hover { background:var(--ink-05); }
+.action-menu button.danger { color:var(--bad); }
 /* Noir Light reproduces the approved mockup palette exactly. */
 :global(.theme-noir-light) .files-browser {
   --muted: #5b6778;
