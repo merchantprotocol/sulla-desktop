@@ -76,6 +76,9 @@ export interface FilesCapabilities {
   orgSharing: boolean;
   publicLinks: boolean;
   onlineOnly: boolean;
+  keepOnComputer?: boolean;
+  authenticatedRemote?: boolean;
+  verifiedRecovery?: boolean;
   nativeFilesystem: boolean;
 }
 
@@ -176,5 +179,7 @@ export interface FilesDataSource {
   unshareFolder?(share:FolderShare):Promise<void>;
   listMembers?(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[]; groups?:{ id:string; name?:string; encrypted_name?:string; members?:string[] }[] }>;
   keepOnMac?(fileId:string):Promise<void>;
+  makeOnlineOnly?(fileId:string):Promise<void>;
+  residencyStatus?(fileId:string):Promise<{ desiredState:'local' | 'online-only'; state:string; lastError:string | null }>;
   onlineOnlyReason?:string;
 }
