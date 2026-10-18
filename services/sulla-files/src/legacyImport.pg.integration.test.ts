@@ -49,7 +49,9 @@ integration('publishes a complete retry-safe legacy snapshot in PostgreSQL', asy
 
     const legacyPlain = Buffer.from('legacy exact bytes'); const legacyChunk = chunkId(legacyPlain, legacyDedup);
     const legacyManifest = createHash('sha256').update(JSON.stringify({ ids: [legacyChunk], size: legacyPlain.length })).digest('hex');
-    const legacyPath = join(sourceRoot, legacyDirectory, legacyChunk.slice(0, 2));
+    // The retired container stored legacy ciphertext in the service chunk
+    // volume, even though its key metadata now classifies it as external.
+    const legacyPath = join(chunkRoot, legacyDirectory, legacyChunk.slice(0, 2));
     await mkdir(legacyPath, { recursive: true }); await writeFile(join(legacyPath, legacyChunk), await encryptChunk(legacyPlain, legacyData, legacyChunk));
     const nativePlain = Buffer.from('native ref data'); const nativeChunk = chunkId(nativePlain, nativeDedup);
     const nativeManifest = createHash('sha256').update(JSON.stringify({ ids: [nativeChunk], size: nativePlain.length })).digest('hex');
