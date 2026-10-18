@@ -37,6 +37,21 @@ export interface MarketplaceBrowseRow {
   desktop_only?:        boolean;
   summary?:             Record<string, unknown> | null;
 }
+
+export interface SullaFileReference {
+  fileId: string;
+  versionId: string;
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+  updatedAt: string;
+  createdByType?: string;
+  createdById?: string;
+  collectionId?: string;
+  collectionKind?: string;
+  agentRunId?: string;
+}
 /**
  * IpcMainEvents describes events the renderer can send to the main process,
  * i.e. ipcRenderer.send() -> ipcMain.on().
@@ -448,19 +463,47 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Filesystem
-  'files-ui:status':       () => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
-  'files-ui:set-paused':   (paused: boolean) => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
-  'files-ui:open-folder':  () => void;
-  'files-ui:open-file':    (input: { fileId: string; versionId?: string }) => void;
+  'files-ui:status':        () => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
+  'files-ui:set-paused':    (paused: boolean) => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
+  'files-ui:capabilities':  () => {
+    orgSharing: boolean;
+    publicLinks: boolean;
+    onlineOnly: boolean;
+    keepOnComputer: boolean;
+    authenticatedRemote: boolean;
+    verifiedRecovery: boolean;
+    onlineOnlyReason: string;
+  };
+  'files-ui:residency-status': (input: { fileId: string }) => { desiredState: 'local' | 'online-only'; state: string; lastError: string | null };
+  'files-ui:set-residency': (input: { fileId: string; desiredState: 'local' | 'online-only' }) => void;
+  'files-ui:recent-references': (limit?: number) => SullaFileReference[];
+  'files-ui:pick-reference': () => SullaFileReference[];
+  'files-ui:reference-content': (input: { fileId: string; versionId?: string }) => { mime: string; data: Uint8Array };
+  'files-ui:capture-screenshot': (mode?: import('@pkg/main/sullaFilesCapture').ScreenshotMode) => import('@pkg/main/sullaFilesCapture').CaptureResult;
+  'files-ui:toggle-recording': (input: { mic: boolean; camera: boolean }) => { recording: boolean; capture?: import('@pkg/main/sullaFilesCapture').CaptureResult; error?: string };
+  'files-ui:create-link': (input: import('@pkg/main/sullaFilesLinkService').CreateShareInput) => import('@pkg/main/sullaFilesLinkService').ShareLink;
+  'files-ui:list-links': () => import('@pkg/main/sullaFilesLinkService').ShareLink[];
+  'files-ui:revoke-link': (id: string) => void;
+  'files-ui:update-link': (input: { id: string; options: Partial<import('@pkg/main/sullaFilesLinkService').CreateShareInput> }) => import('@pkg/main/sullaFilesLinkService').ShareLink;
+  'files-ui:set-link-keep': (input: { id: string; enabled: boolean }) => import('@pkg/main/sullaFilesLinkService').ShareLink;
+  'files-ui:restore-link': (input: { id: string; password?: string }) => import('@pkg/main/sullaFilesLinkService').ShareLink;
+  'files-ui:link-activity': (id?: string) => { id: string; action: 'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked'; occurredAt: string; detail?: string }[];
+  'files-ui:open-folder':   () => void;
+  'files-ui:open-file':     (input: { fileId: string; versionId?: string }) => void;
   'files-ui:download-file': (input: { fileId: string; versionId?: string; name: string }) => boolean;
+  'files-ui:download-files': (items: { fileId: string; versionId?: string; name: string }[]) => { count: number; error?: string };
   'files-ui:media-url':     (input: { fileId: string; versionId?: string }) => string;
-  'files-ui:pick-upload':  () => number;
+  'files-ui:pick-upload':   (destination?: string) => number;
   'files-ui:pick-upload-references': () => import('@pkg/main/sullaFilesChatImport').ChatFilesReference[] | import('@pkg/main/sullaFilesChatImport').PartialChatFilesImport;
-  'files-ui:upload-paths': (paths: string[]) => number;
+  'files-ui:upload-paths': (input: { paths: string[]; destination?: string }) => number;
   'files-ui:create-folder': (relativePath: string) => void;
   'files-ui:chat-inventory': (input: { runIds: string[]; threadId: string }) => any[];
   'sulla-files:collections':     () => any[];
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
+  'sulla-files:search':          (input: { query: string; collectionId?: string }) => { id: string }[];
+  'sulla-files:stars':           (input: { collectionId: string }) => { fileId?: string; folderPath?: string }[];
+  'sulla-files:set-star':        (input: { starred: boolean; collectionId: string; fileId?: string; folderPath?: string }) => void;
+  'sulla-files:operate':         (input: { action: 'move' | 'copy'; collectionId: string; items: { fileId?: string; folderPath?: string; targetPath: string }[] }) => void;
   'sulla-files:metadata':        (input: { fileId: string }) => any;
   'sulla-files:preview':         (input: { fileId: string; versionId?: string; thumbnail?: boolean }) => { mime: string; data: Uint8Array };
   'sulla-files:history':         (input: { fileId: string }) => any[];
