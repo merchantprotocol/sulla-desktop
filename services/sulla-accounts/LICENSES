@@ -1,0 +1,4 @@
+Keycloak is distributed under the Apache License, Version 2.0.
+The complete upstream license text is included in the Keycloak distribution at
+/opt/keycloak/LICENSE.txt in the image. See THIRD_PARTY_NOTICES.md for the
+corresponding upstream source and version.
