@@ -825,13 +825,28 @@ function navigateTo(detail:FilesNavigationPayload) {
 
 watch(view, value => localStorage.setItem('sulla:files-view', value));
 let searchTimer:ReturnType<typeof setTimeout> | undefined;
-watch(query, (value) => { if (searchTimer) clearTimeout(searchTimer); if (!value.trim() || section.value === 'trash') { searchResults.value = null; return } searchTimer = setTimeout(async() => { try { searchResults.value = await props.dataSource.search(value.trim()) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } }, 220) });
+let searchGeneration = 0;
 let mounted = false;
+watch([query, section], ([value, requestedSection]) => {
+  const generation = ++searchGeneration;
+  if (searchTimer) clearTimeout(searchTimer);
+  searchResults.value = null;
+  if (!value.trim() || requestedSection === 'trash') return;
+  const isCurrent = () => mounted && generation === searchGeneration && query.value === value && section.value === requestedSection;
+  searchTimer = setTimeout(async() => {
+    try {
+      const results = await props.dataSource.search(value.trim());
+      if (isCurrent()) searchResults.value = results;
+    } catch (cause) {
+      if (isCurrent()) error.value = cause instanceof Error ? cause.message : String(cause);
+    }
+  }, 220);
+});
 function consumeNavigation() { if (!mounted || !props.navigation || !snapshot.value) return; navigateTo(props.navigation); emit('navigation-consumed') }
 watch(() => props.navigation, () => consumeNavigation());
 let stopUploadProgress:(() => void) | undefined;
-onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); consumeNavigation() }, 12_000) });
-onBeforeUnmount(() => { mounted = false; window.removeEventListener('keydown', onKeydown); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
+onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); consumeNavigation() }, 12_000) });
+onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) clearTimeout(searchTimer); window.removeEventListener('keydown', onKeydown); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
 </script>
 
 <style scoped>
