@@ -75,6 +75,8 @@ class SullaFilesWatcher {
         await this.requireAppUnlocked();
         const unlock = await this.rawLocalRequest('/v1/local/unlock', { method: 'POST', body });
         if (!unlock.ok) {
+          const failure = await unlock.json().catch(() => ({})) as { code?:unknown };
+          if (failure.code !== 'FILES_MASTER_KEY_REJECTED') throw new Error('Files secure startup failed');
           const recovery = await this.rawLocalRequest('/v1/local/recovery/device', { method: 'POST', body });
           if (!recovery.ok) throw new Error('Files keychain bootstrap and recovery failed');
         }

@@ -135,15 +135,22 @@ export class SullaFilesKeychain {
   private async open(): Promise<void> {
     let key: Buffer | undefined;
     try {
-      const storage = await this.storage();
-      if (!storage.isEncryptionAvailable() || storage.getSelectedStorageBackend?.() === 'basic_text') {
-        throw new Error('Secure OS key storage is unavailable');
+      try {
+        const storage = await this.storage();
+        if (!storage.isEncryptionAvailable() || storage.getSelectedStorageBackend?.() === 'basic_text') {
+          throw new Error('Secure OS key storage is unavailable');
+        }
+        key = await this.loadMaster(storage);
+      } catch {
+        throw new Error('Files could not unlock using the OS keychain');
       }
-      key = await this.loadMaster(storage);
-      await this.bootstrap(key);
-    } catch {
-      // Neither Electron nor HTTP errors may leak decrypted material to logs.
-      throw new Error('Files could not unlock using the OS keychain');
+      try {
+        await this.bootstrap(key);
+      } catch {
+        // Bootstrap responses are sanitized by the Files service. Keep them
+        // distinct from safeStorage failures without exposing decrypted material.
+        throw new Error('Files service could not finish secure startup');
+      }
     } finally {
       key?.fill(0);
     }

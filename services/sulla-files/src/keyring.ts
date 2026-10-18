@@ -9,6 +9,14 @@ const CHECK = Buffer.from('sulla-files-keychain-master-v1');
 export interface CollectionKeys { data: Uint8Array; dedup: Uint8Array }
 type Queryable = Pick<pg.Pool, 'query'>;
 
+export class FilesMasterKeyRejectedError extends Error {
+  readonly code = 'FILES_MASTER_KEY_REJECTED';
+
+  constructor(cause?:unknown) {
+    super('Files master key was rejected', { cause });
+  }
+}
+
 /** Plaintext exists only in this process. Persisted envelopes require the Desktop keychain key. */
 export class FilesKeyring {
   private master?:  Buffer;
@@ -39,8 +47,9 @@ export class FilesKeyring {
       await client.query('LOCK TABLE files_key_state IN EXCLUSIVE MODE');
       const state = (await client.query('SELECT verifier FROM files_key_state WHERE id=TRUE')).rows[0];
       if (state) {
-        const check = await decrypt(state.verifier, master, CONTEXT);
-        try { if (!Buffer.from(check).equals(CHECK)) throw new Error('Invalid Files master key'); } finally { check.fill(0) }
+        let check:Uint8Array;
+        try { check = await decrypt(state.verifier, master, CONTEXT) } catch (error) { throw new FilesMasterKeyRejectedError(error) }
+        try { if (!Buffer.from(check).equals(CHECK)) throw new FilesMasterKeyRejectedError() } finally { check.fill(0) }
         // Never overwrite damaged wrapped keys or silently derive replacements.
         const rows = (await client.query('SELECT collection_id,data_key,dedup_key FROM files_collection_keys')).rows;
         for (const row of rows) {
@@ -66,7 +75,11 @@ export class FilesKeyring {
       await client.query('COMMIT');
       if (epoch !== this.epoch) throw new Error('Files was locked during unlock');
       this.master = Buffer.from(master);
-    } catch (error) { await client.query('ROLLBACK'); throw new Error('Files key unlock failed; existing data was preserved', { cause: error }) } finally { client.release() }
+    } catch (error) {
+      await client.query('ROLLBACK');
+      if (error instanceof FilesMasterKeyRejectedError) throw error;
+      throw new Error('Files key unlock failed; existing data was preserved', { cause: error });
+    } finally { client.release() }
   }
 
   private async unwrap(id:string, data:Envelope, dedup:Envelope, master:Buffer):Promise<CollectionKeys> {

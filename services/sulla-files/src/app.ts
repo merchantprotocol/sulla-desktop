@@ -18,6 +18,7 @@ import { SharesService } from './shares.js';
 import { Store } from './store.js';
 import { insertStreamingUpload } from './streamingUpload.js';
 import { beginUploadIntent, completeUploadIntent } from './uploadCleanup.js';
+import { FilesMasterKeyRejectedError } from './keyring.js';
 
 import type { Config } from './config.js';
 import type { LocalFilesManager } from './localManager.js';
@@ -72,6 +73,7 @@ export function createApp(
   const app = express(); const store = new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   let lifecycle:Promise<unknown> = Promise.resolve();
   let ready = Boolean(config.keyring?.unlocked);
+  let unlockFailure:{ code:string; stage:string } | undefined;
   const serial = <T>(operation:()=>Promise<T>):Promise<T> => { const result = lifecycle.then(operation); lifecycle = result.catch(() => undefined); return result; };
   app.disable('x-powered-by');
   if (config.mode === 'server') app.use('/files', serverUi());
@@ -89,19 +91,31 @@ export function createApp(
   app.post('/v1/local/unlock', async(request, response) => {
     if (config.mode !== 'desktop') return response.sendStatus(404);
     let key:Buffer | undefined;
+    let stage:'preflight' | 'master-key' | 'initialization' = 'preflight';
     try {
       if (!config.keyring || typeof request.body?.masterKey !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(request.body.masterKey)) return response.status(400).json({ error: 'Invalid Files master key' });
       key = Buffer.from(request.body.masterKey, 'base64'); delete request.body.masterKey;
       await serial(async() => {
+        stage = 'preflight';
         if (config.filesRoot) {
           config.legacyPreflight = await runLegacyPreflight(db, config.filesRoot, { caseInsensitive: config.caseInsensitiveRoot });
           if (config.legacyPreflight.state === 'secure-import-required') throw new Error('Legacy Files secure import is required');
         }
+        stage = 'master-key';
         await config.keyring!.unlock(key!, config.capabilitySigningKey);
+        stage = 'initialization';
         try { await onUnlock?.(); ready = true } catch (error) { ready = false; try { await onLock?.() } finally { config.keyring!.close() } throw error }
       });
+      unlockFailure = undefined;
       return response.json({ ok: true });
-    } catch { return response.status(503).json({ error: 'Files unlock failed; existing data was preserved' }) }
+    } catch (error) {
+      if (error instanceof FilesMasterKeyRejectedError) {
+        unlockFailure = { code: error.code, stage: 'master-key' };
+        return response.status(409).json({ error: 'Files master key was rejected; existing data was preserved', code: error.code, stage: 'master-key' });
+      }
+      unlockFailure = { code: 'FILES_STARTUP_FAILED', stage };
+      return response.status(503).json({ error: 'Files startup failed; existing data was preserved', code: 'FILES_STARTUP_FAILED', stage });
+    }
     finally { key?.fill(0); if (request.body) delete request.body.masterKey }
   });
   app.post('/v1/local/lock', async(_request, response) => {
@@ -267,7 +281,7 @@ export function createApp(
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
-  app.get('/healthz', (_request, response) => response.json({ ok: true, mode: config.mode, locked: !ready, legacyImport: config.legacyPreflight }));
+  app.get('/healthz', (_request, response) => response.json({ ok: true, mode: config.mode, locked: !ready, legacyImport: config.legacyPreflight, unlockFailure }));
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
   app.get('/v1/local/recent', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.recent(Number(request.query.limit ?? 4), typeof request.query.path === 'string' ? request.query.path : undefined)) } catch (error) { next(error) } });
