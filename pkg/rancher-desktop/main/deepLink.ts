@@ -175,6 +175,17 @@ async function handleFilesAction(target:Electron.BrowserWindow, action:string, a
   const file = await watcher.findFile(relativePath);
   if (!file) { await Electron.dialog.showMessageBox(target, { type: 'info', message: 'Sulla is still indexing this file. Try again after sync finishes.' }); return }
   if (action === 'copy-link') {
+    // Any website or application can invoke the public URL scheme. Resolve the
+    // actual file first, then require an explicit user action before publishing.
+    const decision = await Electron.dialog.showMessageBox(target, {
+      type: 'question',
+      message: 'Create a share link for this file?',
+      detail: relativePath,
+      buttons: ['Cancel', 'Create and copy link'],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (decision.response !== 1) return;
     const [configuredMode, keepAvailable, expiryDays] = await Promise.all([
       SullaSettingsModel.get('sullaFilesCaptureVisitorMode', 'view'),
       SullaSettingsModel.get('sullaFilesOrdinaryKeepAvailable', false),

@@ -59,7 +59,7 @@ final class FinderSync: FIFinderSync {
 
     override func endObservingDirectory(at url: URL) {
         let directory = url.standardizedFileURL
-        visibleURLs = Set(visibleURLs.filter { !is($0, inside: directory) })
+        visibleURLs = Set(visibleURLs.filter { !isWithinDirectory($0, inside: directory) })
     }
 
     override func menu(for menuKind: FIMenuKind) -> NSMenu? {
@@ -169,10 +169,10 @@ final class FinderSync: FIFinderSync {
 
     private func isInsideWatchedRoot(_ url: URL) -> Bool {
         guard let watchedRoot else { return false }
-        return is(url, inside: watchedRoot)
+        return isWithinDirectory(url, inside: watchedRoot)
     }
 
-    private func is(_ candidate: URL, inside directory: URL) -> Bool {
+    private func isWithinDirectory(_ candidate: URL, inside directory: URL) -> Bool {
         let root = directory.standardizedFileURL.path
         let target = candidate.standardizedFileURL.path
         return target == root || target.hasPrefix(root + "/")
