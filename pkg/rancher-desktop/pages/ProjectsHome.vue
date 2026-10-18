@@ -2230,8 +2230,15 @@ async function openTaskDrawer(t: WorkTaskRecord, syncRoute = true): Promise<void
   taskComments.value = issueDetail.value?.comments ?? [];
   dependencyCandidate.value = '';
   if (syncRoute && route.query.issue !== t.id) {
-    issueRouteWasPushed = true;
-    await router.push({ query: { ...route.query, issue: t.id } });
+    if (issueRouteId.value) {
+      // Moving between a parent issue and one of its checklist items stays in
+      // the same drawer session. Replacing the query keeps Close/Escape tied
+      // to the board location that originally opened the drawer.
+      await router.replace({ query: { ...route.query, issue: t.id } });
+    } else {
+      issueRouteWasPushed = true;
+      await router.push({ query: { ...route.query, issue: t.id } });
+    }
   }
 }
 
@@ -2618,8 +2625,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
   color: var(--ptext);
   font: 13px/1.45 var(--psans);
 }
-:global(html.light) .projects-home, :global(body.light) .projects-home,
-:global(.theme-noir-light) .projects-home {
+:global(html.light .projects-home), :global(body.light .projects-home),
+:global(.theme-noir-light .projects-home) {
   --pdetail-surface: #fff;
   --pbg: #f4f7fb; --psurface: rgba(255, 255, 255, 0.82); --psurface2: #eaf0f6;
   --pborder: rgba(26, 35, 50, 0.14); --pborder-soft: rgba(26, 35, 50, 0.09);
