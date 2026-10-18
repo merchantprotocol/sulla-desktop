@@ -17,8 +17,8 @@ const ownerRunTwoToken = issueCapabilityToken({ sub: 'owner-1', agent_id: 'agent
 function fakeDb() {
   return {
     query(sql:string, params:any[] = []) {
-      if (sql === "SELECT id FROM collections WHERE kind='knowledge'") return { rows: [{ id: 'collection-a' }], rowCount: 1 };
-      if (sql === 'SELECT * FROM collections WHERE id=$1') return { rows: [{ id: 'collection-a', org_id: 'org-a', owner_user_id: 'owner-1', kind: 'knowledge' }], rowCount: 1 };
+      if (sql.startsWith("SELECT id FROM collections WHERE kind='knowledge'")) return { rows: [{ id: 'collection-a' }], rowCount: 1 };
+      if (sql.startsWith('SELECT * FROM collections WHERE id=$1')) return { rows: [{ id: 'collection-a', org_id: 'org-a', owner_user_id: 'owner-1', kind: 'knowledge' }], rowCount: 1 };
       if (sql.startsWith('SELECT role FROM collection_acl')) {
         const role = params[1] === 'agent-user-1' ? 'use-by-agents' : params[1] === 'viewer-1' || params[1] === 'agent-viewer-1' ? 'view' : undefined;
         return { rows: role ? [{ role }] : [], rowCount: role ? 1 : 0 };
@@ -34,8 +34,22 @@ function fakeDb() {
   } as any;
 }
 
-async function withServer(fn:(baseUrl:string) => Promise<void>, options:{ db?: any; search?: any } = {}) {
-  const server = createApp(options.db ?? fakeDb(), { keyring: { unlocked: true } as any, chunkRoot: '/tmp/sulla-files-sharing-test', dataRoot: '/tmp/sulla-files-sharing-test', modelDir: '/tmp/sulla-files-sharing-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, localToken: 'local-test-token', mode: 'server', deviceId: 'test', userId: 'owner-1', cloudUrl: 'https://cloud.invalid', caseInsensitiveRoot: false, paused: false }, undefined, undefined, options.search).listen(0);
+function fakeIdentityDb() {
+  return {
+    async query(sql:string, params:any[] = []) {
+      if (sql.includes('FROM users WHERE id=$1')) return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      if (sql.includes('FROM org_members om JOIN users')) {
+        const confirmed = params[0] !== 'outsider-1';
+        return { rows: confirmed ? [{ '?column?': 1 }] : [], rowCount: confirmed ? 1 : 0 };
+      }
+      if (sql.includes('FROM group_members gm JOIN org_groups')) return { rows: [], rowCount: 0 };
+      return { rows: [], rowCount: 0 };
+    },
+  } as any;
+}
+
+async function withServer(fn:(baseUrl:string) => Promise<void>, options:{ db?: any; identityDb?: any; search?: any } = {}) {
+  const server = createApp(options.db ?? fakeDb(), { keyring: { unlocked: true } as any, chunkRoot: '/tmp/sulla-files-sharing-test', dataRoot: '/tmp/sulla-files-sharing-test', modelDir: '/tmp/sulla-files-sharing-test', databaseUrl: '', port: 0, capabilitySigningKey: signingKey, localToken: 'local-test-token', mode: 'server', deviceId: 'test', userId: 'owner-1', cloudUrl: 'https://cloud.invalid', caseInsensitiveRoot: false, paused: false }, undefined, options.identityDb ?? fakeIdentityDb(), options.search).listen(0);
   await new Promise<void>(resolve => server.once('listening', resolve));
   try { await fn(`http://127.0.0.1:${ (server.address() as any).port }`) } finally { server.close() }
 }
@@ -62,9 +76,9 @@ test('search applies the same human-view and agent-use permission boundary as di
   const search = { search: (_input:any, scopes:any[]) => Promise.resolve(scopes) };
   await withServer(async baseUrl => {
     const request = (token:string) => fetch(`${ baseUrl }/v1/search`, { method: 'POST', headers: { authorization: `Bearer ${ token }`, 'content-type': 'application/json' }, body: JSON.stringify({ query: 'plan' }) });
-    assert.deepEqual(await (await request(viewerToken)).json(), [{ collectionId: 'collection-a', paths: [] }]);
+    assert.deepEqual(await (await request(viewerToken)).json(), [{ collectionId: 'collection-a', paths: [], fileIds: [] }]);
     assert.deepEqual(await (await request(agentViewerToken)).json(), []);
-    assert.deepEqual(await (await request(agentUserToken)).json(), [{ collectionId: 'collection-a', paths: [] }]);
+    assert.deepEqual(await (await request(agentUserToken)).json(), [{ collectionId: 'collection-a', paths: [], fileIds: [] }]);
   }, { search });
 });
 
@@ -72,7 +86,7 @@ test('scratch reads, history, list, and keep are scoped to the current agent run
   const collection = { id: 'scratch-a', owner_user_id: 'owner-1', kind: 'scratch', agent_run_id: 'run-1', thread_id: 'thread-1', compatibility_state: 'native' };
   const file = { id: 'scratch-file', collection_id: collection.id, path: 'result.txt', current_version_id: 'version-1', created_by_type: 'agent-run', created_by_id: 'run-1' };
   const query = (sql:string) => {
-    if (sql === 'SELECT * FROM collections WHERE id=$1' || sql.includes("SELECT * FROM collections WHERE owner_user_id=$1 AND agent_run_id=$2 AND kind='scratch'")) return { rows: [collection], rowCount: 1 };
+    if (sql.startsWith('SELECT * FROM collections WHERE id=$1') || sql.includes("SELECT * FROM collections WHERE owner_user_id=$1 AND agent_run_id=$2 AND kind='scratch'")) return { rows: [collection], rowCount: 1 };
     if (sql === 'SELECT * FROM files WHERE id=$1') return { rows: [file], rowCount: 1 };
     if (sql === 'SELECT 1 FROM files_protected_files WHERE file_id=$1') return { rows: [], rowCount: 0 };
     if (sql === 'SELECT * FROM file_versions WHERE id=$1') return { rows: [{ id: 'version-1', file_id: file.id, deleted: false }], rowCount: 1 };
