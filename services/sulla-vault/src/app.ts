@@ -13,6 +13,7 @@ import {
   makeLoginVerifier,
   verifyLoginHash,
 } from './auth.js';
+import { AccountsIdentityError, resolveAccountsContext } from './accountsIdentity.js';
 import { LocalVaultAuthority, LocalVaultError } from './localAuthority.js';
 import { VaultFilesKeyBundleAuthority } from './filesKeyBundleAuthority.js';
 import { createFilesKeyBundleRouter } from './filesKeyBundleRoutes.js';
@@ -111,6 +112,33 @@ function userId(request: AuthenticatedRequest): string {
   return request.auth.userId;
 }
 
+function requireVaultAuthentication(request: AuthenticatedRequest): string {
+  const actorId = userId(request);
+  if (request.auth?.source !== 'vault') {
+    throw new AccessDenied('A Vault session is required for this operation');
+  }
+  return actorId;
+}
+
+function requireAccountsOrganization(request: AuthenticatedRequest, orgId: string | null | undefined): void {
+  if (request.auth?.source !== 'accounts') return;
+  if (!orgId || request.auth.organizationId !== orgId) {
+    throw new AccessDenied('Accounts organization context does not own this resource');
+  }
+}
+
+async function collectionOrganization(db: Queryable, collectionId: string): Promise<string> {
+  const collection = await db.query<{ org_id: string }>('SELECT org_id FROM collections WHERE id = $1', [collectionId]);
+  if (!collection.rows[0]?.org_id) throw new HttpError(404, 'Collection not found');
+  return collection.rows[0].org_id;
+}
+
+async function groupOrganization(db: Queryable, groupId: string): Promise<string> {
+  const group = await db.query<{ org_id: string }>('SELECT org_id FROM org_groups WHERE id = $1', [groupId]);
+  if (!group.rows[0]?.org_id) throw new HttpError(404, 'Group not found');
+  return group.rows[0].org_id;
+}
+
 interface BrokerClaims {
   sub:                    string;
   org_id?:                string;
@@ -143,9 +171,10 @@ function safeTokenEqual(actual: string | undefined, expected: string | undefined
 
 async function authorizeItem(db: Database, actorId: string, itemId: string, right: 'view' | 'edit'): Promise<Record<string, unknown>> {
   const result = await db.query(
-    `SELECT id, owner_user_id, collection_id, folder_id, item_type, ciphertext, encrypted_item_key,
-            agent_wrapped_item_key, agent_policy, revision, created_at, updated_at
-       FROM items WHERE id = $1 AND deleted_at IS NULL`,
+    `SELECT i.id, i.owner_user_id, i.collection_id, i.folder_id, i.item_type, i.ciphertext, i.encrypted_item_key,
+            i.agent_wrapped_item_key, i.agent_policy, i.revision, i.created_at, i.updated_at, c.org_id
+       FROM items i LEFT JOIN collections c ON c.id = i.collection_id
+      WHERE i.id = $1 AND i.deleted_at IS NULL`,
     [itemId],
   );
   const item = result.rows[0];
@@ -192,7 +221,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     if (allowed) {
       response.setHeader('Access-Control-Allow-Origin', origin as string);
       response.setHeader('Vary', 'Origin');
-      response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+      response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Sulla-Accounts-Authorization, X-Sulla-Accounts-Authority-Id, X-Sulla-Authority-Id, X-Sulla-Organization-Id');
       response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
       response.setHeader('Access-Control-Allow-Credentials', 'true');
     }
@@ -790,10 +819,15 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     });
   });
 
-  app.use('/v1', authenticate(config));
+  app.use('/v1', authenticate(config, db));
 
   app.get('/v1/items', async(request: AuthenticatedRequest, response) => {
     const actorId = userId(request);
+    const collectionId = typeof request.query.collectionId === 'string' ? request.query.collectionId : null;
+    if (request.auth?.source === 'accounts') {
+      if (!collectionId) throw new AccessDenied('Accounts requests must select an organization collection');
+      requireAccountsOrganization(request, await collectionOrganization(db, collectionId));
+    }
     const result = await db.query(
       `SELECT DISTINCT i.id, i.owner_user_id, i.collection_id, i.folder_id, i.item_type, i.ciphertext,
               i.encrypted_item_key, i.agent_wrapped_item_key, i.revision, i.created_at, i.updated_at
@@ -805,7 +839,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
           AND (i.owner_user_id = $1 OR om.role IN ('owner', 'admin') OR (om.role = 'member' AND cm.can_view = true))
           AND ($2::uuid IS NULL OR i.collection_id = $2)
         ORDER BY i.updated_at DESC`,
-      [actorId, typeof request.query.collectionId === 'string' ? request.query.collectionId : null],
+      [actorId, collectionId],
     );
     response.json({ items: result.rows });
   });
@@ -814,7 +848,11 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     const actorId = userId(request);
     const itemId = requiredString(request.body.id, 'id');
     const collectionId = typeof request.body.collectionId === 'string' ? request.body.collectionId : null;
+    if (request.auth?.source === 'accounts' && !collectionId) {
+      throw new AccessDenied('Accounts requests cannot create personal Vault items');
+    }
     if (collectionId) {
+      requireAccountsOrganization(request, await collectionOrganization(db, collectionId));
       await requireCollectionRight(db, actorId, collectionId, 'edit');
     }
     const folderId = typeof request.body.folderId === 'string' ? request.body.folderId : null;
@@ -833,12 +871,16 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   });
 
   app.get('/v1/items/:itemId', async(request: AuthenticatedRequest, response) => {
-    response.json(await authorizeItem(db, userId(request), requiredString(request.params.itemId, 'itemId'), 'view'));
+    const item = await authorizeItem(db, userId(request), requiredString(request.params.itemId, 'itemId'), 'view');
+    requireAccountsOrganization(request, typeof item.org_id === 'string' ? item.org_id : null);
+    const { org_id: _orgId, ...publicItem } = item;
+    response.json(publicItem);
   });
 
   app.patch('/v1/items/:itemId', async(request: AuthenticatedRequest, response) => {
     const actorId = userId(request);
     const item = await authorizeItem(db, actorId, requiredString(request.params.itemId, 'itemId'), 'edit');
+    requireAccountsOrganization(request, typeof item.org_id === 'string' ? item.org_id : null);
     const revision = Number(request.body.revision);
     if (!Number.isSafeInteger(revision) || revision < 1) {
       throw new HttpError(400, 'revision is required');
@@ -871,7 +913,8 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   });
 
   app.delete('/v1/items/:itemId', async(request: AuthenticatedRequest, response) => {
-    await authorizeItem(db, userId(request), requiredString(request.params.itemId, 'itemId'), 'edit');
+    const item = await authorizeItem(db, userId(request), requiredString(request.params.itemId, 'itemId'), 'edit');
+    requireAccountsOrganization(request, typeof item.org_id === 'string' ? item.org_id : null);
     const revision = Number(request.query.revision);
     if (!Number.isSafeInteger(revision) || revision < 1) {
       throw new HttpError(400, 'revision query parameter is required');
@@ -888,11 +931,13 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   });
 
   app.get('/v1/folders', async(request: AuthenticatedRequest, response) => {
+    requireVaultAuthentication(request);
     const result = await db.query('SELECT * FROM folders WHERE owner_user_id = $1 ORDER BY updated_at DESC', [userId(request)]);
     response.json({ folders: result.rows });
   });
 
   app.post('/v1/folders', async(request: AuthenticatedRequest, response) => {
+    requireVaultAuthentication(request);
     const result = await db.query(
       'INSERT INTO folders(owner_user_id, encrypted_name) VALUES ($1, $2) RETURNING *',
       [userId(request), requiredObject(request.body.encryptedName, 'encryptedName')],
@@ -901,6 +946,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   });
 
   app.patch('/v1/folders/:folderId', async(request: AuthenticatedRequest, response) => {
+    requireVaultAuthentication(request);
     const result = await db.query(
       `UPDATE folders SET encrypted_name = $1, revision = revision + 1, updated_at = now()
         WHERE id = $2 AND owner_user_id = $3 AND revision = $4 RETURNING *`,
@@ -911,13 +957,14 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   });
 
   app.delete('/v1/folders/:folderId', async(request: AuthenticatedRequest, response) => {
+    requireVaultAuthentication(request);
     const result = await db.query('DELETE FROM folders WHERE id = $1 AND owner_user_id = $2 RETURNING id', [request.params.folderId, userId(request)]);
     if (!result.rowCount) throw new HttpError(404, 'Folder not found');
     response.json(result.rows[0]);
   });
 
   app.post('/v1/orgs', async(request: AuthenticatedRequest, response) => {
-    const actorId = userId(request);
+    const actorId = requireVaultAuthentication(request);
     const client = await db.connect();
     try {
       await client.query('BEGIN');
@@ -944,13 +991,83 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       `SELECT o.id, o.encrypted_name, om.role, om.wrapped_org_key, o.auto_confirm_new_members,
               (o.join_password_verifier IS NOT NULL) AS join_enabled, o.created_at, o.updated_at
          FROM orgs o JOIN org_members om ON om.org_id = o.id
-        WHERE om.user_id = $1 AND om.status = 'confirmed' ORDER BY o.updated_at DESC`, [userId(request)],
+        WHERE om.user_id = $1 AND om.status = 'confirmed'
+          AND ($2::uuid IS NULL OR o.id = $2)
+        ORDER BY o.updated_at DESC`, [userId(request), request.auth?.source === 'accounts' ? request.auth.organizationId : null],
     );
     response.json({ orgs: result.rows });
   });
 
+  app.get('/v1/orgs/:orgId/accounts-identities', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredUuid(request.params.orgId, 'orgId');
+    const actorId = requireVaultAuthentication(request);
+    if (!await getOrgRole(db, actorId, orgId)) {
+      throw new AccessDenied('Only a confirmed Vault organization member can manage their Accounts identities');
+    }
+    const result = await db.query(
+      'SELECT issuer, subject, created_at FROM accounts_identities WHERE user_id = $1 ORDER BY created_at',
+      [actorId],
+    );
+    response.json({ identities: result.rows });
+  });
+
+  app.post('/v1/orgs/:orgId/accounts-identities', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredUuid(request.params.orgId, 'orgId');
+    const actorId = requireVaultAuthentication(request);
+    if (!await getOrgRole(db, actorId, orgId)) {
+      throw new AccessDenied('Only a confirmed Vault organization member can link an Accounts identity');
+    }
+    const authorization = request.header('x-sulla-accounts-authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1];
+    const authorityId = request.header('x-sulla-accounts-authority-id');
+    if (!authorization || !authorityId) {
+      throw new HttpError(400, 'Accounts authorization and authority id are required');
+    }
+    const context = await resolveAccountsContext(config, {
+      bearerToken: authorization,
+      authorityId: requiredUuid(authorityId, 'X-Sulla-Accounts-Authority-Id'),
+      organizationId: orgId,
+    });
+    const linked = await db.query(
+      `INSERT INTO accounts_identities(issuer, subject, user_id) VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING
+       RETURNING issuer, subject, created_at`,
+      [context.issuer, context.subject, actorId],
+    );
+    if (!linked.rowCount) {
+      const existing = await db.query(
+        `SELECT issuer, subject, created_at FROM accounts_identities
+          WHERE issuer = $1 AND subject = $2 AND user_id = $3`,
+        [context.issuer, context.subject, actorId],
+      );
+      if (!existing.rowCount) {
+        throw new HttpError(409, 'Accounts identity conflicts with an existing Vault identity link');
+      }
+      await auditEvent(db, actorId, orgId, 'accounts_identity_linked');
+      response.json(existing.rows[0]);
+      return;
+    }
+    await auditEvent(db, actorId, orgId, 'accounts_identity_linked');
+    response.status(201).json(linked.rows[0]);
+  });
+
+  app.delete('/v1/orgs/:orgId/accounts-identities', async(request: AuthenticatedRequest, response) => {
+    const orgId = requiredUuid(request.params.orgId, 'orgId');
+    const actorId = requireVaultAuthentication(request);
+    if (!await getOrgRole(db, actorId, orgId)) {
+      throw new AccessDenied('Only a confirmed Vault organization member can unlink an Accounts identity');
+    }
+    const result = await db.query(
+      'DELETE FROM accounts_identities WHERE user_id = $1 AND issuer = $2 AND subject = $3 RETURNING issuer, subject',
+      [actorId, requiredString(request.body.issuer, 'issuer'), requiredString(request.body.subject, 'subject')],
+    );
+    if (!result.rowCount) throw new HttpError(404, 'Accounts identity link not found');
+    await auditEvent(db, actorId, orgId, 'accounts_identity_unlinked');
+    response.status(204).end();
+  });
+
   app.patch('/v1/orgs/:orgId', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     await requireOrgManager(db, userId(request), orgId);
     const result = await db.query(
       'UPDATE orgs SET encrypted_name = $1, updated_at = now() WHERE id = $2 RETURNING id, encrypted_name, updated_at',
@@ -961,6 +1078,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.get('/v1/orgs/:orgId/members', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     if (!await getOrgRole(db, userId(request), orgId)) throw new AccessDenied('Organization access denied');
     const result = await db.query(
       `SELECT om.user_id, om.role, om.status, om.wrapped_org_key, u.email, u.public_key
@@ -972,6 +1090,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.get('/v1/orgs/:orgId/account', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     await requireOrgManager(db, userId(request), orgId);
     const email = requiredString(request.query.email, 'email').trim().toLowerCase();
     const result = await db.query<{ id: string; email: string; public_key: string }>(
@@ -983,6 +1102,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.post('/v1/orgs/:orgId/members', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     const actorRole = await requireOrgManager(db, userId(request), orgId);
     const memberId = requiredString(request.body.userId, 'userId');
     const role = requiredString(request.body.role, 'role');
@@ -1015,6 +1135,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.post('/v1/orgs/:orgId/members/:memberId/confirm', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     const actorId = userId(request);
     const client = await db.connect();
     try {
@@ -1040,6 +1161,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.patch('/v1/orgs/:orgId/settings', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     await requireOrgManager(db, userId(request), orgId);
     const enabled = request.body.autoConfirmNewMembers;
     if (typeof enabled !== 'boolean') throw new HttpError(400, 'autoConfirmNewMembers must be boolean');
@@ -1052,6 +1174,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.delete('/v1/orgs/:orgId/members/:memberId', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     const actorRole = await requireOrgManager(db, userId(request), orgId);
     const owners = await db.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM org_members WHERE org_id = $1 AND role = 'owner'`,
@@ -1071,7 +1194,9 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   });
 
   app.post('/v1/orgs/:orgId/collections', async(request: AuthenticatedRequest, response) => {
-    await requireOrgManager(db, userId(request), requiredString(request.params.orgId, 'orgId'));
+    const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
+    await requireOrgManager(db, userId(request), orgId);
     const result = await db.query(
       `INSERT INTO collections(org_id, encrypted_name, wrapped_collection_key) VALUES ($1, $2, $3) RETURNING *`,
       [request.params.orgId, requiredObject(request.body.encryptedName, 'encryptedName'),
@@ -1082,6 +1207,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.get('/v1/orgs/:orgId/collections', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     const actorId = userId(request);
     if (!await getOrgRole(db, actorId, orgId)) throw new AccessDenied('Organization access denied');
     const result = await db.query(
@@ -1099,6 +1225,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.patch('/v1/collections/:collectionId', async(request: AuthenticatedRequest, response) => {
     const collectionId = requiredString(request.params.collectionId, 'collectionId');
+    requireAccountsOrganization(request, await collectionOrganization(db, collectionId));
     await requireCollectionRight(db, userId(request), collectionId, 'manage');
     const result = await db.query(
       `UPDATE collections SET encrypted_name = $1, wrapped_collection_key = COALESCE($2, wrapped_collection_key),
@@ -1110,7 +1237,9 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   });
 
   app.get('/v1/collections/:collectionId/items', async(request: AuthenticatedRequest, response) => {
-    await requireCollectionRight(db, userId(request), requiredString(request.params.collectionId, 'collectionId'), 'view');
+    const collectionId = requiredString(request.params.collectionId, 'collectionId');
+    requireAccountsOrganization(request, await collectionOrganization(db, collectionId));
+    await requireCollectionRight(db, userId(request), collectionId, 'view');
     const result = await db.query(
       'SELECT * FROM items WHERE collection_id = $1 AND deleted_at IS NULL ORDER BY updated_at DESC',
       [request.params.collectionId],
@@ -1120,6 +1249,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.get('/v1/collections/:collectionId/access', async(request: AuthenticatedRequest, response) => {
     const collectionId = requiredString(request.params.collectionId, 'collectionId');
+    requireAccountsOrganization(request, await collectionOrganization(db, collectionId));
     await requireCollectionRight(db, userId(request), collectionId, 'manage');
     const members = await db.query(`SELECT om.user_id,om.role,u.email,
       COALESCE(cm.can_view,false) AS can_view,COALESCE(cm.can_use_by_agents,false) AS can_use_by_agents,
@@ -1139,6 +1269,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.put('/v1/collections/:collectionId/members/:memberId', async(request: AuthenticatedRequest, response) => {
     const collectionId = requiredString(request.params.collectionId, 'collectionId');
+    requireAccountsOrganization(request, await collectionOrganization(db, collectionId));
     await requireCollectionRight(db, userId(request), collectionId, 'manage');
     const memberOrg = await db.query(`SELECT 1 FROM collections c JOIN org_members om ON om.org_id = c.org_id AND om.user_id = $2 AND om.status = 'confirmed' WHERE c.id = $1`, [collectionId, request.params.memberId]);
     if (!memberOrg.rowCount) throw new HttpError(400, 'Member must belong to the collection organization');
@@ -1163,6 +1294,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.delete('/v1/collections/:collectionId/members/:memberId', async(request: AuthenticatedRequest, response) => {
     const collectionId = requiredString(request.params.collectionId, 'collectionId');
+    requireAccountsOrganization(request, await collectionOrganization(db, collectionId));
     await requireCollectionRight(db, userId(request), collectionId, 'manage');
     await db.query('DELETE FROM collection_members WHERE collection_id = $1 AND user_id = $2',
       [collectionId, request.params.memberId]);
@@ -1171,6 +1303,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.post('/v1/orgs/:orgId/join-password', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     await requireOrgManager(db, userId(request), orgId);
     const { salt, verifier } = makeLoginVerifier(requiredString(request.body.joinHash, 'joinHash'));
     await db.query('UPDATE orgs SET join_password_salt=$1,join_password_verifier=$2,updated_at=now() WHERE id=$3',
@@ -1181,6 +1314,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.post('/v1/orgs/:orgId/join-password/rotate', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     await requireOrgManager(db, userId(request), orgId);
     const { salt, verifier } = makeLoginVerifier(requiredString(request.body.joinHash, 'joinHash'));
     await db.query('UPDATE orgs SET join_password_salt=$1,join_password_verifier=$2,updated_at=now() WHERE id=$3',
@@ -1191,6 +1325,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.get('/v1/orgs/:orgId/groups', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     if (!await getOrgRole(db, userId(request), orgId)) throw new AccessDenied('Organization access denied');
     const result = await db.query(`SELECT g.*, count(gm.user_id)::int AS member_count FROM org_groups g LEFT JOIN group_members gm ON gm.group_id = g.id WHERE g.org_id = $1 GROUP BY g.id ORDER BY g.created_at`, [orgId]);
     response.json({ groups: result.rows });
@@ -1198,6 +1333,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.post('/v1/orgs/:orgId/groups', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     await requireOrgManager(db, userId(request), orgId);
     const result = await db.query('INSERT INTO org_groups(org_id, encrypted_name) VALUES ($1, $2) RETURNING *', [orgId, requiredObject(request.body.encryptedName, 'encryptedName')]);
     response.status(201).json(result.rows[0]);
@@ -1208,6 +1344,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   // receives a plaintext user key or master password.
   app.post('/v1/orgs/:orgId/recovery/opt-in', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     const actorId = userId(request);
     if (!await getOrgRole(db, actorId, orgId)) throw new AccessDenied('Organization access denied');
     const wrappedUserKey = requiredObject(request.body.wrappedUserKey, 'wrappedUserKey');
@@ -1219,6 +1356,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.delete('/v1/orgs/:orgId/recovery/opt-in', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     const actorId = userId(request);
     if (!await getOrgRole(db, actorId, orgId)) throw new AccessDenied('Organization access denied');
     await db.query('DELETE FROM org_recovery_keys WHERE org_id = $1 AND user_id = $2', [orgId, actorId]);
@@ -1228,6 +1366,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.get('/v1/orgs/:orgId/recovery', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     const actorId = userId(request);
     const role = await getOrgRole(db, actorId, orgId);
     if (!role) throw new AccessDenied('Organization access denied');
@@ -1239,6 +1378,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.put('/v1/orgs/:orgId/recovery/public-key', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     await requireOrgManager(db, userId(request), orgId);
     const publicKey = requiredString(request.body.publicKey, 'publicKey');
     const result = await db.query('UPDATE orgs SET recovery_public_key = $1, recovery_enabled = true, updated_at = now() WHERE id = $2 RETURNING recovery_public_key', [publicKey, orgId]);
@@ -1247,7 +1387,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   });
 
   app.patch('/v1/account/credentials', async(request: AuthenticatedRequest, response) => {
-    const actorId = userId(request);
+    const actorId = requireVaultAuthentication(request);
     const loginHash = requiredString(request.body.loginHash, 'loginHash');
     const { salt, verifier } = makeLoginVerifier(loginHash);
     await db.query(`UPDATE users SET login_hash_salt=$1, login_hash_verifier=$2, public_key=$3,
@@ -1259,34 +1399,38 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   });
 
   app.put('/v1/groups/:groupId/members/:memberId', async(request: AuthenticatedRequest, response) => {
-    const group = await db.query<{ org_id: string }>('SELECT org_id FROM org_groups WHERE id = $1', [request.params.groupId]);
-    if (!group.rowCount) throw new HttpError(404, 'Group not found');
-    await requireOrgManager(db, userId(request), group.rows[0].org_id);
-    const member = await db.query("SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2 AND status = 'confirmed'", [group.rows[0].org_id, request.params.memberId]);
+    const groupId = requiredString(request.params.groupId, 'groupId');
+    const orgId = await groupOrganization(db, groupId);
+    requireAccountsOrganization(request, orgId);
+    await requireOrgManager(db, userId(request), orgId);
+    const member = await db.query("SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2 AND status = 'confirmed'", [orgId, request.params.memberId]);
     if (!member.rowCount) throw new HttpError(400, 'Member must belong to the group organization');
-    await db.query('INSERT INTO group_members(group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [request.params.groupId, request.params.memberId]);
+    await db.query('INSERT INTO group_members(group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [groupId, request.params.memberId]);
     response.status(204).end();
   });
 
   app.get('/v1/groups/:groupId/members', async(request: AuthenticatedRequest, response) => {
-    const group = await db.query<{ org_id: string }>('SELECT org_id FROM org_groups WHERE id = $1', [request.params.groupId]);
-    if (!group.rowCount) throw new HttpError(404, 'Group not found');
-    if (!await getOrgRole(db, userId(request), group.rows[0].org_id)) throw new AccessDenied('Organization access denied');
+    const groupId = requiredString(request.params.groupId, 'groupId');
+    const orgId = await groupOrganization(db, groupId);
+    requireAccountsOrganization(request, orgId);
+    if (!await getOrgRole(db, userId(request), orgId)) throw new AccessDenied('Organization access denied');
     const result = await db.query(`SELECT u.id,u.email FROM group_members gm JOIN users u ON u.id=gm.user_id
-      WHERE gm.group_id=$1 ORDER BY u.email`, [request.params.groupId]);
+      WHERE gm.group_id=$1 ORDER BY u.email`, [groupId]);
     response.json({ members: result.rows });
   });
 
   app.delete('/v1/groups/:groupId/members/:memberId', async(request: AuthenticatedRequest, response) => {
-    const group = await db.query<{ org_id: string }>('SELECT org_id FROM org_groups WHERE id = $1', [request.params.groupId]);
-    if (!group.rowCount) throw new HttpError(404, 'Group not found');
-    await requireOrgManager(db, userId(request), group.rows[0].org_id);
-    await db.query('DELETE FROM group_members WHERE group_id=$1 AND user_id=$2', [request.params.groupId, request.params.memberId]);
+    const groupId = requiredString(request.params.groupId, 'groupId');
+    const orgId = await groupOrganization(db, groupId);
+    requireAccountsOrganization(request, orgId);
+    await requireOrgManager(db, userId(request), orgId);
+    await db.query('DELETE FROM group_members WHERE group_id=$1 AND user_id=$2', [groupId, request.params.memberId]);
     response.status(204).end();
   });
 
   app.put('/v1/collections/:collectionId/groups/:groupId', async(request: AuthenticatedRequest, response) => {
     const collectionId = requiredString(request.params.collectionId, 'collectionId');
+    requireAccountsOrganization(request, await collectionOrganization(db, collectionId));
     await requireCollectionRight(db, userId(request), collectionId, 'manage');
     const sameOrg = await db.query('SELECT 1 FROM collections c JOIN org_groups g ON g.org_id = c.org_id WHERE c.id = $1 AND g.id = $2', [collectionId, request.params.groupId]);
     if (!sameOrg.rowCount) throw new HttpError(400, 'Group must belong to the collection organization');
@@ -1298,6 +1442,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.delete('/v1/collections/:collectionId/groups/:groupId', async(request: AuthenticatedRequest, response) => {
     const collectionId = requiredString(request.params.collectionId, 'collectionId');
+    requireAccountsOrganization(request, await collectionOrganization(db, collectionId));
     await requireCollectionRight(db, userId(request), collectionId, 'manage');
     await db.query('DELETE FROM collection_group_members WHERE collection_id=$1 AND group_id=$2', [collectionId, request.params.groupId]);
     response.status(204).end();
@@ -1305,6 +1450,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.get('/v1/orgs/:orgId/audit', async(request: AuthenticatedRequest, response) => {
     const orgId = requiredString(request.params.orgId, 'orgId');
+    requireAccountsOrganization(request, orgId);
     if (!await getOrgRole(db, userId(request), orgId)) throw new AccessDenied('Organization access denied');
     const limit = Math.min(Math.max(Number(request.query.limit) || 50, 1), 200); const offset = Math.max(Number(request.query.offset) || 0, 0);
     const conditions = ['a.org_id = $1']; const params: unknown[] = [orgId];
@@ -1323,6 +1469,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.get('/v1/sync', async(request: AuthenticatedRequest, response) => {
     const actorId = userId(request);
+    const accountsOrgId = request.auth?.source === 'accounts' ? request.auth.organizationId : null;
     const cursor = Number.isSafeInteger(Number(request.query.cursor)) ? Number(request.query.cursor) : 0;
     const result = await db.query(`
       SELECT i.id,i.owner_user_id,i.collection_id,i.folder_id,i.item_type,i.ciphertext,i.encrypted_item_key,
@@ -1331,6 +1478,9 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
         FROM items i
         LEFT JOIN user_item_changes uic ON uic.item_id = i.id AND uic.user_id = $1
        WHERE GREATEST(i.change_seq, COALESCE(uic.change_seq, 0)) > $2
+         AND ($3::uuid IS NULL OR EXISTS (
+           SELECT 1 FROM collections scoped_collection
+            WHERE scoped_collection.id = i.collection_id AND scoped_collection.org_id = $3))
          AND (i.owner_user_id = $1 OR EXISTS (
            SELECT 1 FROM collections c
            JOIN org_members om ON om.org_id = c.org_id AND om.user_id = $1 AND om.status = 'confirmed'
@@ -1343,7 +1493,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
              WHERE gm.user_id = $1 AND cgm.collection_id = c.id AND cgm.can_view = true)))
          )
        ORDER BY GREATEST(i.change_seq, COALESCE(uic.change_seq, 0)) ASC
-       LIMIT 501`, [actorId, cursor]);
+       LIMIT 501`, [actorId, cursor, accountsOrgId]);
     const hasMore = result.rows.length > 500;
     const items = hasMore ? result.rows.slice(0, 500) : result.rows;
     response.json({ cursor: items.length ? items[items.length - 1].change_seq : cursor, hasMore, items });
@@ -1401,6 +1551,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       );
       if (!membership.rowCount) throw new AccessDenied('Organization access denied');
     }
+    requireAccountsOrganization(request, orgId);
     if (request.body.deviceId) {
       const device = await db.query('SELECT 1 FROM devices WHERE id = $1 AND user_id = $2', [request.body.deviceId, actorId]);
       if (!device.rowCount) throw new AccessDenied('Device access denied');
@@ -1429,6 +1580,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     }
     if (error instanceof AccessDenied) {
       response.status(403).json({ error: 'forbidden' });
+      return;
+    }
+    if (error instanceof AccountsIdentityError) {
+      response.status(error.status).json({ error: error.status === 401 ? 'invalid_accounts_token' : 'accounts_access_denied' });
       return;
     }
     if (error instanceof HttpError) {
