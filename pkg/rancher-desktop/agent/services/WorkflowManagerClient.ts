@@ -1,12 +1,28 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import Logging from '@pkg/utils/logging';
+import paths from '@pkg/utils/paths';
 
 const console = Logging.background;
 const DEFAULT_URL = 'http://127.0.0.1:30122';
 
 export class WorkflowManagerClient {
   private lastHealth: { healthy: boolean; checkedAt: number } | null = null;
+  private localToken: string | null = null;
 
   constructor(private readonly baseUrl = process.env.SULLA_WORKFLOW_MANAGER_URL ?? DEFAULT_URL) {}
+
+  private async authorizationHeaders(): Promise<Record<string, string>> {
+    if (!this.localToken) {
+      const raw = JSON.parse(await fs.readFile(path.join(paths.appHome, 'chat-api-token.json'), 'utf8')) as { token?: unknown };
+      if (typeof raw.token !== 'string' || Buffer.byteLength(raw.token) < 32) {
+        throw new Error('Workflow manager local credential is unavailable');
+      }
+      this.localToken = raw.token;
+    }
+    return { Authorization: `Bearer ${ this.localToken }` };
+  }
 
   async isHealthy(force = false): Promise<boolean> {
     if (!force && this.lastHealth && Date.now() - this.lastHealth.checkedAt < 2_000) return this.lastHealth.healthy;
@@ -20,9 +36,10 @@ export class WorkflowManagerClient {
   }
 
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const auth = await this.authorizationHeaders();
     const response = await fetch(`${ this.baseUrl }${ path }`, {
       method,
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      headers: body === undefined ? auth : { ...auth, 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });
