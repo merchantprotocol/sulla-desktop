@@ -831,6 +831,14 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const ownerId = typeof hint?.ownerId === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(hint.ownerId) ? hint.ownerId : undefined;
     if (!ownerId) throw new Error('Invalid vault view owner');
     const reservation = vaultViewManager.reserve(ownerId);
+    try {
+      await getServiceLifecycleManager().waitUntilStarted('vault');
+    } catch (error) {
+      if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
+      vaultViewManager.hide(ownerId);
+      throw error;
+    }
+    if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
     const popupTabId = hint?.surface === 'popup' && typeof hint.tabId === 'string' ? hint.tabId : undefined;

@@ -2,7 +2,7 @@
   <div class="agent-router-root">
     <!-- Master password unlock — renders ABOVE everything including startup overlay and native views -->
     <VaultUnlockScreen
-      v-if="!loggedIn && vaultSetUp"
+      v-if="vaultUnlockVisible"
     />
 
     <div class="agent-router-body">
@@ -71,7 +71,7 @@
     </div>
 
     <!-- Startup progress overlay -->
-    <StartupOverlay />
+    <StartupOverlay :force-visible="!vaultStatusResolved" />
 
     <!-- Status Bar Footer -->
     <footer class="agent-footer">
@@ -152,11 +152,21 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 const route = useRoute();
 const router = useRouter();
 const { tabs: browserTabs, createTab, ensureOneTab, restoreClosedTab } = useBrowserTabs();
-const { loggedIn, vaultSetUp, tryAutoLogin } = useVaultUnlock();
-const { showOverlay: startupOverlayVisible } = useStartupProgress();
+const { loggedIn, vaultSetUp, statusResolved: vaultStatusResolved, tryAutoLogin, invalidateStatus } = useVaultUnlock();
+const { systemReady, showOverlay: startupOverlayVisible } = useStartupProgress();
+const vaultUnlockVisible = computed(() => systemReady.value && vaultStatusResolved.value && !loggedIn.value && vaultSetUp.value);
+
+watch(systemReady, (ready) => {
+  if (!ready) {
+    invalidateStatus();
+
+    return;
+  }
+  void tryAutoLogin();
+}, { immediate: true });
 
 // Close the side panel when a full-screen overlay is active (vault lock or startup)
-const sidePanelBlocked = computed(() => (!loggedIn.value && vaultSetUp.value) || startupOverlayVisible.value);
+const sidePanelBlocked = computed(() => !vaultStatusResolved.value || vaultUnlockVisible.value || startupOverlayVisible.value);
 watch(sidePanelBlocked, (blocked) => {
   if (blocked) {
     ipcRenderer.invoke('chrome-api:sidePanel:close' as any, { all: true });
@@ -579,9 +589,6 @@ onMounted(async() => {
     const target = (persistedId && browserTabs.find(t => t.id === persistedId)) || browserTabs[0];
     if (target) router.replace(`/Browser/${ target.id }`);
   }
-
-  // Attempt vault auto-unlock via safeStorage before anything else
-  await tryAutoLogin();
 
   // Start human presence tracker — top-level shell ensures presence is tracked
   // whenever the app is open, regardless of which tab/pane is active

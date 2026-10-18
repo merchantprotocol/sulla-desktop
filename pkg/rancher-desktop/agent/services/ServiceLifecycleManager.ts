@@ -23,7 +23,7 @@ interface ServiceDefinition {
 
 type StopMode = 'full' | 'restart';
 
-class ServiceLifecycleManager extends EventEmitter {
+export class ServiceLifecycleManager extends EventEmitter {
   private services = new Map<string, ServiceDefinition>();
   private started = new Set<string>();
   private _shuttingDown = false;
@@ -161,6 +161,43 @@ class ServiceLifecycleManager extends EventEmitter {
 
   isStarted(name: string): boolean {
     return this.started.has(name);
+  }
+
+  /** Wait for one registered service without allowing callers to hang forever. */
+  async waitUntilStarted(name: string, timeoutMs = 15_000): Promise<void> {
+    if (this._shuttingDown) throw new Error(`Lifecycle service '${ name }' is unavailable during shutdown`);
+    if (this.started.has(name)) return;
+    if (!this.services.has(name)) throw new Error(`Lifecycle service '${ name }' is not registered`);
+    if (this._allReady) throw new Error(`Lifecycle service '${ name }' failed to start`);
+
+    await new Promise<void>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout>;
+      const finish = (error?: Error) => {
+        clearTimeout(timer);
+        this.off('service:ready', onServiceReady);
+        this.off('all:ready', onAllReady);
+        this.off('shutdown:begin', onShutdown);
+        if (error) reject(error);
+        else resolve();
+      };
+      const onServiceReady = (readyName: string) => {
+        if (readyName === name) finish();
+      };
+      const onAllReady = () => {
+        if (!this.started.has(name)) finish(new Error(`Lifecycle service '${ name }' failed to start`));
+      };
+      const onShutdown = () => finish(new Error(`Lifecycle service '${ name }' became unavailable during shutdown`));
+
+      this.on('service:ready', onServiceReady);
+      this.on('all:ready', onAllReady);
+      this.on('shutdown:begin', onShutdown);
+      timer = setTimeout(() => finish(new Error(`Lifecycle service '${ name }' did not become ready within ${ timeoutMs }ms`)), timeoutMs);
+
+      // Close the gap between the checks above and listener registration.
+      if (this.started.has(name)) finish();
+      else if (this._shuttingDown) onShutdown();
+      else if (this._allReady) onAllReady();
+    });
   }
 
   isAllReady(): boolean {
