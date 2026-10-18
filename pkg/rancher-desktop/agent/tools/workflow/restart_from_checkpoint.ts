@@ -29,8 +29,10 @@ export class RestartFromCheckpointWorker extends BaseTool {
         }
         manager.logFallback('restart_from_checkpoint');
       } catch (error) {
-        const { getWorkflowManagerClient } = await import('../../services/WorkflowManagerClient');
-        getWorkflowManagerClient().logFallback('restart_from_checkpoint', error);
+        return {
+          successBoolean: false,
+          responseString: `Workflow manager refused the restart: ${ error instanceof Error ? error.message : String(error) }`,
+        };
       }
     }
 
