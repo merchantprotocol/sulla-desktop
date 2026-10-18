@@ -53,9 +53,12 @@ class MockWebSocket {
   static OPEN = 1;
   static CLOSED = 3;
 
-  url: string;
+  url:     string;
   readyState = 0;
   closed = false;
+  bufferedAmount = 0;
+  sent:    string[] = [];
+  onSend?: (data: string) => void;
   private listeners = new Map<string, Array<(ev: any) => void>>();
 
   constructor(url: string) {
@@ -78,7 +81,10 @@ class MockWebSocket {
     this.emit('open');
   }
 
-  send(_data: string) {}
+  send(data: string) {
+    this.sent.push(data);
+    this.onSend?.(data);
+  }
 
   close() {
     this.closed = true;
@@ -213,14 +219,27 @@ describe('DesktopRelayClient durability', () => {
 });
 
 describe('DesktopRelayClient share byte ranges', () => {
+  function connectedClient() {
+    const client = new DesktopRelayClient() as any;
+    const socket = new MockWebSocket('wss://synthetic-relay');
+
+    socket.readyState = MockWebSocket.OPEN;
+    client.ws = socket;
+    client.openGeneration = 1;
+
+    return { client, socket };
+  }
+
+  function sentFrames(socket: MockWebSocket): Record<string, any>[] {
+    return socket.sent.map(frame => JSON.parse(frame));
+  }
+
   beforeEach(() => {
     mockSullaSettingsModel.SullaSettingsModel.getServicePassword.mockResolvedValue('synthetic-files-token');
   });
 
   it('forwards Range and propagates 206 metadata without buffering the response', async() => {
-    const sent:Record<string, any>[] = [];
-    const client = new DesktopRelayClient() as any;
-    client.sendUnchecked = (frame:Record<string, any>) => sent.push(frame);
+    const { client, socket } = connectedClient();
     const originalFetch = globalThis.fetch;
     globalThis.fetch = jest.fn(async(_url:URL | RequestInfo, init?:RequestInit) => {
       expect(new Headers(init?.headers).get('Range')).toBe('bytes=4-');
@@ -228,43 +247,164 @@ describe('DesktopRelayClient share byte ranges', () => {
       return new Response(stream, { status: 206, headers: { 'Content-Type': 'video/mp4', 'Content-Length': '6', 'Content-Range': 'bytes 4-9/10', 'Accept-Ranges': 'bytes', 'X-Sulla-Filename': 'clip.mp4' } });
     }) as typeof fetch;
     try { await client.serveShare({ type: 'share_fetch', requestId: 'request-1', linkId: 'share-1', range: 'bytes=4-' }) } finally { globalThis.fetch = originalFetch }
+    const sent = sentFrames(socket);
+
     expect(sent.map(frame => frame.type)).toEqual(['share_fetch_start', 'share_fetch_chunk', 'share_fetch_end']);
     expect(sent[0]).toMatchObject({ status: 206, contentLength: 6, contentRange: 'bytes 4-9/10', acceptRanges: 'bytes' });
     expect(Buffer.from(sent[1].data, 'base64').toString()).toBe('456789');
   });
 
   it('propagates an empty 416 response with the full size', async() => {
-    const sent:Record<string, any>[] = [];
-    const client = new DesktopRelayClient() as any;
-    client.sendUnchecked = (frame:Record<string, any>) => sent.push(frame);
+    const { client, socket } = connectedClient();
     const originalFetch = globalThis.fetch;
     globalThis.fetch = jest.fn(async() => new Response(null, { status: 416, headers: { 'Content-Length': '0', 'Content-Range': 'bytes */10', 'Accept-Ranges': 'bytes' } })) as typeof fetch;
     try { await client.serveShare({ type: 'share_fetch', requestId: 'request-2', linkId: 'share-1', range: 'bytes=10-' }) } finally { globalThis.fetch = originalFetch }
+    const sent = sentFrames(socket);
+
     expect(sent.map(frame => frame.type)).toEqual(['share_fetch_start', 'share_fetch_end']);
     expect(sent[0]).toMatchObject({ status: 416, contentLength: 0, contentRange: 'bytes */10', acceptRanges: 'bytes' });
   });
 
   it('honors cancellation only when it remains bound to this Desktop', async() => {
-    const client = new DesktopRelayClient() as any;
+    const { client, socket } = connectedClient();
     const controller = new AbortController();
-    client.shareRequests.set('request-3', controller);
+    client.shareRequests.set('request-3', { requestId: 'request-3', controller, socket, generation: 1 });
     await client.handleMessage(JSON.stringify({ type: 'share_fetch_cancel', requestId: 'request-3', targetDeviceId: 'another-desktop' }));
     expect(controller.signal.aborted).toBe(false);
     await client.handleMessage(JSON.stringify({ type: 'share_fetch_cancel', requestId: 'request-3', targetDeviceId: 'desktop-1' }));
     expect(controller.signal.aborted).toBe(true);
   });
 
+  it('does not let a delayed cancellation abort a replacement connection request', async() => {
+    const { client, socket } = connectedClient();
+    const cancellation = client.handleMessage(JSON.stringify({ type: 'share_fetch_cancel', requestId: 'reused-request', targetDeviceId: 'desktop-1' }), socket, 1);
+    const replacement = new MockWebSocket('wss://replacement');
+    const controller = new AbortController();
+
+    replacement.readyState = MockWebSocket.OPEN;
+    client.ws = replacement;
+    client.openGeneration = 2;
+    client.shareRequests.set('reused-request', { requestId: 'reused-request', controller, socket: replacement, generation: 2 });
+    await cancellation;
+    expect(controller.signal.aborted).toBe(false);
+    expect(client.shareRequests.has('reused-request')).toBe(true);
+    await client.handleMessage(JSON.stringify({ type: 'share_fetch_cancel', requestId: 'reused-request', targetDeviceId: 'desktop-1' }), replacement, 2);
+    expect(controller.signal.aborted).toBe(true);
+  });
+
   it('never makes a relay request without the local Files credential', async() => {
-    const sent:Record<string, any>[] = [];
-    const client = new DesktopRelayClient() as any;
-    client.sendUnchecked = (frame:Record<string, any>) => sent.push(frame);
+    const { client, socket } = connectedClient();
     mockSullaSettingsModel.SullaSettingsModel.getServicePassword.mockResolvedValueOnce('');
     const originalFetch = globalThis.fetch;
     const fetchMock = jest.fn();
     globalThis.fetch = fetchMock as typeof fetch;
     try { await client.serveShare({ type: 'share_fetch', requestId: 'request-4', linkId: 'share-1' }) } finally { globalThis.fetch = originalFetch }
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(sent).toEqual([{ type: 'share_fetch_error', requestId: 'request-4', error: 'Sulla Files authentication is unavailable' }]);
+    expect(sentFrames(socket)).toEqual([{ type: 'share_fetch_error', requestId: 'request-4', error: 'Sulla Files authentication is unavailable' }]);
+  });
+
+  it.each([
+    ['suspend', (client: any, socket: MockWebSocket) => client.handleSuspend()],
+    ['unpair', (client: any, _socket: MockWebSocket) => client.setPairedUserId('')],
+    ['watchdog reconnect', (client: any, _socket: MockWebSocket) => client.forceReconnect('synthetic watchdog')],
+    ['socket close', (_client: any, socket: MockWebSocket) => socket.close()],
+  ])('aborts and clears authenticated reads on %s', async(_name, teardown) => {
+    jest.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    const client = new DesktopRelayClient() as any;
+
+    await client.setPairedUserId('user-1');
+    await jest.advanceTimersByTimeAsync(0);
+    const socket = MockWebSocket.instances.at(-1)!;
+
+    socket.open();
+    let signal: AbortSignal | undefined;
+    globalThis.fetch = jest.fn((_url: URL | RequestInfo, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+    }) as typeof fetch;
+    try {
+      socket.emit('message', { data: JSON.stringify({ type: 'share_fetch', requestId: `request-${ _name }`, linkId: 'share-1', targetDeviceId: 'desktop-1' }) });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(signal?.aborted).toBe(false);
+      await teardown(client, socket);
+      expect(signal?.aborted).toBe(true);
+      expect(client.shareRequests.size).toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      jest.useRealTimers();
+    }
+  });
+
+  it('never sends a stale chunk or end frame to a replacement socket', async() => {
+    const { client, socket: originalSocket } = connectedClient();
+    const originalFetch = globalThis.fetch;
+    let releaseRead: (value: ReadableStreamReadResult<Uint8Array>) => void = () => {};
+    const read = jest.fn(() => new Promise<ReadableStreamReadResult<Uint8Array>>(resolve => { releaseRead = resolve }));
+    globalThis.fetch = jest.fn(() => Promise.resolve(({
+      status:  200,
+      headers: new Headers({ 'Content-Length': '5' }),
+      body:    { getReader: () => ({ read }) },
+    }) as unknown as Response)) as typeof fetch;
+    try {
+      const serving = client.serveShare({ type: 'share_fetch', requestId: 'request-stale', linkId: 'share-1' });
+
+      for (let i = 0; i < 10 && read.mock.calls.length === 0; i++) await Promise.resolve();
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(sentFrames(originalSocket).map(frame => frame.type)).toEqual(['share_fetch_start']);
+      const replacement = new MockWebSocket('wss://replacement');
+
+      replacement.readyState = MockWebSocket.OPEN;
+      client.abortShareRequests(originalSocket, 1);
+      client.ws = replacement;
+      client.openGeneration = 2;
+      releaseRead({ done: false, value: new TextEncoder().encode('stale') });
+      await serving;
+      expect(sentFrames(originalSocket).map(frame => frame.type)).toEqual(['share_fetch_start']);
+      expect(replacement.sent).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('bounds producer advancement and cancellation interrupts backpressure waits', async() => {
+    jest.useFakeTimers();
+    const { client, socket } = connectedClient();
+    const originalFetch = globalThis.fetch;
+    const read = jest.fn<() => Promise<ReadableStreamReadResult<Uint8Array>>>()
+      .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('first') })
+      .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('second') });
+
+    socket.bufferedAmount = 8 * 1024 * 1024;
+    socket.onSend = (data) => {
+      if (JSON.parse(data).type === 'share_fetch_chunk') socket.bufferedAmount = 8 * 1024 * 1024;
+    };
+    globalThis.fetch = jest.fn(() => Promise.resolve(({
+      status:  200,
+      headers: new Headers({ 'Content-Length': '10' }),
+      body:    { getReader: () => ({ read }) },
+    }) as unknown as Response)) as typeof fetch;
+    try {
+      const serving = client.serveShare({ type: 'share_fetch', requestId: 'request-backpressure', linkId: 'share-1' });
+
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(read).not.toHaveBeenCalled();
+      socket.bufferedAmount = 0;
+      await jest.advanceTimersByTimeAsync(10);
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(sentFrames(socket).map(frame => frame.type)).toEqual(['share_fetch_start', 'share_fetch_chunk']);
+      await client.handleMessage(JSON.stringify({ type: 'share_fetch_cancel', requestId: 'request-backpressure', targetDeviceId: 'desktop-1' }));
+      await serving;
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(sentFrames(socket).map(frame => frame.type)).toEqual(['share_fetch_start', 'share_fetch_chunk']);
+    } finally {
+      globalThis.fetch = originalFetch;
+      jest.useRealTimers();
+    }
   });
 });
 

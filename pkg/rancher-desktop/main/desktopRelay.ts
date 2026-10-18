@@ -67,6 +67,13 @@ const STALE_SOCKET_MS  = 45_000;
 // it's stuck and tear it down. Prevents a wedged connect from pinning the
 // client in "connecting" forever.
 const CONNECT_TIMEOUT_MS = 15_000;
+// WebSocket.send() is synchronous and buffers bytes in the renderer process.
+// Pause the upstream Files reader once the socket queue crosses the high-water
+// mark, and do not resume until it drains below the low-water mark. This keeps
+// a multi-GB share from being materialized as queued base64 frames in memory.
+const SHARE_BUFFER_HIGH_WATER_BYTES = 4 * 1024 * 1024;
+const SHARE_BUFFER_LOW_WATER_BYTES = 1 * 1024 * 1024;
+const SHARE_BUFFER_POLL_MS = 10;
 
 type Role = 'desktop' | 'mobile';
 
@@ -105,6 +112,13 @@ interface Status {
   lastError?:   string;
 }
 
+interface ShareRequest {
+  requestId:  string;
+  controller: AbortController;
+  socket:     WebSocket;
+  generation: number;
+}
+
 // Exported for tests only — production code must go through getDesktopRelayClient().
 export class DesktopRelayClient {
   private ws: WebSocket | null = null;
@@ -127,7 +141,7 @@ export class DesktopRelayClient {
   // dashboard). Their frames go back through the channel to the approved
   // client that sent them, never to the legacy mobile relay room.
   private secureRoutes = new Map<string, (frame: Record<string, unknown>) => void>();
-  private shareRequests = new Map<string, AbortController>();
+  private shareRequests = new Map<string, ShareRequest>();
 
   // ── Liveness tracking ──────────────────────────────────────
   // The DO auto-responds to application-level "ping" frames with "pong",
@@ -212,6 +226,7 @@ export class DesktopRelayClient {
     console.log('[DesktopRelay] System suspending — closing relay socket');
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     this.teardownLiveness();
+    this.abortShareRequests();
     if (this.ws) {
       try { this.ws.close(); } catch { /* ignore */ }
       this.ws = null;
@@ -256,6 +271,7 @@ export class DesktopRelayClient {
       this.reconnectTimer = null;
     }
     this.teardownLiveness();
+    this.abortShareRequests();
     for (const t of this.keepaliveTimers.values()) clearInterval(t);
     this.keepaliveTimers.clear();
     this.pendingFrames = [];
@@ -288,6 +304,7 @@ export class DesktopRelayClient {
       console.warn(`[DesktopRelay] Forcing reconnect — ${ reason }${ this.failedAttempts > 1 ? ` (attempt ${ this.failedAttempts }, logging every 20th)` : '' }`);
     }
     this.teardownLiveness();
+    this.abortShareRequests();
     if (this.ws) {
       try { this.ws.close(); } catch { /* already closed */ }
       this.ws = null;
@@ -394,10 +411,13 @@ export class DesktopRelayClient {
     ws.addEventListener('message', (event) => {
       if (this.ws !== ws) return;
       this.lastInboundAt = Date.now();
-      this.handleMessage(event.data as string);
+      this.handleMessage(event.data as string, ws, gen);
     });
 
     ws.addEventListener('close', () => {
+      // Abort reads owned by this exact connection even if its close arrives
+      // after a replacement socket has already become current.
+      this.abortShareRequests(ws, gen);
       // A replaced socket's late close must not tear down the live one's
       // liveness timers or schedule another socket.
       if (this.ws !== ws) return;
@@ -450,7 +470,7 @@ export class DesktopRelayClient {
     }, delay);
   }
 
-  private async handleMessage(raw: string) {
+  private async handleMessage(raw: string, sourceSocket = this.ws, sourceGeneration = this.openGeneration) {
     let msg: IncomingMessage;
     try {
       msg = JSON.parse(raw);
@@ -500,13 +520,18 @@ export class DesktopRelayClient {
 
     if (msg.type === 'share_fetch') {
       if (!msg.requestId || !msg.linkId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
-      await this.serveShare(msg);
+      if (!sourceSocket) return;
+      await this.serveShare(msg, sourceSocket, sourceGeneration);
       return;
     }
 
     if (msg.type === 'share_fetch_cancel') {
       if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
-      this.shareRequests.get(msg.requestId)?.abort();
+      const request = this.shareRequests.get(msg.requestId);
+      if (request && request.socket === sourceSocket && request.generation === sourceGeneration && this.isActiveShareRequest(request)) {
+        request.controller.abort();
+        this.shareRequests.delete(msg.requestId);
+      }
       return;
     }
 
@@ -546,38 +571,102 @@ export class DesktopRelayClient {
     console.log(`[DesktopRelay] Unknown message type: ${ msg.type }`);
   }
 
-  private async serveShare(msg: IncomingMessage): Promise<void> {
+  private async serveShare(
+    msg: IncomingMessage,
+    socket = this.ws,
+    generation = this.openGeneration,
+  ): Promise<void> {
     if (!msg.requestId || !msg.linkId) return;
-    const frame = (type: string, payload: Record<string, unknown> = {}) => this.sendUnchecked({ type, requestId: msg.requestId, ...payload });
-    this.shareRequests.get(msg.requestId)?.abort();
-    const controller = new AbortController(); this.shareRequests.set(msg.requestId, controller);
+    if (socket?.readyState !== WebSocket.OPEN || this.ws !== socket || this.openGeneration !== generation) return;
+    const previous = this.shareRequests.get(msg.requestId);
+    previous?.controller.abort();
+    const request: ShareRequest = {
+      requestId:  msg.requestId,
+      controller: new AbortController(),
+      socket,
+      generation,
+    };
+    this.shareRequests.set(msg.requestId, request);
     try {
       const token = await SullaSettingsModel.getServicePassword();
       if (!token) throw new Error('Sulla Files authentication is unavailable');
+      if (!this.isActiveShareRequest(request)) return;
       const url = new URL(`/v1/local/shares/${ encodeURIComponent(msg.linkId) }/content`, 'http://127.0.0.1:30124');
       if (msg.path) url.searchParams.set('path', msg.path);
       const headers = new Headers({ 'X-Sulla-Files-Token': token }); if (msg.range) headers.set('Range', msg.range);
-      const response = await fetch(url, { headers, signal: controller.signal });
+      const response = await fetch(url, { headers, signal: request.controller.signal });
       if (![200, 206, 416].includes(response.status) || (response.status !== 416 && !response.body)) throw new Error((await response.text()).slice(0, 200) || `Sulla Files returned ${ response.status }`);
-      frame('share_fetch_start', {
+      if (!this.sendShareFrame(request, 'share_fetch_start', {
         status:        response.status,
         mime:          response.headers.get('content-type') || 'application/octet-stream',
         name:          decodeURIComponent(response.headers.get('x-sulla-filename') || 'shared-file'),
         contentLength: Number(response.headers.get('content-length') || 0),
         contentRange:  response.headers.get('content-range') || undefined,
         acceptRanges:  response.headers.get('accept-ranges') || 'bytes',
-      });
-      if (!response.body) { frame('share_fetch_end'); return }
+      })) return;
+      if (!response.body) { this.sendShareFrame(request, 'share_fetch_end'); return }
       const reader = response.body.getReader();
       while (true) {
+        // Wait before asking the producer for another chunk. Once the socket
+        // queue is full this prevents ReadableStream pull() from advancing.
+        if (!await this.waitForShareCapacity(request)) return;
         const { done, value } = await reader.read(); if (done) break;
-        frame('share_fetch_chunk', { data: Buffer.from(value).toString('base64') });
+        if (!this.sendShareFrame(request, 'share_fetch_chunk', { data: Buffer.from(value).toString('base64') })) return;
       }
-      frame('share_fetch_end');
+      this.sendShareFrame(request, 'share_fetch_end');
     } catch (error) {
-      if (!controller.signal.aborted) frame('share_fetch_error', { error: error instanceof Error ? error.message : String(error) });
+      if (!request.controller.signal.aborted) {
+        this.sendShareFrame(request, 'share_fetch_error', { error: error instanceof Error ? error.message : String(error) });
+      }
     } finally {
-      if (this.shareRequests.get(msg.requestId) === controller) this.shareRequests.delete(msg.requestId);
+      if (this.shareRequests.get(msg.requestId) === request) this.shareRequests.delete(msg.requestId);
+    }
+  }
+
+  private isActiveShareRequest(request: ShareRequest): boolean {
+    return !request.controller.signal.aborted &&
+      this.shareRequests.get(request.requestId) === request &&
+      this.ws === request.socket &&
+      this.openGeneration === request.generation &&
+      request.socket.readyState === WebSocket.OPEN;
+  }
+
+  private sendShareFrame(request: ShareRequest, type: string, payload: Record<string, unknown> = {}): boolean {
+    if (!this.isActiveShareRequest(request)) return false;
+    try {
+      request.socket.send(JSON.stringify({ type, requestId: request.requestId, ...payload }));
+      return true;
+    } catch (error) {
+      console.warn('[DesktopRelay] Share send failed:', error);
+      request.controller.abort();
+      this.shareRequests.delete(request.requestId);
+      return false;
+    }
+  }
+
+  private async waitForShareCapacity(request: ShareRequest): Promise<boolean> {
+    if (!this.isActiveShareRequest(request)) return false;
+    if (request.socket.bufferedAmount <= SHARE_BUFFER_HIGH_WATER_BYTES) return true;
+    while (request.socket.bufferedAmount > SHARE_BUFFER_LOW_WATER_BYTES) {
+      if (!this.isActiveShareRequest(request)) return false;
+      await new Promise<void>((resolve) => {
+        const finish = () => {
+          clearTimeout(timer);
+          request.controller.signal.removeEventListener('abort', finish);
+          resolve();
+        };
+        const timer = setTimeout(finish, SHARE_BUFFER_POLL_MS);
+        request.controller.signal.addEventListener('abort', finish, { once: true });
+      });
+    }
+    return this.isActiveShareRequest(request);
+  }
+
+  private abortShareRequests(socket?: WebSocket, generation?: number): void {
+    for (const [requestId, request] of this.shareRequests) {
+      if (socket && (request.socket !== socket || (generation !== undefined && request.generation !== generation))) continue;
+      request.controller.abort();
+      this.shareRequests.delete(requestId);
     }
   }
 
