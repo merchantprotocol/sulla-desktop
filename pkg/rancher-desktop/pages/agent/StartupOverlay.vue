@@ -1,7 +1,7 @@
 <template>
   <!-- Loading overlay while system boots -->
   <div
-    v-if="showOverlay"
+    v-if="showOverlay || props.forceVisible"
     class="sulla-startup-overlay"
   >
     <div class="sulla-startup-card">
@@ -86,6 +86,8 @@
 import { onMounted, onUnmounted } from 'vue';
 
 import { useStartupProgress } from './useStartupProgress';
+
+const props = withDefaults(defineProps<{ forceVisible?: boolean }>(), { forceVisible: false });
 
 const {
   systemReady,
