@@ -22,6 +22,11 @@ export function stopKey(executionId: string): string {
   return `${ STOP_KEY_PREFIX }${ executionId }`;
 }
 
+/** Shared lifecycle primitive for callers that retire workflow executions. */
+export async function requestWorkflowStop(executionId: string, reason: string): Promise<void> {
+  await redisClient.set(stopKey(executionId), reason, STOP_TTL_SECONDS);
+}
+
 export class StopWorkflowWorker extends BaseTool {
   name = '';
   description = '';
@@ -40,7 +45,7 @@ export class StopWorkflowWorker extends BaseTool {
     }
 
     try {
-      await redisClient.set(stopKey(executionId), reason, STOP_TTL_SECONDS);
+      await requestWorkflowStop(executionId, reason);
       return {
         successBoolean: true,
         responseString:

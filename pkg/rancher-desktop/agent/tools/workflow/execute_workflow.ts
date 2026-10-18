@@ -155,6 +155,21 @@ export async function activateWorkflowOnState(
     };
   }
 
+  // Immutable snapshots may bypass registry lookup, so enforce retirement at
+  // the execution boundary too. Archived workflows are historical only.
+  try {
+    const { WorkflowModel } = await import('../../database/models/WorkflowModel');
+    const workflow = await WorkflowModel.findById(definition.id);
+    if (workflow?.attributes.status === 'archive') {
+      return { ok: false, responseString: `Workflow "${ definition.name }" is archived and cannot be executed.` };
+    }
+  } catch (error) {
+    return {
+      ok:             false,
+      responseString: `Workflow status check failed closed: ${ error instanceof Error ? error.message : String(error) }`,
+    };
+  }
+
   if (input.definitionSnapshot && definition.id !== workflowId) {
     return {
       ok:             false,

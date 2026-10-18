@@ -12,6 +12,7 @@ export interface RunLaunch {
 
 export interface WorkflowLauncher {
   launchRunner(run: RunLaunch): Promise<string>;
+  stopRunner(runnerId: string): Promise<void>;
 }
 
 export class DockerWorkflowLauncher implements WorkflowLauncher {
@@ -62,12 +63,20 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
       throw error;
     }
   }
+
+  async stopRunner(runnerId: string): Promise<void> {
+    await this.docker.remove(runnerId, true);
+  }
 }
 
 export class KubernetesWorkflowLauncher implements WorkflowLauncher {
   constructor(private readonly runtime = new KubernetesRuntimeDriver()) {}
   async launchRunner(_run: RunLaunch): Promise<string> {
     return this.runtime.create({ name: 'workflow-runner', image: config.workflowImage });
+  }
+
+  async stopRunner(runnerId: string): Promise<void> {
+    await this.runtime.remove(runnerId, true);
   }
 }
 

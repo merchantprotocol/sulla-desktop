@@ -597,6 +597,7 @@ async function fetchWorkflowRuns(): Promise<AgentsListResponse['workflowRuns']> 
              e.started_at, e.updated_at, e.error,
              latest.node_id, latest.payload
         FROM workflow_executions e
+        LEFT JOIN workflows w ON w.id = e.workflow_id
         LEFT JOIN LATERAL (
           SELECT node_id, payload
             FROM workflow_execution_events
@@ -604,6 +605,7 @@ async function fetchWorkflowRuns(): Promise<AgentsListResponse['workflowRuns']> 
            ORDER BY id DESC LIMIT 1
         ) latest ON true
        WHERE e.status IN ('running', 'suspended', 'failed')
+         AND (w.id IS NULL OR w.status <> 'archive')
          AND (e.status <> 'failed' OR e.updated_at >= NOW() - INTERVAL '1 hour')
        ORDER BY e.started_at ASC`);
 

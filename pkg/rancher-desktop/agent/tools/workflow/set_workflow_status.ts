@@ -76,24 +76,17 @@ export class SetWorkflowStatusWorker extends BaseTool {
       };
     }
 
-    const sets: string[] = [];
-    const params: unknown[] = [];
-
-    if (status !== undefined) {
-      params.push(status);
-      sets.push(`status = $${ params.length }`);
-    }
-    if (enabled !== undefined) {
-      params.push(enabled);
-      sets.push(`enabled = $${ params.length }`);
-    }
-    params.push(target.id);
-
     try {
-      await postgresClient.query(
-        `UPDATE workflows SET ${ sets.join(', ') }, updated_at = NOW() WHERE id = $${ params.length }`,
-        params,
-      );
+      if (status !== undefined && (status !== target.status || status === 'archive')) {
+        const { WorkflowModel } = await import('@pkg/agent/database/models/WorkflowModel');
+        await WorkflowModel.updateStatus(target.id, status as 'draft' | 'production' | 'archive');
+      }
+      if (enabled !== undefined) {
+        await postgresClient.query(
+          'UPDATE workflows SET enabled = $1, updated_at = NOW() WHERE id = $2',
+          [enabled, target.id],
+        );
+      }
     } catch (err) {
       return { successBoolean: false, responseString: `Update failed: ${ (err as Error).message }` };
     }
