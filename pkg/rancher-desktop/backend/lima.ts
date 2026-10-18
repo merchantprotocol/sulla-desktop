@@ -999,6 +999,17 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     } else {
       dockerPortForwards.hostSocket = hostSocket;
     }
+
+    // The native OIDC redirect is fixed by the Accounts authority contract.
+    // Put the exact rule before Lima's catch-all so only host loopback can
+    // reach the guest listener; the service remains reachable to containers.
+    config.portForwards = config.portForwards?.filter(entry => entry.guestPort !== 3020);
+    config.portForwards?.unshift({
+      guestPort: 3020,
+      hostPort:  3020,
+      hostIP:    '127.0.0.1',
+      proto:     'tcp',
+    });
   }
 
   protected async getLimaConfig(): Promise<LimaConfiguration | undefined> {
@@ -2957,7 +2968,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'sulla_shell_runtime',
       'sulla_node_runtime',
     ];
-    requiredServices.push('sulla_relay', 'sulla_workflow_manager', 'sulla_tools');
+    requiredServices.push('sulla_accounts', 'sulla_relay', 'sulla_workflow_manager', 'sulla_tools');
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) requiredServices.push('sulla_vault');
     try {
       if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
@@ -3150,6 +3161,105 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     return token;
   }
 
+  private async prepareAccountsSecrets(databasePassword: string):Promise<{
+    bootstrap:        string;
+    databasePassword: string;
+    databaseUsername: string;
+    encryption:       string;
+    session:          string;
+  }> {
+    const directory = path.join(paths.appHome, 'accounts');
+
+    const directoryInfo = await fs.promises.lstat(directory).catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (directoryInfo?.isSymbolicLink() || (directoryInfo && !directoryInfo.isDirectory())) {
+      throw new Error('Accounts secret directory is not a regular directory');
+    }
+    await fs.promises.mkdir(directory, { recursive: true, mode: 0o700 });
+    await fs.promises.chmod(directory, 0o700);
+
+    const writeAtomic = async(target: string, value: Buffer | string):Promise<void> => {
+      const targetInfo = await fs.promises.lstat(target).catch(error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        throw error;
+      });
+      if (targetInfo?.isSymbolicLink() || (targetInfo && !targetInfo.isFile())) {
+        throw new Error(`Accounts secret path is not a regular file: ${ path.basename(target) }`);
+      }
+      const temporary = `${ target }.${ process.pid }.${ crypto.randomUUID() }.tmp`;
+      const handle = await fs.promises.open(temporary, 'wx', 0o600);
+      try {
+        await handle.writeFile(value);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      try {
+        await fs.promises.rename(temporary, target);
+        await fs.promises.chmod(target, 0o600);
+      } finally {
+        await fs.promises.unlink(temporary).catch(error => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        });
+      }
+    };
+    const loadExisting = async(target: string):Promise<Buffer | undefined> => {
+      let handle:fs.promises.FileHandle;
+      try {
+        handle = await fs.promises.open(target, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        throw error;
+      }
+      try {
+        const info = await handle.stat();
+        if (!info.isFile()) throw new Error(`Accounts secret path is not a regular file: ${ path.basename(target) }`);
+        await handle.chmod(0o600);
+        return await handle.readFile();
+      } finally {
+        await handle.close();
+      }
+    };
+    const loadOrCreateRaw = async(name: string, bytes: number):Promise<string> => {
+      const target = path.join(directory, name);
+      const existing = await loadExisting(target);
+      if (existing) {
+        if (existing.byteLength !== bytes) throw new Error(`Existing Accounts ${ name } has an invalid length`);
+      } else {
+        const secret = crypto.randomBytes(bytes);
+        try { await writeAtomic(target, secret) } finally { secret.fill(0) }
+      }
+      return target;
+    };
+    const loadOrCreateBearer = async(name: string):Promise<string> => {
+      const target = path.join(directory, name);
+      const existing = await loadExisting(target);
+      if (existing) {
+        const value = existing.toString('utf8').trim();
+        if (!/^[A-Za-z0-9_-]{64}$/.test(value)) throw new Error(`Existing Accounts ${ name } has an invalid format`);
+      } else {
+        const secret = crypto.randomBytes(48).toString('base64url');
+        await writeAtomic(target, secret);
+      }
+      return target;
+    };
+    const databaseUsername = path.join(directory, 'database.username');
+    const databasePasswordPath = path.join(directory, 'database.password');
+
+    await writeAtomic(databaseUsername, 'sulla');
+    await writeAtomic(databasePasswordPath, databasePassword);
+
+    return {
+      bootstrap:         await loadOrCreateBearer('bootstrap.secret'),
+      databasePassword: databasePasswordPath,
+      databaseUsername,
+      encryption:        await loadOrCreateRaw('encryption.key', 32),
+      session:           await loadOrCreateRaw('session.secret', 48),
+    };
+  }
+
   private async prepareFilesTlsIdentity():Promise<{ fingerprint:string }> {
     const { uid, gid } = os.userInfo();
     const certificate = await this.execCommand(
@@ -3170,7 +3280,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const compose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
-    const sullaServicePassword = escapeForCompose(await SullaSettingsModel.getServicePassword());
+    const rawSullaServicePassword = await SullaSettingsModel.getServicePassword();
+    const sullaServicePassword = escapeForCompose(rawSullaServicePassword);
     const tokenFile = path.join(paths.appHome, 'chat-api-token.json');
     let sullaApiToken = '';
     try {
@@ -3182,10 +3293,62 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     sullaApiToken = escapeForCompose(sullaApiToken);
     const filesBootstrapIdentity = await this.loadOrCreateFilesBootstrapIdentity();
     const { fingerprint: filesTlsFingerprint } = await this.prepareFilesTlsIdentity();
+    this.#optionalSullaFallbackImages.clear();
+    try {
+      const accountsSecrets = await this.prepareAccountsSecrets(rawSullaServicePassword);
+      const accountsImage = resolveSullaServiceImage(
+        'sulla-accounts', process.cwd(), Electron.app.getVersion(), process.env.SULLA_ACCOUNTS_IMAGE,
+      );
+      const resolvedAccountsImage = accountsImage.build ? accountsImage.image : `\${SULLA_ACCOUNTS_IMAGE:-${ accountsImage.image }}`;
+
+      if (!accountsImage.build && !process.env.SULLA_ACCOUNTS_IMAGE && !accountsImage.image.endsWith(':latest')) {
+        this.#optionalSullaFallbackImages.set('sulla_accounts', {
+          env: 'SULLA_ACCOUNTS_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-accounts:latest',
+        });
+      }
+      compose.services.sulla_accounts = {
+        ...accountsImage,
+        image:          resolvedAccountsImage,
+        container_name: 'sulla_accounts',
+        depends_on:     { postgres: { condition: 'service_healthy' } },
+        environment:    {
+          SULLA_ACCOUNTS_MODE:                         'desktop',
+          SULLA_ACCOUNTS_PORT:                         '3020',
+          SULLA_ACCOUNTS_PUBLIC_URL:                   'http://127.0.0.1:3020',
+          SULLA_ACCOUNTS_DATABASE_HOST:                'postgres',
+          SULLA_ACCOUNTS_DATABASE_PORT:                '5432',
+          SULLA_ACCOUNTS_DATABASE_NAME:                'sulla_accounts',
+          SULLA_ACCOUNTS_DATABASE_USERNAME_FILE:       '/run/sulla-accounts-source/database.username',
+          SULLA_ACCOUNTS_DATABASE_PASSWORD_FILE:       '/run/sulla-accounts-source/database.password',
+          SULLA_ACCOUNTS_BOOTSTRAP_SECRET_SOURCE_FILE: '/run/sulla-accounts-source/bootstrap.secret',
+          SULLA_ACCOUNTS_SESSION_SECRET_SOURCE_FILE:   '/run/sulla-accounts-source/session.secret',
+          SULLA_ACCOUNTS_ENCRYPTION_KEY_SOURCE_FILE:   '/run/sulla-accounts-source/encryption.key',
+        },
+        ports:   ['127.0.0.1:3020:3020'],
+        volumes: [
+          `${ accountsSecrets.databaseUsername }:/run/sulla-accounts-source/database.username:ro`,
+          `${ accountsSecrets.databasePassword }:/run/sulla-accounts-source/database.password:ro`,
+          `${ accountsSecrets.bootstrap }:/run/sulla-accounts-source/bootstrap.secret:ro`,
+          `${ accountsSecrets.session }:/run/sulla-accounts-source/session.secret:ro`,
+          `${ accountsSecrets.encryption }:/run/sulla-accounts-source/encryption.key:ro`,
+        ],
+        tmpfs:       ['/run/sulla-accounts-private:rw,noexec,nosuid,nodev,mode=0700,uid=10001,gid=10001'],
+        restart:     'unless-stopped',
+        healthcheck: {
+          test:     ['CMD', 'curl', '--fail', '--silent', '--show-error', 'http://127.0.0.1:3020/readyz'],
+          interval: '5s',
+          timeout:  '3s',
+          retries:  10,
+        },
+      };
+    } catch (error) {
+      delete compose.services.sulla_accounts;
+      this.#optionalSullaFallbackImages.delete('sulla_accounts');
+      console.warn('[Sulla] Accounts provisioning unavailable; continuing without the optional service:', error);
+    }
     let vaultIdentities: {
       bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string; filesToken: string;
     } | undefined;
-    this.#optionalSullaFallbackImages.clear();
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
       vaultIdentities = await this.loadOrCreateVaultServiceIdentities();
       const { fingerprint: vaultTlsFingerprint } = await this.prepareVaultTlsIdentity();
@@ -3547,6 +3710,24 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       this.#activeOptionalSullaServices.clear();
       const optionalServices = ['sulla_relay', 'workflow_manager', 'tools', 'sulla_files'];
 
+      if (compose.services.sulla_accounts) {
+        try {
+          const accountsDatabaseExists = await this.execCommand(
+            { capture: true, root: true }, 'docker', 'exec', 'sulla_postgres',
+            'psql', '-U', 'sulla', '-d', 'postgres', '-tAc', "SELECT 1 FROM pg_database WHERE datname='sulla_accounts'",
+          );
+          if (accountsDatabaseExists.trim() !== '1') {
+            await this.execCommand(
+              { root: true }, 'docker', 'exec', 'sulla_postgres',
+              'createdb', '-U', 'sulla', '--encoding=UTF8', '--template=template0', 'sulla_accounts',
+            );
+          }
+          optionalServices.unshift('sulla_accounts');
+        } catch (error) {
+          console.warn('[Sulla] Accounts database provisioning failed; continuing without the optional service:', error);
+        }
+      }
+
       if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) optionalServices.push('sulla_vault');
       for (const service of optionalServices) {
         try {
@@ -3593,6 +3774,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     if (this.#activeOptionalSullaServices.has('tools')) optionalServices.push('sulla_tools');
     if (this.#activeOptionalSullaServices.has('sulla_files')) optionalServices.push('sulla_files');
     if (this.#activeOptionalSullaServices.has('sulla_vault')) optionalServices.push('sulla_vault');
+    if (this.#activeOptionalSullaServices.has('sulla_accounts')) optionalServices.push('sulla_accounts');
     for (const service of optionalServices) {
       try {
         await this.waitForDockerServiceHealthy(service, 60);

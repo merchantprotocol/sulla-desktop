@@ -294,6 +294,18 @@ export interface IpcMainInvokeEvents {
   'first-run-ai:connected': (providerId: string) => void;
   'app-quit':               () => void;
 
+  // Accounts owner sessions and authorization URLs remain main-only. These
+  // calls expose validated metadata or a boolean launch result, never tokens.
+  'accounts:profile':            () => import('@pkg/main/sullaAccountsClient').AccountsProfile;
+  'accounts:update-profile':     (input: { displayName: string }) => import('@pkg/main/sullaAccountsClient').AccountsProfile;
+  'accounts:connections':        () => import('@pkg/main/sullaAccountsClient').AccountsConnections;
+  'accounts:create-connection':  (input: import('@pkg/main/sullaAccountsClient').AccountsConnectionInput) => import('@pkg/main/sullaAccountsClient').AccountsConnection;
+  'accounts:discover-authority': (baseUrl: string) => import('@pkg/main/sullaAccountsClient').AccountsAuthorityMetadata;
+  'accounts:enroll-authority':   (baseUrl: string) => import('@pkg/main/sullaAccountsClient').AccountsConnection;
+  'accounts:remove-connection':  (id: string) => void;
+  'accounts:authorize':          (input: { id: string; resourceAudience?: string }) => { opened: boolean; expiresAt: string };
+  'accounts:memberships':        () => import('@pkg/main/sullaAccountsClient').AccountsMemberships;
+
   // Onboarding presence — BrowserTabChat + ChatPage call these on mount to
   // decide whether to show the goals/business onboarding cards. Handlers
   // live in sulla.ts:406-410. Return true when the matching identity file
