@@ -41,5 +41,11 @@ export function resolveSullaServiceImage(
     };
   }
 
-  return { image: override || `ghcr.io/merchantprotocol/${ name }:${ publishedTag(appVersion) }` };
+  if (override) {
+    return { image: override };
+  }
+
+  const tag = name === 'sulla-files' ? 'latest' : publishedTag(appVersion);
+
+  return { image: `ghcr.io/merchantprotocol/${ name }:${ tag }` };
 }
