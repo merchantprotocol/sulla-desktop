@@ -1,7 +1,11 @@
 events {}
 
 http {
-  upstream accounts { server accounts:3020; }
+  resolver 127.0.0.11 valid=5s ipv6=off;
+  resolver_timeout 2s;
+  upstream accounts { zone accounts 64k; server accounts:3020 resolve; }
+
+  upstream keycloak { zone keycloak 64k; server accounts:8080 resolve; }
 
   map $http_host $forwarded_port {
     ~:([0-9]+)$ $1;
@@ -15,8 +19,8 @@ http {
     location = /readyz { proxy_pass http://accounts/readyz; }
     location ^~ /auth/realms/master/ { return 404; }
     location ^~ /auth/admin/ { return 404; }
-    location ^~ /auth/realms/sulla/ { proxy_pass http://accounts:8080; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
-    location ^~ /auth/resources/ { proxy_pass http://accounts:8080; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location ^~ /auth/realms/sulla/ { proxy_pass http://keycloak; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location ^~ /auth/resources/ { proxy_pass http://keycloak; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
     location ^~ /auth/ { return 404; }
     location = /.well-known/sulla-authority { proxy_pass http://accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
     location = /v1/authority/membership/resolve { proxy_pass http://accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
