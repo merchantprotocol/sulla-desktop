@@ -1,6 +1,10 @@
 ALTER TABLE accounts.authorities ADD COLUMN resource_audiences text[] NOT NULL DEFAULT '{}';
 UPDATE accounts.authorities SET resource_audiences = ARRAY[audience] WHERE audience <> '';
 ALTER TABLE accounts.authorities DROP COLUMN audience;
+ALTER TABLE accounts.authorities ADD COLUMN remote_authority_id uuid;
+CREATE UNIQUE INDEX authorities_remote_authority_id_idx
+  ON accounts.authorities(remote_authority_id) WHERE remote_authority_id IS NOT NULL;
+ALTER TABLE accounts.membership_cache ADD COLUMN subject text;
 
 CREATE TABLE accounts.delegated_schedule_grants (
   id uuid PRIMARY KEY,
