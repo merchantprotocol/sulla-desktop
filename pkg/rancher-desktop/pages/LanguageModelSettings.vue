@@ -138,6 +138,8 @@ export default defineComponent({
       providerRetryTimer:   null as ReturnType<typeof setTimeout> | null,
       providerRetryAttempt: 0,
       modelsError:          '' as string,
+      slotAccounts:         { primary: [], secondary: [], subconscious: [] } as Record<string, { accountId: string; label: string; active: boolean; connected: boolean }[]>,
+      slotAccountError:     { primary: '', secondary: '', subconscious: '' } as Record<string, string>,
 
       // Activation state
       activating:             false,
@@ -281,8 +283,10 @@ export default defineComponent({
     // Build available providers list from ModelProviderService. Self-healing:
     // re-fetched on focus/visibility and retried when the vault isn't ready.
     window.addEventListener('focus', this.loadProviders);
+    window.addEventListener('focus', this.loadAllSlotAccounts);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
     await this.loadProviders();
+    await this.loadAllSlotAccounts();
 
     // Load remote models if API key exists
     if (this.selectedProvider && this.apiKey.trim()) {
@@ -316,6 +320,8 @@ export default defineComponent({
 
     // Watch secondary provider — persist via ModelProviderService + reload model list
     async secondaryProvider(newProvider: string, oldProvider: string) {
+      this.loadSlotAccounts('secondary');
+      this.loadSlotAccounts('subconscious');
       if (!newProvider || newProvider === oldProvider) return;
       try {
         await ipcRenderer.invoke('model-provider:set-secondary', newProvider);
@@ -339,6 +345,7 @@ export default defineComponent({
 
     // Watch subconscious provider — persist + reload model list
     async subconsciousProvider(newProvider: string, oldProvider: string) {
+      this.loadSlotAccounts('subconscious');
       if (newProvider === oldProvider) return;
       try {
         await ipcRenderer.invoke('model-provider:set-subconscious', newProvider);
@@ -366,6 +373,8 @@ export default defineComponent({
 
     // Watch for primary provider changes — delegate to ModelProviderService
     async primaryProvider(newProvider: string, oldProvider: string) {
+      this.loadSlotAccounts('primary');
+      this.loadSlotAccounts('subconscious');
       if (!newProvider || newProvider === oldProvider) return;
       if (this.suppressProviderWatch) {
         this.suppressProviderWatch = false;
@@ -403,6 +412,7 @@ export default defineComponent({
   beforeUnmount() {
     window.removeEventListener('focus', this.refreshSwitches);
     window.removeEventListener('focus', this.loadProviders);
+    window.removeEventListener('focus', this.loadAllSlotAccounts);
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
     if (this.providerRetryTimer) clearTimeout(this.providerRetryTimer);
     // Clean up IPC listeners
@@ -1063,6 +1073,43 @@ export default defineComponent({
       }
     },
 
+    slotProviderId(slot: string): string {
+      if (slot === 'primary') return this.primaryProvider;
+      if (slot === 'secondary') return this.secondaryProvider;
+      return this.subconsciousProvider === 'default' ? this.primaryProvider : this.subconsciousProvider;
+    },
+
+    async loadSlotAccounts(slot: string) {
+      const id = this.slotProviderId(slot);
+      if (!id) return;
+      try {
+        this.slotAccounts[slot] = await ipcRenderer.invoke('model-provider:get-accounts', id) || [];
+        this.slotAccountError[slot] = '';
+      } catch (err) {
+        this.slotAccountError[slot] = `Could not load connections: ${ err instanceof Error ? err.message : String(err) }`;
+      }
+    },
+
+    async loadAllSlotAccounts() {
+      await Promise.all(['primary', 'secondary', 'subconscious'].map(s => this.loadSlotAccounts(s)));
+    },
+
+    async onConnectionChange(slot: string, event: Event) {
+      const accountId = (event.target as HTMLSelectElement).value;
+      const id = this.slotProviderId(slot);
+      try {
+        await ipcRenderer.invoke('model-provider:set-active-account', id, accountId);
+        this.slotAccountError[slot] = '';
+      } catch (err) {
+        this.slotAccountError[slot] = `Could not switch connection: ${ err instanceof Error ? err.message : String(err) }`;
+      }
+      await this.loadAllSlotAccounts();
+    },
+
+    activeAccountId(slot: string): string {
+      return this.slotAccounts[slot]?.find(a => a.active)?.accountId || '';
+    },
+
     providerIsDisconnected(id: string): boolean {
       const p = this.availableProviders.find(x => x.id === id);
       return !!p && !p.connected;
@@ -1290,6 +1337,26 @@ export default defineComponent({
                 <span>{{ provider.name }}<small v-if="!provider.connected" class="provider-hint"> (not connected)</small></span>
               </label>
             </div>
+            <div class="setting-description connection-picker" role="group" aria-label="primary connection">
+              <template v-if="slotAccountError.primary">
+                <span class="provider-hint" role="alert">{{ slotAccountError.primary }}</span>
+              </template>
+              <template v-else-if="slotAccounts.primary.length > 1">
+                <label>Connection
+                  <select class="model-select" :value="activeAccountId('primary')" @change="onConnectionChange('primary', $event)">
+                    <option v-for="acct in slotAccounts.primary" :key="acct.accountId" :value="acct.accountId">
+                      {{ acct.label }} ({{ acct.connected ? 'connected' : 'not connected' }}){{ acct.active ? ' - active' : '' }}
+                    </option>
+                  </select>
+                </label>
+              </template>
+              <template v-else-if="slotAccounts.primary.length === 1">
+                Connection: {{ slotAccounts.primary[0].label }} ({{ slotAccounts.primary[0].connected ? 'connected' : 'not connected' }})
+              </template>
+              <template v-else>
+                Not connected. Open <strong>Integrations</strong> to connect this provider.
+              </template>
+            </div>
             <p v-if="providerIsDisconnected(primaryProvider)" class="setting-description provider-hint" role="status">
               This provider isn't connected yet. Open <strong>Integrations</strong> to connect it.
             </p>
@@ -1359,9 +1426,6 @@ export default defineComponent({
                 <span class="slider" />
               </label>
             </div>
-            <p v-if="providerIsDisconnected(secondaryProvider)" class="setting-description provider-hint" role="status">
-              This provider isn't connected yet. Open <strong>Integrations</strong> to connect it.
-            </p>
             <select
               v-model="secondaryProvider"
               class="model-select"
@@ -1384,6 +1448,29 @@ export default defineComponent({
                 <span>{{ provider.name }}<small v-if="!provider.connected" class="provider-hint"> (not connected)</small></span>
               </label>
             </div>
+            <div class="setting-description connection-picker" role="group" aria-label="secondary connection">
+              <template v-if="slotAccountError.secondary">
+                <span class="provider-hint" role="alert">{{ slotAccountError.secondary }}</span>
+              </template>
+              <template v-else-if="slotAccounts.secondary.length > 1">
+                <label>Connection
+                  <select class="model-select" :value="activeAccountId('secondary')" @change="onConnectionChange('secondary', $event)">
+                    <option v-for="acct in slotAccounts.secondary" :key="acct.accountId" :value="acct.accountId">
+                      {{ acct.label }} ({{ acct.connected ? 'connected' : 'not connected' }}){{ acct.active ? ' - active' : '' }}
+                    </option>
+                  </select>
+                </label>
+              </template>
+              <template v-else-if="slotAccounts.secondary.length === 1">
+                Connection: {{ slotAccounts.secondary[0].label }} ({{ slotAccounts.secondary[0].connected ? 'connected' : 'not connected' }})
+              </template>
+              <template v-else>
+                Not connected. Open <strong>Integrations</strong> to connect this provider.
+              </template>
+            </div>
+            <p v-if="providerIsDisconnected(secondaryProvider)" class="setting-description provider-hint" role="status">
+              This provider isn't connected yet. Open <strong>Integrations</strong> to connect it.
+            </p>
             <p class="setting-description">
               If the primary provider is inaccessible, the agent falls back to this provider.
             </p>
@@ -1477,6 +1564,26 @@ export default defineComponent({
                 <input v-model="subconsciousProvider" type="radio" :value="provider.id">
                 <span>{{ provider.name }}<small v-if="!provider.connected" class="provider-hint"> (not connected)</small></span>
               </label>
+            </div>
+            <div class="setting-description connection-picker" role="group" aria-label="subconscious connection">
+              <template v-if="slotAccountError.subconscious">
+                <span class="provider-hint" role="alert">{{ slotAccountError.subconscious }}</span>
+              </template>
+              <template v-else-if="slotAccounts.subconscious.length > 1">
+                <label>Connection
+                  <select class="model-select" :value="activeAccountId('subconscious')" @change="onConnectionChange('subconscious', $event)">
+                    <option v-for="acct in slotAccounts.subconscious" :key="acct.accountId" :value="acct.accountId">
+                      {{ acct.label }} ({{ acct.connected ? 'connected' : 'not connected' }}){{ acct.active ? ' - active' : '' }}
+                    </option>
+                  </select>
+                </label>
+              </template>
+              <template v-else-if="slotAccounts.subconscious.length === 1">
+                Connection: {{ slotAccounts.subconscious[0].label }} ({{ slotAccounts.subconscious[0].connected ? 'connected' : 'not connected' }})
+              </template>
+              <template v-else>
+                Not connected. Open <strong>Integrations</strong> to connect this provider.
+              </template>
             </div>
             <p class="setting-description">
               Provider for background agents (memory recall, observation, unstuck research). "Use Primary Provider" mirrors your primary provider above.

@@ -424,6 +424,8 @@ export interface IpcMainInvokeEvents {
   // #region Model Provider Service (source of truth)
   'model-provider:get-state':              () => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; subconsciousProvider: string; activeModelId: string; modelMode: 'local' | 'remote'; secondaryModelId: string; heartbeatModelId: string; subconsciousModelId: string };
   'model-provider:get-providers':          () => { id: string; name: string; connected: boolean }[];
+  'model-provider:get-accounts':           (providerId: string) => { accountId: string; label: string; active: boolean; connected: boolean }[];
+  'model-provider:set-active-account':     (providerId: string, accountId: string) => void;
   'model-provider:get-models':             (providerId: string) => { id: string; name: string; description?: string }[];
   'model-provider:select-model':           (providerId: string, modelId: string) => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; subconsciousProvider: string; activeModelId: string; modelMode: 'local' | 'remote'; secondaryModelId: string; heartbeatModelId: string; subconsciousModelId: string };
   'model-provider:set-secondary':          (providerId: string) => void;

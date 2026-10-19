@@ -510,6 +510,17 @@ class ModelProviderService {
       return this.getAvailableProviders();
     });
 
+    // Metadata-only account list / active-account switch for the settings
+    // window (the vault:* channels are restricted to the main-agent window).
+    ipcMain.handle('model-provider:get-accounts', async(_event: unknown, providerId: string) => {
+      const accounts = await getIntegrationService().getAccounts(String(providerId));
+      return accounts.map(a => ({ accountId: a.account_id, label: a.label || a.account_id, active: !!a.active, connected: !!a.connected }));
+    });
+
+    ipcMain.handle('model-provider:set-active-account', async(_event: unknown, providerId: string, accountId: string) => {
+      await getIntegrationService().setActiveAccount(String(providerId), String(accountId));
+    });
+
     ipcMain.handle('model-provider:get-models', async(_event: unknown, providerId: string) => {
       return this.getModelsForProvider(providerId);
     });

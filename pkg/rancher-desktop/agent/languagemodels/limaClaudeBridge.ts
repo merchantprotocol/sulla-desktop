@@ -38,7 +38,16 @@ async function resolveAccount(): Promise<{
 }> {
   const integrations = getIntegrationService();
   try {
-    const accountId = await integrations.getActiveAccountId('claude-code');
+    let accountId = await integrations.getActiveAccountId('claude-code');
+    try {
+      // The active account may be an empty placeholder; prefer a connected one.
+      const accounts = await integrations.getAccounts('claude-code');
+      const active = accounts.find(a => a.account_id === accountId);
+      if (!active?.connected) {
+        const alt = accounts.find(a => a.connected);
+        if (alt) accountId = alt.account_id;
+      }
+    } catch { /* keep the active account */ }
     return { integrationId: 'claude-code', accountId, authMode: accountId === 'oauth' ? 'oauth' : 'api-key' };
   } catch (error) {
     if ((error as Error).message !== MISSING_ACCOUNT) throw error;

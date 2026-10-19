@@ -669,6 +669,14 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         } else {
           try {
             accountId = await getIntegrationService().getActiveAccountId('claude-code');
+            try {
+              // Active account may be an empty placeholder; prefer a connected one.
+              const accounts = await getIntegrationService().getAccounts('claude-code');
+              if (!accounts.find(a => a.account_id === accountId)?.connected) {
+                const alt = accounts.find(a => a.connected);
+                if (alt) accountId = alt.account_id;
+              }
+            } catch { /* keep the active account */ }
             integrationId = 'claude-code';
             authMode = accountId === 'oauth' ? 'oauth' : 'api-key';
           } catch (error) {
