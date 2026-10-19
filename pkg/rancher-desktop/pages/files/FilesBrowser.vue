@@ -427,9 +427,11 @@
                       <button
                         class="btn sm danger"
                         type="button"
-                        @click.stop="resolveConflict(entry)"
+                        :disabled="busy || !props.dataSource.keepConflictCopies || !entry.conflictSourceFileId || !entry.conflictSourceVersionId"
+                        title="Keep both preserved files and clear this conflict warning"
+                        @click.stop="keepBothConflict(entry)"
                       >
-                        Resolve
+                        Keep both
                       </button><button
                         class="btn ico"
                         type="button"
@@ -762,7 +764,7 @@ function kindLabel(mime:string, path = '') {
 function toDisplay(file:FilesItem):DisplayEntry {
   const glyph = fileGlyph(file.mime, file.path); const conflict = entrySync(file) === 'conflict';
 
-  return { ...file, key: file.id, name: file.path.split('/').at(-1) || file.path, folder: false, agent: file.createdByType === 'agent-run', childCount: 0, kindClass: glyph.className, icon: glyph.icon, subtitle: conflict ? `Edited on ${ file.conflictDevices || 2 } desktops at once · pick a version` : `${ kindLabel(file.mime, file.path) } · v${ file.versionCount } · ${ file.indexStatus }: ${ file.indexReason }` };
+  return { ...file, key: file.id, name: file.path.split('/').at(-1) || file.path, folder: false, agent: file.createdByType === 'agent-run', childCount: 0, kindClass: glyph.className, icon: glyph.icon, subtitle: conflict ? `Edited on ${ file.conflictDevices || 2 } desktops at once · both copies preserved` : `${ kindLabel(file.mime, file.path) } · v${ file.versionCount } · ${ file.indexStatus }: ${ file.indexReason }` };
 }
 function folderEntry(prefix:string, name:string, children:FilesItem[]):DisplayEntry {
   const newest = [...children].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
@@ -860,7 +862,7 @@ function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value;
 function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
 
 function activate(entry:DisplayEntry) { if (entry.folder) openPath(entry.path); else selectEntry(entry); }
-function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
+async function keepBothConflict(entry:DisplayEntry) { if (!props.dataSource.keepConflictCopies) return; selectedKeys.value = new Set([entry.key]); selectEntry(entry); busy.value = true; operationError.value = ''; try { await props.dataSource.keepConflictCopies(entry); await refresh(true); const updated = snapshot.value?.files.find(file => file.id === entry.id); selected.value = updated ? toDisplay(updated) : null } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 function selectEntry(entry:DisplayEntry) { if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
 async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await props.dataSource.openFile(fileId); }
 function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }

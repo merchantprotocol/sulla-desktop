@@ -29,6 +29,8 @@ export interface FilesItem {
   ownerAvatarUrl?: string;
   syncState?: 'synced' | 'syncing' | 'online-only' | 'conflict';
   conflictDevices?: number;
+  conflictSourceFileId?: string;
+  conflictSourceVersionId?: string;
   indexStatus: FilesIndexState;
   indexReasonCode?: string;
   indexReason: string;
@@ -217,6 +219,7 @@ export interface FilesDataSource {
   setStar(collectionId:string, target:{ fileId?:string; folderPath?:string }, starred:boolean):Promise<void>;
   operate(action:'move' | 'copy', collectionId:string, items:{ fileId?:string; folderPath?:string; targetPath:string }[]):Promise<void>;
   restoreVersion(fileId:string, versionId:string): Promise<void>;
+  keepConflictCopies?(file:FilesItem): Promise<void>;
   restoreTrash(fileId:string): Promise<void>;
   trashFile(fileId:string): Promise<void>;
   createPublicLink?(fileId:string, options:ShareLinkOptions):Promise<ShareLink>;

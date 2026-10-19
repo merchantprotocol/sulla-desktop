@@ -64,7 +64,17 @@ async function readStableUpload(source:string):Promise<Buffer> {
   try {
     const before = await file.stat({ bigint: true });
     if (!stableUploadIdentity(selected, before)) throw new Error('Selected file changed before it could be read');
-    const bytes = await file.readFile();
+    const chunks:Buffer[] = [];
+    let total = 0;
+    while (total <= MAX_DIRECT_UPLOAD_BYTES) {
+      const chunk = Buffer.allocUnsafe(Math.min(1024 * 1024, MAX_DIRECT_UPLOAD_BYTES - total + 1));
+      const { bytesRead } = await file.read(chunk, 0, chunk.byteLength, null);
+      if (!bytesRead) break;
+      total += bytesRead;
+      if (total > MAX_DIRECT_UPLOAD_BYTES) throw new Error('Files selected in Desktop must be 64 MiB or smaller');
+      chunks.push(chunk.subarray(0, bytesRead));
+    }
+    const bytes = Buffer.concat(chunks, total);
     const [after, pathname] = await Promise.all([file.stat({ bigint: true }), fs.promises.lstat(source, { bigint: true })]);
     if (!stableUploadIdentity(before, after) || !stableUploadIdentity(after, pathname) || bytes.byteLength !== Number(after.size)) {
       throw new Error('Selected file changed while it was being read. Nothing was uploaded.');
@@ -271,6 +281,7 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('sulla-files:trash-list', (_event, input:{ collectionId: string }) => json(`/v1/trash?collectionId=${ encodeURIComponent(input.collectionId) }`));
   ipcMain.handle('sulla-files:trash-restore', (_event, input:{ fileId: string }) => json(`/v1/trash/${ encodeURIComponent(input.fileId) }/restore`, { method: 'POST', body: '{}' }));
   ipcMain.handle('sulla-files:restore-version', (_event, input:{ fileId: string; versionId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/restore`, { method: 'POST', body: JSON.stringify({ versionId: input.versionId }) }));
+  ipcMain.handle('sulla-files:keep-conflict-copies', (_event, input:{ fileId:string; currentVersionId:string; sourceFileId:string; sourceVersionId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/conflicts/keep-both`, { method: 'POST', body: JSON.stringify(input) }));
   ipcMain.handle('sulla-files:shares', (_event, input:{ collectionId: string }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, {}, true));
   ipcMain.handle('sulla-files:share', (_event, input:{ collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string; role: 'view' | 'edit' }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, { method: 'POST', body: JSON.stringify(input) }, true));
   ipcMain.handle('sulla-files:unshare', (_event, input:{ collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, { method: 'DELETE', body: JSON.stringify(input) }, true));

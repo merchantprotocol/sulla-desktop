@@ -423,14 +423,18 @@ export class LocalFilesManager {
   }
 
   async finishNativePublicationConflict(operationId:string, input:{ conflictFileId:string; currentSourceRevision:string; currentSourceHash:string; currentFilesVersionId:string }):Promise<void> {
-    const verified = await this.db.query(`UPDATE files_native_source_operations o SET state='completed',last_error='Native source changed; Files preserved both versions',
+    const verified = await this.db.query(`WITH verified AS (UPDATE files_native_source_operations o SET state='completed',last_error='Native source changed; Files preserved both versions',
       recovery=jsonb_build_object('action','visible-conflict','conflictFileId',$2::text),updated_at=NOW()
       FROM files_native_sources n,files f,files_native_sources c
       WHERE o.operation_id=$1 AND o.direction='publish' AND o.state IN('publishing','recovery-required')
         AND n.source_handle=o.source_handle AND n.file_id=o.file_id AND n.source_revision=$3 AND n.source_hash=$4
         AND f.id=o.file_id AND f.current_version_id=$5
         AND c.file_id=$2 AND c.source_hash=o.desired_hash
-      RETURNING o.operation_id`, [operationId, input.conflictFileId, input.currentSourceRevision, input.currentSourceHash, input.currentFilesVersionId]);
+      RETURNING o.file_id,o.desired_hash)
+      INSERT INTO files_native_conflicts(file_id,source_file_id,content_hash)
+      SELECT $2,file_id,desired_hash FROM verified
+      ON CONFLICT(file_id) DO UPDATE SET source_file_id=EXCLUDED.source_file_id,content_hash=EXCLUDED.content_hash
+      RETURNING file_id`, [operationId, input.conflictFileId, input.currentSourceRevision, input.currentSourceHash, input.currentFilesVersionId]);
     if (verified.rowCount !== 1) throw Object.assign(new Error('Native conflict recovery did not match both source and Files outcomes'), { status: 409 });
   }
 
