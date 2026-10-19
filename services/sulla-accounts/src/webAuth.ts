@@ -90,6 +90,9 @@ export async function beginWebLogin(db: Database, config: AccountsConfig, return
   url.searchParams.set('client_id', config.keycloakWebClientId);
   url.searchParams.set('redirect_uri', config.webCallbackUrl);
   url.searchParams.set('scope', `openid profile sulla-audience-${config.keycloakMembershipAudience}`);
+  // A console login must require an explicit credential check even when the
+  // browser still has an authority SSO cookie from a revoked local session.
+  url.searchParams.set('prompt', 'login');
   url.searchParams.set('state', state);
   url.searchParams.set('nonce', nonce);
   url.searchParams.set('code_challenge_method', 'S256');
