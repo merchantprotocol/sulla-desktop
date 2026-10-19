@@ -198,6 +198,7 @@ export class LocalFilesManager {
       publish:(client,receipt,undo) => this.nativeJournal.publish(client,receipt,undo),
       occupied:(collectionId,path)=>this.nativeJournal.occupied(collectionId,path),
       folders:(collectionId,path,files)=>this.nativeJournal.folders(collectionId,path,files),
+      folderSnapshot:(collectionId,path,files)=>this.nativeJournal.folderSnapshot(collectionId,path,files),
       available:()=>FilesMutationCoordinator.atomicRenameAvailable(),
     };
   }

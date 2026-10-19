@@ -9,8 +9,8 @@ import { createDatabaseFolder, executeDatabaseOperation, parseDatabaseOperation,
 export type DatabaseCollisionPolicy = 'replace'|'keep-both'|'skip';
 export type DatabaseBatchState = 'pending'|'completed'|'partial'|'failed'|'cancelled'|'undone';
 export type DatabaseItemState = 'pending'|'completed'|'skipped'|'failed'|'cancelled'|'undone';
-export interface DatabaseFolderState { folderId:string; path:string; revision:string }
-interface DatabaseBatchItemBase extends Omit<DatabaseOperationRequest,'idempotencyKey'|'collectionId'|'action'|'fileId'|'expectedVersionId'|'expectedRevision'> {
+export interface DatabaseFolderState { folderId:string; path:string; revision:string; subtreeSignature?:string }
+interface DatabaseBatchItemBase extends Omit<DatabaseOperationRequest,'idempotencyKey'|'collectionId'|'action'|'fileId'|'expectedVersionId'|'expectedRevision'|'expectedDestination'> {
   itemId:string;
   action:'move'|'copy'|'rename'|'trash'|'create-folder';
   fileId?:string; expectedVersionId?:string; expectedRevision?:string;
@@ -19,12 +19,14 @@ interface DatabaseBatchItemBase extends Omit<DatabaseOperationRequest,'idempoten
 export interface DatabaseFileBatchItem extends DatabaseBatchItemBase {
   kind?:'file'; action:'move'|'copy'|'rename'|'trash';
   fileId:string; expectedVersionId:string; expectedRevision:string;
+  expectedDestination?:DatabaseOperationState;
   folderPath?:never; expectedFolder?:never;
 }
 export interface DatabaseFolderBatchItem extends DatabaseBatchItemBase {
   kind:'folder'; action:'move'|'copy'|'rename'|'trash'; folderPath:string;
   fileId?:never; expectedVersionId?:never; expectedRevision?:never;
-  collisionPolicy?:'keep-both'|'skip';
+  collisionPolicy?:DatabaseCollisionPolicy;
+  expectedDestination?:DatabaseFolderState;
 }
 export interface DatabaseCreateFolderBatchItem extends DatabaseBatchItemBase {
   kind?:'file'; action:'create-folder'; targetPath:string;
@@ -33,12 +35,12 @@ export interface DatabaseCreateFolderBatchItem extends DatabaseBatchItemBase {
 }
 export type DatabaseBatchItem=DatabaseFileBatchItem|DatabaseFolderBatchItem|DatabaseCreateFolderBatchItem;
 export interface DatabaseBatchRequest { idempotencyKey:string; collectionId:string; items:DatabaseBatchItem[] }
-export interface DatabaseRetryRequest { items?:{ itemId:string; collisionPolicy?:DatabaseCollisionPolicy; expectedDestination?:DatabaseOperationState }[] }
-export interface DatabaseItemError { status:number; code:string; message:string; destination?:DatabaseOperationState }
+export interface DatabaseRetryRequest { items?:{ itemId:string; collisionPolicy?:DatabaseCollisionPolicy; expectedDestination?:DatabaseOperationState|DatabaseFolderState }[] }
+export interface DatabaseItemError { status:number; code:string; message:string; destination?:DatabaseOperationState|DatabaseFolderState }
 export interface DatabaseBatchItemReceipt {
   itemId:string; action:DatabaseBatchItem['action']; state:DatabaseItemState; receiptId:string|null;
   before:DatabaseOperationState|DatabaseFolderState|null; after:DatabaseOperationState|DatabaseFolderState|null;
-  displacedBefore?:DatabaseOperationState; displacedAfter?:DatabaseOperationState;
+  displacedBefore?:DatabaseOperationState|DatabaseFolderState; displacedAfter?:DatabaseOperationState|DatabaseFolderState;
   error:DatabaseItemError|null; undoSupported:boolean; retryable:boolean;
 }
 export interface DatabaseBatchReceipt {
@@ -57,11 +59,14 @@ function validateItem(item:any, collectionId:string):DatabaseBatchItem {
     if (!['move','copy','rename','trash'].includes(item.action) || !pathValid(item.folderPath) || item.fileId!==undefined || item.expectedVersionId!==undefined) throw fail(400,'Folder operations require folderPath and no file identity');
     if (item.action!=='trash' && !pathValid(item.targetPath)) throw fail(400,'Folder targetPath must be canonical');
     if (item.action==='trash' && (item.targetPath!==undefined || item.collisionPolicy!==undefined || item.targetCollectionId!==undefined)) throw fail(400,'Trash has no destination');
-    if (item.collisionPolicy!==undefined && !['keep-both','skip'].includes(item.collisionPolicy)) throw fail(400,'Folder collisions support Keep Both or Skip');
+    if (item.collisionPolicy!==undefined && !['replace','keep-both','skip'].includes(item.collisionPolicy)) throw fail(400,'Folder collisions support Replace, Keep Both or Skip');
     if (item.expectedFolder && (!uuid.test(item.expectedFolder.folderId) || item.expectedFolder.path!==item.folderPath || typeof item.expectedFolder.revision!=='string' || !/^[0-9]+$/.test(item.expectedFolder.revision))) throw fail(400,'Invalid expectedFolder snapshot');
+    if (item.collisionPolicy==='replace' && (!item.expectedDestination || !uuid.test(item.expectedDestination.folderId) || item.expectedDestination.path!==item.targetPath || typeof item.expectedDestination.revision!=='string' || !/^\d+$/.test(item.expectedDestination.revision) || typeof item.expectedDestination.subtreeSignature!=='string' || !/^[0-9a-f]{64}$/.test(item.expectedDestination.subtreeSignature))) throw fail(400,'Folder Replace requires the displayed destination folder identity, revision and subtree signature');
+    if (item.collisionPolicy!=='replace' && item.expectedDestination!==undefined) throw fail(400,'expectedDestination is only accepted for folder Replace');
     return { itemId:item.itemId.toLowerCase(),kind:'folder',action:item.action,folderPath:item.folderPath,
       ...(item.expectedFolder?{expectedFolder:item.expectedFolder}:{}),...(item.targetPath?{targetPath:item.targetPath}:{}),
-      ...(item.collisionPolicy?{collisionPolicy:item.collisionPolicy}:{}),...(item.targetCollectionId?{targetCollectionId:item.targetCollectionId.toLowerCase()}:{}) };
+      ...(item.collisionPolicy?{collisionPolicy:item.collisionPolicy}:{}),...(item.expectedDestination?{expectedDestination:item.expectedDestination}:{}),
+      ...(item.targetCollectionId?{targetCollectionId:item.targetCollectionId.toLowerCase()}:{}) };
   }
   if (item.action === 'create-folder') {
     if (!pathValid(item.targetPath) || (item.collisionPolicy !== undefined && !['keep-both','skip'].includes(item.collisionPolicy))) throw fail(400, 'Folder creation requires a canonical path and optional keep-both or skip policy');
@@ -139,7 +144,7 @@ export async function databaseOperationCapabilities(db:pg.Pool, collectionId:str
     const native = (await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1', [collectionId])).rowCount;
     const enabled=!native || Boolean(access.custody && await access.custody.available());
     return { enabled,...(!enabled?{reason:access.custody?'native-helper-unavailable':'native-custody-required'}:{}),folderReceipts:enabled,
-      nativeFolderReceipts:Boolean(native && enabled),folderCollisionPolicies:['keep-both','skip'],
+      nativeFolderReceipts:Boolean(native && enabled),folderCollisionPolicies:['replace','keep-both','skip'],
       crossCollectionOperations:native?'unavailable':'stored-same-audience-files' };
   });
 }
