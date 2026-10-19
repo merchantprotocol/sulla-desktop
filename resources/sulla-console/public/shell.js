@@ -118,8 +118,7 @@ function navigate(area){
   openArea(area);
 }
 function backToConsole(){
-  if((history.state?.sullaConsoleDepth??0)>0){history.back();return}
-  history.replaceState({sullaConsoleDepth:0,area:null},'',urlForArea(null));openArea(null);
+  history.pushState({sullaConsoleDepth:0,area:null},'',urlForArea(null));openArea(null);
 }
 document.querySelectorAll('[data-area]').forEach(button=>button.addEventListener('click',()=>navigate(button.dataset.area)));
 document.getElementById('back').addEventListener('click',backToConsole);
