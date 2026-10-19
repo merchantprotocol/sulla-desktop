@@ -153,6 +153,10 @@ export interface FilesPreview {
   path: string;
 }
 
+export type FilesRevealResult =
+  | { status:'revealed'; target:'materialized-copy'; fileId:string; versionId:string }
+  | { status:'unavailable'; code:'no-local-copy' | 'local-copy-changed'; reason:string };
+
 export interface RecordingSegment { start:number; end:number; text:string }
 export interface RecordingChapter { start:number; end:number; title:string }
 export interface FilesDetail {
@@ -178,6 +182,7 @@ export interface FilesCapabilities {
   authenticatedRemote?: boolean;
   verifiedRecovery?: boolean;
   nativeFilesystem: boolean;
+  nativeReveal?: boolean;
 }
 
 export type ShareAccessMode = 'view' | 'download';
@@ -287,6 +292,8 @@ export interface FilesDataSource {
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
   openFile(fileId:string, versionId?:string): Promise<void>;
+  /** Reveals an authorized local copy, never promises an original host file. */
+  revealFile?(fileId:string, versionId?:string): Promise<FilesRevealResult>;
   downloadFile(fileId:string, name:string, versionId?:string):Promise<boolean>;
   downloadFiles(items:{ fileId:string; name:string; versionId?:string }[]):Promise<{ count:number; error?:string }>;
   listStars(collectionId:string):Promise<{ fileId?:string; folderPath?:string }[]>;

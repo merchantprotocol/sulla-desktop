@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -18,6 +18,8 @@ import { getSullaFilesWatcher } from './sullaFilesWatcher';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+
+import type { FilesRevealResult } from '@pkg/pages/files/types';
 
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
@@ -139,30 +141,90 @@ function pathWithin(root:string, candidate:string):boolean {
   return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${ path.sep }`));
 }
 
-async function openReference(input:{ fileId:string; versionId?:string }):Promise<void> {
+interface OpenedFileCopy {
+  root:string;
+  target:string;
+  rootInfo:fs.Stats;
+  info:fs.Stats;
+}
+
+const openedFileCopies = new Map<string, OpenedFileCopy>();
+const copyKey = (fileId:string, versionId:string):string => JSON.stringify([fileId, versionId]);
+
+async function authorizedReference(input:{ fileId:string; versionId?:string }):Promise<{ file:any; versionId:string }> {
+  if (!input || typeof input.fileId !== 'string' || !input.fileId || input.fileId.length > 256 ||
+      (input.versionId !== undefined && (typeof input.versionId !== 'string' || !input.versionId || input.versionId.length > 256))) {
+    throw new Error('Choose a valid Files reference.');
+  }
   const file = await json(`/v1/files/${ encodeURIComponent(input.fileId) }`);
   const versionId = input.versionId || file.current_version_id;
-  if (!versionId) throw new Error('This file has no readable version.');
+  if (typeof versionId !== 'string' || !versionId) throw new Error('This file has no readable version.');
   const versions = await json(`/v1/files/${ encodeURIComponent(input.fileId) }/history`) as any[];
-  if (!versions.some(version => version.id === versionId)) throw new Error('That file version is no longer available.');
-  const response = await filesClient.stream(`/v1/files/${ encodeURIComponent(input.fileId) }/preview?versionId=${ encodeURIComponent(versionId) }`);
-  if (!response.ok) throw new Error(`Files content failed (${ response.status })`);
-  const cacheRoot = path.join(paths.cache, 'files-open');
+  if (!versions.some(version => version.id === versionId && !version.deleted)) throw new Error('That file version is no longer available.');
+
+  return { file, versionId };
+}
+
+async function openReference(input:{ fileId:string; versionId?:string }):Promise<void> {
+  const { file, versionId } = await authorizedReference(input);
+  const cacheParent = await fs.promises.realpath(paths.cache);
+  const cacheRoot = path.join(cacheParent, 'files-open');
   await fs.promises.mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-  const safeId = `${ input.fileId }-${ versionId }`.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const rootInfo = await fs.promises.lstat(cacheRoot);
+  if (!rootInfo.isDirectory() || await fs.promises.realpath(cacheRoot) !== cacheRoot) throw new Error('Files open cache is not a safe local folder.');
   const safeName = path.basename(String(file.path || 'file')).replace(/[^a-zA-Z0-9._ -]/g, '_');
+  const safeId = createHash('sha256').update(copyKey(input.fileId, versionId)).digest('hex');
   const target = path.join(cacheRoot, `${ safeId }-${ safeName }`);
   const temp = `${ target }.partial-${ process.pid }-${ randomUUID() }`;
   let ownsTemp = false;
+  const response = await filesClient.stream(`/v1/files/${ encodeURIComponent(input.fileId) }/preview?versionId=${ encodeURIComponent(versionId) }`);
+  if (!response.ok) { await response.body?.cancel(); throw new Error(`Files content failed (${ response.status })`) }
   if (!response.body) throw new Error('Files content response was empty');
   try {
     const handle = await fs.promises.open(temp, 'wx', 0o600); ownsTemp = true;
     await pipeline(Readable.fromWeb(response.body as any), handle.createWriteStream());
     await fs.promises.rename(temp, target);
     ownsTemp = false;
-  } catch (error) { if (ownsTemp) await fs.promises.rm(temp, { force: true }); throw error }
+  } catch (error) { await response.body.cancel().catch(() => undefined); if (ownsTemp) await fs.promises.rm(temp, { force: true }); throw error }
+  const copy = { root: cacheRoot, target, rootInfo, info: await fs.promises.lstat(target) };
+  if (!validOpenedCopy(copy)) throw new Error('The local Files copy changed before it could be opened.');
+  const key = copyKey(input.fileId, versionId);
+  openedFileCopies.delete(key);
+  openedFileCopies.set(key, copy);
+  if (openedFileCopies.size > 256) openedFileCopies.delete(openedFileCopies.keys().next().value!);
   const error = await shell.openPath(target);
   if (error) throw new Error(error);
+}
+
+function validOpenedCopy(copy:OpenedFileCopy):boolean {
+  try {
+    const root = fs.lstatSync(copy.root); const info = fs.lstatSync(copy.target);
+
+    return root.isDirectory() && root.dev === copy.rootInfo.dev && root.ino === copy.rootInfo.ino &&
+      fs.realpathSync(copy.root) === copy.root && path.dirname(copy.target) === copy.root &&
+      info.isFile() && info.nlink === 1 && fs.realpathSync(copy.target) === copy.target &&
+      info.dev === copy.info.dev && info.ino === copy.info.ino && info.size === copy.info.size &&
+      info.mtimeMs === copy.info.mtimeMs && info.ctimeMs === copy.info.ctimeMs;
+  } catch { return false }
+}
+
+async function revealReference(input:{ fileId:string; versionId?:string }):Promise<FilesRevealResult> {
+  const { versionId } = await authorizedReference(input);
+  const key = copyKey(input.fileId, versionId);
+  const copy = openedFileCopies.get(key);
+  if (!copy) return { status: 'unavailable', code: 'no-local-copy', reason: 'No verified local copy is available. Open this version first, then reveal its downloaded copy. An original host file is not available through this action.' };
+  // Re-authorize content, including collection access and draft visibility, even for cached copies.
+  const response = await filesClient.stream(`/v1/files/${ encodeURIComponent(input.fileId) }/preview?versionId=${ encodeURIComponent(versionId) }`, { method: 'HEAD' });
+  await response.body?.cancel();
+  if (!response.ok) throw new Error(`Files content authorization failed (${ response.status })`);
+  // Keep the final filesystem validation and native call in the same turn.
+  if (!validOpenedCopy(copy)) {
+    openedFileCopies.delete(key);
+    return { status: 'unavailable', code: 'local-copy-changed', reason: 'The local copy was moved, changed, or removed. Open this version again before revealing its downloaded copy.' };
+  }
+  shell.showItemInFolder(copy.target);
+
+  return { status: 'revealed', target: 'materialized-copy', fileId: input.fileId, versionId };
 }
 
 async function downloadReference(event:Electron.IpcMainInvokeEvent, input:{ fileId:string; versionId?:string; name:string }):Promise<boolean> {
@@ -387,6 +449,7 @@ export function initSullaFilesIpc():void {
     await getSullaFilesWatcher().notifyRescan();
   });
   ipcMain.handle('files-ui:open-file', (_event, input:{ fileId:string; versionId?:string }) => openReference(input));
+  ipcMain.handle('files-ui:reveal-file', (_event, input:{ fileId:string; versionId?:string }) => revealReference(input));
   ipcMain.handle('files-ui:download-file', (event, input:{ fileId:string; versionId?:string; name:string }) => downloadReference(event, input));
   ipcMain.handle('files-ui:download-files', (event, input:{ fileId:string; versionId?:string; name:string }[]) => downloadReferences(event, input));
   ipcMain.handle('files-ui:media-url', async(event, input:{ fileId:string; versionId?:string }) => {

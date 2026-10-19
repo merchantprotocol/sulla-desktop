@@ -3,6 +3,7 @@ import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folder
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+import type { FilesRevealResult } from './types';
 import type { IpcRendererEvent } from 'electron';
 
 interface RemoteCapabilities {
@@ -38,6 +39,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     authenticatedRemote:false,
     verifiedRecovery:false,
     nativeFilesystem:true,
+    nativeReveal:    true,
   };
 
   onlineOnlyReason = '';
@@ -207,6 +209,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
   openFolder():Promise<void> { return ipcRenderer.invoke('files-ui:open-folder', this.collectionId) }
   openFile(fileId:string, versionId?:string):Promise<void> { return ipcRenderer.invoke('files-ui:open-file', { fileId, versionId }) }
+  revealFile(fileId:string, versionId?:string):Promise<FilesRevealResult> { return ipcRenderer.invoke('files-ui:reveal-file', { fileId, versionId }) }
   downloadFile(fileId:string, name:string, versionId?:string):Promise<boolean> { return ipcRenderer.invoke('files-ui:download-file', { fileId, versionId, name }) }
   downloadFiles(items:{ fileId:string; name:string; versionId?:string }[]):Promise<{ count:number; error?:string }> { return ipcRenderer.invoke('files-ui:download-files', items) }
   listStars(collectionId:string):Promise<{ fileId?:string; folderPath?:string }[]> { return ipcRenderer.invoke('sulla-files:stars', { collectionId }) }
