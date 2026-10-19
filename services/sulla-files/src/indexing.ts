@@ -81,6 +81,7 @@ export class IndexingQueue {
       WHERE version_id=(SELECT version_id FROM file_index_jobs WHERE status='pending' AND available_at<=NOW() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
       RETURNING file_id,version_id,attempts`);
     const job = claimed.rows[0]; if (!job) return false;
+    let source:{ path: string; cleanup?: () => Promise<void> } | undefined;
     try {
       await this.db.query("UPDATE files SET extraction_status='indexing',extraction_reason_code='indexing',extraction_reason='Local extraction is in progress.' WHERE id=$1 AND current_version_id=$2", [job.file_id, job.version_id]);
       const file = (await this.db.query('SELECT id,path,mime,current_version_id,deleted_at FROM files WHERE id=$1', [job.file_id])).rows[0];
@@ -88,7 +89,7 @@ export class IndexingQueue {
         await this.db.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
         return true;
       }
-      const source = await this.source(file);
+      source = await this.source(file);
       const extracted = await extractIndexText(source.path, file.mime);
       const client = await this.db.connect();
       try {
@@ -96,6 +97,10 @@ export class IndexingQueue {
         const current = (await client.query('SELECT current_version_id,deleted_at FROM files WHERE id=$1 FOR UPDATE', [file.id])).rows[0];
         if (!current || current.deleted_at || current.current_version_id !== job.version_id) {
           await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
+          await client.query('COMMIT'); return true;
+        }
+        const activeJob = (await client.query('SELECT status,attempts FROM file_index_jobs WHERE version_id=$1 FOR UPDATE', [job.version_id])).rows[0];
+        if (!activeJob || activeJob.status !== 'indexing' || Number(activeJob.attempts) !== Number(job.attempts)) {
           await client.query('COMMIT'); return true;
         }
         await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [file.id]);
@@ -110,13 +115,24 @@ export class IndexingQueue {
         await client.query('UPDATE files SET search_text=$2,extracted_at=NOW(),extraction_status=$3,extraction_reason_code=$4,extraction_reason=$5 WHERE id=$1', [file.id, extracted.text, extracted.status, extracted.reasonCode, extracted.reason]);
         await client.query('UPDATE file_index_jobs SET status=$2,finished_at=NOW(),reason_code=$3,reason=$4,last_error=NULL WHERE version_id=$1', [job.version_id, extracted.status, extracted.reasonCode, extracted.reason]);
         await client.query('COMMIT');
-      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release(); await source.cleanup?.() }
+      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
     } catch (error) {
       const terminal = job.attempts >= 3;
       const status = terminal ? 'failed' : 'pending';
       const reason = terminal ? 'Indexing failed after three local attempts. Re-index to try again.' : 'Indexing hit a temporary local error and will retry.';
-      await this.db.query(`UPDATE file_index_jobs SET status=$2,last_error=$3,reason_code=$4,reason=$5,available_at=NOW()+INTERVAL '5 seconds',finished_at=CASE WHEN $2='failed' THEN NOW() END WHERE version_id=$1`, [job.version_id, status, 'Local indexing operation failed', terminal ? 'retry_exhausted' : 'retry_scheduled', reason]);
-      await this.db.query('UPDATE files SET extraction_status=$3,extraction_reason_code=$4,extraction_reason=$5,extracted_at=CASE WHEN $3=\'failed\' THEN NOW() ELSE NULL END WHERE id=$1 AND current_version_id=$2', [job.file_id, job.version_id, status, terminal ? 'retry_exhausted' : 'retry_scheduled', reason]);
+      const client = await this.db.connect();
+      try {
+        await client.query('BEGIN');
+        const current = (await client.query('SELECT current_version_id,deleted_at FROM files WHERE id=$1 FOR UPDATE', [job.file_id])).rows[0];
+        if (current && !current.deleted_at && current.current_version_id === job.version_id) {
+          const updated = await client.query(`UPDATE file_index_jobs SET status=$2,last_error=$3,reason_code=$4,reason=$5,available_at=NOW()+INTERVAL '5 seconds',finished_at=CASE WHEN $2='failed' THEN NOW() END
+            WHERE version_id=$1 AND status='indexing' AND attempts=$6`, [job.version_id, status, 'Local indexing operation failed', terminal ? 'retry_exhausted' : 'retry_scheduled', reason, job.attempts]);
+          if (updated.rowCount) await client.query('UPDATE files SET extraction_status=$3,extraction_reason_code=$4,extraction_reason=$5,extracted_at=CASE WHEN $3=\'failed\' THEN NOW() ELSE NULL END WHERE id=$1 AND current_version_id=$2', [job.file_id, job.version_id, status, terminal ? 'retry_exhausted' : 'retry_scheduled', reason]);
+        }
+        await client.query('COMMIT');
+      } catch (failureError) { await client.query('ROLLBACK'); throw failureError } finally { client.release() }
+    } finally {
+      try { await source?.cleanup?.() } catch { console.warn('[SullaFiles] index source cleanup failed') }
     }
     return true;
   }
