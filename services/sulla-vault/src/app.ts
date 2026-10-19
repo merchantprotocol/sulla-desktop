@@ -639,7 +639,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     }
     response.type('html').send(CONSOLE_HTML);
   };
-  app.get('/ui', (_request, response) => response.redirect(308, '/ui/'));
+  app.get(/^\/ui$/, (_request, response) => response.redirect(308, '/ui/'));
   app.get('/ui/', sendConsole);
   app.get('/console', (_request, response) => response.redirect(308, '/ui/'));
   app.use('/ui', (request, response, next) => {
