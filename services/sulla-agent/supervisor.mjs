@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
@@ -15,6 +15,7 @@ const queuedSteers = [];
 const claudeSteersInFlight = [];
 let codexSteersAwaitingActivity = [];
 let claudeResultGrace = null;
+const controlInbox = '/run/sulla-control/inbox';
 const MAX_OUTPUT_BYTES = 200_000;
 
 function appendBounded(chunks, chunk, state) {
@@ -231,6 +232,22 @@ function cancel() {
   terminateGroup(child);
 }
 
+function consumeControlInbox() {
+  let files = [];
+  try { files = readdirSync(controlInbox).filter(name => name.endsWith('.json')).sort() } catch { return }
+  for (const name of files) {
+    const path = `${ controlInbox }/${ name }`;
+    try {
+      const command = JSON.parse(readFileSync(path, 'utf8'));
+      unlinkSync(path);
+      if (command.type === 'steer') steer(String(command.message ?? ''), String(command.id ?? ''));
+      else if (command.type === 'cancel') cancel();
+    } catch {
+      try { unlinkSync(path) } catch {}
+    }
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   input.on('line', line => {
@@ -242,4 +259,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   });
   process.once('SIGTERM', cancel);
   process.once('SIGINT', cancel);
+  const controlTimer = setInterval(consumeControlInbox, 400);
+  controlTimer.unref();
+  if (process.env.SULLA_AGENT_PROMPT) queueMicrotask(() => start(process.env.SULLA_AGENT_PROMPT));
 }

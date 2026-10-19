@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import cronParser from 'cron-parser';
 import express from 'express';
@@ -10,6 +12,7 @@ import {
   identityParams,
   identitySql,
   requestBearer,
+  requireMutationRole,
   requireOwner,
   type AuthenticatedRequest,
   type RequestIdentity,
@@ -28,6 +31,8 @@ import type { WorkflowPlaybookState } from '../../../pkg/rancher-desktop/agent/w
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
+const here = path.dirname(fileURLToPath(import.meta.url));
+const uiRoot = path.resolve(here, '../../../../ui');
 
 const launcher = createWorkflowLauncher();
 const jobs = new Map<string, { job: schedule.Job; identity: RequestIdentity }>();
@@ -636,7 +641,12 @@ async function catchUp(identity: RequestIdentity, dryRun = false, lookbackDays =
   return results;
 }
 
-app.get('/healthz', (_request, response) => response.json({ ok: true }));
+app.get('/healthz', (_request, response) => response.json({ ok: true, service: 'workflows' }));
+app.get('/ui', (_request, response) => response.redirect(308, '/ui/'));
+app.use('/ui', (_request, response, next) => {
+  response.setHeader('Content-Security-Policy', "default-src 'self'; frame-ancestors 'self'; script-src 'self'; style-src 'self'"); next();
+});
+app.use('/ui', express.static(uiRoot, { index: 'index.html', fallthrough: false }));
 app.use('/v1', authenticateRequest);
 
 app.get('/v1/workflows', requireOwner, async(request: AuthenticatedRequest, response, next) => {
@@ -669,7 +679,7 @@ app.get('/v1/workflows/:id', requireOwner, async(request: AuthenticatedRequest, 
     response.json(row);
   } catch (error) { next(error) }
 });
-app.put('/v1/workflows/:id', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.put('/v1/workflows/:id', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const workflow = request.body;
     const identity = request.identity!;
@@ -708,7 +718,7 @@ app.put('/v1/workflows/:id', requireOwner, async(request: AuthenticatedRequest, 
     response.json(row);
   } catch (error) { next(error) }
 });
-app.delete('/v1/workflows/:id', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.delete('/v1/workflows/:id', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const identity = request.identity!;
     const workflow = (await pool.query(
@@ -726,7 +736,7 @@ app.delete('/v1/workflows/:id', requireOwner, async(request: AuthenticatedReques
     response.status(204).send();
   } catch (error) { next(error) }
 });
-app.patch('/v1/workflows/:id/location', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.patch('/v1/workflows/:id/location', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const location = request.body.location;
     if (!['desktop', 'server'].includes(location)) return response.status(400).json({ error: 'location must be desktop or server' });
@@ -741,7 +751,7 @@ app.patch('/v1/workflows/:id/location', requireOwner, async(request: Authenticat
     response.json(row);
   } catch (error) { next(error) }
 });
-app.patch('/v1/workflows/:id/status', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.patch('/v1/workflows/:id/status', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const status = request.body.status;
     if (!['draft', 'production', 'archive'].includes(status)) return response.status(400).json({ error: 'invalid workflow status' });
@@ -777,7 +787,7 @@ app.patch('/v1/workflows/:id/status', requireOwner, async(request: Authenticated
     response.json(row);
   } catch (error) { next(error) }
 });
-app.post('/v1/runs', async(request: AuthenticatedRequest, response, next) => {
+app.post('/v1/runs', requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const workflowId = typeof request.body?.workflowId === 'string' ? request.body.workflowId.trim() : '';
     if (!workflowId) return response.status(400).json({ error: 'workflowId is required' });
@@ -788,6 +798,18 @@ app.post('/v1/runs', async(request: AuthenticatedRequest, response, next) => {
       message,
       parentExecutionId: identity.kind === 'runner' ? identity.executionId : undefined,
     }, identity));
+  } catch (error) { next(error) }
+});
+app.get('/v1/runs', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+  try {
+    const limit = Math.min(200, Math.max(1, Number(request.query.limit ?? 100)));
+    const rows = (await pool.query(
+      `SELECT execution_id,workflow_id,workflow_name,status,runner_id,trigger_input,started_at,completed_at,error,
+              wait_kind,resume_at,updated_at
+         FROM workflow_executions WHERE ${ identitySql } ORDER BY started_at DESC LIMIT $5`,
+      [...identityParams(request.identity!), limit],
+    )).rows;
+    response.json(rows);
   } catch (error) { next(error) }
 });
 app.get('/v1/runs/:id', async(request: AuthenticatedRequest, response, next) => {
@@ -804,7 +826,22 @@ app.get('/v1/runs/:id', async(request: AuthenticatedRequest, response, next) => 
     response.json({ ...publicRun, events });
   } catch (error) { next(error) }
 });
-app.post('/v1/runs/:id/resume', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.post('/v1/runs/:id/stop', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
+  try {
+    const identity = request.identity!;
+    const run = (await pool.query(
+      `UPDATE workflow_executions SET status='failed',auto_restart=FALSE,completed_at=COALESCE(completed_at,NOW()),
+              terminal_at=COALESCE(terminal_at,NOW()),terminal_reason='user_cancelled',error=COALESCE(error,'user_cancelled'),
+              owner_id=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=NOW()
+        WHERE execution_id=$5 AND status IN ('running','suspended') AND ${ identitySql } RETURNING runner_id`,
+      [...identityParams(identity), request.params.id],
+    )).rows[0];
+    if (!run) return response.status(409).json({ error: 'run is not active or was not found' });
+    if (run.runner_id) await launcher.stopRunner(run.runner_id);
+    response.status(202).json({ accepted: true });
+  } catch (error) { next(error) }
+});
+app.post('/v1/runs/:id/resume', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const executionId = request.params.id;
     if (typeof executionId !== 'string' || !executionId || executionId.length > 300 || executionId.trim() !== executionId) {
@@ -838,7 +875,7 @@ app.post('/v1/runs/:id/resume', requireOwner, async(request: AuthenticatedReques
     response.status(202).json({ executionId, runnerId: await launch(executionId) });
   } catch (error) { next(error) }
 });
-app.post('/v1/runs/:id/restart', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.post('/v1/runs/:id/restart', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const checkpoint = (await pool.query(
       `SELECT c.playbook_state FROM workflow_checkpoints c
@@ -855,7 +892,7 @@ app.post('/v1/runs/:id/restart', requireOwner, async(request: AuthenticatedReque
     response.status(202).json(await startRun({ workflowId: state.workflowId, message: 'Restarted from checkpoint', playbookState: state }, request.identity!));
   } catch (error) { next(error) }
 });
-app.post('/v1/schedules/refresh', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.post('/v1/schedules/refresh', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const identity = request.identity!;
     if (config.mode === 'server') {
@@ -865,7 +902,7 @@ app.post('/v1/schedules/refresh', requireOwner, async(request: AuthenticatedRequ
     response.json({ schedules: await refreshSchedules(identity) });
   } catch (error) { next(error) }
 });
-app.post('/v1/schedules/catch-up', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.post('/v1/schedules/catch-up', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try { response.json({ results: await catchUp(request.identity!, request.body?.dryRun === true, Number(request.body?.lookbackDays ?? 7)) }) } catch (error) { next(error) }
 });
 

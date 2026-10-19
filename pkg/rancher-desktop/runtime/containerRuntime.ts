@@ -35,12 +35,13 @@ export interface ContainerRuntimeDriver {
   inspect(id: string): Promise<any>;
   remove(id: string, force?: boolean): Promise<void>;
   list(label?: string): Promise<any[]>;
+  logs?(id: string, tail?: number): Promise<string>;
 }
 
 export class DockerRuntimeDriver implements ContainerRuntimeDriver {
   constructor(private readonly socketPath = '/var/run/docker.sock') {}
 
-  private request<T>(method: string, requestPath: string, body?: unknown, rawBody?: Buffer): Promise<DockerResponse<T>> {
+  private request<T>(method: string, requestPath: string, body?: unknown, rawBody?: Buffer, rawResponse = false): Promise<DockerResponse<T>> {
     return new Promise((resolve, reject) => {
       const payload = rawBody ?? (body === undefined ? undefined : Buffer.from(JSON.stringify(body)));
       const request = http.request({
@@ -57,9 +58,10 @@ export class DockerRuntimeDriver implements ContainerRuntimeDriver {
         const chunks: Buffer[] = [];
         response.on('data', chunk => chunks.push(Buffer.from(chunk)));
         response.on('end', () => {
-          const text = Buffer.concat(chunks).toString('utf8');
-          let parsed: unknown = text;
-          try { parsed = text ? JSON.parse(text) : {} } catch { /* Docker can return plain text */ }
+          const responseBody = Buffer.concat(chunks);
+          const text = responseBody.toString('utf8');
+          let parsed: unknown = rawResponse ? responseBody : text;
+          if (!rawResponse) try { parsed = text ? JSON.parse(text) : {} } catch { /* Docker can return plain text */ }
           const status = response.statusCode ?? 500;
           if (status >= 400) reject(new Error(`Docker API ${ method } ${ requestPath } returned ${ status }: ${ text }`));
           else resolve({ status, body: parsed as T });
@@ -112,6 +114,22 @@ export class DockerRuntimeDriver implements ContainerRuntimeDriver {
     return (await this.request<any[]>('GET', `/containers/json${ filters }`)).body;
   }
 
+  async logs(id: string, tail = 2_000): Promise<string> {
+    const response = await this.request<Buffer>('GET', `/containers/${ encodeURIComponent(id) }/logs?stdout=1&stderr=1&timestamps=1&tail=${ Math.max(1, Math.floor(tail)) }`, undefined, undefined, true);
+    const body = Buffer.isBuffer(response.body) ? response.body : Buffer.from(String(response.body ?? ''));
+    // Docker multiplexes non-TTY logs as 8-byte framed records. Fall back to
+    // plain text for runtimes that return an unframed stream.
+    const chunks: Buffer[] = [];
+    let offset = 0;
+    while (offset + 8 <= body.length) {
+      const length = body.readUInt32BE(offset + 4);
+      if (length < 0 || offset + 8 + length > body.length) break;
+      chunks.push(body.subarray(offset + 8, offset + 8 + length));
+      offset += 8 + length;
+    }
+    return (chunks.length && offset === body.length ? Buffer.concat(chunks) : body).toString('utf8');
+  }
+
   async remove(id: string, force = true): Promise<void> {
     try {
       await this.request('DELETE', `/containers/${ encodeURIComponent(id) }?force=${ force ? '1' : '0' }&v=1`);
@@ -129,4 +147,5 @@ export class KubernetesRuntimeDriver implements ContainerRuntimeDriver {
   inspect(_id: string): Promise<any> { return this.unavailable() }
   remove(_id: string, _force = true): Promise<void> { return this.unavailable() }
   list(_label?: string): Promise<any[]> { return this.unavailable() }
+  logs(_id: string, _tail?: number): Promise<string> { return this.unavailable() }
 }

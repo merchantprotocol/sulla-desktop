@@ -1,0 +1,22 @@
+{
+  "name": "@sulla/agents-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/services/sulla-agents/src/manager.js"
+  },
+  "dependencies": {
+    "express": "5.2.1",
+    "pg": "8.18.0",
+    "tar-stream": "3.1.7"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "22.19.15",
+    "@types/pg": "8.16.0",
+    "@types/tar-stream": "3.1.4",
+    "typescript": "5.9.3"
+  }
+}
