@@ -510,6 +510,10 @@ export interface IpcMainInvokeEvents {
   'files-ui:upload-paths': (input: { paths: string[]; destination?: string }) => number;
   'files-ui:create-folder': (relativePath: string) => void;
   'files-ui:chat-inventory': (input: { runIds: string[]; threadId: string }) => any[];
+  'files-preferences:list-roots': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView[];
+  'files-preferences:add-root': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView | undefined;
+  'files-preferences:update-root': (input: { id: string; syncMode?: 'local' | 'server'; paused?: boolean; exclusions?: string[] }) => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView;
+  'files-preferences:remove-root': (id: string) => void;
   'sulla-files:collections':     () => any[];
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
   'sulla-files:search':          (input: { query: string; collectionId?: string }) => { results:{ id:string }[]; coverage:{ total:number; pending:number; indexing:number; indexed:number; partial?:number; unsupported:number; failed:number; complete:boolean } };
