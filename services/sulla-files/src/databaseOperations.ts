@@ -275,16 +275,24 @@ export async function executeDatabaseOperation(db:pg.Pool, input:InternalDatabas
       if (ancestorFile.rowCount) throw fail(409, 'A file occupies an ancestor of the destination');
       const occupied = async(path:string) => Boolean((await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))
         UNION ALL SELECT 1 FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`, [destinationCollection, path])).rowCount) || Boolean(await access.custody?.occupied(destinationCollection,path));
+      let replaceDestination:any;
+      if (input.collisionPolicy === 'replace') {
+        const destination = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [destinationCollection, target])).rows[0];
+        if (!destination || destination.deleted_at) throw Object.assign(fail(409, 'The Replace destination changed'),{code:'destination-conflict'});
+        if (destination.id === file.id) throw Object.assign(fail(409, 'Cannot Replace the source itself; choose Keep Both or Skip'),{code:'destination-conflict',destination:snapshot(destination)});
+        replaceDestination=await lockedFile(client,destination.id,access);
+        editable(replaceDestination, actor);
+        const expected=input.expectedDestination!;
+        if (replaceDestination.id!==expected.fileId || replaceDestination.collection_id!==(expected.collectionId??destinationCollection) ||
+          replaceDestination.current_version_id!==expected.versionId || String(replaceDestination.operation_revision)!==expected.revision ||
+          replaceDestination.path!==expected.path || replaceDestination.deleted_at) {
+          throw Object.assign(fail(409, 'The Replace destination changed'),{code:'destination-conflict',destination:snapshot(replaceDestination)});
+        }
+      }
       if (await occupied(target)) {
         if (input.collisionPolicy === 'replace') {
           if ((await client.query("SELECT 1 FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1", [destinationCollection,target])).rowCount) throw Object.assign(fail(409,'A folder occupies the destination; choose Keep Both or Skip'), { code:'destination-conflict' });
-          const destination = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [destinationCollection, target])).rows[0];
-          if (!destination || destination.deleted_at) throw fail(409, 'Replace requires a live file destination');
-          if (destination.id === file.id) throw fail(409, 'Cannot Replace the source itself; choose Keep Both or Skip');
-          await lockedFile(client, destination.id, access);
-          editable(destination, actor);
-          const expected = input.expectedDestination!;
-          if (destination.id !== expected.fileId || destination.collection_id!==(expected.collectionId??destinationCollection) || destination.current_version_id !== expected.versionId || String(destination.operation_revision) !== expected.revision || destination.path!==expected.path || destination.deleted_at) throw Object.assign(fail(409, 'The Replace destination changed'),{code:'destination-conflict',destination:snapshot(destination)});
+          const destination=replaceDestination;
           const slash = target.lastIndexOf('/');
           const recoveryPath = target.slice(0, slash + 1) + '.replaced-' + row.id + '-' + target.slice(slash + 1);
           if (await occupied(recoveryPath)) throw fail(409,'Replace recovery path is occupied');

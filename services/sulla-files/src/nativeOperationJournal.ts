@@ -226,7 +226,9 @@ export class NativeOperationJournal {
       if (target && folderPlan?.displaced) {
         const desired=[...new Set<string>((folderPlan.displaced.folders??[]).map((item:any)=>item.after.path))].sort((a,b)=>a.split('/').length-b.split('/').length||a.localeCompare(b));
         for (const [index,path] of desired.entries()) if (!await target.mutations.exists(path)) plan.leaves.push({kind:'mkdir',rootId:target.id,target:path,stage:`${prefix}/displaced-dir-${index}`});
-        for (const [index,record] of displaced.entries()) await addRelocate(record,index);
+      }
+      if (target) for (const [index,record] of displaced.entries()) await addRelocate(record,index);
+      if (target && folderPlan?.displaced) {
         for (const [index,item] of [...(folderPlan.displaced.folders??[])].reverse().entries()) {
           if (!await target.mutations.exists(item.before.path)) continue;
           plan.leaves.push({kind:'rmdir',rootId:target.id,source:item.before.path,stage:`${prefix}/displaced-rmdir-${index}`,directory:await target.mutations.directory(item.before.path)});
@@ -344,7 +346,11 @@ export class NativeOperationJournal {
         if (directory.dev!==leaf.directory?.dev || directory.ino!==leaf.directory?.ino) throw failure();
       } else if (undo) {
         if (leaf.source && ['evict','relocate'].includes(leaf.kind)) { const pin=await root.mutations.pinVerified(leaf.source,p=>verify(p,leaf.hash!,leaf.before)); await pin.close() }
-        if (leaf.target && ['publish','relocate'].includes(leaf.kind) && await root.mutations.exists(leaf.target)) throw failure();
+        if (leaf.target && ['publish','relocate'].includes(leaf.kind) && await root.mutations.exists(leaf.target)) {
+          const restored=plan.leaves.find(candidate=>candidate.rootId===leaf.rootId && candidate.kind==='relocate' && candidate.source===leaf.target);
+          if (!restored) throw failure();
+          const pin=await root.mutations.pinVerified(leaf.target,p=>verify(p,restored.hash!,restored.before)); await pin.close();
+        }
         if (['publish','relocate'].includes(leaf.kind)) { const retained=await root.mutations.pinVerified(leaf.stage+'.undo',p=>verify(p,leaf.hash!,leaf.published)); await retained.close() }
       } else {
         const stage=await root.mutations.pinVerified(leaf.stage,p=>verify(p,leaf.hash!,leaf.before)); await stage.close();
@@ -365,7 +371,13 @@ export class NativeOperationJournal {
 
   private async inverseCross(client:pg.PoolClient,receipt:any):Promise<void> {
     const row=(await this.db.query('SELECT * FROM files_path_operations WHERE operation_id=$1',[receipt.id])).rows[0];
-    if (!row || row.plan?.version!==3 || !['completed','db-committed'].includes(row.state)) throw failure();
+    if (!row) {
+      const source=await this.resolve(receipt.collection_id);
+      const target=await this.resolve(receipt.request.targetCollectionId);
+      if (!source && !target) return;
+      throw failure();
+    }
+    if (row.plan?.version!==3 || !['completed','db-committed'].includes(row.state)) throw failure();
     const plan=row.plan as CrossPlan; await this.validateCrossFilesystem(plan,false);
     const roots=await this.crossRoots(plan); plan.undoProgress=0;
     await this.db.query("UPDATE files_path_operations SET state='undo-planned',plan=$2,updated_at=NOW() WHERE operation_id=$1",[receipt.id,plan]);
