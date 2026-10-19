@@ -85,8 +85,10 @@ export class NativeOperationJournal {
       const incomingRecords=folderPlan?.children?.map((c:any)=>({ before_state:c.before,after_state:c.after,action:c.action })) ?? [receipt];
       const displacedRecords=folderPlan?.displaced?.children?.map((c:any)=>({ before_state:c.before,after_state:c.after,action:c.action })) ?? [];
       const records=[...displacedRecords,...incomingRecords];
+      const displacedFileBefore=!folderPlan && receipt.displaced_before?.fileId ? receipt.displaced_before : null;
+      const displacedFileAfter=displacedFileBefore && receipt.displaced_after?.fileId ? receipt.displaced_after : null;
       const watched=(await client.query('SELECT * FROM watched_folder_state WHERE file_id=ANY($1::uuid[]) FOR UPDATE',
-        [[...records.map((r:any)=>r.before_state?.fileId),receipt.displaced_before?.fileId].filter(Boolean)])).rows;
+        [[...records.map((r:any)=>r.before_state?.fileId),displacedFileBefore?.fileId].filter(Boolean)])).rows;
       const plan:Plan={ version:2,rootId:root.id,collectionId:receipt.collection_id,operationId,itemId,leaves:[],watched };
       if (folderPlan) {
         if (receipt.action!=='copy') plan.treeBefore=folderPlan.source;
@@ -109,7 +111,7 @@ export class NativeOperationJournal {
           leaves.push({ kind,source:before.path,target:after?.path,stage,hash:w.content_hash,before:packed(pin.fingerprint) });
         } finally { await pin.close() }
       };
-      if (receipt.displaced_before) await fileLeaf(receipt.displaced_before,receipt.displaced_after,'move',`${prefix}/displaced`);
+      if (displacedFileBefore) await fileLeaf(displacedFileBefore,displacedFileAfter,'move',`${prefix}/displaced`);
       const incomingDirectories:any[]=folderPlan?.folders??[];
       const displacedDirectories:any[]=folderPlan?.displaced?.folders??[];
       const includeParents=(path:string,includeSelf=false)=>{
@@ -138,7 +140,7 @@ export class NativeOperationJournal {
       if (receipt.action==='create-folder') includeParents(receipt.after_state.path,true);
       for (const directory of incomingDirectories) if (!directory.deleted) includeParents(directory.after.path,true);
       for (const record of incomingRecords) if (record.after_state?.fileId && !record.after_state.deleted) includeParents(record.after_state.path);
-      if (receipt.displaced_after) includeParents(receipt.displaced_after.path);
+      if (displacedFileAfter) includeParents(displacedFileAfter.path);
       plan.leaves.push(...await mkdirs(desired,'dir',folderPlan?.displaced?.source));
       if (receipt.action!=='create-folder') for (const [index,record] of incomingRecords.entries()) await fileLeaf(record.before_state,record.after_state,record.action==='rename'?'move':record.action,`${prefix}/source-${index}`);
       if (incomingDirectories.length && receipt.action!=='copy') {
@@ -160,8 +162,8 @@ export class NativeOperationJournal {
       }
       assertOperationNotCancelled(operationId);
       const displacedFileIds=new Set(displacedRecords.map((record:any)=>record.before_state?.fileId).filter(Boolean));
-      for (const w of watched) if (receipt.action!=='copy' || displacedFileIds.has(w.file_id) || w.file_id===receipt.displaced_before?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[w.file_id]);
-      for (const state of [...records.map((r:any)=>r.after_state),receipt.displaced_after]) {
+      for (const w of watched) if (receipt.action!=='copy' || displacedFileIds.has(w.file_id) || w.file_id===displacedFileBefore?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[w.file_id]);
+      for (const state of [...records.map((r:any)=>r.after_state),displacedFileAfter]) {
         if (!state?.fileId || state.deleted) continue;
         const leaf=plan.leaves.find(l=>l.target===state.path);
         if (!leaf?.published) throw failure();
@@ -235,8 +237,9 @@ export class NativeOperationJournal {
     const states=folderPlan?[...folderPlan.children,...(folderPlan.displaced?.children??[])].map((c:any)=>c.after):[receipt.after_state,receipt.displaced_after];
     for (const state of states) if (state?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[state.fileId]);
     const displacedFileIds=new Set((folderPlan?.displaced?.children??[]).map((child:any)=>child.before?.fileId).filter(Boolean));
+    const displacedFileId=!folderPlan ? receipt.displaced_before?.fileId : undefined;
     for (const w of plan.watched) {
-      if (receipt.action==='copy' && !displacedFileIds.has(w.file_id) && w.file_id!==receipt.displaced_before?.fileId) continue;
+      if (receipt.action==='copy' && !displacedFileIds.has(w.file_id) && w.file_id!==displacedFileId) continue;
       const pin=await root.mutations.pinVerified(w.path,p=>verify(p,w.content_hash));
       try { await this.watch(client,root,w.file_id,w.path,w.content_hash,packed(pin.fingerprint)) } finally { await pin.close() }
     }

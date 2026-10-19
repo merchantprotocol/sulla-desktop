@@ -104,7 +104,15 @@ async function authorize(client:pg.PoolClient, row:any, access:DatabaseOperation
         else if (state?.folderId) await access.path(client,row.collection_id,state.path);
       }
     }
-    for (const error of Object.values(row.errors) as DatabaseItemError[]) if (error.destination) await access.file(client,error.destination.fileId);
+    for (const [itemId,error] of Object.entries(row.errors) as [string,DatabaseItemError][]) {
+      const destination=error.destination;
+      if (!destination) continue;
+      if ('fileId' in destination) await access.file(client,destination.fileId);
+      else {
+        const item=(row.request as DatabaseBatchRequest).items.find(candidate=>candidate.itemId===itemId);
+        await access.path(client,item?.targetCollectionId ?? row.collection_id,destination.path);
+      }
+    }
   }
 }
 async function itemRows(client:pg.PoolClient, row:any, actor:FilesIdentity):Promise<any[]> {
