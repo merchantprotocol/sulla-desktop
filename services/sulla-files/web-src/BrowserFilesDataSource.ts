@@ -26,6 +26,7 @@ export class BrowserFilesDataSource implements FilesDataSource {
   private collectionId='';
   private collection:ContainerCollection|undefined;
   private generation=0;
+  private apiBase:Promise<''|'/files-api'>|undefined;
 
   constructor(private token:string,private readonly accountName:string,private readonly orgId:string,private readonly expired:()=>void){}
 
@@ -36,7 +37,7 @@ export class BrowserFilesDataSource implements FilesDataSource {
 
   private async request<T>(path:string,options:RequestInit={},generation=this.generation):Promise<T>{
     if(!this.token)throw new Error('Files is locked. Sign in again.');
-    const response=await fetch(`/files-api${path}`,{...options,cache:'no-store',credentials:'omit',signal:this.controller.signal,headers:{Authorization:`Bearer ${this.token}`,...(options.headers??{})}});
+    const response=await fetch(await this.apiUrl(path),{...options,cache:'no-store',credentials:'omit',signal:this.controller.signal,headers:{Authorization:`Bearer ${this.token}`,...(options.headers??{})}});
     if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');
     if(response.status===401){this.expired();throw new Error('Your Files session ended. Sign in again.')}
     if(!response.ok){const body=await response.json().catch(()=>({})) as {error?:string};if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');throw new Error(body.error??`Files request failed (${response.status})`)}
@@ -98,7 +99,16 @@ export class BrowserFilesDataSource implements FilesDataSource {
   purgeTrash(fileId:string):Promise<void>{return this.request(`/v1/trash/${encodeURIComponent(fileId)}/purge`,{method:'DELETE'})}
   trashFile(fileId:string):Promise<void>{return this.request(`/v1/files/${encodeURIComponent(fileId)}`,{method:'DELETE'})}
 
-  private async upload(file:File,path:string,generation=this.generation,collectionId=this.collectionId):Promise<void>{if(!collectionId)throw new Error('No Files collection is selected.');this.assertCurrent(generation);if(this.collectionId!==collectionId)throw new DOMException('Files collection changed','AbortError');const response=await fetch(`/files-api/v1/files/upload?collectionId=${encodeURIComponent(collectionId)}&path=${encodeURIComponent(path)}`,{method:'PUT',cache:'no-store',credentials:'omit',signal:this.controller.signal,headers:{Authorization:`Bearer ${this.token}`,'Content-Type':file.type||'application/octet-stream'},body:file});this.assertCurrent(generation);if(this.collectionId!==collectionId)throw new DOMException('Files collection changed','AbortError');if(response.status===401){this.expired();throw new Error('Your Files session ended. Sign in again.')}if(!response.ok){const body=await response.json().catch(()=>({})) as {error?:string};this.assertCurrent(generation);throw new Error(body.error??`Files request failed (${response.status})`)} }
+  private async upload(file:File,path:string,generation=this.generation,collectionId=this.collectionId):Promise<void>{if(!collectionId)throw new Error('No Files collection is selected.');this.assertCurrent(generation);if(this.collectionId!==collectionId)throw new DOMException('Files collection changed','AbortError');const response=await fetch(await this.apiUrl(`/v1/files/upload?collectionId=${encodeURIComponent(collectionId)}&path=${encodeURIComponent(path)}`),{method:'PUT',cache:'no-store',credentials:'omit',signal:this.controller.signal,headers:{Authorization:`Bearer ${this.token}`,'Content-Type':file.type||'application/octet-stream'},body:file});this.assertCurrent(generation);if(this.collectionId!==collectionId)throw new DOMException('Files collection changed','AbortError');if(response.status===401){this.expired();throw new Error('Your Files session ended. Sign in again.')}if(!response.ok){const body=await response.json().catch(()=>({})) as {error?:string};this.assertCurrent(generation);throw new Error(body.error??`Files request failed (${response.status})`)} }
   private assertCurrent(generation:number):void{if(generation!==this.generation||!this.token)throw new DOMException('Stale Files request','AbortError')}
-  private async binary(path:string,generation=this.generation):Promise<Response>{const response=await fetch(`/files-api${path}`,{cache:'no-store',credentials:'omit',signal:this.controller.signal,headers:{Authorization:`Bearer ${this.token}`}});this.assertCurrent(generation);if(response.status===401){this.expired();throw new Error('Your Files session ended. Sign in again.')}if(!response.ok)throw new Error(`Files request failed (${response.status})`);return response}
+  private async apiUrl(path:string):Promise<string>{
+    if(!path.startsWith('/v1/'))throw new Error('Files API paths must stay on the authenticated v1 service.');
+    this.apiBase??=this.resolveApiBase();
+    return`${await this.apiBase}${path}`;
+  }
+  private async resolveApiBase():Promise<''|'/files-api'>{
+    const response=await fetch('/files-api/v1/collections',{method:'HEAD',cache:'no-store',credentials:'omit',signal:this.controller.signal,headers:{Authorization:`Bearer ${this.token}`}});
+    return response.status===404?'':'/files-api';
+  }
+  private async binary(path:string,generation=this.generation):Promise<Response>{const response=await fetch(await this.apiUrl(path),{cache:'no-store',credentials:'omit',signal:this.controller.signal,headers:{Authorization:`Bearer ${this.token}`}});this.assertCurrent(generation);if(response.status===401){this.expired();throw new Error('Your Files session ended. Sign in again.')}if(!response.ok)throw new Error(`Files request failed (${response.status})`);return response}
 }
